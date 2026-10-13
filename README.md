@@ -57,6 +57,8 @@ without clicking:
 | --- | --- |
 | `KUVO_OPENCODE_BINARY` | Use this opencode binary instead of the pinned download |
 | `KUVO_DEMO_FOLDER`, `KUVO_DEMO_PROMPT`, `KUVO_DEMO_MODEL` | Open a project and start a session with a prompt (`provider/model`) |
+| `KUVO_DEMO_FILES` | Comma-separated paths to attach to that prompt |
+| `KUVO_DEMO_COMPOSER_FILES` | Comma-separated paths to show as attached in the composer |
 | `KUVO_DEMO_PROVIDERS` | Open Accounts (on a provider's sign-in if it names one) |
 | `KUVO_DEMO_APPEARANCE` | `light` or `dark` |
 | `KUVO_DEMO_CHANGES` | Show the Changes card |
