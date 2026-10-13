@@ -33,7 +33,6 @@ final class BrowserAgent {
     /// The page as text: title, address, scroll position, and its numbered elements.
     func snapshot() async -> String {
         let browser = browser()
-        defer { clearHighlightsLater(browser) }
         guard browser.url != nil else { return "The browser is empty. Use browser_navigate to open a page." }
         let script = Self.snapshotScript
         let result = try? await browser.webView.callAsyncJavaScript(script, contentWorld: .page) as? [String: Any]
@@ -135,18 +134,6 @@ final class BrowserAgent {
 
     // MARK: Helpers
 
-    private var clearTask: Task<Void, Never>?
-
-    /// The numbers stay while the agent works and go a few seconds after its last step.
-    private func clearHighlightsLater(_ browser: BrowserSession) {
-        clearTask?.cancel()
-        clearTask = Task { [weak browser] in
-            try? await Task.sleep(for: .seconds(6))
-            guard !Task.isCancelled, let browser else { return }
-            _ = try? await browser.webView.callAsyncJavaScript("document.getElementById('playwright-highlight-container')?.remove()", contentWorld: .page)
-        }
-    }
-
     /// The browser in view, or a new one; either way the panel shows it.
     private func browser() -> BrowserSession {
         let browser = utilities.activeBrowser ?? utilities.newBrowser()
@@ -199,7 +186,7 @@ final class BrowserAgent {
     /// the way browser-use shows them to a model.
     private static let snapshotScript = """
     document.getElementById('playwright-highlight-container')?.remove();
-    const result = (\(domTree))({ doHighlightElements: true, focusHighlightIndex: -1, viewportExpansion: 0, debugMode: false });
+    const result = (\(domTree))({ doHighlightElements: false, focusHighlightIndex: -1, viewportExpansion: 0, debugMode: false });
     const map = result.map || {};
     const ATTRIBUTES = ['title', 'type', 'checked', 'name', 'role', 'value', 'placeholder', 'alt', 'aria-label', 'aria-expanded', 'aria-checked', 'data-state', 'href'];
     const index = {};
