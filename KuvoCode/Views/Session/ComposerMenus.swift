@@ -61,10 +61,10 @@ struct ModeChip: View {
                     .foregroundStyle(.tertiary)
             }
             .font(.callout.weight(.medium))
-            .padding(.horizontal, 12)
+            .foregroundStyle(agent == "plan" ? AnyShapeStyle(.orange) : AnyShapeStyle(.primary))
+            .padding(.horizontal, 8)
             .padding(.vertical, 6)
-            .solidChip(in: Capsule(), tint: agent == "plan" ? .orange : nil)
-            .contentShape(.capsule)
+            .hoverHighlight(in: Capsule())
         }
         .help("Mode and tool permissions (⌥⌘1 Build, ⌥⌘2 Plan)")
     }
@@ -131,10 +131,9 @@ struct ModelChip: View {
                     .foregroundStyle(.tertiary)
             }
             .font(.callout)
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 8)
             .padding(.vertical, 6)
-            .solidChip(in: Capsule())
-            .contentShape(.capsule)
+            .hoverHighlight(in: Capsule())
         }
         .help("Model and effort")
         .onAppear { LogoImages.shared.prefetch(catalog.models.flatMap { [$0.makerLogoID, $0.providerID] }) }

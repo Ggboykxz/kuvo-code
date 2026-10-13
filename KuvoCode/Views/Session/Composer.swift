@@ -54,12 +54,15 @@ struct Composer: View {
                 }
                 .onSubmit(send)
 
-            HStack(spacing: 8) {
+            HStack(spacing: 4) {
                 ModeChip(agent: agent, approval: approval, onSelectAgent: onSelectAgent, onSelectApproval: onSelectApproval)
                 ModelChip(selection: model, onSelect: onSelectModel)
                 Spacer(minLength: 0)
                 actionButton
             }
+            // The pills are flat, so their text lines up with the message field above;
+            // their hover fill reaches past it.
+            .padding(.leading, -8)
         }
         .padding(.horizontal, 16)
         .padding(.top, 14)
