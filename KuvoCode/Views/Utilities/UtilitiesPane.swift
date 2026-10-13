@@ -18,8 +18,11 @@ struct UtilitiesPane: View {
         } content: {
             VStack(spacing: 0) {
                 tabStrip
+                // A tab whose content can't shrink to the panel is cut off at its edges rather
+                // than drawn over the conversation.
                 content
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
             }
         }
     }

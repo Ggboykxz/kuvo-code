@@ -16,6 +16,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Files and changed lines in the Changes panel are plain rows again, not rounded boxes with notches at the edge.
 - **The terminal sits right on the panel**, in the panel's own color, with no darker box around it and no scroll bar track.
 - The panel no longer has a hide button of its own; the button at the top right of the window shows and hides it.
+- A narrow panel with a file open no longer spills over the conversation; the file list next to the file gets narrower instead.
 
 ## 0.1.1
 

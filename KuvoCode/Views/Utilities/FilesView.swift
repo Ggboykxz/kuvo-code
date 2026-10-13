@@ -12,6 +12,7 @@ struct FilesView: View {
     @Binding var showsTree: Bool
     let open: (URL) -> Void
     @State private var tree: FileTree
+    @State private var width: CGFloat = 600
 
     init(root: String, file: URL?, showsTree: Binding<Bool>, open: @escaping (URL) -> Void) {
         self.root = root
@@ -26,15 +27,23 @@ struct FilesView: View {
             if let file {
                 FileViewer(url: file, root: root, showsTree: $showsTree)
                     .id(file)
-                    .frame(maxWidth: .infinity)
+                    .frame(minWidth: 0, maxWidth: .infinity)
+                    .clipped()
             }
             if showsTree || file == nil {
                 if file != nil { Divider() }
                 FileTreeView(tree: tree, selected: file, open: open)
-                    .frame(width: file == nil ? nil : 260)
+                    .frame(width: file == nil ? nil : treeWidth)
                     .frame(maxWidth: file == nil ? .infinity : nil)
             }
         }
+        .onGeometryChange(for: CGFloat.self, of: \.size.width) { width = $0 }
+    }
+
+    /// Beside a file, the tree takes up to 260 points, less in a narrow panel, so the file
+    /// keeps most of the room.
+    private var treeWidth: CGFloat {
+        min(260, max(140, width * 0.4))
     }
 }
 
