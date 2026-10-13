@@ -112,13 +112,14 @@ struct UsageBarsView: View {
 /// One provider as a bar, after the Figma sketch: brand-colored fill, a darker track, the mark
 /// and name in condensed capitals, the number at the end. Text that crosses the fill's edge
 /// changes color with it, so it reads on both sides.
-private struct ProviderBar: View {
+struct ProviderBar: View {
     let provider: Provider
     let reading: WidgetData?
     let notice: String?
     let isExpanded: Bool
     @State private var isHovering = false
     @Environment(\.self) private var environment
+    @Environment(\.locale) private var locale
 
     static let height: CGFloat = 34
 
@@ -133,7 +134,7 @@ private struct ProviderBar: View {
         guard let reading else { return WidgetData.noDataHeadline }
         guard reading.isBounded else { return reading.menuBarValue }
         if reading.kind == .percent {
-            return fraction.formatted(.percent.precision(.fractionLength(0)))
+            return fraction.formatted(.percent.precision(.fractionLength(0)).locale(locale))
         }
         return reading.menuBarValue
     }
@@ -231,7 +232,21 @@ private struct SpendBar: View {
     }
 
     var body: some View {
-        let projection = projection
+        SpendBarBody(period: period, projection: projection)
+            .onTapGesture {
+                let all = TotalSpendPeriod.allCases
+                let next = all[((all.firstIndex(of: period) ?? 0) + 1) % all.count]
+                withAnimation(Motion.spring) { periodRawValue = next.rawValue }
+            }
+    }
+}
+
+/// The spend bar's drawing, apart from where its numbers come from.
+struct SpendBarBody: View {
+    let period: TotalSpendPeriod
+    let projection: TotalSpendProjection
+
+    var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Image(systemName: "dollarsign.circle.fill")
@@ -263,15 +278,10 @@ private struct SpendBar: View {
         .background(Color.primary.opacity(0.07))
         .clipShape(.rect(cornerRadius: 9))
         .contentShape(.rect(cornerRadius: 9))
-        .onTapGesture {
-            let all = TotalSpendPeriod.allCases
-            let next = all[((all.firstIndex(of: period) ?? 0) + 1) % all.count]
-            withAnimation(Motion.spring) { periodRawValue = next.rawValue }
-        }
-        .help(help(projection))
+        .help(help)
     }
 
-    private func help(_ projection: TotalSpendProjection) -> String {
+    private var help: String {
         let lines = projection.slices.map { "\($0.provider.displayName): \(MetricFormatter.number($0.displayAmount, kind: .dollars, style: .full))" }
         return ([period.rawValue] + (lines.isEmpty ? ["Nothing spent"] : lines) + ["Click for another period"]).joined(separator: "\n")
     }
