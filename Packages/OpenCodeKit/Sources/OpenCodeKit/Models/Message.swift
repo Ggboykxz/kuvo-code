@@ -73,9 +73,56 @@ public enum Message: Codable, Sendable, Hashable, Identifiable {
             self.files = files
         }
 
+        /// A file sent with the message. The engine keeps its contents (`data`, base64),
+        /// so it shows even after the original moves.
         public struct Attachment: Codable, Sendable, Hashable {
             public var mime: String
             public var name: String?
+            public var data: String?
+            public var source: Source?
+
+            public init(mime: String, name: String? = nil, data: String? = nil, source: Source? = nil) {
+                self.mime = mime
+                self.name = name
+                self.data = data
+                self.source = source
+            }
+
+            /// Where it came from: a file, or pasted (inline).
+            public enum Source: Codable, Sendable, Hashable {
+                case inline
+                case uri(String)
+
+                private enum CodingKeys: String, CodingKey { case type, uri }
+
+                public init(from decoder: Decoder) throws {
+                    let container = try decoder.container(keyedBy: CodingKeys.self)
+                    if let uri = try container.decodeIfPresent(String.self, forKey: .uri) {
+                        self = .uri(uri)
+                    } else {
+                        self = .inline
+                    }
+                }
+
+                public func encode(to encoder: Encoder) throws {
+                    var container = encoder.container(keyedBy: CodingKeys.self)
+                    switch self {
+                    case .inline:
+                        try container.encode("inline", forKey: .type)
+                    case .uri(let uri):
+                        try container.encode("uri", forKey: .type)
+                        try container.encode(uri, forKey: .uri)
+                    }
+                }
+            }
+
+            /// The original file, when it was one.
+            public var fileURL: URL? {
+                guard case .uri(let uri) = source, let url = URL(string: uri), url.isFileURL else { return nil }
+                return url
+            }
+
+            public var bytes: Data? { data.flatMap { Data(base64Encoded: $0) } }
         }
     }
 

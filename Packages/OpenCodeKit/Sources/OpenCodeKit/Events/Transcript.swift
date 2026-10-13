@@ -22,12 +22,15 @@ public struct Transcript: Sendable, Equatable {
         public var delivery: InboxItem.Delivery
         /// Shown before the server confirmed it.
         public var isLocal: Bool
+        /// What was attached, for showing a local message before the server has it.
+        public var files: [URL]
 
-        public init(id: String, text: String, delivery: InboxItem.Delivery, isLocal: Bool) {
+        public init(id: String, text: String, delivery: InboxItem.Delivery, isLocal: Bool, files: [URL] = []) {
             self.id = id
             self.text = text
             self.delivery = delivery
             self.isLocal = isLocal
+            self.files = files
         }
     }
 
@@ -47,8 +50,8 @@ public struct Transcript: Sendable, Equatable {
     }
 
     /// Shows a message right away, before the server echoes it back.
-    public mutating func addLocal(id: String, text: String, delivery: InboxItem.Delivery) {
-        pending.append(Pending(id: id, text: text, delivery: delivery, isLocal: true))
+    public mutating func addLocal(id: String, text: String, delivery: InboxItem.Delivery, files: [URL] = []) {
+        pending.append(Pending(id: id, text: text, delivery: delivery, isLocal: true, files: files))
     }
 
     public mutating func removeLocal(id: String) {
