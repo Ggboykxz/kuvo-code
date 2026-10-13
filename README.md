@@ -82,6 +82,7 @@ asks which providers to follow. Its settings are in the panel, also linked from 
 
 - [opencode](https://github.com/anomalyco/opencode) (MIT), downloaded at runtime.
 - [Textual](https://github.com/gonzalezreal/textual) (MIT), for Markdown.
+- [Prism](https://prismjs.com) (MIT), bundled, for coloring code in diffs.
 - [OpenUsage](https://github.com/robinebers/openusage) (MIT), forked as UsageKit for the menu bar.
 - [KeyboardShortcuts](https://github.com/sindresorhus/KeyboardShortcuts) (MIT), the usage panel's global shortcut.
 - Provider logos come from [models.dev](https://models.dev).
