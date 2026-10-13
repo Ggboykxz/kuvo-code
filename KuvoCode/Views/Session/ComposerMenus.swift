@@ -63,7 +63,7 @@ struct ModeChip: View {
             .font(.callout.weight(.medium))
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
-            .background(agent == "plan" ? AnyShapeStyle(Color.orange.opacity(0.18)) : AnyShapeStyle(.fill.tertiary), in: .capsule)
+            .solidChip(in: Capsule(), tint: agent == "plan" ? .orange : nil)
             .contentShape(.capsule)
         }
         .help("Mode and tool permissions (⌥⌘1 Build, ⌥⌘2 Plan)")
@@ -133,7 +133,7 @@ struct ModelChip: View {
             .font(.callout)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
-            .background(.fill.tertiary, in: .capsule)
+            .solidChip(in: Capsule())
             .contentShape(.capsule)
         }
         .help("Model and effort")
