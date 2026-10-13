@@ -4,6 +4,10 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
+## Unreleased
+
+- **Deleting a session asks first**, since it can't be undone.
+
 ## 0.1.0
 
 Kuvo Code's first public release: a native Mac harness for coding agents that works with any model, on the opencode engine.

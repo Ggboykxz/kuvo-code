@@ -20,6 +20,8 @@ struct SidebarView: View {
     /// Recents; only the row you clicked is highlighted (both open the same tab).
     @State private var pickedIn: (place: Place, id: String)?
     @State private var renaming: Session?
+    /// The session waiting for the user to confirm its deletion.
+    @State private var deleting: Session?
 
     private enum Place { case project, recents }
     @State private var newTitle = ""
@@ -93,6 +95,19 @@ struct SidebarView: View {
                 if let session = renaming { Task { await workspace.rename(session.id, to: newTitle) } }
             }
             Button("Cancel", role: .cancel) {}
+        }
+        .alert(
+            deleting.flatMap(\.title).map { "Delete “\($0)”?" } ?? "Delete This Session?",
+            isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })
+        ) {
+            Button("Delete", role: .destructive) {
+                guard let session = deleting else { return }
+                if selection == session.id { selection = nil }
+                Task { await workspace.delete(session.id) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The session and its transcript will be deleted. This can't be undone.")
         }
     }
 
@@ -185,10 +200,7 @@ struct SidebarView: View {
         }
         Button("Show in Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: session.location.directory) }
         Divider()
-        Button("Delete", role: .destructive) {
-            if selection == session.id { selection = nil }
-            Task { await workspace.delete(session.id) }
-        }
+        Button("Delete…", role: .destructive) { deleting = session }
     }
 }
 
