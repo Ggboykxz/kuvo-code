@@ -95,7 +95,7 @@ private struct TabButton: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            TabIcon(logo: tab.logo, status: tab.status)
+            TabIcon(logo: tab.logo, symbol: SidebarView.draftDirectory(from: tab.id) == nil ? "bubble.left" : "square.and.pencil", status: tab.status)
             Text(tab.title)
                 .font(.system(size: 13, weight: isActive ? .medium : .regular))
                 .foregroundStyle(isActive ? .primary : .secondary)
@@ -135,40 +135,87 @@ private struct TabButton: View {
     }
 }
 
-/// A small deck of tiles: the front one shows the model's maker, the one
-/// peeking out behind it shows how the session is doing.
+/// An app-icon tile, like Rex: the model maker's logo large on a soft tile, wrapped
+/// tightly in a white rim. How the session is doing shows as colored tiles peeking
+/// out behind it: two greens while the agent works, orange while it waits for you,
+/// red after a failed run, the accent color when a run finished out of sight.
 struct TabIcon: View {
     let logo: String?
+    /// Shown when there's no logo: a pencil for a draft, a bubble for a session.
+    var symbol = "bubble.left"
     let status: TabItem.Status
+
+    static let tileSize = CGSize(width: 25, height: 20)
+    /// How far each tile behind peeks out.
+    static let peek: CGFloat = 7
+
+    private var behind: [Color] {
+        switch status {
+        case .working: [Color(red: 0.2, green: 0.55, blue: 0.27), .green]
+        default: status.color.map { [$0] } ?? []
+        }
+    }
 
     var body: some View {
         ZStack(alignment: .leading) {
-            if let color = status.color {
-                RoundedRectangle(cornerRadius: 5)
-                    .fill(color.gradient)
-                    .frame(width: 20, height: 20)
-                    .offset(x: 6)
-                    .transition(.offset(x: -6).combined(with: .opacity))
+            ForEach(Array(behind.enumerated()), id: \.offset) { index, color in
+                StatusTile(color: color)
+                    .offset(x: Self.peek * CGFloat(behind.count - index))
+                    .transition(.offset(x: -Self.peek).combined(with: .opacity))
             }
-            RoundedRectangle(cornerRadius: 5)
-                .fill(.white)
-                .frame(width: 20, height: 20)
-                .overlay {
-                    Group {
-                        if let logo {
-                            ProviderLogo(id: logo, size: 12)
-                        } else {
-                            Image(systemName: "square.and.pencil")
-                                .font(.system(size: 10, weight: .semibold))
-                        }
-                    }
-                    .foregroundStyle(.black.opacity(0.85))
-                }
-                .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(.black.opacity(0.1), lineWidth: 0.5))
-                .shadow(color: .black.opacity(0.25), radius: 1.5, x: 1, y: 0.5)
+            FrontTile(logo: logo, symbol: symbol)
         }
-        .frame(width: 28, height: 20, alignment: .leading)
-        .animation(.ui, value: status.color)
+        .frame(width: Self.tileSize.width + Self.peek * CGFloat(behind.count), height: Self.tileSize.height, alignment: .leading)
+        .animation(.ui, value: status)
+    }
+}
+
+/// The white rim around every tile, with a soft shadow so it holds on a white pill.
+private struct TileRim: ViewModifier {
+    @Environment(\.colorScheme) private var scheme
+
+    func body(content: Content) -> some View {
+        content
+            .clipShape(.rect(cornerRadius: 5.5))
+            .overlay(RoundedRectangle(cornerRadius: 5.5).strokeBorder(scheme == .dark ? Color(white: 0.62) : .white, lineWidth: 1.5))
+            .shadow(color: .black.opacity(scheme == .dark ? 0.45 : 0.22), radius: 1.2, y: 0.5)
+    }
+}
+
+private struct FrontTile: View {
+    let logo: String?
+    let symbol: String
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: scheme == .dark ? [Color(white: 0.3), Color(white: 0.22)] : [Color(white: 0.97), Color(white: 0.9)],
+                startPoint: .top, endPoint: .bottom
+            )
+            Group {
+                if let logo {
+                    ProviderLogo(id: logo, size: 13)
+                } else {
+                    Image(systemName: symbol)
+                        .font(.system(size: 10.5, weight: .semibold))
+                }
+            }
+            .foregroundStyle(scheme == .dark ? Color.white : Color(white: 0.18))
+        }
+        .frame(width: TabIcon.tileSize.width, height: TabIcon.tileSize.height)
+        .modifier(TileRim())
+    }
+}
+
+private struct StatusTile: View {
+    let color: Color
+
+    var body: some View {
+        Rectangle()
+            .fill(color.gradient)
+            .frame(width: TabIcon.tileSize.width, height: TabIcon.tileSize.height)
+            .modifier(TileRim())
     }
 }
 
