@@ -52,7 +52,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          persist-credentials: false
+          # The checks below ask the remote about the tag and main, which a private
+          # repository only answers with the job's read-only token.
+          persist-credentials: true
 
       - name: Check the tag
         if: github.event_name == 'push'
