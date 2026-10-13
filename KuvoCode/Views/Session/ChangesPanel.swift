@@ -678,7 +678,12 @@ private struct Avatar: View {
     }
 
     private var initials: String {
-        let parts = NSFullUserName().split(separator: " ").prefix(2)
+        var name = NSFullUserName()
+        #if DEBUG
+        // KUVO_DEMO_NAME stands in for the user's name, for screenshots.
+        if let demo = ProcessInfo.processInfo.environment["KUVO_DEMO_NAME"] { name = demo }
+        #endif
+        let parts = name.split(separator: " ").prefix(2)
         let letters = parts.compactMap(\.first).map(String.init).joined()
         return letters.isEmpty ? "?" : letters.uppercased()
     }
