@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct KuvoAIApp: App {
+struct KuvoCodeApp: App {
     @NSApplicationDelegateAdaptor private var delegate: AppDelegate
 
     var body: some Scene {

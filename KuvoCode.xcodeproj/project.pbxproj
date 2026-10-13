@@ -17,9 +17,9 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		4B0A00000000000000000002 /* KuvoAI */ = {
+		4B0A00000000000000000002 /* KuvoCode */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = KuvoAI;
+			path = KuvoCode;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -40,7 +40,7 @@
 		4B0A00000000000000000004 = {
 			isa = PBXGroup;
 			children = (
-				4B0A00000000000000000002 /* KuvoAI */,
+				4B0A00000000000000000002 /* KuvoCode */,
 				4B0A00000000000000000014 /* Config */,
 				4B0A00000000000000000005 /* Products */,
 			);
@@ -65,9 +65,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		4B0A00000000000000000006 /* KuvoAI */ = {
+		4B0A00000000000000000006 /* KuvoCode */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 4B0A00000000000000000020 /* Build configuration list for PBXNativeTarget "KuvoAI" */;
+			buildConfigurationList = 4B0A00000000000000000020 /* Build configuration list for PBXNativeTarget "KuvoCode" */;
 			buildPhases = (
 				4B0A00000000000000000007 /* Sources */,
 				4B0A00000000000000000003 /* Frameworks */,
@@ -78,14 +78,14 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				4B0A00000000000000000002 /* KuvoAI */,
+				4B0A00000000000000000002 /* KuvoCode */,
 			);
-			name = KuvoAI;
+			name = KuvoCode;
 			packageProductDependencies = (
 				4B0A00000000000000000011 /* OpenCodeKit */,
 				4B0A00000000000000000016 /* Textual */,
 			);
-			productName = KuvoAI;
+			productName = KuvoCode;
 			productReference = 4B0A00000000000000000001 /* $(APP_NAME).app */;
 			productType = "com.apple.product-type.application";
 		};
@@ -104,7 +104,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 4B0A00000000000000000021 /* Build configuration list for PBXProject "KuvoAI" */;
+			buildConfigurationList = 4B0A00000000000000000021 /* Build configuration list for PBXProject "KuvoCode" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -122,7 +122,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				4B0A00000000000000000006 /* KuvoAI */,
+				4B0A00000000000000000006 /* KuvoCode */,
 			);
 		};
 /* End PBXProject section */
@@ -276,7 +276,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = KuvoAI/KuvoAI.entitlements;
+				CODE_SIGN_ENTITLEMENTS = KuvoCode/KuvoCode.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
@@ -293,7 +293,7 @@
 				);
 				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(APP_BUNDLE_ID)";
-				PRODUCT_MODULE_NAME = KuvoAI;
+				PRODUCT_MODULE_NAME = KuvoCode;
 				PRODUCT_NAME = "$(APP_NAME)";
 				REGISTER_APP_GROUPS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -310,7 +310,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = KuvoAI/KuvoAI.entitlements;
+				CODE_SIGN_ENTITLEMENTS = KuvoCode/KuvoCode.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
@@ -327,7 +327,7 @@
 				);
 				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(APP_BUNDLE_ID)";
-				PRODUCT_MODULE_NAME = KuvoAI;
+				PRODUCT_MODULE_NAME = KuvoCode;
 				PRODUCT_NAME = "$(APP_NAME)";
 				REGISTER_APP_GROUPS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -341,7 +341,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		4B0A00000000000000000020 /* Build configuration list for PBXNativeTarget "KuvoAI" */ = {
+		4B0A00000000000000000020 /* Build configuration list for PBXNativeTarget "KuvoCode" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				4B0A00000000000000000024 /* Debug */,
@@ -350,7 +350,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		4B0A00000000000000000021 /* Build configuration list for PBXProject "KuvoAI" */ = {
+		4B0A00000000000000000021 /* Build configuration list for PBXProject "KuvoCode" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				4B0A00000000000000000022 /* Debug */,

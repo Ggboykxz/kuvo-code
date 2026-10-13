@@ -4,7 +4,7 @@
 import Foundation
 
 /// GitHub Copilot quotas (premium requests or AI credits, chat, completions), from the
-/// Copilot sign-in in kuvo-ai, an editor's Copilot login, or the gh CLI.
+/// Copilot sign-in in the app, an editor's Copilot login, or the gh CLI.
 struct CopilotUsage: Sendable {
     let http: UsageHTTP
     let options: UsageOptions
@@ -59,7 +59,7 @@ struct CopilotUsage: Sendable {
 
     // MARK: Tokens
 
-    /// kuvo-ai's own Copilot sign-in first (it's the account the agent uses), then the
+    /// The app's own Copilot sign-in first (it's the account the agent uses), then the
     /// editor's login, then gh's config file, then (if allowed) gh's Keychain item.
     private func loadTokens(engine credentials: [CredentialSecret]) async -> [Token] {
         var tokens: [Token] = []

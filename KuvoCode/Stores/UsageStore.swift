@@ -2,7 +2,7 @@ import Foundation
 import OpenCodeKit
 import os
 
-private let log = Logger(subsystem: "run.kuvo.ai", category: "usage")
+private let log = Logger(subsystem: "run.kuvo.code", category: "usage")
 
 /// How much of each subscription is left, for the menu bar: Codex, Claude, GitHub
 /// Copilot and OpenCode Go (providers ported from OpenUsage).
@@ -52,7 +52,7 @@ final class UsageStore {
         guard !isRefreshing else { return }
         isRefreshing = true
         defer { isRefreshing = false }
-        // kuvo-ai's own accounts come from the engine; secrets stay inside this call.
+        // The app's own accounts come from the engine; secrets stay inside this call.
         var credentials: [CredentialSecret] = []
         if let api {
             do { credentials = try await api.credentialSecrets() } catch { log.error("credentials: \(String(describing: error), privacy: .public)") }

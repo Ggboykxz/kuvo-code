@@ -2,7 +2,7 @@ import Foundation
 import OpenCodeKit
 import os
 
-private let log = Logger(subsystem: "run.kuvo.ai", category: "catalog")
+private let log = Logger(subsystem: "run.kuvo.code", category: "catalog")
 
 /// What the engine offers: providers to sign in to, models, agents, commands.
 /// All of it comes from the engine, so new providers appear without an app update.

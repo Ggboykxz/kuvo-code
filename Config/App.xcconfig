@@ -1,7 +1,6 @@
-// The app's public identity. To rename the app, change these two lines.
-// (The Xcode target, folder and Swift module are named KuvoAI internally.)
-APP_NAME = kuvo-ai
-APP_BUNDLE_ID = run.kuvo.ai
+// The app's public identity: its name and bundle ID.
+APP_NAME = Kuvo Code
+APP_BUNDLE_ID = run.kuvo.code
 
 // Signing. Without a local override, builds are signed ad hoc ("-"), which runs on
 // this Mac but looks like a new app to macOS after every build, so privacy prompts

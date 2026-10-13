@@ -2,7 +2,7 @@ import Foundation
 import OpenCodeKit
 import os
 
-private let log = Logger(subsystem: "run.kuvo.ai", category: "workspace")
+private let log = Logger(subsystem: "run.kuvo.code", category: "workspace")
 
 /// Projects and their sessions, kept live from engine events.
 @Observable

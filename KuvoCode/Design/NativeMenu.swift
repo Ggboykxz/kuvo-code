@@ -125,7 +125,7 @@ extension NSAttributedString {
 /// Provider and model-maker logos, kept in memory for menus (which can't wait for a download).
 @Observable
 final class LogoImages {
-    private let log = Logger(subsystem: "run.kuvo.ai", category: "logos")
+    private let log = Logger(subsystem: "run.kuvo.code", category: "logos")
     static let shared = LogoImages()
     private var images: [String: NSImage] = [:]
 

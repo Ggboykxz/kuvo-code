@@ -25,7 +25,7 @@ final class AppModel {
     private var server: ServerProcess?
     private var eventTask: Task<Void, Never>?
     private var isStopping = false
-    private let log = Logger(subsystem: "run.kuvo.ai", category: "engine")
+    private let log = Logger(subsystem: "run.kuvo.code", category: "engine")
 
     private var installer: EngineInstaller {
         EngineInstaller(root: AppInfo.supportDirectory.appending(path: "engine"))

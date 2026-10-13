@@ -75,7 +75,7 @@ struct ClaudeUsage: Sendable {
     }
 
     private var expiredNote: String {
-        "Your Claude Code login has expired. Open Claude Code to renew it, or let kuvo-ai renew logins in Settings › Usage."
+        "Your Claude Code login has expired. Open Claude Code to renew it, or turn on Renew expired logins in Settings › Usage."
     }
 
     // MARK: Probing

@@ -1,6 +1,6 @@
 # Third-party notices
 
-kuvo-ai includes or uses the software below.
+Kuvo Code includes or uses the software below.
 
 ## OpenUsage
 

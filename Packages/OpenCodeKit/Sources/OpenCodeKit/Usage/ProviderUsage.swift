@@ -67,7 +67,7 @@ public struct UsageFact: Sendable, Equatable, Identifiable {
     public var id: String { label }
 }
 
-/// What usage reading may do beyond kuvo-ai's own accounts.
+/// What usage reading may do beyond the app's own accounts.
 public struct UsageOptions: Sendable, Equatable {
     /// Read logins other tools keep in the Keychain (Claude Code, Codex, gh). macOS asks the
     /// first time; off until the person turns it on.

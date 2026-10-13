@@ -4,7 +4,7 @@
 import Foundation
 
 /// OpenCode Go subscription windows (rolling 5-hour, weekly, monthly), with the Go key
-/// connected in kuvo-ai.
+/// connected in the app.
 struct OpenCodeGoUsage: Sendable {
     let http: UsageHTTP
 

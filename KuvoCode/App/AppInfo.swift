@@ -15,7 +15,7 @@ enum AppInfo {
 
     /// `~/Library/Application Support/<bundle id>`: the engine binary and its data live here.
     static var supportDirectory: URL {
-        URL.applicationSupportDirectory.appending(path: Bundle.main.bundleIdentifier ?? "kuvo-ai")
+        URL.applicationSupportDirectory.appending(path: Bundle.main.bundleIdentifier ?? "run.kuvo.code")
     }
 }
 

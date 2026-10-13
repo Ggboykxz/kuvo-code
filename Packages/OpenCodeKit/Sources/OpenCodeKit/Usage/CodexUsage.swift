@@ -4,7 +4,7 @@
 import Foundation
 
 /// ChatGPT/Codex plan limits (5-hour and weekly windows, Spark, credits), read with the
-/// Codex CLI's login, or a Codex sign-in made in kuvo-ai.
+/// Codex CLI's login, or a Codex sign-in made in the app.
 struct CodexUsage: Sendable {
     let http: UsageHTTP
     let options: UsageOptions
@@ -20,7 +20,7 @@ struct CodexUsage: Sendable {
     enum Source: Equatable {
         case file(String)
         case keychain(account: String)
-        /// A sign-in stored by kuvo-ai's engine: read only, the engine renews it.
+        /// A sign-in stored by the app's engine: read only, the engine renews it.
         case engine
 
         var isWritable: Bool { self != .engine }
@@ -59,7 +59,7 @@ struct CodexUsage: Sendable {
         logins += credentials.compactMap(Self.engineLogin)
 
         guard !logins.isEmpty else {
-            // Signed in with "Sign in with ChatGPT" in kuvo-ai only: say why there's nothing to show.
+            // Signed in with "Sign in with ChatGPT" in the app only: say why there's nothing to show.
             guard credentials.contains(where: { $0.integrationID == "openai" && $0.value.methodID == "chatgpt-token-sharing" }) else { return nil }
             return report(note: "OpenAI doesn't report plan limits for “Sign in with ChatGPT”. Sign in to the Codex CLI (run codex) to see your 5-hour and weekly limits here.")
         }
@@ -122,12 +122,12 @@ struct CodexUsage: Sendable {
 
     private func expiredNote(_ source: Source) -> String {
         source == .engine
-            ? "Your ChatGPT sign-in in kuvo-ai needs renewing. Use one of its models, or sign in again in Accounts."
-            : "Your Codex login has expired. Run codex to renew it, or let kuvo-ai renew logins in Settings › Usage."
+            ? "Your ChatGPT account needs renewing. Use one of its models, or sign in again in Accounts."
+            : "Your Codex login has expired. Run codex to renew it, or turn on Renew expired logins in Settings › Usage."
     }
 
     private func fetch(token: String, accountID: String?) async throws -> UsageHTTP.Response {
-        var headers = ["Authorization": "Bearer \(token)", "Accept": "application/json", "User-Agent": "kuvo-ai"]
+        var headers = ["Authorization": "Bearer \(token)", "Accept": "application/json", "User-Agent": "KuvoCode"]
         if let accountID, !accountID.isEmpty { headers["ChatGPT-Account-Id"] = accountID }
         return try await http.send(Self.usageURL, headers: headers, timeout: 10)
     }
@@ -223,7 +223,7 @@ struct CodexUsage: Sendable {
         return login.accessToken == nil ? nil : login
     }
 
-    /// kuvo-ai's own Codex sign-ins ("Codex browser" / "device code"), which the usage API accepts.
+    /// The app's own Codex sign-ins ("Codex browser" / "device code"), which the usage API accepts.
     static func engineLogin(_ credential: CredentialSecret) -> Login? {
         guard credential.integrationID == "openai", ["chatgpt-browser", "chatgpt-headless"].contains(credential.value.methodID),
               let access = credential.value.access else { return nil }

@@ -1,6 +1,6 @@
-# kuvo-ai
+# Kuvo Code
 
-A native macOS app for working with coding agents. *(Working title.)*
+A native macOS app for working with coding agents.
 
 It's a client for [opencode](https://github.com/anomalyco/opencode): the opencode
 engine does the agent work (models, tools, sign-ins, sessions), and this app is
@@ -23,7 +23,7 @@ the interface, written in SwiftUI.
 
 | Path | What's there |
 | --- | --- |
-| `KuvoAI/` | The app (SwiftUI): views, stores, design system |
+| `KuvoCode/` | The app (SwiftUI): views, stores, design system |
 | `Packages/OpenCodeKit/` | The engine client: API, models, event stream, transcript reducer, engine installer |
 | `Config/App.xcconfig` | The app's name and bundle ID, and signing defaults |
 
@@ -31,7 +31,7 @@ the interface, written in SwiftUI.
 
 Requires macOS 26 and Xcode 26 or later.
 
-1. Open `KuvoAI.xcodeproj` and run the **KuvoAI** scheme.
+1. Open `KuvoCode.xcodeproj` and run the **KuvoCode** scheme.
 2. Optional: to keep one code signature between builds (so macOS remembers
    privacy answers), copy `Config/Signing.local.xcconfig.example` to
    `Config/Signing.local.xcconfig` and set your team. That file is git-ignored.
