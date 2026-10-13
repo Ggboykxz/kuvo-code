@@ -12,6 +12,10 @@ struct Composer: View {
     let approval: ToolApproval
     let model: ModelRef?
     let isRunning: Bool
+    /// Messages are waiting their turn, so ⌘Return adds to the queue even while idle.
+    var hasQueue = false
+    /// Puts the cursor here when it changes.
+    var focusRequest = 0
     /// Comments on the changes waiting to go with the next message.
     var commentCount = 0
     var onDiscardComments: () -> Void = {}
@@ -19,6 +23,10 @@ struct Composer: View {
     var onSelectApproval: (ToolApproval) -> Void
     var onSelectModel: (ModelRef) -> Void
     var onSend: () -> Void
+    /// ⌘Return: after the run, and anything queued before.
+    var onQueue: () -> Void = {}
+    /// ↑ in an empty composer brings back the last waiting message; false if there's none.
+    var onEditLast: () -> Bool = { false }
     var onStop: () -> Void
 
     @Environment(Catalog.self) private var catalog
@@ -67,13 +75,21 @@ struct Composer: View {
                 .lineLimit(1...12)
                 .focused($isFocused)
                 .onKeyPress(.return, phases: .down) { press in
-                    // Return sends; Shift-Return starts a new line.
+                    // Return sends; Shift-Return starts a new line; ⌘Return queues.
                     if press.modifiers.contains(.shift) || press.modifiers.contains(.option) {
                         text += "\n"
                         return .handled
                     }
+                    if press.modifiers.contains(.command) {
+                        queue()
+                        return .handled
+                    }
                     send()
                     return .handled
+                }
+                .onKeyPress(.upArrow) {
+                    guard text.isEmpty, files.isEmpty else { return .ignored }
+                    return onEditLast() ? .handled : .ignored
                 }
                 .onSubmit(send)
 
@@ -113,6 +129,7 @@ struct Composer: View {
             return true
         } isTargeted: { isTargeted = $0 }
         .modifier(PasteAttachments(isActive: isFocused, attach: attach))
+        .onChange(of: focusRequest) { isFocused = true }
         .onAppear {
             isFocused = true
             #if DEBUG
@@ -125,7 +142,7 @@ struct Composer: View {
     }
 
     private var placeholder: String {
-        isRunning ? "Add to the task, or queue a follow-up…" : agent == "plan" ? "Ask the agent to plan something…" : "Ask the agent to build, fix or explain something…"
+        isRunning ? "Add to the task, or ⌘↩ to queue a follow-up…" : agent == "plan" ? "Ask the agent to plan something…" : "Ask the agent to build, fix or explain something…"
     }
 
     @ViewBuilder private var actionButton: some View {
@@ -150,7 +167,12 @@ struct Composer: View {
                 .buttonBorderShape(.circle)
                 .disabled(!canSend)
                 .glassEffectID("action", in: glass)
-                .help(isRunning ? "Send now; the agent reads it at its next step" : "Send (Return)")
+                .help(isRunning ? "Send: the agent reads it at its next step (Return). ⌘Return queues it for after this run." : "Send (Return)")
+                .contextMenu {
+                    Button("Send", action: send)
+                    Button("Queue for After This Run", action: queue)
+                        .disabled(!isRunning && !hasQueue)
+                }
             }
         }
         .controlSize(.large)
@@ -160,6 +182,11 @@ struct Composer: View {
     private func send() {
         guard canSend else { return }
         onSend()
+    }
+
+    private func queue() {
+        guard canSend else { return }
+        onQueue()
     }
 
     private func attach(_ urls: [URL]) {

@@ -89,7 +89,9 @@ struct TranscriptView: View {
                 break
             }
         }
-        rows += model.transcript.pending.map(Row.pending)
+        // Messages waiting their turn are listed above the composer instead.
+        let waiting = Set(model.waiting.map(\.id))
+        rows += model.transcript.pending.filter { !waiting.contains($0.id) }.map(Row.pending)
         if model.transcript.isRunning && !isVisiblyWorking(messages.last) {
             rows.append(.working)
         }

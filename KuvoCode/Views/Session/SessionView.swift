@@ -5,14 +5,12 @@ struct SessionView: View {
     let model: SessionModel
     @Environment(Catalog.self) private var catalog
     @Environment(AppModel.self) private var app
-    @State private var text = ""
-    @State private var files: [URL] = []
     @LastModel private var lastModel
 
     var body: some View {
         TranscriptView(model: model)
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                BottomStack(model: model, text: $text, files: $files, lastModel: $lastModel)
+                BottomStack(model: model, lastModel: $lastModel)
             }
             .navigationTitle(model.session.title ?? "New Session")
             .task { if !model.isLoaded { await model.load() } }
@@ -27,9 +25,7 @@ struct SessionView: View {
 /// Questions and permission requests, stacked on the composer in one glass
 /// container so they grow out of it and melt back in when answered.
 private struct BottomStack: View {
-    let model: SessionModel
-    @Binding var text: String
-    @Binding var files: [URL]
+    @Bindable var model: SessionModel
     @Binding var lastModel: ModelRef?
     @Environment(Catalog.self) private var catalog
     @AppStorage(ToolApproval.key) private var defaultApproval = ToolApproval.approveAll
@@ -54,13 +50,20 @@ private struct BottomStack: View {
                     .glassEffect(.regular, in: .rect(cornerRadius: Metrics.composerRadius))
                     .glassEffectID(form.id, in: glass)
                 }
+                if !model.waiting.isEmpty {
+                    QueueDock(model: model)
+                        .glassEffect(.regular, in: .rect(cornerRadius: Metrics.composerRadius))
+                        .glassEffectID("waiting", in: glass)
+                }
                 Composer(
-                    text: $text,
-                    files: $files,
+                    text: $model.draftText,
+                    files: $model.draftFiles,
                     agent: model.agent,
                     approval: model.approval,
                     model: model.session.model ?? lastModel ?? catalog.defaultModel?.ref,
                     isRunning: model.isRunning,
+                    hasQueue: !model.waiting.isEmpty,
+                    focusRequest: model.composerFocus,
                     commentCount: model.reviewComments.count,
                     onDiscardComments: { model.reviewComments = [] },
                     onSelectAgent: model.selectAgent,
@@ -72,21 +75,26 @@ private struct BottomStack: View {
                         model.selectModel(ref)
                         lastModel = ref
                     },
-                    onSend: {
-                        model.send(text, files: files, for: catalog.model(model.session.model))
-                        text = ""
-                        files = []
-                    },
+                    onSend: { send(queue: false) },
+                    onQueue: { send(queue: true) },
+                    onEditLast: model.editLast,
                     onStop: model.stop
                 )
                 .glassEffectID("composer", in: glass)
             }
             .animation(.ui, value: model.transcript.permissions.map(\.id))
             .animation(.ui, value: model.transcript.forms.map(\.id))
+            .animation(.ui, value: model.waiting.isEmpty)
         }
         .padding(.horizontal, Metrics.gutter)
         .padding(.bottom, 16)
         .readableColumn()
+    }
+
+    private func send(queue: Bool) {
+        model.send(model.draftText, files: model.draftFiles, for: catalog.model(model.session.model), queue: queue)
+        model.draftText = ""
+        model.draftFiles = []
     }
 }
 

@@ -394,7 +394,8 @@ struct MainView: View {
     private func runDemoIfAsked() async {
         let environment = ProcessInfo.processInfo.environment
         // Launched from Terminal for screenshots, the window would otherwise stay inactive.
-        if environment.keys.contains(where: { $0.hasPrefix("KUVO_DEMO_") }) { NSApp.activate() }
+        // KUVO_DEMO_BACKGROUND leaves the copy behind other apps, so it doesn't take the keyboard.
+        if environment.keys.contains(where: { $0.hasPrefix("KUVO_DEMO_") }), environment["KUVO_DEMO_BACKGROUND"] == nil { NSApp.activate() }
         switch environment["KUVO_DEMO_APPEARANCE"] {
         case "light": NSApp.appearance = NSAppearance(named: .aqua)
         case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
@@ -462,6 +463,12 @@ struct MainView: View {
         // KUVO_DEMO_FILES: comma-separated paths to attach.
         let files = environment["KUVO_DEMO_FILES"]?.split(separator: ",").map { URL(filePath: String($0)) } ?? []
         workspace.model(for: session.id)?.send(prompt, files: files, for: catalog.model(session.model))
+        // KUVO_DEMO_QUEUE: messages separated by "|", queued once the agent is working.
+        guard let queue = environment["KUVO_DEMO_QUEUE"], let model = workspace.model(for: session.id) else { return }
+        for _ in 0..<40 where !model.isRunning { try? await Task.sleep(for: .milliseconds(250)) }
+        for message in queue.split(separator: "|") {
+            model.send(String(message), for: catalog.model(session.model), queue: true)
+        }
     }
     #endif
 }

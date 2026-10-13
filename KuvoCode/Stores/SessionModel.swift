@@ -10,11 +10,23 @@ final class SessionModel {
     private(set) var changes: [FileDiff] = []
     /// Comments on lines of the changes, sent with the next message.
     var reviewComments: [ReviewComment] = []
+    /// What's in the composer, kept while you look at other sessions.
+    var draftText = ""
+    var draftFiles: [URL] = []
+    /// Goes up to put the cursor in the composer (after a message comes back to it for editing).
+    private(set) var composerFocus = 0
+    /// Queued messages wait for Resume: after Stop, a failed run, or when the app finds them
+    /// waiting at launch.
+    private(set) var isQueuePaused = false
     var failure: String?
 
     private let api: OpenCodeAPI
     private var reloadTask: Task<Void, Never>?
     private var changesTask: Task<Void, Never>?
+    private var drainTask: Task<Void, Never>?
+    /// The last message on its way out; each waits for the one before, so the engine gets
+    /// (and queues) them in the order they were written.
+    private var sending: Task<Void, Never>?
 
     init(session: Session, api: OpenCodeAPI) {
         self.session = session
@@ -27,6 +39,15 @@ final class SessionModel {
 
     /// The agent and model the next message goes to.
     var agent: String { session.agent ?? "build" }
+
+    /// Messages waiting for the agent, in the order it gets them: those for its next step, then
+    /// the queue. A message sent while it's idle goes straight to the transcript instead.
+    var waiting: [Transcript.Pending] {
+        let pending = transcript.pending
+        return (isRunning ? pending.filter { $0.delivery == .steer } : []) + pending.filter { $0.delivery == .queue }
+    }
+
+    private var hasQueue: Bool { transcript.pending.contains { $0.delivery == .queue } }
 
     func load() async {
         async let messages = api.messages(session: id, limit: 200)
@@ -42,6 +63,9 @@ final class SessionModel {
                 forms: (try? await forms) ?? [],
                 isRunning: (try? await active)?.contains(id) ?? false
             )
+            // A queue left waiting (the app quit mid-run, say) waits for Resume rather than
+            // starting on its own.
+            if !isLoaded, !isRunning, hasQueue { isQueuePaused = true }
             isLoaded = true
         } catch {
             failure = error.localizedDescription
@@ -58,20 +82,37 @@ final class SessionModel {
         default:
             break
         }
+        switch event.type {
+        case "session.execution.started":
+            drainTask?.cancel()
+        case "session.execution.succeeded", "session.execution.interrupted":
+            scheduleDrain()
+        case "session.execution.failed":
+            // Don't run the rest of the queue into the same error.
+            if hasQueue { isQueuePaused = true }
+        default:
+            break
+        }
     }
 
     // MARK: Actions
 
-    /// Sends a message with `files`, as `model` can take them (see `Attachments`).
-    func send(_ text: String, files: [URL] = [], for model: Model?) {
+    /// Sends a message with `files`, as `model` can take them (see `Attachments`). While the
+    /// agent works, it gets the message at its next step, ahead of the queue. With `queue`, the
+    /// message waits for the run, and everything queued before it, to finish.
+    func send(_ text: String, files: [URL] = [], for model: Model?, queue: Bool = false) {
         let comments = reviewComments
         let text = ReviewComments.text(text.trimmingCharacters(in: .whitespacesAndNewlines), adding: comments)
         guard !text.isEmpty || !files.isEmpty else { return }
         reviewComments = []
         let id = Identifier.message()
-        let delivery: InboxItem.Delivery = transcript.isRunning ? .queue : .steer
+        // With nothing running and nothing queued, there's nothing to wait for.
+        let delivery: InboxItem.Delivery = queue && (transcript.isRunning || hasQueue) ? .queue : .steer
+        if delivery == .steer { isQueuePaused = false }
         transcript.addLocal(id: id, text: text, delivery: delivery, files: files)
-        Task {
+        let previous = sending
+        sending = Task {
+            await previous?.value
             do {
                 // Converting a photo takes a moment; keep it off the main thread.
                 let prepared = await Task.detached { Attachments.prepare(files, for: model) }.value
@@ -91,13 +132,92 @@ final class SessionModel {
         }
     }
 
+    /// Stops the agent. Waiting messages stay, queued and paused until Resume.
     func stop() {
-        Task { try? await api.interrupt(session: id) }
+        let steering = transcript.pending.filter { $0.delivery == .steer && !$0.isLocal }
+        if hasQueue || !steering.isEmpty { isQueuePaused = true }
+        Task {
+            // Moved to the queue first, so the end of the step doesn't hand them over.
+            for item in steering { try? await api.setDelivery(session: id, item: item.id, delivery: .queue) }
+            try? await api.interrupt(session: id)
+        }
     }
 
     func cancelPending(_ item: Transcript.Pending) {
         if item.isLocal { transcript.removeLocal(id: item.id); return }
         Task { try? await api.cancelInbox(session: id, item: item.id) }
+    }
+
+    /// Gives a waiting message to the agent right away: its current step stops, and it carries
+    /// on from there with this message.
+    func sendNow(_ item: Transcript.Pending) {
+        guard !item.isLocal else { return }
+        isQueuePaused = false
+        let running = transcript.isRunning
+        Task {
+            do {
+                // Steering wakes an idle session; a running one gets it once the step stops.
+                if item.delivery == .queue { try await api.setDelivery(session: id, item: item.id, delivery: .steer) }
+                if running || item.delivery == .steer { try await api.interrupt(session: id, resume: true) }
+            } catch {
+                failure = error.localizedDescription
+            }
+        }
+    }
+
+    /// Takes a waiting message back into the composer, with its files and comments, ahead of
+    /// anything already there.
+    func edit(_ item: Transcript.Pending) {
+        guard !item.isLocal else { return }
+        Task {
+            do {
+                try await api.cancelInbox(session: id, item: item.id)
+            } catch {
+                failure = error.localizedDescription
+                return
+            }
+            // The agent got it first: it's in the transcript now.
+            guard !transcript.messages.contains(where: { $0.id == item.id }) else { return }
+            transcript.removePending(id: item.id)
+            let (withComments, paths) = Attachments.split(item.text)
+            let (text, comments) = ReviewComments.split(withComments)
+            draftText = [text, draftText].filter { !$0.isEmpty }.joined(separator: "\n\n")
+            let files = item.files + paths.map { URL(filePath: $0) }
+            draftFiles = files + draftFiles.filter { !files.contains($0) }
+            reviewComments = comments + reviewComments
+            composerFocus += 1
+        }
+    }
+
+    /// Edits the message that would go last, if there is one.
+    @discardableResult
+    func editLast() -> Bool {
+        guard let item = waiting.last(where: { !$0.isLocal }) else { return false }
+        edit(item)
+        return true
+    }
+
+    /// Picks the queue up again after Stop or a failed run.
+    func resumeQueue() {
+        isQueuePaused = false
+        scheduleDrain(after: .zero)
+    }
+
+    /// The engine starts each queued message after a run that ends normally, but not after an
+    /// interrupt (Stop, or Send Now) or when its run is woken by steering. So once the agent has
+    /// been idle a moment, the next waiting message gets a nudge.
+    private func scheduleDrain(after delay: Duration = .seconds(1.5)) {
+        drainTask?.cancel()
+        drainTask = Task {
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled, !isQueuePaused, !transcript.isRunning,
+                  let next = waiting.first(where: { !$0.isLocal }) ?? transcript.pending.first(where: { !$0.isLocal }) else { return }
+            if next.delivery == .queue {
+                try? await api.setDelivery(session: id, item: next.id, delivery: .steer)
+            } else {
+                try? await api.interrupt(session: id, resume: true)
+            }
+        }
     }
 
     func selectModel(_ model: ModelRef) {
