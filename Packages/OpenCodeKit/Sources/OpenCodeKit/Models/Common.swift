@@ -1,0 +1,126 @@
+import Foundation
+
+/// A project folder on disk. Most of the API is scoped to one.
+public struct Location: Codable, Sendable, Hashable {
+    public var directory: String
+
+    public init(directory: String) {
+        self.directory = directory
+    }
+}
+
+/// `{ "data": … }`, the envelope of most responses.
+public struct DataEnvelope<Value: Decodable & Sendable>: Decodable, Sendable {
+    public var data: Value
+}
+
+/// `{ "location": …, "data": … }`, the envelope of location-scoped responses.
+public struct LocatedEnvelope<Value: Decodable & Sendable>: Decodable, Sendable {
+    public var location: Location?
+    public var data: Value
+}
+
+/// One page of a list, with opaque cursors for the pages around it.
+public struct Page<Item: Decodable & Sendable>: Decodable, Sendable {
+    public var data: [Item]
+    public var cursor: Cursor?
+
+    public struct Cursor: Codable, Sendable, Hashable {
+        public var previous: String?
+        public var next: String?
+    }
+}
+
+/// A model, by provider, with an optional variant (reasoning effort: `low`, `high`, …).
+public struct ModelRef: Codable, Sendable, Hashable {
+    public var id: String
+    public var providerID: String
+    public var variant: String?
+
+    public init(id: String, providerID: String, variant: String? = nil) {
+        self.id = id
+        self.providerID = providerID
+        self.variant = variant
+    }
+
+    /// Ignores the variant, for "is this the same model?".
+    public func sameModel(as other: ModelRef?) -> Bool {
+        other.map { $0.id == id && $0.providerID == providerID } ?? false
+    }
+}
+
+public struct TokenUsage: Codable, Sendable, Hashable {
+    public var input: Int
+    public var output: Int
+    public var reasoning: Int
+    public var cache: Cache
+
+    public struct Cache: Codable, Sendable, Hashable {
+        public var read: Int
+        public var write: Int
+    }
+
+    public static let zero = TokenUsage(input: 0, output: 0, reasoning: 0, cache: Cache(read: 0, write: 0))
+
+    public var total: Int { input + output + reasoning + cache.read + cache.write }
+}
+
+/// An error the engine reports in a message or event: from a provider, a tool, or itself.
+public struct StructuredError: Codable, Sendable, Hashable, LocalizedError {
+    public var type: String
+    public var message: String
+    public var status: Int?
+
+    public var errorDescription: String? { message }
+}
+
+/// Times on the wire are milliseconds since 1970.
+public typealias Milliseconds = Double
+
+extension Milliseconds {
+    public var date: Date { Date(timeIntervalSince1970: self / 1000) }
+}
+
+/// A file's change, as a unified diff.
+public struct FileDiff: Codable, Sendable, Hashable, Identifiable {
+    public var file: String
+    public var patch: String
+    public var additions: Int
+    public var deletions: Int
+    public var status: Status?
+
+    public var id: String { file }
+
+    public enum Status: String, Codable, Sendable {
+        case added, deleted, modified
+    }
+}
+
+/// IDs the client mints, in the engine's format, so they sort among the server's:
+/// a prefix, 12 hex digits of (milliseconds × 4096 + counter), then 14 random base62 characters.
+public enum Identifier {
+    private static let alphabet = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
+    nonisolated(unsafe) private static var last: (timestamp: UInt64, counter: UInt64) = (0, 0)
+    private static let lock = NSLock()
+
+    public static func message() -> String { "msg_" + ascending() }
+
+    static func ascending(now: Date = Date()) -> String {
+        let timestamp = UInt64(now.timeIntervalSince1970 * 1000)
+        let counter: UInt64 = lock.withLock {
+            if last.timestamp != timestamp { last = (timestamp, 0) }
+            last.counter += 1
+            return last.counter
+        }
+        let value = (timestamp &* 0x1000 &+ counter) & 0xFFFF_FFFF_FFFF
+        let time = String(value, radix: 16).leftPadded(to: 12)
+        let random = (0..<14).map { _ in alphabet[Int.random(in: 0..<alphabet.count)] }
+        return time + String(random)
+    }
+}
+
+private extension String {
+    func leftPadded(to length: Int) -> String {
+        count >= length ? self : String(repeating: "0", count: length - count) + self
+    }
+}
