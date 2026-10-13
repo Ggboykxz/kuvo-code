@@ -12,17 +12,6 @@ struct TabItem: Identifiable, Equatable {
     enum Status {
         case idle, working, waiting, failed, unread
 
-        /// The tile peeking out behind the front one.
-        var color: Color? {
-            switch self {
-            case .idle: nil
-            case .working: .green
-            case .waiting: .orange
-            case .failed: .red
-            case .unread: .accentColor
-            }
-        }
-
         var help: String? {
             switch self {
             case .idle: nil
@@ -148,9 +137,9 @@ private struct TabButton: View {
 }
 
 /// An app-icon tile, like Rex: the model maker's logo large on a soft tile, wrapped
-/// tightly in a white rim. How the session is doing shows as colored tiles peeking
-/// out behind it: two greens while the agent works, orange while it waits for you,
-/// red after a failed run, the accent color when a run finished out of sight.
+/// tightly in a white rim. How the session is doing shows as a badge in its corner,
+/// with the sidebar's marks: a spinner while the agent works, a hand while it waits
+/// for you, a red mark after a failed run, a dot when a run finished out of sight.
 struct TabIcon: View {
     let logo: String?
     /// Shown when there's no logo: a pencil for a draft, a bubble for a session.
@@ -158,27 +147,55 @@ struct TabIcon: View {
     let status: TabItem.Status
 
     static let tileSize = CGSize(width: 25, height: 20)
-    /// How far each tile behind peeks out.
-    static let peek: CGFloat = 7
-
-    private var behind: [Color] {
-        switch status {
-        case .working: [Color(red: 0.2, green: 0.55, blue: 0.27), .green]
-        default: status.color.map { [$0] } ?? []
-        }
-    }
 
     var body: some View {
-        ZStack(alignment: .leading) {
-            ForEach(Array(behind.enumerated()), id: \.offset) { index, color in
-                StatusTile(color: color)
-                    .offset(x: Self.peek * CGFloat(behind.count - index))
-                    .transition(.offset(x: -Self.peek).combined(with: .opacity))
+        FrontTile(logo: logo, symbol: symbol)
+            .overlay(alignment: .bottomTrailing) {
+                if status != .idle {
+                    StatusBadge(status: status)
+                        .offset(x: 5, y: 4)
+                        .transition(.scale.combined(with: .opacity))
+                }
             }
-            FrontTile(logo: logo, symbol: symbol)
+            .animation(.ui, value: status)
+    }
+}
+
+/// How the session is doing, in the tile's corner: the same marks the sidebar uses.
+private struct StatusBadge: View {
+    let status: TabItem.Status
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        ZStack {
+            Circle().fill(scheme == .dark ? Color(white: 0.2) : .white)
+            switch status {
+            case .working:
+                ProgressView()
+                    .controlSize(.mini)
+                    .scaleEffect(0.8)
+            case .waiting:
+                mark("hand.raised.fill", on: .orange)
+            case .failed:
+                mark("exclamationmark", on: .red)
+            case .unread:
+                Circle().fill(.tint).padding(3)
+            case .idle:
+                EmptyView()
+            }
         }
-        .frame(width: Self.tileSize.width + Self.peek * CGFloat(behind.count), height: Self.tileSize.height, alignment: .leading)
-        .animation(.ui, value: status)
+        .frame(width: 14, height: 14)
+        .shadow(color: .black.opacity(scheme == .dark ? 0.45 : 0.2), radius: 1, y: 0.5)
+    }
+
+    private func mark(_ symbol: String, on color: Color) -> some View {
+        Circle().fill(color.gradient)
+            .padding(1.5)
+            .overlay {
+                Image(systemName: symbol)
+                    .font(.system(size: 6.5, weight: .bold))
+                    .foregroundStyle(.white)
+            }
     }
 }
 
@@ -217,17 +234,6 @@ private struct FrontTile: View {
         }
         .frame(width: TabIcon.tileSize.width, height: TabIcon.tileSize.height)
         .modifier(TileRim())
-    }
-}
-
-private struct StatusTile: View {
-    let color: Color
-
-    var body: some View {
-        Rectangle()
-            .fill(color.gradient)
-            .frame(width: TabIcon.tileSize.width, height: TabIcon.tileSize.height)
-            .modifier(TileRim())
     }
 }
 
