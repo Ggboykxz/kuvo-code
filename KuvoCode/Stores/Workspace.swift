@@ -186,7 +186,7 @@ final class Workspace {
         guard let id = event.sessionID else { return }
 
         switch event.type {
-        case "session.created", "session.renamed", "session.moved":
+        case "session.created", "session.renamed", "session.moved", "session.revert.staged", "session.revert.cleared", "session.revert.committed":
             Task { await reload(id) }
         case "session.deleted":
             sessions.removeAll { $0.id == id }

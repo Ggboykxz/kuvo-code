@@ -18,7 +18,7 @@ struct TranscriptView: View {
             let rows = rows
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                    RowView(row: row, directory: model.session.location.directory, cancel: model.cancelPending)
+                    RowView(row: row, directory: model.session.location.directory, cancel: model.cancelPending, undo: model.undo(from:), redo: model.redo)
                         .padding(.top, index == 0 ? 0 : row.spacing(after: rows[index - 1]))
                         .transition(.opacity.combined(with: .offset(y: 8)))
                 }
@@ -59,7 +59,10 @@ struct TranscriptView: View {
     private var rows: [Row] {
         var rows: [Row] = []
         var turn = TurnStats()
-        let messages = model.transcript.messages
+        // An undo waiting to be kept ends the conversation at its message.
+        let boundary = model.session.revert?.messageID
+        let all = model.transcript.messages
+        let messages = boundary.map { boundary in all.filter { $0.id < boundary } } ?? all
         for (index, message) in messages.enumerated() {
             switch message {
             case .user(let user):
@@ -98,6 +101,10 @@ struct TranscriptView: View {
             case .other:
                 break
             }
+        }
+        if let boundary {
+            let undone = all.count { if case .user(let user) = $0 { user.id >= boundary } else { false } }
+            rows.append(.undone(max(undone, 1)))
         }
         // Messages waiting their turn are listed above the composer instead.
         let waiting = Set(model.waiting.map(\.id))
@@ -144,6 +151,8 @@ enum Row: Identifiable, Hashable {
     case turnEnd(Message.Idle, TurnStats)
     case notice(String, String, String)
     case pending(Transcript.Pending)
+    /// An undo that the next message makes final, with how many messages it took back.
+    case undone(Int)
     case working
 
     /// Space above this row: steps of one reply sit close, a new message gets room.
@@ -162,6 +171,7 @@ enum Row: Identifiable, Hashable {
         case .turnEnd(let m, _): m.id
         case .notice(let id, _, _): id
         case .pending(let item): item.id
+        case .undone: "undone"
         case .working: "working"
         }
     }
@@ -171,6 +181,9 @@ private struct RowView: View {
     let row: Row
     let directory: String
     let cancel: (Transcript.Pending) -> Void
+    let undo: (Message.User) -> Void
+    let redo: () -> Void
+    @State private var confirmsUndo = false
 
     var body: some View {
         switch row {
@@ -185,6 +198,14 @@ private struct RowView: View {
                         NSPasteboard.general.setString(text, forType: .string)
                     }
                     .disabled(text.isEmpty)
+                    Divider()
+                    Button("Undo From Here…") { confirmsUndo = true }
+                }
+                .alert("Undo from this message?", isPresented: $confirmsUndo) {
+                    Button("Undo") { undo(message) }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("The conversation goes back to before this message, and so do the files the agent changed since. The message comes back to the composer. You can redo it all until you send something.")
                 }
         case .pending(let item):
             let (withComments, paths) = Attachments.split(item.text)
@@ -205,6 +226,20 @@ private struct RowView: View {
                 .padding(.vertical, 5)
                 .background(.quaternary.opacity(0.5), in: .capsule)
                 .frame(maxWidth: .infinity)
+        case .undone(let count):
+            HStack(spacing: 10) {
+                Label(count == 1 ? "Undid 1 message" : "Undid \(count) messages", systemImage: "arrow.uturn.backward")
+                Button("Redo", action: redo)
+                    .buttonStyle(.borderless)
+                    .fontWeight(.semibold)
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(.quaternary.opacity(0.5), in: .capsule)
+            .frame(maxWidth: .infinity)
+            .help("Sending a message makes the undo final")
         case .working:
             ShimmerText(text: "Working…")
                 .font(.callout)

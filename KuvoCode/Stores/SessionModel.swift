@@ -202,13 +202,56 @@ final class SessionModel {
             // The agent got it first: it's in the transcript now.
             guard !transcript.messages.contains(where: { $0.id == item.id }) else { return }
             transcript.removePending(id: item.id)
-            let (withComments, paths) = Attachments.split(item.text)
-            let (text, comments) = ReviewComments.split(withComments)
-            draftText = [text, draftText].filter { !$0.isEmpty }.joined(separator: "\n\n")
-            let files = item.files + paths.map { URL(filePath: $0) }
-            draftFiles = files + draftFiles.filter { !files.contains($0) }
-            reviewComments = comments + reviewComments
-            composerFocus += 1
+            restoreDraft(item.text, files: item.files)
+        }
+    }
+
+    /// Puts a message back in the composer, ahead of anything already there: its text, its
+    /// attached files and its comments on the changes.
+    private func restoreDraft(_ message: String, files picked: [URL] = []) {
+        let (withComments, paths) = Attachments.split(message)
+        let (text, comments) = ReviewComments.split(withComments)
+        draftText = [text, draftText].filter { !$0.isEmpty }.joined(separator: "\n\n")
+        let files = picked + paths.map { URL(filePath: $0) }
+        draftFiles = files + draftFiles.filter { !files.contains($0) }
+        reviewComments = comments + reviewComments
+        composerFocus += 1
+    }
+
+    /// The text an undo put back in the composer, taken out again by Redo if it's untouched.
+    private var undoneDraft: String?
+
+    /// Takes the session back to before `message`: the agent stops, the conversation and the
+    /// files it changed since go back, and the message returns to the composer to edit or
+    /// send again. Redo brings it all back, until the next message makes it final.
+    func undo(from message: Message.User) {
+        Task {
+            do {
+                if isRunning {
+                    try await api.interrupt(session: id)
+                    try await api.wait(session: id)
+                }
+                session.revert = try await api.stageRevert(session: id, messageID: message.id)
+                let before = draftText
+                restoreDraft(message.text)
+                undoneDraft = draftText == before ? nil : draftText
+            } catch {
+                failure = error.localizedDescription
+            }
+        }
+    }
+
+    /// Takes back an undo: the conversation and the files come back as they were.
+    func redo() {
+        Task {
+            do {
+                try await api.clearRevert(session: id)
+                session.revert = nil
+                if let undoneDraft, draftText == undoneDraft { draftText = "" }
+                undoneDraft = nil
+            } catch {
+                failure = error.localizedDescription
+            }
         }
     }
 
