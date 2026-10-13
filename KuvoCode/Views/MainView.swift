@@ -373,12 +373,18 @@ struct MainView: View {
     }
 
     #if DEBUG
+    /// The comment and prompt go in once, however often the view reappears.
+    private static var ranDemo = false
+
     /// For trying the app without clicking: KUVO_DEMO_FOLDER opens a project, and
     /// KUVO_DEMO_PROMPT (with KUVO_DEMO_MODEL as "provider/model") starts a session with it.
     /// KUVO_DEMO_PROVIDERS opens Accounts, on that provider's sign-in if it names one.
     /// KUVO_DEMO_APPEARANCE=light|dark forces an appearance. KUVO_DEMO_WINDOW sets the window size.
+    /// KUVO_DEMO_COMMENT adds a review comment.
     private func runDemoIfAsked() async {
         let environment = ProcessInfo.processInfo.environment
+        // Launched from Terminal for screenshots, the window would otherwise stay inactive.
+        if environment.keys.contains(where: { $0.hasPrefix("KUVO_DEMO_") }) { NSApp.activate() }
         switch environment["KUVO_DEMO_APPEARANCE"] {
         case "light": NSApp.appearance = NSAppearance(named: .aqua)
         case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
@@ -411,7 +417,27 @@ struct MainView: View {
             window.setFrame(frame, display: true, animate: false)
         }
         if workspace.isLoaded, environment["KUVO_DEMO_PROVIDERS"] != nil { showsProviders = true }
-        guard workspace.isLoaded, let folder = environment["KUVO_DEMO_FOLDER"] else { return }
+        guard workspace.isLoaded, !Self.ranDemo else { return }
+        Self.ranDemo = true
+        // In a task of its own: SwiftUI cancels and restarts this view's task while the
+        // window settles, which would cut the session's creation short.
+        Task { await runDemoSession(environment) }
+    }
+
+    private func runDemoSession(_ environment: [String: String]) async {
+        // KUVO_DEMO_COMMENT=<path in the project>:<line>:<text> adds a review comment to the
+        // session in view, on that line of the changes.
+        if let spec = environment["KUVO_DEMO_COMMENT"], let directory = activeDirectory {
+            let parts = spec.split(separator: ":", maxSplits: 2).map(String.init)
+            try? await Task.sleep(for: .seconds(2))
+            if parts.count == 3, let line = Int(parts[1]), let selection, let model = workspace.model(for: selection),
+               let text = try? String(contentsOfFile: directory + "/" + parts[0], encoding: .utf8) {
+                let lines = text.components(separatedBy: "\n")
+                let snippet = lines.indices.contains(line - 1) ? lines[line - 1].trimmingCharacters(in: .whitespaces) : ""
+                model.reviewComments.append(ReviewComment(file: parts[0], line: line, side: .new, snippet: snippet, text: parts[2]))
+            }
+        }
+        guard let folder = environment["KUVO_DEMO_FOLDER"] else { return }
         guard let prompt = environment["KUVO_DEMO_PROMPT"] else { return newSession(in: folder) }
         let parts = environment["KUVO_DEMO_MODEL"]?.split(separator: "/", maxSplits: 1).map(String.init)
         let model = parts.flatMap { $0.count == 2 ? ModelRef(id: $0[1], providerID: $0[0]) : nil }

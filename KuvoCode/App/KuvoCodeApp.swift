@@ -31,6 +31,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let updates = Updates()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        #if DEBUG
+        // KUVO_DEMO_USAGE=off leaves the usage tracker out, so a second copy of the app
+        // (for screenshots) never renews the logins the first one is using.
+        if ProcessInfo.processInfo.environment["KUVO_DEMO_USAGE"] == "off" { return }
+        #endif
         // Plan limits and spend in the menu bar (UsageKit).
         model.startUsage()
         #if DEBUG

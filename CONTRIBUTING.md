@@ -95,7 +95,8 @@ without clicking, for trying a change or taking screenshots:
 | `KUVO_DEMO_PANEL` | Open tools in the panel, comma-separated: `terminal`, `browser=<address>`, `files`, `file=<path>`, `changes`, `expand` |
 | `KUVO_DEMO_WINDOW` | Window size, as `WIDTHxHEIGHT` |
 | `KUVO_DEMO_MENU` | Open the `mode` or `model` menu (`models` for its first submenu) |
-| `KUVO_DEMO_USAGE` | Open the menu bar's usage panel on `dashboard`, `customize` or `settings` |
+| `KUVO_DEMO_USAGE` | Open the menu bar's usage panel on `dashboard`, `customize` or `settings`, or `off` to leave the usage tracker out |
+| `KUVO_DEMO_COMMENT` | Add a review comment to the session in view, as `<path in the project>:<line>:<text>` |
 
 ### The icon
 
