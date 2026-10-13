@@ -37,9 +37,13 @@ struct ToolCallView: View {
                 DiffStat(additions: stat.additions, deletions: stat.deletions)
             }
             if case .failed(_, let error, _, _) = call.state {
-                Text(error.message)
-                    .lineLimit(1)
-                    .foregroundStyle(.red)
+                if error.isInterruption {
+                    Text("Stopped")
+                } else {
+                    Text(error.message)
+                        .lineLimit(1)
+                        .foregroundStyle(.red)
+                }
             }
             if hasDetails {
                 Image(systemName: "chevron.right")
@@ -58,6 +62,8 @@ struct ToolCallView: View {
         switch call.state {
         case .streaming, .running:
             Spinner(size: 11)
+        case .failed(_, let error, _, _) where error.isInterruption:
+            Image(systemName: "stop.circle")
         case .failed:
             Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
         case .completed:

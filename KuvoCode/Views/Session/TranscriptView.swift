@@ -66,9 +66,10 @@ struct TranscriptView: View {
                 rows.append(.user(user))
             case .assistant(let assistant):
                 turn.add(assistant)
-                // The run's error shows once, at the end of the turn.
+                // The run's error shows once, at the end of the turn. A step you stopped isn't an
+                // error: the turn's end says "Stopped".
                 let nextIdle = messages[(index + 1)...].lazy.compactMap { if case .idle(let idle) = $0 { idle } else { nil } }.first
-                let showsError = assistant.error != nil && assistant.error?.message != nextIdle?.error?.message
+                let showsError = assistant.error.map { !$0.isInterruption } == true && assistant.error?.message != nextIdle?.error?.message
                 if !assistant.content.isEmpty || showsError || assistant.retry != nil {
                     rows.append(.assistant(assistant, showsError: showsError))
                 }

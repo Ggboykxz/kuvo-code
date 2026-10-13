@@ -88,6 +88,9 @@ public struct StructuredError: Codable, Sendable, Hashable, LocalizedError {
     public var status: Int?
 
     public var errorDescription: String? { message }
+
+    /// The step or tool was stopped (Stop, or a message sent right away), not broken.
+    public var isInterruption: Bool { type == "aborted" }
 }
 
 /// Times on the wire are milliseconds since 1970.
