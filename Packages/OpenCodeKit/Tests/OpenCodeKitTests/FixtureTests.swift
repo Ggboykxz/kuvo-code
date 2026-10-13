@@ -126,6 +126,30 @@ struct TranscriptTests {
         #expect(transcript.messages.contains { $0.id == "msg_1349cb403001YFcOUTFbPGFYeS" })
     }
 
+    @Test func keepsTheFilesOfWaitingInput() throws {
+        let picked = URL(filePath: "/Users/me/Desktop/photo.heic")
+        let converted = "file:///Users/me/Library/Attachments/photo.png"
+        var transcript = Transcript(sessionID: Self.session)
+        transcript.addLocal(id: "msg_1", text: "Look", delivery: .queue, files: [picked])
+
+        // The server's copy names the converted file; the local one knows what was picked.
+        let enqueued = """
+        {"id":"evt_2","type":"session.inbox.enqueued","data":{"inboxID":"msg_1","sessionID":"\(Self.session)",\
+        "item":{"type":"user","payload":{"text":"Look","files":[{"uri":"\(converted)"}]},"delivery":"queue"}}}
+        """
+        transcript.apply(try ServerEvent(json: Data(enqueued.utf8)))
+        #expect(transcript.pending.map(\.isLocal) == [false])
+        #expect(transcript.pending.first?.files == [picked])
+
+        // Read back after a restart: the files on this Mac, nothing else.
+        let payload = try JSONDecoder().decode(JSONValue.self, from: Data("""
+        {"text":"Look","files":[{"uri":"\(converted)"},{"uri":"data:image/png;base64,AAAA"}]}
+        """.utf8))
+        let item = InboxItem(id: "msg_1", sessionID: Self.session, type: "user", payload: payload, delivery: .queue)
+        transcript.load(messages: [], inbox: [item], permissions: [], forms: [], isRunning: false)
+        #expect(transcript.pending.first?.files == [URL(string: converted)!])
+    }
+
     /// What a person would see: message kind, text, tools and their outcome.
     private static func summary(_ message: Message) -> String {
         switch message {

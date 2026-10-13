@@ -201,12 +201,23 @@ public struct OpenCodeAPI: Sendable {
         try await send("POST", "api/session/\(session.pathEscaped)/model", body: Body(model: model))
     }
 
-    public func interrupt(session: String) async throws {
-        try await send("POST", "api/session/\(session.pathEscaped)/interrupt", as: Empty.self)
+    /// Stops the current run. With `resume`, the agent goes straight on with the input waiting
+    /// to steer it, so that input goes in now instead of at the next step.
+    public func interrupt(session: String, resume: Bool = false) async throws {
+        struct Response: Decodable { var interrupted: Bool }
+        try await send("POST", "api/session/\(session.pathEscaped)/interrupt", query: ["resume": resume ? "true" : nil], as: Response.self)
     }
 
+    /// Removes waiting input before the agent gets it. Input already delivered is left alone.
     public func cancelInbox(session: String, item: String) async throws {
         try await send("DELETE", "api/session/\(session.pathEscaped)/inbox/\(item.pathEscaped)")
+    }
+
+    /// Moves waiting input between the next step (`steer`, which also wakes an idle session)
+    /// and after the run (`queue`).
+    public func setDelivery(session: String, item: String, delivery: InboxItem.Delivery) async throws {
+        struct Body: Encodable { var delivery: InboxItem.Delivery }
+        try await send("PATCH", "api/session/\(session.pathEscaped)/inbox/\(item.pathEscaped)", body: Body(delivery: delivery))
     }
 
     // MARK: Permissions and questions

@@ -42,7 +42,7 @@ public struct Transcript: Sendable, Equatable {
     public mutating func load(messages: [Message], inbox: [InboxItem], permissions: [PermissionRequest], forms: [FormRequest], isRunning: Bool) {
         self.messages = messages
         let local = pending.filter { item in item.isLocal && !inbox.contains { $0.id == item.id } && !messages.contains { $0.id == item.id } }
-        pending = inbox.filter { $0.type == "user" }.map { Pending(id: $0.id, text: $0.text ?? "", delivery: $0.delivery, isLocal: false) } + local
+        pending = inbox.filter { $0.type == "user" }.map { Pending(id: $0.id, text: $0.text ?? "", delivery: $0.delivery, isLocal: false, files: $0.files) } + local
         self.permissions = permissions
         self.forms = forms
         self.isRunning = isRunning
@@ -56,6 +56,11 @@ public struct Transcript: Sendable, Equatable {
 
     public mutating func removeLocal(id: String) {
         pending.removeAll { $0.id == id && $0.isLocal }
+    }
+
+    /// Drops waiting input the owner cancelled, ahead of the server's word.
+    public mutating func removePending(id: String) {
+        pending.removeAll { $0.id == id }
     }
 
     /// Applies one event. Events for other sessions are ignored.
@@ -104,8 +109,10 @@ public struct Transcript: Sendable, Equatable {
         case "session.inbox.enqueued":
             let enqueued = try event.payload(as: EventPayload.InboxEnqueued.self)
             guard enqueued.item.type == "user" else { return }
-            let item = Pending(id: enqueued.inboxID, text: enqueued.item.payload["text"]?.string ?? "", delivery: enqueued.item.delivery, isLocal: false)
+            var item = Pending(id: enqueued.inboxID, text: enqueued.item.payload["text"]?.string ?? "", delivery: enqueued.item.delivery, isLocal: false, files: InboxItem.files(in: enqueued.item.payload))
             if let index = pending.firstIndex(where: { $0.id == item.id }) {
+                // A local copy knows the files as they were picked, before any conversion.
+                if !pending[index].files.isEmpty { item.files = pending[index].files }
                 pending[index] = item
             } else {
                 pending.append(item)

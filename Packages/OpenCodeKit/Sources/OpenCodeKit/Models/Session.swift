@@ -72,6 +72,15 @@ public struct InboxItem: Codable, Sendable, Hashable, Identifiable {
     }
 
     public var text: String? { payload["text"]?.string }
+
+    /// Files attached to user input, where they're files on this Mac.
+    public var files: [URL] { Self.files(in: payload) }
+
+    static func files(in payload: JSONValue) -> [URL] {
+        (payload["files"]?.array ?? []).compactMap { file in
+            file["uri"]?.string.flatMap(URL.init(string:)).flatMap { $0.isFileURL ? $0 : nil }
+        }
+    }
 }
 
 /// What the agent is waiting for permission to do.
