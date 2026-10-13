@@ -88,6 +88,7 @@ struct MainView: View {
         .toolbar { titleBar }
         .toolbar(removing: .title)
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        .iconOnlyToolbar()
         .overlay(alignment: .top) {
             if catalog.isSlow {
                 SlowEngineNotice()

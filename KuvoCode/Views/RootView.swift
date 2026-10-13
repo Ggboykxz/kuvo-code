@@ -70,6 +70,7 @@ struct EngineSetupView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .toolbar(removing: .title)
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        .iconOnlyToolbar()
     }
 
     private var isWorking: Bool {
