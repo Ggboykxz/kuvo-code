@@ -31,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let updates = Updates()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        Notifier.shared.start()
         #if DEBUG
         // KUVO_DEMO_USAGE=off leaves the usage tracker out, so a second copy of the app
         // (for screenshots) never renews the logins the first one is using.

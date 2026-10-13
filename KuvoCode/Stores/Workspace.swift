@@ -20,6 +20,14 @@ final class Workspace {
     private var models: [String: SessionModel] = [:]
     /// Current git branch per project folder, when it has one.
     private(set) var branches: [String: String] = [:]
+    /// Open permission requests and questions, by ID, with the session they're for.
+    private(set) var asking: [String: String] = [:]
+
+    /// Sessions that finished while you were elsewhere, or wait for your answer: the
+    /// number on the Dock icon.
+    var waitingCount: Int {
+        Set(sessions.filter { $0.isUnread && $0.time.archived == nil }.map(\.id)).union(asking.values).count
+    }
 
     struct Project: Identifiable, Hashable {
         /// The primary folder: sessions run here.
@@ -174,6 +182,7 @@ final class Workspace {
         if let id = event.sessionID ?? Self.formSessionID(event), let model = models[id] {
             model.apply(event)
         }
+        noteQuestions(event)
         guard let id = event.sessionID else { return }
 
         switch event.type {
@@ -188,7 +197,18 @@ final class Workspace {
         case "session.execution.succeeded", "session.execution.failed", "session.execution.interrupted":
             running.remove(id)
             // Picks up the new idle time (unread state) and outcome.
-            Task { await reload(id) }
+            Task {
+                await reload(id)
+                // A run you stopped needs no news.
+                if event.type != "session.execution.interrupted", let session = session(id) {
+                    Notifier.shared.notify(
+                        session: id,
+                        title: session.title ?? "New Session",
+                        subtitle: projectName(session.location.directory),
+                        body: event.type == "session.execution.failed" ? "Stopped with an error." : "Finished."
+                    )
+                }
+            }
         case "session.usage.updated":
             if let usage = try? event.payload(as: EventPayload.Usage.self), let index = sessions.firstIndex(where: { $0.id == id }) {
                 sessions[index].cost = usage.cost
@@ -207,7 +227,48 @@ final class Workspace {
         }
     }
 
+    /// Keeps `asking` current, and tells you about a new request while you're elsewhere.
+    private func noteQuestions(_ event: ServerEvent) {
+        switch event.type {
+        case "permission.asked":
+            guard let request = try? event.payload(as: PermissionRequest.self) else { return }
+            asking[request.id] = request.sessionID
+            notifyAsk(request.sessionID, body: Self.describe(request))
+        case "permission.replied":
+            if let reply = try? event.payload(as: EventPayload.PermissionReplied.self) { asking[reply.requestID] = nil }
+        case "form.created":
+            guard let form = try? event.payload(as: EventPayload.FormCreated.self).form else { return }
+            asking[form.id] = form.sessionID
+            notifyAsk(form.sessionID, body: form.isQuestion ? "Has a question for you." : "Needs your answer.")
+        case "form.replied", "form.cancelled":
+            if let settled = try? event.payload(as: EventPayload.FormSettled.self) { asking[settled.id] = nil }
+        default:
+            break
+        }
+    }
+
+    private func notifyAsk(_ id: String, body: String) {
+        // A subagent's session has no row of its own; its request shows in its parent's.
+        let session = session(id)
+        Notifier.shared.notify(session: id, title: session?.title ?? AppInfo.name, subtitle: session.map { projectName($0.location.directory) }, body: body)
+    }
+
+    /// "Wants to run a command: npm test".
+    private static func describe(_ request: PermissionRequest) -> String {
+        let what = switch request.action {
+        case "edit", "write", "patch": "edit files"
+        case "shell", "bash": "run a command"
+        case "read": "read a file"
+        case "external_directory": "work outside the project"
+        case "webfetch": "open a web page"
+        default: request.action
+        }
+        guard let resource = request.resources.first, resource != "*" else { return "Wants to \(what)." }
+        return "Wants to \(what): \(resource)"
+    }
+
     func markViewed(_ id: String) {
+        Notifier.shared.clear(session: id)
         guard let index = sessions.firstIndex(where: { $0.id == id }), sessions[index].isUnread, let idle = sessions[index].time.idle else { return }
         sessions[index].time.viewed = idle
         Task { try? await api?.markViewed(id, idle: idle) }

@@ -21,6 +21,7 @@ struct MainView: View {
     @AppStorage("sessionsWidth") private var sessionsWidth = 280.0
     @AppStorage("changesWidth") private var changesWidth = 420.0
     @State private var showsProviders = false
+    @AppStorage(Notifier.enabledKey) private var notificationsEnabled = true
     /// The New Project or Edit Project sheet, while it's open.
     @State private var projectSheet: ProjectSheetRequest?
     @State private var focus = Pane.conversation
@@ -137,6 +138,9 @@ struct MainView: View {
         .onChange(of: workspace.sessions.map(\.id)) { _, ids in dropClosedSessions(ids) }
         .onChange(of: workspace.isLoaded) { startIfEmpty() }
         .onAppear(perform: startIfEmpty)
+        .onAppear { Notifier.shared.open = { openTab($0) } }
+        .onChange(of: workspace.waitingCount, initial: true) { Notifier.shared.setBadge(workspace.waitingCount) }
+        .onChange(of: notificationsEnabled) { Notifier.shared.setBadge(workspace.waitingCount) }
         #if DEBUG
         .task(id: workspace.isLoaded) { await runDemoIfAsked() }
         #endif
