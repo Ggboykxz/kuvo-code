@@ -1,113 +1,117 @@
-# Kuvo Code
+<h1 align="center">Kuvo Code</h1>
 
-A native macOS app for working with coding agents.
+<p align="center"><strong>Coding agents, made for the Mac.</strong></p>
 
-It's a client for [opencode](https://github.com/anomalyco/opencode): the opencode
-engine does the agent work (models, tools, sign-ins, sessions), and this app is
-the interface, written in SwiftUI.
+<p align="center">
+  <a href="https://github.com/serhatandic/kuvo-code/actions/workflows/ci.yml"><img src="https://github.com/serhatandic/kuvo-code/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://github.com/serhatandic/kuvo-code/releases"><img src="https://img.shields.io/github/v/release/serhatandic/kuvo-code?include_prereleases&label=release" alt="Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue.svg" alt="License: PolyForm Noncommercial 1.0.0"></a>
+</p>
+
+Kuvo Code is a native macOS app for working with coding agents. Its engine is
+[opencode](https://github.com/anomalyco/opencode), unmodified; Kuvo Code is the
+interface, written in SwiftUI: sessions by project, changes you review and
+comment on like a pull request, and a side panel with files, terminals and a
+browser the agent can use too.
+
+Use any model. Sign in with a subscription you already have, add an API key,
+or start with free models that need no account.
+
+[Download for macOS](https://github.com/serhatandic/kuvo-code/releases/latest/download/KuvoCode.dmg)
+· [Docs](https://kuvo.run/code/docs/)
+· [Report a bug](https://github.com/serhatandic/kuvo-code/issues/new/choose)
+· [Build from source](#build-from-source)
+
+## Features
+
+- **Any model.** Claude, GPT, Gemini, open models through OpenRouter,
+  and the rest of opencode's providers. Pick the model and effort for
+  each message.
+- **Review like a pull request.** The Changes tab shows the project's
+  uncommitted changes from git, with unchanged lines folded and pictures shown
+  before and after. Comment on a line, and the comment goes to the agent with
+  your next message.
+- **Files, terminals and a browser.** The side panel holds them as tabs: the
+  project's files with code highlighted and Markdown rendered, your shell in
+  the project folder, and a web browser.
+- **Browsing for the agent, with any model.** The agent opens pages in the
+  panel's browser, reads them, clicks, types and scrolls, and you see every
+  step.
+- **Attach anything.** Drop, paste or pick files of any kind.
+- **Plans and spend in the menu bar.** Limits with pace and reset times, and
+  spend across Claude, Codex, Copilot, Cursor, OpenCode, OpenRouter, Z.ai and
+  more.
+- **A native app.** SwiftUI and AppKit with Liquid Glass. No Electron.
+
+## Getting started
+
+Kuvo Code needs a Mac with Apple silicon and macOS 26 or later.
+
+1. [Download KuvoCode.dmg](https://github.com/serhatandic/kuvo-code/releases/latest/download/KuvoCode.dmg),
+   open it, and drag Kuvo Code onto the Applications folder.
+2. Open it. The first launch downloads the opencode engine and checks it
+   before it runs.
+3. Open **Accounts** (⇧⌘K) to sign in or add an API key, or start with the
+   free models.
+4. Open a project folder (⌘O) and tell the agent what to build. It can read,
+   edit and run things there, and asks before anything risky.
+
+The [docs](https://kuvo.run/code/docs/) cover sessions, reviewing changes, the
+side panel and the usage menu.
 
 ## How it works
 
-- **The engine is opencode itself**, the official signed `@opencode/cli` binary
-  (v2), unmodified. On first launch the app downloads the pinned version,
-  checks its npm checksum and its code signature, and keeps it in
-  `~/Library/Application Support/<bundle id>/engine`.
-- **Each launch runs a private server**: `opencode serve --stdio --port 0`
-  with a random password. It exits when the app does.
-- **Its data is separate** from any opencode you've installed. Sessions,
-  accounts and settings live in `~/Library/Application Support/<bundle id>/opencode`.
-- **Everything else is the app**: it talks to the server's HTTP API and
-  follows its event stream to show live transcripts.
+- **The engine is opencode itself**: the official, signed `@opencode/cli`
+  binary, unmodified. Kuvo Code downloads the version it's written against,
+  checks its checksum and its code signature, and keeps it in
+  `~/Library/Application Support/run.kuvo.code/engine`.
+- **Each launch runs a private server**, `opencode serve --stdio --port 0`
+  with a random password, which exits when the app does. The app talks to its
+  HTTP API and follows its event stream to show live transcripts.
+- **Its data is kept apart** from any opencode you've installed. Sessions,
+  accounts and settings live in
+  `~/Library/Application Support/run.kuvo.code/opencode`.
+- **The agent's browser tools** are served by the app on `127.0.0.1`, with a
+  new port and token each launch. They read a page the way
+  [browser-use](https://github.com/browser-use/browser-use) does, as numbered
+  interactive elements, and every step happens in the browser you see.
+- **The usage menu** is UsageKit, our fork of
+  [OpenUsage](https://github.com/robinebers/openusage) by Robin Ebers. It reads
+  the logins those tools already keep on your Mac, plus the accounts you
+  connect in Kuvo Code.
 
-## Project layout
+## Build from source
 
-| Path | What's there |
-| --- | --- |
-| `KuvoCode/` | The app (SwiftUI): views, stores, design system |
-| `Packages/OpenCodeKit/` | The engine client: API, models, event stream, transcript reducer, engine installer |
-| `Packages/UsageKit/` | The usage tracker in the menu bar, a fork of [OpenUsage](https://github.com/robinebers/openusage) |
-| `Config/App.xcconfig` | The app's name and bundle ID, and signing defaults |
-
-## Building
-
-Requires macOS 26 and Xcode 26 or later.
-
-1. Open `KuvoCode.xcodeproj` and run the **KuvoCode** scheme.
-2. Optional: to keep one code signature between builds (so macOS remembers
-   privacy answers), copy `Config/Signing.local.xcconfig.example` to
-   `Config/Signing.local.xcconfig` and set your team. That file is git-ignored.
-
-Tests for the engine client and the usage tracker:
+You need Xcode 27 or later.
 
 ```sh
-cd Packages/OpenCodeKit && swift test
-cd Packages/UsageKit && swift test
+git clone https://github.com/serhatandic/kuvo-code.git
+cd kuvo-code
+open KuvoCode.xcodeproj
 ```
 
-Recorded engine responses in `Tests/OpenCodeKitTests/Fixtures` drive most
-tests. `LiveServerTests` run against a real binary when `OPENCODE_TEST_BINARY`
-points to one.
+Run the **KuvoCode** scheme. See [CONTRIBUTING.md](CONTRIBUTING.md) for
+building from Terminal, tests, and the debug launch variables.
 
-### Debug launch variables
+## Contributing and security
 
-Debug builds read a few environment variables to put the app in a given state
-without clicking:
+Bug reports and focused pull requests are welcome; read
+[CONTRIBUTING.md](CONTRIBUTING.md) first. Please report vulnerabilities
+privately, as described in the [security policy](SECURITY.md).
 
-| Variable | Effect |
-| --- | --- |
-| `KUVO_OPENCODE_BINARY` | Use this opencode binary instead of the pinned download |
-| `KUVO_DEMO_FOLDER`, `KUVO_DEMO_PROMPT`, `KUVO_DEMO_MODEL` | Open a project and start a session with a prompt (`provider/model`) |
-| `KUVO_DEMO_FILES` | Comma-separated paths to attach to that prompt |
-| `KUVO_DEMO_COMPOSER_FILES` | Comma-separated paths to show as attached in the composer |
-| `KUVO_DEMO_PROVIDERS` | Open Accounts (on a provider's sign-in if it names one) |
-| `KUVO_DEMO_APPEARANCE` | `light` or `dark` |
-| `KUVO_DEMO_CHANGES` | Show the side panel |
-| `KUVO_DEMO_PANEL` | Open tools in the panel, comma-separated: `terminal`, `browser=<address>`, `files`, `file=<path>`, `changes`, `expand` |
-| `KUVO_DEMO_WINDOW` | Window size, as `WIDTHxHEIGHT` |
-| `KUVO_DEMO_MENU` | Open the `mode` or `model` menu (`models` for its first submenu) |
-| `KUVO_DEMO_USAGE` | Open the menu bar's usage panel on `dashboard`, `customize` or `settings` |
+## License
 
-## The side panel
+Kuvo Code is source-available under the
+[PolyForm Noncommercial License 1.0.0](LICENSE). You may use, study, modify,
+and redistribute it for permitted noncommercial purposes. Commercial use,
+including monetizing a fork or derivative, requires a separate written license
+from the copyright holder. See [NOTICE](NOTICE) for the required copyright
+notice and [THIRD_PARTY_LICENSES.txt](THIRD_PARTY_LICENSES.txt) for the
+licenses of included dependencies.
 
-The panel on the right holds tools, as tabs (+ adds one, the title bar button or ⌥⌘0 shows it):
+Contributions are welcome under the terms in [CONTRIBUTING.md](CONTRIBUTING.md)
+and the [Contributor License Agreement](CONTRIBUTOR_LICENSE_AGREEMENT.md).
+Those terms let the project owner continue to offer commercial licenses.
 
-- **Changes**: the project's uncommitted changes from git (or unstaged, or staged), with
-  comments on lines that go to the agent with your next message.
-- **Files**: the project's files, with Markdown rendered, code highlighted and anything
-  else in Quick Look.
-- **Terminal**: your login shell in the project folder (⌃`).
-- **Browser**: a web browser (⌥⌘B).
-
-### Browsing for the agent
-
-The agent can use the panel's browser with any model. Kuvo Code serves it as MCP tools
-on 127.0.0.1 (a new port and token each launch) and gives its engine the address through
-`OPENCODE_CONFIG_CONTENT`. The tools read a page the way
-[browser-use](https://github.com/browser-use/browser-use) does, as numbered interactive
-elements, then click, type, select, scroll and press keys by number. Every step happens
-in the browser you see, with the numbers drawn on the page.
-
-## Usage in the menu bar
-
-The menu bar item tracks your AI plans: limits with pace and reset countdowns, spend
-for today, yesterday and the last 30 days with a total across providers, a 30-day trend,
-and optional notifications. It covers Claude, Codex, Copilot, Cursor, OpenCode,
-OpenRouter, Z.ai, Grok, Antigravity, Devin and Ollama.
-
-It's [UsageKit](Packages/UsageKit), our fork of [OpenUsage](https://github.com/robinebers/openusage)
-by Robin Ebers. It reads the logins those tools already keep on the Mac, plus the accounts
-connected in Kuvo Code. Kuvo Code's own runs count toward spend. The first click on the item
-asks which providers to follow. Its settings are in the panel, also linked from Settings › Usage.
-
-## Third-party software
-
-- [opencode](https://github.com/anomalyco/opencode) (MIT), downloaded at runtime.
-- [Textual](https://github.com/gonzalezreal/textual) (MIT), for Markdown.
-- [Prism](https://prismjs.com) (MIT), bundled, for coloring code in diffs.
-- [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) (MIT), the panel's terminal.
-- [browser-use](https://github.com/browser-use/browser-use) (MIT), its page reader, for the agent's browsing.
-- [OpenUsage](https://github.com/robinebers/openusage) (MIT), forked as UsageKit for the menu bar.
-- [KeyboardShortcuts](https://github.com/sindresorhus/KeyboardShortcuts) (MIT), the usage panel's global shortcut.
-- Provider logos come from [models.dev](https://models.dev).
-
-License texts are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Kuvo Code is an independent project. It isn't affiliated with opencode or with
+the companies whose models and tools it works with.

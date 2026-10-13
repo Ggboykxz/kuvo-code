@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/serhatandic/kuvo-code/security/advisories/new
+    about: Send security reports privately instead of opening a public issue.
+  - name: Documentation
+    url: https://kuvo.run/code/docs/
+    about: Guides, shortcuts and troubleshooting.
+  - name: A problem with the agent itself
+    url: https://github.com/anomalyco/opencode/issues
+    about: Kuvo Code runs the opencode engine unmodified. Problems with the agent's tools or answers that happen in opencode too belong there.

@@ -1,0 +1,9 @@
+# Swift packages are pinned in the Xcode project, which Dependabot can't update;
+# update them by hand (see CONTRIBUTING.md).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

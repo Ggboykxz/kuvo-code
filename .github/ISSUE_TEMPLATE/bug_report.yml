@@ -1,0 +1,65 @@
+name: Bug report
+description: Report something that doesn't work as it should
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem. Logs and screenshots can include your
+        prompts, code, file paths and account names, so remove anything private
+        before you share them.
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: What you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a project and start a session with …
+        2. Click …
+        3. See …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Kuvo Code version
+      description: Kuvo Code › About Kuvo Code.
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and Mac
+      placeholder: macOS 26.1, MacBook Air M2
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Model and provider
+      description: If it happened in a session, the model it used.
+      placeholder: Claude Sonnet 4.5 with a Claude subscription
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        If the engine is involved, the end of the newest file in its log folder,
+        ~/Library/Application Support/run.kuvo.code/opencode/data/opencode/log.
+        Settings › Engine › Show in Finder opens the folder above it.
+      render: text
+  - type: checkboxes
+    id: security
+    attributes:
+      label: Security check
+      options:
+        - label: This report does not disclose a security vulnerability.
+          required: true
