@@ -200,13 +200,12 @@ private struct AccountsChip: View {
                         .font(.system(size: 16))
                         .foregroundStyle(.tint)
                 } else {
-                    HStack(spacing: -6) {
+                    HStack(spacing: 8) {
                         ForEach(catalog.connectedProviders.prefix(3)) { provider in
-                            ProviderLogo(id: provider.id, size: 15)
-                                .padding(5)
-                                .solidChip(in: Circle(), raised: true)
+                            ProviderLogo(id: provider.id, size: 20)
                         }
                     }
+                    .padding(.leading, 2)
                 }
                 Text(label)
                     .font(.system(size: 14))
