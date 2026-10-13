@@ -492,7 +492,7 @@ struct WelcomeView: View {
                 .foregroundStyle(.tint)
             Text("Welcome to \(AppInfo.name)")
                 .font(.largeTitle.weight(.semibold))
-            Text("Open a project folder and tell the agent what to build.\nIt can read, edit and run things there, and asks before anything risky.")
+            Text("Open a project folder and tell the agent what to build.\nIt can read, edit and run things there.")
                 .font(.title3)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

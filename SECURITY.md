@@ -29,7 +29,7 @@ Reports are especially welcome about:
 - how the app asks for and answers the engine's permission requests, so the
   agent never runs something you didn't allow;
 - where sign-ins and API keys are stored, and the logins of other tools the
-  usage tracker reads;
+  usage tracker reads and renews;
 - attachments and review comments, and what they send to the model.
 
 Vulnerabilities in opencode itself should go to the

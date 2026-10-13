@@ -54,7 +54,8 @@ Kuvo Code needs a Mac with Apple silicon and macOS 26 or later.
 3. Open **Accounts** (⇧⌘K) to sign in or add an API key, or start with the
    free models.
 4. Open a project folder (⌘O) and tell the agent what to build. It can read,
-   edit and run things there, and asks before anything risky.
+   edit and run things there. To approve each edit and command first, choose
+   **Ask First** in the composer's mode menu.
 
 The [docs](https://kuvo.run/code/docs/) cover sessions, reviewing changes, the
 side panel and the usage menu.
@@ -81,7 +82,7 @@ side panel and the usage menu.
 - **The usage menu** is UsageKit, our fork of
   [OpenUsage](https://github.com/robinebers/openusage) by Robin Ebers. It reads
   the logins those tools already keep on your Mac, plus the accounts you
-  connect in Kuvo Code.
+  connect in Kuvo Code, and renews them when they expire, as those tools would.
 
 ## Build from source
 
