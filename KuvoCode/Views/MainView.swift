@@ -21,6 +21,8 @@ struct MainView: View {
     @AppStorage("sessionsWidth") private var sessionsWidth = 280.0
     @AppStorage("changesWidth") private var changesWidth = 420.0
     @State private var showsProviders = false
+    /// The New Project or Edit Project sheet, while it's open.
+    @State private var projectSheet: ProjectSheetRequest?
     @State private var focus = Pane.conversation
     /// The window's content width; the title bar is sized from it.
     @State private var contentWidth: CGFloat = 1200
@@ -116,6 +118,12 @@ struct MainView: View {
             ProvidersView()
                 .frame(width: 720, height: 620)
         }
+        .sheet(item: $projectSheet) { request in
+            ProjectSheet(project: request.project, folders: request.folders) { primary, settings in
+                workspace.saveProject(primary, settings: settings)
+                if request.project == nil { newSession(in: primary) }
+            }
+        }
         .focusedSceneValue(\.sessionActions, actions)
         .onChange(of: sessionID) { _, id in
             if let id { workspace.markViewed(id) }
@@ -140,7 +148,7 @@ struct MainView: View {
         ToolbarItem(placement: .navigation) {
             HStack(spacing: 16) {
                 ProjectIdentity(
-                    name: activeDirectory.map { ($0 as NSString).lastPathComponent },
+                    name: activeDirectory.map(workspace.projectName),
                     branch: activeDirectory.flatMap { workspace.branches[$0] },
                     showsSidebar: $showsSidebar
                 )
@@ -205,7 +213,8 @@ struct MainView: View {
             SidebarView(
                 selection: Binding(get: { selection }, set: { id in if let id { openTab(id) } }),
                 newSession: newSession,
-                openFolder: openFolder,
+                newProject: { projectSheet = ProjectSheetRequest(project: nil) },
+                editProject: { projectSheet = ProjectSheetRequest(project: $0) },
                 showProviders: { showsProviders = true }
             )
         }
@@ -215,7 +224,7 @@ struct MainView: View {
     @ViewBuilder private var conversationCard: some View {
         Group {
             if let id = sessionID, let model = workspace.model(for: id) {
-                Card(title: model.session.title ?? "New Session", detail: (model.session.location.directory as NSString).lastPathComponent, isFocused: focus == .conversation) {
+                Card(title: model.session.title ?? "New Session", detail: workspace.projectName(model.session.location.directory), isFocused: focus == .conversation) {
                     if let logo = logo(for: model.session.model) { ProviderLogo(id: logo, size: 14) } else { Image(systemName: "bubble.left") }
                 } actions: {
                     if !app.isLive {
@@ -231,7 +240,7 @@ struct MainView: View {
                 }
                 .id(id)
             } else if let directory = draftDirectory {
-                Card(title: "New Session", detail: (directory as NSString).lastPathComponent, isFocused: focus == .conversation) {
+                Card(title: "New Session", detail: workspace.projectName(directory), isFocused: focus == .conversation) {
                     Image(systemName: "square.and.pencil")
                 } actions: {
                     Button("Close Tab", systemImage: "xmark") { closeTab(SidebarView.draftTag(directory)) }
@@ -343,6 +352,7 @@ struct MainView: View {
             canStop: model?.isRunning == true,
             newSession: { newSession(in: nil) },
             openFolder: openFolder,
+            newProject: { projectSheet = ProjectSheetRequest(project: nil) },
             stop: { model?.stop() },
             selectAgent: { model?.selectAgent($0) },
             togglePanel: { withAnimation(.ui) { showsPanel.toggle() } },
@@ -413,6 +423,10 @@ struct MainView: View {
             window.setFrame(frame, display: true, animate: false)
         }
         if workspace.isLoaded, environment["KUVO_DEMO_PROVIDERS"] != nil { showsProviders = true }
+        // KUVO_DEMO_NEW_PROJECT=<folder>,<folder>: the New Project sheet with these folders.
+        if workspace.isLoaded, let list = environment["KUVO_DEMO_NEW_PROJECT"] {
+            projectSheet = ProjectSheetRequest(project: nil, folders: list.split(separator: ",").map(String.init))
+        }
         // KUVO_DEMO_SETTINGS=<tab> opens Settings on that tab: general, accounts, panel, usage, engine.
         if workspace.isLoaded, let tab = environment["KUVO_DEMO_SETTINGS"] {
             UserDefaults.standard.set(tab, forKey: "settings.tab")
@@ -525,6 +539,14 @@ private struct SlowEngineNotice: View {
         .padding(.vertical, 10)
         .glassEffect(.regular, in: .capsule)
     }
+}
+
+/// Which project sheet to show: New Project, or Edit Project for `project`.
+struct ProjectSheetRequest: Identifiable {
+    let id = UUID()
+    let project: Workspace.Project?
+    /// Folders a new project starts with.
+    var folders: [String] = []
 }
 
 /// Shown before there's any project.

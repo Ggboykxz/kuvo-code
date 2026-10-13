@@ -13,6 +13,8 @@ final class Workspace {
     private(set) var running: Set<String> = []
     /// Folders the user opened, even before they have sessions.
     private(set) var folders: [String] = UserDefaults.standard.stringArray(forKey: "projectFolders") ?? []
+    /// Names and other folders of projects, by their primary folder.
+    private(set) var settings: [String: ProjectSettings] = Workspace.loadSettings()
     private(set) var isLoaded = false
 
     private var models: [String: SessionModel] = [:]
@@ -20,11 +22,23 @@ final class Workspace {
     private(set) var branches: [String: String] = [:]
 
     struct Project: Identifiable, Hashable {
+        /// The primary folder: sessions run here.
         var directory: String
         var sessions: [Session]
+        var settings = ProjectSettings()
 
         var id: String { directory }
-        var name: String { (directory as NSString).lastPathComponent }
+        var name: String { settings.name ?? (directory as NSString).lastPathComponent }
+        /// Every folder, the primary one first.
+        var allFolders: [String] { [directory] + settings.folders }
+    }
+
+    /// What a project has beyond its primary folder.
+    struct ProjectSettings: Codable, Hashable {
+        /// Shown instead of the folder's name.
+        var name: String?
+        /// Other folders the agent works with, besides the primary one.
+        var folders: [String] = []
     }
 
     /// Projects with their sessions, most recently active first.
@@ -32,7 +46,7 @@ final class Workspace {
         let grouped = Dictionary(grouping: sessions.filter { $0.time.archived == nil }, by: \.location.directory)
         let directories = Set(grouped.keys).union(folders)
         return directories.map { directory in
-            Project(directory: directory, sessions: (grouped[directory] ?? []).sorted { $0.time.updated > $1.time.updated })
+            Project(directory: directory, sessions: (grouped[directory] ?? []).sorted { $0.time.updated > $1.time.updated }, settings: settings[directory] ?? ProjectSettings())
         }
         .sorted { lhs, rhs in
             let left = lhs.sessions.first?.time.updated ?? 0
@@ -51,7 +65,8 @@ final class Workspace {
     func model(for id: String) -> SessionModel? {
         if let model = models[id] { return model }
         guard let api, let session = session(id) else { return nil }
-        let model = SessionModel(session: session, api: api)
+        let directory = session.location.directory
+        let model = SessionModel(session: session, api: api) { [weak self] in self?.settings[directory]?.folders ?? [] }
         models[id] = model
         return model
     }
@@ -77,15 +92,50 @@ final class Workspace {
     func removeFolder(_ directory: String) {
         folders.removeAll { $0 == directory }
         UserDefaults.standard.set(folders, forKey: "projectFolders")
+        settings[directory] = nil
+        saveSettings()
+    }
+
+    /// The project's name: its own, or its primary folder's.
+    func projectName(_ directory: String) -> String {
+        settings[directory]?.name ?? (directory as NSString).lastPathComponent
+    }
+
+    /// Adds a project, or updates one, and gives its open sessions the new folders.
+    func saveProject(_ directory: String, settings project: ProjectSettings) {
+        addFolder(directory)
+        var project = project
+        project.name = project.name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if project.name?.isEmpty == true || project.name == (directory as NSString).lastPathComponent { project.name = nil }
+        project.folders = project.folders.filter { $0 != directory }
+        settings[directory] = project == ProjectSettings() ? nil : project
+        saveSettings()
+        // Sessions not open yet catch up when they open.
+        for model in models.values where model.session.location.directory == directory {
+            Task { await model.syncFolders() }
+        }
     }
 
     func createSession(in directory: String, model: ModelRef?, agent: String?, approval: ToolApproval = .approveAll) async throws -> Session {
         guard let api else { throw CancellationError() }
         addFolder(directory)
-        let rules = approval.rules
+        let extra = settings[directory]?.folders ?? []
+        let rules = ProjectFolders.permissions(approval.rules, folders: extra)
         let session = try await api.createSession(directory: directory, agent: agent, model: model, permissions: rules.isEmpty ? nil : rules)
+        if !extra.isEmpty {
+            try? await api.setInstruction(session: session.id, key: ProjectFolders.instructionKey, text: ProjectFolders.instructions(primary: directory, folders: extra))
+        }
         upsert(session)
         return session
+    }
+
+    private static func loadSettings() -> [String: ProjectSettings] {
+        guard let data = UserDefaults.standard.data(forKey: "projectSettings") else { return [:] }
+        return (try? JSONDecoder().decode([String: ProjectSettings].self, from: data)) ?? [:]
+    }
+
+    private func saveSettings() {
+        UserDefaults.standard.set(try? JSONEncoder().encode(settings), forKey: "projectSettings")
     }
 
     func delete(_ id: String) async {

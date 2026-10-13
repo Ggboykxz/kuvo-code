@@ -78,6 +78,9 @@ struct AppCommands: Commands {
             Button("New Session") { actions?.newSession() }
                 .keyboardShortcut("n")
                 .disabled(actions == nil)
+            Button("New Project…") { actions?.newProject() }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
+                .disabled(actions == nil)
             Button("Open Folder…") { actions?.openFolder() }
                 .keyboardShortcut("o")
                 .disabled(actions == nil)
@@ -140,6 +143,7 @@ struct SessionActions {
     var canStop: Bool
     var newSession: () -> Void
     var openFolder: () -> Void
+    var newProject: () -> Void
     var stop: () -> Void
     var selectAgent: (String) -> Void
     var togglePanel: () -> Void

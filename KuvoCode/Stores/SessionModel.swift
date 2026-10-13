@@ -28,9 +28,13 @@ final class SessionModel {
     /// (and queues) them in the order they were written.
     private var sending: Task<Void, Never>?
 
-    init(session: Session, api: OpenCodeAPI) {
+    /// The project's other folders, as they're set now.
+    private let projectFolders: () -> [String]
+
+    init(session: Session, api: OpenCodeAPI, projectFolders: @escaping () -> [String] = { [] }) {
         self.session = session
         self.api = api
+        self.projectFolders = projectFolders
         transcript = Transcript(sessionID: session.id)
     }
 
@@ -66,6 +70,7 @@ final class SessionModel {
             // A queue left waiting (the app quit mid-run, say) waits for Resume rather than
             // starting on its own.
             if !isLoaded, !isRunning, hasQueue { isQueuePaused = true }
+            if !isLoaded { await syncFolders() }
             isLoaded = true
         } catch {
             failure = error.localizedDescription
@@ -231,9 +236,31 @@ final class SessionModel {
     var approval: ToolApproval { ToolApproval(rules: session.permissions) }
 
     func setApproval(_ approval: ToolApproval) {
-        session.permissions = approval.rules
+        // The project's folders stay allowed, after the approval rules.
+        let rules = approval.rules + (session.permissions ?? []).filter(ProjectFolders.isFolderRule)
+        session.permissions = rules
         Task {
-            do { try await api.setPermissions(session: id, rules: approval.rules) } catch { failure = error.localizedDescription }
+            do { try await api.setPermissions(session: id, rules: rules) } catch { failure = error.localizedDescription }
+        }
+    }
+
+    /// Gives the agent the project's folders as they're set now, if it doesn't have them yet:
+    /// allowed in its permissions, and named in its instructions.
+    func syncFolders() async {
+        let folders = projectFolders()
+        let current = session.permissions ?? []
+        let rules = ProjectFolders.permissions(current, folders: folders)
+        guard rules != current else { return }
+        do {
+            try await api.setPermissions(session: id, rules: rules)
+            session.permissions = rules
+            if folders.isEmpty {
+                try await api.removeInstruction(session: id, key: ProjectFolders.instructionKey)
+            } else {
+                try await api.setInstruction(session: id, key: ProjectFolders.instructionKey, text: ProjectFolders.instructions(primary: session.location.directory, folders: folders))
+            }
+        } catch {
+            failure = error.localizedDescription
         }
     }
 

@@ -10,6 +10,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - **Messages waiting for the agent are listed above the composer.** Send one now (the agent stops its current step and takes it), put it back in the composer to edit (or press ↑ in an empty composer), or remove it.
 - Stop pauses the queue, and so does a failed run, instead of sending the rest into the same error. **Resume** picks it up again.
 - What you type in the composer stays there when you switch to another session.
+- **A project can have several folders.** New Project (⇧⌘N, or + next to Projects) names a project and adds its folders; sessions run in the primary one, and the agent can work in the others too and knows them by name. Right-click a project for **Edit Project…** to rename it or add and remove folders.
 
 ## 0.1.2
 

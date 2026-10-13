@@ -84,7 +84,12 @@ struct TranscriptView: View {
             case .shell(let shell):
                 rows.append(.notice(shell.id, "terminal", "$ \(shell.command)" + (shell.exit.map { " (exit \($0))" } ?? "")))
             case .synthetic(let notice), .system(let notice):
-                rows.append(.notice(notice.id, "info.circle", notice.description ?? notice.text))
+                let sources = notice.instructionSources
+                if !sources.isEmpty, sources.allSatisfy({ $0.contains(ProjectFolders.instructionKey) }) {
+                    rows.append(.notice(notice.id, "folder", "Project folders updated"))
+                } else {
+                    rows.append(.notice(notice.id, "info.circle", notice.description ?? notice.text))
+                }
             case .other:
                 break
             }

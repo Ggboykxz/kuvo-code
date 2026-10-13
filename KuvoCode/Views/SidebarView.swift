@@ -9,7 +9,8 @@ struct SidebarView: View {
 
     @Binding var selection: String?
     let newSession: (String?) -> Void
-    let openFolder: () -> Void
+    let newProject: () -> Void
+    let editProject: (Workspace.Project) -> Void
     let showProviders: () -> Void
 
     /// Folders the user closed, by path (newline-separated).
@@ -49,7 +50,7 @@ struct SidebarView: View {
                     .help("New Session (⌘N)")
 
                     SectionHeader(title: "Projects") {
-                        Button(action: openFolder) {
+                        Button(action: newProject) {
                             Image(systemName: "plus")
                                 .font(.system(size: 12, weight: .semibold))
                                 .frame(width: 22, height: 22)
@@ -57,7 +58,7 @@ struct SidebarView: View {
                         }
                         .buttonStyle(.plain)
                         .foregroundStyle(.secondary)
-                        .help("Open Folder… (⌘O)")
+                        .help("New Project… (⇧⌘N)")
                     }
                     if workspace.isLoaded && workspace.projects.isEmpty {
                         Text("Open a folder for the agent to work in.")
@@ -122,7 +123,8 @@ struct SidebarView: View {
         }
         .contextMenu {
             Button("New Session") { newSession(project.directory) }
-            Button("Show in Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: project.directory) }
+            Button("Edit Project…") { editProject(project) }
+            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting(project.allFolders.map { URL(filePath: $0) }) }
             if project.sessions.isEmpty {
                 Divider()
                 Button("Remove from Sidebar") { workspace.removeFolder(project.directory) }
@@ -294,7 +296,7 @@ private struct ProjectRow: View {
             .help("New Session in \(project.name)")
         }
         .onHover { isHovering = $0 }
-        .help(project.directory)
+        .help(project.allFolders.map { ($0 as NSString).abbreviatingWithTildeInPath }.joined(separator: "\n"))
     }
 }
 
