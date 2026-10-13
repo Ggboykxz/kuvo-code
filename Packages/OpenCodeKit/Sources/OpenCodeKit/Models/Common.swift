@@ -32,15 +32,31 @@ public struct Page<Item: Decodable & Sendable>: Decodable, Sendable {
 }
 
 /// A model, by provider, with an optional variant (reasoning effort: `low`, `high`, …).
+///
+/// The engine reports a session with no effort chosen as variant `"default"`. That isn't
+/// one of the model's levels, so it's read as `nil` here: the app shows "Default" and
+/// never sends the word back.
 public struct ModelRef: Codable, Sendable, Hashable {
     public var id: String
     public var providerID: String
     public var variant: String?
 
+    /// The engine's name for "no effort chosen".
+    public static let defaultVariant = "default"
+
     public init(id: String, providerID: String, variant: String? = nil) {
         self.id = id
         self.providerID = providerID
-        self.variant = variant
+        self.variant = variant == Self.defaultVariant ? nil : variant
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try container.decode(String.self, forKey: .id),
+            providerID: try container.decode(String.self, forKey: .providerID),
+            variant: try container.decodeIfPresent(String.self, forKey: .variant)
+        )
     }
 
     /// Ignores the variant, for "is this the same model?".
