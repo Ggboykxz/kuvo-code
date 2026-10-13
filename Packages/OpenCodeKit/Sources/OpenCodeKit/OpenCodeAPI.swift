@@ -90,6 +90,12 @@ public struct OpenCodeAPI: Sendable {
         try await get("api/credential", as: DataEnvelope<[Credential]>.self).data
     }
 
+    /// Stored sign-ins with their secrets, for asking providers about usage.
+    /// Keep the result in memory only.
+    public func credentialSecrets() async throws -> [CredentialSecret] {
+        try await get("api/credential", as: DataEnvelope<[CredentialSecret]>.self).data
+    }
+
     public func activateCredential(_ id: String) async throws {
         try await send("POST", "api/credential/\(id.pathEscaped)/activate")
     }

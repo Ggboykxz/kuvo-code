@@ -60,6 +60,7 @@ without clicking:
 | `KUVO_DEMO_CHANGES` | Show the Changes card |
 | `KUVO_DEMO_WINDOW` | Window size, as `WIDTHxHEIGHT` |
 | `KUVO_DEMO_MENU` | Open the `mode` or `model` menu (`models` for its first submenu) |
+| `KUVO_DEMO_USAGE` | Show the menu bar's usage panel in a sheet |
 
 ## Third-party software
 

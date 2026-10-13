@@ -18,6 +18,7 @@ struct MainView: View {
     @AppStorage("sessionsWidth") private var sessionsWidth = 280.0
     @AppStorage("changesWidth") private var changesWidth = 420.0
     @State private var showsProviders = false
+    @State private var showsUsagePreview = false
     @State private var focus = Pane.conversation
     /// The window's content width; the title bar is sized from it.
     @State private var contentWidth: CGFloat = 1200
@@ -99,6 +100,11 @@ struct MainView: View {
         .sheet(isPresented: $showsProviders) {
             ProvidersView()
                 .frame(width: 720, height: 620)
+        }
+        .sheet(isPresented: $showsUsagePreview) {
+            // Debug only (KUVO_DEMO_USAGE): the menu bar panel, where a screenshot can see it.
+            UsageMenu()
+                .environment(app.usage)
         }
         .focusedSceneValue(\.sessionActions, actions)
         .onChange(of: sessionID) { _, id in
@@ -349,6 +355,7 @@ struct MainView: View {
     /// KUVO_DEMO_PROMPT (with KUVO_DEMO_MODEL as "provider/model") starts a session with it.
     /// KUVO_DEMO_PROVIDERS opens Accounts, on that provider's sign-in if it names one.
     /// KUVO_DEMO_APPEARANCE=light|dark forces an appearance. KUVO_DEMO_WINDOW sets the window size.
+    /// KUVO_DEMO_USAGE shows the menu bar's usage panel in a sheet.
     private func runDemoIfAsked() async {
         let environment = ProcessInfo.processInfo.environment
         switch environment["KUVO_DEMO_APPEARANCE"] {
@@ -357,6 +364,7 @@ struct MainView: View {
         default: break
         }
         if environment["KUVO_DEMO_CHANGES"] != nil { showsChanges = true }
+        if workspace.isLoaded, environment["KUVO_DEMO_USAGE"] != nil { showsUsagePreview = true }
         // KUVO_DEMO_WINDOW=WIDTHxHEIGHT resizes the window, for checking narrow layouts.
         if let size = environment["KUVO_DEMO_WINDOW"]?.split(separator: "x").compactMap({ Double($0) }), size.count == 2,
            let window = NSApp.windows.first(where: \.isVisible) {

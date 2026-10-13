@@ -21,6 +21,17 @@ struct KuvoAIApp: App {
                 .environment(delegate.model)
                 .environment(delegate.model.catalog)
         }
+
+        // How much of each connected plan is left (ChatGPT windows, Copilot requests).
+        MenuBarExtra {
+            UsageMenu()
+                .environment(delegate.model.usage)
+                .environment(delegate.model.catalog)
+        } label: {
+            UsageMenuLabel()
+                .environment(delegate.model.usage)
+        }
+        .menuBarExtraStyle(.window)
     }
 }
 
@@ -32,8 +43,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.stop()
     }
 
+    /// The usage meter stays in the menu bar after the window closes.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
+        false
     }
 }
 

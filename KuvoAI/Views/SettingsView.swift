@@ -5,16 +5,19 @@ struct SettingsView: View {
     /// Every tab is this wide, so switching tabs doesn't make the window jump sideways.
     static let width: CGFloat = 680
 
+    /// Which tab is open; other places (the menu bar's "Accounts…") can set it.
+    @AppStorage("settings.tab") private var tab = "general"
+
     var body: some View {
-        TabView {
-            Tab("General", systemImage: "gearshape") {
+        TabView(selection: $tab) {
+            Tab("General", systemImage: "gearshape", value: "general") {
                 GeneralSettings()
             }
-            Tab("Accounts", systemImage: "person.crop.circle") {
+            Tab("Accounts", systemImage: "person.crop.circle", value: "accounts") {
                 ProvidersView(context: .settings)
                     .frame(width: SettingsView.width, height: 600)
             }
-            Tab("Engine", systemImage: "cpu") {
+            Tab("Engine", systemImage: "cpu", value: "engine") {
                 EngineSettings()
             }
         }

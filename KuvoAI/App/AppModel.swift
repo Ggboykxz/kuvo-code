@@ -20,6 +20,7 @@ final class AppModel {
 
     let catalog = Catalog()
     let workspace = Workspace()
+    let usage = UsageStore()
 
     private var server: ServerProcess?
     private var eventTask: Task<Void, Never>?
@@ -64,7 +65,9 @@ final class AppModel {
             self.api = api
             catalog.api = api
             workspace.api = api
+            usage.api = api
             engine = .ready
+            usage.start()
             listen(to: api)
             // In parallel: the catalog can wait on the engine's plugins (and they on a
             // macOS permission prompt); sessions shouldn't wait with it.
@@ -125,6 +128,7 @@ final class AppModel {
                 case .event(let event):
                     catalog.handle(event)
                     workspace.handle(event)
+                    usage.handle(event)
                 }
             }
         }
