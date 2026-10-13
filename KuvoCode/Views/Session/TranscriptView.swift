@@ -88,6 +88,9 @@ struct TranscriptView: View {
                 let sources = notice.instructionSources
                 if !sources.isEmpty, sources.allSatisfy({ $0.contains(ProjectFolders.instructionKey) }) {
                     rows.append(.notice(notice.id, "folder", "Project folders updated"))
+                } else if !sources.isEmpty, sources.allSatisfy({ $0.hasPrefix("core/") }) {
+                    // The engine's own guidance (for the browser tools, say): nothing you set.
+                    break
                 } else {
                     rows.append(.notice(notice.id, "info.circle", notice.description ?? notice.text))
                 }
