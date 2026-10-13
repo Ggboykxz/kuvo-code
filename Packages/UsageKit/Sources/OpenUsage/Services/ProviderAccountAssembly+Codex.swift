@@ -1,0 +1,174 @@
+import Foundation
+
+struct CodexAccountCard: Equatable, Sendable {
+    let id: String
+    let identity: CodexAccountIdentity
+    let displayName: String
+    let authHomes: [String]
+    /// Canonical paths of the account's own Codex homes — never one xswap manages — whose tokens
+    /// OpenUsage may refresh and write back.
+    let writableAuthHomes: [String]
+    let piCredentialSources: [CodexPiCredentialSource]
+    /// pi's usage logs name no account, so they count for the account in pi's `openai-codex` login.
+    let claimsPiUsage: Bool
+}
+
+/// What the Codex account pass found: account cards once more than one account is known, otherwise the
+/// read-only logins the plain `codex` card may fall back to when its only account lives in a sibling
+/// home or in pi.
+struct CodexAccountDiscovery: Equatable, Sendable {
+    var cards: [CodexAccountCard] = []
+    /// The homes the account cards divide between them; unused by the plain card.
+    var historyHomes = CodexHistoryHomes(homes: [], defaultHome: "", registeredOwners: [:])
+    var plainAuthHomes: [String] = []
+    /// The independent homes among `plainAuthHomes`; see `CodexAccountCard.writableAuthHomes`.
+    var plainWritableAuthHomes: [String] = []
+    var plainPiCredentialSources: [CodexPiCredentialSource] = []
+}
+
+extension ProviderAccountAssembly {
+    /// One card per ChatGPT account found across Codex homes, pi logins, Swap slots, and the Keychain.
+    /// A lone account stays on the plain `codex` provider; cards appear once a second account is
+    /// known, or once Swap or the saved registry already made this a multi-account install.
+    static func makeCodexCards(
+        observer: DefaultAccountObserver,
+        accountsStore: ProviderAccountsStore,
+        listDirectories: @escaping @Sendable (String) -> [String] = CodexHomeScanner.listSubdirectories
+    ) async -> CodexAccountDiscovery {
+        let homeDirectory = observer.homeDirectory()
+        let swaps = CodexSwapAccount.discover(
+            environment: observer.environment, files: observer.files, home: homeDirectory
+        )
+        let managedHomes = Set(CodexSwapAccount.managedHomes(
+            environment: observer.environment, files: observer.files, home: homeDirectory
+        ).map { CodexHomeScanner.canonicalHome($0, homeDirectory: homeDirectory) })
+        let homeScan = CodexHomeScanner(
+            environment: observer.environment,
+            files: observer.files,
+            homeDirectory: observer.homeDirectory,
+            listDirectories: listDirectories
+        ).scan(additionalHomes: swaps.map(\.mainHome))
+        let homeLogins = homeScan.logins
+        let piScan = PiCodexLoginScanner(
+            environment: observer.environment, files: observer.files, homeDirectory: observer.homeDirectory
+        ).scan()
+        // Keychain can hold a different default login with no auth.json or saved Swap slot.
+        let auth = CodexAuthStore(environment: observer.environment, files: observer.files,
+                                  keychain: observer.keychain)
+        let keychainIdentity: CodexAccountIdentity? = await loadOffMainActor {
+            guard let state = auth.loadKeychainAuth(), state.hasUsableAccessToken else { return nil }
+            return CodexAccountIdentity(auth: state.auth)
+        }
+        let configuredHomes = Set(CodexHomeScanner.configuredHomes(
+            environment: observer.environment, homeDirectory: homeDirectory
+        ))
+        let hasEstablishedAccounts = accountsStore.records.contains {
+            $0.family == "codex" && $0.identityKey.contains("|")
+        }
+        let knownIdentities = Set(
+            homeLogins.map(\.identity) + piScan.logins.map(\.identity) + swaps.map(\.identity)
+                + [keychainIdentity].compactMap { $0 }
+        )
+        guard !swaps.isEmpty || hasEstablishedAccounts || knownIdentities.count > 1 else {
+            let plainHomes = homeLogins.map(\.home).filter { !configuredHomes.contains($0) }
+            return CodexAccountDiscovery(
+                plainAuthHomes: plainHomes,
+                plainWritableAuthHomes: Set(plainHomes.map { CodexHomeScanner.canonicalHome($0, homeDirectory: homeDirectory) })
+                    .subtracting(managedHomes).sorted(),
+                plainPiCredentialSources: piScan.logins.map {
+                    CodexPiCredentialSource(path: $0.authPath, providerID: $0.providerID)
+                }
+            )
+        }
+
+        var observations: [ProviderAccountsStore.Observation] = []
+        var identities: [CodexAccountIdentity] = []
+        var labels: [String: String] = [:]
+        var namedByTool = Set<String>()
+
+        func label(for identity: CodexAccountIdentity, preferred: String? = nil) -> String {
+            if let preferred = preferred?.nilIfEmpty { return "Codex: \(preferred)" }
+            let workspace = identity.accountID.isEmpty ? "Unknown" : String(identity.accountID.prefix(8))
+            return "Codex: Workspace \(workspace) (\(identity.email ?? identity.accountID))"
+        }
+
+        /// A name the user chose in xswap or pi beats the generic workspace label; the first such name wins.
+        func observe(_ identity: CodexAccountIdentity, label: String, named: Bool = false,
+                     source: ProviderAccountSource) {
+            accountsStore.upgradeCodexIdentity(identity)
+            if let index = observations.firstIndex(where: { $0.identityKey == identity.key }) {
+                if !observations[index].sources.contains(source) { observations[index].sources.append(source) }
+            } else {
+                identities.append(identity)
+                observations.append(.init(family: "codex", identityKey: identity.key,
+                                          label: identity.email, sources: [source]))
+            }
+            if named ? namedByTool.insert(identity.key).inserted : labels[identity.key] == nil {
+                labels[identity.key] = label
+            }
+        }
+
+        var assignedDefault = false
+        for login in homeLogins {
+            let isConfigured = configuredHomes.contains(login.home)
+            let holdsDefault = isConfigured && !assignedDefault
+            if holdsDefault { assignedDefault = true }
+            observe(login.identity, label: label(for: login.identity),
+                    source: .init(kind: isConfigured ? .defaultHome : .codexHome, anchor: login.home,
+                                  holdsDefaultSource: holdsDefault))
+        }
+        // The Keychain login comes before saved slots so it retains the default card on a first launch.
+        if let keychainIdentity {
+            observe(keychainIdentity, label: label(for: keychainIdentity),
+                    source: .init(kind: .defaultHome, anchor: nil, holdsDefaultSource: !assignedDefault))
+            assignedDefault = true
+        }
+        for swap in swaps {
+            observe(swap.identity, label: swap.displayName, named: swap.alias != nil,
+                    source: .init(kind: .codexSwap, anchor: swap.home, holdsDefaultSource: false))
+        }
+        for login in piScan.logins {
+            observe(login.identity, label: label(for: login.identity, preferred: login.label ?? login.identity.email),
+                    named: login.label != nil,
+                    source: .init(kind: .pi, anchor: login.providerID, holdsDefaultSource: false))
+        }
+
+        let records = accountsStore.reconcile(with: observations)
+        func standardized(_ home: String) -> String {
+            CodexHomeScanner.standardizedHome(home, homeDirectory: homeDirectory)
+        }
+        let swapHomes = swaps.flatMap { [$0.mainHome, $0.home] }.map(standardized)
+        let defaultHome = standardized(auth.codexHome() ?? "~/.codex")
+        // xswap's main home follows whoever is signed in there; only its separate account homes keep
+        // the registered owner when their own auth.json is missing.
+        var registeredOwners: [String: CodexAccountIdentity] = [:]
+        for swap in swaps where standardized(swap.home) != standardized(swap.mainHome) {
+            registeredOwners[standardized(swap.home)] = swap.identity
+        }
+        let historyHomes = CodexHistoryHomes(
+            homes: configuredHomes.union(homeLogins.map(\.home)).union(swapHomes).union([defaultHome]).sorted(),
+            defaultHome: defaultHome, registeredOwners: registeredOwners
+        )
+        let piUsageOwner = piScan.logins.first { $0.providerID == PiCodexLoginScanner.providerPrefix }?.identity
+        // Registry order is persistent; observation order follows the current default login.
+        // Even an uncustomized layout must keep its cards in place after a switch and relaunch.
+        let cards = records.compactMap { record -> CodexAccountCard? in
+            guard record.family == "codex", !record.removedTombstone,
+                  let identity = identities.first(where: { $0.key == record.identityKey })
+            else { return nil }
+            let matchingHomes = homeLogins.filter { $0.identity == identity }.map(\.home)
+            let matchingSwapHomes = swaps.filter { $0.identity == identity }.flatMap { [$0.mainHome, $0.home] }
+            let matchingPi = piScan.logins.filter { $0.identity == identity }.map {
+                CodexPiCredentialSource(path: $0.authPath, providerID: $0.providerID)
+            }
+            let writableHomes = Set(matchingHomes.map { CodexHomeScanner.canonicalHome($0, homeDirectory: homeDirectory) })
+                .subtracting(managedHomes)
+            return CodexAccountCard(id: record.id, identity: identity,
+                displayName: labels[identity.key] ?? "Codex",
+                authHomes: Set(matchingHomes + matchingSwapHomes).sorted(),
+                writableAuthHomes: writableHomes.sorted(),
+                piCredentialSources: matchingPi, claimsPiUsage: piUsageOwner == identity)
+        }
+        return CodexAccountDiscovery(cards: cards, historyHomes: historyHomes)
+    }
+}
