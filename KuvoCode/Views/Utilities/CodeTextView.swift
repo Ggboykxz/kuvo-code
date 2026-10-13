@@ -28,6 +28,12 @@ struct CodeTextView: NSViewRepresentable {
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
         scroll.autohidesScrollers = true
+        // It sits in the panel, not under the title bar, so it needs no room for one; and since
+        // views no longer clip by default, the ruler's edge would otherwise draw up over the
+        // file's header.
+        scroll.automaticallyAdjustsContentInsets = false
+        scroll.contentInsets = NSEdgeInsetsZero
+        scroll.clipsToBounds = true
         let ruler = LineNumberRuler(textView: textView, scrollView: scroll)
         scroll.verticalRulerView = ruler
         scroll.hasVerticalRuler = true
