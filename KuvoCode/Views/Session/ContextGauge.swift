@@ -1,0 +1,179 @@
+import OpenCodeKit
+import SwiftUI
+import UsageKit
+
+/// How full the model's context window is, as a small ring with its number. Clicking it says
+/// what the number is, with the plan's limits and what the session has cost so far.
+struct ContextGauge: View {
+    let model: SessionModel
+    @Environment(Catalog.self) private var catalog
+    @State private var showsDetails = false
+
+    var body: some View {
+        if let used, let limit, limit > 0 {
+            let fraction = min(Double(used) / Double(limit), 1)
+            Button { showsDetails.toggle() } label: {
+                // A ring with its number, so it reads as a gauge and not a spinner.
+                HStack(spacing: 5) {
+                    ZStack {
+                        Circle().stroke(.quaternary, lineWidth: 2.5)
+                        Circle()
+                            .trim(from: 0, to: max(fraction, 0.02))
+                            .stroke(fraction > 0.8 ? Color.orange : Color.secondary, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                            .rotationEffect(.degrees(-90))
+                    }
+                    .frame(width: 12, height: 12)
+                    Text(fraction.formatted(.percent.precision(.fractionLength(0))))
+                        .font(.system(size: 11, weight: .medium).monospacedDigit())
+                        .foregroundStyle(fraction > 0.8 ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                }
+                .padding(.horizontal, 6)
+                .frame(height: 24)
+                .contentShape(.rect)
+                .hoverHighlight(in: RoundedRectangle(cornerRadius: 7), selected: showsDetails)
+            }
+            .buttonStyle(.plain)
+            .animation(.ui, value: fraction)
+            .help("Context window: \(used.compactTokens) of \(limit.compactTokens) tokens")
+            .popover(isPresented: $showsDetails, arrowEdge: .bottom) {
+                ContextDetails(used: used, limit: limit, cost: model.session.cost, plan: planLimits) {
+                    showsDetails = false
+                    UsageMenuBar.shared.open(.dashboard)
+                }
+            }
+        }
+    }
+
+    /// What the last step sent and got back is what's in the window now.
+    private var used: Int? {
+        for message in model.transcript.messages.reversed() {
+            if case .assistant(let assistant) = message, let tokens = assistant.tokens {
+                return tokens.input + tokens.cache.read + tokens.cache.write + tokens.output
+            }
+        }
+        return nil
+    }
+
+    private var limit: Int? {
+        catalog.model(model.session.model)?.limit.context
+    }
+
+    /// The limits of the account the session runs on, from the usage tracker in the menu bar.
+    /// Copilot, OpenRouter, Z.ai and OpenCode Go accounts there are the ones connected here.
+    /// ChatGPT and Claude plans are read from Codex's and Claude Code's sign-ins, so they only
+    /// count when the session is signed in to a plan too, not using an API key.
+    private var planLimits: PlanLimits? {
+        guard let id = model.session.model?.providerID, let tracker = Self.trackers[id] else { return nil }
+        if id == "openai" || id == "anthropic" {
+            guard catalog.integrations.first(where: { $0.id == id })?.connections.first?.method == "oauth" else { return nil }
+        }
+        return UsageMenuBar.shared.planLimits(for: tracker)
+    }
+
+    /// The tracker's provider for each engine provider.
+    private static let trackers = [
+        "github-copilot": "copilot",
+        "openrouter": "openrouter",
+        "zai-coding-plan": "zai",
+        "zai": "zai",
+        "opencode-go": "opencode",
+        "openai": "codex",
+        "anthropic": "claude",
+    ]
+}
+
+/// The gauge's popover: the context window, the plan's limits and the session's cost.
+private struct ContextDetails: View {
+    let used: Int
+    let limit: Int
+    let cost: Double
+    let plan: PlanLimits?
+    let openUsage: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 7) {
+                row("Context window", detail: "\(used.compactTokens) / \(limit.compactTokens)", fraction: Double(used) / Double(limit))
+                Text("What the model sees of this session. When it fills up, the conversation is summarized to make room.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let plan {
+                Divider()
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("Usage limits · " + ([plan.providerName, plan.plan].compactMap(\.self).joined(separator: " ")))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Open Usage", systemImage: "arrow.up.right", action: openUsage)
+                            .labelStyle(.iconOnly)
+                            .buttonStyle(.borderless)
+                            .help("Open the usage panel in the menu bar")
+                    }
+                    TimelineView(.everyMinute) { context in
+                        VStack(alignment: .leading, spacing: 12) {
+                            ForEach(plan.limits) { limit in
+                                row(limit.label, detail: limit.resetsAt.map { resets($0, now: context.date) }, fraction: limit.fraction)
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let cost = cost.formattedCost {
+                Divider()
+                HStack {
+                    Text("Cost so far")
+                    Spacer()
+                    Text(cost)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .font(.body)
+        .padding(16)
+        .frame(width: 320)
+    }
+
+    /// A label, its detail and percentage, and a bar under them.
+    private func row(_ label: String, detail: String?, fraction: Double) -> some View {
+        let fraction = min(max(fraction, 0), 1)
+        let tint = fraction > 0.8 ? Color.orange : Color.accentColor
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(label)
+                Spacer()
+                if let detail {
+                    Text(detail)
+                        .foregroundStyle(.secondary)
+                }
+                Text(fraction.formatted(.percent.precision(.fractionLength(0))))
+                    .foregroundStyle(fraction > 0.8 ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+            }
+            .monospacedDigit()
+            Capsule()
+                .fill(.quaternary)
+                .frame(height: 5)
+                .overlay(alignment: .leading) {
+                    GeometryReader { proxy in
+                        Capsule()
+                            .fill(tint)
+                            .frame(width: max(proxy.size.width * fraction, fraction > 0 ? 5 : 0))
+                    }
+                }
+        }
+    }
+
+    /// "Resets in 2 hr, 28 min" within a day, else "Resets Sat 1:00 AM".
+    private func resets(_ date: Date, now: Date) -> String {
+        let seconds = date.timeIntervalSince(now)
+        if seconds >= 24 * 3600 {
+            return "Resets " + date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
+        }
+        let left = Duration.seconds(max(seconds, 60))
+        return "Resets in " + left.formatted(.units(allowed: [.hours, .minutes], width: .abbreviated, maximumUnitCount: 2))
+    }
+}

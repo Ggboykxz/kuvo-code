@@ -90,50 +90,6 @@ private struct BottomStack: View {
     }
 }
 
-/// How full the model's context window is, as a small ring.
-struct ContextGauge: View {
-    let model: SessionModel
-    @Environment(Catalog.self) private var catalog
-
-    var body: some View {
-        if let used, let limit, limit > 0 {
-            let fraction = min(Double(used) / Double(limit), 1)
-            // A ring with its number, so it reads as a gauge and not a spinner.
-            HStack(spacing: 5) {
-                ZStack {
-                    Circle().stroke(.quaternary, lineWidth: 2.5)
-                    Circle()
-                        .trim(from: 0, to: max(fraction, 0.02))
-                        .stroke(fraction > 0.8 ? Color.orange : Color.secondary, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
-                        .rotationEffect(.degrees(-90))
-                }
-                .frame(width: 12, height: 12)
-                Text(fraction.formatted(.percent.precision(.fractionLength(0))))
-                    .font(.system(size: 11, weight: .medium).monospacedDigit())
-                    .foregroundStyle(fraction > 0.8 ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
-            }
-            .padding(.horizontal, 6)
-            .frame(height: 24)
-            .animation(.ui, value: fraction)
-            .help("\(used.compactTokens) of \(limit.compactTokens) tokens of context used" + (model.session.cost.formattedCost.map { " · \($0) so far" } ?? ""))
-        }
-    }
-
-    /// What the last step sent and got back is what's in the window now.
-    private var used: Int? {
-        for message in model.transcript.messages.reversed() {
-            if case .assistant(let assistant) = message, let tokens = assistant.tokens {
-                return tokens.input + tokens.cache.read + tokens.cache.write + tokens.output
-            }
-        }
-        return nil
-    }
-
-    private var limit: Int? {
-        catalog.model(model.session.model)?.limit.context
-    }
-}
-
 /// A new conversation, before its first message creates it on the server.
 struct DraftSessionView: View {
     let directory: String
