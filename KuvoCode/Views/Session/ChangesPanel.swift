@@ -191,8 +191,11 @@ private struct FileHeader: View {
         .background(scheme == .dark ? Color(white: 0.21) : .white)
         .overlay(alignment: .bottom) { Divider() }
         .contentShape(.rect)
-        .onTapGesture(perform: toggle)
+        .onTapGesture { if hasBody { toggle() } }
     }
+
+    /// Binary files other than pictures have nothing to open.
+    private var hasBody: Bool { !file.isBinary || file.isImage }
 
     /// "Sources/Models/" quiet, "Message.swift" bold.
     private var pathText: Text {
@@ -235,12 +238,11 @@ private struct FileBody: View {
     let deleteComment: (ReviewComment) -> Void
 
     var body: some View {
-        if file.isBinary {
-            Text("Binary file")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(14)
+        if file.isImage {
+            ImageDiff(file: file)
+        } else if file.isBinary {
+            // Nothing to show line by line; the header says what changed.
+            EmptyView()
         } else if file.lines.isEmpty {
             Text(file.status == .renamed ? "Renamed without changes" : "No content changes")
                 .font(.callout)
@@ -275,6 +277,71 @@ private struct FileBody: View {
                 }
             }
         }
+    }
+}
+
+/// A changed picture: before and after side by side, or just the one that exists.
+private struct ImageDiff: View {
+    let file: ChangedFile
+    @State private var images: Pair?
+
+    struct Pair { var old: NSImage?; var new: NSImage? }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            if let images {
+                if let old = images.old { side(images.new == nil ? nil : "Before", old, edge: .deletions) }
+                if let new = images.new { side(images.old == nil ? nil : "After", new, edge: .additions) }
+                if images.old == nil && images.new == nil {
+                    Text("Couldn't read this picture")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                ProgressView().controlSize(.small)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .task(id: file) { images = await Self.load(file) }
+    }
+
+    private func side(_ label: String?, _ image: NSImage, edge: Color) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let label {
+                Text(label)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(edge)
+            }
+            Image(nsImage: image)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .frame(maxWidth: 260, maxHeight: 220, alignment: .topLeading)
+                .background(Color.primary.opacity(0.04))
+                .clipShape(.rect(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(edge.opacity(0.6), lineWidth: 1))
+            if let rep = image.representations.first, rep.pixelsWide > 0 {
+                Text("\(rep.pixelsWide) × \(rep.pixelsHigh)")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// Each side from git when it's committed or staged, otherwise from disk.
+    private static func load(_ file: ChangedFile) async -> Pair {
+        await Task.detached {
+            func read(_ object: String?, disk: URL?) -> NSImage? {
+                if let object, let root = file.root, let data = Git.data(["show", object], in: root) { return NSImage(data: data) }
+                if let disk, FileManager.default.fileExists(atPath: disk.path) { return NSImage(contentsOf: disk) }
+                return nil
+            }
+            return Pair(
+                old: file.status == .added ? nil : read(file.oldObject, disk: nil),
+                new: file.status == .deleted ? nil : read(file.newObject, disk: file.url)
+            )
+        }.value
     }
 }
 

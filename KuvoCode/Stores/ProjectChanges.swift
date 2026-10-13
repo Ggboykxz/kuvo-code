@@ -1,5 +1,6 @@
 import Foundation
 import OpenCodeKit
+import UniformTypeIdentifiers
 
 /// One changed file, parsed from a unified diff: every line it shows, with its numbers
 /// on each side. Git is asked for the whole file as context, so unchanged stretches can
@@ -15,8 +16,18 @@ nonisolated struct ChangedFile: Identifiable, Hashable, Sendable {
     var lines: [DiffLine] = []
     /// Where the file is on disk.
     var url: URL
+    /// The repository, and git's names for the two versions ("HEAD:path", ":path" for
+    /// the index); nil reads that side from disk, or means there's none.
+    var root: String?
+    var oldObject: String?
+    var newObject: String?
 
     var id: String { path }
+
+    /// Pictures get a before and after instead of lines.
+    var isImage: Bool {
+        UTType(filenameExtension: (path as NSString).pathExtension)?.conforms(to: .image) == true
+    }
     var additions: Int { lines.count { $0.kind == .added } }
     var deletions: Int { lines.count { $0.kind == .removed } }
 }
@@ -104,7 +115,14 @@ nonisolated enum Git {
         }
         arguments += ["--", limit.isEmpty ? "." : limit]
         guard let patch = run(arguments, in: root) else { return nil }
-        var files = DiffParser.files(from: patch, root: root)
+        var files = DiffParser.files(from: patch, root: root).map { file in
+            // Where each side lives, for showing pictures.
+            var file = file
+            file.root = root
+            if file.status != .added { file.oldObject = (scope == .unstaged ? ":" : base + ":") + (file.oldPath ?? file.path) }
+            if scope == .staged, file.status != .deleted { file.newObject = ":" + file.path }
+            return file
+        }
         if scope != .staged {
             let untracked = run(["-c", "core.quotepath=off", "ls-files", "--others", "--exclude-standard", "-z", "--", limit.isEmpty ? "." : limit], in: root) ?? ""
             for path in untracked.split(separator: "\0").map(String.init) where !files.contains(where: { $0.path == path }) {
@@ -118,6 +136,7 @@ nonisolated enum Git {
     private static func newFile(_ path: String, root: String) -> ChangedFile {
         let url = URL(filePath: root).appending(path: path)
         var file = ChangedFile(path: path, status: .added, url: url)
+        file.root = root
         let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
         guard size <= 2_000_000, let data = try? Data(contentsOf: url), !data.contains(0),
               let text = String(data: data, encoding: .utf8) else {
@@ -139,6 +158,11 @@ nonisolated enum Git {
 
     /// Runs git and returns its output, or nil when it fails.
     static func run(_ arguments: [String], in directory: String) -> String? {
+        data(arguments, in: directory).map { String(decoding: $0, as: UTF8.self) }
+    }
+
+    /// Runs git and returns its raw output (for file contents), or nil when it fails.
+    static func data(_ arguments: [String], in directory: String) -> Data? {
         let process = Process()
         process.executableURL = URL(filePath: "/usr/bin/git")
         process.arguments = arguments
@@ -153,7 +177,7 @@ nonisolated enum Git {
         let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         guard process.terminationStatus == 0 else { return nil }
-        return String(decoding: data, as: UTF8.self)
+        return data
     }
 }
 
