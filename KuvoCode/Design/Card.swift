@@ -8,6 +8,8 @@ struct Card<Icon: View, Actions: View, Content: View>: View {
     var title: String
     var detail: String?
     var isFocused = true
+    /// The sidebar has no header bar: its first row is its title.
+    var showsHeader = true
     @ViewBuilder var icon: () -> Icon
     @ViewBuilder var actions: () -> Actions
     @ViewBuilder var content: () -> Content
@@ -16,30 +18,7 @@ struct Card<Icon: View, Actions: View, Content: View>: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                icon()
-                    .frame(width: 16, height: 16)
-                    .foregroundStyle(isFocused ? .primary : .secondary)
-                HStack(spacing: 0) {
-                    Text(title)
-                    if let detail {
-                        Text(" | " + detail)
-                    }
-                }
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(isFocused ? .primary : .secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                Spacer(minLength: 8)
-                HStack(spacing: 2) {
-                    actions()
-                }
-                .buttonStyle(CardActionStyle())
-            }
-            .padding(.leading, 14)
-            .padding(.trailing, 8)
-            .frame(height: 38)
-
+            if showsHeader { header }
             content()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -60,6 +39,32 @@ struct Card<Icon: View, Actions: View, Content: View>: View {
         .animation(.ui, value: isFocused)
     }
 
+    private var header: some View {
+        HStack(spacing: 8) {
+            icon()
+                .frame(width: 16, height: 16)
+                .foregroundStyle(isFocused ? .primary : .secondary)
+            HStack(spacing: 0) {
+                Text(title)
+                if let detail {
+                    Text(" | " + detail)
+                }
+            }
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(isFocused ? .primary : .secondary)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            Spacer(minLength: 8)
+            HStack(spacing: 2) {
+                actions()
+            }
+            .buttonStyle(CardActionStyle())
+        }
+        .padding(.leading, 14)
+        .padding(.trailing, 8)
+        .frame(height: 38)
+    }
+
     private var fill: Color {
         switch (scheme, isFocused) {
         case (.dark, true): Color(white: 0.21, opacity: 0.92)
@@ -71,8 +76,8 @@ struct Card<Icon: View, Actions: View, Content: View>: View {
 }
 
 extension Card where Actions == EmptyView {
-    init(title: String, detail: String? = nil, isFocused: Bool = true, @ViewBuilder icon: @escaping () -> Icon, @ViewBuilder content: @escaping () -> Content) {
-        self.init(title: title, detail: detail, isFocused: isFocused, icon: icon, actions: { EmptyView() }, content: content)
+    init(title: String, detail: String? = nil, isFocused: Bool = true, showsHeader: Bool = true, @ViewBuilder icon: @escaping () -> Icon, @ViewBuilder content: @escaping () -> Content) {
+        self.init(title: title, detail: detail, isFocused: isFocused, showsHeader: showsHeader, icon: icon, actions: { EmptyView() }, content: content)
     }
 }
 

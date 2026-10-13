@@ -176,11 +176,8 @@ struct MainView: View {
     // MARK: Cards
 
     private var sessionsCard: some View {
-        Card(title: "Sessions", isFocused: focus == .sessions) {
-            Image(systemName: "rectangle.stack")
-        } actions: {
-            Button("Open Folder…", systemImage: "folder.badge.plus", action: openFolder)
-                .help("Open Folder… (⌘O)")
+        Card(title: "Sessions", isFocused: focus == .sessions, showsHeader: false) {
+            EmptyView()
         } content: {
             SidebarView(
                 selection: Binding(get: { selection }, set: { id in if let id { openTab(id) } }),
