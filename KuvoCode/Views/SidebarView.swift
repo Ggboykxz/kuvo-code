@@ -26,6 +26,8 @@ struct SidebarView: View {
 
     private enum Place { case project, recents }
     @State private var newTitle = ""
+    /// Sessions whose title or project has this, instead of the usual lists.
+    @State private var search = ""
 
     /// A project lists this many sessions until you ask for the rest.
     private static let sessionsPerProject = 5
@@ -49,6 +51,21 @@ struct SidebarView: View {
                     }
                     .help("New Session (⌘N)")
 
+                    SearchRow(text: $search)
+
+                    if !search.isEmpty {
+                        SectionHeader(title: "Results") { EmptyView() }
+                        if results.isEmpty {
+                            Text("No sessions match.")
+                                .font(.system(size: 13))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                        }
+                        ForEach(results) { session in
+                            sessionRow(session, in: .recents)
+                        }
+                    } else {
                     SectionHeader(title: "Projects") {
                         Button(action: newProject) {
                             Image(systemName: "plus")
@@ -76,6 +93,7 @@ struct SidebarView: View {
                         ForEach(recents) { session in
                             sessionRow(session, in: .recents)
                         }
+                    }
                     }
                 }
                 .padding(.horizontal, 10)
@@ -169,6 +187,16 @@ struct SidebarView: View {
 
     // MARK: Sessions
 
+    /// Sessions whose title or project name has the search, newest first.
+    private var results: [Session] {
+        let query = search.trimmingCharacters(in: .whitespaces)
+        return workspace.projects.flatMap { project in
+            let inName = project.name.localizedStandardContains(query)
+            return project.sessions.filter { inName || ($0.title ?? "New Session").localizedStandardContains(query) }
+        }
+        .sorted { $0.time.updated > $1.time.updated }
+    }
+
     private var recents: [Session] {
         Array(workspace.projects.flatMap(\.sessions).sorted { $0.time.updated > $1.time.updated }.prefix(Self.recentCount))
     }
@@ -207,6 +235,42 @@ struct SidebarView: View {
 }
 
 // MARK: - Rows
+
+/// Finding a session: a quiet field shaped like a row, cleared with its button or Escape.
+private struct SearchRow: View {
+    @Binding var text: String
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .frame(width: SidebarMetrics.iconWidth)
+            TextField("Search", text: $text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 14))
+                .focused($isFocused)
+                .onExitCommand { text = "" }
+            if !text.isEmpty {
+                Button {
+                    text = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.tertiary)
+                .help("Clear")
+            }
+        }
+        .padding(.horizontal, 10)
+        .frame(height: SidebarMetrics.rowHeight)
+        .background(Color.primary.opacity(isFocused ? 0.07 : 0.04), in: .rect(cornerRadius: 8))
+        .contentShape(.rect)
+        .onTapGesture { isFocused = true }
+        .padding(.vertical, 4)
+    }
+}
 
 private enum SidebarMetrics {
     static let rowHeight: CGFloat = 32
