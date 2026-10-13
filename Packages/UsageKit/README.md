@@ -24,6 +24,10 @@ here.
   Code are used. OpenCode also reads the databases of Kuvo Code's private engine, so Kuvo Code's own
   runs count toward spend, and its OpenCode Go key is found there.
 
+- **A Bars style for the dashboard**, the default (`Views/UsageBarsView.swift`): one compact bar
+  per provider in its brand color, showing the limit closest to running out, with its full card a
+  click away, and today's spend as one bar on top. Settings › Style switches back to the cards.
+
 Everything else, including providers, pricing, pace, layout and the views, is upstream code. Kuvo
 Code-specific code lives in `Sources/UsageKit/Embedding` and `Support/HostApp.swift`. Other edits are
 kept small and marked "fork addition" where they aren't obvious.

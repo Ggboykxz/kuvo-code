@@ -16,6 +16,8 @@ struct WidgetGroupedListView: View {
     @Environment(\.colorScheme) private var colorScheme
     let reorderSpaceName: String
     @Binding var reorderLift: ReorderLift?
+    /// Shows only this provider's card, without its header: what a bar in the Bars style opens into.
+    var onlyProviderID: String?
 
     @State private var frameStore = ReorderFrameStore()
     @State private var activeProviderID: String?
@@ -28,7 +30,7 @@ struct WidgetGroupedListView: View {
         // Provider-section spacing is noticeably wider than the in-card row rhythm (so groups
         // still read as groups); the exact step comes from the density setting.
         VStack(alignment: .leading, spacing: density.sectionSpacing) {
-            ForEach(layout.displayGroups) { group in
+            ForEach(layout.displayGroups.filter { onlyProviderID == nil || $0.provider.id == onlyProviderID }) { group in
                 section(group)
             }
         }
@@ -39,7 +41,7 @@ struct WidgetGroupedListView: View {
 
     private func section(_ group: ProviderGroup) -> some View {
         VStack(alignment: .leading, spacing: density.headerToCardSpacing) {
-            header(group)
+            if onlyProviderID == nil { header(group) }
             container(group)
         }
         .opacity(activeProviderID == group.provider.id ? 0 : 1)

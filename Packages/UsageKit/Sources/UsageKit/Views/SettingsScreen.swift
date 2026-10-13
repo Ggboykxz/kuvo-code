@@ -18,6 +18,8 @@ struct SettingsScreen: View {
     @AppStorage(AppearanceSetting.key) private var appearance = AppearanceSetting.system
     @AppStorage(TimeFormatSetting.key) private var timeFormat = TimeFormatSetting.auto
     @AppStorage(DensitySetting.key) private var density = DensitySetting.regular
+    @AppStorage(DashboardStyle.key) private var dashboardStyle = DashboardStyle.bars
+    @AppStorage(BarMetricSetting.key) private var barMetric = BarMetricSetting.tightest
     @AppStorage(ReduceAnimationsSetting.key) private var reduceAnimations = ReduceAnimationsSetting.fallback
     @AppStorage(LogLevelSetting.key) private var logLevel = LogLevelSetting.fallback
     /// Surfaced under the Advanced rows when copying the path or revealing the file fails.
@@ -123,6 +125,14 @@ struct SettingsScreen: View {
                     .onChange(of: appearance) {
                         AppearanceSetting.applyCurrent()
                     }
+            }
+            row("Style") {
+                picker($dashboardStyle, options: DashboardStyle.allCases, label: \.label)
+            }
+            if dashboardStyle == .bars {
+                row("Each Bar Shows") {
+                    picker($barMetric, options: BarMetricSetting.allCases, label: \.label)
+                }
             }
             row("Density") {
                 picker($density, options: DensitySetting.allCases, label: \.label)

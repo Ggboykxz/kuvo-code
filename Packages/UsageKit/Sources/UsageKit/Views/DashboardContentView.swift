@@ -14,6 +14,7 @@ struct DashboardContentView: View {
 
     @AppStorage(DensitySetting.key) private var density = DensitySetting.regular
     @AppStorage(TotalSpendSetting.key) private var showTotalSpend = true
+    @AppStorage(DashboardStyle.key) private var style = DashboardStyle.bars
 
     var body: some View {
         PopoverScrollView {
@@ -38,6 +39,15 @@ struct DashboardContentView: View {
 
     @ViewBuilder
     private var widgetContent: some View {
+        if style == .bars, !layout.displayGroups.isEmpty {
+            UsageBarsView(reorderSpaceName: reorderSpaceName, reorderLift: $reorderLift)
+        } else {
+            cardContent
+        }
+    }
+
+    @ViewBuilder
+    private var cardContent: some View {
         // The cross-provider Total Spend ring stays visible whenever the user allows it and an enabled
         // provider can track spend, even before fresh data arrives or when every metric row is hidden.
         if showTotalSpend, layout.hasSpendCapableProvider {
