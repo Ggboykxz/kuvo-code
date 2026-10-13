@@ -53,12 +53,15 @@ struct TabStrip: View {
                 TabButton(tab: tab, isActive: isActive, close: { close(tab.id) }) {
                     withAnimation(.ui) { selection = tab.id }
                 }
-                .contextMenu {
-                    Button("Close Tab") { close(tab.id) }
-                    Button("Close Other Tabs") { closeAll(tab.id) }
-                        .disabled(tabs.count < 2)
-                    Divider()
-                    Button("Close All Tabs") { closeAll(nil) }
+                .rightClickMenu {
+                    let others = ActionItem("Close Other Tabs") { closeAll(tab.id) }
+                    others.isEnabled = tabs.count > 1
+                    return [
+                        ActionItem("Close Tab") { close(tab.id) },
+                        others,
+                        .separator(),
+                        ActionItem("Close All Tabs") { closeAll(nil) },
+                    ]
                 }
                 .background {
                     if isActive {
