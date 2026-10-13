@@ -24,6 +24,8 @@ here.
   Code are used. OpenCode also reads the databases of Kuvo Code's private engine, so Kuvo Code's own
   runs count toward spend, and its OpenCode Go key is found there.
 
+- **Plan limits for the host** (`Embedding/PlanLimits.swift`): the latest limits of one provider,
+  read from what the panel already has, for Kuvo Code to show beside a session.
 - **API keys pasted into the panel go into the Keychain** (`Providers/APIKeySecrets.swift`), not a
   JSON file; a key an earlier version saved in a file moves there the next time it's read.
 - **A Bars style for the dashboard**, the default (`Views/UsageBarsView.swift`): one compact bar

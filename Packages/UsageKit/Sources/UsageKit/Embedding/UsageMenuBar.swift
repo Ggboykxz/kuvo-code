@@ -10,7 +10,7 @@ import AppKit
 public final class UsageMenuBar {
     public static let shared = UsageMenuBar()
 
-    private var container: AppContainer?
+    private(set) var container: AppContainer?
     private var statusItemController: StatusItemController?
     private var welcome: FirstLaunchWindowController?
     private var openHost: (@MainActor () -> Void)?
