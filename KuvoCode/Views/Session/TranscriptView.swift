@@ -19,7 +19,8 @@ struct TranscriptView: View {
             }
             .padding(.horizontal, Metrics.gutter)
             .padding(.top, 24)
-            .padding(.bottom, 12)
+            // Room under the last reply, so it doesn't sit on the composer.
+            .padding(.bottom, 32)
             .readableColumn()
             .animation(.ui, value: rows.map(\.id))
         }
