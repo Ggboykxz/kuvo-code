@@ -16,7 +16,12 @@ struct SidebarView: View {
     @AppStorage("collapsedProjects") private var collapsedStorage = ""
     /// Projects showing all their sessions instead of the latest few.
     @State private var showsAll: Set<String> = []
+    /// Where the open session was picked from. A session shows in its project and in
+    /// Recents; only the row you clicked is highlighted (both open the same tab).
+    @State private var pickedIn: (place: Place, id: String)?
     @State private var renaming: Session?
+
+    private enum Place { case project, recents }
     @State private var newTitle = ""
 
     /// A project lists this many sessions until you ask for the rest.
@@ -66,7 +71,7 @@ struct SidebarView: View {
                     if !recents.isEmpty {
                         SectionHeader(title: "Recents") { EmptyView() }
                         ForEach(recents) { session in
-                            sessionRow(session, indented: false)
+                            sessionRow(session, in: .recents)
                         }
                     }
                 }
@@ -118,7 +123,7 @@ struct SidebarView: View {
             }
             let all = showsAll.contains(project.directory)
             ForEach(all ? project.sessions : Array(project.sessions.prefix(Self.sessionsPerProject))) { session in
-                sessionRow(session, indented: true)
+                sessionRow(session, in: .project)
             }
             if project.sessions.count > Self.sessionsPerProject {
                 SidebarRow(isSelected: false, indented: true, action: {
@@ -151,8 +156,18 @@ struct SidebarView: View {
         Array(workspace.projects.flatMap(\.sessions).sorted { $0.time.updated > $1.time.updated }.prefix(Self.recentCount))
     }
 
-    private func sessionRow(_ session: Session, indented: Bool) -> some View {
-        SidebarRow(isSelected: selection == session.id, indented: indented, action: { selection = session.id }) {
+    /// Highlighted where it was picked; picked elsewhere (a tab, a new session), in its project.
+    private func isHighlighted(_ id: String, in place: Place) -> Bool {
+        guard selection == id else { return false }
+        if let pickedIn, pickedIn.id == id { return pickedIn.place == place }
+        return place == .project
+    }
+
+    private func sessionRow(_ session: Session, in place: Place) -> some View {
+        SidebarRow(isSelected: isHighlighted(session.id, in: place), indented: place == .project, action: {
+            pickedIn = (place, session.id)
+            selection = session.id
+        }) {
             EmptyView()
         } title: {
             Text(session.title ?? "New Session")
