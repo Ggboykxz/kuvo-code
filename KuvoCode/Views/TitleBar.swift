@@ -41,6 +41,8 @@ struct TabStrip: View {
     let tabs: [TabItem]
     @Binding var selection: String?
     let close: (String) -> Void
+    /// Closes every tab except the given one, or all of them when it's nil.
+    let closeAll: (_ except: String?) -> Void
 
     @Namespace private var pill
 
@@ -50,6 +52,13 @@ struct TabStrip: View {
                 let isActive = tab.id == selection
                 TabButton(tab: tab, isActive: isActive, close: { close(tab.id) }) {
                     withAnimation(.ui) { selection = tab.id }
+                }
+                .contextMenu {
+                    Button("Close Tab") { close(tab.id) }
+                    Button("Close Other Tabs") { closeAll(tab.id) }
+                        .disabled(tabs.count < 2)
+                    Divider()
+                    Button("Close All Tabs") { closeAll(nil) }
                 }
                 .background {
                     if isActive {

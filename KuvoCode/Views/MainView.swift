@@ -130,7 +130,7 @@ struct MainView: View {
                     showsSidebar: $showsSidebar
                 )
                 if !tabItems.isEmpty {
-                    TabStrip(tabs: tabItems, selection: $selection, close: closeTab)
+                    TabStrip(tabs: tabItems, selection: $selection, close: closeTab, closeAll: closeTabs(except:))
                 }
             }
             // A width from the window (minus the traffic lights and the Changes button), so a
@@ -271,6 +271,14 @@ struct MainView: View {
             if selection == key {
                 selection = tabs.indices.contains(index) ? tabs[index] : tabs.last
             }
+        }
+    }
+
+    /// Closes every tab but `key`, or all of them when it's nil.
+    private func closeTabs(except key: String?) {
+        withAnimation(.ui) {
+            tabs = tabs.filter { $0 == key }
+            selection = key
         }
     }
 
