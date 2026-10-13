@@ -54,14 +54,17 @@ struct OpenRouterAuthStore: Sendable {
 
     init(
         files: TextFileAccessing = LocalTextFileAccessor(),
-        environment: EnvironmentReading = ProcessEnvironmentReader()
+        environment: EnvironmentReading = ProcessEnvironmentReader(),
+        secrets: any APIKeySecrets = KeychainAPIKeySecrets()
     ) {
         store = UserAPIKeyStore(
             configPaths: Self.configPaths,
             environmentNames: Self.environmentNames,
+            secretAccount: "openrouter",
             hostIntegrationIDs: ["openrouter"],
             files: files,
             environment: environment,
+            secrets: secrets,
             makeError: { OpenRouterAuthError($0) }
         )
     }

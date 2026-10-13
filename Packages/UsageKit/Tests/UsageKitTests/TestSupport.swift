@@ -581,3 +581,16 @@ extension HTTPRequest {
     /// A regular Claude usage read, not the reset-grants check.
     var isClaudeUsagePoll: Bool { url.path.hasSuffix("/api/oauth/usage") && !isClaudeResetGrantsCheck }
 }
+
+/// Keys "in the Keychain" for tests, so no test reads or writes the real one.
+final class MemoryAPIKeySecrets: APIKeySecrets, @unchecked Sendable {
+    var values: [String: String]
+
+    init(_ values: [String: String] = [:]) {
+        self.values = values
+    }
+
+    func read(_ account: String) -> String? { values[account] }
+    func write(_ account: String, _ value: String) throws { values[account] = value }
+    func delete(_ account: String) throws { values.removeValue(forKey: account) }
+}

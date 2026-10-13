@@ -5,8 +5,9 @@ import SwiftUI
 /// showing a muted source hint; the eye reveals the real key; "Override With a Custom Key" flips the
 /// same field to editable for a new key; a leading clear button clears a saved/override key.
 ///
-/// A saved key writes to the config file the auth store already reads, and config > env — so "save" is
-/// also "override the env key", and clearing a saved override falls back to the env key or to none.
+/// A saved key goes into the Keychain (fork addition; upstream wrote the config file), which wins over
+/// the environment — so "save" is also "override the env key", and clearing a saved override falls back
+/// to the env key or to none.
 /// After any change the card clears the provider's failure backoff and forces a refresh so the
 /// dashboard updates immediately.
 struct APIKeysSection: View {

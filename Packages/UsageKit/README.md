@@ -24,6 +24,8 @@ here.
   Code are used. OpenCode also reads the databases of Kuvo Code's private engine, so Kuvo Code's own
   runs count toward spend, and its OpenCode Go key is found there.
 
+- **API keys pasted into the panel go into the Keychain** (`Providers/APIKeySecrets.swift`), not a
+  JSON file; a key an earlier version saved in a file moves there the next time it's read.
 - **A Bars style for the dashboard**, the default (`Views/UsageBarsView.swift`): one compact bar
   per provider in a pastel of its brand color, with thin monospaced labels, showing the limit closest to running out, with its full card a
   click away, and today's spend as one bar on top. Settings › Style switches back to the cards.

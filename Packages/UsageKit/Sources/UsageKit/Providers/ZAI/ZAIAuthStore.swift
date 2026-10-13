@@ -58,14 +58,17 @@ struct ZAIAuthStore: Sendable {
 
     init(
         files: TextFileAccessing = LocalTextFileAccessor(),
-        environment: EnvironmentReading = ProcessEnvironmentReader()
+        environment: EnvironmentReading = ProcessEnvironmentReader(),
+        secrets: any APIKeySecrets = KeychainAPIKeySecrets()
     ) {
         store = UserAPIKeyStore(
             configPaths: Self.configPaths,
             environmentNames: Self.environmentNames,
+            secretAccount: "zai",
             hostIntegrationIDs: ["zai-coding-plan", "zai"],
             files: files,
             environment: environment,
+            secrets: secrets,
             makeError: { ZAIAuthError($0) }
         )
     }

@@ -57,7 +57,8 @@ final class ZAIQuotaValidationProviderTests: XCTestCase {
         let provider = ZAIProvider(
             authStore: ZAIAuthStore(
                 files: FakeFiles(),
-                environment: FakeEnvironment(["ZAI_API_KEY": "zai-test"])
+                environment: FakeEnvironment(["ZAI_API_KEY": "zai-test"]),
+                secrets: MemoryAPIKeySecrets()
             ),
             usageClient: ZAIUsageClient(http: RoutingHTTPClient { request in
                 if request.url == ZAIUsageClient.quotaURL {

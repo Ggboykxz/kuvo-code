@@ -1,7 +1,8 @@
 import Foundation
 
-/// A user-supplied API key already on the machine — an environment variable or a small JSON/plain-text
-/// config file — for providers with no companion CLI/app that stashes a credential (OpenRouter, Z.ai).
+/// A user-supplied API key already on the machine — a key pasted into the panel (kept in the Keychain),
+/// an environment variable or a small JSON/plain-text config file — for providers with no companion
+/// CLI/app that stashes a credential (OpenRouter, Z.ai).
 /// The full read / status / save / delete behavior lives here so each such provider is a thin wrapper
 /// over its own config paths, env-var names, and error messages instead of a line-for-line copy.
 ///
@@ -13,25 +14,33 @@ struct UserAPIKeyStore: Sendable {
     /// A save/delete failure the wrapper maps to its provider's own error, preserving the user-facing message.
     enum Failure { case missingKey, saveFailed, deleteFailed }
 
+    /// Config files read for a key, in order. The first is the host app's own file, where earlier
+    /// versions saved pasted keys; it's moved into the Keychain when found (fork addition).
     let configPaths: [String]
     let environmentNames: [String]
+    /// The provider's ID, naming its Keychain item (fork addition).
+    let secretAccount: String
     /// The host app's integration IDs for this provider, whose connected key comes after a saved key
     /// and before the environment (fork addition).
     var hostIntegrationIDs: [String] = []
     var files: TextFileAccessing
     var environment: EnvironmentReading
+    var secrets: any APIKeySecrets
     let makeError: @Sendable (Failure) -> Error
 
-    /// Config file first, environment second: the config file is the path a user edits to rotate or
-    /// replace the key, so it wins over a stale env value an old `launchctl setenv` may have left behind.
+    /// A pasted key first, then a config file, then the host app's account, then the environment: the
+    /// key a user saved or edited on purpose wins over a stale env value an old `launchctl setenv` may
+    /// have left behind.
     func loadKey() -> String? {
-        keyFromConfigFile() ?? keyFromHostApp() ?? keyFromEnvironment()
+        moveSavedFileToKeychain()
+        return keyFromKeychain() ?? keyFromConfigFile() ?? keyFromHostApp() ?? keyFromEnvironment()
     }
 
     /// Which combination of sources currently holds a key — drives the four-state per-provider API-key
     /// editor. A saved key plus an environment key is `overrideActive` because config wins.
     func keyStatus() -> APIKeyStatus {
-        let hasConfig = keyFromConfigFile() != nil
+        moveSavedFileToKeychain()
+        let hasConfig = keyFromKeychain() != nil || keyFromConfigFile() != nil
         let hasHost = keyFromHostApp() != nil
         let hasEnv = keyFromEnvironment() != nil
         switch (hasConfig, hasHost || hasEnv) {
@@ -42,24 +51,31 @@ struct UserAPIKeyStore: Sendable {
         }
     }
 
-    /// Persist `key` to the primary config file (as JSON `{"apiKey":"…"}`), which wins over a stale env
-    /// var — so this is also the "override" path. Empty input is rejected as `.missingKey`.
+    /// Keep `key` in the Keychain (fork addition: upstream wrote it to the primary config file), where it
+    /// wins over a stale env var — so this is also the "override" path. Empty input is rejected as
+    /// `.missingKey`.
     func saveKey(_ key: String) throws {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw makeError(.missingKey) }
-        let data = try JSONSerialization.data(withJSONObject: ["apiKey": trimmed], options: [.sortedKeys])
-        guard let text = String(data: data, encoding: .utf8) else { throw makeError(.saveFailed) }
         do {
-            try files.writeText(configPaths[0], text)
+            try secrets.write(secretAccount, trimmed)
         } catch {
-            AppLog.error(.auth, "save API key to \(configPaths[0]) failed: \(error.localizedDescription)")
+            AppLog.error(.auth, "save \(secretAccount) API key to the Keychain failed: \(error)")
             throw makeError(.saveFailed)
         }
+        // A key an earlier version saved in a file would otherwise linger beside it.
+        if files.exists(configPaths[0]) { try? files.remove(configPaths[0]) }
     }
 
     /// Remove the saved key from every config path (not just the primary), so clearing truly clears it —
     /// otherwise a key in an alternate path would resurface. A missing file is a no-op.
     func deleteKey() throws {
+        do {
+            try secrets.delete(secretAccount)
+        } catch {
+            AppLog.error(.auth, "delete \(secretAccount) API key from the Keychain failed: \(error)")
+            throw makeError(.deleteFailed)
+        }
         for path in configPaths {
             guard files.exists(path) else { continue }
             do {
@@ -69,6 +85,22 @@ struct UserAPIKeyStore: Sendable {
                 throw makeError(.deleteFailed)
             }
         }
+    }
+
+    private func keyFromKeychain() -> String? {
+        secrets.read(secretAccount)
+    }
+
+    /// Earlier versions saved a pasted key in the host app's own config file, as plain text. Move it into
+    /// the Keychain once, and remove the file only after the Keychain has the key.
+    private func moveSavedFileToKeychain() {
+        let path = configPaths[0]
+        guard files.exists(path) else { return }
+        if keyFromKeychain() == nil {
+            guard let text = try? files.readText(path), let key = Self.keyFromConfigText(text),
+                  (try? secrets.write(secretAccount, key)) != nil else { return }
+        }
+        try? files.remove(path)
     }
 
     private func keyFromHostApp() -> String? {

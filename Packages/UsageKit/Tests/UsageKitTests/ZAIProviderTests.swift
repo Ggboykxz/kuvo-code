@@ -27,7 +27,7 @@ final class ZAIAuthStoreTests: XCTestCase {
         ]
 
         for entry in cases {
-            let store = ZAIAuthStore(files: FakeFiles(), environment: FakeEnvironment(entry.environment))
+            let store = ZAIAuthStore(files: FakeFiles(), environment: FakeEnvironment(entry.environment), secrets: MemoryAPIKeySecrets())
             XCTAssertEqual(store.loadAPIKey()?.apiKey, entry.expected)
         }
     }
@@ -39,31 +39,44 @@ final class ZAIAuthStoreTests: XCTestCase {
         ]
 
         for (path, content, expected) in cases {
-            let store = ZAIAuthStore(files: FakeFiles([path: content]), environment: FakeEnvironment())
+            let store = ZAIAuthStore(files: FakeFiles([path: content]), environment: FakeEnvironment(), secrets: MemoryAPIKeySecrets())
             XCTAssertEqual(store.loadAPIKey()?.apiKey, expected, path)
         }
     }
 
     func testReturnsNilWhenNoKeyAnywhere() {
-        let store = ZAIAuthStore(files: FakeFiles(), environment: FakeEnvironment())
+        let store = ZAIAuthStore(files: FakeFiles(), environment: FakeEnvironment(), secrets: MemoryAPIKeySecrets())
         XCTAssertNil(store.loadAPIKey())
     }
 
     // MARK: - In-app save / delete / status (Customize → Z.ai → API Key)
 
-    func testSaveAPIKeyWritesTrimmedJSONConfigFile() throws {
+    func testSaveAPIKeyKeepsTrimmedKeyInKeychain() throws {
         let files = FakeFiles()
-        let store = ZAIAuthStore(files: files, environment: FakeEnvironment())
+        let secrets = MemoryAPIKeySecrets()
+        let store = ZAIAuthStore(files: files, environment: FakeEnvironment(), secrets: secrets)
 
         try store.saveAPIKey("  zai-new  ")
 
-        XCTAssertEqual(files.files[ZAIAuthStore.configPaths[0]], #"{"apiKey":"zai-new"}"#)
+        XCTAssertEqual(secrets.values["zai"], "zai-new")
+        XCTAssertNil(files.files[ZAIAuthStore.configPaths[0]])
         XCTAssertEqual(store.loadAPIKey()?.apiKey, "zai-new")
+    }
+
+    func testMovesKeySavedInFileIntoKeychain() {
+        let path = ZAIAuthStore.configPaths[0]
+        let files = FakeFiles([path: #"{"apiKey":"zai-old"}"#])
+        let secrets = MemoryAPIKeySecrets()
+        let store = ZAIAuthStore(files: files, environment: FakeEnvironment(), secrets: secrets)
+
+        XCTAssertEqual(store.loadAPIKey()?.apiKey, "zai-old")
+        XCTAssertEqual(secrets.values["zai"], "zai-old")
+        XCTAssertNil(files.files[path])
     }
 
     func testSaveAPIKeyRejectsEmptyKey() {
         let files = FakeFiles()
-        let store = ZAIAuthStore(files: files, environment: FakeEnvironment())
+        let store = ZAIAuthStore(files: files, environment: FakeEnvironment(), secrets: MemoryAPIKeySecrets())
 
         XCTAssertThrowsError(try store.saveAPIKey("   ")) { error in
             XCTAssertEqual(error as? ZAIAuthError, .missingKey)
@@ -73,7 +86,7 @@ final class ZAIAuthStoreTests: XCTestCase {
 
     func testSavedKeyOverridesEnvironment() throws {
         let files = FakeFiles()
-        let store = ZAIAuthStore(files: files, environment: FakeEnvironment(["ZAI_API_KEY": "zai-env"]))
+        let store = ZAIAuthStore(files: files, environment: FakeEnvironment(["ZAI_API_KEY": "zai-env"]), secrets: MemoryAPIKeySecrets())
 
         try store.saveAPIKey("zai-saved")
 
@@ -85,16 +98,17 @@ final class ZAIAuthStoreTests: XCTestCase {
         let envKey = ["ZAI_API_KEY": "zai-env"]
         let file = [ZAIAuthStore.configPaths[0]: #"{"apiKey":"zai-file"}"#]
 
-        XCTAssertEqual(ZAIAuthStore(files: FakeFiles(), environment: FakeEnvironment()).keyStatus(), .notSet)
-        XCTAssertEqual(ZAIAuthStore(files: FakeFiles(), environment: FakeEnvironment(envKey)).keyStatus(), .fromEnvironment)
-        XCTAssertEqual(ZAIAuthStore(files: FakeFiles(file), environment: FakeEnvironment()).keyStatus(), .saved)
-        XCTAssertEqual(ZAIAuthStore(files: FakeFiles(file), environment: FakeEnvironment(envKey)).keyStatus(), .overrideActive)
+        XCTAssertEqual(ZAIAuthStore(files: FakeFiles(), environment: FakeEnvironment(), secrets: MemoryAPIKeySecrets()).keyStatus(), .notSet)
+        XCTAssertEqual(ZAIAuthStore(files: FakeFiles(), environment: FakeEnvironment(envKey), secrets: MemoryAPIKeySecrets()).keyStatus(), .fromEnvironment)
+        XCTAssertEqual(ZAIAuthStore(files: FakeFiles(file), environment: FakeEnvironment(), secrets: MemoryAPIKeySecrets()).keyStatus(), .saved)
+        XCTAssertEqual(ZAIAuthStore(files: FakeFiles(file), environment: FakeEnvironment(envKey), secrets: MemoryAPIKeySecrets()).keyStatus(), .overrideActive)
     }
 
     func testCurrentAPIKeyReturnsEffectiveKey() {
         let store = ZAIAuthStore(
             files: FakeFiles([ZAIAuthStore.configPaths[0]: #"{"apiKey":"zai-file"}"#]),
-            environment: FakeEnvironment(["ZAI_API_KEY": "zai-env"])
+            environment: FakeEnvironment(["ZAI_API_KEY": "zai-env"]),
+            secrets: MemoryAPIKeySecrets()
         )
         XCTAssertEqual(store.currentAPIKey(), "zai-file")
     }
@@ -105,9 +119,12 @@ final class ZAIAuthStoreTests: XCTestCase {
                 ZAIAuthStore.configPaths[0]: #"{"apiKey":"zai-primary"}"#,
                 ZAIAuthStore.configPaths[1]: "zai-alt"
             ])
-            let store = ZAIAuthStore(files: files, environment: FakeEnvironment(environment))
+            let secrets = MemoryAPIKeySecrets(["zai": "zai-saved"])
+            let store = ZAIAuthStore(files: files, environment: FakeEnvironment(environment), secrets: secrets)
 
             try store.deleteAPIKey()
+
+            XCTAssertNil(secrets.values["zai"])
 
             for path in ZAIAuthStore.configPaths {
                 XCTAssertNil(files.files[path], path)
@@ -118,7 +135,7 @@ final class ZAIAuthStoreTests: XCTestCase {
     }
 
     func testDeleteAPIKeyIsNoOpWhenFileMissing() throws {
-        let store = ZAIAuthStore(files: FakeFiles(), environment: FakeEnvironment())
+        let store = ZAIAuthStore(files: FakeFiles(), environment: FakeEnvironment(), secrets: MemoryAPIKeySecrets())
         XCTAssertNoThrow(try store.deleteAPIKey())
         XCTAssertEqual(store.keyStatus(), .notSet)
     }
@@ -280,7 +297,7 @@ final class ZAIProviderTests: XCTestCase {
 
     func testRefreshWithoutKeyReportsNotLoggedIn() async {
         let provider = ZAIProvider(
-            authStore: ZAIAuthStore(files: FakeFiles(), environment: FakeEnvironment()),
+            authStore: ZAIAuthStore(files: FakeFiles(), environment: FakeEnvironment(), secrets: MemoryAPIKeySecrets()),
             usageClient: ZAIUsageClient(http: RoutingHTTPClient { _ in
                 XCTFail("should not hit the network without a key")
                 return jsonResponse("{}")
@@ -351,7 +368,7 @@ final class ZAIProviderTests: XCTestCase {
     func testProviderAPIKeyManagingDelegatesToAuthStore() throws {
         let files = FakeFiles()
         let provider = ZAIProvider(
-            authStore: ZAIAuthStore(files: files, environment: FakeEnvironment(["ZAI_API_KEY": "zai-env"])),
+            authStore: ZAIAuthStore(files: files, environment: FakeEnvironment(["ZAI_API_KEY": "zai-env"]), secrets: MemoryAPIKeySecrets()),
             usageClient: ZAIUsageClient(http: RoutingHTTPClient { _ in jsonResponse("{}") })
         )
 
@@ -373,7 +390,7 @@ final class ZAIProviderTests: XCTestCase {
     }
 
     private func makeAuthStore(key: String) -> ZAIAuthStore {
-        ZAIAuthStore(files: FakeFiles(), environment: FakeEnvironment(["ZAI_API_KEY": key]))
+        ZAIAuthStore(files: FakeFiles(), environment: FakeEnvironment(["ZAI_API_KEY": key]), secrets: MemoryAPIKeySecrets())
     }
 }
 
