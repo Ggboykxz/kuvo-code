@@ -14,6 +14,8 @@ struct Composer: View {
     let isRunning: Bool
     /// Messages are waiting their turn, so ⌘Return adds to the queue even while idle.
     var hasQueue = false
+    /// Messages sent before, oldest first: ↑ and ↓ go through them, as in a shell.
+    var history: [String] = []
     /// Puts the cursor here when it changes.
     var focusRequest = 0
     /// Comments on the changes waiting to go with the next message.
@@ -33,6 +35,8 @@ struct Composer: View {
     @FocusState private var isFocused: Bool
     @Namespace private var glass
     @State private var isTargeted = false
+    /// The sent message showing in the field, while going through them.
+    @State private var historyIndex: Int?
 
     private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty || commentCount > 0 }
     private var currentModel: Model? { catalog.model(model) ?? catalog.defaultModel }
@@ -88,8 +92,14 @@ struct Composer: View {
                     return .handled
                 }
                 .onKeyPress(.upArrow) {
-                    guard text.isEmpty, files.isEmpty else { return .ignored }
-                    return onEditLast() ? .handled : .ignored
+                    // A waiting message comes back first; then what was sent before.
+                    if text.isEmpty, files.isEmpty, historyIndex == nil, onEditLast() { return .handled }
+                    return recall(-1) ? .handled : .ignored
+                }
+                .onKeyPress(.downArrow) { recall(1) ? .handled : .ignored }
+                // Editing a recalled message makes it a new one; the arrows move the cursor again.
+                .onChange(of: text) { _, new in
+                    if let index = historyIndex, !history.indices.contains(index) || new != history[index] { historyIndex = nil }
                 }
                 .onSubmit(send)
 
@@ -187,6 +197,28 @@ struct Composer: View {
     private func queue() {
         guard canSend else { return }
         onQueue()
+    }
+
+    /// ↑ from an empty field, or from a recalled message left as it was, goes back a message;
+    /// ↓ comes forward, and past the newest clears the field again.
+    private func recall(_ step: Int) -> Bool {
+        guard !history.isEmpty else { return false }
+        guard let index = historyIndex else {
+            guard step < 0, text.isEmpty, files.isEmpty else { return false }
+            historyIndex = history.count - 1
+            text = history[history.count - 1]
+            return true
+        }
+        let next = index + step
+        if next < 0 { return true }
+        if next >= history.count {
+            historyIndex = nil
+            text = ""
+            return true
+        }
+        historyIndex = next
+        text = history[next]
+        return true
     }
 
     private func attach(_ urls: [URL]) {

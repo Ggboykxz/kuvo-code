@@ -63,6 +63,7 @@ private struct BottomStack: View {
                     model: model.session.model ?? lastModel ?? catalog.defaultModel?.ref,
                     isRunning: model.isRunning,
                     hasQueue: !model.waiting.isEmpty,
+                    history: model.sentMessages,
                     focusRequest: model.composerFocus,
                     commentCount: model.reviewComments.count,
                     onDiscardComments: { model.reviewComments = [] },
@@ -105,11 +106,12 @@ struct DraftSessionView: View {
 
     @Environment(Workspace.self) private var workspace
     @Environment(Catalog.self) private var catalog
-    @State private var text = ""
-    @State private var files: [URL] = []
     @State private var agent = "build"
     @AppStorage(ToolApproval.key) private var approval = ToolApproval.approveAll
     @State private var isCreating = false
+
+    /// The project's new session keeps its draft under this key until it's created.
+    private var draftKey: String { SidebarView.draftTag(directory) }
     @State private var failure: String?
     @LastModel private var lastModel
 
@@ -121,8 +123,8 @@ struct DraftSessionView: View {
                 .padding(.bottom, 28)
 
             Composer(
-                text: $text,
-                files: $files,
+                text: Binding(get: { Drafts.shared[draftKey].text }, set: { Drafts.shared[draftKey].text = $0 }),
+                files: Binding(get: { Drafts.shared[draftKey].files }, set: { Drafts.shared[draftKey].files = $0 }),
                 agent: agent,
                 approval: approval,
                 model: lastModel ?? catalog.defaultModel?.ref,
@@ -151,11 +153,12 @@ struct DraftSessionView: View {
     private func send() {
         guard !isCreating else { return }
         isCreating = true
-        let message = text
-        let attachments = files
+        let message = Drafts.shared[draftKey].text
+        let attachments = Drafts.shared[draftKey].files
         Task {
             do {
                 let session = try await workspace.createSession(in: directory, model: lastModel ?? catalog.defaultModel?.ref, agent: agent, approval: approval)
+                Drafts.shared.remove(draftKey)
                 created(session, message, attachments)
             } catch {
                 failure = error.localizedDescription

@@ -141,6 +141,7 @@ final class Workspace {
     func delete(_ id: String) async {
         sessions.removeAll { $0.id == id }
         models[id] = nil
+        Drafts.shared.remove(id)
         try? await api?.deleteSession(id)
     }
 

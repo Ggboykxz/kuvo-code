@@ -10,9 +10,27 @@ final class SessionModel {
     private(set) var changes: [FileDiff] = []
     /// Comments on lines of the changes, sent with the next message.
     var reviewComments: [ReviewComment] = []
-    /// What's in the composer, kept while you look at other sessions.
-    var draftText = ""
-    var draftFiles: [URL] = []
+    /// What's in the composer, kept while you look at other sessions and across launches.
+    var draftText: String {
+        get { Drafts.shared[id].text }
+        set { Drafts.shared[id].text = newValue }
+    }
+
+    var draftFiles: [URL] {
+        get { Drafts.shared[id].files }
+        set { Drafts.shared[id].files = newValue }
+    }
+
+    /// Messages you sent here, oldest first, for going back through with ↑.
+    var sentMessages: [String] {
+        var texts: [String] = []
+        for message in transcript.messages {
+            guard case .user(let user) = message else { continue }
+            let text = ReviewComments.split(Attachments.split(user.text).text).text
+            if !text.isEmpty, text != texts.last { texts.append(text) }
+        }
+        return texts
+    }
     /// Goes up to put the cursor in the composer (after a message comes back to it for editing).
     private(set) var composerFocus = 0
     /// Queued messages wait for Resume: after Stop, a failed run, or when the app finds them
