@@ -2,7 +2,7 @@ import AppKit
 
 /// The app's identity, read from the bundle so renaming the app only touches
 /// `Config/App.xcconfig`.
-enum AppInfo {
+nonisolated enum AppInfo {
     static var name: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
             ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String

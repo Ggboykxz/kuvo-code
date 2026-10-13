@@ -71,7 +71,7 @@ private struct BottomStack: View {
                         lastModel = ref
                     },
                     onSend: {
-                        model.send(text, files: files)
+                        model.send(text, files: files, for: catalog.model(model.session.model))
                         text = ""
                         files = []
                     },

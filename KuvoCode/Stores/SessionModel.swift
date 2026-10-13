@@ -60,16 +60,19 @@ final class SessionModel {
 
     // MARK: Actions
 
-    func send(_ text: String, files: [URL] = []) {
+    /// Sends a message with `files`, as `model` can take them (see `Attachments`).
+    func send(_ text: String, files: [URL] = [], for model: Model?) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        guard !text.isEmpty || !files.isEmpty else { return }
         let id = Identifier.message()
         let delivery: InboxItem.Delivery = transcript.isRunning ? .queue : .steer
-        transcript.addLocal(id: id, text: text, delivery: delivery)
-        let attachments = files.map { OpenCodeAPI.PromptFile(uri: $0.absoluteString, name: $0.lastPathComponent) }
+        transcript.addLocal(id: id, text: text, delivery: delivery, files: files)
         Task {
             do {
-                try await api.prompt(session: self.id, id: id, text: text, files: attachments, delivery: delivery)
+                // Converting a photo takes a moment; keep it off the main thread.
+                let prepared = await Task.detached { Attachments.prepare(files, for: model) }.value
+                let message = Attachments.text(text, adding: prepared.paths)
+                try await api.prompt(session: self.id, id: id, text: message, files: prepared.files, delivery: delivery)
             } catch {
                 transcript.removeLocal(id: id)
                 failure = error.localizedDescription

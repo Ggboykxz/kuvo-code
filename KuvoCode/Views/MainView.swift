@@ -216,7 +216,7 @@ struct MainView: View {
                 } content: {
                     DraftSessionView(directory: directory) { session, text, files in
                         replaceTab(SidebarView.draftTag(directory), with: session.id)
-                        workspace.model(for: session.id)?.send(text, files: files)
+                        workspace.model(for: session.id)?.send(text, files: files, for: catalog.model(session.model))
                     }
                 }
                 .id(directory)
@@ -378,7 +378,9 @@ struct MainView: View {
         // Like a new session from the UI: the chosen model, or the default one.
         guard let session = try? await workspace.createSession(in: folder, model: model ?? catalog.defaultModel?.ref, agent: "build") else { return }
         openTab(session.id)
-        workspace.model(for: session.id)?.send(prompt)
+        // KUVO_DEMO_FILES: comma-separated paths to attach.
+        let files = environment["KUVO_DEMO_FILES"]?.split(separator: ",").map { URL(filePath: String($0)) } ?? []
+        workspace.model(for: session.id)?.send(prompt, files: files, for: catalog.model(session.model))
     }
     #endif
 }

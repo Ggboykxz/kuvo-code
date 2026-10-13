@@ -139,9 +139,13 @@ private struct RowView: View {
     var body: some View {
         switch row {
         case .user(let message):
-            UserBubble(text: message.text)
+            let (text, paths) = Attachments.split(message.text)
+            let stored = (message.files ?? []).enumerated().map { AttachmentItem.stored($1, id: "\(message.id)#\($0)") }
+            UserBubble(text: text, attachments: stored + paths.map(AttachmentItem.path))
         case .pending(let item):
-            UserBubble(text: item.text, status: item.isLocal ? "Sending" : item.delivery == .queue ? "Queued" : "Sending")
+            let (text, paths) = Attachments.split(item.text)
+            UserBubble(text: text, attachments: item.files.map(AttachmentItem.local) + paths.map(AttachmentItem.path),
+                       status: item.isLocal ? "Sending" : item.delivery == .queue ? "Queued" : "Sending")
                 .contextMenu { Button("Cancel", role: .destructive) { cancel(item) } }
         case .assistant(let message, let showsError):
             AssistantStepView(message: message, directory: directory, showsError: showsError)
@@ -165,16 +169,23 @@ private struct RowView: View {
 
 struct UserBubble: View {
     let text: String
+    var attachments: [AttachmentItem] = []
     var status: String?
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 4) {
-            Text(text)
-                .font(.transcript)
-                .textSelection(.enabled)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(.fill.tertiary, in: .rect(cornerRadius: Metrics.bubbleRadius))
+            if !attachments.isEmpty {
+                MessageAttachments(items: attachments)
+                    .padding(.bottom, text.isEmpty ? 0 : 2)
+            }
+            if !text.isEmpty {
+                Text(text)
+                    .font(.transcript)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(.fill.tertiary, in: .rect(cornerRadius: Metrics.bubbleRadius))
+            }
             if let status {
                 Text(status)
                     .font(.caption2)

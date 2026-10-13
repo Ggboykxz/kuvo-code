@@ -23,17 +23,21 @@ struct Composer: View {
     @Namespace private var glass
     @State private var isTargeted = false
 
-    private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty }
+    private var currentModel: Model? { catalog.model(model) ?? catalog.defaultModel }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if !files.isEmpty {
                 ScrollView(.horizontal) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: 8) {
                         ForEach(files, id: \.self) { file in
-                            AttachmentChip(url: file) { files.removeAll { $0 == file } }
+                            ComposerAttachment(url: file, route: Attachments.route(file, for: currentModel)) { files.removeAll { $0 == file } }
                         }
                     }
+                    // Room for each chip's remove button, which sits on its corner.
+                    .padding(.top, 6)
+                    .padding(.trailing, 6)
                 }
                 .scrollIndicators(.hidden)
             }
@@ -55,6 +59,14 @@ struct Composer: View {
                 .onSubmit(send)
 
             HStack(spacing: 4) {
+                Button(action: chooseFiles) {
+                    Image(systemName: "paperclip")
+                        .font(.system(size: 14, weight: .medium))
+                        .frame(width: 30, height: 28)
+                        .hoverHighlight(in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Attach Files… You can also drop files here, or paste them.")
                 ModeChip(agent: agent, approval: approval, onSelectAgent: onSelectAgent, onSelectApproval: onSelectApproval)
                 ModelChip(selection: model, onSelect: onSelectModel)
                 Spacer(minLength: 0)
@@ -78,10 +90,19 @@ struct Composer: View {
             }
         }
         .dropDestination(for: URL.self) { urls, _ in
-            files += urls.filter { $0.isFileURL && !files.contains($0) }
+            attach(urls.filter(\.isFileURL))
             return true
         } isTargeted: { isTargeted = $0 }
-        .onAppear { isFocused = true }
+        .modifier(PasteAttachments(isActive: isFocused, attach: attach))
+        .onAppear {
+            isFocused = true
+            #if DEBUG
+            // KUVO_DEMO_COMPOSER_FILES: comma-separated paths to show as attached.
+            if files.isEmpty, let list = ProcessInfo.processInfo.environment["KUVO_DEMO_COMPOSER_FILES"] {
+                files = list.split(separator: ",").map { URL(filePath: String($0)) }
+            }
+            #endif
+        }
     }
 
     private var placeholder: String {
@@ -121,29 +142,61 @@ struct Composer: View {
         guard canSend else { return }
         onSend()
     }
+
+    private func attach(_ urls: [URL]) {
+        files += urls.filter { !files.contains($0) }
+    }
+
+    private func chooseFiles() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = true
+        panel.prompt = "Attach"
+        panel.message = "Choose files or folders to attach."
+        guard panel.runModal() == .OK else { return }
+        attach(panel.urls)
+    }
 }
 
-private struct AttachmentChip: View {
-    let url: URL
-    let remove: () -> Void
+/// ⌘V with files or a picture on the pasteboard attaches them, instead of pasting
+/// their names (or nothing) into the message.
+private struct PasteAttachments: ViewModifier {
+    let isActive: Bool
+    let attach: ([URL]) -> Void
+    @State private var monitor: Any?
 
-    var body: some View {
-        HStack(spacing: 6) {
-            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
-                .resizable()
-                .frame(width: 16, height: 16)
-            Text(url.lastPathComponent)
-                .font(.caption)
-                .lineLimit(1)
-            Button(action: remove) {
-                Image(systemName: "xmark.circle.fill")
-                    .foregroundStyle(.secondary)
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: isActive, initial: true) { _, active in
+                if active { install() } else { remove() }
             }
-            .buttonStyle(.plain)
+            .onDisappear(perform: remove)
+    }
+
+    private func install() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+                  event.charactersIgnoringModifiers == "v",
+                  let urls = Self.pastedFiles() else { return event }
+            attach(urls)
+            return nil
         }
-        .padding(.leading, 8)
-        .padding(.trailing, 6)
-        .padding(.vertical, 5)
-        .background(.fill.tertiary, in: .capsule)
+    }
+
+    private func remove() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+    }
+
+    private static func pastedFiles() -> [URL]? {
+        let board = NSPasteboard.general
+        if let urls = board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty {
+            return urls
+        }
+        // A picture without text: a copied screenshot, an image copied from Preview.
+        guard board.string(forType: .string) == nil, let image = NSImage(pasteboard: board) else { return nil }
+        return Attachments.save(image, named: Attachments.pastedImageName).map { [$0] }
     }
 }
