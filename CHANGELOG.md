@@ -6,7 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
-Kuvo Code's first public release: a native Mac app for coding agents, on the opencode engine.
+Kuvo Code's first public release: a native Mac harness for coding agents that works with any model, on the opencode engine.
 
 ### Highlights
 

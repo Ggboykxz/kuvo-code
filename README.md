@@ -1,6 +1,6 @@
 <h1 align="center">Kuvo Code</h1>
 
-<p align="center"><strong>Coding agents, made for the Mac.</strong></p>
+<p align="center"><strong>Any model. One native harness.</strong></p>
 
 <p align="center">
   <a href="https://github.com/serhatandic/kuvo-code/actions/workflows/ci.yml"><img src="https://github.com/serhatandic/kuvo-code/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
@@ -8,11 +8,11 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue.svg" alt="License: PolyForm Noncommercial 1.0.0"></a>
 </p>
 
-Kuvo Code is a native macOS app for working with coding agents. Its engine is
-[opencode](https://github.com/anomalyco/opencode), unmodified; Kuvo Code is the
-interface, written in SwiftUI: sessions by project, changes you review and
-comment on like a pull request, and a side panel with files, terminals and a
-browser the agent can use too.
+Kuvo Code is a native macOS harness for coding agents that works with any
+model. Its engine is [opencode](https://github.com/anomalyco/opencode),
+unmodified; Kuvo Code is the interface, written in SwiftUI: sessions by
+project, changes you review and comment on like a pull request, and a side
+panel with files, terminals and a browser the agent can use too.
 
 Use any model. Sign in with a subscription you already have, add an API key,
 or start with free models that need no account.
