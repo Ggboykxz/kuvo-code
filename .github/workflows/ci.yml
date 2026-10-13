@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: build and test
+    # Xcode's runner images are named for the Xcode version they ship, which
+    # has the Swift toolchain and the macOS SDK Kuvo Code builds against.
+    runs-on: xcode-27
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      # Package.resolved is part of the build input: fail if building would
+      # change it rather than testing a different dependency graph. Generating
+      # the license file resolves the packages too.
+      - name: Resolve dependencies and check THIRD_PARTY_LICENSES.txt
+        run: |
+          ./scripts/third-party-licenses.sh
+          git diff --exit-code KuvoCode.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+          git diff --exit-code THIRD_PARTY_LICENSES.txt \
+            || { echo "Run scripts/third-party-licenses.sh and commit the result." >&2; exit 1; }
+
+      - name: Test OpenCodeKit
+        working-directory: Packages/OpenCodeKit
+        run: swift test
+
+      - name: Test UsageKit
+        working-directory: Packages/UsageKit
+        run: swift test
+
+      - name: Build the app
+        run: |
+          xcodebuild -project KuvoCode.xcodeproj -scheme KuvoCode -configuration Release \
+            -derivedDataPath build/DerivedData -clonedSourcePackagesDirPath build/SourcePackages \
+            build
+
+      - name: Check the app bundle
+        run: |
+          app="build/DerivedData/Build/Products/Release/Kuvo Code.app"
+          for file in LICENSE NOTICE THIRD_PARTY_LICENSES.txt prism-bundle.js buildDomTree.js; do
+            test -f "$app/Contents/Resources/$file" || { echo "Missing $file in the app bundle" >&2; exit 1; }
+          done
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" = run.kuvo.code \
+            || { echo "Unexpected bundle identifier" >&2; exit 1; }
+          codesign --verify --strict --deep --verbose=2 "$app"
+          codesign -d --verbose=2 "$app" 2>&1 | grep -q 'flags=.*runtime' \
+            || { echo "The hardened runtime is off" >&2; exit 1; }
