@@ -117,9 +117,7 @@ struct UtilitiesPane: View {
                 }
             case .terminal:
                 if let session = utilities.terminals[tab.id] {
-                    TerminalHost(session: session)
-                        .padding(.leading, 10)
-                        .padding(.top, 6)
+                    TerminalHost(session: session, isFocused: isFocused)
                         .id(tab.id)
                 }
             case .browser:

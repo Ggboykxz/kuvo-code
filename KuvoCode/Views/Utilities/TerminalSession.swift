@@ -9,7 +9,7 @@ final class TerminalSession: NSObject {
     let view: LocalProcessTerminalView
     private(set) var title = "Terminal"
     private(set) var isRunning = true
-    @ObservationIgnored private var appliedDark: Bool?
+    @ObservationIgnored private var appliedLook: (dark: Bool, focused: Bool)?
 
     init(directory: String, environment: [String: String]) {
         view = LocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
@@ -17,6 +17,8 @@ final class TerminalSession: NSObject {
         view.processDelegate = self
         view.font = Self.font
         view.optionAsMetaKey = true
+        // Scrolling works as anywhere else; a permanent scroll bar track is just clutter.
+        for scroller in view.subviews.compactMap({ $0 as? NSScroller }) { scroller.isHidden = true }
         var environment = environment
         environment["TERM"] = "xterm-256color"
         environment["COLORTERM"] = "truecolor"
@@ -38,12 +40,16 @@ final class TerminalSession: NSObject {
         isRunning = false
     }
 
-    /// Colors for the app's appearance: the card's background, and an ANSI palette that
-    /// stays readable on it.
-    func apply(dark: Bool) {
-        guard appliedDark != dark else { return }
-        appliedDark = dark
-        view.nativeBackgroundColor = dark ? NSColor(white: 0.13, alpha: 1) : .white
+    /// Colors for the app's appearance: the card's own background, so the terminal is part of
+    /// the card rather than a box in it, and an ANSI palette that stays readable on it. (Solid,
+    /// not see-through: SwiftTerm draws reverse video from the background color.)
+    func apply(dark: Bool, focused: Bool) {
+        guard appliedLook.map({ $0 != (dark, focused) }) ?? true else { return }
+        appliedLook = (dark, focused)
+        let background = CardFill.solid(dark: dark, focused: focused)
+        view.nativeBackgroundColor = background
+        view.layer?.backgroundColor = background.cgColor
+        view.needsDisplay = true
         view.nativeForegroundColor = dark ? NSColor(white: 0.9, alpha: 1) : NSColor(white: 0.12, alpha: 1)
         view.caretColor = .controlAccentColor
         view.selectedTextBackgroundColor = NSColor.selectedTextBackgroundColor
@@ -91,19 +97,36 @@ extension TerminalSession: @preconcurrency LocalProcessTerminalViewDelegate {
     }
 }
 
-/// Puts a session's terminal in the panel. The view outlives the tab being shown, so the
-/// shell keeps its state while you look at something else.
-struct TerminalHost: NSViewRepresentable {
+/// Puts a session's terminal in the panel, on the card itself as in Rex: the card's color
+/// edge to edge, with the text inset like the rest of the card. The view outlives the tab
+/// being shown, so the shell keeps its state while you look at something else.
+struct TerminalHost: View {
     let session: TerminalSession
+    var isFocused = true
     @Environment(\.colorScheme) private var scheme
 
+    var body: some View {
+        TerminalRepresentable(session: session, dark: scheme == .dark, focused: isFocused)
+            // The right side already has room SwiftTerm keeps for its (hidden) scroll bar.
+            .padding(.leading, 16)
+            .padding(.top, 4)
+            .padding(.bottom, 12)
+            .background(Color(nsColor: CardFill.solid(dark: scheme == .dark, focused: isFocused)))
+    }
+}
+
+private struct TerminalRepresentable: NSViewRepresentable {
+    let session: TerminalSession
+    let dark: Bool
+    let focused: Bool
+
     func makeNSView(context: Context) -> LocalProcessTerminalView {
-        session.apply(dark: scheme == .dark)
+        session.apply(dark: dark, focused: focused)
         DispatchQueue.main.async { session.view.window?.makeFirstResponder(session.view) }
         return session.view
     }
 
     func updateNSView(_ view: LocalProcessTerminalView, context: Context) {
-        session.apply(dark: scheme == .dark)
+        session.apply(dark: dark, focused: focused)
     }
 }

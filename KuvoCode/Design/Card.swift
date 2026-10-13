@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The window's building block: a rounded pane floating on the window's glass,
@@ -71,6 +72,19 @@ struct Card<Icon: View, Actions: View, Content: View>: View {
         case (.dark, false): Color(white: 0.19, opacity: 0.8)
         case (_, true): Color.white
         case (_, false): Color(white: 0.965, opacity: 0.94)
+        }
+    }
+}
+
+/// The card's fill as it shows over the window's glass, as one solid color: for content that
+/// paints its own background, like the terminal, and has to blend into the card.
+enum CardFill {
+    static func solid(dark: Bool, focused: Bool) -> NSColor {
+        switch (dark, focused) {
+        case (true, true): NSColor(white: 0.2, alpha: 1)
+        case (true, false): NSColor(white: 0.17, alpha: 1)
+        case (false, true): .white
+        case (false, false): NSColor(white: 0.953, alpha: 1)
         }
     }
 }
