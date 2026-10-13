@@ -220,6 +220,22 @@ public struct OpenCodeAPI: Sendable {
     }
 
     /// Removes waiting input before the agent gets it. Input already delivered is left alone.
+    /// Waits for the session's run to wind down after an interrupt.
+    public func wait(session: String) async throws {
+        try await send("POST", "api/experimental/session/\(session.pathEscaped)/wait")
+    }
+
+    /// Takes the conversation back to before `messageID`, and the files the agent changed
+    /// since. Until the next message (which makes it final), `clearRevert` brings it all back.
+    public func stageRevert(session: String, messageID: String) async throws -> Session.Revert {
+        struct Body: Encodable { var messageID: String }
+        return try await send("POST", "api/session/\(session.pathEscaped)/revert/stage", body: Body(messageID: messageID), as: DataEnvelope<Session.Revert>.self).data
+    }
+
+    public func clearRevert(session: String) async throws {
+        try await send("DELETE", "api/session/\(session.pathEscaped)/revert")
+    }
+
     public func cancelInbox(session: String, item: String) async throws {
         try await send("DELETE", "api/session/\(session.pathEscaped)/inbox/\(item.pathEscaped)")
     }

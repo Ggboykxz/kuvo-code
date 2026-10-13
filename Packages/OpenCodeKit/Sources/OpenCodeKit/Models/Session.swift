@@ -17,6 +17,15 @@ public struct Session: Codable, Sendable, Hashable, Identifiable {
     public var subpath: String?
     /// Rules on top of the agent's own, for this session. Later rules win.
     public var permissions: [PermissionRule]?
+    /// An undo waiting to be kept or taken back: the conversation is back to before this
+    /// message. Sending the next message makes it final.
+    public var revert: Revert?
+
+    public struct Revert: Codable, Sendable, Hashable {
+        public var messageID: String
+        /// The files it put back.
+        public var files: [FileDiff]?
+    }
 
     public struct Time: Codable, Sendable, Hashable {
         public var created: Milliseconds
