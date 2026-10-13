@@ -70,20 +70,11 @@ struct SidebarView: View {
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            VStack(spacing: 8) {
-                Button(action: openFolder) {
-                    Label("Open Folder…", systemImage: "folder.badge.plus")
-                        .font(.system(size: 14))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 6)
-                        .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                AccountsChip(action: showProviders)
-            }
-            .padding(10)
+            // 16 from the bottom, like the composer next to it, so their bottom edges line up.
+            AccountsChip(action: showProviders)
+                .padding(.horizontal, 10)
+                .padding(.top, 10)
+                .padding(.bottom, 16)
         }
         .alert("Rename Session", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Title", text: $newTitle)
@@ -213,7 +204,7 @@ private struct AccountsChip: View {
                         ForEach(catalog.connectedProviders.prefix(3)) { provider in
                             ProviderLogo(id: provider.id, size: 15)
                                 .padding(5)
-                                .background(.background, in: Circle())
+                                .solidChip(in: Circle(), raised: true)
                         }
                     }
                 }

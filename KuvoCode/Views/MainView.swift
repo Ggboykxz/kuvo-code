@@ -132,16 +132,19 @@ struct MainView: View {
                     TabStrip(tabs: tabItems, selection: $selection, close: closeTab)
                 }
             }
-            // A width from the window (minus the traffic lights and the + button), so a
+            // A width from the window (minus the traffic lights and the Changes button), so a
             // narrow window squeezes the tabs instead of pushing them into a » menu.
             .frame(width: max(240, contentWidth - 150), alignment: .leading)
         }
         .sharedBackgroundVisibility(.hidden)
 
+        // Mirrors the sessions toggle on the left: this one shows the Changes card on the right.
         ToolbarItem(placement: .primaryAction) {
-            Button("New Session", systemImage: "plus") { newSession(in: nil) }
+            Toggle("Changes", systemImage: "sidebar.right", isOn: $showsChanges.animation(.ui))
+                .toggleStyle(.button)
                 .labelStyle(.iconOnly)
-                .help("New Session (⌘N)")
+                .disabled(activeModel == nil)
+                .help(showsChanges ? "Hide Changes (⌥⌘I)" : "Show Changes (⌥⌘I)")
         }
         .sharedBackgroundVisibility(.hidden)
     }
@@ -200,12 +203,6 @@ struct MainView: View {
                             .help("Reconnecting to the engine…")
                     }
                     ContextGauge(model: model)
-                    Button("Changes", systemImage: "rectangle.split.2x1") { withAnimation(.ui) { showsChanges.toggle() } }
-                        .help(showsChanges ? "Hide Changes (⌥⌘I)" : "Show Changes (⌥⌘I)")
-                    Button("Show in Finder", systemImage: "folder") {
-                        NSWorkspace.shared.open(URL(filePath: model.session.location.directory))
-                    }
-                    .help("Open the project folder")
                     Button("Close Tab", systemImage: "xmark") { closeTab(id) }
                         .help("Close Tab")
                 } content: {
@@ -372,7 +369,8 @@ struct MainView: View {
         guard let prompt = environment["KUVO_DEMO_PROMPT"] else { return newSession(in: folder) }
         let parts = environment["KUVO_DEMO_MODEL"]?.split(separator: "/", maxSplits: 1).map(String.init)
         let model = parts.flatMap { $0.count == 2 ? ModelRef(id: $0[1], providerID: $0[0]) : nil }
-        guard let session = try? await workspace.createSession(in: folder, model: model, agent: "build") else { return }
+        // Like a new session from the UI: the chosen model, or the default one.
+        guard let session = try? await workspace.createSession(in: folder, model: model ?? catalog.defaultModel?.ref, agent: "build") else { return }
         openTab(session.id)
         workspace.model(for: session.id)?.send(prompt)
     }
