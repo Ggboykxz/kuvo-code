@@ -7,6 +7,8 @@ struct UtilitiesPane: View {
     @Bindable var utilities: Utilities
     /// The project in view; files and terminals start there.
     let directory: String?
+    /// All of the project's folders, the primary one first.
+    var folders: [String] = []
     let model: SessionModel?
     let environment: [String: String]
     @Binding var isExpanded: Bool
@@ -100,15 +102,15 @@ struct UtilitiesPane: View {
             switch tab.kind {
             case .changes:
                 if let directory {
-                    ChangesPanel(directory: directory, model: model)
-                        .id(directory)
+                    ChangesPanel(directory: directory, folders: folders, model: model)
+                        .id(folders.joined(separator: "\n") + directory)
                 } else {
                     placeholder("No Project", symbol: "plus.forwardslash.minus", detail: "Open a project to see its changes.")
                 }
             case .file(let url):
                 if let directory {
-                    FilesView(root: directory, file: url, showsTree: $utilities.showsTree) { utilities.open($0) }
-                        .id(directory)
+                    FilesView(roots: folders.isEmpty ? [directory] : folders, file: url, showsTree: $utilities.showsTree) { utilities.open($0) }
+                        .id(folders.joined(separator: "\n") + directory)
                 } else {
                     placeholder("No Project", symbol: "folder", detail: "Open a project to browse its files.")
                 }

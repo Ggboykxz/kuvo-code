@@ -7,25 +7,31 @@ import UniformTypeIdentifiers
 /// A file tab: the file on the left (rendered, highlighted or previewed), the project's
 /// tree on the right. With no file yet, the tree fills the tab.
 struct FilesView: View {
-    let root: String
+    /// The project's folders, the primary one first.
+    let roots: [String]
     let file: URL?
     @Binding var showsTree: Bool
     let open: (URL) -> Void
     @State private var tree: FileTree
     @State private var width: CGFloat = 600
 
-    init(root: String, file: URL?, showsTree: Binding<Bool>, open: @escaping (URL) -> Void) {
-        self.root = root
+    init(roots: [String], file: URL?, showsTree: Binding<Bool>, open: @escaping (URL) -> Void) {
+        self.roots = roots
         self.file = file
         _showsTree = showsTree
         self.open = open
-        _tree = State(initialValue: FileTree(root: URL(filePath: root)))
+        _tree = State(initialValue: FileTree(roots: roots.map { URL(filePath: $0) }))
+    }
+
+    /// The folder `file` is in, for its breadcrumb.
+    private func root(of file: URL) -> String {
+        roots.first { file.path.hasPrefix($0 + "/") } ?? roots[0]
     }
 
     var body: some View {
         HStack(spacing: 0) {
             if let file {
-                FileViewer(url: file, root: root, showsTree: $showsTree)
+                FileViewer(url: file, root: root(of: file), showsTree: $showsTree)
                     .id(file)
                     .frame(minWidth: 0, maxWidth: .infinity)
                     .clipped()
@@ -58,18 +64,22 @@ final class FileTree {
         var name: String { url.lastPathComponent }
     }
 
-    let root: URL
+    /// The project's folders, the primary one first.
+    let roots: [URL]
     var expanded: Set<URL> = []
     var filter = ""
     private var children: [URL: [Entry]] = [:]
-    /// Every file, relative to the root, for filtering; read on first use.
-    private(set) var allFiles: [String]?
+    /// Every file, for filtering; read on first use.
+    private(set) var allFiles: [ProjectFiles.File]?
 
-    init(root: URL) {
-        self.root = root
+    init(roots: [URL]) {
+        self.roots = roots
+        // With several folders each is a row of its own; the primary one starts open.
+        if roots.count > 1, let primary = roots.first { expanded.insert(primary) }
     }
 
-    /// The tree as rows, with each row's depth.
+    /// The tree as rows, with each row's depth: one folder's contents, or each folder with
+    /// its contents under it.
     var rows: [(entry: Entry, depth: Int)] {
         var rows: [(Entry, Int)] = []
         func walk(_ directory: URL, depth: Int) {
@@ -78,15 +88,22 @@ final class FileTree {
                 if entry.isDirectory, expanded.contains(entry.url) { walk(entry.url, depth: depth + 1) }
             }
         }
-        walk(root, depth: 0)
+        if roots.count == 1, let root = roots.first {
+            walk(root, depth: 0)
+        } else {
+            for root in roots {
+                rows.append((Entry(url: root, isDirectory: true), 0))
+                if expanded.contains(root) { walk(root, depth: 1) }
+            }
+        }
         return rows
     }
 
     /// Files whose path contains the filter, up to a few hundred.
-    var matches: [String] {
+    var matches: [ProjectFiles.File] {
         let query = filter.trimmingCharacters(in: .whitespaces).lowercased()
         guard !query.isEmpty, let allFiles else { return [] }
-        return Array(allFiles.lazy.filter { $0.lowercased().contains(query) }.prefix(300))
+        return Array(allFiles.lazy.filter { $0.path.lowercased().contains(query) }.prefix(300))
     }
 
     func toggle(_ directory: URL) {
@@ -112,28 +129,8 @@ final class FileTree {
 
     func loadAllFiles() async {
         guard allFiles == nil else { return }
-        let root = root.path
-        allFiles = await Task.detached { FileTree.listFiles(in: root) }.value
-    }
-
-    /// git's list (tracked and new, without ignored files) in a repository; otherwise a
-    /// walk that skips the usual heavy folders.
-    nonisolated private static func listFiles(in root: String) -> [String] {
-        if let listed = Git.run(["ls-files", "--cached", "--others", "--exclude-standard"], in: root) {
-            return listed.split(separator: "\n").map(String.init)
-        }
-        let skip: Set<String> = [".git", "node_modules", "build", "DerivedData", ".build", "Pods", "dist", ".next"]
-        var files: [String] = []
-        let base = URL(filePath: root)
-        guard let walker = FileManager.default.enumerator(at: base, includingPropertiesForKeys: [.isDirectoryKey]) else { return [] }
-        for case let url as URL in walker {
-            if skip.contains(url.lastPathComponent) { walker.skipDescendants(); continue }
-            if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == false {
-                files.append(String(url.path.dropFirst(base.path.count + 1)))
-                if files.count >= 20_000 { break }
-            }
-        }
-        return files
+        let roots = roots
+        allFiles = await Task.detached { ProjectFiles.list(roots) }.value
     }
 }
 
@@ -166,14 +163,13 @@ private struct FileTreeView: View {
                 LazyVStack(alignment: .leading, spacing: 1) {
                     if tree.filter.isEmpty {
                         ForEach(tree.rows, id: \.entry.id) { row in
-                            TreeRow(entry: row.entry, depth: row.depth, isOpen: tree.expanded.contains(row.entry.url), isSelected: row.entry.url == selected) {
+                            TreeRow(entry: row.entry, depth: row.depth, isRoot: tree.roots.count > 1 && row.depth == 0, isOpen: tree.expanded.contains(row.entry.url), isSelected: row.entry.url == selected) {
                                 if row.entry.isDirectory { tree.toggle(row.entry.url) } else { open(row.entry.url) }
                             }
                         }
                     } else {
-                        ForEach(tree.matches, id: \.self) { path in
-                            let url = tree.root.appending(path: path)
-                            MatchRow(path: path, isSelected: url == selected) { open(url) }
+                        ForEach(tree.matches) { match in
+                            MatchRow(path: match.path, isSelected: match.url == selected) { open(match.url) }
                         }
                         if tree.allFiles == nil {
                             ProgressView().controlSize(.small).padding()
@@ -198,6 +194,8 @@ private struct FileTreeView: View {
 private struct TreeRow: View {
     let entry: FileTree.Entry
     let depth: Int
+    /// One of the project's folders, in a tree of several.
+    var isRoot = false
     let isOpen: Bool
     let isSelected: Bool
     let action: () -> Void
@@ -219,7 +217,7 @@ private struct TreeRow: View {
                 }
                 .frame(width: 16)
                 Text(entry.name)
-                    .font(.system(size: 13))
+                    .font(.system(size: 13, weight: isRoot ? .semibold : .regular))
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 0)

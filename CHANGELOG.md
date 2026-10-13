@@ -13,6 +13,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - **↑ and ↓ in an empty composer go through the messages you sent**, as in a shell.
 - A step you stopped, with Stop or Send Now, shows as stopped instead of as a red error.
 - **A project can have several folders.** New Project (⇧⌘N, or + next to Projects) names a project and adds its folders; sessions run in the primary one, and the agent can work in the others too and knows them by name. Right-click a project for **Edit Project…** to rename it or add and remove folders.
+- The **Files** panel lists all of a project's folders, and its filter looks in all of them. The **Changes** panel has a folder menu to show each folder's changes, and comments there name the folder.
 
 ## 0.1.2
 

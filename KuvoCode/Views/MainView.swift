@@ -267,6 +267,7 @@ struct MainView: View {
         UtilitiesPane(
             utilities: utilities,
             directory: activeDirectory,
+            folders: activeDirectory.map { [$0] + (workspace.settings[$0]?.folders ?? []) } ?? [],
             model: activeModel,
             environment: app.shellEnvironment,
             isExpanded: $panelExpanded,

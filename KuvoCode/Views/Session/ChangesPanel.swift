@@ -9,6 +9,8 @@ struct ChangesPanel: View {
     /// The session, for its comments and its record of edits; none for a project
     /// without one open (no comments then).
     let model: SessionModel?
+    /// The project's folders, the primary one first; a menu picks which one's changes show.
+    let folders: [String]
     @State private var changes: ProjectChanges
     @State private var collapsed: Set<String> = []
     @State private var expandedFolds: Set<String> = []
@@ -19,12 +21,20 @@ struct ChangesPanel: View {
 
     struct DraftTarget: Equatable { var file: String; var line: Int }
 
-    init(directory: String, model: SessionModel?) {
+    init(directory: String, folders: [String] = [], model: SessionModel?) {
         self.model = model
+        self.folders = folders.isEmpty ? [directory] : folders
         _changes = State(initialValue: ProjectChanges(directory: directory))
     }
 
-    private var engineChanges: [FileDiff] { model?.changes ?? [] }
+    private var isPrimary: Bool { changes.directory == folders.first }
+
+    /// The session's record of its edits is about its own folder.
+    private var engineChanges: [FileDiff] { isPrimary ? model?.changes ?? [] : [] }
+
+    /// Comments name files by their path, after the folder's name outside the primary folder,
+    /// as the agent knows the project's folders.
+    private var commentPrefix: String { isPrimary ? "" : (changes.directory as NSString).lastPathComponent + "/" }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -33,7 +43,7 @@ struct ChangesPanel: View {
             content
         }
         // Git is quick to ask; look again every few seconds while the panel is open.
-        .task(id: changes.scope) {
+        .task(id: "\(changes.directory)\n\(changes.scope)") {
             while !Task.isCancelled {
                 await changes.refresh(fallback: engineChanges)
                 try? await Task.sleep(for: .seconds(3))
@@ -53,6 +63,27 @@ struct ChangesPanel: View {
 
     private var header: some View {
         HStack(spacing: 10) {
+            if folders.count > 1 {
+                Menu {
+                    Picker("Folder", selection: Binding(get: { changes.directory }, set: { folder in
+                        let scope = changes.scope
+                        changes = ProjectChanges(directory: folder)
+                        changes.scope = scope
+                        collapsed = []
+                    })) {
+                        ForEach(folders, id: \.self) { Text(($0 as NSString).lastPathComponent).tag($0) }
+                    }
+                    .pickerStyle(.inline)
+                } label: {
+                    Label((changes.directory as NSString).lastPathComponent, systemImage: "folder")
+                        .labelStyle(.titleAndIcon)
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .fixedSize()
+                .help("Which of the project's folders to show")
+            }
             if changes.isRepository {
                 Menu {
                     Picker("Changes", selection: $changes.scope) {
@@ -109,10 +140,14 @@ struct ChangesPanel: View {
                                 FileBody(
                                     file: file,
                                     highlighted: highlighting[file.id],
-                                    comments: model?.reviewComments.filter { $0.file == file.path } ?? [],
+                                    comments: model?.reviewComments.filter { $0.file == commentPrefix + file.path } ?? [],
                                     expandedFolds: $expandedFolds,
                                     draft: $draft,
-                                    addComment: model.map { model in { model.reviewComments.append($0) } },
+                                    addComment: model.map { model in { [commentPrefix] comment in
+                                        var comment = comment
+                                        comment.file = commentPrefix + comment.file
+                                        model.reviewComments.append(comment)
+                                    } },
                                     deleteComment: { comment in model?.reviewComments.removeAll { $0.id == comment.id } }
                                 )
                             }
