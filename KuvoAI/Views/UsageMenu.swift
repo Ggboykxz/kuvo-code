@@ -127,19 +127,23 @@ private struct MeterRow: View {
                     .font(.callout)
                 Spacer()
                 Text("\(meter.remaining.formatted(.percent.precision(.fractionLength(0)))) left")
-                    .font(.callout.monospacedDigit().weight(.medium))
-                    .foregroundStyle(color)
+                    .font(.callout.monospacedDigit().weight(.semibold))
+                    // Plain text reads on any panel; colour only when it's a warning.
+                    .foregroundStyle(meter.remaining < 0.3 ? AnyShapeStyle(color) : AnyShapeStyle(.primary))
             }
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
-                    Capsule().fill(.fill.tertiary)
+                    // A track you can see on the menu bar's glass, with a hairline edge.
+                    Capsule()
+                        .fill(Color.primary.opacity(0.16))
+                        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
                     // Fills with what's left, so it drains as you use the plan, like the label says.
                     Capsule()
                         .fill(color.gradient)
                         .frame(width: max(proxy.size.width * meter.remaining, meter.remaining > 0 ? 4 : 0))
                 }
             }
-            .frame(height: 6)
+            .frame(height: 8)
             HStack {
                 if let detail = meter.detail { Text(detail) }
                 Spacer()
