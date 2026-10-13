@@ -74,6 +74,8 @@ struct ToolCallView: View {
     private func relative(_ path: String?) -> String? {
         guard let path else { return nil }
         let base = directory.hasSuffix("/") ? directory : directory + "/"
+        // The project folder itself goes by its name.
+        if path == directory || path == base { return (directory as NSString).lastPathComponent }
         return path.hasPrefix(base) ? String(path.dropFirst(base.count)) : (path as NSString).abbreviatingWithTildeInPath
     }
 
