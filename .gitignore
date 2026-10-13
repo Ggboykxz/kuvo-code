@@ -6,3 +6,4 @@ build/
 .swiftpm/
 *.xcuserstate
 Config/Signing.local.xcconfig
+CLAUDE.md
