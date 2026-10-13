@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Generates KuvoCode/AppIcon.icon, the app icon in Icon Composer's format.
 
-The icon is a prompt: Kuvo's chevron, turned to face right, in lavender, and a
-white cursor, on a dark indigo background. (Kuvo Box's icon is a K made of a
-white stem and the same chevron in teal.) Each part is its own layer, so macOS
-renders them as Liquid Glass and adapts them to dark, clear and tinted icon
-styles. Xcode compiles the file with the app.
+The icon is a prompt: the chevron from Kuvo's K logo, turned to face right, in
+lavender, and a white cursor, on a dark indigo background. Each part is its own
+layer, so macOS renders them as Liquid Glass and adapts them to dark, clear and
+tinted icon styles. Xcode compiles the file with the app.
 """
 import json
 import os
