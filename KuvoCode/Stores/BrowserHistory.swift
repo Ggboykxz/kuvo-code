@@ -1,0 +1,118 @@
+import AppKit
+import Foundation
+
+/// The sites the panel's browser has visited, for the new tab page's suggestions, with
+/// each site's icon. Kept in `<support>/Browser`, a site per host, at most a few hundred.
+@Observable
+final class BrowserHistory {
+    nonisolated struct Site: Codable, Identifiable, Hashable {
+        var host: String
+        var url: URL
+        var title: String
+        var visits: Int
+        var lastVisit: Date
+        var id: String { host }
+    }
+
+    private(set) var sites: [Site] = []
+    private(set) var icons: [String: NSImage] = [:]
+    @ObservationIgnored private var fetching: Set<String> = []
+
+    private static let limit = 300
+    private let folder: URL
+    private var file: URL { folder.appending(path: "history.json") }
+    private var iconFolder: URL { folder.appending(path: "Icons") }
+
+    init(folder: URL = AppInfo.supportDirectory.appending(path: "Browser")) {
+        self.folder = folder
+        if let data = try? Data(contentsOf: file), let saved = try? JSONDecoder().decode([Site].self, from: data) {
+            sites = saved
+        }
+    }
+
+    /// The most visited sites lately: visits count, and fade over a few weeks.
+    func suggestions(_ count: Int) -> [Site] {
+        let now = Date()
+        func score(_ site: Site) -> Double {
+            let days = now.timeIntervalSince(site.lastVisit) / 86_400
+            return Double(site.visits) / (1 + days / 14)
+        }
+        return Array(sites.sorted { score($0) > score($1) }.prefix(count))
+    }
+
+    /// A finished page load; `iconURL` is the page's own icon if it names one.
+    func record(_ url: URL, title: String, iconURL: URL?) {
+        guard let host = url.host(), ["http", "https"].contains(url.scheme ?? "") else { return }
+        let key = host.replacingOccurrences(of: "www.", with: "")
+        if let index = sites.firstIndex(where: { $0.host == key }) {
+            sites[index].visits += 1
+            sites[index].lastVisit = .now
+            // The site's front page names it best; keep its title once seen.
+            if url.path().count <= 1 || sites[index].title.isEmpty {
+                sites[index].url = url
+                sites[index].title = title
+            }
+        } else {
+            sites.append(Site(host: key, url: url, title: title, visits: 1, lastVisit: .now))
+            if sites.count > Self.limit {
+                sites = Array(sites.sorted { $0.lastVisit > $1.lastVisit }.prefix(Self.limit))
+            }
+        }
+        save()
+        loadIcon(for: key, from: iconURL ?? URL(string: "https://\(host)/favicon.ico"))
+    }
+
+    /// Leaves a site out of the suggestions until it's visited again.
+    func remove(_ site: Site) {
+        sites.removeAll { $0.host == site.host }
+        save()
+    }
+
+    func clear() {
+        sites = []
+        icons = [:]
+        try? FileManager.default.removeItem(at: folder)
+    }
+
+    func icon(for site: Site) -> NSImage? {
+        if let icon = icons[site.host] { return icon }
+        if let image = NSImage(contentsOf: iconFolder.appending(path: site.host + ".png")) {
+            icons[site.host] = image
+            return image
+        }
+        return nil
+    }
+
+    private func loadIcon(for host: String, from url: URL?) {
+        guard let url, !fetching.contains(host) else { return }
+        fetching.insert(host)
+        Task {
+            defer { fetching.remove(host) }
+            guard let (data, _) = try? await URLSession.shared.data(from: url),
+                  let image = NSImage(data: data), image.isValid,
+                  let png = image.pngData(side: 64) else { return }
+            try? FileManager.default.createDirectory(at: iconFolder, withIntermediateDirectories: true)
+            try? png.write(to: iconFolder.appending(path: host + ".png"))
+            icons[host] = NSImage(data: png)
+        }
+    }
+
+    private func save() {
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        if let data = try? JSONEncoder().encode(sites) { try? data.write(to: file, options: .atomic) }
+    }
+}
+
+private extension NSImage {
+    /// The image redrawn as a square PNG, for a small cache that loads fast.
+    func pngData(side: CGFloat) -> Data? {
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(side), pixelsHigh: Int(side), bitsPerSample: 8,
+                                         samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                                         bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        draw(in: NSRect(x: 0, y: 0, width: side, height: side))
+        NSGraphicsContext.restoreGraphicsState()
+        return rep.representation(using: .png, properties: [:])
+    }
+}

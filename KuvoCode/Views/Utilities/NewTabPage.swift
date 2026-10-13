@@ -1,0 +1,166 @@
+import AppKit
+import SwiftUI
+
+/// What a new tab shows until you go somewhere: the panel's tools (and a way into their
+/// settings), and the sites the browser visits most. Picking a tool turns this tab into it; picking a site opens it here. Both
+/// sections can be turned off in Settings › Panel.
+struct NewTabPage: View {
+    let utilities: Utilities
+    let tabID: UUID
+    let directory: String?
+    let environment: [String: String]
+    let browser: BrowserSession
+    @AppStorage(PanelSettings.showsTools) private var showsTools = true
+    @AppStorage(PanelSettings.showsSuggestions) private var showsSuggestions = true
+    @AppStorage(PanelSettings.suggestionCount) private var suggestionCount = 8
+    @Environment(\.openSettings) private var openSettings
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 28) {
+                if showsTools {
+                    section("Tools") {
+                        LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                            ToolCard(title: "Changes", symbol: "plus.forwardslash.minus", shortcut: "⌥⌘I") {
+                                replace { utilities.showChanges() }
+                            }
+                            ToolCard(title: "Terminal", symbol: "apple.terminal", shortcut: "⌃`") {
+                                replace { utilities.newTerminal(in: directory, environment: environment) }
+                            }
+                            ToolCard(title: "Files", symbol: "folder", shortcut: "⌥⌘F") {
+                                replace { utilities.showFiles() }
+                            }
+                            ToolCard(title: "Customize…", symbol: "slider.horizontal.3", shortcut: nil) {
+                                UserDefaults.standard.set("panel", forKey: "settings.tab")
+                                openSettings()
+                            }
+                        }
+                    }
+                }
+                if showsSuggestions {
+                    section("Suggested") {
+                        let sites = utilities.history.suggestions(suggestionCount)
+                        if sites.isEmpty {
+                            Text("Sites you visit in the panel show up here.")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 104, maximum: 160), spacing: 8)], spacing: 8) {
+                                ForEach(sites) { site in
+                                    SiteTile(site: site, icon: utilities.history.icon(for: site)) {
+                                        browser.load(site.url.absoluteString)
+                                    }
+                                    .contextMenu {
+                                        Button("Open in New Tab") { utilities.newBrowser(site.url.absoluteString) }
+                                        Divider()
+                                        Button("Remove from Suggested") { withAnimation(.ui) { utilities.history.remove(site) } }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if !showsTools && !showsSuggestions {
+                    Text("Search, or enter a URL above.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: 640, alignment: .leading)
+            .frame(maxWidth: .infinity)
+        }
+        .scrollIndicators(.automatic)
+    }
+
+    private func replace(_ open: () -> Void) {
+        withAnimation(.ui) { utilities.replace(tabID, with: open) }
+    }
+
+    private func section(_ title: String, @ViewBuilder content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.system(size: 15, weight: .semibold))
+            content()
+        }
+    }
+}
+
+/// A tool on the new tab page: its symbol and name, and its shortcut in a chip.
+private struct ToolCard: View {
+    let title: String
+    let symbol: String
+    let shortcut: String?
+    let action: () -> Void
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: symbol)
+                    .font(.system(size: 14))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 20)
+                Text(title)
+                    .font(.system(size: 14))
+                Spacer(minLength: 6)
+                if let shortcut {
+                    Text(shortcut)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(Color.primary.opacity(0.07), in: .capsule)
+                }
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 48)
+            .background(Color.primary.opacity(isHovering ? 0.08 : 0.045), in: .rect(cornerRadius: 12))
+            .contentShape(.rect(cornerRadius: 12))
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+    }
+}
+
+/// A suggested site: its icon large, its name under it.
+private struct SiteTile: View {
+    let site: BrowserHistory.Site
+    let icon: NSImage?
+    let action: () -> Void
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 10) {
+                Group {
+                    if let icon {
+                        Image(nsImage: icon)
+                            .resizable()
+                            .interpolation(.high)
+                            .clipShape(.rect(cornerRadius: 8))
+                    } else {
+                        Text(site.host.prefix(1).uppercased())
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .background(Color.primary.opacity(0.07), in: .rect(cornerRadius: 8))
+                    }
+                }
+                .frame(width: 40, height: 40)
+                Text(site.title.isEmpty ? site.host : site.title)
+                    .font(.system(size: 13))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .padding(.vertical, 14)
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity)
+            .background(isHovering ? Color.primary.opacity(0.05) : .clear, in: .rect(cornerRadius: 12))
+            .contentShape(.rect(cornerRadius: 12))
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .help(site.url.absoluteString)
+    }
+}

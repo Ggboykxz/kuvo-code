@@ -24,10 +24,20 @@ final class Utilities {
     var showsTree = true
     private(set) var terminals: [UUID: TerminalSession] = [:]
     private(set) var browsers: [UUID: BrowserSession] = [:]
+    /// Sites the browser visits, for the new tab page.
+    let history = BrowserHistory()
     /// Goes up when something (the agent's browsing) needs the panel in view.
     private(set) var revealRequest = 0
 
     var selected: Tab? { tabs.first { $0.id == selection } ?? tabs.first }
+
+    init() {
+        // Settings › Panel can start the panel on a new tab instead of Changes.
+        if UserDefaults.standard.string(forKey: PanelSettings.startsWith) == PanelSettings.Start.newTab.rawValue {
+            tabs = []
+            newTab()
+        }
+    }
 
     /// Shows the Changes tab, opening it again if it was closed.
     func showChanges() {
@@ -48,6 +58,11 @@ final class Utilities {
     func newBrowser(_ address: String? = nil) -> BrowserSession {
         let tab = Tab(kind: .browser)
         let browser = BrowserSession()
+        browser.onVisit = { [weak history] url, title, icon in history?.record(url, title: title, iconURL: icon) }
+        browser.openInNewTab = { [weak self] request in
+            guard let url = request.url else { return }
+            self?.newBrowser(url.absoluteString)
+        }
         browsers[tab.id] = browser
         if let address { browser.load(address) }
         add(tab)
@@ -74,10 +89,28 @@ final class Utilities {
         }
     }
 
+    /// A new tab: an empty browser, which shows the tools and suggested sites until you go
+    /// somewhere.
+    func newTab() {
+        newBrowser()
+    }
+
+    /// Swaps a tab for another tool, in its place: what picking a tool on a new tab page does.
+    func replace(_ id: UUID, with open: () -> Void) {
+        let before = Set(tabs.map(\.id))
+        open()
+        // Put a tab the tool added where this one was (it may have reused an existing tab instead).
+        if let added = tabs.first(where: { !before.contains($0.id) }), let from = tabs.firstIndex(of: added) {
+            tabs.remove(at: from)
+            tabs.insert(added, at: tabs.firstIndex(where: { $0.id == id }) ?? tabs.count)
+        }
+        close(id)
+    }
+
     /// Brings the panel into view, on `browser`'s tab if given.
     func reveal(_ browser: BrowserSession? = nil) {
         if let browser, let id = browsers.first(where: { $0.value === browser })?.key { selection = id }
-        revealRequest += 1
+        if PanelSettings.isOn(PanelSettings.revealsForAgent) { revealRequest += 1 }
     }
 
     /// The browser in view, or the most recent one.

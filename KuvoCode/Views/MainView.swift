@@ -7,6 +7,7 @@ struct MainView: View {
     @Environment(AppModel.self) private var app
     @Environment(Catalog.self) private var catalog
     @Environment(Workspace.self) private var workspace
+    @Environment(\.openSettings) private var openSettings
 
     /// Open tabs, in order: session IDs, or `draft:<folder>` for a new session
     /// that doesn't exist on the server until its first message.
@@ -251,7 +252,8 @@ struct MainView: View {
             model: activeModel,
             environment: app.shellEnvironment,
             isExpanded: $panelExpanded,
-            isFocused: focus == .changes
+            isFocused: focus == .changes,
+            hide: { withAnimation(.ui) { showsPanel = false } }
         )
         .simultaneousGesture(TapGesture().onEnded { focus = .changes })
     }
@@ -391,6 +393,24 @@ struct MainView: View {
         default: break
         }
         if environment["KUVO_DEMO_CHANGES"] != nil { showsPanel = true }
+        // KUVO_DEMO_WINDOW=WIDTHxHEIGHT resizes the window, for checking narrow layouts.
+        if let size = environment["KUVO_DEMO_WINDOW"]?.split(separator: "x").compactMap({ Double($0) }), size.count == 2,
+           let window = NSApp.windows.first(where: \.isVisible) {
+            var frame = window.frame
+            frame.size = CGSize(width: size[0], height: size[1])
+            window.setFrame(frame, display: true, animate: false)
+            // Again once window restoration has settled.
+            try? await Task.sleep(for: .seconds(1))
+            window.setFrame(frame, display: true, animate: false)
+        }
+        if workspace.isLoaded, environment["KUVO_DEMO_PROVIDERS"] != nil { showsProviders = true }
+        // KUVO_DEMO_SETTINGS=<tab> opens Settings on that tab: general, accounts, panel, usage, engine.
+        if workspace.isLoaded, let tab = environment["KUVO_DEMO_SETTINGS"] {
+            UserDefaults.standard.set(tab, forKey: "settings.tab")
+            openSettings()
+        }
+        guard workspace.isLoaded, !Self.ranDemo else { return }
+        Self.ranDemo = true
         // KUVO_DEMO_PANEL: tools to open in the panel, comma-separated: terminal,
         // browser=<address>, files, file=<path>, changes, expand.
         for item in (environment["KUVO_DEMO_PANEL"] ?? "").split(separator: ",").map(String.init) {
@@ -406,19 +426,6 @@ struct MainView: View {
             }
             showsPanel = true
         }
-        // KUVO_DEMO_WINDOW=WIDTHxHEIGHT resizes the window, for checking narrow layouts.
-        if let size = environment["KUVO_DEMO_WINDOW"]?.split(separator: "x").compactMap({ Double($0) }), size.count == 2,
-           let window = NSApp.windows.first(where: \.isVisible) {
-            var frame = window.frame
-            frame.size = CGSize(width: size[0], height: size[1])
-            window.setFrame(frame, display: true, animate: false)
-            // Again once window restoration has settled.
-            try? await Task.sleep(for: .seconds(1))
-            window.setFrame(frame, display: true, animate: false)
-        }
-        if workspace.isLoaded, environment["KUVO_DEMO_PROVIDERS"] != nil { showsProviders = true }
-        guard workspace.isLoaded, !Self.ranDemo else { return }
-        Self.ranDemo = true
         // In a task of its own: SwiftUI cancels and restarts this view's task while the
         // window settles, which would cut the session's creation short.
         Task { await runDemoSession(environment) }

@@ -13,6 +13,10 @@ final class BrowserSession: NSObject {
     private(set) var canGoForward = false
     private(set) var progress = 0.0
     @ObservationIgnored private var observations: [NSKeyValueObservation] = []
+    /// Told about each page that finishes loading, for the new tab page's suggestions.
+    @ObservationIgnored var onVisit: ((URL, String, URL?) -> Void)?
+    /// Opens a link that asks for a new window in a tab of its own.
+    @ObservationIgnored var openInNewTab: ((URLRequest) -> Void)?
 
     override init() {
         let configuration = WKWebViewConfiguration()
@@ -24,6 +28,7 @@ final class BrowserSession: NSObject {
         webView.allowsMagnification = true
         super.init()
         webView.uiDelegate = self
+        webView.navigationDelegate = self
         observations = [
             webView.observe(\.title) { [weak self] view, _ in MainActor.assumeIsolated { self?.title = view.title ?? "" } },
             webView.observe(\.url) { [weak self] view, _ in MainActor.assumeIsolated { self?.url = view.url } },
@@ -62,75 +67,65 @@ final class BrowserSession: NSObject {
         if looksLikeHost, let url = URL(string: (text.hasPrefix("localhost") || text.hasPrefix("127.") ? "http://" : "https://") + text) {
             return url
         }
-        var search = URLComponents(string: "https://www.google.com/search")!
-        search.queryItems = [URLQueryItem(name: "q", value: text)]
-        return search.url
+        return SearchEngine.current.url(for: text)
     }
 }
 
 extension BrowserSession: WKUIDelegate {
-    /// Links that would open a new window open in this tab.
+    /// Links that would open a new window open in this tab, or in a new one (Settings › Panel).
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        webView.load(navigationAction.request)
+        let setting = UserDefaults.standard.string(forKey: PanelSettings.newWindowLinks).flatMap(PanelSettings.NewWindowLinks.init)
+        if setting == .newTab, let openInNewTab {
+            openInNewTab(navigationAction.request)
+        } else {
+            webView.load(navigationAction.request)
+        }
         return nil
     }
 }
 
-/// A browser tab in the panel: back, forward, reload, the address, and the page.
-struct BrowserPane: View {
+extension BrowserSession: WKNavigationDelegate {
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard let url = webView.url, let onVisit else { return }
+        let title = webView.title ?? ""
+        // The page's own icon, the largest it names; the site's /favicon.ico otherwise.
+        let script = """
+        (() => {
+          // Only icons meant for the current appearance (sites name light and dark ones).
+          const links = [...document.querySelectorAll('link[rel~="icon"], link[rel="apple-touch-icon"]')]
+            .filter((l) => !l.media || matchMedia(l.media).matches);
+          const size = (l) => parseInt((l.sizes && l.sizes.value || '0').split('x')[0]) || (l.rel.includes('apple') ? 180 : 16);
+          links.sort((a, b) => size(b) - size(a));
+          return links.length ? links[0].href : null;
+        })()
+        """
+        webView.evaluateJavaScript(script) { result, _ in
+            MainActor.assumeIsolated { onVisit(url, title, (result as? String).flatMap(URL.init(string:))) }
+        }
+    }
+}
+
+/// A browser tab in the panel: back, forward and reload, the address, a few actions, and the
+/// page, or the new tab page while the tab hasn't gone anywhere.
+struct BrowserPane<NewTab: View>: View {
     let session: BrowserSession
+    @ViewBuilder let newTab: () -> NewTab
     @State private var address = ""
     @FocusState private var editing: Bool
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                Button { session.webView.goBack() } label: { Image(systemName: "chevron.left") }
-                    .disabled(!session.canGoBack)
-                    .help("Back")
-                Button { session.webView.goForward() } label: { Image(systemName: "chevron.right") }
-                    .disabled(!session.canGoForward)
-                    .help("Forward")
-                Button {
-                    if session.isLoading { session.webView.stopLoading() } else { session.webView.reload() }
-                } label: {
-                    Image(systemName: session.isLoading ? "xmark" : "arrow.clockwise")
-                }
-                .help(session.isLoading ? "Stop" : "Reload")
-                TextField("Search or enter an address", text: $address)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13))
-                    .multilineTextAlignment(editing ? .leading : .center)
-                    .focused($editing)
-                    .onSubmit {
-                        session.load(address)
-                        editing = false
-                    }
-                    .padding(.horizontal, 12)
-                    .frame(height: 28)
-                    .background(Color.primary.opacity(0.06), in: .capsule)
-                    .overlay(alignment: .bottomLeading) {
-                        if session.isLoading {
-                            GeometryReader { proxy in
-                                Capsule().fill(.tint).frame(width: proxy.size.width * session.progress, height: 2)
-                            }
-                            .frame(height: 2)
-                            .padding(.horizontal, 10)
-                        }
-                    }
-                Button {
-                    if let url = session.url { NSWorkspace.shared.open(url) }
-                } label: { Image(systemName: "arrow.up.right.square") }
-                    .disabled(session.url == nil)
-                    .help("Open in Your Browser")
+            HStack(spacing: 8) {
+                navigation
+                addressField
+                actions
             }
-            .buttonStyle(CardActionStyle())
             .padding(.horizontal, 10)
-            .padding(.vertical, 6)
+            .padding(.bottom, 8)
             Divider()
             if session.url == nil && !session.isLoading {
-                ContentUnavailableView("New Tab", systemImage: "globe", description: Text("Search, or enter an address above."))
-                    .frame(maxHeight: .infinity)
+                newTab()
             } else {
                 WebViewHost(webView: session.webView)
             }
@@ -143,11 +138,121 @@ struct BrowserPane: View {
         .onChange(of: editing) { _, isEditing in address = isEditing ? (session.url?.absoluteString ?? "") : displayAddress }
     }
 
+    private var navigation: some View {
+        HStack(spacing: 0) {
+            Button { session.webView.goBack() } label: { Label("Back", systemImage: "arrow.left") }
+                .disabled(!session.canGoBack)
+                .help("Back")
+            Button { session.webView.goForward() } label: { Label("Forward", systemImage: "arrow.right") }
+                .disabled(!session.canGoForward)
+                .help("Forward")
+            Divider().frame(height: 16).padding(.horizontal, 2)
+            Button {
+                if session.isLoading { session.webView.stopLoading() } else { session.webView.reload() }
+            } label: {
+                Label(session.isLoading ? "Stop" : "Reload", systemImage: session.isLoading ? "xmark" : "arrow.clockwise")
+            }
+            .disabled(session.url == nil)
+            .help(session.isLoading ? "Stop" : "Reload")
+        }
+        .buttonStyle(ToolbarGroupStyle())
+        .padding(.horizontal, 3)
+        .frame(height: 34)
+        .background(Color.primary.opacity(0.06), in: .capsule)
+    }
+
+    private var addressField: some View {
+        HStack(spacing: 7) {
+            Image(systemName: session.url?.scheme == "https" && !editing ? "lock.fill" : "magnifyingglass")
+                .font(.system(size: 11))
+                .foregroundStyle(.tertiary)
+            TextField("Search or enter a URL", text: $address)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .focused($editing)
+                .onSubmit {
+                    session.load(address)
+                    editing = false
+                }
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 34)
+        .background(Color.primary.opacity(0.06), in: .capsule)
+        .overlay(alignment: .bottom) {
+            if session.isLoading {
+                GeometryReader { proxy in
+                    Capsule().fill(.tint).frame(width: proxy.size.width * session.progress, height: 2)
+                }
+                .frame(height: 2)
+                .padding(.horizontal, 16)
+            }
+        }
+        .contentShape(.capsule)
+        .onTapGesture { editing = true }
+    }
+
+    private var actions: some View {
+        HStack(spacing: 0) {
+            Button {
+                if let url = session.url { NSWorkspace.shared.open(url) }
+            } label: { Label("Open in Your Browser", systemImage: "arrow.up.forward.app") }
+                .disabled(session.url == nil)
+                .help("Open in Your Browser")
+            Menu {
+                Button("Copy Address") {
+                    guard let url = session.url else { return }
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(url.absoluteString, forType: .string)
+                }
+                .disabled(session.url == nil)
+                Button("Reload Page") { session.webView.reload() }
+                    .disabled(session.url == nil)
+                Divider()
+                Button("Actual Size") { session.webView.magnification = 1 }
+                Button("Zoom In") { session.webView.magnification = min(session.webView.magnification + 0.1, 3) }
+                Button("Zoom Out") { session.webView.magnification = max(session.webView.magnification - 0.1, 0.5) }
+                Divider()
+                Button("Panel Settings…") {
+                    UserDefaults.standard.set("panel", forKey: "settings.tab")
+                    openSettings()
+                }
+            } label: {
+                Label("More", systemImage: "ellipsis")
+            }
+            .menuStyle(.button)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("More")
+        }
+        .buttonStyle(ToolbarGroupStyle())
+        .padding(.horizontal, 3)
+        .frame(height: 34)
+        .background(Color.primary.opacity(0.06), in: .capsule)
+    }
+
     /// The host while browsing ("google.com"), the full address while editing.
     private var displayAddress: String {
         guard let url = session.url else { return "" }
         if editing { return url.absoluteString }
         return url.host()?.replacingOccurrences(of: "www.", with: "") ?? url.absoluteString
+    }
+}
+
+/// The buttons inside the toolbar's capsules.
+private struct ToolbarGroupStyle: ButtonStyle {
+    @State private var isHovering = false
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .labelStyle(.iconOnly)
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(isEnabled ? (isHovering ? .primary : .secondary) : .quaternary)
+            .frame(width: 30, height: 28)
+            .background(isHovering && isEnabled ? Color.primary.opacity(0.08) : .clear, in: .capsule)
+            .opacity(configuration.isPressed ? 0.6 : 1)
+            .contentShape(.capsule)
+            .onHover { isHovering = $0 }
     }
 }
 

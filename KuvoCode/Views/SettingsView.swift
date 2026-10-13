@@ -1,6 +1,7 @@
 import OpenCodeKit
 import SwiftUI
 import UsageKit
+import WebKit
 
 struct SettingsView: View {
     /// Every tab is this wide, so switching tabs doesn't make the window jump sideways.
@@ -17,6 +18,9 @@ struct SettingsView: View {
             Tab("Accounts", systemImage: "person.crop.circle", value: "accounts") {
                 ProvidersView(context: .settings)
                     .frame(width: SettingsView.width, height: 600)
+            }
+            Tab("Panel", systemImage: "sidebar.right", value: "panel") {
+                PanelSettingsView()
             }
             Tab("Usage", systemImage: "gauge.with.dots.needle.50percent", value: "usage") {
                 UsageSettings()
@@ -67,6 +71,69 @@ private struct UsageSettings: View {
         .formStyle(.grouped)
         .frame(width: SettingsView.width)
         .fixedSize()
+    }
+}
+
+/// The side panel: what it starts with, the new tab page, and the browser.
+private struct PanelSettingsView: View {
+    @Environment(AppModel.self) private var app
+    @AppStorage(PanelSettings.startsWith) private var startsWith = PanelSettings.Start.changes
+    @AppStorage(PanelSettings.revealsForAgent) private var revealsForAgent = true
+    @AppStorage(PanelSettings.showsTools) private var showsTools = true
+    @AppStorage(PanelSettings.showsSuggestions) private var showsSuggestions = true
+    @AppStorage(PanelSettings.suggestionCount) private var suggestionCount = 8
+    @AppStorage(SearchEngine.key) private var searchEngine = SearchEngine.google
+    @AppStorage(PanelSettings.newWindowLinks) private var newWindowLinks = PanelSettings.NewWindowLinks.sameTab
+    @State private var confirmingClearData = false
+
+    var body: some View {
+        Form {
+            Section {
+                Picker("Start a project's panel with", selection: $startsWith) {
+                    ForEach(PanelSettings.Start.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                Toggle("Show the panel when the agent starts browsing", isOn: $revealsForAgent)
+            }
+            Section("New Tab Page") {
+                Toggle("Show tools", isOn: $showsTools)
+                Toggle("Show suggested sites", isOn: $showsSuggestions)
+                Picker("Suggested sites", selection: $suggestionCount) {
+                    ForEach([4, 8, 12, 16], id: \.self) { Text("\($0)").tag($0) }
+                }
+                .disabled(!showsSuggestions)
+            }
+            Section {
+                Picker("Search engine", selection: $searchEngine) {
+                    ForEach(SearchEngine.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                Picker("Open links that ask for a new window", selection: $newWindowLinks) {
+                    ForEach(PanelSettings.NewWindowLinks.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                LabeledContent("Suggested sites") {
+                    Button("Clear") { app.utilities.history.clear() }
+                        .disabled(app.utilities.history.sites.isEmpty)
+                }
+                LabeledContent("Cookies and website data") {
+                    Button("Clear…") { confirmingClearData = true }
+                }
+            } header: {
+                Text("Browser")
+            } footer: {
+                Text("The panel's browser keeps its own cookies and sign-ins, separate from your other browsers.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .frame(width: SettingsView.width)
+        .fixedSize()
+        .confirmationDialog("Clear the panel browser's cookies and website data?", isPresented: $confirmingClearData) {
+            Button("Clear", role: .destructive) {
+                let store = WKWebsiteDataStore.default()
+                store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast) {}
+            }
+        } message: {
+            Text("You'll be signed out of every site in the panel's browser. Your other browsers aren't affected.")
+        }
     }
 }
 
