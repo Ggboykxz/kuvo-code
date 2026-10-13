@@ -6,7 +6,9 @@ import SwiftUI
 /// changes from git, new files included, each file folded to its changes with the
 /// rest a click away. Lines take comments, which go to the agent with the next message.
 struct ChangesPanel: View {
-    let model: SessionModel
+    /// The session, for its comments and its record of edits; none for a project
+    /// without one open (no comments then).
+    let model: SessionModel?
     @State private var changes: ProjectChanges
     @State private var collapsed: Set<String> = []
     @State private var expandedFolds: Set<String> = []
@@ -17,10 +19,12 @@ struct ChangesPanel: View {
 
     struct DraftTarget: Equatable { var file: String; var line: Int }
 
-    init(model: SessionModel) {
+    init(directory: String, model: SessionModel?) {
         self.model = model
-        _changes = State(initialValue: ProjectChanges(directory: model.session.location.directory))
+        _changes = State(initialValue: ProjectChanges(directory: directory))
     }
+
+    private var engineChanges: [FileDiff] { model?.changes ?? [] }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -31,7 +35,7 @@ struct ChangesPanel: View {
         // Git is quick to ask; look again every few seconds while the panel is open.
         .task(id: changes.scope) {
             while !Task.isCancelled {
-                await changes.refresh(fallback: model.changes)
+                await changes.refresh(fallback: engineChanges)
                 try? await Task.sleep(for: .seconds(3))
             }
         }
@@ -41,8 +45,8 @@ struct ChangesPanel: View {
                 highlighting[file.id] = await DiffHighlighting.make(for: file)
             }
         }
-        .onChange(of: model.isRunning) { Task { await changes.refresh(fallback: model.changes) } }
-        .onChange(of: model.changes) { Task { await changes.refresh(fallback: model.changes) } }
+        .onChange(of: model?.isRunning) { Task { await changes.refresh(fallback: engineChanges) } }
+        .onChange(of: engineChanges) { Task { await changes.refresh(fallback: engineChanges) } }
     }
 
     // MARK: Header
@@ -105,11 +109,11 @@ struct ChangesPanel: View {
                                 FileBody(
                                     file: file,
                                     highlighted: highlighting[file.id],
-                                    comments: model.reviewComments.filter { $0.file == file.path },
+                                    comments: model?.reviewComments.filter { $0.file == file.path } ?? [],
                                     expandedFolds: $expandedFolds,
                                     draft: $draft,
-                                    addComment: { model.reviewComments.append($0) },
-                                    deleteComment: { comment in model.reviewComments.removeAll { $0.id == comment.id } }
+                                    addComment: model.map { model in { model.reviewComments.append($0) } },
+                                    deleteComment: { comment in model?.reviewComments.removeAll { $0.id == comment.id } }
                                 )
                             }
                         } header: {
@@ -226,7 +230,8 @@ private struct FileBody: View {
     let comments: [ReviewComment]
     @Binding var expandedFolds: Set<String>
     @Binding var draft: ChangesPanel.DraftTarget?
-    let addComment: (ReviewComment) -> Void
+    /// Nil without a session: lines don't take comments then.
+    let addComment: ((ReviewComment) -> Void)?
     let deleteComment: (ReviewComment) -> Void
 
     var body: some View {
@@ -254,9 +259,8 @@ private struct FileBody: View {
                     FoldRow(count: nil) {}
                 case .line(let index):
                     let line = file.lines[index]
-                    DiffLineRow(line: line, runs: highlighted?.runs(for: line, at: index), gutterWidth: gutter) {
-                        draft = .init(file: file.id, line: index)
-                    }
+                    DiffLineRow(line: line, runs: highlighted?.runs(for: line, at: index), gutterWidth: gutter,
+                                comment: addComment == nil ? nil : { draft = .init(file: file.id, line: index) })
                     ForEach(comments.filter { $0.matches(line) }) { comment in
                         CommentCard(comment: comment) { deleteComment(comment) }
                     }
@@ -264,7 +268,7 @@ private struct FileBody: View {
                         CommentEditor {
                             draft = nil
                         } save: { text in
-                            addComment(ReviewComment(file: file.path, line: line.number, side: line.kind == .removed ? .old : .new, snippet: line.text.trimmingCharacters(in: .whitespaces), text: text))
+                            addComment?(ReviewComment(file: file.path, line: line.number, side: line.kind == .removed ? .old : .new, snippet: line.text.trimmingCharacters(in: .whitespaces), text: text))
                             draft = nil
                         }
                     }

@@ -61,10 +61,22 @@ without clicking:
 | `KUVO_DEMO_COMPOSER_FILES` | Comma-separated paths to show as attached in the composer |
 | `KUVO_DEMO_PROVIDERS` | Open Accounts (on a provider's sign-in if it names one) |
 | `KUVO_DEMO_APPEARANCE` | `light` or `dark` |
-| `KUVO_DEMO_CHANGES` | Show the Changes card |
+| `KUVO_DEMO_CHANGES` | Show the side panel |
+| `KUVO_DEMO_PANEL` | Open tools in the panel, comma-separated: `terminal`, `browser=<address>`, `files`, `file=<path>`, `changes`, `expand` |
 | `KUVO_DEMO_WINDOW` | Window size, as `WIDTHxHEIGHT` |
 | `KUVO_DEMO_MENU` | Open the `mode` or `model` menu (`models` for its first submenu) |
 | `KUVO_DEMO_USAGE` | Open the menu bar's usage panel on `dashboard`, `customize` or `settings` |
+
+## The side panel
+
+The panel on the right holds tools, as tabs (+ adds one, the title bar button or ⌥⌘0 shows it):
+
+- **Changes**: the project's uncommitted changes from git (or unstaged, or staged), with
+  comments on lines that go to the agent with your next message.
+- **Files**: the project's files, with Markdown rendered, code highlighted and anything
+  else in Quick Look.
+- **Terminal**: your login shell in the project folder (⌃`).
+- **Browser**: a web browser (⌥⌘B).
 
 ## Usage in the menu bar
 
@@ -83,6 +95,7 @@ asks which providers to follow. Its settings are in the panel, also linked from 
 - [opencode](https://github.com/anomalyco/opencode) (MIT), downloaded at runtime.
 - [Textual](https://github.com/gonzalezreal/textual) (MIT), for Markdown.
 - [Prism](https://prismjs.com) (MIT), bundled, for coloring code in diffs.
+- [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) (MIT), the panel's terminal.
 - [OpenUsage](https://github.com/robinebers/openusage) (MIT), forked as UsageKit for the menu bar.
 - [KeyboardShortcuts](https://github.com/sindresorhus/KeyboardShortcuts) (MIT), the usage panel's global shortcut.
 - Provider logos come from [models.dev](https://models.dev).

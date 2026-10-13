@@ -79,10 +79,22 @@ struct AppCommands: Commands {
             Button("Plan Mode") { actions?.selectAgent("plan") }
                 .keyboardShortcut("2", modifiers: [.command, .option])
                 .disabled(actions?.hasSession != true)
-            Divider()
-            Button("Show Changes") { actions?.toggleChanges() }
-                .keyboardShortcut("i", modifiers: [.command, .option])
-                .disabled(actions?.hasSession != true)
+        }
+        CommandMenu("Tools") {
+            Group {
+                Button("Show Changes") { actions?.showChanges() }
+                    .keyboardShortcut("i", modifiers: [.command, .option])
+                Button("Show Files") { actions?.showFiles() }
+                    .keyboardShortcut("f", modifiers: [.command, .option])
+                Button("New Terminal") { actions?.newTerminal() }
+                    .keyboardShortcut("`", modifiers: .control)
+                Button("New Browser Tab") { actions?.newBrowser() }
+                    .keyboardShortcut("b", modifiers: [.command, .option])
+                Divider()
+                Button("Show Panel") { actions?.togglePanel() }
+                    .keyboardShortcut("0", modifiers: [.command, .option])
+            }
+            .disabled(actions == nil)
         }
         CommandGroup(before: .sidebar) {
             Button("Show Sessions") { actions?.toggleSidebar() }
@@ -116,7 +128,11 @@ struct SessionActions {
     var openFolder: () -> Void
     var stop: () -> Void
     var selectAgent: (String) -> Void
-    var toggleChanges: () -> Void
+    var togglePanel: () -> Void
+    var showChanges: () -> Void
+    var showFiles: () -> Void
+    var newTerminal: () -> Void
+    var newBrowser: () -> Void
     var toggleSidebar: () -> Void
     var nextTab: () -> Void
     var previousTab: () -> Void

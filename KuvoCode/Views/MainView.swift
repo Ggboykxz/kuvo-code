@@ -14,7 +14,9 @@ struct MainView: View {
     /// The active tab.
     @SceneStorage("selection") private var selection: String?
     @SceneStorage("showsSidebar") private var showsSidebar = true
-    @SceneStorage("showsChanges") private var showsChanges = false
+    @SceneStorage("showsPanel") private var showsPanel = false
+    /// The panel over the conversation, for room.
+    @State private var panelExpanded = false
     @AppStorage("sessionsWidth") private var sessionsWidth = 280.0
     @AppStorage("changesWidth") private var changesWidth = 420.0
     @State private var showsProviders = false
@@ -28,6 +30,8 @@ struct MainView: View {
         get { tabStorage.split(separator: "\n").map(String.init) }
         nonmutating set { tabStorage = newValue.joined(separator: "\n") }
     }
+
+    private var utilities: Utilities { app.utilities }
 
     private var sessionID: String? {
         selection.flatMap { SidebarView.draftDirectory(from: $0) == nil ? $0 : nil }
@@ -53,7 +57,7 @@ struct MainView: View {
             let layout = PaneLayout(
                 available: proxy.size.width,
                 sessions: showsSidebar ? sessionsWidth : nil,
-                changes: showsChanges && activeModel != nil ? changesWidth : nil
+                changes: showsPanel && !panelExpanded ? changesWidth : nil
             )
             HStack(spacing: 0) {
                 if let width = layout.sessions {
@@ -66,15 +70,21 @@ struct MainView: View {
                         side: .leading
                     )
                 }
-                conversationCard
-                    .frame(maxWidth: .infinity)
-                if let width = layout.changes, let model = activeModel {
+                if showsPanel && panelExpanded {
+                    utilitiesPane
+                        .frame(maxWidth: .infinity)
+                        .transition(.opacity)
+                } else {
+                    conversationCard
+                        .frame(maxWidth: .infinity)
+                }
+                if let width = layout.changes {
                     PaneResizer(
                         width: Binding(get: { width }, set: { changesWidth = $0 }),
                         range: PaneLayout.changesRange.lowerBound...max(PaneLayout.changesRange.lowerBound, layout.changesMax),
                         side: .trailing
                     )
-                    changesCard(model)
+                    utilitiesPane
                         .frame(width: width)
                         .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
@@ -84,7 +94,9 @@ struct MainView: View {
         .padding(.horizontal, Metrics.paneGap)
         .padding(.bottom, Metrics.paneGap)
         .animation(.ui, value: showsSidebar)
-        .animation(.ui, value: showsChanges)
+        .animation(.ui, value: showsPanel)
+        .animation(.ui, value: panelExpanded)
+        .onDisappear { utilities.closeAll() }
         .toolbar { titleBar }
         .toolbar(removing: .title)
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
@@ -141,11 +153,10 @@ struct MainView: View {
 
         // Mirrors the sessions toggle on the left: this one shows the Changes card on the right.
         ToolbarItem(placement: .primaryAction) {
-            Toggle("Changes", systemImage: "sidebar.right", isOn: $showsChanges.animation(.ui))
+            Toggle("Panel", systemImage: "sidebar.right", isOn: $showsPanel.animation(.ui))
                 .toggleStyle(.button)
                 .labelStyle(.iconOnly)
-                .disabled(activeModel == nil)
-                .help(showsChanges ? "Hide Changes (⌥⌘I)" : "Show Changes (⌥⌘I)")
+                .help(showsPanel ? "Hide Panel (⌥⌘0)" : "Show Panel: Changes, Files, Terminal, Browser (⌥⌘0)")
         }
         .sharedBackgroundVisibility(.hidden)
     }
@@ -231,17 +242,24 @@ struct MainView: View {
         .simultaneousGesture(TapGesture().onEnded { focus = .conversation })
     }
 
-    private func changesCard(_ model: SessionModel) -> some View {
-        Card(title: "Changes", detail: (model.session.location.directory as NSString).lastPathComponent, isFocused: focus == .changes) {
-            Image(systemName: "plus.forwardslash.minus")
-        } actions: {
-            Button("Close", systemImage: "xmark") { withAnimation(.ui) { showsChanges = false } }
-                .help("Hide Changes")
-        } content: {
-            ChangesPanel(model: model)
-                .id(model.session.location.directory)
-        }
+    private var utilitiesPane: some View {
+        UtilitiesPane(
+            utilities: utilities,
+            directory: activeDirectory,
+            model: activeModel,
+            environment: app.shellEnvironment,
+            isExpanded: $panelExpanded,
+            isFocused: focus == .changes
+        )
         .simultaneousGesture(TapGesture().onEnded { focus = .changes })
+    }
+
+    /// Opens the panel on a tool.
+    private func showInPanel(_ open: () -> Void) {
+        withAnimation(.ui) {
+            open()
+            showsPanel = true
+        }
     }
 
     // MARK: Tabs
@@ -315,7 +333,11 @@ struct MainView: View {
             openFolder: openFolder,
             stop: { model?.stop() },
             selectAgent: { model?.selectAgent($0) },
-            toggleChanges: { withAnimation(.ui) { showsChanges.toggle() } },
+            togglePanel: { withAnimation(.ui) { showsPanel.toggle() } },
+            showChanges: { showInPanel { utilities.showChanges() } },
+            showFiles: { showInPanel { utilities.showFiles() } },
+            newTerminal: { showInPanel { utilities.newTerminal(in: activeDirectory, environment: app.shellEnvironment) } },
+            newBrowser: { showInPanel { utilities.newBrowser() } },
             toggleSidebar: { withAnimation(.ui) { showsSidebar.toggle() } },
             nextTab: { cycleTabs(by: 1) },
             previousTab: { cycleTabs(by: -1) },
@@ -360,7 +382,22 @@ struct MainView: View {
         case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
         default: break
         }
-        if environment["KUVO_DEMO_CHANGES"] != nil { showsChanges = true }
+        if environment["KUVO_DEMO_CHANGES"] != nil { showsPanel = true }
+        // KUVO_DEMO_PANEL: tools to open in the panel, comma-separated: terminal,
+        // browser=<address>, files, file=<path>, changes, expand.
+        for item in (environment["KUVO_DEMO_PANEL"] ?? "").split(separator: ",").map(String.init) {
+            let parts = item.split(separator: "=", maxSplits: 1).map(String.init)
+            switch parts.first {
+            case "terminal": utilities.newTerminal(in: activeDirectory, environment: app.shellEnvironment)
+            case "browser": utilities.newBrowser(parts.count > 1 ? parts[1] : nil)
+            case "files": utilities.showFiles()
+            case "file" where parts.count > 1: utilities.open(URL(filePath: parts[1]))
+            case "changes": utilities.showChanges()
+            case "expand": panelExpanded = true
+            default: continue
+            }
+            showsPanel = true
+        }
         // KUVO_DEMO_WINDOW=WIDTHxHEIGHT resizes the window, for checking narrow layouts.
         if let size = environment["KUVO_DEMO_WINDOW"]?.split(separator: "x").compactMap({ Double($0) }), size.count == 2,
            let window = NSApp.windows.first(where: \.isVisible) {

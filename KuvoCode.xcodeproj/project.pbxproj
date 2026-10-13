@@ -10,6 +10,7 @@
 		4B0A00000000000000000010 /* OpenCodeKit in Frameworks */ = {isa = PBXBuildFile; productRef = 4B0A00000000000000000011 /* OpenCodeKit */; };
 		4B0A00000000000000000015 /* Textual in Frameworks */ = {isa = PBXBuildFile; productRef = 4B0A00000000000000000016 /* Textual */; };
 		4B0A00000000000000000018 /* UsageKit in Frameworks */ = {isa = PBXBuildFile; productRef = 4B0A00000000000000000019 /* UsageKit */; };
+		4B0A0000000000000000001B /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 4B0A0000000000000000001C /* SwiftTerm */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -33,6 +34,7 @@
 				4B0A00000000000000000010 /* OpenCodeKit in Frameworks */,
 				4B0A00000000000000000015 /* Textual in Frameworks */,
 				4B0A00000000000000000018 /* UsageKit in Frameworks */,
+				4B0A0000000000000000001B /* SwiftTerm in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -87,6 +89,7 @@
 				4B0A00000000000000000011 /* OpenCodeKit */,
 				4B0A00000000000000000016 /* Textual */,
 				4B0A00000000000000000019 /* UsageKit */,
+				4B0A0000000000000000001C /* SwiftTerm */,
 			);
 			productName = KuvoCode;
 			productReference = 4B0A00000000000000000001 /* $(APP_NAME).app */;
@@ -120,6 +123,7 @@
 				4B0A00000000000000000012 /* XCLocalSwiftPackageReference "Packages/OpenCodeKit" */,
 				4B0A0000000000000000001A /* XCLocalSwiftPackageReference "Packages/UsageKit" */,
 				4B0A00000000000000000017 /* XCRemoteSwiftPackageReference "textual" */,
+				4B0A0000000000000000001D /* XCRemoteSwiftPackageReference "SwiftTerm" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 4B0A00000000000000000005 /* Products */;
@@ -385,6 +389,14 @@
 				minimumVersion = 0.5.0;
 			};
 		};
+		4B0A0000000000000000001D /* XCRemoteSwiftPackageReference "SwiftTerm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/migueldeicaza/SwiftTerm";
+			requirement = {
+				kind = upToNextMinorVersion;
+				minimumVersion = 1.11.2;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -400,6 +412,11 @@
 		4B0A00000000000000000019 /* UsageKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = UsageKit;
+		};
+		4B0A0000000000000000001C /* SwiftTerm */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4B0A0000000000000000001D /* XCRemoteSwiftPackageReference "SwiftTerm" */;
+			productName = SwiftTerm;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

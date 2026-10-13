@@ -18,7 +18,12 @@ final class AppModel {
     /// False while the live event feed is down (the UI shows it, and re-syncs after).
     private(set) var isLive = false
 
+    /// The login shell's environment (PATH and the like), for the engine and terminals.
+    private(set) var shellEnvironment = ProcessInfo.processInfo.environment
+
     let catalog = Catalog()
+    /// The right panel's tools; one window, so one set.
+    let utilities = Utilities()
     let workspace = Workspace()
     let usage = UsageAccounts()
     /// Brings the main window back (set by the window itself; the usage menu's "Open Kuvo Code").
@@ -68,6 +73,7 @@ final class AppModel {
 
             engine = .starting
             let shell = await environment
+            shellEnvironment = shell
             let server = try await ServerProcess.start(
                 executable: binary,
                 folders: engineFolders,
