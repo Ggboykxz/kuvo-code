@@ -15,18 +15,20 @@ struct KuvoCodeApp: App {
         }
         .defaultSize(width: 1180, height: 760)
         .windowToolbarStyle(.unified)
-        .commands { AppCommands() }
+        .commands { AppCommands(updates: delegate.updates) }
 
         Settings {
             SettingsView()
                 .environment(delegate.model)
                 .environment(delegate.model.catalog)
+                .environment(delegate.updates)
         }
     }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
+    let updates = Updates()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Plan limits and spend in the menu bar (UsageKit).
@@ -56,10 +58,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 /// Menu commands. They act on whatever the focused window exposes.
 struct AppCommands: Commands {
+    let updates: Updates
     @FocusedValue(\.sessionActions) private var actions
     @AppStorage(Appearance.key) private var appearance = Appearance.system
 
     var body: some Commands {
+        CommandGroup(after: .appInfo) {
+            if updates.isAvailable {
+                Button("Check for Updates…") { updates.check() }
+                    .disabled(!updates.canCheck)
+            }
+        }
         CommandGroup(replacing: .newItem) {
             Button("New Session") { actions?.newSession() }
                 .keyboardShortcut("n")

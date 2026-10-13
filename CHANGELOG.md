@@ -18,4 +18,5 @@ Kuvo Code's first public release: a native Mac app for coding agents, on the ope
 - **Attach anything.** Drop, paste or pick files of any kind. Pictures show up in the transcript.
 - **Plans and spend in the menu bar.** Limits with pace and reset times, and spend for today and the last 30 days, across Claude, Codex, Copilot, Cursor, OpenCode, OpenRouter, Z.ai and more.
 - **Build and Plan modes.** The agent asks before anything risky, and Plan mode talks a change through before making it.
+- **Updates itself.** Kuvo Code checks for signed updates once a day and shows what's new before it installs one. **Kuvo Code › Check for Updates…** checks right away.
 - **Kept apart from your own opencode.** The engine is the official opencode, unmodified, with its sessions, accounts and settings in Kuvo Code's own folder.

@@ -30,6 +30,7 @@ struct SettingsView: View {
 
 private struct GeneralSettings: View {
     @AppStorage(Appearance.key) private var appearance = Appearance.system
+    @Environment(Updates.self) private var updates
 
     var body: some View {
         Form {
@@ -37,6 +38,10 @@ private struct GeneralSettings: View {
                 ForEach(Appearance.allCases, id: \.self) { Text($0.title).tag($0) }
             }
             .pickerStyle(.segmented)
+            if updates.isAvailable {
+                @Bindable var updates = updates
+                Toggle("Check for updates automatically", isOn: $updates.checksAutomatically)
+            }
         }
         .formStyle(.grouped)
         .frame(width: SettingsView.width)
