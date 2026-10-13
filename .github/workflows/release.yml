@@ -12,7 +12,10 @@ name: Release
 # without a warning; the workflow stops if any of these secrets is missing.
 #   MACOS_CERTIFICATE_P12       base64 of the Developer ID Application .p12
 #   MACOS_CERTIFICATE_PASSWORD  password of that .p12
-#   MACOS_SIGNING_IDENTITY      e.g. "Developer ID Application: Name (TEAMID)"
+#   MACOS_SIGNING_IDENTITY      the certificate's SHA-1 fingerprint, from
+#                               `security find-identity -v -p codesigning`; safer
+#                               than its name, which codesign misses when the name
+#                               has accented letters
 #   APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD   for notarytool
 #
 # Every release also needs SPARKLE_PRIVATE_KEY, the EdDSA key that signs the
