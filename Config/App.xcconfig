@@ -1,0 +1,13 @@
+// The app's public identity. To rename the app, change these two lines.
+// (The Xcode target, folder and Swift module are named KuvoAI internally.)
+APP_NAME = kuvo-ai
+APP_BUNDLE_ID = run.kuvo.ai
+
+// Signing. Without a local override, builds are signed ad hoc ("-"), which runs on
+// this Mac but looks like a new app to macOS after every build, so privacy prompts
+// (like Desktop access) come back each time. Put your team in Signing.local.xcconfig
+// (git-ignored; see Signing.local.xcconfig.example) to keep one stable identity.
+CODE_SIGN_STYLE = Manual
+CODE_SIGN_IDENTITY = -
+DEVELOPMENT_TEAM =
+#include? "Signing.local.xcconfig"
