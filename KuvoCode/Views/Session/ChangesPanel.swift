@@ -201,8 +201,9 @@ private struct FileHeader: View {
     private var pathText: Text {
         let name = (file.path as NSString).lastPathComponent
         let folder = String(file.path.dropLast(name.count))
-        return Text(folder).foregroundStyle(.secondary).font(.system(size: 13))
-            + Text(name).font(.system(size: 13, weight: .semibold))
+        let folderText = Text(folder).foregroundStyle(.secondary).font(.system(size: 13))
+        let nameText = Text(name).font(.system(size: 13, weight: .semibold))
+        return Text("\(folderText)\(nameText)")
     }
 
     private var statusLabel: String {

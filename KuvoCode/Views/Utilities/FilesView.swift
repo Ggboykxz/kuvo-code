@@ -351,10 +351,11 @@ private struct FileViewer: View {
         var text = Text("")
         for (index, part) in parts.enumerated() {
             let isLast = index == parts.count - 1
-            if index > 0 { text = text + Text("  ›  ").foregroundStyle(.tertiary) }
-            text = text + Text(part)
+            if index > 0 { text = Text("\(text)\(Text("  ›  ").foregroundStyle(.tertiary))") }
+            let partText = Text(part)
                 .font(.system(size: 13, weight: isLast ? .semibold : .regular))
                 .foregroundStyle(isLast ? .primary : .secondary)
+            text = Text("\(text)\(partText)")
         }
         return text
     }
