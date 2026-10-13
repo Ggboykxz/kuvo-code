@@ -9,6 +9,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - **Signing in with Google, Apple and others works in the panel's browser.** Sign-in windows open in their own tab and close themselves when you're done, back on the site you were signing in to.
 - Links that open a new window always open in a new tab, as in other browsers, so that setting is gone.
 - The spinner on a working session's tab no longer flies in from the corner of the window.
+- Searching Accounts for a provider that isn't there says so, with a button to clear the search, instead of showing an empty box.
 
 ## 0.1.1
 

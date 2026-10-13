@@ -98,15 +98,27 @@ struct ProvidersView: View {
                     }
                 }
 
-                section(search.isEmpty ? "All Providers" : "Results") {
-                    LazyVStack(spacing: 0) {
-                        ForEach(others) { provider in
-                            ProviderRow(provider: provider) { connecting = provider }
-                        }
+                if others.isEmpty, !search.isEmpty {
+                    ContentUnavailableView {
+                        Label("No Results for “\(search.trimmingCharacters(in: .whitespaces))”", systemImage: "magnifyingglass")
+                    } description: {
+                        Text("Check the spelling, or search for the company that makes the model.")
+                    } actions: {
+                        Button("Clear Search") { search = "" }
                     }
-                    .padding(4)
-                    .background(.background, in: .rect(cornerRadius: Metrics.cardRadius))
-                    .overlay(RoundedRectangle(cornerRadius: Metrics.cardRadius).strokeBorder(.separator))
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 24)
+                } else {
+                    section(search.isEmpty ? "All Providers" : "Results") {
+                        LazyVStack(spacing: 0) {
+                            ForEach(others) { provider in
+                                ProviderRow(provider: provider) { connecting = provider }
+                            }
+                        }
+                        .padding(4)
+                        .background(.background, in: .rect(cornerRadius: Metrics.cardRadius))
+                        .overlay(RoundedRectangle(cornerRadius: Metrics.cardRadius).strokeBorder(.separator))
+                    }
                 }
             }
             .padding(28)
