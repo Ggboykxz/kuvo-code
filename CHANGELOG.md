@@ -4,6 +4,10 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
+## Unreleased
+
+- The spinner on a working session's tab no longer flies in from the corner of the window.
+
 ## 0.1.1
 
 - **Deleting a session asks first**, since it can't be undone.

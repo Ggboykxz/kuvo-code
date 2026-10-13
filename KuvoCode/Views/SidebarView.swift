@@ -331,8 +331,7 @@ private struct SessionStatus: View {
                 .foregroundStyle(.orange)
                 .help("Waiting for you")
         } else if workspace.running.contains(session.id) {
-            ProgressView()
-                .controlSize(.mini)
+            Spinner(size: 12)
                 .help("Working")
         } else if session.outcome == .failed {
             Image(systemName: "exclamationmark.circle.fill")

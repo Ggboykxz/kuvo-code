@@ -57,7 +57,7 @@ struct ToolCallView: View {
     @ViewBuilder private var icon: some View {
         switch call.state {
         case .streaming, .running:
-            ProgressView().controlSize(.mini)
+            Spinner(size: 11)
         case .failed:
             Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
         case .completed:

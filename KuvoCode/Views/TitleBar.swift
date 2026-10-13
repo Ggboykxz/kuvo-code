@@ -171,9 +171,7 @@ private struct StatusBadge: View {
             Circle().fill(scheme == .dark ? Color(white: 0.2) : .white)
             switch status {
             case .working:
-                ProgressView()
-                    .controlSize(.mini)
-                    .scaleEffect(0.8)
+                Spinner(size: 9)
             case .waiting:
                 mark("hand.raised.fill", on: .orange)
             case .failed:
