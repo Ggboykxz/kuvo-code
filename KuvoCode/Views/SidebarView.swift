@@ -142,6 +142,8 @@ struct SidebarView: View {
         .contextMenu {
             Button("New Session") { newSession(project.directory) }
             Button("Edit Project…") { editProject(project) }
+            Divider()
+            OpenInMenu(folder: URL(filePath: project.directory))
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting(project.allFolders.map { URL(filePath: $0) }) }
             if project.sessions.isEmpty {
                 Divider()
@@ -235,6 +237,41 @@ struct SidebarView: View {
 }
 
 // MARK: - Rows
+
+/// The developer apps on this Mac that open a folder: editors, terminals, git apps, then the
+/// Finder. (The system's own list for folders is mostly archivers and readers.)
+private struct OpenInMenu: View {
+    let folder: URL
+
+    /// By bundle identifier, in the order they're listed.
+    private static let apps = [
+        "com.microsoft.VSCode", "com.todesktop.230313mzl4w4u92", "com.exafunction.windsurf", "dev.zed.Zed",
+        "com.apple.dt.Xcode", "com.panic.Nova", "com.sublimetext.4", "com.barebones.bbedit",
+        "com.jetbrains.intellij", "com.jetbrains.intellij.ce", "com.jetbrains.WebStorm", "com.jetbrains.pycharm",
+        "com.jetbrains.pycharm.ce", "com.jetbrains.goland", "com.jetbrains.rider", "com.google.android.studio",
+        "com.apple.Terminal", "com.googlecode.iterm2", "com.mitchellh.ghostty", "dev.warp.Warp-Stable",
+        "com.DanPristupov.Fork", "com.fournova.Tower3", "com.github.GitHubClient", "com.torusknot.SourceTreeNotMAS",
+        "com.apple.finder",
+    ]
+
+    var body: some View {
+        let workspace = NSWorkspace.shared
+        let installed = Self.apps.compactMap { workspace.urlForApplication(withBundleIdentifier: $0) }
+        Menu("Open In") {
+            ForEach(installed, id: \.self) { app in
+                Button {
+                    workspace.open([folder], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
+                } label: {
+                    Label {
+                        Text(FileManager.default.displayName(atPath: app.path).replacingOccurrences(of: ".app", with: ""))
+                    } icon: {
+                        Image(nsImage: workspace.icon(forFile: app.path))
+                    }
+                }
+            }
+        }
+    }
+}
 
 /// Finding a session: a quiet field shaped like a row, cleared with its button or Escape.
 private struct SearchRow: View {
