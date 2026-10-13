@@ -134,6 +134,8 @@ final class Utilities {
         if selection == id {
             selection = tabs.indices.contains(index) ? tabs[index].id : tabs.last?.id
         }
+        // The panel always has a tab: closing the last one leaves a new tab in its place.
+        if tabs.isEmpty { newTab() }
     }
 
     /// Ends every terminal (the window is closing).

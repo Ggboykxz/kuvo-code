@@ -11,6 +11,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - The spinner on a working session's tab no longer flies in from the corner of the window.
 - Searching Accounts for a provider that isn't there says so, with a button to clear the search, instead of showing an empty box.
 - The panel button at the top right of the window is a plain icon, like the sessions button at the top left.
+- Closing the panel's last tab leaves a new tab in its place, instead of an empty panel.
 
 ## 0.1.1
 

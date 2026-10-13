@@ -130,8 +130,6 @@ struct UtilitiesPane: View {
                     .id(tab.id)
                 }
             }
-        } else {
-            NewTabButton { withAnimation(.ui) { utilities.newTab() } }
         }
     }
 
@@ -202,20 +200,6 @@ private struct UtilityTabButton: View {
         .onTapGesture(perform: select)
         .onHover { isHovering = $0 }
         .help(title)
-    }
-}
-
-/// With every tab closed: one way back in.
-private struct NewTabButton: View {
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Label("New Tab", systemImage: "plus")
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.large)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
