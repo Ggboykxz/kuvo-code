@@ -13,6 +13,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - The panel button at the top right of the window is a plain icon, like the sessions button at the top left.
 - **Click the context ring at the top of a conversation** to see what it measures: how full the model's context window is, what the session has cost, and your plan's limits when the usage item follows that account.
 - Closing the panel's last tab leaves a new tab in its place, instead of an empty panel.
+- Files and changed lines in the Changes panel are plain rows again, not rounded boxes with notches at the edge.
 
 ## 0.1.1
 

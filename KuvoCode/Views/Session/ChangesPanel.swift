@@ -187,8 +187,9 @@ private struct FileHeader: View {
         .padding(.leading, 14)
         .padding(.trailing, 8)
         .frame(height: 38)
-        // Opaque: the header stays pinned while the file's lines scroll under it.
-        .background(scheme == .dark ? Color(white: 0.21) : .white)
+        // Opaque: the header stays pinned while the file's lines scroll under it. A plain
+        // rectangle: without a shape, the background takes the rounded shape of its container.
+        .background(scheme == .dark ? Color(white: 0.21) : .white, in: .rect)
         .overlay(alignment: .bottom) { Divider() }
         .contentShape(.rect)
         .onTapGesture { if hasBody { toggle() } }
@@ -418,7 +419,7 @@ private struct FoldRow: View {
             .font(.system(size: 12))
             .foregroundStyle(.secondary)
             .frame(height: 26)
-            .background(Color.primary.opacity(0.04))
+            .background(Color.primary.opacity(0.04), in: .rect)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
@@ -474,7 +475,7 @@ struct DiffLineRow: View {
                 .padding(.trailing, 12)
         }
         .padding(.vertical, 1.5)
-        .background(rowColor)
+        .background(rowColor, in: .rect)
         .overlay(alignment: .leading) {
             if line.kind != .context {
                 Rectangle().fill(edgeColor).frame(width: 3)
