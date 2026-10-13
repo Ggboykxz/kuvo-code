@@ -26,6 +26,10 @@ struct DiffView: View {
             }
     }
 
+    /// The visible width, so line highlights reach the right edge even when the
+    /// code is narrower than the card.
+    @State private var viewport: CGFloat = 0
+
     var body: some View {
         let lines = lines
         VStack(alignment: .leading, spacing: 0) {
@@ -52,7 +56,7 @@ struct DiffView: View {
                             .foregroundStyle(foreground(line.kind))
                             .padding(.horizontal, 12)
                             .padding(.vertical, line.kind == .hunk ? 4 : 0.5)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .frame(minWidth: viewport, maxWidth: .infinity, alignment: .leading)
                             // An explicit rectangle: a bare colour background follows the
                             // container's rounded shape on macOS 26, giving each line pill ends.
                             .background(Rectangle().fill(background(line.kind)))
@@ -61,6 +65,7 @@ struct DiffView: View {
                 .fixedSize(horizontal: true, vertical: false)
                 .textSelection(.enabled)
             }
+            .onGeometryChange(for: CGFloat.self, of: \.size.width) { viewport = $0 }
             if lines.count > maxLines {
                 Text("\(lines.count - maxLines) more lines")
                     .font(.caption)
@@ -70,6 +75,7 @@ struct DiffView: View {
             }
         }
         .background(.background.secondary, in: .rect(cornerRadius: 10))
+        .clipShape(.rect(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator.opacity(0.6)))
     }
 
