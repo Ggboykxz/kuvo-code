@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 /// The right panel: a card whose header is a strip of tabs (Changes, files, terminals,
-/// browsers), with + for a new tab, then expand and hide.
+/// browsers), with + for a new tab, then expand. The title bar's button shows and hides it.
 struct UtilitiesPane: View {
     @Bindable var utilities: Utilities
     /// The project in view; files and terminals start there.
@@ -11,7 +11,6 @@ struct UtilitiesPane: View {
     let environment: [String: String]
     @Binding var isExpanded: Bool
     var isFocused = true
-    var hide: () -> Void = {}
 
     var body: some View {
         Card(title: "", isFocused: isFocused, showsHeader: false) {
@@ -61,11 +60,6 @@ struct UtilitiesPane: View {
             }
             .buttonStyle(PanelIconStyle())
             .help(isExpanded ? "Restore" : "Expand")
-            Button(action: hide) {
-                Label("Hide Panel", systemImage: "sidebar.right")
-            }
-            .buttonStyle(PanelIconStyle())
-            .help("Hide Panel (⌥⌘0)")
         }
         .padding(.leading, 8)
         .padding(.trailing, 8)

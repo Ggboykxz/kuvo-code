@@ -261,8 +261,7 @@ struct MainView: View {
             model: activeModel,
             environment: app.shellEnvironment,
             isExpanded: $panelExpanded,
-            isFocused: focus == .changes,
-            hide: { withAnimation(.ui) { showsPanel = false } }
+            isFocused: focus == .changes
         )
         .simultaneousGesture(TapGesture().onEnded { focus = .changes })
     }
