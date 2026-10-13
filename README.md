@@ -78,6 +78,15 @@ The panel on the right holds tools, as tabs (+ adds one, the title bar button or
 - **Terminal**: your login shell in the project folder (⌃`).
 - **Browser**: a web browser (⌥⌘B).
 
+### Browsing for the agent
+
+The agent can use the panel's browser with any model. Kuvo Code serves it as MCP tools
+on 127.0.0.1 (a new port and token each launch) and gives its engine the address through
+`OPENCODE_CONFIG_CONTENT`. The tools read a page the way
+[browser-use](https://github.com/browser-use/browser-use) does, as numbered interactive
+elements, then click, type, select, scroll and press keys by number. Every step happens
+in the browser you see, with the numbers drawn on the page.
+
 ## Usage in the menu bar
 
 The menu bar item tracks your AI plans: limits with pace and reset countdowns, spend
@@ -96,6 +105,7 @@ asks which providers to follow. Its settings are in the panel, also linked from 
 - [Textual](https://github.com/gonzalezreal/textual) (MIT), for Markdown.
 - [Prism](https://prismjs.com) (MIT), bundled, for coloring code in diffs.
 - [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) (MIT), the panel's terminal.
+- [browser-use](https://github.com/browser-use/browser-use) (MIT), its page reader, for the agent's browsing.
 - [OpenUsage](https://github.com/robinebers/openusage) (MIT), forked as UsageKit for the menu bar.
 - [KeyboardShortcuts](https://github.com/sindresorhus/KeyboardShortcuts) (MIT), the usage panel's global shortcut.
 - Provider logos come from [models.dev](https://models.dev).

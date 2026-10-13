@@ -97,7 +97,31 @@ struct ToolCallView: View {
         case "question": return isActive ? "Asking you a question" : "Asked you a question"
         case "subagent": return (string("description") ?? "Delegated a task") + (string("agent").map { " · \($0)" } ?? "")
         case "skill": return "Used a skill"
-        default: return call.name.replacingOccurrences(of: "_", with: " ").capitalized
+        default:
+            if let browsing = browserSummary { return browsing }
+            return call.name.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+
+    /// The panel browser's tools (served as "kuvo-browser_browser_…"), in words.
+    private var browserSummary: String? {
+        guard call.name.hasPrefix("kuvo-browser_") else { return nil }
+        let index = input?["index"]?.number.map { "[\(Int($0))]" } ?? "an element"
+        switch call.name.dropFirst("kuvo-browser_".count) {
+        case "browser_navigate": return (isActive ? "Opening " : "Opened ") + (string("url") ?? "a page")
+        case "browser_new_tab": return "Opened a new tab" + (string("url").map { " at \($0)" } ?? "")
+        case "browser_snapshot": return isActive ? "Reading the page" : "Read the page"
+        case "browser_text": return isActive ? "Reading the page's text" : "Read the page's text"
+        case "browser_click": return (isActive ? "Clicking " : "Clicked ") + index
+        case "browser_type": return (isActive ? "Typing into " : "Typed into ") + index + (string("text").map { ": “\($0)”" } ?? "")
+        case "browser_select": return "Chose “\(string("option") ?? "")” in \(index)"
+        case "browser_scroll": return "Scrolled " + (string("direction") ?? "down")
+        case "browser_press": return "Pressed " + (string("key") ?? "a key")
+        case "browser_back": return "Went back"
+        case "browser_forward": return "Went forward"
+        case "browser_screenshot": return isActive ? "Taking a screenshot" : "Took a screenshot"
+        case "browser_wait": return "Waited for the page"
+        default: return "Used the browser"
         }
     }
 
@@ -117,7 +141,7 @@ struct ToolCallView: View {
         case "question": "questionmark.bubble"
         case "subagent": "person.2"
         case "skill": "wand.and.stars"
-        default: "wrench.and.screwdriver"
+        default: call.name.hasPrefix("kuvo-browser_") ? "safari" : "wrench.and.screwdriver"
         }
     }
 

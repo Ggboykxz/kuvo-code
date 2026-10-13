@@ -24,6 +24,8 @@ final class AppModel {
     let catalog = Catalog()
     /// The right panel's tools; one window, so one set.
     let utilities = Utilities()
+    /// The panel's browser as MCP tools for the agent.
+    @ObservationIgnored private(set) lazy var browserTools = BrowserToolServer(agent: BrowserAgent(utilities: utilities))
     let workspace = Workspace()
     let usage = UsageAccounts()
     /// Brings the main window back (set by the window itself; the usage menu's "Open Kuvo Code").
@@ -72,8 +74,16 @@ final class AppModel {
             }
 
             engine = .starting
-            let shell = await environment
+            var shell = await environment
             shellEnvironment = shell
+            // The browser tools, for the engine to connect to. Without them the agent
+            // still works, just without the browser.
+            do {
+                _ = try await browserTools.start()
+                if let config = browserTools.engineConfig { shell["OPENCODE_CONFIG_CONTENT"] = Self.merged(config, into: shell["OPENCODE_CONFIG_CONTENT"]) }
+            } catch {
+                log.error("Browser tools didn't start: \(error.localizedDescription, privacy: .public)")
+            }
             let server = try await ServerProcess.start(
                 executable: binary,
                 folders: engineFolders,
@@ -99,6 +109,24 @@ final class AppModel {
             log.error("Engine failed to start: \(error.localizedDescription, privacy: .public)")
             engine = .failed(error.localizedDescription)
         }
+    }
+
+    /// `config` merged over any inline config already in the environment.
+    private static func merged(_ config: [String: Any], into existing: String?) -> String {
+        var base = existing.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] } ?? [:]
+        func merge(_ new: [String: Any], into old: inout [String: Any]) {
+            for (key, value) in new {
+                if let value = value as? [String: Any], var current = old[key] as? [String: Any] {
+                    merge(value, into: &current)
+                    old[key] = current
+                } else {
+                    old[key] = value
+                }
+            }
+        }
+        merge(config, into: &base)
+        let data = (try? JSONSerialization.data(withJSONObject: base)) ?? Data()
+        return String(decoding: data, as: UTF8.self)
     }
 
     func restart() async {

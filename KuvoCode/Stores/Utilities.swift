@@ -24,6 +24,8 @@ final class Utilities {
     var showsTree = true
     private(set) var terminals: [UUID: TerminalSession] = [:]
     private(set) var browsers: [UUID: BrowserSession] = [:]
+    /// Goes up when something (the agent's browsing) needs the panel in view.
+    private(set) var revealRequest = 0
 
     var selected: Tab? { tabs.first { $0.id == selection } ?? tabs.first }
 
@@ -70,6 +72,12 @@ final class Utilities {
         } else {
             add(Tab(kind: .file(url)))
         }
+    }
+
+    /// Brings the panel into view, on `browser`'s tab if given.
+    func reveal(_ browser: BrowserSession? = nil) {
+        if let browser, let id = browsers.first(where: { $0.value === browser })?.key { selection = id }
+        revealRequest += 1
     }
 
     /// The browser in view, or the most recent one.

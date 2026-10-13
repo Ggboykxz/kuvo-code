@@ -97,6 +97,8 @@ struct MainView: View {
         .animation(.ui, value: showsPanel)
         .animation(.ui, value: panelExpanded)
         .onDisappear { utilities.closeAll() }
+        // The agent started browsing: show it.
+        .onChange(of: utilities.revealRequest) { withAnimation(.ui) { showsPanel = true } }
         .toolbar { titleBar }
         .toolbar(removing: .title)
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
