@@ -6,6 +6,11 @@ import Textual
 /// scroll up to read.
 struct TranscriptView: View {
     let model: SessionModel
+    @State private var position = ScrollPosition(edge: .bottom)
+    /// Whether to keep the newest text in view: true until you scroll up, true again
+    /// once you scroll back to the end.
+    @State private var followsEnd = true
+    @State private var isScrolling = false
 
     var body: some View {
         ScrollView {
@@ -24,8 +29,22 @@ struct TranscriptView: View {
             .readableColumn()
             .animation(.ui, value: rows.map(\.id))
         }
-        .defaultScrollAnchor(.bottom)
-        .defaultScrollAnchor(.bottom, for: .sizeChanges)
+        .scrollPosition($position)
+        // Only where it starts. An anchor for size changes fought the rubber band: the lazy
+        // stack re-measures rows during a bounce, so the end kept moving and the bounce
+        // crawled, then snapped back. Following the end is done below, only while idle.
+        .defaultScrollAnchor(.bottom, for: .initialOffset)
+        .onScrollPhaseChange { _, phase in isScrolling = phase != .idle }
+        .onScrollGeometryChange(for: Bool.self) { geometry in
+            geometry.visibleRect.maxY >= geometry.contentSize.height - 40
+        } action: { _, atEnd in
+            // Your scrolling decides; growth below the fold doesn't.
+            if isScrolling { followsEnd = atEnd }
+        }
+        .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { old, new in
+            guard followsEnd, !isScrolling, new > old else { return }
+            position.scrollTo(edge: .bottom)
+        }
         .scrollEdgeEffectStyle(.soft, for: .all)
         .overlay {
             if model.isLoaded && rows.isEmpty {
