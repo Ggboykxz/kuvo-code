@@ -62,8 +62,20 @@ without clicking:
 | `KUVO_DEMO_MENU` | Open the `mode` or `model` menu (`models` for its first submenu) |
 | `KUVO_DEMO_USAGE` | Show the menu bar's usage panel in a sheet |
 
+## Usage in the menu bar
+
+The menu bar shows how much of each subscription is left: Codex (5-hour and weekly
+windows), Claude, GitHub Copilot and OpenCode Go. The providers are adapted from
+[OpenUsage](https://github.com/robinebers/openusage). They read logins already on the
+Mac (the Codex CLI's, Claude Code's, your editor's or gh's) and the accounts connected
+in the app. Reading logins from the Keychain and renewing expired logins are off until
+you turn them on in Settings › Usage.
+
 ## Third-party software
 
 - [opencode](https://github.com/anomalyco/opencode) (MIT), downloaded at runtime.
 - [Textual](https://github.com/gonzalezreal/textual) (MIT), for Markdown.
+- [OpenUsage](https://github.com/robinebers/openusage) (MIT), the usage providers.
 - Provider logos come from [models.dev](https://models.dev).
+
+License texts are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
