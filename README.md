@@ -25,6 +25,7 @@ the interface, written in SwiftUI.
 | --- | --- |
 | `KuvoCode/` | The app (SwiftUI): views, stores, design system |
 | `Packages/OpenCodeKit/` | The engine client: API, models, event stream, transcript reducer, engine installer |
+| `Packages/UsageKit/` | The usage tracker in the menu bar, a fork of [OpenUsage](https://github.com/robinebers/openusage) |
 | `Config/App.xcconfig` | The app's name and bundle ID, and signing defaults |
 
 ## Building
@@ -36,10 +37,11 @@ Requires macOS 26 and Xcode 26 or later.
    privacy answers), copy `Config/Signing.local.xcconfig.example` to
    `Config/Signing.local.xcconfig` and set your team. That file is git-ignored.
 
-Tests for the engine client:
+Tests for the engine client and the usage tracker:
 
 ```sh
 cd Packages/OpenCodeKit && swift test
+cd Packages/UsageKit && swift test
 ```
 
 Recorded engine responses in `Tests/OpenCodeKitTests/Fixtures` drive most
@@ -60,22 +62,26 @@ without clicking:
 | `KUVO_DEMO_CHANGES` | Show the Changes card |
 | `KUVO_DEMO_WINDOW` | Window size, as `WIDTHxHEIGHT` |
 | `KUVO_DEMO_MENU` | Open the `mode` or `model` menu (`models` for its first submenu) |
-| `KUVO_DEMO_USAGE` | Show the menu bar's usage panel in a sheet |
+| `KUVO_DEMO_USAGE` | Open the menu bar's usage panel on `dashboard`, `customize` or `settings` |
 
 ## Usage in the menu bar
 
-The menu bar shows how much of each subscription is left: Codex (5-hour and weekly
-windows), Claude, GitHub Copilot and OpenCode Go. The providers are adapted from
-[OpenUsage](https://github.com/robinebers/openusage). They read logins already on the
-Mac (the Codex CLI's, Claude Code's, your editor's or gh's) and the accounts connected
-in the app. Reading logins from the Keychain and renewing expired logins are off until
-you turn them on in Settings › Usage.
+The menu bar item tracks your AI plans: limits with pace and reset countdowns, spend
+for today, yesterday and the last 30 days with a total across providers, a 30-day trend,
+and optional notifications. It covers Claude, Codex, Copilot, Cursor, OpenCode,
+OpenRouter, Z.ai, Grok, Antigravity, Devin and Ollama.
+
+It's [UsageKit](Packages/UsageKit), our fork of [OpenUsage](https://github.com/robinebers/openusage)
+by Robin Ebers. It reads the logins those tools already keep on the Mac, plus the accounts
+connected in Kuvo Code. Kuvo Code's own runs count toward spend. The first click on the item
+asks which providers to follow. Its settings are in the panel, also linked from Settings › Usage.
 
 ## Third-party software
 
 - [opencode](https://github.com/anomalyco/opencode) (MIT), downloaded at runtime.
 - [Textual](https://github.com/gonzalezreal/textual) (MIT), for Markdown.
-- [OpenUsage](https://github.com/robinebers/openusage) (MIT), the usage providers.
+- [OpenUsage](https://github.com/robinebers/openusage) (MIT), forked as UsageKit for the menu bar.
+- [KeyboardShortcuts](https://github.com/sindresorhus/KeyboardShortcuts) (MIT), the usage panel's global shortcut.
 - Provider logos come from [models.dev](https://models.dev).
 
 License texts are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

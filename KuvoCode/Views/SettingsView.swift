@@ -1,5 +1,6 @@
 import OpenCodeKit
 import SwiftUI
+import UsageKit
 
 struct SettingsView: View {
     /// Every tab is this wide, so switching tabs doesn't make the window jump sideways.
@@ -43,39 +44,24 @@ private struct GeneralSettings: View {
     }
 }
 
-/// What the menu bar's usage meter may read. Both are opt-in: they touch other tools' logins.
+/// Usage has its own settings in the menu bar panel; this tab points there.
 private struct UsageSettings: View {
-    @AppStorage(UsageStore.readsKeychainKey) private var readsKeychain = false
-    @AppStorage(UsageStore.renewsLoginsKey) private var renewsLogins = false
-    @Environment(UsageStore.self) private var usage
-
     var body: some View {
         Form {
             Section {
-                LabeledContent("Codex") { Text("Codex CLI login (~/.codex), or a Codex sign-in in Accounts") }
-                LabeledContent("Claude") { Text("Claude Code login") }
-                LabeledContent("GitHub Copilot") { Text("Your Copilot account in Accounts, your editor, or gh") }
-                LabeledContent("OpenCode Go") { Text("Your OpenCode Go key in Accounts") }
-            } header: {
-                Text("Where usage comes from")
+                Text("Plan limits, pace and spend for Claude, Codex, Copilot, Cursor, OpenCode and more live in the menu bar. Accounts you connect in Kuvo Code count there too, and so do Kuvo Code's own runs.")
+                    .foregroundStyle(.secondary)
+                HStack {
+                    Button("Usage Settings…") { UsageMenuBar.shared.open(.settings) }
+                    Button("Choose Providers…") { UsageMenuBar.shared.open(.customize) }
+                }
             } footer: {
-                Text("Usage providers are adapted from OpenUsage by Robin Ebers (MIT).")
-            }
-            Section {
-                Toggle("Read logins from the Keychain", isOn: $readsKeychain)
-                Text("Claude Code and some Codex and gh setups keep their login in the Keychain. macOS asks you once for each.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                Toggle("Renew expired logins", isOn: $renewsLogins)
-                Text("When a Codex or Claude Code login has expired, renew it and save the new one where that tool keeps it, so limits stay current. Off, an expired login shows a note until you next use that tool.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                Text("Usage tracking is a fork of OpenUsage by Robin Ebers (MIT). It isn't affiliated with or endorsed by OpenUsage.")
             }
         }
         .formStyle(.grouped)
         .frame(width: SettingsView.width)
         .fixedSize()
-        .onChange(of: [readsKeychain, renewsLogins]) { Task { await usage.refresh() } }
     }
 }
 

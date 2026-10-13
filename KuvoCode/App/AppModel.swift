@@ -20,12 +20,26 @@ final class AppModel {
 
     let catalog = Catalog()
     let workspace = Workspace()
-    let usage = UsageStore()
+    let usage = UsageAccounts()
+    /// Brings the main window back (set by the window itself; the usage menu's "Open Kuvo Code").
+    var openMainWindow: (() -> Void)?
 
     private var server: ServerProcess?
     private var eventTask: Task<Void, Never>?
     private var isStopping = false
     private let log = Logger(subsystem: "run.kuvo.code", category: "engine")
+
+    private var engineFolders: EngineFolders {
+        EngineFolders(root: AppInfo.supportDirectory.appending(path: "opencode"))
+    }
+
+    /// Puts the usage panel in the menu bar. It reads the engine's database for spend, so it
+    /// starts with the app, not with the engine.
+    func startUsage() {
+        usage.start(engineData: engineFolders.dataDirectory) { [weak self] in
+            self?.openMainWindow?()
+        }
+    }
 
     private var installer: EngineInstaller {
         EngineInstaller(root: AppInfo.supportDirectory.appending(path: "engine"))
@@ -54,10 +68,9 @@ final class AppModel {
 
             engine = .starting
             let shell = await environment
-            usage.environment = shell
             let server = try await ServerProcess.start(
                 executable: binary,
-                folders: EngineFolders(root: AppInfo.supportDirectory.appending(path: "opencode")),
+                folders: engineFolders,
                 environment: shell,
                 onExit: { status in Task { @MainActor in self.engineExited(status: status) } }
             )
@@ -69,8 +82,8 @@ final class AppModel {
             workspace.api = api
             usage.api = api
             engine = .ready
-            usage.start()
             listen(to: api)
+            Task { await usage.sync() }
             // In parallel: the catalog can wait on the engine's plugins (and they on a
             // macOS permission prompt); sessions shouldn't wait with it.
             async let catalogLoaded: Void = catalog.refresh()

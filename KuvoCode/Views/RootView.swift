@@ -4,6 +4,7 @@ import SwiftUI
 /// The window: the engine's setup screen until it's running, then the workspace.
 struct RootView: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.openWindow) private var openWindow
     @AppStorage(Appearance.key) private var appearance = Appearance.system
 
     var body: some View {
@@ -22,6 +23,8 @@ struct RootView: View {
         // The window itself is frosted glass, tinted by what's behind it; cards float on it.
         .windowGlass()
         .onChange(of: appearance, initial: true) { appearance.apply() }
+        // The usage menu's "Open Kuvo Code" brings this window back, even after it's closed.
+        .onAppear { app.openMainWindow = { [openWindow] in openWindow(id: "main") } }
     }
 }
 

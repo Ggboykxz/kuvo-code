@@ -1,4 +1,5 @@
 import SwiftUI
+import UsageKit
 
 @main
 struct KuvoCodeApp: App {
@@ -20,24 +21,27 @@ struct KuvoCodeApp: App {
             SettingsView()
                 .environment(delegate.model)
                 .environment(delegate.model.catalog)
-                .environment(delegate.model.usage)
         }
-
-        // How much of each connected plan is left (ChatGPT windows, Copilot requests).
-        MenuBarExtra {
-            UsageMenu()
-                .environment(delegate.model.usage)
-                .environment(delegate.model.catalog)
-        } label: {
-            UsageMenuLabel()
-                .environment(delegate.model.usage)
-        }
-        .menuBarExtraStyle(.window)
     }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // Plan limits and spend in the menu bar (UsageKit).
+        model.startUsage()
+        #if DEBUG
+        // KUVO_DEMO_USAGE=dashboard|customize|settings opens the usage panel, for screenshots.
+        if let screen = ProcessInfo.processInfo.environment["KUVO_DEMO_USAGE"] {
+            Task {
+                while !UsageMenuBar.shared.isRunning { try? await Task.sleep(for: .milliseconds(250)) }
+                try? await Task.sleep(for: .seconds(3))
+                UsageMenuBar.shared.open(screen == "settings" ? .settings : screen == "customize" ? .customize : .dashboard)
+            }
+        }
+        #endif
+    }
 
     func applicationWillTerminate(_ notification: Notification) {
         // Closing the engine's stdin shuts it down cleanly (it would also exit with us).

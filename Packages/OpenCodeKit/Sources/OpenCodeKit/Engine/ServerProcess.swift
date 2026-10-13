@@ -14,6 +14,9 @@ public struct EngineFolders: Sendable {
     /// the engine scans ~ and macOS stops it with "would like to access your Desktop".
     public var workspace: URL { root.appending(path: "workspace") }
 
+    /// Where the engine keeps its database (`opencode*.db`) and logs.
+    public var dataDirectory: URL { root.appending(path: "data/opencode") }
+
     var environment: [String: String] {
         [
             "XDG_DATA_HOME": root.appending(path: "data").path,

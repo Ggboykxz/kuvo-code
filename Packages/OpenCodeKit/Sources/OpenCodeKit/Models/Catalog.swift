@@ -180,6 +180,25 @@ public struct Credential: Codable, Sendable, Hashable, Identifiable {
     public var active: Bool
 }
 
+/// A stored credential with its secret, for features that call a provider directly
+/// (the usage panel). Kept in memory only.
+public struct CredentialSecret: Decodable, Sendable {
+    public var id: String
+    public var integrationID: String
+    public var active: Bool
+    public var value: Value
+
+    public struct Value: Decodable, Sendable {
+        public var type: String
+        public var methodID: String?
+        public var access: String?
+        public var key: String?
+        /// Milliseconds since 1970; 0 when it doesn't expire.
+        public var expires: Double?
+        public var metadata: JSONValue?
+    }
+}
+
 /// A started OAuth sign-in. Open `url`; with `mode == .auto` the engine finishes
 /// on its own and the app polls for the result.
 public struct OAuthAttempt: Codable, Sendable, Hashable {

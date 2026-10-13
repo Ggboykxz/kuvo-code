@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		4B0A00000000000000000010 /* OpenCodeKit in Frameworks */ = {isa = PBXBuildFile; productRef = 4B0A00000000000000000011 /* OpenCodeKit */; };
 		4B0A00000000000000000015 /* Textual in Frameworks */ = {isa = PBXBuildFile; productRef = 4B0A00000000000000000016 /* Textual */; };
+		4B0A00000000000000000018 /* UsageKit in Frameworks */ = {isa = PBXBuildFile; productRef = 4B0A00000000000000000019 /* UsageKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -31,6 +32,7 @@
 			files = (
 				4B0A00000000000000000010 /* OpenCodeKit in Frameworks */,
 				4B0A00000000000000000015 /* Textual in Frameworks */,
+				4B0A00000000000000000018 /* UsageKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -84,6 +86,7 @@
 			packageProductDependencies = (
 				4B0A00000000000000000011 /* OpenCodeKit */,
 				4B0A00000000000000000016 /* Textual */,
+				4B0A00000000000000000019 /* UsageKit */,
 			);
 			productName = KuvoCode;
 			productReference = 4B0A00000000000000000001 /* $(APP_NAME).app */;
@@ -115,6 +118,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				4B0A00000000000000000012 /* XCLocalSwiftPackageReference "Packages/OpenCodeKit" */,
+				4B0A0000000000000000001A /* XCLocalSwiftPackageReference "Packages/UsageKit" */,
 				4B0A00000000000000000017 /* XCRemoteSwiftPackageReference "textual" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -366,6 +370,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/OpenCodeKit;
 		};
+		4B0A0000000000000000001A /* XCLocalSwiftPackageReference "Packages/UsageKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/UsageKit;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCRemoteSwiftPackageReference section */
@@ -388,6 +396,10 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 4B0A00000000000000000017 /* XCRemoteSwiftPackageReference "textual" */;
 			productName = Textual;
+		};
+		4B0A00000000000000000019 /* UsageKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = UsageKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
