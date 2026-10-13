@@ -4,20 +4,19 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
-## Unreleased
+## 0.1.2
 
 - **Signing in with Google, Apple and others works in the panel's browser.** Sign-in windows open in their own tab and close themselves when you're done, back on the site you were signing in to.
-- Links that open a new window always open in a new tab, as in other browsers, so that setting is gone.
-- The spinner on a working session's tab no longer flies in from the corner of the window.
-- Searching Accounts for a provider that isn't there says so, with a button to clear the search, instead of showing an empty box.
-- The panel button at the top right of the window is a plain icon, like the sessions button at the top left.
 - **Click the context ring at the top of a conversation** to see what it measures: how full the model's context window is, what the session has cost, and your plan's limits when the usage item follows that account.
-- Closing the panel's last tab leaves a new tab in its place, instead of an empty panel.
-- Files and changed lines in the Changes panel are plain rows again, not rounded boxes with notches at the edge.
 - **The terminal sits right on the panel**, in the panel's own color, with no darker box around it and no scroll bar track.
-- The panel no longer has a hide button of its own; the button at the top right of the window shows and hides it.
+- Links that open a new window always open in a new tab, as in other browsers, so that setting is gone.
+- Searching Accounts for a provider that isn't there says so, with a button to clear the search, instead of showing an empty box.
+- Closing the panel's last tab leaves a new tab in its place, instead of an empty panel.
+- The panel button at the top right of the window is a plain icon, like the sessions button at the top left, and it's the one place to show and hide the panel.
 - A narrow panel with a file open no longer spills over the conversation; the file list next to the file gets narrower instead.
+- Files and changed lines in the Changes panel are plain rows, not rounded boxes with notches at the edge.
 - The line beside a file's line numbers no longer runs up through the file's header.
+- The spinner on a working session's tab no longer flies in from the corner of the window.
 
 ## 0.1.1
 
