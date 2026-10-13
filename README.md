@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/images/icon.png" alt="" width="128" height="128"></p>
+
 <h1 align="center">Kuvo Code</h1>
 
 <p align="center"><strong>Any model. One native harness.</strong></p>
@@ -7,6 +9,11 @@
   <a href="https://github.com/serhatandic/kuvo-code/releases"><img src="https://img.shields.io/github/v/release/serhatandic/kuvo-code?include_prereleases&label=release" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue.svg" alt="License: PolyForm Noncommercial 1.0.0"></a>
 </p>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/screenshot-dark.webp">
+  <img src="docs/images/screenshot-light.webp" alt="Kuvo Code showing a finished session beside the changes it made, with a review comment on one of the lines" width="100%">
+</picture>
 
 Kuvo Code is a native macOS harness for coding agents that works with any
 model. Its engine is [opencode](https://github.com/anomalyco/opencode),
