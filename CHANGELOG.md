@@ -4,7 +4,7 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
-## Unreleased
+## 0.1.1
 
 - **Deleting a session asks first**, since it can't be undone.
 - **API keys you paste into the usage panel are kept in your Keychain**, not in a file. Keys saved by 0.1.0 move there on their own.
