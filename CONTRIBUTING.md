@@ -36,6 +36,17 @@ xcodebuild -project KuvoCode.xcodeproj -scheme KuvoCode -configuration Debug -de
 open "build/DerivedData/Build/Products/Debug/Kuvo Code.app"
 ```
 
+To build the release app and its disk image the way CI does:
+
+```sh
+./scripts/build-app.sh
+./scripts/build-dmg.sh
+open "build/Kuvo Code.app"
+```
+
+Only these builds update themselves; debug builds have no update feed and hide
+the update controls.
+
 Builds are signed ad hoc, so macOS treats every build as a new app and asks for
 privacy permissions (like access to Desktop) again. To keep one identity
 between builds, copy `Config/Signing.local.xcconfig.example` to
@@ -86,9 +97,15 @@ without clicking, for trying a change or taking screenshots:
 | `KUVO_DEMO_MENU` | Open the `mode` or `model` menu (`models` for its first submenu) |
 | `KUVO_DEMO_USAGE` | Open the menu bar's usage panel on `dashboard`, `customize` or `settings` |
 
+### The icon
+
+`scripts/icon.py` generates the app icon as an Icon Composer file in
+`KuvoCode/AppIcon.icon`, which Xcode compiles with the app. Run it again after
+changing the icon there.
+
 ### Dependencies
 
-Kuvo Code depends on Textual, SwiftTerm and, through UsageKit,
+Kuvo Code depends on Textual, SwiftTerm, Sparkle and, through UsageKit,
 KeyboardShortcuts. SwiftTerm stays on 1.11, because 1.12 and later need the
 Metal toolchain to build.
 
@@ -129,7 +146,8 @@ Every change starts from an issue and lands on `main` through a pull request.
      it.
    - **If people using Kuvo Code would notice the change, add a line to
      `CHANGELOG.md`** under Unreleased, saying what they'll see. It becomes
-     part of the next release's notes.
+     part of the next release's notes, on GitHub and in the app's update
+     window.
 4. **CI must pass**, and a maintainer reviews and approves the pull request.
    It's then squash-merged and the branch is deleted.
 

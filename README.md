@@ -75,6 +75,9 @@ side panel and the usage menu.
   new port and token each launch. They read a page the way
   [browser-use](https://github.com/browser-use/browser-use) does, as numbered
   interactive elements, and every step happens in the browser you see.
+- **Updates** come through [Sparkle](https://sparkle-project.org), signed,
+  from this repository's releases. Releases are signed with a Developer ID and
+  notarized by Apple.
 - **The usage menu** is UsageKit, our fork of
   [OpenUsage](https://github.com/robinebers/openusage) by Robin Ebers. It reads
   the logins those tools already keep on your Mac, plus the accounts you

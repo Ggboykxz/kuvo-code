@@ -1,0 +1,228 @@
+name: Release
+
+# Pushing an annotated vMAJOR.MINOR.PATCH tag on main builds Kuvo Code, attaches the
+# disk image and the update feed to a draft release, and publishes the release
+# once both are uploaded.
+#
+# The release notes, on the release page and in the app's update window, are the
+# version's section of CHANGELOG.md. Before tagging, rename its "## Unreleased"
+# heading to the version, like "## 0.1.0"; a tag without notes fails right away.
+#
+# Every release is signed with a Developer ID and notarized, so macOS opens it
+# without a warning; the workflow stops if any of these secrets is missing.
+#   MACOS_CERTIFICATE_P12       base64 of the Developer ID Application .p12
+#   MACOS_CERTIFICATE_PASSWORD  password of that .p12
+#   MACOS_SIGNING_IDENTITY      e.g. "Developer ID Application: Name (TEAMID)"
+#   APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD   for notarytool
+#
+# Every release also needs SPARKLE_PRIVATE_KEY, the EdDSA key that signs the
+# update feed (appcast.xml). Installed copies of Kuvo Code only accept updates
+# signed with it. scripts/set-update-key.sh uploads it; the signing and
+# notarization secrets come from scripts/set-signing-secrets.sh and
+# scripts/set-notary-secrets.sh.
+#
+# Running it by hand (Actions › Release › Run workflow) is a dry run: it signs,
+# notarizes and checks the app with Gatekeeper, then uploads it as a workflow
+# artifact instead of publishing a release. Use it to check the secrets.
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  verify:
+    name: verify release tag
+    needs: ci
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check the tag
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tags must look like vMAJOR.MINOR.PATCH." >&2
+            exit 1
+          fi
+
+          tag_ref="refs/tags/$GITHUB_REF_NAME"
+          tag_oid="$(git ls-remote --tags origin "$tag_ref" | awk 'NR == 1 { print $1 }')"
+          peeled_oid="$(git ls-remote --tags origin "$tag_ref^{}" | awk 'NR == 1 { print $1 }')"
+          if [[ -z "$tag_oid" || -z "$peeled_oid" ]]; then
+            echo "Release tags must be annotated (git tag -a)." >&2
+            exit 1
+          fi
+          if [[ "$peeled_oid" != "$(git rev-parse HEAD)" ]]; then
+            echo "The release tag does not resolve to the checked-out commit." >&2
+            exit 1
+          fi
+
+          # Releases come from main, but main may move on while a release builds.
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "Release tags must point at a commit on main." >&2
+            exit 1
+          fi
+
+  release:
+    name: build and publish
+    needs: verify
+    runs-on: xcode-27
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+      SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Choose the version
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Without the update key, installed copies could never update past this release.
+          if [[ -z "$SPARKLE_PRIVATE_KEY" ]]; then
+            echo "The SPARKLE_PRIVATE_KEY secret is missing." >&2
+            exit 1
+          fi
+          # Notes come from CHANGELOG.md; checked now so a tag without them fails in seconds.
+          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+            echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+            ./scripts/release-notes.sh "${GITHUB_REF_NAME#v}" > "$RUNNER_TEMP/notes.md"
+          else
+            # A dry run shows the newest notes, or a placeholder before there are any.
+            ./scripts/release-notes.sh > "$RUNNER_TEMP/notes.md" || echo "Dry run." > "$RUNNER_TEMP/notes.md"
+            echo "VERSION=0.0.0" >> "$GITHUB_ENV"
+          fi
+          # Unsigned or unnotarized builds make macOS warn people, so none go out.
+          for name in MACOS_CERTIFICATE_P12 MACOS_CERTIFICATE_PASSWORD MACOS_SIGNING_IDENTITY APPLE_ID APPLE_TEAM_ID APPLE_APP_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              echo "The $name secret is missing." >&2
+              exit 1
+            fi
+          done
+
+      - name: Import the signing certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password="$(openssl rand -base64 24)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          echo "$MACOS_CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -k "$password" "$keychain" >/dev/null
+          # Add ours to the search list, keeping the keychains already there.
+          existing=()
+          while IFS= read -r line; do
+            existing+=("$(sed 's/^ *"//; s/"$//' <<< "$line")")
+          done < <(security list-keychains -d user)
+          security list-keychains -d user -s "$keychain" "${existing[@]}"
+          rm "$RUNNER_TEMP/certificate.p12"
+
+      - name: Build the app
+        shell: bash
+        run: |
+          set -euo pipefail
+          SIGN_IDENTITY="$MACOS_SIGNING_IDENTITY" ./scripts/build-app.sh
+
+      - name: Notarize
+        shell: bash
+        run: |
+          set -euo pipefail
+          ditto -c -k --keepParent "build/Kuvo Code.app" "$RUNNER_TEMP/notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
+          xcrun stapler staple "build/Kuvo Code.app"
+          # The same check macOS makes when someone opens the download.
+          spctl --assess --type execute --verbose=2 "build/Kuvo Code.app"
+
+      # The download: a disk image with the app and a link to Applications.
+      # It's notarized on its own, so it opens without a warning too.
+      - name: Build the disk image
+        shell: bash
+        run: |
+          set -euo pipefail
+          SIGN_IDENTITY="$MACOS_SIGNING_IDENTITY" ./scripts/build-dmg.sh
+          xcrun notarytool submit build/KuvoCode.dmg \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
+          xcrun stapler staple build/KuvoCode.dmg
+          spctl --assess --type open --context context:primary-signature --verbose=2 build/KuvoCode.dmg
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "build/Kuvo Code.app/Contents/Info.plist")" = "$VERSION"
+          # A release is two files: the disk image people download and the update
+          # feed installed copies read. Updates install from the same disk image.
+          # The license notices travel inside the app.
+          mkdir dist
+          # Unversioned, so kuvo.run/code can always link to releases/latest/download/KuvoCode.dmg.
+          cp build/KuvoCode.dmg dist/KuvoCode.dmg
+          ./scripts/appcast.sh "$VERSION" dist/KuvoCode.dmg \
+            "https://github.com/$GITHUB_REPOSITORY/releases/download/v$VERSION/KuvoCode.dmg" "$RUNNER_TEMP/notes.md" > dist/appcast.xml
+          cat dist/appcast.xml
+
+      - name: Upload the dry-run build
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: KuvoCode-dry-run
+          path: dist/
+          retention-days: 3
+
+      - name: Publish the release
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            if [[ "$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" != true ]]; then
+              echo "A published release already exists for $GITHUB_REF_NAME." >&2
+              exit 1
+            fi
+            gh release delete "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --yes
+          fi
+
+          printf '\n\nRequires macOS 26 or later on Apple silicon. Signed with a Developer ID and notarized by Apple.\n' >> "$RUNNER_TEMP/notes.md"
+          # --generate-notes adds the link to the full list of commits after these notes.
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" \
+            --draft --title "Kuvo Code ${GITHUB_REF_NAME#v}" --generate-notes \
+            --notes-file "$RUNNER_TEMP/notes.md"
+
+          expected="$(find dist -type f -exec basename {} \; | sort)"
+          actual="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | sort)"
+          if [[ "$expected" != "$actual" ]]; then
+            echo "Uploaded assets don't match:" >&2
+            diff <(echo "$expected") <(echo "$actual") >&2 || true
+            exit 1
+          fi
+
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest

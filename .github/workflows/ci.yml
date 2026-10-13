@@ -47,17 +47,29 @@ jobs:
         working-directory: Packages/UsageKit
         run: swift test
 
+      # The same scripts the release workflow runs, signed ad hoc here.
       - name: Build the app
+        run: ./scripts/build-app.sh
+
+      - name: Build the disk image
         run: |
-          xcodebuild -project KuvoCode.xcodeproj -scheme KuvoCode -configuration Release \
-            -derivedDataPath build/DerivedData -clonedSourcePackagesDirPath build/SourcePackages \
-            build
+          ./scripts/build-dmg.sh
+          mount=$(mktemp -d)
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount" build/KuvoCode.dmg >/dev/null
+          test -d "$mount/Kuvo Code.app" || { echo "Kuvo Code.app is missing from the disk image" >&2; exit 1; }
+          test "$(readlink "$mount/Applications")" = /Applications || { echo "The Applications link is missing" >&2; exit 1; }
+          hdiutil detach "$mount" >/dev/null
 
       - name: Check the app bundle
         run: |
-          app="build/DerivedData/Build/Products/Release/Kuvo Code.app"
-          for file in LICENSE NOTICE THIRD_PARTY_LICENSES.txt prism-bundle.js buildDomTree.js; do
+          app="build/Kuvo Code.app"
+          for file in Assets.car AppIcon.icns LICENSE NOTICE THIRD_PARTY_LICENSES.txt prism-bundle.js buildDomTree.js; do
             test -f "$app/Contents/Resources/$file" || { echo "Missing $file in the app bundle" >&2; exit 1; }
+          done
+          test -d "$app/Contents/Frameworks/Sparkle.framework" || { echo "Sparkle isn't embedded" >&2; exit 1; }
+          for key in SUFeedURL SUPublicEDKey; do
+            /usr/libexec/PlistBuddy -c "Print :$key" "$app/Contents/Info.plist" >/dev/null \
+              || { echo "Info.plist is missing $key" >&2; exit 1; }
           done
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" = run.kuvo.code \
             || { echo "Unexpected bundle identifier" >&2; exit 1; }
