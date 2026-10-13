@@ -28,6 +28,7 @@ private struct BottomStack: View {
     @Bindable var model: SessionModel
     @Binding var lastModel: ModelRef?
     @Environment(Catalog.self) private var catalog
+    @Environment(Workspace.self) private var workspace
     @AppStorage(ToolApproval.key) private var defaultApproval = ToolApproval.approveAll
     @Namespace private var glass
 
@@ -64,6 +65,7 @@ private struct BottomStack: View {
                     isRunning: model.isRunning,
                     hasQueue: !model.waiting.isEmpty,
                     history: model.sentMessages,
+                    folders: [model.session.location.directory] + (workspace.settings[model.session.location.directory]?.folders ?? []),
                     focusRequest: model.composerFocus,
                     commentCount: model.reviewComments.count,
                     onDiscardComments: { model.reviewComments = [] },
@@ -129,6 +131,7 @@ struct DraftSessionView: View {
                 approval: approval,
                 model: lastModel ?? catalog.defaultModel?.ref,
                 isRunning: isCreating,
+                folders: [directory] + (workspace.settings[directory]?.folders ?? []),
                 onSelectAgent: { agent = $0 },
                 onSelectApproval: { approval = $0 },
                 onSelectModel: { lastModel = $0 },

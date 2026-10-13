@@ -16,6 +16,8 @@ struct Composer: View {
     var hasQueue = false
     /// Messages sent before, oldest first: ↑ and ↓ go through them, as in a shell.
     var history: [String] = []
+    /// The project's folders, the primary one first, for "@" mentions of their files.
+    var folders: [String] = []
     /// Puts the cursor here when it changes.
     var focusRequest = 0
     /// Comments on the changes waiting to go with the next message.
@@ -37,12 +39,21 @@ struct Composer: View {
     @State private var isTargeted = false
     /// The sent message showing in the field, while going through them.
     @State private var historyIndex: Int?
+    /// The project's files for "@", read when one is typed.
+    @State private var mentionFiles: [ProjectFiles.File] = []
+    @State private var mentionFilesRead: Date?
+    @State private var mentionIndex = 0
+    /// Where the "@" whose list was closed with Escape is, so it stays closed.
+    @State private var dismissedMention: Int?
 
     private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty || commentCount > 0 }
     private var currentModel: Model? { catalog.model(model) ?? catalog.defaultModel }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if let mention {
+                MentionList(files: mention.matches, selected: min(mentionIndex, max(mention.matches.count - 1, 0))) { insertMention($0) }
+            }
             if commentCount > 0 {
                 Menu {
                     Button("Discard Comments", role: .destructive, action: onDiscardComments)
@@ -79,6 +90,10 @@ struct Composer: View {
                 .lineLimit(1...12)
                 .focused($isFocused)
                 .onKeyPress(.return, phases: .down) { press in
+                    if let mention, press.modifiers.isEmpty, !mention.matches.isEmpty {
+                        insertMention(mention.matches[min(mentionIndex, mention.matches.count - 1)])
+                        return .handled
+                    }
                     // Return sends; Shift-Return starts a new line; ⌘Return queues.
                     if press.modifiers.contains(.shift) || press.modifiers.contains(.option) {
                         text += "\n"
@@ -91,15 +106,36 @@ struct Composer: View {
                     send()
                     return .handled
                 }
+                .onKeyPress(.tab) {
+                    guard let mention, !mention.matches.isEmpty else { return .ignored }
+                    insertMention(mention.matches[min(mentionIndex, mention.matches.count - 1)])
+                    return .handled
+                }
+                .onKeyPress(.escape) {
+                    guard let start = Mentions.query(in: text)?.start, mention != nil else { return .ignored }
+                    dismissedMention = text.distance(from: text.startIndex, to: start)
+                    return .handled
+                }
                 .onKeyPress(.upArrow) {
+                    if let mention, !mention.matches.isEmpty {
+                        mentionIndex = max(0, min(mentionIndex, mention.matches.count - 1) - 1)
+                        return .handled
+                    }
                     // A waiting message comes back first; then what was sent before.
                     if text.isEmpty, files.isEmpty, historyIndex == nil, onEditLast() { return .handled }
                     return recall(-1) ? .handled : .ignored
                 }
-                .onKeyPress(.downArrow) { recall(1) ? .handled : .ignored }
+                .onKeyPress(.downArrow) {
+                    if let mention, !mention.matches.isEmpty {
+                        mentionIndex = min(mention.matches.count - 1, mentionIndex + 1)
+                        return .handled
+                    }
+                    return recall(1) ? .handled : .ignored
+                }
                 // Editing a recalled message makes it a new one; the arrows move the cursor again.
                 .onChange(of: text) { _, new in
                     if let index = historyIndex, !history.indices.contains(index) || new != history[index] { historyIndex = nil }
+                    mentionTyped(in: new)
                 }
                 .onSubmit(send)
 
@@ -199,6 +235,31 @@ struct Composer: View {
         onQueue()
     }
 
+    /// The "@" being typed and the files it matches, while its list is open.
+    private var mention: (query: String, matches: [ProjectFiles.File])? {
+        guard !folders.isEmpty, let (query, start) = Mentions.query(in: text),
+              text.distance(from: text.startIndex, to: start) != dismissedMention else { return nil }
+        let matches = Mentions.matches(query, in: mentionFiles)
+        return matches.isEmpty ? nil : (query, matches)
+    }
+
+    /// Reads the project's files on the first "@", and again when the list is a while old.
+    private func mentionTyped(in text: String) {
+        guard !folders.isEmpty, Mentions.query(in: text) != nil else {
+            mentionIndex = 0
+            return
+        }
+        guard mentionFilesRead.map({ Date().timeIntervalSince($0) > 30 }) ?? true else { return }
+        mentionFilesRead = Date()
+        let roots = folders.map { URL(filePath: $0) }
+        Task { mentionFiles = await Task.detached { ProjectFiles.mentionable(roots) }.value }
+    }
+
+    private func insertMention(_ file: ProjectFiles.File) {
+        text = Mentions.insert(file, into: text)
+        mentionIndex = 0
+    }
+
     /// ↑ from an empty field, or from a recalled message left as it was, goes back a message;
     /// ↓ comes forward, and past the newest clears the field again.
     private func recall(_ step: Int) -> Bool {
@@ -234,6 +295,47 @@ struct Composer: View {
         panel.message = "Choose files or folders to attach."
         guard panel.runModal() == .OK else { return }
         attach(panel.urls)
+    }
+}
+
+/// The files an "@" matches, above the message field: the chosen one highlighted, any
+/// one a click away.
+private struct MentionList: View {
+    let files: [ProjectFiles.File]
+    let selected: Int
+    let choose: (ProjectFiles.File) -> Void
+
+    var body: some View {
+        VStack(spacing: 1) {
+            ForEach(Array(files.enumerated()), id: \.element.id) { index, file in
+                Button { choose(file) } label: {
+                    HStack(spacing: 8) {
+                        Image(nsImage: NSWorkspace.shared.icon(forFile: file.url.path))
+                            .resizable()
+                            .frame(width: 16, height: 16)
+                        Text(file.isFolder ? String(file.path.dropLast()) : file.name)
+                            .font(.system(size: 13, weight: .medium))
+                            .lineLimit(1)
+                        let folder = (file.path as NSString).deletingLastPathComponent
+                        if !file.isFolder, !folder.isEmpty {
+                            Text(folder)
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.head)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 8)
+                    .frame(height: 28)
+                    .background(index == selected ? AnyShapeStyle(.tint.opacity(0.16)) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 7))
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.leading, -8)
+        .help("↑ ↓ to choose, Return or Tab to insert, Escape to close")
     }
 }
 

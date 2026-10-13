@@ -6,16 +6,29 @@ nonisolated enum ProjectFiles {
         /// Relative to its folder; with several folders, starting with the folder's name.
         let path: String
         let url: URL
+        /// Which of the project's folders it's in: 0 is the primary one.
+        var folder = 0
+        /// How "@" names it: inside the primary folder, where the agent works, its path there;
+        /// elsewhere, after its folder's name, which the agent knows.
+        var mention: String
 
         var id: URL { url }
+        var name: String { url.lastPathComponent }
+        /// One of the project's folders, listed by name ("api/").
+        var isFolder: Bool { path.hasSuffix("/") }
+    }
+
+    /// What "@" can point at: with several folders, each folder first, then every file.
+    static func mentionable(_ roots: [URL]) -> [File] {
+        (roots.count > 1 ? roots.enumerated().map { File(path: $1.lastPathComponent + "/", url: $1, folder: $0, mention: $1.lastPathComponent + "/") } : []) + list(roots)
     }
 
     /// The files in `roots`, the primary folder's first. Slow for big trees: call it off the
     /// main thread.
     static func list(_ roots: [URL]) -> [File] {
-        roots.flatMap { root in
+        roots.enumerated().flatMap { index, root in
             let prefix = roots.count > 1 ? root.lastPathComponent + "/" : ""
-            return listFiles(in: root.path).map { File(path: prefix + $0, url: root.appending(path: $0)) }
+            return listFiles(in: root.path).map { File(path: prefix + $0, url: root.appending(path: $0), folder: index, mention: index == 0 ? $0 : prefix + $0) }
         }
     }
 
