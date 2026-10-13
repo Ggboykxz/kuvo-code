@@ -12,6 +12,9 @@ struct Composer: View {
     let approval: ToolApproval
     let model: ModelRef?
     let isRunning: Bool
+    /// Comments on the changes waiting to go with the next message.
+    var commentCount = 0
+    var onDiscardComments: () -> Void = {}
     var onSelectAgent: (String) -> Void
     var onSelectApproval: (ToolApproval) -> Void
     var onSelectModel: (ModelRef) -> Void
@@ -23,11 +26,27 @@ struct Composer: View {
     @Namespace private var glass
     @State private var isTargeted = false
 
-    private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty }
+    private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty || commentCount > 0 }
     private var currentModel: Model? { catalog.model(model) ?? catalog.defaultModel }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if commentCount > 0 {
+                Menu {
+                    Button("Discard Comments", role: .destructive, action: onDiscardComments)
+                } label: {
+                    Label("\(commentCount) \(commentCount == 1 ? "comment" : "comments")", systemImage: "text.bubble")
+                        .font(.system(size: 12, weight: .medium))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color.primary.opacity(0.06), in: .capsule)
+                }
+                .menuStyle(.button)
+                .menuIndicator(.hidden)
+                .buttonStyle(.plain)
+                .fixedSize()
+                .help("Your comments on the changes go with this message.")
+            }
             if !files.isEmpty {
                 ScrollView(.horizontal) {
                     HStack(spacing: 8) {

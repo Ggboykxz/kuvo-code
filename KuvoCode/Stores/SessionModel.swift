@@ -8,6 +8,8 @@ final class SessionModel {
     private(set) var transcript: Transcript
     private(set) var isLoaded = false
     private(set) var changes: [FileDiff] = []
+    /// Comments on lines of the changes, sent with the next message.
+    var reviewComments: [ReviewComment] = []
     var failure: String?
 
     private let api: OpenCodeAPI
@@ -62,8 +64,10 @@ final class SessionModel {
 
     /// Sends a message with `files`, as `model` can take them (see `Attachments`).
     func send(_ text: String, files: [URL] = [], for model: Model?) {
-        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let comments = reviewComments
+        let text = ReviewComments.text(text.trimmingCharacters(in: .whitespacesAndNewlines), adding: comments)
         guard !text.isEmpty || !files.isEmpty else { return }
+        reviewComments = []
         let id = Identifier.message()
         let delivery: InboxItem.Delivery = transcript.isRunning ? .queue : .steer
         transcript.addLocal(id: id, text: text, delivery: delivery, files: files)
@@ -75,6 +79,7 @@ final class SessionModel {
                 try await api.prompt(session: self.id, id: id, text: message, files: prepared.files, delivery: delivery)
             } catch {
                 transcript.removeLocal(id: id)
+                reviewComments = comments + reviewComments
                 failure = error.localizedDescription
             }
         }

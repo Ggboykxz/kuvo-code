@@ -61,6 +61,8 @@ private struct BottomStack: View {
                     approval: model.approval,
                     model: model.session.model ?? lastModel ?? catalog.defaultModel?.ref,
                     isRunning: model.isRunning,
+                    commentCount: model.reviewComments.count,
+                    onDiscardComments: { model.reviewComments = [] },
                     onSelectAgent: model.selectAgent,
                     onSelectApproval: { approval in
                         model.setApproval(approval)

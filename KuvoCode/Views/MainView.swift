@@ -232,13 +232,14 @@ struct MainView: View {
     }
 
     private func changesCard(_ model: SessionModel) -> some View {
-        Card(title: "Changes", detail: (model.session.location.directory as NSString).abbreviatingWithTildeInPath, isFocused: focus == .changes) {
+        Card(title: "Changes", detail: (model.session.location.directory as NSString).lastPathComponent, isFocused: focus == .changes) {
             Image(systemName: "plus.forwardslash.minus")
         } actions: {
             Button("Close", systemImage: "xmark") { withAnimation(.ui) { showsChanges = false } }
                 .help("Hide Changes")
         } content: {
-            ChangesInspector(model: model)
+            ChangesPanel(model: model)
+                .id(model.session.location.directory)
         }
         .simultaneousGesture(TapGesture().onEnded { focus = .changes })
     }

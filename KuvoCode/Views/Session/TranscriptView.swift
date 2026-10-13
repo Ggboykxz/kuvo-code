@@ -139,12 +139,14 @@ private struct RowView: View {
     var body: some View {
         switch row {
         case .user(let message):
-            let (text, paths) = Attachments.split(message.text)
+            let (withComments, paths) = Attachments.split(message.text)
+            let (text, comments) = ReviewComments.split(withComments)
             let stored = (message.files ?? []).enumerated().map { AttachmentItem.stored($1, id: "\(message.id)#\($0)") }
-            UserBubble(text: text, attachments: stored + paths.map(AttachmentItem.path))
+            UserBubble(text: text, attachments: stored + paths.map(AttachmentItem.path), comments: comments)
         case .pending(let item):
-            let (text, paths) = Attachments.split(item.text)
-            UserBubble(text: text, attachments: item.files.map(AttachmentItem.local) + paths.map(AttachmentItem.path),
+            let (withComments, paths) = Attachments.split(item.text)
+            let (text, comments) = ReviewComments.split(withComments)
+            UserBubble(text: text, attachments: item.files.map(AttachmentItem.local) + paths.map(AttachmentItem.path), comments: comments,
                        status: item.isLocal ? "Sending" : item.delivery == .queue ? "Queued" : "Sending")
                 .contextMenu { Button("Cancel", role: .destructive) { cancel(item) } }
         case .assistant(let message, let showsError):
@@ -170,6 +172,7 @@ private struct RowView: View {
 struct UserBubble: View {
     let text: String
     var attachments: [AttachmentItem] = []
+    var comments: [ReviewComment] = []
     var status: String?
 
     var body: some View {
@@ -177,6 +180,9 @@ struct UserBubble: View {
             if !attachments.isEmpty {
                 MessageAttachments(items: attachments)
                     .padding(.bottom, text.isEmpty ? 0 : 2)
+            }
+            ForEach(comments) { comment in
+                CommentReference(comment: comment)
             }
             if !text.isEmpty {
                 Text(text)
