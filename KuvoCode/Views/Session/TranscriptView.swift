@@ -1,3 +1,4 @@
+import AppKit
 import OpenCodeKit
 import SwiftUI
 import Textual
@@ -124,11 +125,16 @@ struct TurnStats: Hashable {
     var cost: Double = 0
     var outputTokens = 0
     var steps = 0
+    /// What the agent wrote, for copying the reply.
+    var text: [String] = []
 
     mutating func add(_ message: Message.Assistant) {
         cost += message.cost ?? 0
         outputTokens += (message.tokens?.output ?? 0) + (message.tokens?.reasoning ?? 0)
         steps += 1
+        for block in message.content {
+            if case .text(let part) = block, !part.text.isEmpty { text.append(part.text) }
+        }
     }
 }
 
@@ -173,6 +179,13 @@ private struct RowView: View {
             let (text, comments) = ReviewComments.split(withComments)
             let stored = (message.files ?? []).enumerated().map { AttachmentItem.stored($1, id: "\(message.id)#\($0)") }
             UserBubble(text: text, attachments: stored + paths.map(AttachmentItem.path), comments: comments)
+                .contextMenu {
+                    Button("Copy") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(text, forType: .string)
+                    }
+                    .disabled(text.isEmpty)
+                }
         case .pending(let item):
             let (withComments, paths) = Attachments.split(item.text)
             let (text, comments) = ReviewComments.split(withComments)
@@ -340,10 +353,15 @@ private struct TurnEndView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         case .succeeded:
-            if !parts.isEmpty {
-                Text(parts.joined(separator: " · "))
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+            HStack(spacing: 6) {
+                if !parts.isEmpty {
+                    Text(parts.joined(separator: " · "))
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+                if !stats.text.isEmpty {
+                    CopyButton(text: stats.text.joined(separator: "\n\n"), help: "Copy the Reply")
+                }
             }
         }
     }
@@ -357,6 +375,34 @@ private struct TurnEndView: View {
         if stats.outputTokens > 0 { parts.append("\(stats.outputTokens.compactTokens) tokens") }
         if let cost = stats.cost.formattedCost { parts.append(cost) }
         return parts
+    }
+}
+
+/// A quiet copy icon that turns into a checkmark for a moment once it's copied.
+struct CopyButton: View {
+    let text: String
+    var help = "Copy"
+    @State private var copied = false
+
+    var body: some View {
+        Button {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            withAnimation(.ui) { copied = true }
+            Task {
+                try? await Task.sleep(for: .seconds(1.5))
+                withAnimation(.ui) { copied = false }
+            }
+        } label: {
+            Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                .font(.system(size: 11))
+                .contentTransition(.symbolEffect(.replace))
+                .frame(width: 22, height: 20)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.tertiary)
+        .help(copied ? "Copied" : help)
     }
 }
 
