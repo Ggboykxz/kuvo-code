@@ -25,7 +25,7 @@ here.
   runs count toward spend, and its OpenCode Go key is found there.
 
 - **A Bars style for the dashboard**, the default (`Views/UsageBarsView.swift`): one compact bar
-  per provider in its brand color, showing the limit closest to running out, with its full card a
+  per provider in a pastel of its brand color, with thin monospaced labels, showing the limit closest to running out, with its full card a
   click away, and today's spend as one bar on top. Settings › Style switches back to the cards.
 
 Everything else, including providers, pricing, pace, layout and the views, is upstream code. Kuvo
