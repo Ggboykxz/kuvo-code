@@ -159,6 +159,13 @@ public enum Message: Codable, Sendable, Hashable, Identifiable {
         public var time: Time
         public var text: String
         public var description: String?
+        public var metadata: JSONValue?
+
+        /// For "Instructions updated": which instructions changed (`core/mcp-guidance`, an
+        /// entry's key, …).
+        public var instructionSources: [String] {
+            metadata?["instructionSources"]?.array?.compactMap(\.string) ?? []
+        }
     }
 
     public struct Shell: Codable, Sendable, Hashable {

@@ -140,6 +140,17 @@ public struct OpenCodeAPI: Sendable {
         try await send("PATCH", "api/session/\(id.pathEscaped)", body: Body(permissions: rules))
     }
 
+    /// Attaches (or replaces) an instruction for the session's agent under `key` (lowercase
+    /// letters, digits, `.`, `_` and `-`). The agent hears about the change at its next step.
+    public func setInstruction(session id: String, key: String, text: String) async throws {
+        struct Body: Encodable { var value: String }
+        try await send("PUT", "api/experimental/session/\(id.pathEscaped)/instructions/entries/\(key.pathEscaped)", body: Body(value: text))
+    }
+
+    public func removeInstruction(session id: String, key: String) async throws {
+        try await send("DELETE", "api/experimental/session/\(id.pathEscaped)/instructions/entries/\(key.pathEscaped)")
+    }
+
     public func deleteSession(_ id: String) async throws {
         try await send("DELETE", "api/session/\(id.pathEscaped)")
     }
