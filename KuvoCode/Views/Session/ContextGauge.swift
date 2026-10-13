@@ -39,6 +39,9 @@ struct ContextGauge: View {
                 ContextDetails(used: used, limit: limit, cost: model.session.cost, plan: planLimits) {
                     showsDetails = false
                     UsageMenuBar.shared.open(.dashboard)
+                } summarize: {
+                    showsDetails = false
+                    model.compact()
                 }
             }
         }
@@ -89,6 +92,7 @@ private struct ContextDetails: View {
     let cost: Double
     let plan: PlanLimits?
     let openUsage: () -> Void
+    let summarize: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -98,6 +102,10 @@ private struct ContextDetails: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                Button("Summarize Now", action: summarize)
+                    .buttonStyle(.link)
+                    .font(.caption.weight(.medium))
+                    .help("Summarize the conversation so far, to free up the context window")
             }
 
             if let plan {

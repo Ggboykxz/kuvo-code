@@ -263,6 +263,13 @@ final class SessionModel {
         return true
     }
 
+    /// Summarizes the conversation so far, to make room in the context window.
+    func compact() {
+        Task {
+            do { try await api.compact(session: id) } catch { failure = error.localizedDescription }
+        }
+    }
+
     /// Picks the queue up again after Stop or a failed run.
     func resumeQueue() {
         isQueuePaused = false

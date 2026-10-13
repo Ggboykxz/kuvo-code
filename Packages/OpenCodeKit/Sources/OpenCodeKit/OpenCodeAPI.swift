@@ -220,6 +220,13 @@ public struct OpenCodeAPI: Sendable {
     }
 
     /// Removes waiting input before the agent gets it. Input already delivered is left alone.
+    /// Summarizes the conversation so far to free up the context window: right away when
+    /// idle, otherwise at the agent's next step.
+    public func compact(session: String) async throws {
+        struct Body: Encodable {}
+        try await send("POST", "api/session/\(session.pathEscaped)/compact", body: Body(), as: JSONValue.self)
+    }
+
     /// Waits for the session's run to wind down after an interrupt.
     public func wait(session: String) async throws {
         try await send("POST", "api/experimental/session/\(session.pathEscaped)/wait")

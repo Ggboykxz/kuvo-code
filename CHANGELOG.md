@@ -15,6 +15,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - **A project can have several folders.** New Project (⇧⌘N, or + next to Projects) names a project and adds its folders; sessions run in the primary one, and the agent can work in the others too and knows them by name. Right-click a project for **Edit Project…** to rename it or add and remove folders.
 - **Notifications:** when a session finishes or needs your answer while you're in another app, you get a notification that opens it, and the Dock icon counts the sessions waiting for you. Settings › General turns them off.
 - **Undo from any of your messages:** right-click it and choose Undo From Here… to take back the conversation and the agent's file changes since, with the message back in the composer to edit. Redo brings it all back until you send.
+- **Summarize Now** in the context ring's popover shrinks a long conversation to a summary, to make room before the context window fills up.
 - Right-click a project and choose **Open In** to open it in your editor, terminal or git app.
 - **Search sessions** from the top of the sidebar, by title or project.
 - A copy button under each reply copies it, and right-clicking one of your messages copies that.
