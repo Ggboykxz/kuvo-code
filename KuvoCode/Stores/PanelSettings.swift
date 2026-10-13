@@ -12,17 +12,10 @@ nonisolated enum PanelSettings {
     static let startsWith = "panel.startsWith"
     /// The panel comes forward when the agent starts browsing.
     static let revealsForAgent = "panel.revealsForAgent"
-    /// Where links that ask for a new window open.
-    static let newWindowLinks = "browser.newWindowLinks"
 
     enum Start: String, CaseIterable {
         case changes, newTab
         var title: String { self == .changes ? "Changes" : "New Tab" }
-    }
-
-    enum NewWindowLinks: String, CaseIterable {
-        case sameTab, newTab
-        var title: String { self == .sameTab ? "In the Same Tab" : "In a New Tab" }
     }
 
     /// A Bool setting that's on unless it was turned off.

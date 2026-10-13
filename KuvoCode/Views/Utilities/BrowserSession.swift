@@ -15,14 +15,15 @@ final class BrowserSession: NSObject {
     @ObservationIgnored private var observations: [NSKeyValueObservation] = []
     /// Told about each page that finishes loading, for the new tab page's suggestions.
     @ObservationIgnored var onVisit: ((URL, String, URL?) -> Void)?
-    /// Opens a link that asks for a new window in a tab of its own.
-    @ObservationIgnored var openInNewTab: ((URLRequest) -> Void)?
+    /// Opens a window the page asked for, as a tab of its own, and hands back its web view.
+    @ObservationIgnored var openWindow: ((WKWebViewConfiguration) -> WKWebView?)?
+    /// The page closed its own window (a sign-in popup that's done).
+    @ObservationIgnored var onClose: (() -> Void)?
 
-    override init() {
-        let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .default()
-        // Present as Safari, so sites don't serve a reduced page to an unknown browser.
-        configuration.applicationNameForUserAgent = "Version/26.0 Safari/605.1.15"
+    /// A new tab, or, with the configuration WebKit passes for a window a page opens, that window:
+    /// it stays connected to the page that opened it, which sign-in popups need to report back.
+    init(configuration: WKWebViewConfiguration? = nil) {
+        let configuration = configuration ?? Self.makeConfiguration()
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.allowsBackForwardNavigationGestures = true
         webView.allowsMagnification = true
@@ -37,6 +38,14 @@ final class BrowserSession: NSObject {
             webView.observe(\.canGoForward) { [weak self] view, _ in MainActor.assumeIsolated { self?.canGoForward = view.canGoForward } },
             webView.observe(\.estimatedProgress) { [weak self] view, _ in MainActor.assumeIsolated { self?.progress = view.estimatedProgress } },
         ]
+    }
+
+    private static func makeConfiguration() -> WKWebViewConfiguration {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .default()
+        // Present as Safari, so sites don't serve a reduced page to an unknown browser.
+        configuration.applicationNameForUserAgent = "Version/26.0 Safari/605.1.15"
+        return configuration
     }
 
     /// The tab's name: the page title, else its host.
@@ -72,15 +81,18 @@ final class BrowserSession: NSObject {
 }
 
 extension BrowserSession: WKUIDelegate {
-    /// Links that would open a new window open in this tab, or in a new one (Settings › Panel).
+    /// A window the page opens, a link or a script's, becomes a real window in a tab of its own, as
+    /// in any browser. It stays connected to the page that opened it, which sign-in windows like
+    /// "Sign in with Google" need to report back before they close.
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        let setting = UserDefaults.standard.string(forKey: PanelSettings.newWindowLinks).flatMap(PanelSettings.NewWindowLinks.init)
-        if setting == .newTab, let openInNewTab {
-            openInNewTab(navigationAction.request)
-        } else {
-            webView.load(navigationAction.request)
-        }
+        if let window = openWindow?(configuration) { return window }
+        webView.load(navigationAction.request)
         return nil
+    }
+
+    /// The page closed its own window, like a sign-in popup that's done.
+    func webViewDidClose(_ webView: WKWebView) {
+        onClose?()
     }
 }
 

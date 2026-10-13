@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import WebKit
 
 /// The window's right panel: Changes, files, terminals and browsers, as tabs. Terminals
 /// and pages keep running while their tab is out of view, and close with it.
@@ -54,18 +55,24 @@ final class Utilities {
         add(tab)
     }
 
+    /// A browser tab at `address`; or, given WebKit's configuration, a window a page opened, placed
+    /// right after the page's tab. When that window closes itself, its page's tab comes back.
     @discardableResult
-    func newBrowser(_ address: String? = nil) -> BrowserSession {
+    func newBrowser(_ address: String? = nil, configuration: WKWebViewConfiguration? = nil, openedFrom opener: UUID? = nil) -> BrowserSession {
         let tab = Tab(kind: .browser)
-        let browser = BrowserSession()
+        let browser = BrowserSession(configuration: configuration)
         browser.onVisit = { [weak history] url, title, icon in history?.record(url, title: title, iconURL: icon) }
-        browser.openInNewTab = { [weak self] request in
-            guard let url = request.url else { return }
-            self?.newBrowser(url.absoluteString)
+        browser.openWindow = { [weak self] configuration in
+            self?.newBrowser(configuration: configuration, openedFrom: tab.id).webView
+        }
+        browser.onClose = { [weak self] in
+            guard let self else { return }
+            close(tab.id)
+            if let opener, tabs.contains(where: { $0.id == opener }) { selection = opener }
         }
         browsers[tab.id] = browser
         if let address { browser.load(address) }
-        add(tab)
+        add(tab, at: opener.flatMap { id in tabs.firstIndex { $0.id == id }.map { $0 + 1 } })
         return browser
     }
 

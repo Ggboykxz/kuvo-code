@@ -83,7 +83,6 @@ private struct PanelSettingsView: View {
     @AppStorage(PanelSettings.showsSuggestions) private var showsSuggestions = true
     @AppStorage(PanelSettings.suggestionCount) private var suggestionCount = 8
     @AppStorage(SearchEngine.key) private var searchEngine = SearchEngine.google
-    @AppStorage(PanelSettings.newWindowLinks) private var newWindowLinks = PanelSettings.NewWindowLinks.sameTab
     @State private var confirmingClearData = false
 
     var body: some View {
@@ -105,9 +104,6 @@ private struct PanelSettingsView: View {
             Section {
                 Picker("Search engine", selection: $searchEngine) {
                     ForEach(SearchEngine.allCases, id: \.self) { Text($0.title).tag($0) }
-                }
-                Picker("Open links that ask for a new window", selection: $newWindowLinks) {
-                    ForEach(PanelSettings.NewWindowLinks.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
                 LabeledContent("Suggested sites") {
                     Button("Clear") { app.utilities.history.clear() }
