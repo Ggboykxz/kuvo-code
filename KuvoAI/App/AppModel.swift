@@ -53,10 +53,12 @@ final class AppModel {
             }
 
             engine = .starting
+            let shell = await environment
+            usage.environment = shell
             let server = try await ServerProcess.start(
                 executable: binary,
                 folders: EngineFolders(root: AppInfo.supportDirectory.appending(path: "opencode")),
-                environment: await environment,
+                environment: shell,
                 onExit: { status in Task { @MainActor in self.engineExited(status: status) } }
             )
             self.server = server

@@ -4,22 +4,37 @@ import os
 
 private let log = Logger(subsystem: "run.kuvo.ai", category: "usage")
 
-/// How much of each connected plan is left, for the menu bar.
+/// How much of each subscription is left, for the menu bar: Codex, Claude, GitHub
+/// Copilot and OpenCode Go (providers ported from OpenUsage).
 @Observable
 final class UsageStore {
     var api: OpenCodeAPI?
+    /// The login shell's environment (CODEX_HOME, CLAUDE_CONFIG_DIR live there).
+    var environment: [String: String] = ProcessInfo.processInfo.environment
+
+    static let readsKeychainKey = "usage.readsKeychain"
+    static let renewsLoginsKey = "usage.renewsLogins"
 
     private(set) var reports: [ProviderUsage] = []
     private(set) var isRefreshing = false
     private(set) var updated: Date?
 
-    private let client = UsageClient()
+    private let service = UsageService()
     private var timer: Task<Void, Never>?
     private var pending: Task<Void, Never>?
 
-    /// The tightest limit across accounts: what the menu bar shows.
+    /// The tightest limit across subscriptions: what the menu bar shows.
     var tightest: UsageMeter? {
         reports.flatMap(\.meters).max { $0.used < $1.used }
+    }
+
+    private var options: UsageOptions {
+        let defaults = UserDefaults.standard
+        return UsageOptions(
+            readsKeychain: defaults.bool(forKey: Self.readsKeychainKey),
+            renewsLogins: defaults.bool(forKey: Self.renewsLoginsKey),
+            environment: environment
+        )
     }
 
     func start() {
@@ -27,34 +42,31 @@ final class UsageStore {
         timer = Task {
             while !Task.isCancelled {
                 await refresh()
+                // Five minutes, like OpenUsage: providers throttle more frequent checks.
                 try? await Task.sleep(for: .seconds(300))
             }
         }
     }
 
     func refresh() async {
-        guard let api, !isRefreshing else { return }
+        guard !isRefreshing else { return }
         isRefreshing = true
         defer { isRefreshing = false }
-        do {
-            // Secrets stay in this function: only the usage figures are kept.
-            let credentials = try await api.credentialSecrets().filter { $0.active && UsageClient.supported.contains($0.integrationID) }
-            let client = client
-            let results = await withTaskGroup(of: ProviderUsage?.self) { group in
-                for credential in credentials {
-                    group.addTask { await client.usage(for: credential) }
-                }
-                var results: [ProviderUsage] = []
-                for await usage in group {
-                    if let usage { results.append(usage) }
-                }
-                return results
-            }
-            reports = results.sorted { $0.id < $1.id }
-            updated = Date()
-        } catch {
-            log.error("usage: \(String(describing: error), privacy: .public)")
+        // kuvo-ai's own accounts come from the engine; secrets stay inside this call.
+        var credentials: [CredentialSecret] = []
+        if let api {
+            do { credentials = try await api.credentialSecrets() } catch { log.error("credentials: \(String(describing: error), privacy: .public)") }
         }
+        let fresh = await service.usage(engine: credentials, options: options)
+        reports = fresh.map { report in
+            // A check that failed for now (offline, throttled) keeps the last figures, with its note.
+            guard report.meters.isEmpty, report.facts.isEmpty,
+                  let previous = reports.first(where: { $0.id == report.id }), !previous.meters.isEmpty else { return report }
+            var kept = previous
+            kept.note = report.note
+            return kept
+        }
+        updated = Date()
     }
 
     /// Usage changes after a run, and when accounts change; refresh once things settle.

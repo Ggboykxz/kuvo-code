@@ -20,6 +20,7 @@ struct KuvoAIApp: App {
             SettingsView()
                 .environment(delegate.model)
                 .environment(delegate.model.catalog)
+                .environment(delegate.model.usage)
         }
 
         // How much of each connected plan is left (ChatGPT windows, Copilot requests).

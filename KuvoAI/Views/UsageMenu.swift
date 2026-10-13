@@ -54,13 +54,13 @@ struct UsageMenu: View {
             }
 
             if usage.reports.isEmpty {
-                Text(usage.updated == nil ? "Checking your plans…" : "Connect GitHub Copilot or ChatGPT to see how much of your plan is left.")
+                Text(usage.updated == nil ? "Checking your plans…" : "Sign in to Codex or Claude Code, or connect GitHub Copilot or OpenCode Go, to see how much of your plan is left.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 ForEach(usage.reports) { report in
-                    PlanUsage(report: report, name: catalog.providerName(report.id))
+                    PlanUsage(report: report)
                     if report.id != usage.reports.last?.id { Divider() }
                 }
             }
@@ -72,8 +72,8 @@ struct UsageMenu: View {
                     NSApp.activate()
                 }
                 Spacer()
-                Button("Accounts…") {
-                    UserDefaults.standard.set("accounts", forKey: "settings.tab")
+                Button("Settings…") {
+                    UserDefaults.standard.set("usage", forKey: "settings.tab")
                     openSettings()
                     NSApp.activate()
                 }
@@ -88,13 +88,12 @@ struct UsageMenu: View {
 
 private struct PlanUsage: View {
     let report: ProviderUsage
-    let name: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                ProviderLogo(id: report.id, size: 16)
-                Text(name)
+                ProviderLogo(id: report.logo, size: 16)
+                Text(report.name)
                     .font(.body.weight(.semibold))
                 if let plan = report.plan {
                     Text(plan)
@@ -106,6 +105,16 @@ private struct PlanUsage: View {
             }
             ForEach(report.meters) { meter in
                 MeterRow(meter: meter)
+            }
+            ForEach(report.facts) { fact in
+                HStack {
+                    Text(fact.label)
+                    Spacer()
+                    Text(fact.value)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
+                .font(.callout)
             }
             if let note = report.note {
                 Text(note)
