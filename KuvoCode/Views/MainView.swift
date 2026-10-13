@@ -154,12 +154,21 @@ struct MainView: View {
         }
         .sharedBackgroundVisibility(.hidden)
 
-        // Mirrors the sessions toggle on the left: this one shows the Changes card on the right.
+        // Mirrors the sessions toggle on the left, and looks the same: a plain icon, not a
+        // highlighted toggle.
         ToolbarItem(placement: .primaryAction) {
-            Toggle("Panel", systemImage: "sidebar.right", isOn: $showsPanel.animation(.ui))
-                .toggleStyle(.button)
-                .labelStyle(.iconOnly)
-                .help(showsPanel ? "Hide Panel (⌥⌘0)" : "Show Panel: Changes, Files, Terminal, Browser (⌥⌘0)")
+            Button {
+                withAnimation(.ui) { showsPanel.toggle() }
+            } label: {
+                Image(systemName: "sidebar.right")
+                    .font(.system(size: 14))
+                    .frame(width: 28, height: 28)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .accessibilityLabel(showsPanel ? "Hide Panel" : "Show Panel")
+            .help(showsPanel ? "Hide Panel (⌥⌘0)" : "Show Panel: Changes, Files, Terminal, Browser (⌥⌘0)")
         }
         .sharedBackgroundVisibility(.hidden)
     }
