@@ -49,6 +49,37 @@ struct MCPSettings: View {
             ConfigProblem()
 
             Section {
+                ForEach(MCPCatalog.servers) { server in
+                    HStack(alignment: .firstTextBaseline) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 6) {
+                                Text(server.title)
+                                Text(server.access.title)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Text(server.summary)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if config.value(at: Self.path + [server.id]) != nil {
+                            Label("Added", systemImage: "checkmark")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Button("Add") { add(server) }
+                        }
+                    }
+                }
+            } header: {
+                Text("Popular Servers")
+            } footer: {
+                Text("Each from the company behind it, as listed in the official MCP Registry. One that needs an account asks you to sign in here once it's added.")
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
                 ConfigNumberField(title: "Time to start, in milliseconds", path: ["mcp", "timeout", "startup"], prompt: "30000")
                 ConfigNumberField(title: "Time to list tools, in milliseconds", path: ["mcp", "timeout", "catalog"], prompt: "30000")
                 ConfigNumberField(title: "Time for one tool call, in milliseconds", path: ["mcp", "timeout", "execution"], prompt: "43200000")
@@ -161,6 +192,11 @@ struct MCPSettings: View {
         config.set(.object(["type": .string("local"), "command": .array([]), "disabled": .bool(true)]), at: Self.path + [name])
         Analytics.shared.track("mcp_server_added")
         editing = ServerEdit(id: name)
+    }
+
+    private func add(_ server: MCPCatalog.Server) {
+        config.set(server.settings, at: Self.path + [server.id])
+        Analytics.shared.track("mcp_server_added", ["catalog": server.id])
     }
 
     private func removePending() {
