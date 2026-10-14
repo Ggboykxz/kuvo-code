@@ -252,6 +252,7 @@ struct Composer: View {
     private func mentionTyped(in text: String) {
         guard !folders.isEmpty, Mentions.query(in: text) != nil else {
             mentionIndex = 0
+            dismissedMention = nil
             return
         }
         guard mentionFilesRead.map({ Date().timeIntervalSince($0) > 30 }) ?? true else { return }

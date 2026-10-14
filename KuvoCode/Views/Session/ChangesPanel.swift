@@ -816,6 +816,12 @@ private struct CommentEditor: View {
                 .lineLimit(2...8)
                 .focused($focused)
                 .onKeyPress(.escape) { cancel(); return .handled }
+                // Here, not on the button: a button's ⌘Return would take it from the composer too.
+                .onKeyPress(.return, phases: .down) { press in
+                    guard press.modifiers.contains(.command) else { return .ignored }
+                    submit()
+                    return .handled
+                }
             HStack {
                 Spacer()
                 Button("Cancel", action: cancel)
@@ -824,7 +830,7 @@ private struct CommentEditor: View {
                 Button("Comment") { submit() }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
-                    .keyboardShortcut(.return, modifiers: .command)
+                    .help("Comment (⌘Return)")
                     .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             .font(.system(size: 12))
