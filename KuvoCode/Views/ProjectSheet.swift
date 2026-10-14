@@ -21,6 +21,7 @@ struct ProjectSheet: View {
     @State private var engineProject: String?
     @State private var run: String
     @FocusState private var isRunFocused: Bool
+    @FocusState private var isSetupFocused: Bool
     private let focusesRun: Bool
     /// The primary folder first.
     @State private var folders: [String]
@@ -44,32 +45,39 @@ struct ProjectSheet: View {
 
             nameField
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Folders")
-                    .font(.headline)
+            section("Folders", note: "Sessions run in the primary folder; the agent can work in the others too.") {
                 folderList
             }
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Commands")
-                    .font(.headline)
-                TextField("Run", text: $run, prompt: Text("npm run dev"))
-                    .font(.system(.body, design: .monospaced))
-                    .textFieldStyle(.roundedBorder)
-                    .focused($isRunFocused)
-                Text("Run (⌘R) runs it in a terminal in the panel, in the session's folder.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                if setup != nil {
-                    TextField("Worktree setup", text: Binding(get: { setup ?? "" }, set: { setup = $0 }), prompt: Text("npm install && cp \"$OPENCODE_WORKTREE_BASE/.env\" ."), axis: .vertical)
-                        .font(.system(.body, design: .monospaced))
-                        .lineLimit(1...4)
-                        .textFieldStyle(.roundedBorder)
-                        .padding(.top, 6)
-                    Text("Runs in each new worktree before its session starts, to install dependencies or copy files git doesn't have. $OPENCODE_WORKTREE_BASE is the project's folder.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+            section("Run", note: Text("Adds a \(Image(systemName: "play.fill")) Run button to the title bar that starts your app in a terminal in the side panel (⌘R).")) {
+                WellGroup(isActive: isRunFocused) {
+                    WellRow(isActive: isRunFocused) {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 13))
+                    } content: {
+                        TextField("Run", text: $run, prompt: Text(verbatim: "npm run dev"))
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 14, design: .monospaced))
+                            .focused($isRunFocused)
+                    }
+                }
+            }
+
+            if setup != nil {
+                section("Worktree Setup", note: Text(verbatim: "Runs in each new worktree before its session starts, to install dependencies or copy files git doesn't have. $OPENCODE_WORKTREE_BASE is the project's folder.")) {
+                    WellGroup(isActive: isSetupFocused) {
+                        WellRow(isActive: isSetupFocused) {
+                            Image(systemName: "arrow.triangle.branch")
+                                .font(.system(size: 14))
+                        } content: {
+                            TextField("Worktree setup", text: Binding(get: { setup ?? "" }, set: { setup = $0 }), prompt: Text(verbatim: "npm install && cp \"$OPENCODE_WORKTREE_BASE/.env\" ."), axis: .vertical)
+                                .textFieldStyle(.plain)
+                                .font(.system(size: 14, design: .monospaced))
+                                .lineLimit(1...4)
+                                .focused($isSetupFocused)
+                                .padding(.vertical, 12)
+                        }
+                    }
                 }
             }
 
@@ -116,75 +124,66 @@ struct ProjectSheet: View {
         Task { try? await api.setSetupCommand(project: engineProject, command.isEmpty ? nil : command) }
     }
 
+    /// A titled part of the sheet, with a line under it saying what it's for.
+    private func section(_ title: String, note: String, @ViewBuilder content: () -> some View) -> some View {
+        section(title, note: Text(note), content: content)
+    }
+
+    private func section(_ title: String, note: Text, @ViewBuilder content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.headline)
+            content()
+            note
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     // MARK: Name
 
     private var nameField: some View {
-        HStack(spacing: 0) {
-            Image(systemName: "folder")
-                .foregroundStyle(.secondary)
-                .frame(width: 42)
-            Rectangle()
-                .fill(Surface.wellBorder(scheme))
-                .frame(width: 1)
-            // Left empty, the project takes its primary folder's name.
-            TextField("Project name", text: $name, prompt: Text(folders.first.map { ($0 as NSString).lastPathComponent } ?? "Project name"))
-                .textFieldStyle(.plain)
-                .focused($isNameFocused)
-                .padding(.horizontal, 12)
+        WellGroup(isActive: isNameFocused) {
+            WellRow(isActive: isNameFocused) {
+                Image(systemName: "folder")
+            } content: {
+                // Left empty, the project takes its primary folder's name.
+                TextField("Project name", text: $name, prompt: Text(folders.first.map { ($0 as NSString).lastPathComponent } ?? "Project name"))
+                    .textFieldStyle(.plain)
+                    .focused($isNameFocused)
+            }
         }
         .font(.system(size: 15))
-        .frame(height: 44)
-        // A recessed well, ringed in the accent color while you type.
-        .recessedWell(RoundedRectangle(cornerRadius: 10))
-        .overlay {
-            if isNameFocused { RoundedRectangle(cornerRadius: 10).strokeBorder(.tint, lineWidth: 2) }
-        }
     }
 
     // MARK: Folders
 
+    /// The folders as rows of one field, the way the name is drawn, with adding a folder as
+    /// its last row.
     private var folderList: some View {
-        VStack(spacing: 0) {
-            if folders.isEmpty {
-                VStack(spacing: 12) {
-                    Text("Add the folders this project works with.")
-                        .foregroundStyle(.secondary)
-                    Button("Add Folder…", systemImage: "folder.badge.plus", action: addFolders)
-                        .buttonStyle(.glass)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 30)
-            } else {
-                ForEach(folders, id: \.self) { folder in
-                    FolderRow(
-                        path: folder,
-                        isPrimary: folder == folders.first,
-                        canChangePrimary: isNew,
-                        makePrimary: { withAnimation(.ui) { folders.removeAll { $0 == folder }; folders.insert(folder, at: 0) } },
-                        remove: { withAnimation(.ui) { folders.removeAll { $0 == folder } } }
-                    )
-                    Divider().padding(.leading, 48)
-                }
-                Button(action: addFolders) {
-                    HStack(spacing: 12) {
-                        Image(systemName: "folder.badge.plus")
-                            .font(.system(size: 15))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 24)
-                        Text("Add Folder…")
-                        Spacer()
-                    }
-                    .padding(.horizontal, 12)
-                    .frame(height: 44)
-                    .contentShape(.rect)
-                    .hoverHighlight(in: Rectangle())
-                }
-                .buttonStyle(.plain)
+        WellGroup {
+            ForEach(folders, id: \.self) { folder in
+                FolderRow(
+                    path: folder,
+                    isPrimary: folder == folders.first,
+                    canChangePrimary: isNew,
+                    makePrimary: { withAnimation(.ui) { folders.removeAll { $0 == folder }; folders.insert(folder, at: 0) } },
+                    remove: { withAnimation(.ui) { folders.removeAll { $0 == folder } } }
+                )
+                WellDivider()
             }
+            Button(action: addFolders) {
+                WellRow {
+                    Image(systemName: "plus")
+                        .font(.system(size: 14, weight: .medium))
+                } content: {
+                    Text(folders.isEmpty ? "Add Folder…" : "Add Another Folder…")
+                }
+                .contentShape(.rect)
+            }
+            .buttonStyle(WellRowButtonStyle())
         }
-        .background(Surface.cardFill(scheme, focused: false), in: .rect(cornerRadius: Metrics.cardRadius))
-        .clipShape(.rect(cornerRadius: Metrics.cardRadius))
-        .specularRim(RoundedRectangle(cornerRadius: Metrics.cardRadius))
     }
 
     private func addFolders() {
@@ -211,42 +210,117 @@ private struct FolderRow: View {
     let remove: () -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
+        WellRow(height: 52) {
             Image(nsImage: NSWorkspace.shared.icon(forFile: path))
                 .resizable()
-                .frame(width: 24, height: 24)
-            VStack(alignment: .leading, spacing: 1) {
-                Text((path as NSString).lastPathComponent)
-                    .lineLimit(1)
-                Text((path as NSString).abbreviatingWithTildeInPath)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                .frame(width: 22, height: 22)
+        } content: {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text((path as NSString).lastPathComponent)
+                        .lineLimit(1)
+                    Text((path as NSString).abbreviatingWithTildeInPath)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                .help(path)
+                Spacer(minLength: 8)
+                // A checkmark: a state, not a button like Make Primary.
+                if isPrimary {
+                    Label("Primary", systemImage: "checkmark")
+                        .labelStyle(.titleAndIcon)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .help("Sessions run in this folder")
+                } else if canChangePrimary {
+                    Button("Make Primary", action: makePrimary)
+                        .font(.subheadline.weight(.medium))
+                        .buttonStyle(TextButtonStyle(outset: true))
+                        .help("Run sessions in this folder")
+                }
+                if !(isPrimary && !canChangePrimary) {
+                    Button(action: remove) {
+                        Image(systemName: "minus.circle.fill")
+                    }
+                    .buttonStyle(RemoveButtonStyle())
+                    .help("Remove from the project")
+                }
             }
-            Spacer(minLength: 8)
-            if isPrimary {
-                Text("Primary")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .recessedWell(Capsule())
-                    .help("Sessions run in this folder")
-            } else if canChangePrimary {
-                Button("Make Primary", action: makePrimary)
-                    .font(.system(size: 12, weight: .medium))
-                    .buttonStyle(.borderless)
-                    .help("Run sessions in this folder")
-            }
-            Button("Remove", systemImage: "xmark", action: remove)
-                .buttonStyle(CardActionStyle())
-                .help(isPrimary && !canChangePrimary ? "Sessions run here, so it stays" : "Remove from the project")
-                .disabled(isPrimary && !canChangePrimary)
-                .opacity(isPrimary && !canChangePrimary ? 0 : 1)
         }
-        .padding(.horizontal, 12)
-        .frame(height: 52)
-        .help(path)
+    }
+}
+
+/// A group of rows drawn into the sheet like one field: sunken, with an edge of its own and no
+/// outline, a touch deeper while you type in it.
+private struct WellGroup<Content: View>: View {
+    var isActive = false
+    @ViewBuilder var content: Content
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        VStack(spacing: 0) { content }
+            .background((scheme == .dark ? Color.black : Surface.slate).opacity(isActive ? 0.05 : 0), in: .rect(cornerRadius: 10))
+            .clipShape(.rect(cornerRadius: 10))
+            .recessedWell(RoundedRectangle(cornerRadius: 10))
+            .animation(.easeOut(duration: 0.15), value: isActive)
+    }
+}
+
+/// One row of a well: an icon in its own column, a hairline, then the content. The icon takes
+/// the accent color while the row's field has the focus, in place of an outline.
+private struct WellRow<Icon: View, Content: View>: View {
+    var isActive = false
+    var height: CGFloat = 44
+    @ViewBuilder var icon: Icon
+    @ViewBuilder var content: Content
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        HStack(spacing: 0) {
+            icon
+                .foregroundStyle(isActive ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                .frame(width: 42)
+            Rectangle()
+                .fill(Surface.wellBorder(scheme))
+                .frame(width: 1)
+            content
+                .padding(.horizontal, 12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(minHeight: height)
+    }
+}
+
+/// The hairline between a well's rows.
+private struct WellDivider: View {
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        Rectangle()
+            .fill(Surface.wellBorder(scheme))
+            .frame(height: 1)
+    }
+}
+
+/// A row of a well that's a button, like Add Folder…: secondary ink and a soft fill under
+/// the pointer, so it reads as a field to click.
+private struct WellRowButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        WellRowButton(configuration: configuration)
+    }
+
+    private struct WellRowButton: View {
+        let configuration: ButtonStyleConfiguration
+        @State private var isHovering = false
+
+        var body: some View {
+            configuration.label
+                .foregroundStyle(isHovering ? .primary : .secondary)
+                .background(configuration.isPressed ? Pressable.pressedFill : isHovering ? Pressable.hoverFill : .clear)
+                .onHover { isHovering = $0 }
+                .animation(.easeOut(duration: 0.12), value: isHovering)
+        }
     }
 }
