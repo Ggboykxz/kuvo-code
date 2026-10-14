@@ -153,8 +153,10 @@ struct TranscriptView: View {
         // Messages waiting their turn are listed above the composer instead.
         let waiting = Set(model.waiting.map(\.id))
         rows += model.transcript.pending.filter { !waiting.contains($0.id) }.map(Row.pending)
-        if model.transcript.isRunning && !isVisiblyWorking(messages.last) {
-            rows.append(.working)
+        // Always while it works, with the time since your message, so a long step is plainly
+        // still going.
+        if model.transcript.isRunning {
+            rows.append(.working(since: turn.started))
         }
         return rows
     }
@@ -165,16 +167,6 @@ struct TranscriptView: View {
         }
     }
 
-    /// Whether the last message already shows activity (streaming text, open reasoning, a running tool).
-    private func isVisiblyWorking(_ message: Message?) -> Bool {
-        guard case .assistant(let assistant) = message, assistant.time.completed == nil, let last = assistant.content.last else { return false }
-        switch last {
-        case .reasoning(let block): return !block.isComplete
-        case .tool(let call): return !call.state.isFinished
-        case .text: return true
-        case .other: return false
-        }
-    }
 }
 
 struct TurnStats: Hashable {
@@ -204,7 +196,8 @@ enum Row: Identifiable, Hashable {
     case pending(Transcript.Pending)
     /// An undo that the next message makes final, with how many messages it took back.
     case undone(Int)
-    case working
+    /// The agent at work, since the time of your message.
+    case working(since: Milliseconds?)
 
     /// The words Find looks in: messages and replies.
     var searchText: String {
@@ -219,7 +212,7 @@ enum Row: Identifiable, Hashable {
     /// Space above this row: steps of one reply sit close, a new message gets room.
     func spacing(after previous: Row) -> CGFloat {
         switch (previous, self) {
-        case (.assistant, .assistant), (.assistant, .turnEnd), (.assistant, .working): 10
+        case (.assistant, .assistant), (.assistant, .turnEnd), (.assistant, .working(_)): 10
         case (_, .user), (_, .pending): 28
         default: 16
         }
@@ -247,6 +240,15 @@ private struct RowView: View {
     let fork: (Message.User) -> Void
     let retry: () -> Void
     @State private var confirmsUndo = false
+
+    /// " 12s", " 1m 5s" after a few seconds, then " · Esc to stop".
+    static func elapsed(since: Milliseconds?, now: Date) -> String {
+        guard let since else { return "" }
+        let seconds = Int(now.timeIntervalSince1970 - since / 1000)
+        guard seconds >= 2 else { return "" }
+        let time = seconds < 60 ? "\(seconds)s" : "\(seconds / 60)m \(seconds % 60)s"
+        return " \(time) · Esc to stop"
+    }
 
     var body: some View {
         switch row {
@@ -304,9 +306,11 @@ private struct RowView: View {
             .background(.quaternary.opacity(0.5), in: .capsule)
             .frame(maxWidth: .infinity)
             .help("Sending a message makes the undo final")
-        case .working:
-            ShimmerText(text: "Working…")
-                .font(.callout)
+        case .working(let since):
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                ShimmerText(text: "Working…" + Self.elapsed(since: since, now: context.date))
+                    .font(.callout)
+            }
         }
     }
 }
