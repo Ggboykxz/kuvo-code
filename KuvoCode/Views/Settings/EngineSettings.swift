@@ -8,6 +8,9 @@ struct EngineSettings: View {
     @State private var shells: [ShellOption] = []
     @State private var searchProviders: [WebSearchProvider] = []
     @State private var plugins: [PluginInfo] = []
+    /// A search service's key, while it's being added.
+    @State private var addingKey: IntegrationRef?
+    @Environment(Catalog.self) private var catalog
 
     private var config: EngineConfig { app.engineConfig }
 
@@ -49,10 +52,15 @@ struct EngineSettings: View {
                         : "With the formatters the engine knows, such as Prettier, gofmt or rustfmt, when the project has them.")
                 }
                 .disabled(customFormatters)
-                Toggle(isOn: Binding(get: { config.value(at: ["warming"]).map { $0.bool ?? true } ?? false }, set: { config.set(.bool($0), at: ["warming"]) })) {
+                // Warming set up by hand (an object) isn't this switch's to replace.
+                let customWarming = config.value(at: ["warming"])?.object != nil
+                Toggle(isOn: customWarming ? .constant(true) : config.bool(["warming"], default: false)) {
                     Text("Keep recent sessions warm")
-                    Text("Sends a small request every few minutes so the model's cache stays ready. Uses a little of your quota.")
+                    Text(customWarming
+                        ? "As set up in the settings file."
+                        : "Sends a small request every few minutes so the model's cache stays ready. Uses a little of your quota.")
                 }
+                .disabled(customWarming)
                 Toggle(isOn: config.bool(["snapshots"], default: true)) {
                     Text("Keep snapshots of files")
                     Text("Undo From Here needs them to put files back.")
@@ -93,10 +101,21 @@ struct EngineSettings: View {
                     Divider()
                     Text("Off").tag("off")
                 }
+                // The chosen service, if it still needs its key.
+                if let provider = config.value(at: ["websearch", "provider"])?.string, provider != "random",
+                   let integration = catalog.integrations.first(where: { $0.id == provider }) {
+                    LabeledContent("\(integration.name) key") {
+                        if integration.isConnected {
+                            Text("Added").foregroundStyle(.secondary)
+                        } else {
+                            Button("Add API Key…") { addingKey = IntegrationRef(id: provider) }
+                        }
+                    }
+                }
             } header: {
                 Text("Web Search")
             } footer: {
-                Text("Search services need an API key in Accounts.")
+                Text("Each search service needs its own API key. With none chosen, the agent asks the first time it searches.")
                     .foregroundStyle(.secondary)
             }
 
@@ -150,6 +169,9 @@ struct EngineSettings: View {
                 Text("Everything in Settings is saved in this file, in opencode's format, and the engine picks up changes as you make them. A project's own opencode.json takes precedence for that project.")
                     .foregroundStyle(.secondary)
             }
+        }
+        .sheet(item: $addingKey) { ref in
+            ConnectSheet(integrationID: ref.id) { addingKey = nil }
         }
         .task {
             guard let api = app.api else { return }

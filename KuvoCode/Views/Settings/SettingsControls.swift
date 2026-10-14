@@ -303,3 +303,28 @@ extension View {
     /// The first section of a `ScrollingSettingsForm`.
     func settingsTop() -> some View { id(settingsTopID) }
 }
+
+/// Signing in to something from Settings (an MCP server, a web search service): the same
+/// steps as in Accounts, in a sheet.
+struct ConnectSheet: View {
+    let integrationID: String
+    let done: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ConnectView(integrationID: integrationID, onDone: done)
+            HStack {
+                Spacer()
+                Button("Close", action: done)
+                    .keyboardShortcut(.cancelAction)
+            }
+            .padding(16)
+        }
+        .frame(width: 560, height: 560)
+    }
+}
+
+/// An integration, by its ID, for a sheet.
+struct IntegrationRef: Identifiable {
+    let id: String
+}

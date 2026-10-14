@@ -13,6 +13,8 @@ public struct ShellOption: Codable, Sendable, Hashable, Identifiable {
 public struct MCPServer: Decodable, Sendable, Hashable, Identifiable {
     public var name: String
     public var status: Status
+    /// Where its sign-in goes, for a server that needs one.
+    public var integrationID: String?
 
     public var id: String { name }
 

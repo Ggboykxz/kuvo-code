@@ -11,6 +11,8 @@ struct MCPSettings: View {
     @State private var removal: [String]?
     @State private var isNaming = false
     @State private var newName = ""
+    /// A server's sign-in, while it's open.
+    @State private var signingIn: IntegrationRef?
 
     private var config: EngineConfig { app.engineConfig }
     static let path = ["mcp", "servers"]
@@ -71,6 +73,15 @@ struct MCPSettings: View {
                 editing = nil
             }
         }
+        .sheet(item: $signingIn) { ref in
+            ConnectSheet(integrationID: ref.id) {
+                signingIn = nil
+                Task {
+                    for server in live where server.integrationID == ref.id { try? await app.api?.connectMCP(server.name) }
+                    await refresh()
+                }
+            }
+        }
         .alert("Add MCP Server", isPresented: $isNaming) {
             TextField("Name, like github", text: $newName)
             Button("Add") { add() }
@@ -105,8 +116,11 @@ struct MCPSettings: View {
                 }
             }
             Spacer()
-            if isOn, let status = status?.status, status == "failed" || status == "needs_auth" {
-                Button(status == "needs_auth" ? "Sign In" : "Connect") {
+            if isOn, let server = live.first(where: { $0.name == name }), server.status.status == "needs_auth", let integrationID = server.integrationID {
+                // Signing in goes through the server's sign-in, as an account does.
+                Button("Sign In…") { signingIn = IntegrationRef(id: integrationID) }
+            } else if isOn, status?.status == "failed" {
+                Button("Connect") {
                     Task {
                         try? await app.api?.connectMCP(name)
                         await refresh()
@@ -219,13 +233,16 @@ private struct ServerEditor: View {
                     .pickerStyle(.segmented)
                     if isRemote {
                         ConfigTextField(title: "URL", path: path + ["url"], prompt: "https://example.com/mcp")
-                        Toggle(isOn: Binding(
+                        // Sign-in set up by hand (an object) isn't this switch's to replace.
+                        let customSignIn = config.value(at: path + ["oauth"])?.object != nil
+                        Toggle(isOn: customSignIn ? .constant(true) : Binding(
                             get: { config.value(at: path + ["oauth"])?.bool != false },
                             set: { config.set($0 ? nil : .bool(false), at: path + ["oauth"]) }
                         )) {
                             Text("Sign in when the server asks")
-                            Text("Turn off for a server that takes an API key in a header instead.")
+                            Text(customSignIn ? "With the sign-in set up in the settings file." : "Turn off for a server that takes an API key in a header instead.")
                         }
+                        .disabled(customSignIn)
                     } else {
                         TextField("Command", text: $command, prompt: Text("npx -y @modelcontextprotocol/server-github"))
                             .onSubmit(saveCommand)
