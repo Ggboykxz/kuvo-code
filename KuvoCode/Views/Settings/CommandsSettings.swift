@@ -10,6 +10,8 @@ struct CommandsSettings: View {
     @State private var removal: [String]?
     @State private var isNaming = false
     @State private var newName = ""
+    /// Claude Code's commands, to bring over.
+    @State private var claudeCommands: [ClaudeCommands.Command] = []
 
     private var config: EngineConfig { app.engineConfig }
     static let path = ["commands"]
@@ -54,6 +56,40 @@ struct CommandsSettings: View {
 
             ConfigProblem()
 
+            if !claudeCommands.isEmpty {
+                Section {
+                    ForEach(claudeCommands) { command in
+                        HStack(alignment: .firstTextBaseline) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("/" + command.id)
+                                if !command.description.isEmpty {
+                                    Text(command.description)
+                                        .font(.callout)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(2)
+                                }
+                            }
+                            Spacer()
+                            if config.value(at: Self.path + [command.id]) != nil {
+                                Label("Imported", systemImage: "checkmark")
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Button("Import") {
+                                    config.set(.object(["template": .string(command.template), "description": .string(command.description)]), at: Self.path + [command.id])
+                                    Analytics.shared.track("command_created", ["from": "claude"])
+                                }
+                            }
+                        }
+                    }
+                } header: {
+                    Text("From Claude Code")
+                } footer: {
+                    Text("Commands in ~/.claude/commands. Their prompts come over as they are.")
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             if !others.isEmpty {
                 Section("Also Available") {
                     ForEach(others) { command in
@@ -69,6 +105,7 @@ struct CommandsSettings: View {
                 }
             }
         }
+        .task { claudeCommands = await Task.detached { ClaudeCommands.load() }.value }
         .sheet(item: $editing, onDismiss: removePending) { edit in
             CommandEditor(name: edit.id) { editing = nil } remove: { path in
                 removal = path
