@@ -41,3 +41,12 @@ extension UsageMenuBar {
         return PlanLimits(snapshot)
     }
 }
+
+extension UsageMenuBar {
+    /// The providers the panel follows and has read, by ID (`claude`, `codex`, …), for the host's
+    /// own counts. Empty while the tracker isn't running. (Fork addition.)
+    public var trackedProviderIDs: [String] {
+        guard let container else { return [] }
+        return container.dataStore.snapshots.keys.filter { container.enablement.isEnabled($0) }.sorted()
+    }
+}
