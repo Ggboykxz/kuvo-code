@@ -112,8 +112,13 @@ struct Composer: View {
                     return .handled
                 }
                 .onKeyPress(.escape) {
-                    guard let start = Mentions.query(in: text)?.start, mention != nil else { return .ignored }
-                    dismissedMention = text.distance(from: text.startIndex, to: start)
+                    // Closes the "@" list first; otherwise stops the agent, as ⌘. does.
+                    if let start = Mentions.query(in: text)?.start, mention != nil {
+                        dismissedMention = text.distance(from: text.startIndex, to: start)
+                        return .handled
+                    }
+                    guard isRunning else { return .ignored }
+                    onStop()
                     return .handled
                 }
                 .onKeyPress(.upArrow) {
