@@ -1,3 +1,4 @@
+import AppKit
 import OpenCodeKit
 import SwiftUI
 
@@ -6,7 +7,14 @@ import SwiftUI
 struct ToolCallView: View {
     let call: Message.ToolCall
     let directory: String
+    @Environment(AppModel.self) private var app
     @State private var isExpanded = false
+
+    /// The file a read, write or edit was about, where it is on disk.
+    private var file: URL? {
+        guard ["read", "write", "edit"].contains(call.name), let path = string("path") else { return nil }
+        return path.hasPrefix("/") ? URL(filePath: path) : URL(filePath: directory).appending(path: path)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -17,6 +25,12 @@ struct ToolCallView: View {
                 header
             }
             .buttonStyle(.plain)
+            .contextMenu {
+                if let file, FileManager.default.fileExists(atPath: file.path) {
+                    Button("Open in Panel") { app.utilities.show(file) }
+                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([file]) }
+                }
+            }
 
             if isExpanded, hasDetails {
                 details

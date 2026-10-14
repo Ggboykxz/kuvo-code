@@ -114,6 +114,12 @@ final class Utilities {
         close(id)
     }
 
+    /// Opens `url` in a file tab and brings the panel into view: you asked to see it.
+    func show(_ url: URL) {
+        open(url)
+        revealRequest += 1
+    }
+
     /// Brings the panel into view, on `browser`'s tab if given.
     func reveal(_ browser: BrowserSession? = nil) {
         if let browser, let id = browsers.first(where: { $0.value === browser })?.key { selection = id }
