@@ -14,7 +14,7 @@ here.
 
 - **Embedded, not a standalone app.** `UsageMenuBar` replaces OpenUsage's app delegate. It never
   changes the activation policy or quits the app, and the first-run welcome opens on the first
-  click of the menu bar item instead of at launch.
+  click of the menu bar item instead of at launch. It tells the host when the panel opens (`UsageMenuBar.onPanelShown`), for the host's own counts.
 - **Removed:** Sparkle updates, PostHog analytics, the local HTTP API on port 6736, the `openusage`
   command-line tool, iCloud sync, single-instance handling and OpenUsage's own logo.
 - **The host's identity.** Names, the user agent, logs (`~/Library/Logs/<app>/Usage.log`) and

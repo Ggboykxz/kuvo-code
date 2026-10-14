@@ -60,6 +60,9 @@ public final class UsageMenuBar {
         }
     }
 
+    /// Called each time the panel opens, for the host's own records.
+    public var onPanelShown: (() -> Void)?
+
     /// True once the menu bar item is up.
     public var isRunning: Bool { statusItemController != nil }
 
@@ -91,6 +94,7 @@ public final class UsageMenuBar {
         let container = await AppContainer(isFreshInstall: isFreshInstall || showsWelcome)
         self.container = container
         let controller = StatusItemController(container: container)
+        controller.onShow = { [weak self] in self?.onPanelShown?() }
         statusItemController = controller
         if showsWelcome {
             controller.clickInterceptor = { [weak self] in self?.showWelcome() ?? false }

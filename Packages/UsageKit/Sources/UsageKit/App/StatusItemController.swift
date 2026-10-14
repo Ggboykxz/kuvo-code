@@ -50,6 +50,8 @@ final class StatusItemController: NSObject {
     /// Runs before the panel opens; returning `true` handles the click instead (the host's pending
     /// welcome screen). Fork addition.
     var clickInterceptor: (() -> Bool)?
+    /// Called each time the panel opens, for the host's own records. Fork addition.
+    var onShow: (() -> Void)?
 
     init(container: AppContainer) {
         self.container = container
@@ -341,6 +343,7 @@ final class StatusItemController: NSObject {
         clearStrayFocus()
         button.highlight(true)
         outsideClickMonitor.start()
+        onShow?()
     }
 
     private func hidePanel() {
