@@ -24,7 +24,7 @@ struct TranscriptView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                    RowView(row: row, directory: model.session.location.directory, cancel: model.cancelPending, undo: model.undo(from:), redo: model.redo, fork: fork, retry: model.retry)
+                    RowView(row: row, directory: model.session.location.directory, cancel: model.cancelPending, undo: model.undo(from:), redo: model.redo, fork: fork, retry: model.retry(_:))
                         .background {
                             if matches.contains(row.id) {
                                 RoundedRectangle(cornerRadius: 8)
@@ -122,14 +122,16 @@ struct TranscriptView: View {
     private var rows: [Row] {
         var rows: [Row] = []
         var turn = TurnStats()
-        // An undo waiting to be kept ends the conversation at its message.
+        // An undo waiting to be kept ends the conversation at its message: by where it is, as a
+        // message queued during a run is older than that run's later steps.
         let boundary = model.session.revert?.messageID
         let all = model.transcript.messages
-        let messages = boundary.map { boundary in all.filter { $0.id < boundary } } ?? all
+        let cut = boundary.map { boundary in all.firstIndex { $0.id == boundary } ?? all.firstIndex { $0.id >= boundary } ?? all.count }
+        let messages = cut.map { Array(all[..<$0]) } ?? all
         for (index, message) in messages.enumerated() {
             switch message {
             case .user(let user):
-                turn = TurnStats(started: user.time.created)
+                turn = TurnStats(started: user.time.created, message: user)
                 rows.append(.user(user))
             case .assistant(let assistant):
                 turn.add(assistant)
@@ -165,8 +167,8 @@ struct TranscriptView: View {
                 break
             }
         }
-        if let boundary {
-            let undone = all.count { if case .user(let user) = $0 { user.id >= boundary } else { false } }
+        if let cut {
+            let undone = all[cut...].count { if case .user = $0 { true } else { false } }
             rows.append(.undone(max(undone, 1)))
         }
         // Messages waiting their turn are listed above the composer instead.
@@ -190,6 +192,8 @@ struct TranscriptView: View {
 
 struct TurnStats: Hashable {
     var started: Milliseconds?
+    /// The message that started the turn, for Try Again.
+    var message: Message.User?
     var cost: Double = 0
     var outputTokens = 0
     var steps = 0
@@ -257,7 +261,7 @@ private struct RowView: View {
     let undo: (Message.User) -> Void
     let redo: () -> Void
     let fork: (Message.User) -> Void
-    let retry: () -> Void
+    let retry: (Message.User) -> Void
     @State private var confirmsUndo = false
 
     /// " 12s", " 1m 5s" after a few seconds, then " · Esc to stop".
@@ -301,7 +305,7 @@ private struct RowView: View {
         case .assistant(let message, let showsError):
             AssistantStepView(message: message, directory: directory, showsError: showsError)
         case .turnEnd(let idle, let stats, let isLast):
-            TurnEndView(idle: idle, stats: stats, retry: isLast ? retry : nil)
+            TurnEndView(idle: idle, stats: stats, retry: isLast ? stats.message.map { message in { retry(message) } } : nil)
         case .notice(_, let symbol, let text):
             Label(text, systemImage: symbol)
                 .font(.caption)

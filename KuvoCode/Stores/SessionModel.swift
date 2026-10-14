@@ -75,6 +75,15 @@ final class SessionModel {
 
     private var hasQueue: Bool { transcript.pending.contains { $0.delivery == .queue } }
 
+    /// Running, or about to: a message for the next step starts a run as soon as it lands.
+    private var isBusy: Bool { transcript.isRunning || transcript.pending.contains { $0.delivery == .steer } }
+
+    /// Waiting messages being taken back for editing, and what the engine said about each:
+    /// true when the cancel won, false when the agent got it first.
+    private var editing: Set<String> = []
+    private var settledEdits: [String: Bool] = [:]
+    private var isRetrying = false
+
     func load() async {
         async let messages = api.messages(session: id, limit: 200)
         async let inbox = api.inbox(session: id)
@@ -90,8 +99,12 @@ final class SessionModel {
                 isRunning: (try? await active)?.contains(id) ?? false
             )
             // A queue left waiting (the app quit mid-run, say) waits for Resume rather than
-            // starting on its own.
-            if !isLoaded, !isRunning, hasQueue { isQueuePaused = true }
+            // starting on its own. Read again later (a reconnect), it carries on.
+            if !isLoaded, !isRunning, hasQueue {
+                isQueuePaused = true
+            } else if isLoaded, !isRunning, hasQueue, !isQueuePaused {
+                scheduleDrain()
+            }
             if !isLoaded { await syncFolders() }
             isLoaded = true
         } catch {
@@ -117,9 +130,17 @@ final class SessionModel {
         case "session.execution.failed":
             // Don't run the rest of the queue into the same error.
             if hasQueue { isQueuePaused = true }
+        case "session.inbox.enqueued":
+            // Queued while nothing runs: the engine waits for a run to end, so nudge it.
+            if !transcript.isRunning, !isQueuePaused, hasQueue { scheduleDrain() }
+        case "session.inbox.cancelled", "session.inbox.delivered":
+            if let id = try? event.payload(as: EventPayload.InboxChanged.self).inboxID, editing.contains(id) {
+                settledEdits[id] = event.type == "session.inbox.cancelled"
+            }
         default:
             break
         }
+        if transcript.pending.isEmpty { isQueuePaused = false }
     }
 
     // MARK: Actions
@@ -133,8 +154,8 @@ final class SessionModel {
         guard !text.isEmpty || !files.isEmpty else { return }
         reviewComments = []
         let id = Identifier.message()
-        // With nothing running and nothing queued, there's nothing to wait for.
-        let delivery: InboxItem.Delivery = queue && (transcript.isRunning || hasQueue) ? .queue : .steer
+        // With nothing running (or about to) and nothing queued, there's nothing to wait for.
+        let delivery: InboxItem.Delivery = queue && (isBusy || hasQueue) ? .queue : .steer
         if delivery == .steer { isQueuePaused = false }
         transcript.addLocal(id: id, text: text, delivery: delivery, files: files)
         let previous = sending
@@ -161,13 +182,19 @@ final class SessionModel {
 
     /// Stops the agent. Waiting messages stay, queued and paused until Resume.
     func stop() {
-        let steering = transcript.pending.filter { $0.delivery == .steer && !$0.isLocal }
-        if hasQueue || !steering.isEmpty { isQueuePaused = true }
         Task {
-            // Moved to the queue first, so the end of the step doesn't hand them over.
-            for item in steering { try? await api.setDelivery(session: id, item: item.id, delivery: .queue) }
+            await holdWaiting()
             try? await api.interrupt(session: id)
         }
+    }
+
+    /// Before an interrupt: what's waiting stays where it is, paused, instead of being handed
+    /// over as the step ends or started by the nudge after it.
+    private func holdWaiting() async {
+        drainTask?.cancel()
+        let steering = transcript.pending.filter { $0.delivery == .steer && !$0.isLocal }
+        if hasQueue || !steering.isEmpty { isQueuePaused = true }
+        for item in steering { try? await api.setDelivery(session: id, item: item.id, delivery: .queue) }
     }
 
     func cancelPending(_ item: Transcript.Pending) {
@@ -195,17 +222,24 @@ final class SessionModel {
     /// Takes a waiting message back into the composer, with its files and comments, ahead of
     /// anything already there.
     func edit(_ item: Transcript.Pending) {
-        guard !item.isLocal else { return }
+        guard !item.isLocal, !editing.contains(item.id) else { return }
+        editing.insert(item.id)
         Task {
+            defer {
+                editing.remove(item.id)
+                settledEdits[item.id] = nil
+            }
             do {
                 try await api.cancelInbox(session: id, item: item.id)
             } catch {
                 failure = error.localizedDescription
                 return
             }
-            // The agent got it first: it's in the transcript now.
-            guard !transcript.messages.contains(where: { $0.id == item.id }) else { return }
-            transcript.removePending(id: item.id)
+            // The engine says which won: the cancel, or the agent taking it first (a cancel
+            // that comes too late changes nothing, and says nothing).
+            for _ in 0..<40 where settledEdits[item.id] == nil { try? await Task.sleep(for: .milliseconds(50)) }
+            let cancelled = settledEdits[item.id] ?? (!transcript.pending.contains { $0.id == item.id } && !transcript.messages.contains { $0.id == item.id })
+            guard cancelled else { return }
             restoreDraft(item.text, files: item.files)
         }
     }
@@ -222,8 +256,41 @@ final class SessionModel {
         composerFocus += 1
     }
 
-    /// The text an undo put back in the composer, taken out again by Redo if it's untouched.
-    private var undoneDraft: String?
+    /// What was in the composer before an undo, and after it: Redo puts the first back if the
+    /// second is still there untouched.
+    private struct ComposerState: Equatable {
+        var text: String
+        var files: [URL]
+        var comments: [ReviewComment]
+    }
+
+    private var composerState: ComposerState {
+        get { ComposerState(text: draftText, files: draftFiles, comments: reviewComments) }
+        set {
+            draftText = newValue.text
+            draftFiles = newValue.files
+            reviewComments = newValue.comments
+        }
+    }
+
+    private var undone: (before: ComposerState, after: ComposerState)?
+
+    /// A sent message's attached files that are still on this Mac.
+    static func files(of message: Message.User) -> [URL] {
+        (message.files ?? []).compactMap { file in
+            guard case .uri(let uri) = file.source, let url = URL(string: uri), url.isFileURL,
+                  FileManager.default.fileExists(atPath: url.path) else { return nil }
+            return url
+        }
+    }
+
+    /// The engine's copy of a message, with its attachments (a message seen arrive live
+    /// doesn't carry them).
+    private func stored(_ message: Message.User) async -> Message.User {
+        let recent = (try? await api.messages(session: id, limit: 100).data) ?? []
+        for case .user(let user) in recent where user.id == message.id { return user }
+        return message
+    }
 
     /// Takes the session back to before `message`: the agent stops, the conversation and the
     /// files it changed since go back, and the message returns to the composer to edit or
@@ -232,28 +299,33 @@ final class SessionModel {
         Task {
             do {
                 if isRunning {
+                    await holdWaiting()
                     try await api.interrupt(session: id)
                     try await api.wait(session: id)
                 }
+                let message = await stored(message)
                 session.revert = try await api.stageRevert(session: id, messageID: message.id)
-                let before = draftText
-                restoreDraft(message.text)
-                undoneDraft = draftText == before ? nil : draftText
+                let before = composerState
+                restoreDraft(message.text, files: Self.files(of: message))
+                undone = (before, composerState)
             } catch {
                 failure = error.localizedDescription
             }
         }
     }
 
-    /// Sends your last message again after its run failed. Its turn is taken back first, so
-    /// the conversation reads as if it had gone through the first time.
-    func retry() {
-        guard !isRunning, let message = transcript.messages.last(where: { if case .user = $0 { true } else { false } }), case .user(let user) = message else { return }
-        let files = (user.files ?? []).compactMap { file -> OpenCodeAPI.PromptFile? in
-            if case .uri(let uri) = file.source { .init(uri: uri, name: file.name) } else { nil }
-        }
+    /// Sends a message again after its run failed. Its turn is taken back first, so the
+    /// conversation reads as if it had gone through the first time.
+    func retry(_ message: Message.User) {
+        guard !isRunning, !isRetrying else { return }
+        isRetrying = true
         Task {
+            defer { isRetrying = false }
             do {
+                let user = await stored(message)
+                let files = (user.files ?? []).compactMap { file -> OpenCodeAPI.PromptFile? in
+                    if case .uri(let uri) = file.source { .init(uri: uri, name: file.name) } else { nil }
+                }
                 _ = try await api.stageRevert(session: id, messageID: user.id)
                 let id = Identifier.message()
                 transcript.addLocal(id: id, text: user.text, delivery: .steer)
@@ -270,8 +342,8 @@ final class SessionModel {
             do {
                 try await api.clearRevert(session: id)
                 session.revert = nil
-                if let undoneDraft, draftText == undoneDraft { draftText = "" }
-                undoneDraft = nil
+                if let undone, composerState == undone.after { composerState = undone.before }
+                undone = nil
             } catch {
                 failure = error.localizedDescription
             }
@@ -281,7 +353,7 @@ final class SessionModel {
     /// Edits the message that would go last, if there is one.
     @discardableResult
     func editLast() -> Bool {
-        guard let item = waiting.last(where: { !$0.isLocal }) else { return false }
+        guard let item = waiting.last(where: { !$0.isLocal && !editing.contains($0.id) }) else { return false }
         edit(item)
         return true
     }
