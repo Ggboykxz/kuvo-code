@@ -21,10 +21,14 @@ enum Surface {
         scheme == .dark ? .white.opacity(0.13) : .white.opacity(0.8)
     }
 
-    /// The tint over the window's behind-window glass: light enough that the desktop's color
-    /// comes through, solid enough that other windows behind don't show as shapes.
+    /// The tint over the window's behind-window glass, solid enough that other windows behind
+    /// don't show as shapes. Dark mode lets the desktop's color through; light mode is a warm
+    /// ivory with only a hint of it, since a dark wallpaper under thin glass turned the sidebar
+    /// a murky olive gray beside the white cards.
     static func canvasTint(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(white: 0.06, opacity: 0.25) : Color(white: 0.9, opacity: 0.45)
+        scheme == .dark
+            ? Color(white: 0.06, opacity: 0.25)
+            : Color(red: 0xF6 / 255, green: 0xF4 / 255, blue: 0xEE / 255).opacity(0.86)
     }
 
     /// The canvas's ambient light: warm from the top left, cool toward the bottom right, a few

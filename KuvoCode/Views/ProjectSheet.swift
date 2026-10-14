@@ -49,7 +49,7 @@ struct ProjectSheet: View {
                 folderList
             }
 
-            section("Run", note: Text("Adds a \(Image(systemName: "play.fill")) Run button to the title bar that starts your app in a terminal in the side panel (⌘R).")) {
+            section("Run") {
                 WellGroup(isActive: isRunFocused) {
                     WellRow(isActive: isRunFocused) {
                         Image(systemName: "play.fill")
@@ -64,7 +64,7 @@ struct ProjectSheet: View {
             }
 
             if setup != nil {
-                section("Worktree Setup", note: Text(verbatim: "Runs in each new worktree before its session starts, to install dependencies or copy files git doesn't have. $OPENCODE_WORKTREE_BASE is the project's folder.")) {
+                section("Worktree Setup") {
                     WellGroup(isActive: isSetupFocused) {
                         WellRow(isActive: isSetupFocused) {
                             Image(systemName: "arrow.triangle.branch")
@@ -124,20 +124,19 @@ struct ProjectSheet: View {
         Task { try? await api.setSetupCommand(project: engineProject, command.isEmpty ? nil : command) }
     }
 
-    /// A titled part of the sheet, with a line under it saying what it's for.
-    private func section(_ title: String, note: String, @ViewBuilder content: () -> some View) -> some View {
-        section(title, note: Text(note), content: content)
-    }
-
-    private func section(_ title: String, note: Text, @ViewBuilder content: () -> some View) -> some View {
+    /// A titled part of the sheet, and a line under it when it needs one. (Run and worktree
+    /// setup don't explain themselves here; the docs do.)
+    private func section(_ title: String, note: String? = nil, @ViewBuilder content: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
                 .font(.headline)
             content()
-            note
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            if let note {
+                Text(note)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -210,22 +209,16 @@ private struct FolderRow: View {
     let remove: () -> Void
 
     var body: some View {
-        WellRow(height: 52) {
+        WellRow {
             Image(nsImage: NSWorkspace.shared.icon(forFile: path))
                 .resizable()
-                .frame(width: 22, height: 22)
+                .frame(width: 20, height: 20)
         } content: {
             HStack(spacing: 10) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text((path as NSString).lastPathComponent)
-                        .lineLimit(1)
-                    Text((path as NSString).abbreviatingWithTildeInPath)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                .help(path)
+                // Just the name; the full path shows on hover.
+                Text((path as NSString).lastPathComponent)
+                    .lineLimit(1)
+                    .help((path as NSString).abbreviatingWithTildeInPath)
                 Spacer(minLength: 8)
                 // A checkmark: a state, not a button like Make Primary.
                 if isPrimary {

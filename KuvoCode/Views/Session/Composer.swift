@@ -215,9 +215,18 @@ struct Composer: View {
             RoundedRectangle(cornerRadius: Metrics.composerRadius)
                 .fill(Surface.cardFill(scheme, focused: cardIsFocused))
                 .overlay(RoundedRectangle(cornerRadius: Metrics.composerRadius).fill(scheme == .dark ? Color.white.opacity(0.035) : Surface.slate.opacity(0.02)))
-                .shadow(color: scheme == .dark ? .black.opacity(0.25) : Surface.slate.opacity(0.06), radius: 3, y: 1)
+                .shadow(color: scheme == .dark ? .black.opacity(0.25) : .black.opacity(0.07), radius: scheme == .dark ? 3 : 8, y: scheme == .dark ? 1 : 2)
         }
         .specularRim(RoundedRectangle(cornerRadius: Metrics.composerRadius))
+        // On a white card, a crisper edge than the rim's hairline, so it floats instead of
+        // reading as a flat gray patch.
+        .overlay {
+            if scheme == .light {
+                RoundedRectangle(cornerRadius: Metrics.composerRadius)
+                    .strokeBorder(.black.opacity(0.1), lineWidth: 1)
+                    .allowsHitTesting(false)
+            }
+        }
         .overlay {
             if isTargeted {
                 RoundedRectangle(cornerRadius: Metrics.composerRadius)
