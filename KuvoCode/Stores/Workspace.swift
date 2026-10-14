@@ -147,6 +147,48 @@ final class Workspace {
         return model
     }
 
+    /// Each session's conversation as text, for searching it, until the session changes.
+    @ObservationIgnored private var conversationTexts: [String: (updated: Double, text: String)] = [:]
+
+    /// Sessions whose conversation has `query` (archived ones too), the latest first, with the
+    /// words around its first mention. Reads the conversations it hasn't yet, a few at a time.
+    func searchConversations(_ query: String, limit: Int = 20) async -> [(session: Session, snippet: String)] {
+        guard let api else { return [] }
+        let candidates = sessions.sorted { $0.time.updated > $1.time.updated }
+        let missing = candidates.filter { conversationTexts[$0.id]?.updated != $0.time.updated }
+        await withTaskGroup(of: (Session, [Message])?.self) { group in
+            var queue = missing.makeIterator()
+            func next() {
+                guard let session = queue.next() else { return }
+                group.addTask { (try? await ConversationExport.messages(of: session, api: api)).map { (session, $0) } }
+            }
+            for _ in 0..<4 { next() }
+            for await result in group {
+                if let (session, messages) = result {
+                    let text = ConversationExport.markdown(title: session.title ?? "New Session", messages: messages, directory: session.location.directory)
+                    conversationTexts[session.id] = (session.time.updated, text)
+                }
+                if Task.isCancelled { group.cancelAll() } else { next() }
+            }
+        }
+        var found: [(session: Session, snippet: String)] = []
+        for session in candidates where found.count < limit {
+            guard let text = conversationTexts[session.id]?.text,
+                  let range = text.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) else { continue }
+            found.append((session, Self.snippet(around: range, in: text)))
+        }
+        return found
+    }
+
+    /// A line's worth of text from just before `range`, without Markdown's marks, so the match
+    /// shows in a narrow sidebar.
+    private static func snippet(around range: Range<String.Index>, in text: String) -> String {
+        let start = text.index(range.lowerBound, offsetBy: -16, limitedBy: text.startIndex) ?? text.startIndex
+        let end = text.index(range.upperBound, offsetBy: 80, limitedBy: text.endIndex) ?? text.endIndex
+        let words = text[start..<end].filter { !"*`#>".contains($0) }.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return (start > text.startIndex ? "…" : "") + words + (end < text.endIndex ? "…" : "")
+    }
+
     /// A session's conversation as Markdown, to share.
     func markdown(of id: String) async throws -> String? {
         guard let api, let session = session(id) else { return nil }

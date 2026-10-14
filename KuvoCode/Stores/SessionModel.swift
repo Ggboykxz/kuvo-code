@@ -35,8 +35,13 @@ final class SessionModel {
     private(set) var composerFocus = 0
     /// Goes up to open the find bar on the conversation (⌘F).
     private(set) var findRequest = 0
+    /// What the find bar should look for when it opens, from a search in the sidebar.
+    var findPreset: String?
 
-    func showFind() { findRequest += 1 }
+    func showFind(_ query: String? = nil) {
+        findPreset = query
+        findRequest += 1
+    }
 
     /// Started by another session's agent to do part of its task.
     var isSubagent: Bool { session.parentID != nil }

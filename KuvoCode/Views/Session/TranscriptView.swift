@@ -104,7 +104,14 @@ struct TranscriptView: View {
             matchIndex = 0
             if let first = Self.matches(of: query, in: self.rows).first { reveal(first) }
         }
-        .onChange(of: model.findRequest) { withAnimation(.ui) { isFinding = true } }
+        .onChange(of: model.findRequest, initial: true) {
+            guard model.findRequest > 0 else { return }
+            if let preset = model.findPreset {
+                query = preset
+                model.findPreset = nil
+            }
+            withAnimation(.ui) { isFinding = true }
+        }
     }
 
     /// Rows whose words have `query`, in order.

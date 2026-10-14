@@ -33,6 +33,9 @@ struct SidebarView: View {
     @State private var newTitle = ""
     /// Sessions whose title or project has this, instead of the usual lists.
     @State private var search = ""
+    /// Sessions whose conversations have the search, with the words around it.
+    @State private var conversationResults: [(session: Session, snippet: String)] = []
+    @State private var isSearchingConversations = false
 
     /// A project lists this many sessions until you ask for the rest.
     private static let sessionsPerProject = 5
@@ -59,8 +62,11 @@ struct SidebarView: View {
                     SearchRow(text: $search)
 
                     if !search.isEmpty {
-                        SectionHeader(title: "Results") { EmptyView() }
-                        if results.isEmpty {
+                        let inConversations = conversationResults.filter { found in !results.contains { $0.id == found.session.id } }
+                        if !results.isEmpty || inConversations.isEmpty {
+                            SectionHeader(title: "Results") { EmptyView() }
+                        }
+                        if results.isEmpty && inConversations.isEmpty && !isSearchingConversations {
                             Text("No sessions match.")
                                 .font(.system(size: 13))
                                 .foregroundStyle(.secondary)
@@ -69,6 +75,18 @@ struct SidebarView: View {
                         }
                         ForEach(results) { session in
                             sessionRow(session, in: .recents)
+                        }
+                        if !inConversations.isEmpty || isSearchingConversations {
+                            SectionHeader(title: "In Conversations") {
+                                if isSearchingConversations { Spinner(size: 11).padding(.trailing, 6) }
+                            }
+                            ForEach(inConversations, id: \.session.id) { found in
+                                ConversationResultRow(title: found.session.title ?? "New Session", snippet: found.snippet, isSelected: selection == found.session.id) {
+                                    selection = found.session.id
+                                    workspace.model(for: found.session.id)?.showFind(search.trimmingCharacters(in: .whitespaces))
+                                }
+                                .contextMenu { menu(for: found.session) }
+                            }
                         }
                     } else {
                     if !pinned.isEmpty {
@@ -124,6 +142,27 @@ struct SidebarView: View {
                 .padding(.horizontal, 10)
                 .padding(.top, 8)
                 .padding(.bottom, 12)
+        }
+        #if DEBUG
+        // KUVO_DEMO_SEARCH: text in the sidebar's search field.
+        .onAppear { if let text = ProcessInfo.processInfo.environment["KUVO_DEMO_SEARCH"] { search = text } }
+        #endif
+        // Titles match as you type; conversations once you pause.
+        .task(id: search) {
+            let query = search.trimmingCharacters(in: .whitespaces)
+            guard query.count >= 3 else {
+                conversationResults = []
+                isSearchingConversations = false
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            isSearchingConversations = true
+            let found = await workspace.searchConversations(query)
+            guard !Task.isCancelled else { return }
+            conversationResults = found
+            isSearchingConversations = false
+            Analytics.shared.track("conversations_searched", ["found": min(found.count, 20)])
         }
         .alert("Rename Session", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Title", text: $newTitle)
@@ -406,6 +445,33 @@ private struct OpenInMenu: View {
                 }
             }
         }
+    }
+}
+
+/// A session found by what was said in it: its title, and the words around the match.
+private struct ConversationResultRow: View {
+    let title: String
+    let snippet: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 14))
+                Text(snippet)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .hoverHighlight(selected: isSelected)
+        }
+        .buttonStyle(.plain)
     }
 }
 
