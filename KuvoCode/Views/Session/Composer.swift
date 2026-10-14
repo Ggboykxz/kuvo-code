@@ -180,24 +180,26 @@ struct Composer: View {
             return true
         } isTargeted: { isTargeted = $0 }
         .modifier(PasteAttachments(isActive: isFocused, attach: attach))
-        .onChange(of: focusRequest) {
-            isFocused = true
-            // Focusing a field selects all of it; the cursor goes after what's there instead,
-            // so typing adds to it.
-            Task {
-                try? await Task.sleep(for: .milliseconds(50))
-                let editor = NSApp.windows.lazy.compactMap { $0.firstResponder as? NSTextView }.first { $0.isFieldEditor && $0.string == text }
-                if let editor { editor.setSelectedRange(NSRange(location: (editor.string as NSString).length, length: 0)) }
-            }
-        }
+        .onChange(of: focusRequest) { focusAtEnd() }
         .onAppear {
-            isFocused = true
+            focusAtEnd()
             #if DEBUG
             // KUVO_DEMO_COMPOSER_FILES: comma-separated paths to show as attached.
             if files.isEmpty, let list = ProcessInfo.processInfo.environment["KUVO_DEMO_COMPOSER_FILES"] {
                 files = list.split(separator: ",").map { URL(filePath: String($0)) }
             }
             #endif
+        }
+    }
+
+    /// Puts the cursor in the field, after what's there. (Focusing a field selects all of it,
+    /// so typing would replace a draft.)
+    private func focusAtEnd() {
+        isFocused = true
+        Task {
+            try? await Task.sleep(for: .milliseconds(50))
+            let editor = NSApp.windows.lazy.compactMap { $0.firstResponder as? NSTextView }.first { $0.isFieldEditor && $0.string == text }
+            if let editor { editor.setSelectedRange(NSRange(location: (editor.string as NSString).length, length: 0)) }
         }
     }
 
