@@ -89,22 +89,22 @@ private struct FieldView: View {
                 }
                 if allowsCustom {
                     TextField("Something else…", text: $custom)
-                        .textFieldStyle(.roundedBorder)
+                        .wellField()
                         .onChange(of: custom) { _, text in if !text.isEmpty { value = .string(text) } }
                 }
             } else if format == "password" {
                 SecureField(placeholder ?? "", text: stringBinding)
-                    .textFieldStyle(.roundedBorder)
+                    .wellField()
             } else {
                 TextField(placeholder ?? "", text: stringBinding)
-                    .textFieldStyle(.roundedBorder)
+                    .wellField()
             }
         case .number(let isInteger, _, _, _):
             TextField("", value: Binding(
                 get: { if case .number(let n) = value { n } else { nil } },
                 set: { value = $0.map { .number(isInteger ? $0.rounded() : $0) } }
             ), format: .number)
-            .textFieldStyle(.roundedBorder)
+            .wellField()
             .frame(maxWidth: 160)
         case .boolean:
             Toggle(field.title ?? field.key, isOn: Binding(
@@ -120,7 +120,7 @@ private struct FieldView: View {
             }
             if allowsCustom {
                 TextField("Something else…", text: $custom)
-                    .textFieldStyle(.roundedBorder)
+                    .wellField()
                     .onSubmit {
                         guard !custom.isEmpty else { return }
                         value = .list(listValue + [custom])

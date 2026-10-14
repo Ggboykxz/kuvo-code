@@ -81,7 +81,8 @@ struct ConfigNumberField: View {
     }
 }
 
-/// Longer text, like an agent's instructions: saved when you leave it.
+/// Longer text, like an agent's instructions: saved when you leave it. Monospaced, like a
+/// skill's instructions, and on the row's own background rather than a box of its own.
 struct ConfigTextEditor: View {
     let path: [String]
     var minHeight: CGFloat = 120
@@ -92,7 +93,8 @@ struct ConfigTextEditor: View {
     var body: some View {
         let stored = app.engineConfig.value(at: path)?.string ?? ""
         TextEditor(text: $field.text)
-            .font(.body)
+            .font(.system(.body, design: .monospaced))
+            .scrollContentBackground(.hidden)
             .frame(minHeight: minHeight)
             .focused($isFocused)
             .onChange(of: isFocused) { if !isFocused { commit() } }
@@ -201,7 +203,9 @@ struct ConfigStringList: View {
     }
 }
 
-/// Names and values (environment variables, headers): each removable, a row to add one.
+/// Names and values (environment variables, headers): each value editable in place and each
+/// removable, a row to add one. A name and value typed in the last row are added on Return,
+/// with Add, or when the list goes away (a sheet's Done).
 struct ConfigKeyValueList: View {
     let path: [String]
     var keyPrompt = "Name"
@@ -210,36 +214,31 @@ struct ConfigKeyValueList: View {
     @State private var newKey = ""
     @State private var newValue = ""
 
+    /// The names' column, the same in every row so the values line up.
+    static let keyWidth: CGFloat = 210
+
     var body: some View {
         let items = (app.engineConfig.value(at: path)?.object ?? [:]).compactMapValues(\.string).sorted { $0.key < $1.key }
         ForEach(items, id: \.key) { item in
-            HStack {
-                Text(item.key)
-                    .fontDesign(.monospaced)
-                Spacer()
-                Text(item.value)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .foregroundStyle(.secondary)
-                Button {
-                    app.engineConfig.set(nil, at: path + [item.key])
-                } label: {
-                    Image(systemName: "minus.circle.fill")
-                }
-                .buttonStyle(RemoveButtonStyle())
-                .help("Remove")
+            KeyValueRow(key: item.key, value: item.value, prompt: valuePrompt) { value in
+                app.engineConfig.set(.string(value), at: path + [item.key])
+            } remove: {
+                app.engineConfig.set(nil, at: path + [item.key])
             }
         }
         HStack {
             TextField(keyPrompt, text: $newKey, prompt: Text(keyPrompt))
                 .labelsHidden()
                 .fontDesign(.monospaced)
+                .frame(width: Self.keyWidth)
+                .onSubmit(add)
             TextField(valuePrompt, text: $newValue, prompt: Text(valuePrompt))
                 .labelsHidden()
                 .onSubmit(add)
             Button("Add", action: add)
                 .disabled(newKey.trimmingCharacters(in: .whitespaces).isEmpty)
         }
+        .onDisappear(perform: add)
     }
 
     private func add() {
@@ -248,6 +247,59 @@ struct ConfigKeyValueList: View {
         app.engineConfig.set(.string(newValue), at: path + [key])
         newKey = ""
         newValue = ""
+    }
+}
+
+/// One name and its value. The value is saved when you press Return or leave the field. Values
+/// are often secrets, so one that isn't a reference to an environment variable ({env:NAME})
+/// shows as dots until you click into it.
+private struct KeyValueRow: View {
+    let key: String
+    let value: String
+    let prompt: String
+    let change: (String) -> Void
+    let remove: () -> Void
+    @State private var field = SettingField()
+    @FocusState private var isFocused: Bool
+
+    private var isMasked: Bool {
+        !isFocused && !field.text.isEmpty && !field.text.hasPrefix("{env:")
+    }
+
+    var body: some View {
+        HStack {
+            Text(key)
+                .fontDesign(.monospaced)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .help(key)
+                .frame(width: ConfigKeyValueList.keyWidth, alignment: .leading)
+            TextField(prompt, text: Binding(
+                get: { isMasked ? "••••••••" : field.text },
+                set: { if !isMasked { field.text = $0 } }
+            ), prompt: Text(prompt))
+            .labelsHidden()
+            .focused($isFocused)
+            .onSubmit(commit)
+            .onChange(of: isFocused) { if !isFocused { commit() } }
+            .onAppear { field.load(value) }
+            .onChange(of: value) { if !isFocused { field.load(value) } }
+            .onDisappear(perform: commit)
+            Button {
+                // Drop what was typed first, so going away doesn't save it back.
+                field.load(value)
+                remove()
+            } label: {
+                Image(systemName: "minus.circle.fill")
+            }
+            .buttonStyle(RemoveButtonStyle())
+            .help("Remove")
+        }
+    }
+
+    private func commit() {
+        guard let edited = field.edit(trimming: false) else { return }
+        change(edited)
     }
 }
 
@@ -298,22 +350,16 @@ struct ScrollingSettingsForm<Content: View>: View {
 }
 
 /// Signing in to something from Settings (an MCP server, a web search service): the same
-/// steps as in Accounts, in a sheet.
+/// steps as in Accounts, in a sheet, each with a Cancel beside its own buttons.
 struct ConnectSheet: View {
     let integrationID: String
+    /// What the last step says the connection gives you.
+    var note = "Its models are now in the model picker."
     let done: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            ConnectView(integrationID: integrationID, onDone: done)
-            HStack {
-                Spacer()
-                Button("Close", action: done)
-                    .keyboardShortcut(.cancelAction)
-            }
-            .padding(16)
-        }
-        .frame(width: 560, height: 560)
+        ConnectView(integrationID: integrationID, connectedNote: note, onDone: done, onCancel: done)
+            .frame(width: SettingsView.sheetWidth, height: 560)
     }
 }
 

@@ -9,8 +9,6 @@ struct AgentsSettings: View {
     @State private var editing: AgentEdit?
     /// What to remove once its sheet has closed (and its fields are done saving).
     @State private var removal: [String]?
-    @State private var isNaming = false
-    @State private var newName = ""
     /// Claude Code's agents, to bring over.
     @State private var claudeAgents: [ClaudeAgents.Agent] = []
 
@@ -19,7 +17,7 @@ struct AgentsSettings: View {
     /// The engine's own agents that people see; the hidden ones (titles, summaries) aren't
     /// listed, but their models can be set above.
     static let builtIn = ["build", "plan", "general", "explore"]
-    private static let hiddenBuiltIn: Set = ["compaction", "title", "summary"]
+    static let hiddenBuiltIn: Set = ["compaction", "title", "summary"]
 
     /// Built-in ones first, then yours: from the engine's list and from the settings (one
     /// that's turned off is only there).
@@ -64,10 +62,10 @@ struct AgentsSettings: View {
                             HStack(spacing: 6) {
                                 Text(agent.name)
                                 Text(Self.modeTitle(agent.mode))
-                                    .font(.caption)
+                                    .font(.subheadline)
                                     .foregroundStyle(.secondary)
                                 if agent.isOff {
-                                    Text("Off").font(.caption).foregroundStyle(.orange)
+                                    Text("Off").font(.subheadline).foregroundStyle(.orange)
                                 }
                             }
                             if let description = agent.description, !description.isEmpty {
@@ -78,17 +76,14 @@ struct AgentsSettings: View {
                             }
                         }
                         Spacer()
-                        Button("Edit…") { editing = AgentEdit(id: agent.id, isBuiltIn: agent.isBuiltIn) }
+                        Button("Edit…") { editing = AgentEdit(agentID: agent.id, isBuiltIn: agent.isBuiltIn) }
                     }
                 }
-                Button("New Agent…") {
-                    newName = ""
-                    isNaming = true
-                }
+                Button("New Agent…") { editing = AgentEdit(agentID: nil) }
             } header: {
                 Text("Agents")
             } footer: {
-                Text("Primary agents are the modes you pick in the composer. Subagents are ones the agent hands part of a task to.")
+                Text("Modes are the agents you pick in the composer. Subagents are ones the agent hands part of a task to.")
                     .foregroundStyle(.secondary)
             }
 
@@ -125,28 +120,11 @@ struct AgentsSettings: View {
         }
         .task { claudeAgents = await Task.detached { ClaudeAgents.load() }.value }
         .sheet(item: $editing, onDismiss: removePending) { edit in
-            AgentEditor(id: edit.id, isBuiltIn: edit.isBuiltIn) { editing = nil } remove: { path in
+            AgentEditor(id: edit.agentID, isBuiltIn: edit.isBuiltIn) { editing = nil } remove: { path in
                 removal = path
                 editing = nil
             }
         }
-        .alert("New Agent", isPresented: $isNaming) {
-            TextField("Name, like reviewer", text: $newName)
-            Button("Create") { create() }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("A short name without spaces. It's how the agent is chosen.")
-        }
-    }
-
-    private func create() {
-        let id = newName.lowercased().trimmingCharacters(in: .whitespaces)
-            .replacingOccurrences(of: " ", with: "-")
-            .filter { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }
-        guard !id.isEmpty, config.value(at: ["agents", id]) == nil, catalog.agents.first(where: { $0.id == id }) == nil else { return }
-        config.set(.object(["mode": .string("primary"), "description": .string("")]), at: ["agents", id])
-        Analytics.shared.track("agent_created")
-        editing = AgentEdit(id: id, isBuiltIn: false)
     }
 
     private func importAgent(_ agent: ClaudeAgents.Agent) {
@@ -170,88 +148,165 @@ struct AgentsSettings: View {
 }
 
 private struct AgentEdit: Identifiable {
-    var id: String
-    var isBuiltIn: Bool
+    /// Nil for a new one.
+    var agentID: String?
+    var isBuiltIn = false
+
+    var id: String { agentID ?? "" }
 }
 
-/// One agent's settings, saved as you change them.
+/// One agent's settings. A new one is named first; after that, changes are saved as you make
+/// them.
 private struct AgentEditor: View {
-    let id: String
+    /// Nil for a new one, until it's named.
+    @State var id: String?
     let isBuiltIn: Bool
     let done: () -> Void
     /// Removes this entry, once the sheet has closed.
     let remove: ([String]) -> Void
     @Environment(AppModel.self) private var app
     @Environment(Catalog.self) private var catalog
+    @State private var newName = ""
     @State private var confirmsRemoval = false
 
     private var config: EngineConfig { app.engineConfig }
-    private var path: [String] { ["agents", id] }
-    private var name: String { catalog.agents.first { $0.id == id }?.name ?? id }
-    /// A built-in agent's own description, shown until you write another.
-    private var builtInDescription: String? { isBuiltIn ? catalog.agents.first { $0.id == id }?.description : nil }
+    private var name: String {
+        guard let id else { return "New Agent" }
+        return catalog.agents.first { $0.id == id }?.name ?? id
+    }
+
+    /// The name you typed, as an agent's: lowercase, with hyphens for spaces, and only letters,
+    /// digits, hyphens and underscores.
+    private var newID: String {
+        newName.lowercased().trimmingCharacters(in: .whitespaces)
+            .replacingOccurrences(of: " ", with: "-")
+            .filter { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }
+    }
+
+    /// Why the name you typed can't be used, if it can't.
+    private var problem: String? {
+        if newID.isEmpty {
+            return newName.trimmingCharacters(in: .whitespaces).isEmpty ? nil : "A name needs a letter or a number."
+        }
+        // Not one the engine already has: that would change it instead.
+        let isTaken = config.value(at: ["agents", newID]) != nil || catalog.agents.contains(where: { $0.id == newID })
+            || AgentsSettings.builtIn.contains(newID) || AgentsSettings.hiddenBuiltIn.contains(newID)
+        return isTaken ? "There's an agent called \(newID) already." : nil
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             Text(name)
                 .font(.headline)
                 .padding(.top, 16)
-            Form {
-                Section {
-                    ConfigTextField(title: "Description", path: path + ["description"], prompt: builtInDescription ?? "What it's for, so the agent knows when to use it")
-                    Picker("Use as", selection: Binding(
-                        get: { config.value(at: path + ["mode"])?.string ?? catalog.agents.first { $0.id == id }?.mode ?? "primary" },
-                        set: { config.set(.string($0), at: path + ["mode"]) }
-                    )) {
-                        Text("A mode you pick").tag("primary")
-                        Text("A subagent").tag("subagent")
-                        Text("Both").tag("all")
-                    }
-                    ConfigModelPicker(title: "Model", path: path + ["model"], defaultTitle: "The session's model")
-                    ConfigNumberField(title: "Most steps per message", path: path + ["steps"], prompt: "No limit")
-                    Toggle("Turned on", isOn: Binding(
-                        get: { config.value(at: path + ["disabled"])?.bool != true },
-                        set: { config.set($0 ? nil : .bool(true), at: path + ["disabled"]) }
-                    ))
-                }
-                Section {
-                    ConfigTextEditor(path: path + ["system"])
-                } header: {
-                    Text("Instructions")
-                } footer: {
-                    Text(isBuiltIn
-                        ? "Leave empty to keep the built-in instructions. Anything here replaces them; the project's AGENTS.md, skills and MCP servers still apply."
-                        : "How it should work. The project's AGENTS.md, skills and MCP servers still apply.")
-                        .foregroundStyle(.secondary)
-                }
-                Section {
-                    RulesEditor(path: path + ["permissions"])
-                } header: {
-                    Text("Permissions")
-                } footer: {
-                    Text("Added after the ones in Settings › Permissions, so these win for this agent.")
-                        .foregroundStyle(.secondary)
-                }
+            if let id {
+                editor(id)
+            } else {
+                naming
             }
-            .formStyle(.grouped)
             HStack {
-                if config.value(at: path) != nil {
+                if let id, config.value(at: ["agents", id]) != nil {
                     Button(isBuiltIn ? "Reset to Built-In…" : "Delete Agent…", role: .destructive) { confirmsRemoval = true }
                 }
                 Spacer()
-                Button("Done", action: done)
-                    .keyboardShortcut(.defaultAction)
+                if id == nil {
+                    Button("Cancel", role: .cancel, action: done)
+                        .keyboardShortcut(.cancelAction)
+                    Button("Create Agent", action: create)
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(newID.isEmpty || problem != nil)
+                } else {
+                    Button("Done", action: done)
+                        .keyboardShortcut(.defaultAction)
+                        // Changes are saved as you make them, so Escape closes it too.
+                        .background {
+                            Button("Close", action: done)
+                                .keyboardShortcut(.cancelAction)
+                                .opacity(0)
+                                .accessibilityHidden(true)
+                        }
+                }
             }
             .padding(16)
         }
-        .frame(width: 620, height: 640)
-        .navigationTitle(name)
+        .frame(width: SettingsView.sheetWidth, height: id == nil ? 220 : SettingsView.sheetHeight)
         .confirmationDialog(isBuiltIn ? "Reset \(name) to how it's built in?" : "Delete \(name)?", isPresented: $confirmsRemoval) {
             Button(isBuiltIn ? "Reset" : "Delete", role: .destructive) {
-                remove(path)
+                if let id { remove(["agents", id]) }
             }
         } message: {
             Text(isBuiltIn ? "Your changes to it are removed." : "It's removed from the engine's settings.")
         }
+    }
+
+    /// A new agent's name, before anything is written: what's wrong with it, or what it'll be
+    /// called when that isn't quite what you typed.
+    private var naming: some View {
+        Form {
+            Section {
+                TextField("Name", text: $newName, prompt: Text("reviewer"))
+                    .onSubmit(create)
+            } footer: {
+                if let problem {
+                    Text(problem).foregroundStyle(.red)
+                } else if !newID.isEmpty, newID != newName.trimmingCharacters(in: .whitespaces) {
+                    Text(verbatim: "It'll be called \(newID).").foregroundStyle(.secondary)
+                } else {
+                    Text("A short name without spaces. It's how the agent is chosen.").foregroundStyle(.secondary)
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    @ViewBuilder private func editor(_ id: String) -> some View {
+        let path = ["agents", id]
+        // A built-in agent's own description, shown until you write another.
+        let builtInDescription = isBuiltIn ? catalog.agents.first(where: { $0.id == id })?.description : nil
+        Form {
+            Section {
+                ConfigTextField(title: "Description", path: path + ["description"], prompt: builtInDescription ?? "What it's for, so the agent knows when to use it")
+                Picker("Use as", selection: Binding(
+                    get: { config.value(at: path + ["mode"])?.string ?? catalog.agents.first { $0.id == id }?.mode ?? "primary" },
+                    set: { config.set(.string($0), at: path + ["mode"]) }
+                )) {
+                    ForEach(["primary", "subagent", "all"], id: \.self) { mode in
+                        Text(AgentsSettings.modeTitle(mode)).tag(mode)
+                    }
+                }
+                ConfigModelPicker(title: "Model", path: path + ["model"], defaultTitle: "The session's model")
+                ConfigNumberField(title: "Most steps per message", path: path + ["steps"], prompt: "No limit")
+                Toggle("Use this agent", isOn: Binding(
+                    get: { config.value(at: path + ["disabled"])?.bool != true },
+                    set: { config.set($0 ? nil : .bool(true), at: path + ["disabled"]) }
+                ))
+            }
+            Section {
+                ConfigTextEditor(path: path + ["system"])
+            } header: {
+                Text("Instructions")
+            } footer: {
+                Text(isBuiltIn
+                    ? "Leave empty to keep the built-in instructions. Anything here replaces them; the project's AGENTS.md, skills and MCP servers still apply."
+                    : "How it should work. The project's AGENTS.md, skills and MCP servers still apply.")
+                    .foregroundStyle(.secondary)
+            }
+            Section {
+                RulesEditor(path: path + ["permissions"])
+            } header: {
+                Text("Permissions")
+            } footer: {
+                Text("Added after the ones in Settings › Permissions, so these win for this agent.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func create() {
+        guard !newID.isEmpty, problem == nil else { return }
+        config.set(.object(["mode": .string("primary"), "description": .string("")]), at: ["agents", newID])
+        Analytics.shared.track("agent_created")
+        id = newID
     }
 }

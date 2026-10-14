@@ -68,16 +68,20 @@ struct PermissionsSettings: View {
                                 .lineLimit(2)
                                 .truncationMode(.middle)
                             Text(projectName(permission.projectID))
-                                .font(.caption)
+                                .font(.subheadline)
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Button("Remove") {
+                        Button {
                             Task {
                                 try? await app.api?.removeSavedPermission(permission.id)
                                 await loadSaved()
                             }
+                        } label: {
+                            Image(systemName: "minus.circle.fill")
                         }
+                        .buttonStyle(RemoveButtonStyle())
+                        .help("Remove")
                     }
                 }
             } header: {
@@ -160,6 +164,9 @@ struct RulesEditor: View {
     /// every tool, so there it stays as it was.
     var allowsAnything = true
     @Environment(AppModel.self) private var app
+    /// A rule being added: shown under the others, and saved only once it has a pattern, so a
+    /// half-made rule never changes what the agent may do.
+    @State private var draft: PermissionRule?
 
     var body: some View {
         let items = app.engineConfig.items(path)
@@ -167,7 +174,7 @@ struct RulesEditor: View {
             guard let rule = items[index].rule else { return false }
             return !(hiding.contains(rule.action) && rule.resource == "*")
         }
-        if shown.isEmpty {
+        if shown.isEmpty, draft == nil {
             Text("None yet.")
                 .foregroundStyle(.secondary)
         }
@@ -181,9 +188,27 @@ struct RulesEditor: View {
                 }
             }
         }
-        Button("Add Rule") {
-            app.engineConfig.setItems(items + [PermissionRule(action: actions.first?.id ?? "shell", resource: allowsAnything ? "*" : "", effect: effects.first ?? .ask).json], at: path)
+        if let draft {
+            // An empty pattern keeps it a draft here, rather than meaning everything.
+            RuleRow(rule: draft, actions: actions, effects: effects, prompt: prompt, allowsAnything: false, focusesOnAppear: true) { changed in
+                // Already saved or removed (the row commits again as it goes away).
+                guard self.draft != nil else { return }
+                guard let changed else {
+                    self.draft = nil
+                    return
+                }
+                if changed.resource.isEmpty {
+                    self.draft = changed
+                } else {
+                    app.engineConfig.setItems(app.engineConfig.items(path) + [changed.json], at: path)
+                    self.draft = nil
+                }
+            }
         }
+        Button("Add Rule") {
+            draft = PermissionRule(action: actions.first?.id ?? "shell", resource: "", effect: effects.first ?? .ask)
+        }
+        .disabled(draft != nil)
     }
 }
 
@@ -194,6 +219,8 @@ private struct RuleRow: View {
     let effects: [PermissionRule.Effect]
     let prompt: String
     let allowsAnything: Bool
+    /// For a rule just added: its pattern is what to fill in next.
+    var focusesOnAppear = false
     /// The rule as changed, or nil to remove it.
     let change: (PermissionRule?) -> Void
     @State private var resource = ""
@@ -201,12 +228,12 @@ private struct RuleRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
+            // A fixed width that long titles truncate in, so the patterns line up.
             Picker("Action", selection: Binding(get: { rule.action }, set: { change(PermissionRule(action: $0, resource: rule.resource, effect: rule.effect)) })) {
                 ForEach(actions, id: \.id) { Text($0.title).tag($0.id) }
                 if !actions.contains(where: { $0.id == rule.action }) { Text(rule.action).tag(rule.action) }
             }
             .labelsHidden()
-            .fixedSize()
             .frame(width: 190, alignment: .leading)
             TextField("Pattern", text: $resource, prompt: Text(prompt))
                 .labelsHidden()
@@ -219,6 +246,8 @@ private struct RuleRow: View {
             .labelsHidden()
             .frame(width: 120)
             Button {
+                // Drop what was typed first, so going away doesn't save it back.
+                resource = rule.resource
                 change(nil)
             } label: {
                 Image(systemName: "minus.circle.fill")
@@ -226,8 +255,13 @@ private struct RuleRow: View {
             .buttonStyle(RemoveButtonStyle())
             .help("Remove Rule")
         }
-        .onAppear { resource = rule.resource }
+        .onAppear {
+            resource = rule.resource
+            if focusesOnAppear { isFocused = true }
+        }
         .onChange(of: rule.resource) { resource = rule.resource }
+        // Closing the sheet or switching tabs while typing keeps what you typed.
+        .onDisappear(perform: commit)
     }
 
     private func commit() {

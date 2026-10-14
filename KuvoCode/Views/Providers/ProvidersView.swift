@@ -29,12 +29,13 @@ struct ProvidersView: View {
                         Label("Accounts", systemImage: "chevron.left")
                             .font(.body.weight(.medium))
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(TextButtonStyle(outset: true))
                     .padding(.horizontal, 20)
                     .padding(.top, 16)
-                    ConnectView(integrationID: connecting.id) {
+                    // The back button above is the way out, so no Cancel in the steps.
+                    ConnectView(integrationID: connecting.id, onDone: {
                         withAnimation(.ui) { self.connecting = nil }
-                    }
+                    })
                 }
                 .transition(.move(edge: .trailing).combined(with: .opacity))
             } else {
@@ -153,9 +154,9 @@ struct ProvidersView: View {
     }
 }
 
-/// A rounded search field that lives in the content, not in a toolbar: a recessed well, ringed
-/// in the accent color while you type.
-private struct SearchField: View {
+/// A rounded search field that lives in the content, not in a toolbar: a recessed well with no
+/// outline, a touch deeper while you type. Also filters the skills in Settings.
+struct SearchField: View {
     @Binding var text: String
     let prompt: String
     @FocusState private var isFocused: Bool

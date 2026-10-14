@@ -6,6 +6,10 @@ import WebKit
 struct SettingsView: View {
     /// Every tab is this wide, so switching tabs doesn't make the window jump sideways.
     static let width: CGFloat = 680
+    /// Every sheet a tab opens (an agent, a server, a command, a skill, a sign-in) is this
+    /// wide, and this tall unless it's short.
+    static let sheetWidth: CGFloat = 620
+    static let sheetHeight: CGFloat = 600
 
     /// Which tab is open; other places (the menu bar's "Accounts…") can set it.
     @AppStorage("settings.tab") private var tab = "general"

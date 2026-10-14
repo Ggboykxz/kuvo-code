@@ -8,8 +8,6 @@ struct CommandsSettings: View {
     @State private var editing: CommandEdit?
     /// What to remove once its sheet has closed (and its fields are done saving).
     @State private var removal: [String]?
-    @State private var isNaming = false
-    @State private var newName = ""
     /// Claude Code's commands, to bring over.
     @State private var claudeCommands: [ClaudeCommands.Command] = []
 
@@ -39,13 +37,10 @@ struct CommandsSettings: View {
                             }
                         }
                         Spacer()
-                        Button("Edit…") { editing = CommandEdit(id: name) }
+                        Button("Edit…") { editing = CommandEdit(name: name) }
                     }
                 }
-                Button("New Command…") {
-                    newName = ""
-                    isNaming = true
-                }
+                Button("New Command…") { editing = CommandEdit(name: nil) }
             } header: {
                 Text("Your Commands")
             } footer: {
@@ -107,27 +102,11 @@ struct CommandsSettings: View {
         }
         .task { claudeCommands = await Task.detached { ClaudeCommands.load() }.value }
         .sheet(item: $editing, onDismiss: removePending) { edit in
-            CommandEditor(name: edit.id) { editing = nil } remove: { path in
+            CommandEditor(name: edit.name) { editing = nil } remove: { path in
                 removal = path
                 editing = nil
             }
         }
-        .alert("New Command", isPresented: $isNaming) {
-            TextField("Name, like test", text: $newName)
-            Button("Create") { create() }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("A short name without spaces: you'll type / and this name.")
-        }
-    }
-
-    private func create() {
-        let name = newName.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            .replacingOccurrences(of: " ", with: "-")
-            .filter { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }
-        guard !name.isEmpty, config.value(at: Self.path + [name]) == nil else { return }
-        config.set(.object(["template": .string("")]), at: Self.path + [name])
-        editing = CommandEdit(id: name)
     }
 
     private func removePending() {
@@ -138,66 +117,148 @@ struct CommandsSettings: View {
 }
 
 private struct CommandEdit: Identifiable {
-    var id: String
+    /// Nil for a new one.
+    var name: String?
+    var id: String { name ?? "" }
 }
 
-/// One command's settings, saved as you change them.
+/// One command's settings. A new one is named first; after that, changes are saved as you
+/// make them.
 private struct CommandEditor: View {
-    let name: String
+    /// Nil for a new one, until it's named.
+    @State var name: String?
     let done: () -> Void
     /// Removes this entry, once the sheet has closed.
     let remove: ([String]) -> Void
     @Environment(AppModel.self) private var app
     @Environment(Catalog.self) private var catalog
+    @State private var newName = ""
     @State private var confirmsRemoval = false
 
     private var config: EngineConfig { app.engineConfig }
-    private var path: [String] { CommandsSettings.path + [name] }
+    private var title: String { name.map { "/" + $0 } ?? "New Command" }
+
+    /// The name you typed, without spaces around it or a "/" in front.
+    private var typedName: String {
+        newName.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    }
+
+    /// The name you typed, as a command's: hyphens for spaces, and only letters, digits,
+    /// hyphens and underscores.
+    private var newID: String {
+        typedName.replacingOccurrences(of: " ", with: "-")
+            .filter { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }
+    }
+
+    /// Why the name you typed can't be used, if it can't.
+    private var problem: String? {
+        if newID.isEmpty {
+            return typedName.isEmpty ? nil : "A name needs a letter or a number."
+        }
+        // Not one you have already, or one the engine or a server has.
+        let isTaken = config.value(at: CommandsSettings.path + [newID]) != nil || catalog.commands.contains(where: { $0.name == newID })
+        return isTaken ? "There's a command called /\(newID) already." : nil
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            Text("/" + name)
+            Text(title)
                 .font(.headline)
                 .padding(.top, 16)
-            Form {
-                Section {
-                    ConfigTextField(title: "Description", path: path + ["description"], prompt: "Shown in the list when you type /")
-                    Picker("Agent", selection: config.string(path + ["agent"])) {
-                        Text("The session's").tag(String?.none)
-                        ForEach(catalog.agents.filter { !$0.hidden }) { Text($0.name).tag(Optional($0.id)) }
-                    }
-                    ConfigModelPicker(title: "Model", path: path + ["model"], defaultTitle: "The agent's or the session's")
-                    Toggle(isOn: Binding(
-                        get: { config.value(at: path + ["subagent"])?.bool == true },
-                        set: { config.set($0 ? .bool(true) : nil, at: path + ["subagent"]) }
-                    )) {
-                        Text("Run as a subagent")
-                        Text("In the background, without filling up the conversation.")
-                    }
-                }
-                Section {
-                    ConfigTextEditor(path: path + ["template"], minHeight: 180)
-                } header: {
-                    Text("Prompt")
-                } footer: {
-                    Text("What the agent gets. $ARGUMENTS is what you type after the command; $1, $2 and so on are its words. !`command` puts in a command's output.")
-                        .foregroundStyle(.secondary)
-                }
+            if let name {
+                editor(name)
+            } else {
+                naming
             }
-            .formStyle(.grouped)
             HStack {
-                Button("Delete Command…", role: .destructive) { confirmsRemoval = true }
+                if name != nil {
+                    Button("Delete Command…", role: .destructive) { confirmsRemoval = true }
+                }
                 Spacer()
-                Button("Done", action: done)
-                    .keyboardShortcut(.defaultAction)
+                if name == nil {
+                    Button("Cancel", role: .cancel, action: done)
+                        .keyboardShortcut(.cancelAction)
+                    Button("Create Command", action: create)
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(newID.isEmpty || problem != nil)
+                } else {
+                    Button("Done", action: done)
+                        .keyboardShortcut(.defaultAction)
+                        // Changes are saved as you make them, so Escape closes it too.
+                        .background {
+                            Button("Close", action: done)
+                                .keyboardShortcut(.cancelAction)
+                                .opacity(0)
+                                .accessibilityHidden(true)
+                        }
+                }
             }
             .padding(16)
         }
-        .frame(width: 600, height: 560)
-        .confirmationDialog("Delete /\(name)?", isPresented: $confirmsRemoval) {
+        .frame(width: SettingsView.sheetWidth, height: name == nil ? 220 : SettingsView.sheetHeight)
+        .confirmationDialog("Delete \(title)?", isPresented: $confirmsRemoval) {
             Button("Delete", role: .destructive) {
-                remove(path)
+                if let name { remove(CommandsSettings.path + [name]) }
+            }
+        } message: {
+            Text("It's removed from the engine's settings.")
+        }
+    }
+
+    /// A new command's name, before anything is written: what's wrong with it, or what it'll
+    /// be called when that isn't quite what you typed.
+    private var naming: some View {
+        Form {
+            Section {
+                TextField("Name", text: $newName, prompt: Text("test"))
+                    .onSubmit(create)
+            } footer: {
+                if let problem {
+                    Text(problem).foregroundStyle(.red)
+                } else if !newID.isEmpty, newID != typedName {
+                    Text(verbatim: "It'll be called /\(newID).").foregroundStyle(.secondary)
+                } else {
+                    Text("A short name without spaces: you'll type / and this name.").foregroundStyle(.secondary)
+                }
             }
         }
+        .formStyle(.grouped)
+    }
+
+    @ViewBuilder private func editor(_ name: String) -> some View {
+        let path = CommandsSettings.path + [name]
+        Form {
+            Section {
+                ConfigTextField(title: "Description", path: path + ["description"], prompt: "Shown in the list when you type /")
+                Picker("Agent", selection: config.string(path + ["agent"])) {
+                    Text("The session's agent").tag(String?.none)
+                    ForEach(catalog.agents.filter { !$0.hidden }) { Text($0.name).tag(Optional($0.id)) }
+                }
+                ConfigModelPicker(title: "Model", path: path + ["model"], defaultTitle: "The agent's or session's model")
+                Toggle(isOn: Binding(
+                    get: { config.value(at: path + ["subagent"])?.bool == true },
+                    set: { config.set($0 ? .bool(true) : nil, at: path + ["subagent"]) }
+                )) {
+                    Text("Run as a subagent")
+                    Text("In the background, without filling up the conversation.")
+                }
+            }
+            Section {
+                ConfigTextEditor(path: path + ["template"], minHeight: 180)
+            } header: {
+                Text("Prompt")
+            } footer: {
+                // Verbatim: as Markdown, the backticks would be taken for code and vanish.
+                Text(verbatim: "What the agent gets. $ARGUMENTS is what you type after the command; $1, $2 and so on are its words. !`command` puts in a command's output.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func create() {
+        guard !newID.isEmpty, problem == nil else { return }
+        config.set(.object(["template": .string("")]), at: CommandsSettings.path + [newID])
+        name = newID
     }
 }

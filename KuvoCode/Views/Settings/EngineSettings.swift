@@ -101,14 +101,20 @@ struct EngineSettings: View {
                     Divider()
                     Text("Off").tag("off")
                 }
-                // The chosen service, if it still needs its key.
-                if let provider = config.value(at: ["websearch", "provider"])?.string, provider != "random",
-                   let integration = catalog.integrations.first(where: { $0.id == provider }) {
-                    LabeledContent("\(integration.name) key") {
-                        if integration.isConnected {
-                            Text("Added").foregroundStyle(.secondary)
+                // The chosen service's key, or every service's when any connected one will do.
+                ForEach(keyedServices) { integration in
+                    LabeledContent("\(integration.name) API key") {
+                        let credentials = integration.connections.filter { $0.type == "credential" }.compactMap(\.credentialID)
+                        if !credentials.isEmpty {
+                            HStack(spacing: 12) {
+                                Text("Added").foregroundStyle(.secondary)
+                                Button("Remove") { removeKeys(credentials) }
+                            }
+                        } else if let variable = integration.connections.first(where: { $0.type == "env" }) {
+                            // From the environment: nothing here to change.
+                            Text("From \(variable.name ?? "the environment")").foregroundStyle(.secondary)
                         } else {
-                            Button("Add API Key…") { addingKey = IntegrationRef(id: provider) }
+                            Button("Add API Key…") { addingKey = IntegrationRef(id: integration.id) }
                         }
                     }
                 }
@@ -171,13 +177,30 @@ struct EngineSettings: View {
             }
         }
         .sheet(item: $addingKey) { ref in
-            ConnectSheet(integrationID: ref.id) { addingKey = nil }
+            ConnectSheet(integrationID: ref.id, note: "The agent can search the web with it now.") { addingKey = nil }
         }
         .task {
             guard let api = app.api else { return }
             shells = (try? await api.shells()) ?? []
             searchProviders = (try? await api.webSearchProviders()) ?? []
             plugins = (try? await api.plugins()) ?? []
+        }
+    }
+
+    /// The search services whose keys to show: the chosen one, or all of them for "Any
+    /// connected service", so there's somewhere to add one.
+    private var keyedServices: [Integration] {
+        guard let chosen = config.value(at: ["websearch", "provider"])?.string else { return [] }
+        let ids = chosen == "random" ? searchProviders.map(\.id) : [chosen]
+        return ids.compactMap { id in catalog.integrations.first { $0.id == id } }
+    }
+
+    /// Removes a service's stored keys, so a wrong one can be added again.
+    private func removeKeys(_ ids: [String]) {
+        guard let api = app.api else { return }
+        Task {
+            for id in ids { try? await api.removeCredential(id) }
+            await catalog.refresh()
         }
     }
 }

@@ -6,10 +6,13 @@ import SwiftUI
 /// and catalogs to read them from.
 struct SkillsSettings: View {
     @Environment(AppModel.self) private var app
-    @State private var skills: [Skill] = []
+    /// Nil until the engine has listed them.
+    @State private var skills: [Skill]?
     @State private var installed: [String: SkillLibrary.Source] = [:]
     @State private var browsing: SkillLibrary.Repository?
     @State private var repositoryName = ""
+    /// While a repository typed by name is being looked up on GitHub.
+    @State private var isOpening = false
     @State private var failure: String?
     /// The skill being written or changed: a new one has no name yet.
     @State private var writing: SkillDraft?
@@ -20,16 +23,21 @@ struct SkillsSettings: View {
     var body: some View {
         ScrollingSettingsForm {
             Section {
-                if skills.isEmpty {
-                    Text("Loading…").foregroundStyle(.secondary)
+                if skills == nil {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(maxWidth: .infinity)
+                } else if skills?.isEmpty == true {
+                    Text("None yet.")
+                        .foregroundStyle(.secondary)
                 }
-                ForEach(skills) { skill in
+                ForEach(skills ?? []) { skill in
                     HStack(alignment: .firstTextBaseline) {
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 6) {
                                 Text(skill.name)
                                 Text(source(of: skill))
-                                    .font(.caption)
+                                    .font(.subheadline)
                                     .foregroundStyle(.secondary)
                             }
                             if let description = skill.description {
@@ -41,9 +49,11 @@ struct SkillsSettings: View {
                         }
                         Spacer()
                         if isYours(skill) {
+                            // Deleting one you wrote is in its editor, behind a confirmation.
                             Button("Edit…") { writing = SkillDraft(name: skill.id) }
                         }
-                        if installed[skill.id] != nil || isYours(skill) {
+                        if installed[skill.id] != nil {
+                            // From GitHub, so it can be added back.
                             Button("Remove") { remove(skill.id) }
                         }
                         Toggle("Use \(skill.name)", isOn: isOn(skill.id))
@@ -72,7 +82,7 @@ struct SkillsSettings: View {
                                 HStack(spacing: 6) {
                                     Text(repository.title)
                                     Text(repository.id)
-                                        .font(.caption)
+                                        .font(.subheadline)
                                         .foregroundStyle(.secondary)
                                 }
                                 Text(repository.summary)
@@ -90,8 +100,11 @@ struct SkillsSettings: View {
                     TextField("Repository", text: $repositoryName, prompt: Text("Another repository on GitHub, like owner/skills"))
                         .labelsHidden()
                         .onSubmit(openRepository)
+                    if isOpening {
+                        ProgressView().controlSize(.small)
+                    }
                     Button("Open", action: openRepository)
-                        .disabled(repositoryName.isEmpty)
+                        .disabled(isOpening || repositoryName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
                 if let failure {
                     Text(failure).foregroundStyle(.red)
@@ -114,7 +127,7 @@ struct SkillsSettings: View {
         }
         .task(id: config.settings) { await refresh() }
         .sheet(item: $writing) { draft in
-            SkillEditor(name: draft.name, folder: folder, taken: Set(skills.map(\.id))) {
+            SkillEditor(name: draft.name, folder: folder, taken: Set((skills ?? []).map(\.id))) {
                 writing = nil
                 Task { await refresh() }
             }
@@ -170,9 +183,12 @@ struct SkillsSettings: View {
     }
 
     private func openRepository() {
-        let name = repositoryName
+        let name = repositoryName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !isOpening else { return }
         failure = nil
+        isOpening = true
         Task {
+            defer { isOpening = false }
             do {
                 browsing = try await SkillLibrary.repository(named: name)
                 repositoryName = ""
@@ -203,11 +219,22 @@ private struct SkillEditor: View {
     @State private var summary = ""
     @State private var instructions = ""
     @State private var failure: String?
+    @State private var confirmsRemoval = false
 
     private var id: String { name ?? SkillFile.name(from: newName) }
     private var file: URL { folder.appending(path: id).appending(path: "SKILL.md") }
     private var canSave: Bool {
         !id.isEmpty && !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && (name != nil || !taken.contains(id))
+    }
+
+    /// What's under a new skill's name: the name it's saved as when that isn't what you typed,
+    /// or why it can't be saved. Always a line, so the fields below don't move as you type.
+    private var nameNote: (text: String, isProblem: Bool) {
+        let typed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !typed.isEmpty, id.isEmpty { return ("Names use the letters a to z and digits, and this one has none.", true) }
+        if taken.contains(id) { return ("There's a skill called \(id) already.", true) }
+        if !typed.isEmpty, id != typed { return ("It's saved as \(id).", false) }
+        return ("Names use lowercase letters a to z, digits and hyphens.", false)
     }
 
     var body: some View {
@@ -216,15 +243,20 @@ private struct SkillEditor: View {
                 .font(.headline)
                 .padding(.top, 16)
             Form {
-                Section {
-                    if name == nil {
+                if name == nil {
+                    Section {
                         TextField("Name", text: $newName, prompt: Text("release-notes"))
+                    } footer: {
+                        Text(nameNote.text)
+                            .foregroundStyle(nameNote.isProblem ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
                     }
+                }
+                Section {
                     TextField("Use it when", text: $summary, prompt: Text("Writing release notes from the commits since the last tag"), axis: .vertical)
                         .lineLimit(1...3)
                 } footer: {
-                    Text(name == nil && taken.contains(id) ? "There's a skill called \(id) already." : "The agent reads this to decide when the skill is needed, and loads the instructions only then.")
-                        .foregroundStyle(name == nil && taken.contains(id) ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                    Text("The agent reads this to decide when the skill is needed, and loads the instructions only then.")
+                        .foregroundStyle(.secondary)
                 }
                 Section {
                     TextEditor(text: $instructions)
@@ -243,6 +275,7 @@ private struct SkillEditor: View {
             .formStyle(.grouped)
             HStack {
                 if name != nil {
+                    Button("Delete Skill…", role: .destructive) { confirmsRemoval = true }
                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([file]) }
                 }
                 Spacer()
@@ -254,8 +287,13 @@ private struct SkillEditor: View {
             }
             .padding(16)
         }
-        .frame(width: 620, height: 600)
+        .frame(width: SettingsView.sheetWidth, height: SettingsView.sheetHeight)
         .onAppear(perform: load)
+        .confirmationDialog("Delete \(id)?", isPresented: $confirmsRemoval) {
+            Button("Delete", role: .destructive, action: delete)
+        } message: {
+            Text("Its folder, with anything else in it, goes to the Trash.")
+        }
     }
 
     private func load() {
@@ -272,6 +310,15 @@ private struct SkillEditor: View {
             let existing = name == nil ? nil : try? String(contentsOf: file, encoding: .utf8)
             try SkillFile.text(name: id, description: summary, body: instructions, replacing: existing).write(to: file, atomically: true, encoding: .utf8)
             if name == nil { Analytics.shared.track("skill_written") }
+            done()
+        } catch {
+            failure = error.localizedDescription
+        }
+    }
+
+    private func delete() {
+        do {
+            try FileManager.default.trashItem(at: file.deletingLastPathComponent(), resultingItemURL: nil)
             done()
         } catch {
             failure = error.localizedDescription
@@ -347,10 +394,12 @@ private struct RepositorySkills: View {
     @State private var confirming: SkillLibrary.RemoteSkill?
     @State private var working: String?
 
+    /// The filter, without the spaces around it.
+    private var search: String { query.trimmingCharacters(in: .whitespaces) }
+
     private var shown: [SkillLibrary.RemoteSkill] {
         guard let skills else { return [] }
-        let query = query.trimmingCharacters(in: .whitespaces).lowercased()
-        return query.isEmpty ? skills : skills.filter { $0.path.lowercased().contains(query) }
+        return search.isEmpty ? skills : skills.filter { $0.path.localizedCaseInsensitiveContains(search) }
     }
 
     var body: some View {
@@ -361,8 +410,8 @@ private struct RepositorySkills: View {
             }
             .padding(.top, 16)
             .padding(.bottom, 8)
-            TextField("Filter", text: $query, prompt: Text("Filter skills"))
-                .textFieldStyle(.roundedBorder)
+            // Return here does nothing: Done is the cancel action (Escape), not the default one.
+            SearchField(text: $query, prompt: "Filter skills")
                 .padding(.horizontal, 20)
             Group {
                 if let failure {
@@ -370,33 +419,42 @@ private struct RepositorySkills: View {
                 } else if skills == nil {
                     ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if shown.isEmpty {
-                    ContentUnavailableView("No Skills", systemImage: "magnifyingglass")
+                    if search.isEmpty {
+                        ContentUnavailableView("No Skills", systemImage: "graduationcap", description: Text("This repository doesn't have any skills."))
+                    } else {
+                        ContentUnavailableView.search(text: search)
+                    }
                 } else {
-                    List {
-                        ForEach(shown) { skill in
-                            RemoteSkillRow(skill: skill, installed: installed[skill.name], isWorking: working == skill.id) {
-                                confirming = skill
-                            } remove: {
-                                try? FileManager.default.trashItem(at: folder.appending(path: skill.name), resultingItemURL: nil)
-                                reload()
+                    Form {
+                        Section {
+                            ForEach(shown) { skill in
+                                RemoteSkillRow(skill: skill, installed: installed[skill.name], isWorking: working == skill.id) {
+                                    confirming = skill
+                                } remove: {
+                                    try? FileManager.default.trashItem(at: folder.appending(path: skill.name), resultingItemURL: nil)
+                                    reload()
+                                }
+                            }
+                        } footer: {
+                            if isPartial {
+                                Text("This collection is too big for GitHub to list in full, so some of its skills aren't here.")
+                                    .foregroundStyle(.secondary)
                             }
                         }
-                        if isPartial {
-                            Text("This collection is too big for GitHub to list in full, so some of its skills aren't here.")
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                        }
                     }
+                    .formStyle(.grouped)
                 }
             }
             .frame(maxHeight: .infinity)
             HStack {
                 Spacer()
-                Button("Done", action: done).keyboardShortcut(.defaultAction)
+                Button("Done", action: done)
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.cancelAction)
             }
             .padding(16)
         }
-        .frame(width: 600, height: 600)
+        .frame(width: SettingsView.sheetWidth, height: SettingsView.sheetHeight)
         .task {
             reload()
             do {
@@ -478,15 +536,15 @@ private struct RemoteSkillRow: View {
                     Button("Remove", action: remove)
                 } else {
                     // Another skill by this name is installed (they'd share a folder).
-                    Text("\(skill.name) from \(installed.repository) is added")
-                        .font(.caption)
+                    Text("Another \(skill.name) is added, from \(installed.repository)")
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.trailing)
                 }
             } else {
                 Button("Add", action: add)
             }
         }
-        .padding(.vertical, 4)
         .task { about = await SkillLibrary.about(skill) }
     }
 }

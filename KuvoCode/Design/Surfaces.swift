@@ -91,6 +91,12 @@ extension View {
         modifier(AccentGlass(shape: shape, isOn: isOn))
     }
 
+    /// A text field drawn into the surface: sunken, with no bezel and no focus outline, like the
+    /// sidebar's search. For fields outside a grouped form (a form's own fields stay native).
+    func wellField(cornerRadius: CGFloat = 10) -> some View {
+        modifier(WellField(cornerRadius: cornerRadius))
+    }
+
     /// A recessed well, one step below the card, with a subtle inner border: for code.
     func recessedWell<S: InsettableShape>(_ shape: S) -> some View {
         modifier(RecessedWell(shape: shape))
@@ -157,6 +163,20 @@ private struct AccentGlass<S: InsettableShape>: ViewModifier {
                         .allowsHitTesting(false)
                 }
             }
+    }
+}
+
+private struct WellField: ViewModifier {
+    let cornerRadius: CGFloat
+    @Environment(\.colorScheme) private var scheme
+
+    func body(content: Content) -> some View {
+        content
+            .textFieldStyle(.plain)
+            .focusEffectDisabled()
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(Surface.well(scheme), in: .rect(cornerRadius: cornerRadius))
     }
 }
 

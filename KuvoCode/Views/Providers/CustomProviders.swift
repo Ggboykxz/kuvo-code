@@ -23,7 +23,8 @@ struct CustomProvidersSection: View {
             HStack(alignment: .firstTextBaseline) {
                 Text("Your Own").font(.headline)
                 Spacer()
-                Button("Add a Provider…") { editing = ProviderEdit(id: nil) }
+                Button("Add Provider…") { editing = ProviderEdit(id: nil) }
+                    .buttonStyle(.glass)
             }
             if ids.isEmpty {
                 Text("For a company proxy, a self-hosted server or any service with an OpenAI- or Anthropic-compatible API.")
@@ -43,10 +44,19 @@ struct CustomProvidersSection: View {
                             }
                             Spacer()
                             if let integration {
-                                Button(integration.isConnected ? "Key Added" : "Add Key") { connect(integration) }
-                                    .disabled(integration.isConnected)
+                                // Once added, a status rather than a button.
+                                if integration.isConnected {
+                                    Label("Key added", systemImage: "checkmark.circle.fill")
+                                        .labelStyle(.titleAndIcon)
+                                        .font(.callout)
+                                        .foregroundStyle(.green)
+                                } else {
+                                    Button("Add Key") { connect(integration) }
+                                        .buttonStyle(.glass)
+                                }
                             }
                             Button("Edit…") { editing = ProviderEdit(id: id) }
+                                .buttonStyle(.glass)
                         }
                         .padding(.horizontal, 14)
                         .padding(.vertical, 10)
@@ -128,6 +138,7 @@ private struct CustomProviderEditor: View {
                 Spacer()
                 if id == nil {
                     Button("Cancel", action: done)
+                        .keyboardShortcut(.cancelAction)
                     Button("Create", action: create)
                         .keyboardShortcut(.defaultAction)
                         .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -138,7 +149,7 @@ private struct CustomProviderEditor: View {
             }
             .padding(16)
         }
-        .frame(width: 620, height: id == nil ? 220 : 620)
+        .frame(width: SettingsView.sheetWidth, height: id == nil ? 220 : SettingsView.sheetHeight)
         .confirmationDialog("Remove this provider?", isPresented: $confirmsRemoval) {
             Button("Remove", role: .destructive) {
                 remove(CustomProvidersSection.path + [id ?? ""])
@@ -153,7 +164,7 @@ private struct CustomProviderEditor: View {
         Form {
             Section {
                 ConfigTextField(title: "Name", path: path + ["name"], prompt: id)
-                Picker("Speaks", selection: Binding(
+                Picker("API", selection: Binding(
                     get: { config.value(at: path + ["package"])?.string ?? Self.kinds[0].package },
                     set: { config.set(.string($0), at: path + ["package"]) }
                 )) {
@@ -166,6 +177,25 @@ private struct CustomProviderEditor: View {
             }
             Section {
                 let models = (config.value(at: path + ["models"])?.object?.keys).map { $0.sorted() } ?? []
+                // Column titles, since a filled-in number no longer shows its prompt. Laid out
+                // like the rows below, with the remove button's room kept.
+                if !models.isEmpty {
+                    HStack {
+                        Text("Model")
+                            .frame(width: 170, alignment: .leading)
+                        Text("Name")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Text("Context")
+                            .frame(width: 90, alignment: .trailing)
+                        Text("Output")
+                            .frame(width: 80, alignment: .trailing)
+                        Image(systemName: "minus.circle.fill")
+                            .font(.body)
+                            .hidden()
+                    }
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                }
                 ForEach(models, id: \.self) { model in
                     HStack {
                         Text(model)
@@ -173,6 +203,7 @@ private struct CustomProviderEditor: View {
                             .frame(width: 170, alignment: .leading)
                             .lineLimit(1)
                             .truncationMode(.middle)
+                            .help(model)
                         ConfigTextField(title: "Name", path: path + ["models", model, "name"], prompt: "Name")
                             .labelsHidden()
                         ConfigNumberField(title: "Context", path: path + ["models", model, "limit", "context"], prompt: "Context")

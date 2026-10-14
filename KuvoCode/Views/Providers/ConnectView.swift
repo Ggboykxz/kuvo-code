@@ -7,8 +7,13 @@ import SwiftUI
 /// the person through it.
 struct ConnectView: View {
     let integrationID: String
+    /// What the last step says the connection gives you.
+    var connectedNote = "Its models are now in the model picker."
     /// Back to the account list (after "Done").
     var onDone: () -> Void = {}
+    /// Leaves without connecting. When set (in a sheet), every step but the last has a Cancel
+    /// beside its own buttons.
+    var onCancel: (() -> Void)? = nil
 
     @Environment(AppModel.self) private var app
     @Environment(Catalog.self) private var catalog
@@ -27,7 +32,10 @@ struct ConnectView: View {
     @State private var key = ""
     @State private var pastedCode = ""
     @State private var isWorking = false
+    /// Why the engine didn't take the key, shown under it until you change it.
+    @State private var keyError: String?
     @State private var copied = false
+    @State private var copyReset: Task<Void, Never>?
     @State private var pollTask: Task<Void, Never>?
 
     private var integration: Integration? {
@@ -109,9 +117,13 @@ struct ConnectView: View {
             }
             if let names = integration?.environmentVariables, !names.isEmpty {
                 Text("Or set \(names.joined(separator: " or ")) in your shell profile.")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
                     .padding(.top, 8)
+            }
+            if onCancel != nil {
+                trailingCancel
+                    .padding(.top, 14)
             }
         }
     }
@@ -122,6 +134,7 @@ struct ConnectView: View {
             HStack {
                 backButton
                 Spacer()
+                cancelButton
                 Button("Continue") { proceed(method) }
                     .buttonStyle(.glassProminent)
                     .keyboardShortcut(.defaultAction)
@@ -134,19 +147,24 @@ struct ConnectView: View {
     private func keyEntry(_ method: Integration.Method) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 6) {
-                Text(label(for: method))
+                Text("API key")
                     .font(.callout.weight(.medium))
                 SecureField("Paste your key", text: $key)
-                    .textFieldStyle(.roundedBorder)
-                    .controlSize(.large)
+                    .wellField()
                     .onSubmit { connectKey(method) }
+                    .onChange(of: key) { keyError = nil }
             }
             if !method.form.isEmpty {
                 FormFieldsView(fields: method.form, answers: $answers)
             }
+            if let keyError {
+                ErrorCard(message: keyError)
+                    .transition(.opacity)
+            }
             HStack {
                 backButton
                 Spacer()
+                cancelButton
                 Button("Connect") { connectKey(method) }
                     .buttonStyle(.glassProminent)
                     .keyboardShortcut(.defaultAction)
@@ -154,6 +172,7 @@ struct ConnectView: View {
             }
             .controlSize(.large)
         }
+        .animation(.ui, value: keyError)
     }
 
     private func waiting(_ attempt: OAuthAttempt) -> some View {
@@ -170,11 +189,11 @@ struct ConnectView: View {
                         .padding(.vertical, 12)
                         .glassEffect(.regular, in: .rect(cornerRadius: 16))
                     Button(copied ? "Copied" : "Copy Code", systemImage: copied ? "checkmark" : "doc.on.doc") { copy(code) }
-                        .buttonStyle(.borderless)
+                        .buttonStyle(TextButtonStyle())
                         .contentTransition(.symbolEffect(.replace))
                 }
             } else if attempt.mode == .auto {
-                Text("Finish signing in in your browser. This page updates on its own.")
+                Text("Finish signing in with your browser. This updates on its own.")
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.secondary)
             }
@@ -184,12 +203,18 @@ struct ConnectView: View {
                     Text(attempt.instructions)
                         .foregroundStyle(.secondary)
                     TextField("Paste the code", text: $pastedCode)
-                        .textFieldStyle(.roundedBorder)
-                        .controlSize(.large)
+                        .wellField()
                         .onSubmit { complete(attempt) }
-                    Button("Continue") { complete(attempt) }
-                        .buttonStyle(.glassProminent)
-                        .disabled(pastedCode.isEmpty || isWorking)
+                    HStack {
+                        Spacer()
+                        cancelButton
+                        Button("Continue") { complete(attempt) }
+                            .buttonStyle(.glassProminent)
+                            .keyboardShortcut(.defaultAction)
+                            .disabled(pastedCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isWorking)
+                    }
+                    .controlSize(.large)
+                    .padding(.top, 8)
                 }
             } else {
                 HStack(spacing: 8) {
@@ -201,18 +226,26 @@ struct ConnectView: View {
 
             HStack(spacing: 16) {
                 Button("Open the Page Again") { open(attempt.url) }
-                Button("Cancel") {
-                    cancelAttempt()
-                    step = .choose
+                // In a sheet, Cancel leaves it; here it goes back to the ways to sign in.
+                if onCancel == nil {
+                    Button("Cancel") {
+                        cancelAttempt()
+                        step = .choose
+                    }
                 }
             }
             .buttonStyle(.link)
+
+            if onCancel != nil, attempt.mode != .code {
+                trailingCancel
+            }
         }
     }
 
     private var connected: some View {
         VStack(spacing: 16) {
-            Text("Its models are now in the model picker.")
+            Text(connectedNote)
+                .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
             Button("Done", action: onDone)
                 .buttonStyle(.glassProminent)
@@ -224,16 +257,43 @@ struct ConnectView: View {
     private func failed(_ message: String) -> some View {
         VStack(spacing: 16) {
             ErrorCard(message: message)
-            Button("Try Again") { step = .choose }
-                .buttonStyle(.glass)
-                .controlSize(.large)
+            // Centered on its own; in a sheet, at the trailing edge beside Cancel.
+            HStack {
+                if onCancel != nil {
+                    Spacer()
+                    cancelButton
+                }
+                Button("Try Again") { step = .choose }
+                    .buttonStyle(.glass)
+            }
+            .controlSize(.large)
         }
     }
 
-    private var backButton: some View {
-        Button("Back") { step = .choose }
-            .buttonStyle(.borderless)
-            .opacity(supportedMethods.count > 1 ? 1 : 0)
+    /// Back to the ways to sign in, when there's more than one.
+    @ViewBuilder private var backButton: some View {
+        if supportedMethods.count > 1 {
+            Button("Back") { step = .choose }
+                .buttonStyle(TextButtonStyle(outset: true))
+        }
+    }
+
+    /// Leaves the sheet without connecting; nothing outside a sheet.
+    @ViewBuilder private var cancelButton: some View {
+        if let onCancel {
+            Button("Cancel", action: onCancel)
+                .buttonStyle(.glass)
+                .keyboardShortcut(.cancelAction)
+        }
+    }
+
+    /// Cancel on its own, at the trailing edge, for steps without a row of buttons.
+    private var trailingCancel: some View {
+        HStack {
+            Spacer()
+            cancelButton
+        }
+        .controlSize(.large)
     }
 
     // MARK: Actions
@@ -251,6 +311,7 @@ struct ConnectView: View {
         switch method {
         case .key:
             key = ""
+            keyError = nil
             step = .key(method)
         default:
             // Ask for details first if the method has any visible fields.
@@ -289,16 +350,19 @@ struct ConnectView: View {
     }
 
     private func connectKey(_ method: Integration.Method) {
-        guard let api = app.api else { return }
+        // Return in the field gets here too, past the disabled button.
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let api = app.api, !trimmed.isEmpty, FormFieldsView.isComplete(method.form, answers), !isWorking else { return }
         let answer = FormFieldsView.payload(method.form, answers)
         isWorking = true
         Task {
             defer { isWorking = false }
             do {
-                try await api.connectKey(integration: integrationID, key: key.trimmingCharacters(in: .whitespacesAndNewlines), answer: answer.isEmpty ? nil : answer)
+                try await api.connectKey(integration: integrationID, key: trimmed, answer: answer.isEmpty ? nil : answer)
                 finish(method: "api_key")
             } catch {
-                step = .failed(error.localizedDescription)
+                // Stay on the key, so it can be fixed rather than pasted again.
+                keyError = error.localizedDescription
             }
         }
     }
@@ -322,12 +386,13 @@ struct ConnectView: View {
     }
 
     private func complete(_ attempt: OAuthAttempt) {
-        guard let api = app.api else { return }
+        let code = pastedCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let api = app.api, !code.isEmpty, !isWorking else { return }
         isWorking = true
         Task {
             defer { isWorking = false }
             do {
-                try await api.completeOAuth(integration: integrationID, attempt: attempt.attemptID, code: pastedCode.trimmingCharacters(in: .whitespacesAndNewlines))
+                try await api.completeOAuth(integration: integrationID, attempt: attempt.attemptID, code: code)
                 finish(method: "oauth")
             } catch {
                 step = .failed(error.localizedDescription)
@@ -356,10 +421,17 @@ struct ConnectView: View {
         if let url = URL(string: url) { NSWorkspace.shared.open(url) }
     }
 
+    /// Copies the code, and says so for a moment.
     private func copy(_ code: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(code, forType: .string)
         withAnimation(.ui) { copied = true }
+        copyReset?.cancel()
+        copyReset = Task {
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            withAnimation(.ui) { copied = false }
+        }
     }
 
     // MARK: Describing methods
