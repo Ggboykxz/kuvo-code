@@ -228,6 +228,7 @@ private struct CustomProviderEditor: View {
             "package": .string(Self.kinds[0].package),
             "models": .object([:]),
         ]), at: CustomProvidersSection.path + [slug])
+        Analytics.shared.track("custom_provider_added")
         id = slug
     }
 

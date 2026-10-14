@@ -112,6 +112,7 @@ struct AgentsSettings: View {
             .filter { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }
         guard !id.isEmpty, config.value(at: ["agents", id]) == nil, catalog.agents.first(where: { $0.id == id }) == nil else { return }
         config.set(.object(["mode": .string("primary"), "description": .string("")]), at: ["agents", id])
+        Analytics.shared.track("agent_created")
         editing = AgentEdit(id: id, isBuiltIn: false)
     }
 

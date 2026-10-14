@@ -285,6 +285,7 @@ final class SessionModel {
     /// Gives a waiting message to the agent right away: its current step stops, and it carries
     /// on from there with this message.
     func sendNow(_ item: Transcript.Pending) {
+        Analytics.shared.track("message_sent_now")
         guard !item.isLocal else { return }
         isQueuePaused = false
         let running = transcript.isRunning
@@ -376,6 +377,7 @@ final class SessionModel {
     /// files it changed since go back, and the message returns to the composer to edit or
     /// send again. Redo brings it all back, until the next message makes it final.
     func undo(from message: Message.User) {
+        Analytics.shared.track("undo_used")
         Task {
             do {
                 if isRunning {
@@ -423,6 +425,7 @@ final class SessionModel {
 
     /// Takes back an undo: the conversation and the files come back as they were.
     func redo() {
+        Analytics.shared.track("redo_used")
         Task {
             do {
                 try await api.clearRevert(session: id)
@@ -533,18 +536,21 @@ final class SessionModel {
     }
 
     func reply(to request: PermissionRequest, _ decision: PermissionRequest.Decision, message: String? = nil) {
+        Analytics.shared.track("permission_answered", ["action": Analytics.action(request.action), "decision": decision.rawValue])
         Task {
             do { try await api.reply(session: id, permission: request.id, decision: decision, message: message) } catch { failure = error.localizedDescription }
         }
     }
 
     func answer(_ form: FormRequest, with answer: FormAnswer) {
+        Analytics.shared.track("question_answered", ["kind": form.isQuestion ? "question" : "form"])
         Task {
             do { try await api.reply(session: id, form: form.id, answer: answer) } catch { failure = error.localizedDescription }
         }
     }
 
     func dismiss(_ form: FormRequest, message: String? = nil) {
+        Analytics.shared.track("question_dismissed", ["kind": form.isQuestion ? "question" : "form"])
         Task { try? await api.dismiss(session: id, form: form.id, message: message) }
     }
 

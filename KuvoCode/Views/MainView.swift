@@ -137,6 +137,7 @@ struct MainView: View {
                         .onTapGesture { showsOpenQuickly = false }
                     OpenQuickly(roots: [directory] + (workspace.settings[directory]?.folders ?? [])) { url in
                         showsOpenQuickly = false
+                        Analytics.shared.track("open_quickly_used")
                         showInPanel { utilities.show(url) }
                     } dismiss: {
                         showsOpenQuickly = false

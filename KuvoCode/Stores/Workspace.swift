@@ -85,6 +85,7 @@ final class Workspace {
 
     /// Pins a session to the top of the sidebar, or takes it off.
     func setPinned(_ id: String, _ pinned: Bool) async {
+        if pinned { Analytics.shared.track("session_pinned") }
         await setFlag(Self.pinnedKey, pinned, of: id)
     }
 
@@ -145,6 +146,7 @@ final class Workspace {
 
     func addFolder(_ directory: String) {
         guard !folders.contains(directory) else { return }
+        Analytics.shared.track("project_added", ["projects": folders.count + 1])
         folders.insert(directory, at: 0)
         UserDefaults.standard.set(folders, forKey: "projectFolders")
     }
@@ -209,6 +211,7 @@ final class Workspace {
     /// A new session with `id`'s conversation before `message`, opened in a tab with the
     /// message in its composer, ready to try another way.
     func fork(_ id: String, from message: Message.User) async throws {
+        Analytics.shared.track("session_branched")
         guard let api else { return }
         let session = try await api.forkSession(id, before: message.id)
         upsert(session)
@@ -275,9 +278,11 @@ final class Workspace {
             asking = asking.filter { $0.value != id }
         case "session.execution.started":
             running.insert(id)
+            runStarted[id] = .now
             touch(id)
         case "session.execution.succeeded", "session.execution.failed", "session.execution.interrupted":
             running.remove(id)
+            noteTurn(id, event)
             // Picks up the new idle time (unread state) and outcome.
             Task {
                 await reload(id)
@@ -307,6 +312,30 @@ final class Workspace {
         default:
             break
         }
+    }
+
+    @ObservationIgnored private var runStarted: [String: Date] = [:]
+
+    /// How a run ended, for anonymous usage: the outcome, how long it took, with which model, and
+    /// for a failure the engine's error type and status, never its message.
+    private func noteTurn(_ id: String, _ event: ServerEvent) {
+        let ended = try? event.payload(as: EventPayload.ExecutionEnded.self)
+        guard ended?.reason != "shutdown" else { return }
+        let session = session(id)
+        var props = Analytics.model(provider: session?.model?.providerID, model: session?.model?.id)
+        props["outcome"] = switch event.type {
+        case "session.execution.succeeded": "done"
+        case "session.execution.failed": "failed"
+        default: "stopped"
+        }
+        // A subagent's session has no row of its own.
+        props["subagent"] = session == nil
+        if let started = runStarted.removeValue(forKey: id) { props["seconds"] = Int(Date.now.timeIntervalSince(started)) }
+        if event.type == "session.execution.failed", let error = ended?.error {
+            props["error"] = String(error.type.lowercased().filter { $0.isLetter || $0 == "_" }.prefix(40))
+            if let status = error.status { props["status"] = status }
+        }
+        Analytics.shared.track("turn_finished", props)
     }
 
     /// Keeps `asking` current, and tells you about a new request while you're elsewhere.

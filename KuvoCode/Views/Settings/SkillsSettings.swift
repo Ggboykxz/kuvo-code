@@ -279,6 +279,9 @@ private struct RepositorySkills: View {
             defer { working = nil }
             do {
                 try await SkillLibrary.install(skill, into: folder)
+                // The collection by name when it's one of the listed ones, else just that it was another.
+                let listed = SkillLibrary.repositories.contains(skill.repository)
+                Analytics.shared.track("skill_added", ["collection": listed ? "\(skill.repository.owner)/\(skill.repository.name)" : "other"])
                 reload()
             } catch {
                 installFailure = error.localizedDescription

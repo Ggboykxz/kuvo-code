@@ -259,6 +259,7 @@ struct SidebarView: View {
             panel.nameFieldStringValue = (session.title ?? "Conversation").replacingOccurrences(of: "/", with: "-") + ".md"
             guard panel.runModal() == .OK, let url = panel.url else { return }
             try text.write(to: url, atomically: true, encoding: .utf8)
+            Analytics.shared.track("session_exported", ["how": "file"])
         } catch {
             NSAlert(error: error).runModal()
         }
@@ -284,6 +285,7 @@ struct SidebarView: View {
                     guard let text = try await workspace.markdown(of: session.id) else { return }
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(text, forType: .string)
+                    Analytics.shared.track("session_exported", ["how": "copy"])
                 } catch {
                     NSAlert(error: error).runModal()
                 }

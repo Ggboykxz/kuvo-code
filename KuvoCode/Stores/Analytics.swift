@@ -1,4 +1,5 @@
 import Foundation
+import UsageKit
 import os
 
 /// Anonymous usage, sent in small batches to Kuvo's analytics collector so it's known which
@@ -19,6 +20,8 @@ final class Analytics {
     static let noticeKey = "analytics.noticeShown"
     private static let installKey = "analytics.installID"
     private static let activeDayKey = "analytics.activeDay"
+    private static let versionKey = "analytics.version"
+    private static let usageDayKey = "analytics.usageDay"
     private static let endpoint = URL(string: "https://analytics.porigam.com.tr/kuvo/code")!
 
     /// Whether events are sent. Turning it off drops what hasn't gone out yet.
@@ -81,14 +84,34 @@ final class Analytics {
 
     /// At launch: the launch itself, then one "active" a day for as long as the app stays open.
     func start() {
+        let defaults = UserDefaults.standard
         track("app_launched", isFirstLaunch ? ["first": true] : [:])
-        UserDefaults.standard.set(Self.today, forKey: Self.activeDayKey)
+        if let previous = defaults.string(forKey: Self.versionKey), previous != AppInfo.version {
+            track("app_updated", ["from": previous])
+        }
+        defaults.set(AppInfo.version, forKey: Self.versionKey)
+        defaults.set(Self.today, forKey: Self.activeDayKey)
         dayTimer = Timer.scheduledTimer(withTimeInterval: 1800, repeats: true) { _ in
             Task { @MainActor in Analytics.shared.markActiveDay() }
         }
+        // The usage panel reads its providers in the first minutes.
+        Task {
+            try? await Task.sleep(for: .seconds(180))
+            noteUsageProviders()
+        }
+    }
+
+    /// Once a day: which AI tools the menu bar's usage panel follows (their public IDs).
+    private func noteUsageProviders() {
+        let defaults = UserDefaults.standard
+        let providers = UsageMenuBar.shared.trackedProviderIDs
+        guard defaults.string(forKey: Self.usageDayKey) != Self.today, !providers.isEmpty else { return }
+        defaults.set(Self.today, forKey: Self.usageDayKey)
+        for provider in providers { track("usage_tracked", ["provider": provider]) }
     }
 
     private func markActiveDay() {
+        noteUsageProviders()
         guard UserDefaults.standard.string(forKey: Self.activeDayKey) != Self.today else { return }
         UserDefaults.standard.set(Self.today, forKey: Self.activeDayKey)
         track("app_active")
@@ -118,6 +141,16 @@ final class Analytics {
         let provider = provider(id)
         guard provider != "other", provider != "none", let model else { return ["provider": provider] }
         return ["provider": provider, "model": String(model.prefix(80))]
+    }
+
+    /// What a permission was for, by kind.
+    static func action(_ action: String) -> String {
+        switch action {
+        case "edit", "write", "patch": "edit"
+        case "shell", "bash": "shell"
+        case "read", "external_directory", "webfetch", "websearch", "subagent", "skill", "question": action
+        default: action.hasPrefix("kuvo-browser_") ? "browser" : "other"
+        }
     }
 
     /// Build and Plan by name; agents you made are "custom".

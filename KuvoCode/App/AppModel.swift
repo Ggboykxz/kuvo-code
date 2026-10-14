@@ -62,6 +62,8 @@ final class AppModel {
         isStopping = false
         // How far it got, for analytics when it fails: the download, the launch, or the connection.
         var stage = "download"
+        let began = Date.now
+        var downloaded = false
         do {
             // Set KUVO_OPENCODE_BINARY to run a local opencode build instead of the pinned download.
             async let environment = ShellEnvironment.load()
@@ -72,6 +74,7 @@ final class AppModel {
                 binary = installed
             } else {
                 engine = .downloading(progress: 0)
+                downloaded = true
                 binary = try await installer.install { progress in
                     Task { @MainActor in
                         if case .downloading = self.engine { self.engine = .downloading(progress: progress) }
@@ -106,7 +109,7 @@ final class AppModel {
             workspace.api = api
             usage.api = api
             engine = .ready
-            Analytics.shared.trackOnce("engine_ready")
+            Analytics.shared.trackOnce("engine_ready", ["seconds": Int(Date.now.timeIntervalSince(began)), "downloaded": downloaded])
             listen(to: api)
             Task { await usage.sync() }
             // In parallel: the catalog can wait on the engine's plugins (and they on a

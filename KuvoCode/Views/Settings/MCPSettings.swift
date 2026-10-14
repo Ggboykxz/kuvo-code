@@ -159,6 +159,7 @@ struct MCPSettings: View {
         guard !name.isEmpty, config.value(at: Self.path + [name]) == nil, !Self.builtIn.contains(name) else { return }
         // Off until it has a command or URL, so the engine doesn't try to start an empty one.
         config.set(.object(["type": .string("local"), "command": .array([]), "disabled": .bool(true)]), at: Self.path + [name])
+        Analytics.shared.track("mcp_server_added")
         editing = ServerEdit(id: name)
     }
 
