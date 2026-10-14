@@ -104,6 +104,41 @@ struct ModeChip: View {
     }
 }
 
+/// "Local ⌄" or "Worktree ⌄", for a new session: whether it works in the project's folder or
+/// in a git worktree of its own, on a branch of its own.
+struct WorkplaceChip: View {
+    let worktree: Bool
+    let onSelect: (Bool) -> Void
+
+    var body: some View {
+        NativeMenuButton(name: "workplace", menu: makeMenu) {
+            HStack(spacing: 6) {
+                Image(systemName: worktree ? "arrow.triangle.branch" : "folder")
+                Text(worktree ? "Worktree" : "Local")
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .font(.callout.weight(.medium))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .hoverHighlight(in: Capsule())
+        }
+        .help("Where the session works: in the project's folder, or in a worktree of its own")
+    }
+
+    private func makeMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.addItem(ActionItem("Local", subtitle: "Works in the project's folder", image: NSImage(systemSymbolName: "folder", accessibilityDescription: nil), checked: !worktree) {
+            onSelect(false)
+        })
+        menu.addItem(ActionItem("Worktree", subtitle: "Works in a copy on a branch of its own", image: NSImage(systemSymbolName: "arrow.triangle.branch", accessibilityDescription: nil), checked: worktree) {
+            onSelect(true)
+        })
+        return menu
+    }
+}
+
 /// "GPT-6 Luna · High ⌄": the model, its effort, and the context it has.
 struct ModelChip: View {
     @Environment(Catalog.self) private var catalog

@@ -9,6 +9,37 @@ public struct Location: Codable, Sendable, Hashable {
     }
 }
 
+/// A folder as the engine sees it: the project it's in, and where that project's main
+/// checkout is (a worktree's project is its repository's).
+public struct LocationInfo: Codable, Sendable, Hashable {
+    public var directory: String
+    public var project: Project
+
+    public struct Project: Codable, Sendable, Hashable {
+        public var id: String
+        public var directory: String
+        public var canonical: String
+    }
+}
+
+/// A project the engine knows: a repository (by its first commit) or a folder.
+public struct ProjectInfo: Codable, Sendable, Hashable, Identifiable {
+    public var id: String
+    /// The main checkout.
+    public var canonical: String
+    public var vcs: String?
+    public var commands: Commands?
+
+    public struct Commands: Codable, Sendable, Hashable {
+        /// Runs in each new worktree, from its folder.
+        public var start: String?
+
+        public init(start: String? = nil) {
+            self.start = start
+        }
+    }
+}
+
 /// `{ "data": … }`, the envelope of most responses.
 public struct DataEnvelope<Value: Decodable & Sendable>: Decodable, Sendable {
     public var data: Value

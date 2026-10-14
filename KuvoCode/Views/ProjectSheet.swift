@@ -1,4 +1,5 @@
 import AppKit
+import OpenCodeKit
 import SwiftUI
 
 /// Creating a project, or changing one: its name and its folders. Sessions run in the primary
@@ -10,7 +11,13 @@ struct ProjectSheet: View {
     let save: (_ primary: String, _ settings: Workspace.ProjectSettings) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(AppModel.self) private var app
     @State private var name: String
+    /// What runs in each new worktree; nil until it's known that the primary folder is in a
+    /// git repository (and what the engine has for it).
+    @State private var setup: String?
+    @State private var savedSetup: String?
+    @State private var engineProject: String?
     /// The primary folder first.
     @State private var folders: [String]
     @FocusState private var isNameFocused: Bool
@@ -37,6 +44,21 @@ struct ProjectSheet: View {
                 folderList
             }
 
+            if setup != nil {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Worktree Setup")
+                        .font(.headline)
+                    TextField("Setup command", text: Binding(get: { setup ?? "" }, set: { setup = $0 }), prompt: Text("npm install && cp \"$OPENCODE_WORKTREE_BASE/.env\" ."), axis: .vertical)
+                        .font(.system(.body, design: .monospaced))
+                        .lineLimit(1...4)
+                        .textFieldStyle(.roundedBorder)
+                    Text("Runs in each new worktree before its session starts, to install dependencies or copy files git doesn't have. $OPENCODE_WORKTREE_BASE is the project's folder.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
             HStack(spacing: 10) {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
@@ -45,6 +67,7 @@ struct ProjectSheet: View {
                 Button(isNew ? "Create Project" : "Save") {
                     guard let primary = folders.first else { return }
                     save(primary, Workspace.ProjectSettings(name: name, folders: Array(folders.dropFirst())))
+                    saveSetup()
                     dismiss()
                 }
                 .keyboardShortcut(.defaultAction)
@@ -56,6 +79,27 @@ struct ProjectSheet: View {
         .padding(28)
         .frame(width: 560)
         .onAppear { isNameFocused = true }
+        .task(id: folders.first) { await loadSetup() }
+    }
+
+    // MARK: Worktree setup
+
+    /// The engine keeps the setup command with its project (the repository).
+    private func loadSetup() async {
+        setup = nil
+        guard let primary = folders.first, let api = app.api,
+              await Task.detached(operation: { Git.run(["rev-parse", "--git-dir"], in: primary) != nil }).value,
+              let project = try? await api.location(directory: primary).project else { return }
+        let command = (try? await api.projects())?.first { $0.id == project.id }?.commands?.start ?? ""
+        engineProject = project.id
+        savedSetup = command
+        setup = command
+    }
+
+    private func saveSetup() {
+        guard let api = app.api, let engineProject, let setup, setup != savedSetup else { return }
+        let command = setup.trimmingCharacters(in: .whitespacesAndNewlines)
+        Task { try? await api.setSetupCommand(project: engineProject, command.isEmpty ? nil : command) }
     }
 
     // MARK: Name

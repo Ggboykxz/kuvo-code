@@ -66,7 +66,7 @@ private struct BottomStack: View {
                     isRunning: model.isRunning,
                     hasQueue: !model.waiting.isEmpty,
                     history: model.sentMessages,
-                    folders: [model.session.location.directory] + (workspace.settings[model.session.location.directory]?.folders ?? []),
+                    folders: [model.session.location.directory] + workspace.extraFolders(model.session.location.directory),
                     commands: catalog.commands(in: model.session.location.directory),
                     focusRequest: model.composerFocus,
                     commentCount: model.reviewComments.count,
@@ -117,7 +117,12 @@ struct DraftSessionView: View {
     @State private var pickedAgent: String?
     private var agent: String { pickedAgent ?? catalog.startingAgent(chosen: app.engineConfig.value(at: ["default_agent"])?.string) }
     @AppStorage(ToolApproval.key) private var approval = ToolApproval.approveAll
+    /// New sessions in a git repository get a worktree of their own (remembered).
+    @AppStorage("newSessionWorktree") private var worktree = false
     @State private var isCreating = false
+
+    /// Worktrees are for git repositories.
+    private var isRepository: Bool { workspace.branches[directory] != nil || workspace.defaultBranches[directory] != nil }
 
     /// The project's new session keeps its draft under this key until it's created.
     private var draftKey: String { SidebarView.draftTag(directory) }
@@ -138,18 +143,26 @@ struct DraftSessionView: View {
                 approval: approval,
                 model: lastModel ?? catalog.defaultModel?.ref,
                 isRunning: isCreating,
-                folders: [directory] + (workspace.settings[directory]?.folders ?? []),
+                folders: [directory] + workspace.extraFolders(directory),
                 commands: catalog.commands(in: directory),
                 focusRequest: focusRequest,
                 onSelectAgent: { pickedAgent = $0 },
                 onSelectApproval: { approval = $0 },
                 onSelectModel: { lastModel = $0 },
+                worktree: isRepository ? worktree : nil,
+                onSelectWorktree: { worktree = $0 },
                 onSend: send,
                 onStop: {}
             )
             .padding(.horizontal, Metrics.gutter)
             .readableColumn()
 
+            if isCreating, isRepository, worktree {
+                Label("Setting up a worktree…", systemImage: "arrow.triangle.branch")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 12)
+            }
             if let failure {
                 ErrorCard(message: failure)
                     .padding(.horizontal, Metrics.gutter)
@@ -170,7 +183,7 @@ struct DraftSessionView: View {
         let attachments = Drafts.shared[draftKey].files
         Task {
             do {
-                let session = try await workspace.createSession(in: directory, model: lastModel ?? catalog.defaultModel?.ref, agent: agent, approval: approval)
+                let session = try await workspace.createSession(in: directory, model: lastModel ?? catalog.defaultModel?.ref, agent: agent, approval: approval, worktree: isRepository && worktree)
                 Drafts.shared.remove(draftKey)
                 created(session, message, attachments)
             } catch {

@@ -109,6 +109,39 @@ public struct OpenCodeAPI: Sendable {
         try await get("api/vcs", directory: directory, as: LocatedEnvelope<VCSInfo>.self).data
     }
 
+    // MARK: Projects and worktrees
+
+    /// What the engine makes of a folder: its project, and that project's main checkout.
+    public func location(directory: String) async throws -> LocationInfo {
+        try await get("api/location", directory: directory)
+    }
+
+    public func projects() async throws -> [ProjectInfo] {
+        try await get("api/project")
+    }
+
+    /// Sets the command the engine runs in each new worktree of the project (nil or empty for none).
+    public func setSetupCommand(project id: String, _ command: String?) async throws {
+        struct Body: Encodable { var commands: ProjectInfo.Commands }
+        try await send("PATCH", "api/project/\(id.pathEscaped)", body: Body(commands: ProjectInfo.Commands(start: command ?? "")))
+    }
+
+    /// A new git worktree of the project, at its main checkout's last commit (with no branch
+    /// checked out), in the engine's data folder. The project's setup command runs in it first.
+    /// Returns its folder.
+    public func createWorktree(project id: String, name: String? = nil) async throws -> String {
+        struct Body: Encodable { var projectID: String; var name: String? }
+        struct Info: Decodable { var directory: String }
+        return try await send("POST", "api/worktree", body: Body(projectID: id, name: name), as: Info.self).directory
+    }
+
+    /// Removes a worktree the engine made. Without `force`, git refuses one with changes that
+    /// aren't committed.
+    public func removeWorktree(project id: String, directory: String, force: Bool) async throws {
+        struct Body: Encodable { var projectID: String; var directory: String; var force: Bool }
+        try await send("DELETE", "api/worktree", body: Body(projectID: id, directory: directory, force: force))
+    }
+
     // MARK: Connecting providers
 
     public func connectKey(integration: String, key: String, answer: FormAnswer? = nil, directory: String? = nil) async throws {

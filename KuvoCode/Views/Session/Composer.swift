@@ -28,6 +28,9 @@ struct Composer: View {
     var onSelectAgent: (String) -> Void
     var onSelectApproval: (ToolApproval) -> Void
     var onSelectModel: (ModelRef) -> Void
+    /// A new session in a git repository: whether it gets a worktree of its own (nil hides it).
+    var worktree: Bool?
+    var onSelectWorktree: (Bool) -> Void = { _ in }
     var onSend: () -> Void
     /// ⌘Return: after the run, and anything queued before.
     var onQueue: () -> Void = {}
@@ -186,6 +189,9 @@ struct Composer: View {
                 .help("Attach Files… You can also drop files here, or paste them.")
                 ModeChip(agent: agent, approval: approval, onSelectAgent: onSelectAgent, onSelectApproval: onSelectApproval)
                 ModelChip(selection: model, onSelect: onSelectModel)
+                if let worktree {
+                    WorkplaceChip(worktree: worktree, onSelect: onSelectWorktree)
+                }
                 Spacer(minLength: 0)
                 actionButton
             }

@@ -24,6 +24,10 @@ struct SidebarView: View {
     @State private var renaming: Session?
     /// The session waiting for the user to confirm its deletion.
     @State private var deleting: Session?
+    /// A session in a worktree being archived, while the user decides about its worktree.
+    @State private var archiving: Session?
+    /// The worktree of the session being archived or deleted has changes that aren't committed.
+    @State private var worktreeIsDirty = false
 
     private enum Place { case pinned, project, recents }
     @State private var newTitle = ""
@@ -132,15 +136,71 @@ struct SidebarView: View {
             deleting.flatMap(\.title).map { "Delete “\($0)”?" } ?? "Delete This Session?",
             isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })
         ) {
-            Button("Delete", role: .destructive) {
-                guard let session = deleting else { return }
-                if selection == session.id { selection = nil }
-                Task { await workspace.delete(session.id) }
+            if let session = deleting, hasOwnWorktree(session) {
+                Button("Delete and Remove Worktree", role: .destructive) { delete(session, removingWorktree: true) }
+                Button("Delete Session Only") { delete(session, removingWorktree: false) }
+            } else {
+                Button("Delete", role: .destructive) { if let session = deleting { delete(session, removingWorktree: false) } }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("The session and its transcript will be deleted. This can't be undone.")
+            if let session = deleting, hasOwnWorktree(session) {
+                Text("The session and its transcript will be deleted. This can't be undone. " + worktreeNote(session))
+            } else {
+                Text("The session and its transcript will be deleted. This can't be undone.")
+            }
         }
+        .alert("Remove Its Worktree Too?", isPresented: Binding(get: { archiving != nil }, set: { if !$0 { archiving = nil } })) {
+            if let session = archiving {
+                Button("Archive and Remove Worktree", role: worktreeIsDirty ? .destructive : nil) { archive(session, removingWorktree: true) }
+                Button("Archive Only") { archive(session, removingWorktree: false) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            if let session = archiving { Text(worktreeNote(session)) }
+        }
+    }
+
+    // MARK: Worktrees
+
+    /// In a worktree no other session is working in.
+    private func hasOwnWorktree(_ session: Session) -> Bool {
+        workspace.worktrees[session.location.directory] != nil && !workspace.worktreeIsShared(session.location.directory, besides: session.id)
+    }
+
+    private func worktreeNote(_ session: Session) -> String {
+        let branch = workspace.worktrees[session.location.directory]?.branch ?? "its branch"
+        return "Its worktree is a copy of the project on \(branch). Removing it keeps the branch and its commits"
+            + (worktreeIsDirty ? ", but throws away the changes that aren't committed." : ".")
+    }
+
+    /// Asks about the worktree first when the session has one of its own.
+    private func confirm(_ session: Session, then ask: @escaping (Session) -> Void) {
+        guard hasOwnWorktree(session) else { return ask(session) }
+        let directory = session.location.directory
+        Task {
+            worktreeIsDirty = await Task.detached { Git.hasUncommittedChanges(in: directory) }.value
+            ask(session)
+        }
+    }
+
+    private func archive(_ session: Session, removingWorktree: Bool) {
+        Task {
+            if removingWorktree { await removeWorktree(of: session) }
+            await workspace.setArchived(session.id, true)
+        }
+    }
+
+    private func delete(_ session: Session, removingWorktree: Bool) {
+        if selection == session.id { selection = nil }
+        Task {
+            if removingWorktree { await removeWorktree(of: session) }
+            await workspace.delete(session.id)
+        }
+    }
+
+    private func removeWorktree(of session: Session) async {
+        do { try await workspace.removeWorktree(session.location.directory) } catch { NSAlert(error: error).runModal() }
     }
 
     // MARK: Projects
@@ -244,7 +304,15 @@ struct SidebarView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.tertiary)
             } else {
-                SessionStatus(session: session)
+                HStack(spacing: 6) {
+                    if let tree = workspace.worktrees[session.location.directory] {
+                        Image(systemName: "arrow.triangle.branch")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                            .help("Works in a worktree, on \(tree.branch)")
+                    }
+                    SessionStatus(session: session)
+                }
             }
         }
         .contextMenu { menu(for: session) }
@@ -296,9 +364,11 @@ struct SidebarView: View {
         if Workspace.isArchived(session) {
             Button("Unarchive") { Task { await workspace.setArchived(session.id, false) } }
         } else {
-            Button("Archive") { Task { await workspace.setArchived(session.id, true) } }
+            Button("Archive") {
+                if hasOwnWorktree(session) { confirm(session) { archiving = $0 } } else { Task { await workspace.setArchived(session.id, true) } }
+            }
         }
-        Button("Delete…", role: .destructive) { deleting = session }
+        Button("Delete…", role: .destructive) { confirm(session) { deleting = $0 } }
     }
 }
 

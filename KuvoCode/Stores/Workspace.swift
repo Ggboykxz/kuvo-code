@@ -15,11 +15,15 @@ final class Workspace {
     private(set) var folders: [String] = UserDefaults.standard.stringArray(forKey: "projectFolders") ?? []
     /// Names and other folders of projects, by their primary folder.
     private(set) var settings: [String: ProjectSettings] = Workspace.loadSettings()
+    /// Sessions' own git worktrees, by the folder their sessions run in.
+    private(set) var worktrees: [String: Worktree] = Workspace.loadWorktrees()
     private(set) var isLoaded = false
 
     private var models: [String: SessionModel] = [:]
     /// Current git branch per project folder, when it has one.
     private(set) var branches: [String: String] = [:]
+    /// The repository's main branch per project folder, when git knows it.
+    private(set) var defaultBranches: [String: String] = [:]
     /// Open permission requests and questions, by ID, with the session they're for.
     private(set) var asking: [String: String] = [:]
 
@@ -49,9 +53,36 @@ final class Workspace {
         var folders: [String] = []
     }
 
+    /// A copy of a project for sessions to work in apart from the rest: a git worktree of its
+    /// repository, on a branch of its own.
+    struct Worktree: Codable, Hashable {
+        /// The project's primary folder.
+        var project: String
+        /// The worktree's top folder. Sessions run in the same place in it as the project's
+        /// folder is in its repository.
+        var root: String
+        var branch: String
+        /// What the project's folder had checked out when it was made: what it merges back into.
+        var base: String?
+    }
+
+    /// The project a folder sessions run in belongs to: its own, or a worktree's project.
+    func projectDirectory(_ directory: String) -> String {
+        worktrees[directory]?.project ?? directory
+    }
+
+    func projectDirectory(of session: Session) -> String {
+        projectDirectory(session.location.directory)
+    }
+
+    /// The project's other folders, for a folder sessions run in.
+    func extraFolders(_ directory: String) -> [String] {
+        settings[projectDirectory(directory)]?.folders ?? []
+    }
+
     /// Projects with their sessions, most recently active first.
     var projects: [Project] {
-        let grouped = Dictionary(grouping: sessions.filter { !Self.isArchived($0) }, by: \.location.directory)
+        let grouped = Dictionary(grouping: sessions.filter { !Self.isArchived($0) }, by: projectDirectory(of:))
         let directories = Set(grouped.keys).union(folders)
         return directories.map { directory in
             Project(directory: directory, sessions: (grouped[directory] ?? []).sorted { $0.time.updated > $1.time.updated }, settings: settings[directory] ?? ProjectSettings())
@@ -127,7 +158,7 @@ final class Workspace {
         if let model = models[id] { return model }
         guard let api, let session = session(id) else { return nil }
         let directory = session.location.directory
-        let model = SessionModel(session: session, api: api) { [weak self] in self?.settings[directory]?.folders ?? [] }
+        let model = SessionModel(session: session, api: api) { [weak self] in self?.extraFolders(directory) ?? [] }
         models[id] = model
         return model
     }
@@ -135,6 +166,7 @@ final class Workspace {
     func loadBranch(for directory: String) async {
         guard let api, let info = try? await api.vcs(directory: directory) else { return }
         branches[directory] = info.branch?.current
+        defaultBranches[directory] = info.branch?.default
     }
 
     func needsAttention(_ id: String) -> Bool {
@@ -158,9 +190,10 @@ final class Workspace {
         saveSettings()
     }
 
-    /// The project's name: its own, or its primary folder's.
+    /// The project's name: its own, or its primary folder's. A worktree has its project's.
     func projectName(_ directory: String) -> String {
-        settings[directory]?.name ?? (directory as NSString).lastPathComponent
+        let directory = projectDirectory(directory)
+        return settings[directory]?.name ?? (directory as NSString).lastPathComponent
     }
 
     /// Adds a project, or updates one, and gives its open sessions the new folders.
@@ -173,27 +206,88 @@ final class Workspace {
         settings[directory] = project == ProjectSettings() ? nil : project
         saveSettings()
         // Sessions not open yet catch up when they open.
-        for model in models.values where model.session.location.directory == directory {
+        for model in models.values where projectDirectory(of: model.session) == directory {
             Task { await model.syncFolders() }
         }
     }
 
-    func createSession(in directory: String, model: ModelRef?, agent: String?, approval: ToolApproval = .approveAll) async throws -> Session {
+    /// A new session in the project at `directory`, or with `worktree`, in a new worktree of it.
+    func createSession(in directory: String, model: ModelRef?, agent: String?, approval: ToolApproval = .approveAll, worktree: Bool = false) async throws -> Session {
         guard let api else { throw CancellationError() }
         addFolder(directory)
+        let folder = worktree ? try await makeWorktree(of: directory) : directory
         let extra = settings[directory]?.folders ?? []
         let rules = ProjectFolders.permissions(approval.rules, folders: extra)
-        let session = try await api.createSession(directory: directory, agent: agent, model: model, permissions: rules.isEmpty ? nil : rules)
+        let session = try await api.createSession(directory: folder, agent: agent, model: model, permissions: rules.isEmpty ? nil : rules)
         if !extra.isEmpty {
-            try? await api.setInstruction(session: session.id, key: ProjectFolders.instructionKey, text: ProjectFolders.instructions(primary: directory, folders: extra))
+            try? await api.setInstruction(session: session.id, key: ProjectFolders.instructionKey, text: ProjectFolders.instructions(primary: folder, folders: extra))
+        }
+        if let tree = worktrees[folder] {
+            try? await api.setInstruction(session: session.id, key: Self.worktreeInstructionKey, text: Self.instructions(for: tree))
         }
         upsert(session)
         let used = model ?? session.model
         var props = Analytics.model(provider: used?.providerID, model: used?.id)
         props["mode"] = Analytics.mode(agent)
         props["approval"] = approval == .approveAll ? "all" : "ask"
+        props["worktree"] = worktree
         Analytics.shared.track("session_created", props)
         return session
+    }
+
+    // MARK: Worktrees
+
+    private static let worktreeInstructionKey = "kuvo.worktree"
+
+    private static func instructions(for tree: Worktree) -> String {
+        """
+        You work in a git worktree of this project, on the branch \(tree.branch), so your changes stay apart from \
+        the user's own checkout at \(tree.project) until they merge them. Make your changes here, not there.
+        """
+    }
+
+    /// A new worktree of the project's repository on a branch of its own, set up by the
+    /// project's setup command. Returns the folder for the session to run in.
+    private func makeWorktree(of directory: String) async throws -> String {
+        guard let api else { throw CancellationError() }
+        let project = try await api.location(directory: directory).project
+        let (base, subpath) = await Task.detached { (Git.currentBranch(in: directory), Git.pathInRepository(of: directory)) }.value
+        let root = try await api.createWorktree(project: project.id)
+        // The engine leaves it on no branch; one of its own makes the work easy to commit,
+        // push and merge.
+        let branch = try await Task.detached { try Git.newBranch(named: "kuvo/" + (root as NSString).lastPathComponent, in: root) }.value
+        let folder = subpath.isEmpty ? root : (root as NSString).appendingPathComponent(subpath)
+        worktrees[folder] = Worktree(project: directory, root: root, branch: branch, base: base)
+        saveWorktrees()
+        return folder
+    }
+
+    /// Whether another session still working in the worktree (not archived) would lose it.
+    func worktreeIsShared(_ directory: String, besides id: String) -> Bool {
+        guard let root = worktrees[directory]?.root else { return false }
+        return sessions.contains { $0.id != id && !Self.isArchived($0) && worktrees[$0.location.directory]?.root == root }
+    }
+
+    /// Removes a worktree's folder, changes that aren't committed too. Its branch stays with its
+    /// commits, unless it's merged already.
+    func removeWorktree(_ directory: String) async throws {
+        guard let api, let tree = worktrees[directory] else { return }
+        let project = try await api.location(directory: tree.project).project
+        try await api.removeWorktree(project: project.id, directory: tree.root, force: true)
+        // Git deletes only a branch that's merged.
+        _ = await Task.detached { Git.run(["branch", "-d", tree.branch], in: tree.project) }.value
+        worktrees = worktrees.filter { $0.value.root != tree.root }
+        saveWorktrees()
+        Analytics.shared.track("worktree_removed")
+    }
+
+    private static func loadWorktrees() -> [String: Worktree] {
+        guard let data = UserDefaults.standard.data(forKey: "worktrees") else { return [:] }
+        return (try? JSONDecoder().decode([String: Worktree].self, from: data)) ?? [:]
+    }
+
+    private func saveWorktrees() {
+        UserDefaults.standard.set(try? JSONEncoder().encode(worktrees), forKey: "worktrees")
     }
 
     private static func loadSettings() -> [String: ProjectSettings] {

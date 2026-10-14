@@ -48,22 +48,30 @@ nonisolated struct DiffLine: Hashable, Sendable {
 @Observable
 final class ProjectChanges {
     enum Scope: String, CaseIterable, Identifiable {
-        case uncommitted, unstaged, staged
+        /// `branch` is everything since the branch left its base, committed or not.
+        case uncommitted, unstaged, staged, branch
         var id: Self { self }
         var title: String {
             switch self {
             case .uncommitted: "Uncommitted"
             case .unstaged: "Unstaged"
             case .staged: "Staged"
+            case .branch: "Branch"
             }
         }
     }
 
     let directory: String
     var scope = Scope.uncommitted
+    /// The branch this one comes from, for the Branch scope: a worktree's base, or the
+    /// repository's default branch.
+    var base: String?
     private(set) var files: [ChangedFile] = []
     /// False outside a git repository; the scopes don't apply then.
     private(set) var isRepository = true
+    /// Something isn't committed yet, so there's something to commit (the Branch scope shows
+    /// committed changes too).
+    private(set) var hasUncommitted = true
     private(set) var isLoaded = false
     private var signature = 0
 
@@ -76,10 +84,13 @@ final class ProjectChanges {
 
     /// Reads the changes again. `fallback` is the engine's diff, used outside a repository.
     func refresh(fallback: [FileDiff] = []) async {
-        let directory = directory, scope = scope
-        let result = await Task.detached { Git.changes(in: directory, scope: scope) }.value
+        let directory = directory, scope = scope, base = base
+        let (result, uncommitted) = await Task.detached {
+            (Git.changes(in: directory, scope: scope, base: base), scope != .branch || Git.hasUncommittedChanges(in: directory))
+        }.value
         if let result {
             isRepository = true
+            if hasUncommitted != uncommitted { hasUncommitted = uncommitted }
             apply(result)
         } else {
             isRepository = false
@@ -138,15 +149,20 @@ final class ProjectChanges {
 
 nonisolated enum Git {
     /// The changed files in `scope`, or nil when `directory` isn't in a repository.
-    static func changes(in directory: String, scope: ProjectChanges.Scope) -> [ChangedFile]? {
+    static func changes(in directory: String, scope: ProjectChanges.Scope, base branch: String? = nil) -> [ChangedFile]? {
         guard let root = run(["rev-parse", "--show-toplevel"], in: directory)?.trimmingCharacters(in: .whitespacesAndNewlines),
               !root.isEmpty else { return nil }
         // A repository without commits yet: compare with the empty tree.
-        let base = run(["rev-parse", "--verify", "-q", "HEAD"], in: root) == nil ? "4b825dc642cb6eb9a060e54bf8d69288fbee4904" : "HEAD"
+        var base = run(["rev-parse", "--verify", "-q", "HEAD"], in: root) == nil ? "4b825dc642cb6eb9a060e54bf8d69288fbee4904" : "HEAD"
+        // Since the branch left its base: from where they part, to the files as they are now.
+        if scope == .branch, let branch,
+           let fork = run(["merge-base", "HEAD", branch], in: root)?.trimmingCharacters(in: .whitespacesAndNewlines), !fork.isEmpty {
+            base = fork
+        }
         let limit = relativePath(of: directory, in: root)
         var arguments = ["-c", "core.quotepath=off", "diff", "--no-color", "--no-ext-diff", "--find-renames", "-U100000"]
         switch scope {
-        case .uncommitted: arguments.append(base)
+        case .uncommitted, .branch: arguments.append(base)
         case .unstaged: break
         case .staged: arguments += ["--cached", base]
         }
@@ -232,7 +248,7 @@ nonisolated enum Git {
 
     /// Runs git for something that changes the repository; nil when it worked, else what git
     /// said. It never waits for a password: with nothing to answer, it fails instead.
-    private static func report(_ arguments: [String], in directory: String, environment: [String: String]) -> String? {
+    static func report(_ arguments: [String], in directory: String, environment: [String: String]) -> String? {
         let process = Process()
         process.executableURL = URL(filePath: "/usr/bin/git")
         process.arguments = arguments
@@ -268,7 +284,7 @@ nonisolated enum Git {
         return file
     }
 
-    private static func relativePath(of directory: String, in root: String) -> String {
+    static func relativePath(of directory: String, in root: String) -> String {
         let resolved = URL(filePath: directory).resolvingSymlinksInPath().path
         let base = URL(filePath: root).resolvingSymlinksInPath().path
         guard resolved.hasPrefix(base) else { return "" }

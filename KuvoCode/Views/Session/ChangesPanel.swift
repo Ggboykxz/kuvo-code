@@ -21,7 +21,19 @@ struct ChangesPanel: View {
 
     struct DraftTarget: Equatable { var file: String; var line: Int }
     @Environment(AppModel.self) private var app
+    @Environment(Workspace.self) private var workspace
     @State private var isCommitting = false
+
+    /// The session's own worktree, when it has one.
+    private var worktree: Workspace.Worktree? { workspace.worktrees[changes.directory] }
+
+    /// What the Branch scope compares with: the worktree's base, or the repository's main
+    /// branch when another one is checked out.
+    private var base: String? {
+        if let worktree { return worktree.base }
+        guard let main = workspace.defaultBranches[changes.directory], workspace.branches[changes.directory] != main else { return nil }
+        return main
+    }
 
     init(directory: String, folders: [String] = [], model: SessionModel?) {
         self.model = model
@@ -44,8 +56,14 @@ struct ChangesPanel: View {
             Divider()
             content
         }
+        .onChange(of: base, initial: true) { old, new in
+            changes.base = new
+            if new == nil, changes.scope == .branch { changes.scope = .uncommitted }
+            // A worktree's work is all on its branch, committed or not.
+            if old == new, worktree != nil, new != nil { changes.scope = .branch }
+        }
         // Git is quick to ask; look again every few seconds while the panel is open.
-        .task(id: "\(changes.directory)\n\(changes.scope)") {
+        .task(id: "\(changes.directory)\n\(changes.scope)\n\(changes.base ?? "")") {
             while !Task.isCancelled {
                 await changes.refresh(fallback: engineChanges)
                 try? await Task.sleep(for: .seconds(3))
@@ -70,7 +88,7 @@ struct ChangesPanel: View {
                     Picker("Folder", selection: Binding(get: { changes.directory }, set: { folder in
                         let scope = changes.scope
                         changes = ProjectChanges(directory: folder)
-                        changes.scope = scope
+                        changes.scope = scope == .branch ? .uncommitted : scope
                         collapsed = []
                     })) {
                         ForEach(folders, id: \.self) { Text(($0 as NSString).lastPathComponent).tag($0) }
@@ -89,11 +107,18 @@ struct ChangesPanel: View {
             if changes.isRepository {
                 Menu {
                     Picker("Changes", selection: $changes.scope) {
-                        ForEach(ProjectChanges.Scope.allCases) { Text($0.title).tag($0) }
+                        ForEach(ProjectChanges.Scope.allCases.filter { $0 != .branch }) { Text($0.title).tag($0) }
                     }
                     .pickerStyle(.inline)
+                    if let base = changes.base {
+                        Divider()
+                        Picker("Branch", selection: $changes.scope) {
+                            Text("Since \(base)").tag(ProjectChanges.Scope.branch)
+                        }
+                        .pickerStyle(.inline)
+                    }
                 } label: {
-                    Text(changes.scope.title)
+                    Text(changes.scope == .branch ? changes.base.map { "Since \($0)" } ?? "Branch" : changes.scope.title)
                         .font(.system(size: 13, weight: .semibold))
                 }
                 .menuStyle(.button)
@@ -106,8 +131,11 @@ struct ChangesPanel: View {
             }
             DiffStat(additions: changes.additions, deletions: changes.deletions)
             Spacer()
+            if let worktree {
+                WorktreeMenu(tree: worktree, directory: changes.directory, model: model, environment: app.shellEnvironment)
+            }
             // Kept while its form is open, so a push problem stays readable after the commit.
-            if changes.isRepository, !changes.files.isEmpty || isCommitting {
+            if changes.isRepository, !changes.files.isEmpty && changes.hasUncommitted || isCommitting {
                 Button("Commit…") { isCommitting = true }
                     .buttonStyle(.borderless)
                     .font(.system(size: 12, weight: .medium))
@@ -139,7 +167,9 @@ struct ChangesPanel: View {
                 Label(changes.isLoaded ? "No Changes" : "Reading Changes…", systemImage: "doc.text.magnifyingglass")
             } description: {
                 if changes.isLoaded {
-                    Text(changes.isRepository ? "Nothing \(changes.scope.title.lowercased()) in this project." : "Files the agent edits show up here.")
+                    Text(!changes.isRepository ? "Files the agent edits show up here."
+                        : changes.scope == .branch ? "Nothing changed since \(changes.base ?? "the branch began")."
+                        : "Nothing \(changes.scope.title.lowercased()) in this project.")
                 }
             }
             .frame(maxHeight: .infinity)
@@ -165,7 +195,7 @@ struct ChangesPanel: View {
                                 )
                             }
                         } header: {
-                            FileHeader(file: file, isCollapsed: collapsed.contains(file.id), scope: changes.isRepository ? changes.scope : nil) {
+                            FileHeader(file: file, isCollapsed: collapsed.contains(file.id), scope: changes.isRepository && changes.scope != .branch ? changes.scope : nil) {
                                 withAnimation(.ui) {
                                     if collapsed.contains(file.id) { collapsed.remove(file.id) } else { collapsed.insert(file.id) }
                                 }
@@ -222,7 +252,7 @@ private struct CommitForm: View {
                 .help("Have the session's model write a message from the changes")
             }
             if let hasStaged {
-                Text(hasStaged ? "Commits what's staged." : "Commits all the changes shown, \(changes.files.count) \(changes.files.count == 1 ? "file" : "files").")
+                Text(hasStaged ? "Commits what's staged." : changes.scope == .branch ? "Commits what isn't committed yet." : "Commits all the changes shown, \(changes.files.count) \(changes.files.count == 1 ? "file" : "files").")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -282,6 +312,143 @@ private struct CommitForm: View {
             failure = await changes.commit(message: message.trimmingCharacters(in: .whitespacesAndNewlines), push: pushes, environment: environment)
             isWorking = false
             if failure == nil { done() }
+        }
+    }
+}
+
+// MARK: - Worktree
+
+/// A session's own branch, and bringing its work back: merged into the project's folder, or
+/// pushed for a pull request.
+private struct WorktreeMenu: View {
+    let tree: Workspace.Worktree
+    /// Where the session runs, in the worktree.
+    let directory: String
+    let model: SessionModel?
+    let environment: [String: String]
+    @Environment(Catalog.self) private var catalog
+    @Environment(Workspace.self) private var workspace
+    @State private var isWorking = false
+    @State private var outcome: Outcome?
+
+    enum Outcome {
+        case merged(into: String)
+        case conflict([String], into: String)
+        case pushed
+        case failed(title: String, message: String)
+    }
+
+    var body: some View {
+        Menu {
+            Section(tree.branch) {
+                Button("Merge into \(tree.base ?? "the Project’s Branch")", systemImage: "arrow.triangle.merge", action: merge)
+                Button("Create Pull Request", systemImage: "arrow.up.forward.square", action: pullRequest)
+            }
+            Divider()
+            Button("Show Worktree in Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: directory) }
+        } label: {
+            if isWorking {
+                Spinner(size: 12)
+            } else {
+                Image(systemName: "arrow.triangle.branch")
+            }
+        }
+        .menuStyle(.button)
+        .menuIndicator(.hidden)
+        .buttonStyle(CardActionStyle())
+        .fixedSize()
+        .disabled(isWorking)
+        .help("This session works on its own branch, \(tree.branch). Merge it or create a pull request.")
+        .alert(title, isPresented: Binding(get: { outcome != nil }, set: { if !$0 { outcome = nil } })) {
+            if case .conflict(_, let target) = outcome, let model {
+                Button("Ask the Agent to Fix It") {
+                    model.send("Merge \(target) into this branch (\(tree.branch)), resolve the conflicts, and commit the merge.", for: catalog.model(model.session.model))
+                }
+                Button("Cancel", role: .cancel) {}
+            } else {
+                Button("OK") {}
+            }
+        } message: {
+            Text(message)
+        }
+    }
+
+    private var title: String {
+        switch outcome {
+        case .merged(let target): "Merged into \(target)"
+        case .conflict: "Merging Would Conflict"
+        case .pushed: "Pushed \(tree.branch)"
+        case .failed(let title, _): title
+        case nil: ""
+        }
+    }
+
+    private var message: String {
+        switch outcome {
+        case .merged: "The branch’s commits are in \(workspace.projectName(tree.project)) now. Archive the session to remove its worktree."
+        case .conflict(let files, let target):
+            "\(target) changed some of the same lines: \(files.prefix(5).joined(separator: ", "))\(files.count > 5 ? " and \(files.count - 5) more" : ""). Nothing was merged."
+        case .pushed: "Open a pull request for it on your git host."
+        case .failed(_, let message): message
+        case nil: ""
+        }
+    }
+
+    /// Why the work can't go anywhere yet, if it can't.
+    nonisolated private static func unready(_ tree: Workspace.Worktree, in directory: String, against target: String) -> String? {
+        if Git.hasUncommittedChanges(in: directory) { return "Commit the changes first. Only what’s committed goes." }
+        if Git.commitsAhead(of: target, in: directory) == 0 { return "\(tree.branch) has nothing \(target) doesn’t have yet." }
+        return nil
+    }
+
+    private func merge() {
+        let tree = tree, directory = directory, environment = environment
+        isWorking = true
+        Task {
+            outcome = await Task.detached { () -> Outcome in
+                let failed = { (message: String) in Outcome.failed(title: "Couldn’t Merge", message: message) }
+                guard let target = Git.currentBranch(in: tree.project) else { return failed("The project’s folder isn’t on a branch.") }
+                if let base = tree.base, target != base {
+                    return failed("The project’s folder is on \(target) now. Switch it back to \(base) to merge, or create a pull request.")
+                }
+                if let reason = Self.unready(tree, in: directory, against: target) { return failed(reason) }
+                return switch Git.merge(tree.branch, into: tree.project, environment: environment) {
+                case .merged: .merged(into: target)
+                case .conflict(let files): .conflict(files, into: target)
+                case .failed(let message): failed(message)
+                }
+            }.value
+            isWorking = false
+            let result = switch outcome {
+            case .merged: "merged"
+            case .conflict: "conflict"
+            default: "failed"
+            }
+            Analytics.shared.track("worktree_merged", ["outcome": result])
+        }
+    }
+
+    private func pullRequest() {
+        let tree = tree, directory = directory, environment = environment
+        isWorking = true
+        Task {
+            let result = await Task.detached { () -> Result<URL?, GitFailure> in
+                if let base = tree.base, let reason = Self.unready(tree, in: directory, against: base) { return .failure(GitFailure(message: reason)) }
+                do {
+                    return .success(try Git.pushForPullRequest(branch: tree.branch, base: tree.base, in: directory, environment: environment))
+                } catch {
+                    return .failure(error as? GitFailure ?? GitFailure(message: error.localizedDescription))
+                }
+            }.value
+            isWorking = false
+            if case .success(let page) = result {
+                Analytics.shared.track("pull_request_opened", ["host": page?.host()?.contains("gitlab") == true ? "gitlab" : page == nil ? "other" : "github"])
+            }
+            switch result {
+            case .success(let page?): NSWorkspace.shared.open(page)
+            case .success(nil): outcome = .pushed
+            case .failure(let failure): outcome = .failed(title: "Couldn’t Push", message: failure.message)
+            }
         }
     }
 }

@@ -135,7 +135,7 @@ struct MainView: View {
                     // A click outside closes it.
                     Color.black.opacity(0.001)
                         .onTapGesture { showsOpenQuickly = false }
-                    OpenQuickly(roots: [directory] + (workspace.settings[directory]?.folders ?? [])) { url in
+                    OpenQuickly(roots: [directory] + workspace.extraFolders(directory)) { url in
                         showsOpenQuickly = false
                         Analytics.shared.track("open_quickly_used")
                         showInPanel { utilities.show(url) }
@@ -344,7 +344,7 @@ struct MainView: View {
         UtilitiesPane(
             utilities: utilities,
             directory: activeDirectory,
-            folders: activeDirectory.map { [$0] + (workspace.settings[$0]?.folders ?? []) } ?? [],
+            folders: activeDirectory.map { [$0] + workspace.extraFolders($0) } ?? [],
             model: activeModel,
             environment: app.shellEnvironment,
             isExpanded: $panelExpanded,
@@ -508,9 +508,9 @@ struct MainView: View {
         )
     }
 
-    /// Starts a draft in `directory`, or in the current project.
+    /// Starts a draft in `directory`, or in the current project (a worktree's, for a session in one).
     private func newSession(in directory: String?) {
-        let directory = directory ?? activeDirectory ?? workspace.projects.first?.directory
+        let directory = directory ?? activeDirectory.map(workspace.projectDirectory) ?? workspace.projects.first?.directory
         guard let directory else { return openFolder() }
         openTab(SidebarView.draftTag(directory))
     }
@@ -613,8 +613,9 @@ struct MainView: View {
         guard let prompt = environment["KUVO_DEMO_PROMPT"] else { return newSession(in: folder) }
         let parts = environment["KUVO_DEMO_MODEL"]?.split(separator: "/", maxSplits: 1).map(String.init)
         let model = parts.flatMap { $0.count == 2 ? ModelRef(id: $0[1], providerID: $0[0]) : nil }
-        // Like a new session from the UI: the chosen model, or the default one.
-        guard let session = try? await workspace.createSession(in: folder, model: model ?? catalog.defaultModel?.ref, agent: catalog.startingAgent(chosen: app.engineConfig.value(at: ["default_agent"])?.string)) else { return }
+        // Like a new session from the UI: the chosen model, or the default one. KUVO_DEMO_WORKTREE
+        // gives it a worktree of its own.
+        guard let session = try? await workspace.createSession(in: folder, model: model ?? catalog.defaultModel?.ref, agent: catalog.startingAgent(chosen: app.engineConfig.value(at: ["default_agent"])?.string), worktree: environment["KUVO_DEMO_WORKTREE"] != nil) else { return }
         openTab(session.id)
         // KUVO_DEMO_FILES: comma-separated paths to attach.
         let files = environment["KUVO_DEMO_FILES"]?.split(separator: ",").map { URL(filePath: String($0)) } ?? []
