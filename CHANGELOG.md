@@ -38,6 +38,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Scrolled up in a conversation, a button takes you back to the newest message.
 - A step you stopped, with Stop or Send Now, shows as stopped instead of as a red error.
 - The panel no longer shows scroll bars, which took a strip off its content on Macs set to always show them.
+- A long conversation sometimes opened part of the way up instead of at its newest message.
 
 ## 0.1.2
 

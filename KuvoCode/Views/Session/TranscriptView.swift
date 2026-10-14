@@ -57,7 +57,9 @@ struct TranscriptView: View {
             if isScrolling { followsEnd = atEnd }
         }
         .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { old, new in
-            guard followsEnd, !isScrolling, new > old else { return }
+            // Shrinking too: the lazy stack's first guess at the height can be too big, and a
+            // session would then open part of the way up.
+            guard followsEnd, !isScrolling, new != old else { return }
             position.scrollTo(edge: .bottom)
         }
         .scrollEdgeEffectStyle(.soft, for: .all)
