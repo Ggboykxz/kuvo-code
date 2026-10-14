@@ -126,6 +126,11 @@ struct ToolCallView: View {
         case "question": return isActive ? "Asking you a question" : "Asked you a question"
         case "subagent": return (string("description") ?? "Delegated a task") + (string("agent").map { " · \($0)" } ?? "")
         case "skill": return "Used a skill"
+        case "execute":
+            // Code Mode: the agent wrote code that calls its tools.
+            let calls = call.state.metadata?["toolCalls"]?.array?.count ?? 0
+            let failed = call.state.metadata?["error"]?.bool == true
+            return (isActive ? "Running code" : "Ran code") + (calls > 0 ? " using \(calls) tool\(calls == 1 ? "" : "s")" : "") + (failed && !isActive ? " (it failed)" : "")
         default:
             if let browsing = browserSummary { return browsing }
             return call.name.replacingOccurrences(of: "_", with: " ").capitalized
@@ -170,6 +175,7 @@ struct ToolCallView: View {
         case "question": "questionmark.bubble"
         case "subagent": "person.2"
         case "skill": "wand.and.stars"
+        case "execute": "chevron.left.forwardslash.chevron.right"
         default: call.name.hasPrefix("kuvo-browser_") ? "safari" : "wrench.and.screwdriver"
         }
     }
@@ -198,12 +204,22 @@ struct ToolCallView: View {
     }
 
     private var hasDetails: Bool {
-        subagentSession != nil || !diffs.isEmpty || (call.name == "shell" && !outputText.isEmpty) || call.state.isFailure
+        subagentSession != nil || !diffs.isEmpty || (call.name == "shell" && !outputText.isEmpty) || code != nil || call.state.isFailure
+    }
+
+    /// The code a Code Mode step ran.
+    private var code: String? {
+        call.name == "execute" ? string("code") : nil
     }
 
     @ViewBuilder private var details: some View {
         if let subagentSession {
             SubagentSteps(id: subagentSession, task: string("prompt"), directory: directory)
+        } else if let code {
+            VStack(alignment: .leading, spacing: 8) {
+                OutputBlock(text: code)
+                if !outputText.isEmpty { OutputBlock(text: outputText) }
+            }
         } else if !diffs.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(diffs) { diff in
@@ -211,16 +227,25 @@ struct ToolCallView: View {
                 }
             }
         } else {
-            ScrollView(.horizontal) {
-                Text(outputText.trimmingCharacters(in: .whitespacesAndNewlines))
-                    .font(.transcriptCode)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .padding(12)
-            }
-            .frame(maxHeight: 260)
-            .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 10))
+            OutputBlock(text: outputText)
         }
+    }
+}
+
+/// A command's output or a step's code, in a box that scrolls sideways for long lines.
+private struct OutputBlock: View {
+    let text: String
+
+    var body: some View {
+        ScrollView(.horizontal) {
+            Text(text.trimmingCharacters(in: .whitespacesAndNewlines))
+                .font(.transcriptCode)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: true, vertical: false)
+                .padding(12)
+        }
+        .frame(maxHeight: 260)
+        .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 10))
     }
 }
 
