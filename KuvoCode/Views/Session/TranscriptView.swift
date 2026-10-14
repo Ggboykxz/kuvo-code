@@ -290,6 +290,14 @@ private struct RowView: View {
     /// Under the pointer: a message shows its buttons.
     @State private var isHovering = false
 
+    /// When a message was sent: the time today, the day and time before that.
+    static func sentAt(_ created: Milliseconds) -> String {
+        let date = Date(timeIntervalSince1970: created / 1000)
+        if Calendar.current.isDateInToday(date) { return date.formatted(date: .omitted, time: .shortened) }
+        if Calendar.current.isDateInYesterday(date) { return "Yesterday " + date.formatted(date: .omitted, time: .shortened) }
+        return date.formatted(.dateTime.month(.abbreviated).day().hour().minute())
+    }
+
     /// " 12s", " 1m 5s" after a few seconds, then " · Esc to stop".
     static func elapsed(since: Milliseconds?, now: Date) -> String {
         guard let since else { return "" }
@@ -309,6 +317,10 @@ private struct RowView: View {
                 UserBubble(text: text, attachments: stored + paths.map(AttachmentItem.path), comments: comments)
                 // Always laid out, shown under the pointer: nothing moves when they appear.
                 HStack(spacing: 0) {
+                    Text(Self.sentAt(message.time.created))
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .padding(.trailing, 6)
                     if !text.isEmpty {
                         CopyButton(text: text, help: "Copy")
                     }
