@@ -48,8 +48,9 @@ nonisolated struct DiffLine: Hashable, Sendable {
 @Observable
 final class ProjectChanges {
     enum Scope: String, CaseIterable, Identifiable {
-        /// `branch` is everything since the branch left its base, committed or not.
-        case uncommitted, unstaged, staged, branch
+        /// `branch` is everything since the branch left its base, committed or not; `session`
+        /// is the session's own edits, as the engine recorded them.
+        case uncommitted, unstaged, staged, branch, session
         var id: Self { self }
         var title: String {
             switch self {
@@ -57,6 +58,7 @@ final class ProjectChanges {
             case .unstaged: "Unstaged"
             case .staged: "Staged"
             case .branch: "Branch"
+            case .session: "This Session"
             }
         }
     }
@@ -85,6 +87,12 @@ final class ProjectChanges {
     /// Reads the changes again. `fallback` is the engine's diff, used outside a repository.
     func refresh(fallback: [FileDiff] = []) async {
         let directory = directory, scope = scope, base = base
+        if scope == .session {
+            hasUncommitted = false
+            apply(fallback.map { DiffParser.file(from: $0, directory: directory) })
+            isLoaded = true
+            return
+        }
         let (result, uncommitted) = await Task.detached {
             (Git.changes(in: directory, scope: scope, base: base), scope != .branch || Git.hasUncommittedChanges(in: directory))
         }.value
@@ -162,7 +170,8 @@ nonisolated enum Git {
         let limit = relativePath(of: directory, in: root)
         var arguments = ["-c", "core.quotepath=off", "diff", "--no-color", "--no-ext-diff", "--find-renames", "-U100000"]
         switch scope {
-        case .uncommitted, .branch: arguments.append(base)
+        // The session's edits come from the engine, not git; read like Uncommitted here.
+        case .uncommitted, .branch, .session: arguments.append(base)
         case .unstaged: break
         case .staged: arguments += ["--cached", base]
         }
@@ -379,7 +388,10 @@ nonisolated enum DiffParser {
         let base = directory.hasSuffix("/") ? directory : directory + "/"
         let path = diff.file.hasPrefix(base) ? String(diff.file.dropFirst(base.count)) : diff.file
         let url = URL(filePath: diff.file.hasPrefix("/") ? diff.file : base + diff.file)
-        let parsed = files(from: "diff --git a/\(path) b/\(path)\n" + diff.patch, root: directory).first
+        // The engine's patches may come with git's header already; a second one would read as an
+        // empty file before this one.
+        let patch = diff.patch.hasPrefix("diff --git ") ? diff.patch : "diff --git a/\(path) b/\(path)\n" + diff.patch
+        let parsed = files(from: patch, root: directory).first
         var file = parsed ?? ChangedFile(path: path, status: .modified, url: url)
         file.path = path
         file.url = url

@@ -88,7 +88,7 @@ struct ChangesPanel: View {
                     Picker("Folder", selection: Binding(get: { changes.directory }, set: { folder in
                         let scope = changes.scope
                         changes = ProjectChanges(directory: folder)
-                        changes.scope = scope == .branch ? .uncommitted : scope
+                        changes.scope = scope == .branch || scope == .session ? .uncommitted : scope
                         collapsed = []
                     })) {
                         ForEach(folders, id: \.self) { Text(($0 as NSString).lastPathComponent).tag($0) }
@@ -107,13 +107,20 @@ struct ChangesPanel: View {
             if changes.isRepository {
                 Menu {
                     Picker("Changes", selection: $changes.scope) {
-                        ForEach(ProjectChanges.Scope.allCases.filter { $0 != .branch }) { Text($0.title).tag($0) }
+                        ForEach([ProjectChanges.Scope.uncommitted, .unstaged, .staged]) { Text($0.title).tag($0) }
                     }
                     .pickerStyle(.inline)
                     if let base = changes.base {
                         Divider()
                         Picker("Branch", selection: $changes.scope) {
                             Text("Since \(base)").tag(ProjectChanges.Scope.branch)
+                        }
+                        .pickerStyle(.inline)
+                    }
+                    if model != nil, isPrimary {
+                        Divider()
+                        Picker("Session", selection: $changes.scope) {
+                            Text("This Session").tag(ProjectChanges.Scope.session)
                         }
                         .pickerStyle(.inline)
                     }
@@ -169,6 +176,7 @@ struct ChangesPanel: View {
                 if changes.isLoaded {
                     Text(!changes.isRepository ? "Files the agent edits show up here."
                         : changes.scope == .branch ? "Nothing changed since \(changes.base ?? "the branch began")."
+                        : changes.scope == .session ? "The agent hasn't changed any files in this session yet."
                         : "Nothing \(changes.scope.title.lowercased()) in this project.")
                 }
             }
@@ -195,7 +203,7 @@ struct ChangesPanel: View {
                                 )
                             }
                         } header: {
-                            FileHeader(file: file, isCollapsed: collapsed.contains(file.id), scope: changes.isRepository && changes.scope != .branch ? changes.scope : nil) {
+                            FileHeader(file: file, isCollapsed: collapsed.contains(file.id), scope: changes.isRepository && changes.scope != .branch && changes.scope != .session ? changes.scope : nil) {
                                 withAnimation(.ui) {
                                     if collapsed.contains(file.id) { collapsed.remove(file.id) } else { collapsed.insert(file.id) }
                                 }
