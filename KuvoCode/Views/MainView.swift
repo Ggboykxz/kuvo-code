@@ -155,6 +155,7 @@ struct MainView: View {
         }
         .onAppear(perform: startIfEmpty)
         .onAppear { Notifier.shared.open = { openTab($0) } }
+        .onAppear { utilities.addToMessage = { addToMessage($0) } }
         .onChange(of: workspace.requestedTab) { _, id in
             guard let id else { return }
             openTab(id)
@@ -368,6 +369,20 @@ struct MainView: View {
             }
             return
         }
+    }
+
+    /// Adds a file's lines ("@src/App.swift:12-20") or a terminal's output to what's in the
+    /// composer of the tab in view, and puts the cursor there.
+    private func addToMessage(_ addition: String) {
+        guard let key = selection else { return }
+        var text = Drafts.shared[key].text
+        let isBlock = addition.hasPrefix("```")
+        if !text.isEmpty {
+            if isBlock { if !text.hasSuffix("\n") { text += "\n" } } else if !(text.last?.isWhitespace ?? true) { text += " " }
+        }
+        Drafts.shared[key].text = text + addition + (isBlock ? "\n" : " ")
+        workspace.model(for: key)?.focusComposer()
+        focus = .conversation
     }
 
     /// A draft became a real session: it keeps its place in the tab strip.

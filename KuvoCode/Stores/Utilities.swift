@@ -29,6 +29,9 @@ final class Utilities {
     let history = BrowserHistory()
     /// Goes up when something (the agent's browsing) needs the panel in view.
     private(set) var revealRequest = 0
+    /// Puts text in the composer of the session in view, for Add to Message on a selection
+    /// in a file or a terminal. The window sets it.
+    @ObservationIgnored var addToMessage: ((String) -> Void)?
 
     var selected: Tab? { tabs.first { $0.id == selection } ?? tabs.first }
 
@@ -51,7 +54,9 @@ final class Utilities {
 
     func newTerminal(in directory: String?, environment: [String: String]) {
         let tab = Tab(kind: .terminal)
-        terminals[tab.id] = TerminalSession(directory: directory ?? NSHomeDirectory(), environment: environment)
+        let terminal = TerminalSession(directory: directory ?? NSHomeDirectory(), environment: environment)
+        terminal.addToMessage = { [weak self] text in self?.addToMessage?(text) }
+        terminals[tab.id] = terminal
         add(tab)
     }
 

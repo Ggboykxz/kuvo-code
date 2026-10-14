@@ -9,6 +9,8 @@ final class TerminalSession: NSObject {
     let view: LocalProcessTerminalView
     private(set) var title = "Terminal"
     private(set) var isRunning = true
+    /// Add to Message in the right-click menu, with the selected text.
+    @ObservationIgnored var addToMessage: ((String) -> Void)?
     @ObservationIgnored private var appliedLook: (dark: Bool, focused: Bool)?
 
     init(directory: String, environment: [String: String]) {
@@ -19,6 +21,9 @@ final class TerminalSession: NSObject {
         view.optionAsMetaKey = true
         // Scrolling works as anywhere else; a permanent scroll bar track is just clutter.
         for scroller in view.subviews.compactMap({ $0 as? NSScroller }) { scroller.isHidden = true }
+        let menu = NSMenu()
+        menu.delegate = self
+        view.menu = menu
         var environment = environment
         environment["TERM"] = "xterm-256color"
         environment["COLORTERM"] = "truecolor"
@@ -81,6 +86,33 @@ final class TerminalSession: NSObject {
         0x000000, 0xCD3131, 0x107C10, 0x949800, 0x0451A5, 0xBC05BC, 0x0598BC, 0x555555,
         0x666666, 0xCD3131, 0x14A314, 0xB5BA00, 0x0451A5, 0xBC05BC, 0x0598BC, 0xA5A5A5,
     ])
+}
+
+/// Right-click: Add to Message, Copy and Paste.
+extension TerminalSession: NSMenuDelegate {
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let hasSelection = view.selectionActive
+        let add = NSMenuItem(title: "Add to Message", action: hasSelection ? #selector(addSelection) : nil, keyEquivalent: "")
+        add.target = self
+        menu.addItem(add)
+        menu.addItem(.separator())
+        let copy = NSMenuItem(title: "Copy", action: hasSelection ? #selector(NSText.copy(_:)) : nil, keyEquivalent: "")
+        copy.target = view
+        menu.addItem(copy)
+        let paste = NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "")
+        paste.target = view
+        menu.addItem(paste)
+    }
+
+    /// The selection as a code block, without the blank space terminals pad lines with.
+    @objc private func addSelection() {
+        guard let selection = view.getSelection() else { return }
+        let lines = selection.components(separatedBy: "\n").map { String($0.reversed().drop(while: \.isWhitespace).reversed()) }
+        let text = lines.joined(separator: "\n").trimmingCharacters(in: .newlines)
+        guard !text.isEmpty else { return }
+        addToMessage?("```\n\(text)\n```")
+    }
 }
 
 extension TerminalSession: @preconcurrency LocalProcessTerminalViewDelegate {

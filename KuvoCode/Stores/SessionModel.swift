@@ -37,6 +37,7 @@ final class SessionModel {
     private(set) var findRequest = 0
 
     func showFind() { findRequest += 1 }
+    func focusComposer() { composerFocus += 1 }
     /// Queued messages wait for Resume: after Stop, a failed run, or when the app finds them
     /// waiting at launch.
     private(set) var isQueuePaused = false

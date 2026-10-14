@@ -28,10 +28,18 @@ struct FilesView: View {
         roots.first { file.path.hasPrefix($0 + "/") } ?? roots[0]
     }
 
+    /// How a message names `file`, as "@" does: its path in the primary folder, after its
+    /// folder's name in the others, in full anywhere else.
+    private func mention(of file: URL) -> String {
+        guard let index = roots.firstIndex(where: { file.path.hasPrefix($0 + "/") }) else { return file.path }
+        let relative = String(file.path.dropFirst(roots[index].count + 1))
+        return index == 0 ? relative : URL(filePath: roots[index]).lastPathComponent + "/" + relative
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             if let file {
-                FileViewer(url: file, root: root(of: file), showsTree: $showsTree)
+                FileViewer(url: file, root: root(of: file), mention: mention(of: file), showsTree: $showsTree)
                     .id(file)
                     .frame(minWidth: 0, maxWidth: .infinity)
                     .clipped()
@@ -275,7 +283,9 @@ private func copyPath(_ url: URL) {
 private struct FileViewer: View {
     let url: URL
     let root: String
+    let mention: String
     @Binding var showsTree: Bool
+    @Environment(AppModel.self) private var app
     @State private var content: Content?
     @State private var showsSource = false
 
@@ -304,7 +314,10 @@ private struct FileViewer: View {
                             .padding(20)
                     }
                 case .text(let text):
-                    CodeTextView(text: text, language: CodeHighlighter.language(for: url.path))
+                    CodeTextView(text: text, language: CodeHighlighter.language(for: url.path)) { lines in
+                        let range = lines.count == 1 ? "\(lines.lowerBound)" : "\(lines.lowerBound)-\(lines.upperBound)"
+                        app.utilities.addToMessage?("@\(mention):\(range)")
+                    }
                 case .image(let image):
                     ScrollView([.horizontal, .vertical]) {
                         Image(nsImage: image)

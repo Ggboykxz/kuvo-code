@@ -6,6 +6,8 @@ import SwiftUI
 struct CodeTextView: NSViewRepresentable {
     let text: String
     let language: String?
+    /// Add to Message in the right-click menu, with the selected lines (1 first).
+    var addToMessage: ((ClosedRange<Int>) -> Void)?
     @Environment(\.colorScheme) private var scheme
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -22,6 +24,7 @@ struct CodeTextView: NSViewRepresentable {
         textView.autoresizingMask = .width
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.textContainer?.widthTracksTextView = true
+        textView.delegate = context.coordinator
 
         let scroll = NSScrollView()
         scroll.documentView = textView
@@ -48,6 +51,7 @@ struct CodeTextView: NSViewRepresentable {
         guard let textView = scroll.documentView as? NSTextView else { return }
         let dark = scheme == .dark
         let coordinator = context.coordinator
+        coordinator.addToMessage = addToMessage
         guard coordinator.text != text || coordinator.dark != dark else { return }
         coordinator.text = text
         coordinator.dark = dark
@@ -77,11 +81,36 @@ struct CodeTextView: NSViewRepresentable {
         .foregroundColor: NSColor.labelColor,
     ]
 
-    final class Coordinator {
+    final class Coordinator: NSObject, NSTextViewDelegate {
         var text: String?
         var dark: Bool?
         var ruler: LineNumberRuler?
         var highlight: Task<Void, Never>?
+        var addToMessage: ((ClosedRange<Int>) -> Void)?
+        private var selectedLines: ClosedRange<Int>?
+
+        /// Add to Message first in the text view's own menu, while there's a selection.
+        func textView(_ view: NSTextView, menu: NSMenu, for event: NSEvent, at charIndex: Int) -> NSMenu? {
+            let selection = view.selectedRange()
+            guard addToMessage != nil, selection.length > 0 else { return menu }
+            let string = view.string as NSString
+            func line(at offset: Int) -> Int {
+                1 + string.substring(to: offset).utf16.count { $0 == 10 }
+            }
+            // A selection ending at the start of a line (a whole line picked) doesn't include it.
+            var end = NSMaxRange(selection)
+            if end > selection.location, string.character(at: end - 1) == 10 { end -= 1 }
+            selectedLines = line(at: selection.location)...max(line(at: end), line(at: selection.location))
+            let item = NSMenuItem(title: "Add to Message", action: #selector(addSelection), keyEquivalent: "")
+            item.target = self
+            menu.insertItem(item, at: 0)
+            menu.insertItem(.separator(), at: 1)
+            return menu
+        }
+
+        @objc private func addSelection() {
+            if let selectedLines { addToMessage?(selectedLines) }
+        }
     }
 }
 
