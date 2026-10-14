@@ -162,6 +162,9 @@ struct TranscriptView: View {
                 } else if !sources.isEmpty, sources.allSatisfy({ $0.hasPrefix("core/") }) {
                     // The engine's own guidance (for the browser tools, say): nothing you set.
                     break
+                } else if notice.text.hasPrefix("Your last response hit the output token limit") {
+                    // The engine asking the model to go on after a reply ran out of room.
+                    rows.append(.notice(notice.id, "arrow.turn.down.right", "Hit the length limit for one reply, so it carried on"))
                 } else {
                     rows.append(.notice(notice.id, "info.circle", notice.description ?? notice.text))
                 }

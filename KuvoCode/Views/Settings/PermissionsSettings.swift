@@ -85,7 +85,7 @@ struct PermissionsSettings: View {
             }
 
             Section {
-                RulesEditor(path: ["experimental", "policies"], actions: Self.policyKinds, effects: [.deny, .allow], prompt: "Like shell:git push *, openrouter or mcp:github", allowsAnything: false)
+                RulesEditor(path: ["policies"], actions: Self.policyKinds, effects: [.deny, .allow], prompt: "Like shell:git push *, openrouter or mcp:github", allowsAnything: false)
             } header: {
                 Text("Blocks")
             } footer: {
@@ -93,7 +93,15 @@ struct PermissionsSettings: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .task { await loadSaved() }
+        .task {
+            // Engine 2.0.29 moved blocks out of `experimental`; bring any set there along.
+            let old = app.engineConfig.items(["experimental", "policies"])
+            if !old.isEmpty {
+                app.engineConfig.setItems(app.engineConfig.items(["policies"]) + old, at: ["policies"])
+                app.engineConfig.set(nil, at: ["experimental", "policies"])
+            }
+            await loadSaved()
+        }
     }
 
     static let policyKinds: [(id: String, title: String)] = [
