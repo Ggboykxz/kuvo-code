@@ -14,6 +14,7 @@ struct UtilitiesPane: View {
     @Binding var isExpanded: Bool
     var isFocused = true
     @Environment(\.windowControlsInset) private var windowControlsInset
+    @State private var tabsOverflow = TabsOverflow()
 
     var body: some View {
         Card(title: "", isFocused: isFocused, showsHeader: false) {
@@ -37,33 +38,64 @@ struct UtilitiesPane: View {
 
     private var tabStrip: some View {
         HStack(spacing: 6) {
-            // Tabs share the width and shrink as more open, like a browser's.
-            HStack(spacing: 4) {
-                ForEach(utilities.tabs) { tab in
-                    UtilityTabButton(
-                        title: title(for: tab),
-                        icon: icon(for: tab),
-                        isSelected: tab.id == utilities.selected?.id,
-                        select: { utilities.selection = tab.id },
-                        close: { withAnimation(.ui) { utilities.close(tab.id) } }
-                    )
-                    .frame(minWidth: 44, maxWidth: 190)
-                    .layoutPriority(1)
-                    .contextMenu {
-                        Button("Close Tab") { withAnimation(.ui) { utilities.close(tab.id) } }
-                        Button("Close Other Tabs") {
-                            withAnimation(.ui) { for other in utilities.tabs where other.id != tab.id { utilities.close(other.id) } }
+            // Tabs keep a width you can read their names at; past what fits, the row scrolls
+            // sideways, faded at the edge that has more, and the chosen tab is scrolled into view.
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal) {
+                    HStack(spacing: 4) {
+                        ForEach(utilities.tabs) { tab in
+                            UtilityTabButton(
+                                title: title(for: tab),
+                                icon: icon(for: tab),
+                                isSelected: tab.id == utilities.selected?.id,
+                                select: { utilities.selection = tab.id },
+                                close: { withAnimation(.ui) { utilities.close(tab.id) } }
+                            )
+                            .frame(minWidth: 120, maxWidth: 190)
+                            .id(tab.id)
+                            .contextMenu {
+                                Button("Close Tab") { withAnimation(.ui) { utilities.close(tab.id) } }
+                                Button("Close Other Tabs") {
+                                    withAnimation(.ui) { for other in utilities.tabs where other.id != tab.id { utilities.close(other.id) } }
+                                }
+                                .disabled(utilities.tabs.count < 2)
+                            }
                         }
-                        .disabled(utilities.tabs.count < 2)
                     }
+                    // Room for the chosen tab's lit edge, which the scroll view would cut off.
+                    .padding(1)
                 }
-                Button { withAnimation(.ui) { utilities.newTab() } } label: {
-                    Label("New Tab", systemImage: "plus")
+                .scrollIndicators(.never)
+                .onScrollGeometryChange(for: TabsOverflow.self) { geometry in
+                    TabsOverflow(
+                        width: geometry.contentSize.width,
+                        before: geometry.contentOffset.x > 1,
+                        after: geometry.contentOffset.x + geometry.containerSize.width < geometry.contentSize.width - 1
+                    )
+                } action: { _, overflow in
+                    tabsOverflow = overflow
                 }
-                .buttonStyle(PanelIconStyle())
-                .help("New Tab")
-                Spacer(minLength: 0)
+                .mask { tabsFade }
+                // Toward the middle where it can be, so the tabs beside it show too; at the ends,
+                // the row stops at its edge.
+                .onChange(of: utilities.selected?.id) { _, id in
+                    guard let id else { return }
+                    withAnimation(.ui) { proxy.scrollTo(id, anchor: .center) }
+                }
+                // Opened with a tab far along already chosen, or the row resized: once it's laid out.
+                .onChange(of: tabsOverflow.width) {
+                    if let id = utilities.selected?.id { proxy.scrollTo(id, anchor: .center) }
+                }
             }
+            // As wide as the tabs while they fit, so New Tab follows the last one; then the room
+            // there is, with New Tab at its end.
+            .frame(maxWidth: tabsOverflow.width > 0 ? tabsOverflow.width : nil)
+            Button { withAnimation(.ui) { utilities.newTab() } } label: {
+                Label("New Tab", systemImage: "plus")
+            }
+            .buttonStyle(PanelIconStyle())
+            .help("New Tab")
+            Spacer(minLength: 0)
             Button { withAnimation(.ui) { isExpanded.toggle() } } label: {
                 Label(isExpanded ? "Restore" : "Expand", systemImage: isExpanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
             }
@@ -73,6 +105,18 @@ struct UtilitiesPane: View {
         .padding(.leading, 8 + windowControlsInset)
         .padding(.trailing, 8)
         .frame(height: 44)
+    }
+
+    /// The tabs row faded where there are more tabs to scroll to.
+    private var tabsFade: some View {
+        HStack(spacing: 0) {
+            LinearGradient(colors: [.clear, .black], startPoint: .leading, endPoint: .trailing)
+                .frame(width: tabsOverflow.before ? 24 : 0)
+            Color.black
+            LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing)
+                .frame(width: tabsOverflow.after ? 24 : 0)
+        }
+        .animation(.easeOut(duration: 0.15), value: tabsOverflow)
     }
 
     private func title(for tab: Utilities.Tab) -> String {
@@ -224,4 +268,12 @@ struct PanelIconStyle: ButtonStyle {
             .contentShape(.rect)
             .onHover { isHovering = $0 }
     }
+}
+
+/// How the panel's tabs fit their row: their full width, and whether there are more to scroll
+/// to before or after what shows.
+private struct TabsOverflow: Equatable {
+    var width: CGFloat = 0
+    var before = false
+    var after = false
 }
