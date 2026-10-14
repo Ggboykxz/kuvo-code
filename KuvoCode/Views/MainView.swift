@@ -41,6 +41,10 @@ struct MainView: View {
     @State private var newTitle = ""
     /// The window's content width; the title bar is sized from it.
     @State private var contentWidth: CGFloat = 1200
+    /// Where the middle card starts and where the title bar's items start, in the window: the
+    /// tabs line up with the card.
+    @State private var mainPaneX: CGFloat = 0
+    @State private var titleBarX: CGFloat = 0
 
     enum Pane { case sessions, conversation, changes }
 
@@ -107,6 +111,7 @@ struct MainView: View {
                     }
                 }
                 .environment(\.windowControlsInset, controlsInset)
+                .onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .global).minX }) { mainPaneX = $0 }
                 if let width = layout.changes {
                     PaneResizer(
                         width: Binding(get: { width }, set: { changesWidth = $0 }),
@@ -264,7 +269,7 @@ struct MainView: View {
 
     @ToolbarContentBuilder private var titleBar: some ToolbarContent {
         ToolbarItem(placement: .navigation) {
-            HStack(spacing: 16) {
+            HStack(spacing: 0) {
                 ProjectIdentity(
                     name: activeDirectory.map(workspace.projectName),
                     branch: activeDirectory.flatMap { workspace.branches[$0] },
@@ -275,6 +280,10 @@ struct MainView: View {
                 ) {
                     if let activeDirectory { Task { await workspace.loadBranch(for: activeDirectory) } }
                 }
+                // Up to the middle card, so the tabs start where it does; without the sidebar
+                // there's no room for that, and the tabs follow the project.
+                .frame(width: identityWidth, alignment: .leading)
+                .padding(.trailing, identityWidth == nil ? 16 : 0)
                 if !tabItems.isEmpty {
                     TabStrip(tabs: tabItems, selection: $selection, close: { closeTab($0) }, closeAll: closeTabs(except:)) { id in
                         guard let session = workspace.session(id) else { return }
@@ -283,6 +292,7 @@ struct MainView: View {
                     }
                 }
             }
+            .background(WindowXReader { titleBarX = $0 })
             // A width from the window (minus the traffic lights and the buttons on the right), so a
             // narrow window squeezes the tabs instead of pushing them into a » menu.
             .frame(width: max(240, contentWidth - (runCommand == nil ? 150 : 190)), alignment: .leading)
@@ -316,6 +326,13 @@ struct MainView: View {
             .help(showsPanel ? "Hide Panel (⌥⌘0)" : "Show Panel: Changes, Files, Terminal, Browser (⌥⌘0)")
         }
         .sharedBackgroundVisibility(.hidden)
+    }
+
+    /// The project's width in the title bar: up to the middle card, when the sidebar leaves
+    /// enough room for it.
+    private var identityWidth: CGFloat? {
+        let room = mainPaneX - titleBarX
+        return showsSidebar && titleBarX > 0 && room >= 150 ? room : nil
     }
 
     private var tabItems: [TabItem] {

@@ -10,7 +10,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Messages fade out under the conversation's header instead of being cut off, and run on under the composer.
 - **A quieter composer**: no outline, smaller corners, and its buttons stay in the background until you point at them.
 - **Hide the tab bar**, the whole row at the top, with View › Hide Tab Bar (⌥⌘T) or in Settings › General: the cards reach the top of the window, with the sidebar button next to the window's own. Switch sessions from the sidebar or ⌘K.
-- The sidebar sits on the window's glass instead of a card of its own.
+- The sidebar sits on the window's glass instead of a card of its own, its rows lined up under the window's buttons, and the tabs start where the conversation does.
 - **Files a reply names look like files**: an icon and the name in link color, instead of code.
 - **Settings**: long tabs open at the top, Accounts fits each provider's name, and clearer labels in Engine and Panel. New agents, commands and servers are named in their sheet, which says why a name can't be used, and Cancel leaves nothing behind. Escape closes every editor, keys and tokens show as dots until you click them, signing in has one set of buttons, and a rejected API key keeps what you typed.
 - Fixed: Add Rule in Settings › Permissions set Edit Files to Allow.

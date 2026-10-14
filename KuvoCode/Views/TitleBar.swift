@@ -1,3 +1,4 @@
+import AppKit
 import OpenCodeKit
 import SwiftUI
 
@@ -446,5 +447,51 @@ struct SidebarToggle: View {
         }
         .buttonStyle(IconButtonStyle(width: 28, height: 28, cornerRadius: 7))
         .help(showsSidebar ? "Hide Sessions (⌘0)" : "Show Sessions (⌘0)")
+    }
+}
+
+/// Reports where it sits in its window, horizontally: for lining up title bar items, which live
+/// in the toolbar's own views, with the window's content.
+struct WindowXReader: NSViewRepresentable {
+    let changed: (CGFloat) -> Void
+
+    func makeNSView(context: Context) -> Reader { Reader(changed: changed) }
+
+    func updateNSView(_ view: Reader, context: Context) {
+        view.changed = changed
+        view.report()
+    }
+
+    final class Reader: NSView {
+        var changed: (CGFloat) -> Void
+        private var reported: CGFloat?
+
+        init(changed: @escaping (CGFloat) -> Void) {
+            self.changed = changed
+            super.init(frame: .zero)
+        }
+
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+        override func layout() {
+            super.layout()
+            report()
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            report()
+        }
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        func report() {
+            guard window != nil else { return }
+            let x = convert(bounds.origin, to: nil).x
+            guard x != reported else { return }
+            reported = x
+            // After the layout pass that moved it, not during it.
+            DispatchQueue.main.async { [changed] in changed(x) }
+        }
     }
 }

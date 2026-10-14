@@ -7,7 +7,6 @@ import UniformTypeIdentifiers
 /// Rows are flat: a soft fill under the pointer, accent glass under the open session.
 struct SidebarView: View {
     @Environment(Workspace.self) private var workspace
-    @Environment(\.colorScheme) private var scheme
 
     @Binding var selection: String?
     let newSession: (String?) -> Void
@@ -124,26 +123,34 @@ struct SidebarView: View {
                     }
                     }
                 }
-                .padding(.horizontal, 10)
+                // No inset of its own: on the glass, the window's 8pt gap is the sidebar's edge,
+                // as it is the cards', and the rows' icons line up under the window's buttons.
                 .padding(.vertical, 10)
             }
             .scrollIndicators(.never)
 
             if !Analytics.shared.noticeShown {
                 AnalyticsNotice()
-                    .padding(.horizontal, 10)
                     .padding(.bottom, 10)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
-            // A hairline, not a gray rule, like the edges of the cards.
+            // Barely there, and fading out at both ends: it sets the accounts apart without
+            // drawing a rule across the glass.
             Rectangle()
-                .fill(Surface.hairline(scheme))
+                .fill(LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0),
+                        .init(color: .primary.opacity(0.07), location: 0.2),
+                        .init(color: .primary.opacity(0.07), location: 0.8),
+                        .init(color: .clear, location: 1),
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                ))
                 .frame(height: 1)
-                .padding(.horizontal, 10)
+            // Its bottom on the cards' bottom edge.
             AccountsRow(action: showProviders)
-                .padding(.horizontal, 10)
-                .padding(.top, 8)
-                .padding(.bottom, 12)
+                .padding(.top, 6)
         }
         #if DEBUG
         // KUVO_DEMO_SEARCH: text in the sidebar's search field.

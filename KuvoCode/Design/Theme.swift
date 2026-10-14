@@ -9,8 +9,8 @@ enum Metrics {
     /// A card's header bar: icon, title and actions.
     static let cardHeaderHeight: CGFloat = 38
     /// The window's close, minimize and zoom buttons, with the tab bar hidden: the sidebar
-    /// leaves this much above its first row for them.
-    static let windowControlsHeight: CGFloat = 30
+    /// leaves this much above its first row for them, so they read as the list's first row.
+    static let windowControlsHeight: CGFloat = 26
     /// Space between cards, and between cards and the window's edge.
     static let paneGap: CGFloat = 8
     static let bubbleRadius: CGFloat = 18
