@@ -101,6 +101,22 @@ final class ProjectChanges {
         return failure
     }
 
+    /// Commits what's staged, or everything in the project's folder when nothing is, and
+    /// pushes if asked. Returns git's complaint, if any. `environment` is your shell's, so
+    /// hooks, signing and pushing see what they do in Terminal.
+    func commit(message: String, push: Bool, environment: [String: String]) async -> String? {
+        let directory = directory
+        let failure = await Task.detached { Git.commit(message: message, push: push, in: directory, environment: environment) }.value
+        await refresh()
+        return failure
+    }
+
+    /// Whether anything is staged, which is what a commit takes then.
+    func hasStaged() async -> Bool {
+        let directory = directory
+        return await Task.detached { Git.hasStaged(in: directory) }.value
+    }
+
     /// Only publishes when something changed, so a refresh doesn't redraw the panel.
     private func apply(_ files: [ChangedFile]) {
         let signature = files.hashValue
@@ -171,6 +187,48 @@ nonisolated enum Git {
             }
             return git(["restore", "--source=HEAD", "--staged", "--worktree", "--", file.path])
         }
+    }
+
+    static func hasStaged(in directory: String) -> Bool {
+        // `diff --quiet` fails when there are differences.
+        run(["diff", "--cached", "--quiet"], in: directory) == nil
+    }
+
+    static func commit(message: String, push: Bool, in directory: String, environment: [String: String]) -> String? {
+        guard let root = run(["rev-parse", "--show-toplevel"], in: directory)?.trimmingCharacters(in: .whitespacesAndNewlines) else { return "Not a git repository." }
+        if !hasStaged(in: root) {
+            let limit = relativePath(of: directory, in: root)
+            if let failure = report(["add", "-A", "--", limit.isEmpty ? "." : limit], in: root, environment: environment) { return failure }
+        }
+        if let failure = report(["commit", "-m", message], in: root, environment: environment) { return failure }
+        guard push else { return nil }
+        var failure = report(["push"], in: root, environment: environment)
+        // A new branch: push it and track it, as `git push -u` would.
+        if failure?.contains("no upstream branch") == true {
+            failure = report(["push", "-u", "origin", "HEAD"], in: root, environment: environment)
+        }
+        return failure.map { "Committed, but the push didn't go through:\n\($0)" }
+    }
+
+    /// Runs git for something that changes the repository; nil when it worked, else what git
+    /// said. It never waits for a password: with nothing to answer, it fails instead.
+    private static func report(_ arguments: [String], in directory: String, environment: [String: String]) -> String? {
+        let process = Process()
+        process.executableURL = URL(filePath: "/usr/bin/git")
+        process.arguments = arguments
+        process.currentDirectoryURL = URL(filePath: directory)
+        var environment = environment.isEmpty ? ProcessInfo.processInfo.environment : environment
+        environment["GIT_TERMINAL_PROMPT"] = "0"
+        process.environment = environment
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = output
+        do { try process.run() } catch { return error.localizedDescription }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus != 0 else { return nil }
+        let text = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? "git \(arguments.first ?? "") failed." : text
     }
 
     /// An untracked file, as all-new lines.

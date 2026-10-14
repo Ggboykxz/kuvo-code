@@ -20,6 +20,8 @@ struct ChangesPanel: View {
     @State private var highlighting: [String: DiffHighlighting] = [:]
 
     struct DraftTarget: Equatable { var file: String; var line: Int }
+    @Environment(AppModel.self) private var app
+    @State private var isCommitting = false
 
     init(directory: String, folders: [String] = [], model: SessionModel?) {
         self.model = model
@@ -104,6 +106,16 @@ struct ChangesPanel: View {
             }
             DiffStat(additions: changes.additions, deletions: changes.deletions)
             Spacer()
+            // Kept while its form is open, so a push problem stays readable after the commit.
+            if changes.isRepository, !changes.files.isEmpty || isCommitting {
+                Button("Commit…") { isCommitting = true }
+                    .buttonStyle(.borderless)
+                    .font(.system(size: 12, weight: .medium))
+                    .help("Commit the changes, and push them if you like")
+                    .popover(isPresented: $isCommitting, arrowEdge: .bottom) {
+                        CommitForm(changes: changes, environment: app.shellEnvironment) { isCommitting = false }
+                    }
+            }
             Button {
                 withAnimation(.ui) {
                     collapsed = collapsed.count == changes.files.count ? [] : Set(changes.files.map(\.id))
@@ -166,6 +178,71 @@ struct ChangesPanel: View {
                 }
                 .padding(.bottom, 24)
             }
+        }
+    }
+}
+
+// MARK: - Commit
+
+/// A commit message, what it'll take, and whether to push afterwards (remembered).
+private struct CommitForm: View {
+    let changes: ProjectChanges
+    let environment: [String: String]
+    let done: () -> Void
+    @State private var message = ""
+    @State private var hasStaged: Bool?
+    @State private var failure: String?
+    @State private var isWorking = false
+    @AppStorage("changes.pushAfterCommit") private var pushes = false
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Commit Changes")
+                .font(.headline)
+            TextField("Message", text: $message, axis: .vertical)
+                .lineLimit(3...10)
+                .textFieldStyle(.roundedBorder)
+                .focused($isFocused)
+            if let hasStaged {
+                Text(hasStaged ? "Commits what's staged." : "Commits all the changes shown, \(changes.files.count) \(changes.files.count == 1 ? "file" : "files").")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            Toggle("Push afterwards", isOn: $pushes)
+            if let failure {
+                Text(failure)
+                    .font(.callout)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                if isWorking { Spinner(size: 12) }
+                Spacer()
+                Button("Cancel", role: .cancel, action: done)
+                    .keyboardShortcut(.cancelAction)
+                Button(pushes ? "Commit and Push" : "Commit") { commit() }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isWorking)
+            }
+        }
+        .padding(16)
+        .frame(width: 340)
+        .task {
+            isFocused = true
+            hasStaged = await changes.hasStaged()
+        }
+    }
+
+    private func commit() {
+        isWorking = true
+        failure = nil
+        Task {
+            failure = await changes.commit(message: message.trimmingCharacters(in: .whitespacesAndNewlines), push: pushes, environment: environment)
+            isWorking = false
+            if failure == nil { done() }
         }
     }
 }
