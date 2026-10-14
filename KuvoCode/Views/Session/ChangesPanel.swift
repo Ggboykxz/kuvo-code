@@ -22,6 +22,7 @@ struct ChangesPanel: View {
     struct DraftTarget: Equatable { var file: String; var line: Int }
     @Environment(AppModel.self) private var app
     @Environment(Workspace.self) private var workspace
+    @Environment(Catalog.self) private var catalog
     @State private var isCommitting = false
 
     /// The session's own worktree, when it has one.
@@ -145,6 +146,17 @@ struct ChangesPanel: View {
                 BranchMenu(tree: Workspace.Worktree(project: changes.directory, root: changes.directory, branch: branch, base: base), isWorktree: false,
                            directory: changes.directory, model: model, environment: app.shellEnvironment)
             }
+            if let model, changes.isRepository, !changes.files.isEmpty, changes.scope != .session,
+               catalog.commands(in: model.session.location.directory).contains(where: { $0.name == "review" }) {
+                Button {
+                    review(in: model)
+                } label: {
+                    Image(systemName: "text.badge.checkmark")
+                }
+                .buttonStyle(CardActionStyle())
+                .disabled(model.isRunning)
+                .help(model.isRunning ? "Review the changes once the agent is done" : "Have the agent review these changes (/review)")
+            }
             // Kept while its form is open, so a push problem stays readable after the commit.
             if changes.isRepository, !changes.files.isEmpty && changes.hasUncommitted || isCommitting {
                 Button("Commit…") { isCommitting = true }
@@ -168,6 +180,14 @@ struct ChangesPanel: View {
         }
         .padding(.horizontal, 14)
         .frame(height: 40)
+    }
+
+    /// The engine's /review on what the tab shows: the uncommitted changes, or the branch.
+    private func review(in model: SessionModel) {
+        let branch = changes.scope == .branch ? workspace.branches[changes.directory] : nil
+        Analytics.shared.track("review_requested", ["scope": changes.scope.rawValue])
+        model.submit("/review" + (branch.map { " " + $0 } ?? ""), files: [], for: catalog.model(model.session.model), queue: false,
+                     commands: catalog.commands(in: model.session.location.directory))
     }
 
     // MARK: Files

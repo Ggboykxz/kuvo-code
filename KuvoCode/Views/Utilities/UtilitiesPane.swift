@@ -124,7 +124,7 @@ struct UtilitiesPane: View {
                 }
             case .browser:
                 if let session = utilities.browsers[tab.id] {
-                    BrowserPane(session: session) {
+                    BrowserPane(session: session, attach: { utilities.attachToMessage?($0) }) {
                         NewTabPage(utilities: utilities, tabID: tab.id, directory: directory, environment: environment, browser: session)
                     }
                     .id(tab.id)

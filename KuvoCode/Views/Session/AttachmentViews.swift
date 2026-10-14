@@ -74,17 +74,23 @@ nonisolated enum AttachmentItem: Identifiable, Sendable {
         return image
     }
 
-    /// Opens it in its app; a pasted image that only the engine has is written out first.
+    /// Opens it in its app.
     func open() {
-        if let url = fileURL {
-            NSWorkspace.shared.open(url)
-        } else if case .stored(let file, _) = self, let bytes = file.bytes {
-            let ext = type?.preferredFilenameExtension ?? (name as NSString).pathExtension
-            let base = (name as NSString).deletingPathExtension
-            if let url = Attachments.write(bytes, named: base, extension: ext.isEmpty ? "dat" : ext) {
-                NSWorkspace.shared.open(url)
-            }
-        }
+        if let url = localURL() { NSWorkspace.shared.open(url) }
+    }
+
+    /// Shows it in Quick Look, to zoom into a picture.
+    @MainActor func preview() {
+        if let url = localURL() { QuickLook.shared.show([url]) }
+    }
+
+    /// Where it is on this Mac; a pasted image that only the engine has is written out first.
+    private func localURL() -> URL? {
+        if let url = fileURL { return url }
+        guard case .stored(let file, _) = self, let bytes = file.bytes else { return nil }
+        let ext = type?.preferredFilenameExtension ?? (name as NSString).pathExtension
+        let base = (name as NSString).deletingPathExtension
+        return Attachments.write(bytes, named: base, extension: ext.isEmpty ? "dat" : ext)
     }
 
     func revealInFinder() {
@@ -239,8 +245,9 @@ private struct AttachmentPicture: View {
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.primary.opacity(0.08)))
         .contentShape(.rect(cornerRadius: 12))
         .onTapGesture(count: 2) { item.open() }
+        .onTapGesture { item.preview() }
         .contextMenu { AttachmentMenu(item: item) }
-        .help("\(item.name) — double-click to open")
+        .help("\(item.name) — click to look closer, double-click to open")
         .task(id: item.id) { image = await item.loadImage() }
     }
 

@@ -210,6 +210,7 @@ struct MainView: View {
         .onAppear(perform: startIfEmpty)
         .onAppear { Notifier.shared.open = { openTab($0) } }
         .onAppear { utilities.addToMessage = { addToMessage($0) } }
+        .onAppear { utilities.attachToMessage = { attachToMessage($0) } }
         .onChange(of: workspace.requestedTab) { _, id in
             guard let id else { return }
             openTab(id)
@@ -486,6 +487,15 @@ struct MainView: View {
             if isBlock { if !text.hasSuffix("\n") { text += "\n" } } else if !(text.last?.isWhitespace ?? true) { text += " " }
         }
         Drafts.shared[key].text = text + addition + (isBlock ? "\n" : " ")
+        if SidebarView.draftDirectory(from: key) != nil { draftFocus += 1 } else { workspace.model(for: key)?.focusComposer() }
+        focus = .conversation
+    }
+
+    /// Attaches files to the message in the composer of the tab in view, and puts the cursor there.
+    private func attachToMessage(_ files: [URL]) {
+        if selection == nil { newSession(in: nil) }
+        guard let key = selection else { return }
+        Drafts.shared[key].files += files.filter { !Drafts.shared[key].files.contains($0) }
         if SidebarView.draftDirectory(from: key) != nil { draftFocus += 1 } else { workspace.model(for: key)?.focusComposer() }
         focus = .conversation
     }

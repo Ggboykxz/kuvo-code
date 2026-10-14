@@ -121,6 +121,8 @@ extension BrowserSession: WKNavigationDelegate {
 /// page, or the new tab page while the tab hasn't gone anywhere.
 struct BrowserPane<NewTab: View>: View {
     let session: BrowserSession
+    /// Attaches files to the message being written, for Add Screenshot to Message.
+    var attach: ([URL]) -> Void = { _ in }
     @ViewBuilder let newTab: () -> NewTab
     @State private var address = ""
     @FocusState private var editing: Bool
@@ -205,6 +207,11 @@ struct BrowserPane<NewTab: View>: View {
 
     private var actions: some View {
         HStack(spacing: 0) {
+            Button(action: addScreenshot) {
+                Label("Add Screenshot to Message", systemImage: "camera.viewfinder")
+            }
+            .disabled(session.url == nil)
+            .help("Add a screenshot of the page to your message, so the agent sees what you see")
             Button {
                 if let url = session.url { NSWorkspace.shared.open(url) }
             } label: { Label("Open in Your Browser", systemImage: "arrow.up.forward.app") }
@@ -240,6 +247,19 @@ struct BrowserPane<NewTab: View>: View {
         .padding(.horizontal, 3)
         .frame(height: 34)
         .background(Color.primary.opacity(0.06), in: .capsule)
+    }
+
+    /// What's in view of the page, as a picture attached to the message being written.
+    private func addScreenshot() {
+        let host = session.url?.host()?.replacingOccurrences(of: "www.", with: "") ?? "page"
+        session.webView.takeSnapshot(with: nil) { image, _ in
+            MainActor.assumeIsolated {
+                guard let image, let tiff = image.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]),
+                      let url = Attachments.write(png, named: "Screenshot of \(host)", extension: "png") else { return }
+                Analytics.shared.track("browser_screenshot_added")
+                attach([url])
+            }
+        }
     }
 
     /// The host while browsing ("google.com"), the full address while editing.

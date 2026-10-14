@@ -34,6 +34,8 @@ final class Utilities {
     /// Puts text in the composer of the session in view, for Add to Message on a selection
     /// in a file or a terminal. The window sets it.
     @ObservationIgnored var addToMessage: ((String) -> Void)?
+    /// Attaches files to that message, like a screenshot of a page.
+    @ObservationIgnored var attachToMessage: (([URL]) -> Void)?
 
     var selected: Tab? { tabs.first { $0.id == selection } ?? tabs.first }
 
