@@ -106,6 +106,8 @@ private struct BottomStack: View {
 /// A new conversation, before its first message creates it on the server.
 struct DraftSessionView: View {
     let directory: String
+    /// Puts the cursor in the composer when it changes.
+    var focusRequest = 0
     let created: (Session, String, [URL]) -> Void
 
     @Environment(Workspace.self) private var workspace
@@ -135,6 +137,7 @@ struct DraftSessionView: View {
                 isRunning: isCreating,
                 folders: [directory] + (workspace.settings[directory]?.folders ?? []),
                 commands: catalog.commands(in: directory),
+                focusRequest: focusRequest,
                 onSelectAgent: { agent = $0 },
                 onSelectApproval: { approval = $0 },
                 onSelectModel: { lastModel = $0 },

@@ -27,6 +27,8 @@ struct MainView: View {
     @State private var focus = Pane.conversation
     /// Tabs you closed, last one last, with where they were: ⇧⌘T opens them again.
     @State private var closedTabs: [ClosedTab] = []
+    /// Goes up to put the cursor in a new session's composer.
+    @State private var draftFocus = 0
     /// Open Quickly's palette is showing.
     @State private var showsOpenQuickly = false
     /// A tab's session being renamed, and the title being typed.
@@ -306,7 +308,7 @@ struct MainView: View {
                     Button("Close Tab", systemImage: "xmark") { closeTab(SidebarView.draftTag(directory)) }
                         .help("Close Tab")
                 } content: {
-                    DraftSessionView(directory: directory) { session, text, files in
+                    DraftSessionView(directory: directory, focusRequest: draftFocus) { session, text, files in
                         replaceTab(SidebarView.draftTag(directory), with: session.id)
                         workspace.model(for: session.id)?.submit(text, files: files, for: catalog.model(session.model), queue: false, commands: catalog.commands(in: directory))
                     }
@@ -389,12 +391,16 @@ struct MainView: View {
         if closedTabs.count > 50 { closedTabs.removeFirst(closedTabs.count - 50) }
     }
 
+    /// Not open again already, and not a session deleted since.
+    private func canReopen(_ closed: ClosedTab) -> Bool {
+        !tabs.contains(closed.key) && (SidebarView.draftDirectory(from: closed.key) != nil || workspace.session(closed.key) != nil)
+    }
+
     /// Opens the tab closed last, where it was, skipping sessions deleted since.
     private func reopenClosedTab() {
         while let closed = closedTabs.popLast() {
             var tabs = tabs
-            guard !tabs.contains(closed.key) else { continue }
-            if SidebarView.draftDirectory(from: closed.key) == nil, workspace.session(closed.key) == nil { continue }
+            guard canReopen(closed) else { continue }
             tabs.insert(closed.key, at: min(closed.index, tabs.count))
             withAnimation(.ui) {
                 self.tabs = tabs
@@ -408,6 +414,8 @@ struct MainView: View {
     /// Adds a file's lines ("@src/App.swift:12-20") or a terminal's output to what's in the
     /// composer of the tab in view, and puts the cursor there.
     private func addToMessage(_ addition: String) {
+        // With no tab open, a new session gets it.
+        if selection == nil { newSession(in: nil) }
         guard let key = selection else { return }
         var text = Drafts.shared[key].text
         let isBlock = addition.hasPrefix("```")
@@ -415,7 +423,7 @@ struct MainView: View {
             if isBlock { if !text.hasSuffix("\n") { text += "\n" } } else if !(text.last?.isWhitespace ?? true) { text += " " }
         }
         Drafts.shared[key].text = text + addition + (isBlock ? "\n" : " ")
-        workspace.model(for: key)?.focusComposer()
+        if SidebarView.draftDirectory(from: key) != nil { draftFocus += 1 } else { workspace.model(for: key)?.focusComposer() }
         focus = .conversation
     }
 
@@ -454,7 +462,7 @@ struct MainView: View {
             hasSession: model != nil,
             hasProject: activeDirectory != nil,
             canStop: model?.isRunning == true,
-            canReopenTab: !closedTabs.isEmpty,
+            canReopenTab: closedTabs.contains(where: canReopen),
             newSession: { newSession(in: nil) },
             openFolder: openFolder,
             newProject: { projectSheet = ProjectSheetRequest(project: nil) },

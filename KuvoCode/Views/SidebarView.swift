@@ -235,12 +235,16 @@ struct SidebarView: View {
 
     /// Saves the conversation as a Markdown file where you choose.
     private func export(_ session: Session) async {
-        guard let text = try? await workspace.markdown(of: session.id) else { return }
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
-        panel.nameFieldStringValue = (session.title ?? "Conversation").replacingOccurrences(of: "/", with: "-") + ".md"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        try? text.write(to: url, atomically: true, encoding: .utf8)
+        do {
+            guard let text = try await workspace.markdown(of: session.id) else { return }
+            let panel = NSSavePanel()
+            panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
+            panel.nameFieldStringValue = (session.title ?? "Conversation").replacingOccurrences(of: "/", with: "-") + ".md"
+            guard panel.runModal() == .OK, let url = panel.url else { return }
+            try text.write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            NSAlert(error: error).runModal()
+        }
     }
 
     @ViewBuilder private func menu(for session: Session) -> some View {
@@ -252,9 +256,13 @@ struct SidebarView: View {
         Divider()
         Button("Copy as Markdown") {
             Task {
-                guard let text = try? await workspace.markdown(of: session.id) else { return }
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(text, forType: .string)
+                do {
+                    guard let text = try await workspace.markdown(of: session.id) else { return }
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                } catch {
+                    NSAlert(error: error).runModal()
+                }
             }
         }
         Button("Export as Markdown…") { Task { await export(session) } }

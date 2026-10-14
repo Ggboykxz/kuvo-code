@@ -92,8 +92,8 @@ struct AppCommands: Commands {
         // In place of Close and Close All: ⌘W closes the session tab, as in browsers.
         CommandGroup(replacing: .saveItem) {
             Button("Close Tab") {
-                // Another window, like Settings, just closes.
-                if let actions { actions.closeTab() } else { NSApp.keyWindow?.performClose(nil) }
+                // Another window in front, like Settings or an update window, just closes.
+                if let actions, NSApp.keyWindow?.identifier?.rawValue == "main" { actions.closeTab() } else { NSApp.keyWindow?.performClose(nil) }
             }
             .keyboardShortcut("w")
             Button("Close Window") { NSApp.keyWindow?.performClose(nil) }
