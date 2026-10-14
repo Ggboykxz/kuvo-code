@@ -108,6 +108,7 @@ struct DraftSessionView: View {
     let directory: String
     /// Puts the cursor in the composer when it changes.
     var focusRequest = 0
+    /// Each session the message starts (several, for attempts), the first first.
     let created: (Session, String, [URL]) -> Void
 
     @Environment(Workspace.self) private var workspace
@@ -119,6 +120,8 @@ struct DraftSessionView: View {
     @AppStorage(ToolApproval.key) private var approval = ToolApproval.approveAll
     /// New sessions in a git repository get a worktree of their own (remembered).
     @AppStorage("newSessionWorktree") private var worktree = false
+    /// How many sessions try the task, each in its own worktree; back to one after sending.
+    @State private var attempts = 1
     @State private var isCreating = false
 
     /// Worktrees are for git repositories.
@@ -151,6 +154,8 @@ struct DraftSessionView: View {
                 onSelectModel: { lastModel = $0 },
                 worktree: isRepository ? worktree : nil,
                 onSelectWorktree: { worktree = $0 },
+                attempts: attempts,
+                onSelectAttempts: { attempts = $0 },
                 onSend: send,
                 onStop: {}
             )
@@ -158,7 +163,7 @@ struct DraftSessionView: View {
             .readableColumn()
 
             if isCreating, isRepository, worktree {
-                Label("Setting up a worktree…", systemImage: "arrow.triangle.branch")
+                Label(attempts > 1 ? "Setting up \(attempts) worktrees…" : "Setting up a worktree…", systemImage: "arrow.triangle.branch")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .padding(.top, 12)
@@ -181,11 +186,18 @@ struct DraftSessionView: View {
         isCreating = true
         let message = Drafts.shared[draftKey].text
         let attachments = Drafts.shared[draftKey].files
+        let inWorktrees = isRepository && worktree
+        let count = inWorktrees ? attempts : 1
         Task {
             do {
-                let session = try await workspace.createSession(in: directory, model: lastModel ?? catalog.defaultModel?.ref, agent: agent, approval: approval, worktree: isRepository && worktree)
+                // One after another: each worktree's setup runs on its own.
+                var sessions: [Session] = []
+                for _ in 0..<count {
+                    sessions.append(try await workspace.createSession(in: directory, model: lastModel ?? catalog.defaultModel?.ref, agent: agent, approval: approval, worktree: inWorktrees))
+                }
+                if count > 1 { Analytics.shared.track("attempts_started", ["count": count]) }
                 Drafts.shared.remove(draftKey)
-                created(session, message, attachments)
+                for session in sessions { created(session, message, attachments) }
             } catch {
                 failure = error.localizedDescription
                 isCreating = false

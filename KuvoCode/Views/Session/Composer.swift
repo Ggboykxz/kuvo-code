@@ -31,6 +31,9 @@ struct Composer: View {
     /// A new session in a git repository: whether it gets a worktree of its own (nil hides it).
     var worktree: Bool?
     var onSelectWorktree: (Bool) -> Void = { _ in }
+    /// Sessions to start with the message, each in a worktree of its own.
+    var attempts = 1
+    var onSelectAttempts: (Int) -> Void = { _ in }
     var onSend: () -> Void
     /// ⌘Return: after the run, and anything queued before.
     var onQueue: () -> Void = {}
@@ -190,7 +193,7 @@ struct Composer: View {
                 ModeChip(agent: agent, approval: approval, onSelectAgent: onSelectAgent, onSelectApproval: onSelectApproval)
                 ModelChip(selection: model, onSelect: onSelectModel)
                 if let worktree {
-                    WorkplaceChip(worktree: worktree, onSelect: onSelectWorktree)
+                    WorkplaceChip(worktree: worktree, attempts: attempts, onSelect: onSelectWorktree, onSelectAttempts: onSelectAttempts)
                 }
                 Spacer(minLength: 0)
                 actionButton

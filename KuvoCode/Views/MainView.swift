@@ -366,7 +366,13 @@ struct MainView: View {
                         .help("Close Tab")
                 } content: {
                     DraftSessionView(directory: directory, focusRequest: draftFocus) { session, text, files in
-                        replaceTab(SidebarView.draftTag(directory), with: session.id)
+                        // The first takes the draft's tab and stays in view; more attempts open at the end.
+                        let draft = SidebarView.draftTag(directory)
+                        if tabs.contains(draft) {
+                            replaceTab(draft, with: session.id)
+                        } else if !tabs.contains(session.id) {
+                            tabs.append(session.id)
+                        }
                         workspace.model(for: session.id)?.submit(text, files: files, for: catalog.model(session.model), queue: false, commands: catalog.commands(in: directory))
                     }
                 }

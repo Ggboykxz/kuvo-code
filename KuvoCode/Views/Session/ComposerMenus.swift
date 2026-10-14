@@ -108,13 +108,16 @@ struct ModeChip: View {
 /// in a git worktree of its own, on a branch of its own.
 struct WorkplaceChip: View {
     let worktree: Bool
+    /// How many sessions try the task, each in a worktree of its own.
+    var attempts = 1
     let onSelect: (Bool) -> Void
+    var onSelectAttempts: (Int) -> Void = { _ in }
 
     var body: some View {
         NativeMenuButton(name: "workplace", menu: makeMenu) {
             HStack(spacing: 6) {
                 Image(systemName: worktree ? "arrow.triangle.branch" : "folder")
-                Text(worktree ? "Worktree" : "Local")
+                Text(worktree ? (attempts > 1 ? "Worktree ×\(attempts)" : "Worktree") : "Local")
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.tertiary)
@@ -135,6 +138,15 @@ struct WorkplaceChip: View {
         menu.addItem(ActionItem("Worktree", subtitle: "Works in a copy on a branch of its own", image: NSImage(systemSymbolName: "arrow.triangle.branch", accessibilityDescription: nil), checked: worktree) {
             onSelect(true)
         })
+        menu.addItem(.separator())
+        let counts = NSMenu()
+        for count in 1...4 {
+            counts.addItem(ActionItem(count == 1 ? "1 Session" : "\(count) Sessions", subtitle: count == 1 ? nil : "Each tries it in a worktree of its own", checked: worktree && count == attempts) {
+                onSelect(true)
+                onSelectAttempts(count)
+            })
+        }
+        menu.addItem(.chained("Attempts", value: worktree ? "\(attempts)" : nil, image: NSImage(systemSymbolName: "square.stack", accessibilityDescription: nil), submenu: counts))
         return menu
     }
 }
