@@ -367,8 +367,10 @@ private struct FileViewer: View {
     /// "kuvo-ai › Sources › App.swift".
     private var breadcrumb: Text {
         let base = URL(filePath: root)
-        let relative = url.path.hasPrefix(base.path + "/") ? String(url.path.dropFirst(base.path.count + 1)) : url.lastPathComponent
-        let parts = [base.lastPathComponent] + relative.split(separator: "/").map(String.init)
+        // A file outside the project shows under its own folder.
+        let parts = url.path.hasPrefix(base.path + "/")
+            ? [base.lastPathComponent] + url.path.dropFirst(base.path.count + 1).split(separator: "/").map(String.init)
+            : [url.deletingLastPathComponent().lastPathComponent, url.lastPathComponent]
         var text = Text("")
         for (index, part) in parts.enumerated() {
             let isLast = index == parts.count - 1
