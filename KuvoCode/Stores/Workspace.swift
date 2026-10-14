@@ -308,6 +308,25 @@ final class Workspace {
         return folder
     }
 
+    /// A worktree's branch starts with a made-up name; once its session has a title, the branch
+    /// is named after it, unless it's been pushed (or renamed) already.
+    private func nameBranch(of session: Session) {
+        let folder = session.location.directory
+        guard let tree = worktrees[folder], let title = session.title, !title.isEmpty,
+              tree.branch == "kuvo/" + (tree.root as NSString).lastPathComponent else { return }
+        let slug = Git.slug(title)
+        guard !slug.isEmpty else { return }
+        Task {
+            guard let renamed = await Task.detached(operation: { Git.renameBranch(tree.branch, to: "kuvo/" + slug, in: tree.root) }).value else { return }
+            for (key, value) in worktrees where value.root == tree.root { worktrees[key]?.branch = renamed }
+            saveWorktrees()
+            if let tree = worktrees[folder] {
+                try? await api?.setInstruction(session: session.id, key: Self.worktreeInstructionKey, text: Self.instructions(for: tree))
+            }
+            await loadBranch(for: folder)
+        }
+    }
+
     /// Whether another session still working in the worktree (not archived) would lose it.
     func worktreeIsShared(_ directory: String, besides id: String) -> Bool {
         guard let root = worktrees[directory]?.root else { return false }
@@ -554,6 +573,7 @@ final class Workspace {
     }
 
     private func upsert(_ session: Session) {
+        nameBranch(of: session)
         if let index = sessions.firstIndex(where: { $0.id == session.id }) {
             sessions[index] = session
         } else {

@@ -28,6 +28,31 @@ nonisolated extension Git {
         throw GitFailure(message: failure.isEmpty ? "Couldn't make a branch for the worktree." : failure)
     }
 
+    /// A branch name made from a title: "Trim note titles" is trim-note-titles.
+    static func slug(_ title: String, limit: Int = 40) -> String {
+        var name = ""
+        for word in title.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }) {
+            let ascii = word.filter(\.isASCII)
+            guard !ascii.isEmpty else { continue }
+            let next = name.isEmpty ? String(ascii) : name + "-" + ascii
+            if next.count > limit { break }
+            name = next
+        }
+        return name
+    }
+
+    /// Renames `branch` to `name` (or `name-2` and so on, when that's taken), unless it's been
+    /// pushed: its pull request would lose track of it. Returns the new name.
+    static func renameBranch(_ branch: String, to name: String, in directory: String) -> String? {
+        guard run(["rev-parse", "--abbrev-ref", branch + "@{upstream}"], in: directory) == nil else { return nil }
+        for suffix in 1...20 {
+            let candidate = suffix == 1 ? name : "\(name)-\(suffix)"
+            guard run(["rev-parse", "--verify", "--quiet", "refs/heads/" + candidate], in: directory) == nil else { continue }
+            return report(["branch", "-m", branch, candidate], in: directory, environment: [:]) == nil ? candidate : nil
+        }
+        return nil
+    }
+
     /// Changes that aren't committed, new files included.
     static func hasUncommittedChanges(in directory: String) -> Bool {
         !(run(["status", "--porcelain"], in: directory) ?? "").isEmpty

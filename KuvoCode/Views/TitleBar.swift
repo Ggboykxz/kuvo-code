@@ -286,7 +286,8 @@ struct ProjectIdentity: View {
                 }
                 .lineLimit(1)
                 .truncationMode(.tail)
-                .frame(minWidth: 50, alignment: .leading)
+                // A long branch name (a worktree's is its session's title) leaves the tabs room.
+                .frame(minWidth: 50, maxWidth: 220, alignment: .leading)
             }
         }
     }
