@@ -41,7 +41,7 @@ struct SkillsSettings: View {
                         if installed[skill.id] != nil {
                             Button("Remove") { remove(skill.id) }
                         }
-                        Toggle("On", isOn: isOn(skill.id))
+                        Toggle("Use \(skill.name)", isOn: isOn(skill.id))
                             .labelsHidden()
                             .toggleStyle(.switch)
                             .controlSize(.small)
@@ -134,19 +134,19 @@ struct SkillsSettings: View {
             .components(separatedBy: "/").dropLast(2).joined(separator: "/")
     }
 
-    /// Off is a rule that denies the skill.
+    /// Off is a rule that denies the skill; turning it on takes that rule out, and leaves any
+    /// other rule for it alone.
     private func isOn(_ id: String) -> Binding<Bool> {
         Binding {
-            !rules().contains { $0.action == "skill" && $0.resource == id && $0.effect == .deny }
+            !config.items(["permissions"]).compactMap(\.rule).contains { $0.action == "skill" && $0.resource == id && $0.effect == .deny }
         } set: { on in
-            var rules = rules().filter { !($0.action == "skill" && $0.resource == id) }
-            if !on { rules.append(PermissionRule(action: "skill", resource: id, effect: .deny)) }
-            config.set(rules.isEmpty ? nil : .array(rules.map(\.json)), at: ["permissions"])
+            var items = config.items(["permissions"]).filter { item in
+                guard let rule = item.rule else { return true }
+                return !(rule.action == "skill" && rule.resource == id && rule.effect == .deny)
+            }
+            if !on { items.append(PermissionRule(action: "skill", resource: id, effect: .deny).json) }
+            config.setItems(items, at: ["permissions"])
         }
-    }
-
-    private func rules() -> [PermissionRule] {
-        (try? config.value(at: ["permissions"])?.decode(as: [PermissionRule].self)) ?? []
     }
 
     private func remove(_ id: String) {

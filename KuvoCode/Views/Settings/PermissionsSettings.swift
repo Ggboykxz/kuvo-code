@@ -40,7 +40,7 @@ struct PermissionsSettings: View {
             } header: {
                 Text("When the Agent Wants To")
             } footer: {
-                Text("For every session, on top of each mode's own rules. A session set to Ask First still asks.")
+                Text("For every session and mode. These come after a mode's own rules, so Allow here also lets Plan mode do it. A session set to Ask First still asks.")
                     .foregroundStyle(.secondary)
             }
             .settingsTop()
@@ -85,7 +85,7 @@ struct PermissionsSettings: View {
             }
 
             Section {
-                RulesEditor(path: ["experimental", "policies"], actions: Self.policyKinds, effects: [.deny, .allow])
+                RulesEditor(path: ["experimental", "policies"], actions: Self.policyKinds, effects: [.deny, .allow], prompt: "Like shell:git push *, openrouter or mcp:github", allowsAnything: false)
             } header: {
                 Text("Blocks")
             } footer: {
@@ -117,20 +117,13 @@ struct PermissionsSettings: View {
     /// The rule for every resource of `action`, kept at the front so specific rules win.
     private func effect(for action: String) -> Binding<PermissionRule.Effect?> {
         Binding {
-            rules().last { $0.action == action && $0.resource == "*" }?.effect
+            config.items(Self.path).compactMap(\.rule).last { $0.action == action && $0.resource == "*" }?.effect
         } set: { effect in
-            var rules = rules().filter { !($0.action == action && $0.resource == "*") }
-            if let effect { rules.insert(PermissionRule(action: action, resource: "*", effect: effect), at: 0) }
-            save(rules)
+            // Only the rule this sets; the rest, including any written by hand, stay as they are.
+            var items = config.items(Self.path).filter { $0.rule.map { !($0.action == action && $0.resource == "*") } ?? true }
+            if let effect { items.insert(PermissionRule(action: action, resource: "*", effect: effect).json, at: 0) }
+            config.setItems(items, at: Self.path)
         }
-    }
-
-    private func rules() -> [PermissionRule] {
-        (try? config.value(at: Self.path)?.decode(as: [PermissionRule].self)) ?? []
-    }
-
-    private func save(_ rules: [PermissionRule]) {
-        config.set(rules.isEmpty ? nil : .array(rules.map(\.json)), at: Self.path)
     }
 }
 
@@ -140,38 +133,45 @@ extension PermissionRule {
     }
 }
 
+extension JSONValue {
+    /// This item of a rules list as a rule, if it is one.
+    var rule: PermissionRule? { try? decode(as: PermissionRule.self) }
+}
+
 /// An ordered list of `{action, resource, effect}` rules at a path in the settings, each
 /// editable in place, with a button to add one. Rules for actions in `hiding`, for everything
-/// ("*"), are left out: they have their own controls.
+/// ("*"), are left out: they have their own controls. Items that aren't rules (written by
+/// hand) are kept where they are.
 struct RulesEditor: View {
     let path: [String]
     var actions: [(id: String, title: String)] = PermissionsSettings.actions.map { ($0.id, $0.title) }
     var effects: [PermissionRule.Effect] = [.allow, .ask, .deny]
     var hiding: Set<String> = []
+    var prompt = "Pattern, like git push *"
+    /// Whether an empty pattern means everything ("*"); a block for everything would stop
+    /// every tool, so there it stays as it was.
+    var allowsAnything = true
     @Environment(AppModel.self) private var app
 
     var body: some View {
-        let all = rules()
-        let shown = all.indices.filter { !(hiding.contains(all[$0].action) && all[$0].resource == "*") }
+        let items = app.engineConfig.items(path)
+        let shown = items.indices.filter { index in
+            guard let rule = items[index].rule else { return false }
+            return !(hiding.contains(rule.action) && rule.resource == "*")
+        }
         ForEach(shown, id: \.self) { index in
-            RuleRow(rule: all[index], actions: actions, effects: effects) { changed in
-                var rules = rules()
-                guard rules.indices.contains(index) else { return }
-                if let changed { rules[index] = changed } else { rules.remove(at: index) }
-                save(rules)
+            if let rule = items[index].rule {
+                RuleRow(rule: rule, actions: actions, effects: effects, prompt: prompt, allowsAnything: allowsAnything) { changed in
+                    var items = app.engineConfig.items(path)
+                    guard items.indices.contains(index) else { return }
+                    if let changed { items[index] = changed.json } else { items.remove(at: index) }
+                    app.engineConfig.setItems(items, at: path)
+                }
             }
         }
         Button("Add Rule") {
-            save(rules() + [PermissionRule(action: actions.first?.id ?? "shell", resource: "", effect: effects.first ?? .ask)])
+            app.engineConfig.setItems(items + [PermissionRule(action: actions.first?.id ?? "shell", resource: allowsAnything ? "*" : "", effect: effects.first ?? .ask).json], at: path)
         }
-    }
-
-    private func rules() -> [PermissionRule] {
-        (try? app.engineConfig.value(at: path)?.decode(as: [PermissionRule].self)) ?? []
-    }
-
-    private func save(_ rules: [PermissionRule]) {
-        app.engineConfig.set(rules.isEmpty ? nil : .array(rules.map(\.json)), at: path)
     }
 }
 
@@ -180,6 +180,8 @@ private struct RuleRow: View {
     let rule: PermissionRule
     let actions: [(id: String, title: String)]
     let effects: [PermissionRule.Effect]
+    let prompt: String
+    let allowsAnything: Bool
     /// The rule as changed, or nil to remove it.
     let change: (PermissionRule?) -> Void
     @State private var resource = ""
@@ -194,7 +196,7 @@ private struct RuleRow: View {
             .labelsHidden()
             .fixedSize()
             .frame(width: 190, alignment: .leading)
-            TextField("Pattern", text: $resource, prompt: Text("Pattern, like git push *"))
+            TextField("Pattern", text: $resource, prompt: Text(prompt))
                 .labelsHidden()
                 .focused($isFocused)
                 .onSubmit(commit)
@@ -217,9 +219,16 @@ private struct RuleRow: View {
     }
 
     private func commit() {
-        let value = resource.trimmingCharacters(in: .whitespacesAndNewlines)
+        var value = resource.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.isEmpty {
+            guard allowsAnything else {
+                resource = rule.resource
+                return
+            }
+            value = "*"
+        }
         guard value != rule.resource else { return }
-        change(PermissionRule(action: rule.action, resource: value.isEmpty ? "*" : value, effect: rule.effect))
+        change(PermissionRule(action: rule.action, resource: value, effect: rule.effect))
     }
 
     static func title(of effect: PermissionRule.Effect) -> String {

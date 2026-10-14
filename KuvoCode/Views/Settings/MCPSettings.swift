@@ -114,7 +114,7 @@ struct MCPSettings: View {
                 }
             }
             if settings != nil {
-                Toggle("On", isOn: Binding(
+                Toggle("Turn on \(name)", isOn: Binding(
                     get: { isOn },
                     set: { config.set($0 ? nil : .bool(true), at: Self.path + [name, "disabled"]) }
                 ))
