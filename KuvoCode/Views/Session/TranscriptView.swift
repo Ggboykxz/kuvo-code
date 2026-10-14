@@ -450,6 +450,8 @@ struct MarkdownText: View {
     var body: some View {
         StructuredText(markdown: text)
             .font(.transcript)
+            // Closer to the text than the GitHub style, so it wins for code blocks.
+            .textual.codeBlockStyle(CopyableCodeBlockStyle())
             .textual.structuredTextStyle(.gitHub)
             .textual.textSelection(.enabled)
     }

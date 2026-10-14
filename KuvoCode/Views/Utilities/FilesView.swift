@@ -297,6 +297,7 @@ private struct FileViewer: View {
                     ScrollView {
                         StructuredText(markdown: text)
                             .font(.transcript)
+                            .textual.codeBlockStyle(CopyableCodeBlockStyle())
                             .textual.structuredTextStyle(.gitHub)
                             .textual.textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
