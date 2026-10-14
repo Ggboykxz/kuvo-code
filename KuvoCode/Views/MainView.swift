@@ -794,6 +794,13 @@ struct MainView: View {
     }
 
     private func runDemoSession(_ environment: [String: String]) async {
+        // KUVO_DEMO_TABS: the project's sessions as tabs, the one in view staying in view.
+        if environment["KUVO_DEMO_TABS"] != nil,
+           let project = workspace.projects.first(where: { $0.directory == activeDirectory }) ?? workspace.projects.first {
+            let current = selection
+            for session in project.sessions.reversed() where !tabs.contains(session.id) { openTab(session.id) }
+            if let current { openTab(current) }
+        }
         // KUVO_DEMO_COMMENT=<path in the project>:<line>:<text> adds a review comment to the
         // session in view, on that line of the changes.
         if let spec = environment["KUVO_DEMO_COMMENT"], let directory = activeDirectory {
@@ -807,6 +814,8 @@ struct MainView: View {
             }
         }
         guard let folder = environment["KUVO_DEMO_FOLDER"] else { return }
+        // KUVO_DEMO_DRAFT: a message typed, not sent, in the new session's composer.
+        if let draft = environment["KUVO_DEMO_DRAFT"] { Drafts.shared[SidebarView.draftTag(folder)].text = draft }
         guard let prompt = environment["KUVO_DEMO_PROMPT"] else { return newSession(in: folder) }
         let parts = environment["KUVO_DEMO_MODEL"]?.split(separator: "/", maxSplits: 1).map(String.init)
         let model = parts.flatMap { $0.count == 2 ? ModelRef(id: $0[1], providerID: $0[0]) : nil }
