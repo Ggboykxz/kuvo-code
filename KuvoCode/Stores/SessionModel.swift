@@ -241,6 +241,25 @@ final class SessionModel {
         }
     }
 
+    /// Sends your last message again after its run failed. Its turn is taken back first, so
+    /// the conversation reads as if it had gone through the first time.
+    func retry() {
+        guard !isRunning, let message = transcript.messages.last(where: { if case .user = $0 { true } else { false } }), case .user(let user) = message else { return }
+        let files = (user.files ?? []).compactMap { file -> OpenCodeAPI.PromptFile? in
+            if case .uri(let uri) = file.source { .init(uri: uri, name: file.name) } else { nil }
+        }
+        Task {
+            do {
+                _ = try await api.stageRevert(session: id, messageID: user.id)
+                let id = Identifier.message()
+                transcript.addLocal(id: id, text: user.text, delivery: .steer)
+                try await api.prompt(session: self.id, id: id, text: user.text, files: files)
+            } catch {
+                failure = error.localizedDescription
+            }
+        }
+    }
+
     /// Takes back an undo: the conversation and the files come back as they were.
     func redo() {
         Task {

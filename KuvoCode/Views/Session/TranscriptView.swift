@@ -19,7 +19,7 @@ struct TranscriptView: View {
             let rows = rows
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                    RowView(row: row, directory: model.session.location.directory, cancel: model.cancelPending, undo: model.undo(from:), redo: model.redo, fork: fork)
+                    RowView(row: row, directory: model.session.location.directory, cancel: model.cancelPending, undo: model.undo(from:), redo: model.redo, fork: fork, retry: model.retry)
                         .padding(.top, index == 0 ? 0 : row.spacing(after: rows[index - 1]))
                         .transition(.opacity.combined(with: .offset(y: 8)))
                 }
@@ -79,7 +79,7 @@ struct TranscriptView: View {
                     rows.append(.assistant(assistant, showsError: showsError))
                 }
             case .idle(let idle):
-                rows.append(.turnEnd(idle, turn))
+                rows.append(.turnEnd(idle, turn, isLast: index == messages.count - 1))
                 turn = TurnStats()
             case .modelSwitched(let change):
                 rows.append(.notice(change.id, "cpu", "Switched to \(change.model.id)"))
@@ -155,7 +155,8 @@ struct TurnStats: Hashable {
 enum Row: Identifiable, Hashable {
     case user(Message.User)
     case assistant(Message.Assistant, showsError: Bool)
-    case turnEnd(Message.Idle, TurnStats)
+    /// `isLast`: the conversation ends here, so a failed run can be tried again.
+    case turnEnd(Message.Idle, TurnStats, isLast: Bool)
     case notice(String, String, String)
     case pending(Transcript.Pending)
     /// An undo that the next message makes final, with how many messages it took back.
@@ -175,7 +176,7 @@ enum Row: Identifiable, Hashable {
         switch self {
         case .user(let m): m.id
         case .assistant(let m, _): m.id
-        case .turnEnd(let m, _): m.id
+        case .turnEnd(let m, _, _): m.id
         case .notice(let id, _, _): id
         case .pending(let item): item.id
         case .undone: "undone"
@@ -191,6 +192,7 @@ private struct RowView: View {
     let undo: (Message.User) -> Void
     let redo: () -> Void
     let fork: (Message.User) -> Void
+    let retry: () -> Void
     @State private var confirmsUndo = false
 
     var body: some View {
@@ -224,8 +226,8 @@ private struct RowView: View {
                 .contextMenu { Button("Cancel", role: .destructive) { cancel(item) } }
         case .assistant(let message, let showsError):
             AssistantStepView(message: message, directory: directory, showsError: showsError)
-        case .turnEnd(let idle, let stats):
-            TurnEndView(idle: idle, stats: stats)
+        case .turnEnd(let idle, let stats, let isLast):
+            TurnEndView(idle: idle, stats: stats, retry: isLast ? retry : nil)
         case .notice(_, let symbol, let text):
             Label(text, systemImage: symbol)
                 .font(.caption)
@@ -387,11 +389,21 @@ private struct ReasoningView: View {
 private struct TurnEndView: View {
     let idle: Message.Idle
     let stats: TurnStats
+    /// Sends the turn's message again; offered on the last turn when it failed.
+    var retry: (() -> Void)?
 
     var body: some View {
         switch idle.outcome {
         case .failed:
-            ErrorCard(message: idle.error?.message ?? "The run failed.")
+            VStack(alignment: .leading, spacing: 8) {
+                ErrorCard(message: idle.error?.message ?? "The run failed.")
+                if let retry {
+                    Button("Try Again", systemImage: "arrow.clockwise", action: retry)
+                        .buttonStyle(.glass)
+                        .controlSize(.small)
+                        .help("Send your last message again")
+                }
+            }
         case .interrupted:
             Label("Stopped", systemImage: "stop.circle")
                 .font(.caption)
