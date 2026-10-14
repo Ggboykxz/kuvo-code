@@ -13,6 +13,7 @@ struct UtilitiesPane: View {
     let environment: [String: String]
     @Binding var isExpanded: Bool
     var isFocused = true
+    @Environment(\.windowControlsInset) private var windowControlsInset
 
     var body: some View {
         Card(title: "", isFocused: isFocused, showsHeader: false) {
@@ -69,7 +70,7 @@ struct UtilitiesPane: View {
             .buttonStyle(PanelIconStyle())
             .help(isExpanded ? "Restore" : "Expand")
         }
-        .padding(.leading, 8)
+        .padding(.leading, 8 + windowControlsInset)
         .padding(.trailing, 8)
         .frame(height: 44)
     }

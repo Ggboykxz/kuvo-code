@@ -301,14 +301,7 @@ struct ProjectIdentity: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Button {
-                withAnimation(.ui) { showsSidebar.toggle() }
-            } label: {
-                Image(systemName: "sidebar.left")
-                    .font(.system(size: 14))
-            }
-            .buttonStyle(IconButtonStyle(width: 28, height: 28, cornerRadius: 7))
-            .help(showsSidebar ? "Hide Sessions (⌘0)" : "Show Sessions (⌘0)")
+            SidebarToggle(showsSidebar: $showsSidebar)
 
             if let name {
                 CappedWidth(max: 220) {
@@ -436,5 +429,22 @@ private struct BranchSwitcher: View {
             if failure == nil { Analytics.shared.track("branch_switched", ["created": created]) }
             switched()
         }
+    }
+}
+
+/// Shows or hides the sessions sidebar: in the title bar, or alone by the window's buttons when
+/// the tab bar is hidden.
+struct SidebarToggle: View {
+    @Binding var showsSidebar: Bool
+
+    var body: some View {
+        Button {
+            withAnimation(.ui) { showsSidebar.toggle() }
+        } label: {
+            Image(systemName: "sidebar.left")
+                .font(.system(size: 14))
+        }
+        .buttonStyle(IconButtonStyle(width: 28, height: 28, cornerRadius: 7))
+        .help(showsSidebar ? "Hide Sessions (⌘0)" : "Show Sessions (⌘0)")
     }
 }

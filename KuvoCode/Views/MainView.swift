@@ -93,14 +93,20 @@ struct MainView: View {
                         side: .leading
                     )
                 }
-                if showsPanel && panelExpanded {
-                    utilitiesPane
-                        .frame(maxWidth: .infinity)
-                        .transition(.opacity)
-                } else {
-                    conversationCard
-                        .frame(maxWidth: .infinity)
+                // With the tab bar hidden and no sidebar, the window's buttons and the sidebar
+                // button sit over this card's header.
+                let controlsInset: CGFloat = !showsTabBar && layout.sessions == nil ? 124 : 0
+                Group {
+                    if showsPanel && panelExpanded {
+                        utilitiesPane
+                            .frame(maxWidth: .infinity)
+                            .transition(.opacity)
+                    } else {
+                        conversationCard
+                            .frame(maxWidth: .infinity)
+                    }
                 }
+                .environment(\.windowControlsInset, controlsInset)
                 if let width = layout.changes {
                     PaneResizer(
                         width: Binding(get: { width }, set: { changesWidth = $0 }),
@@ -116,16 +122,27 @@ struct MainView: View {
         .onGeometryChange(for: CGFloat.self, of: \.size.width) { contentWidth = $0 }
         .padding(.horizontal, Metrics.paneGap)
         .padding(.bottom, Metrics.paneGap)
+        // Without the tab bar, the cards reach up into the title bar; the window's buttons sit
+        // at the top of the sidebar.
+        .padding(.top, showsTabBar ? 0 : Metrics.paneGap)
+        .ignoresSafeArea(.container, edges: showsTabBar ? [] : .top)
         .animation(.ui, value: showsSidebar)
         .animation(.ui, value: showsPanel)
         .animation(.ui, value: panelExpanded)
         .onDisappear { utilities.closeAll() }
         // The agent started browsing: show it.
         .onChange(of: utilities.revealRequest) { withAnimation(.ui) { showsPanel = true } }
-        // Hiding the tab bar takes the whole row away: with nothing in it, the window keeps
-        // just its title bar and buttons. The sidebar and panel are still ⌘0 and ⌥⌘0, and
-        // sessions are in ⌘K.
-        .toolbar { if showsTabBar { titleBar } }
+        // Hiding the tab bar takes the whole row away and the cards reach the top. The sidebar
+        // button stays, so the window's buttons keep a toolbar's height, centered on the cards'
+        // header row, and the sidebar is a click away. The panel is still ⌥⌘0, and sessions ⌘K.
+        .toolbar {
+            if showsTabBar {
+                titleBar
+            } else {
+                ToolbarItem(placement: .navigation) { SidebarToggle(showsSidebar: $showsSidebar) }
+                    .sharedBackgroundVisibility(.hidden)
+            }
+        }
         .toolbar(removing: .title)
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .iconOnlyToolbar()
@@ -327,7 +344,8 @@ struct MainView: View {
     // MARK: Cards
 
     private var sessionsCard: some View {
-        Card(title: "Sessions", isFocused: focus == .sessions, showsHeader: false) {
+        // No card of its own: the sessions sit on the window's glass.
+        Card(title: "Sessions", isFocused: focus == .sessions, showsHeader: false, showsSurface: false) {
             EmptyView()
         } content: {
             SidebarView(
@@ -337,6 +355,11 @@ struct MainView: View {
                 editProject: { projectSheet = ProjectSheetRequest(project: $0) },
                 showProviders: { showsProviders = true }
             )
+            // Room for the window's buttons above the first row, when they sit here.
+            .padding(.top, showsTabBar ? 0 : Metrics.windowControlsHeight)
+        }
+        .overlay(alignment: .top) {
+            if !showsTabBar { WindowDragArea().frame(height: Metrics.windowControlsHeight) }
         }
         .simultaneousGesture(TapGesture().onEnded { focus = .sessions })
     }

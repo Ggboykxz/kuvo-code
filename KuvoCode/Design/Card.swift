@@ -14,11 +14,14 @@ struct Card<Icon: View, Actions: View, Content: View>: View {
     var isFocused = true
     /// The sidebar has no header bar: its first row is its title.
     var showsHeader = true
+    /// False draws no card at all (no fill, edge or shadow): the content sits on the window's glass.
+    var showsSurface = true
     @ViewBuilder var icon: () -> Icon
     @ViewBuilder var actions: () -> Actions
     @ViewBuilder var content: () -> Content
 
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.windowControlsInset) private var windowControlsInset
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: Metrics.cardRadius)
@@ -29,11 +32,13 @@ struct Card<Icon: View, Actions: View, Content: View>: View {
             // The shadow comes from the fill alone, so it's drawn from one shape rather than
             // worked out again from everything in the card each time it scrolls.
             .background {
-                shape
-                    .fill(Surface.cardFill(scheme, focused: isFocused))
-                    .shadow(color: shadowColor, radius: isFocused ? 16 : 6, y: isFocused ? 6 : 2)
+                if showsSurface {
+                    shape
+                        .fill(Surface.cardFill(scheme, focused: isFocused))
+                        .shadow(color: shadowColor, radius: isFocused ? 16 : 6, y: isFocused ? 6 : 2)
+                }
             }
-            .specularRim(shape)
+            .specularRim(shape, strength: showsSurface ? 1 : 0)
             // The focused card's shadow falls on its neighbors, never theirs on it.
             .zIndex(isFocused ? 1 : 0)
             .animation(.ui, value: isFocused)
@@ -43,12 +48,14 @@ struct Card<Icon: View, Actions: View, Content: View>: View {
     /// doesn't scroll starts below it, while scroll views run on beneath it and fade out there.
     @ViewBuilder private var framedContent: some View {
         if showsHeader {
+            // The header's room is kept as safe area rather than given by a bar, so it's the
+            // same whether or not the card reaches up into the window's title bar.
             content()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .safeAreaBar(edge: .top, spacing: 0) {
+                .safeAreaPadding(.top, Metrics.cardHeaderHeight)
+                .overlay(alignment: .top) {
                     header.background(alignment: .top) { headerFade }
                 }
-                .scrollEdgeEffectStyle(.soft, for: .top)
         } else {
             content()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -97,7 +104,7 @@ struct Card<Icon: View, Actions: View, Content: View>: View {
             }
             .buttonStyle(CardActionStyle())
         }
-        .padding(.leading, 14)
+        .padding(.leading, 14 + windowControlsInset)
         .padding(.trailing, 8)
         .frame(height: Metrics.cardHeaderHeight)
         // The whole bar takes clicks, so nothing scrolled under it is clicked by accident.
@@ -114,8 +121,8 @@ struct Card<Icon: View, Actions: View, Content: View>: View {
 }
 
 extension Card where Actions == EmptyView {
-    init(title: String, detail: String? = nil, isFocused: Bool = true, showsHeader: Bool = true, @ViewBuilder icon: @escaping () -> Icon, @ViewBuilder content: @escaping () -> Content) {
-        self.init(title: title, detail: detail, isFocused: isFocused, showsHeader: showsHeader, icon: icon, actions: { EmptyView() }, content: content)
+    init(title: String, detail: String? = nil, isFocused: Bool = true, showsHeader: Bool = true, showsSurface: Bool = true, @ViewBuilder icon: @escaping () -> Icon, @ViewBuilder content: @escaping () -> Content) {
+        self.init(title: title, detail: detail, isFocused: isFocused, showsHeader: showsHeader, showsSurface: showsSurface, icon: icon, actions: { EmptyView() }, content: content)
     }
 }
 
@@ -132,5 +139,21 @@ struct CardActionStyle: ButtonStyle {
             .background(configuration.isPressed ? Pressable.pressedFill : isHovering ? Pressable.hoverFill : .clear, in: .rect(cornerRadius: 6))
             .contentShape(.rect)
             .onHover { isHovering = $0 }
+    }
+}
+
+extension EnvironmentValues {
+    /// Room the leftmost card leaves at its top left for the window's close, minimize and zoom
+    /// buttons, when the tab bar is hidden and they sit over it.
+    @Entry var windowControlsInset: CGFloat = 0
+}
+
+/// Drags the window, where the title bar would be when the tab bar is hidden.
+struct WindowDragArea: View {
+    var body: some View {
+        Color.clear
+            .contentShape(.rect)
+            .gesture(WindowDragGesture())
+            .allowsWindowActivationEvents(true)
     }
 }
