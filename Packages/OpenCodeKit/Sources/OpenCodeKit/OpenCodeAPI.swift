@@ -157,6 +157,12 @@ public struct OpenCodeAPI: Sendable {
         return try await send("POST", "api/session/\(id.pathEscaped)/fork", body: Body(before: before), as: DataEnvelope<Session>.self).data
     }
 
+    /// Replaces the session's metadata (a JSON object; keep what other clients put there).
+    public func setMetadata(session id: String, _ metadata: JSONValue) async throws {
+        struct Body: Encodable { var metadata: JSONValue }
+        try await send("PATCH", "api/session/\(id.pathEscaped)", body: Body(metadata: metadata))
+    }
+
     public func deleteSession(_ id: String) async throws {
         try await send("DELETE", "api/session/\(id.pathEscaped)")
     }

@@ -17,6 +17,8 @@ public struct Session: Codable, Sendable, Hashable, Identifiable {
     public var subpath: String?
     /// Rules on top of the agent's own, for this session. Later rules win.
     public var permissions: [PermissionRule]?
+    /// Clients' own notes on the session, as a JSON object.
+    public var metadata: JSONValue?
     /// An undo waiting to be kept or taken back: the conversation is back to before this
     /// message. Sending the next message makes it final.
     public var revert: Revert?
