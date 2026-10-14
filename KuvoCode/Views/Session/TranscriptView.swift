@@ -66,6 +66,25 @@ struct TranscriptView: View {
                 EmptyConversationView(directory: model.session.location.directory)
             }
         }
+        .overlay(alignment: .bottom) {
+            // Scrolled up: a way back to the newest, which also follows it again.
+            if !followsEnd, !rows.isEmpty {
+                Button {
+                    followsEnd = true
+                    withAnimation(.ui) { position.scrollTo(edge: .bottom) }
+                } label: {
+                    Image(systemName: "arrow.down")
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(width: 30, height: 30)
+                }
+                .buttonStyle(.glass)
+                .buttonBorderShape(.circle)
+                .help("Scroll to the End")
+                .padding(.bottom, 12)
+                .transition(.opacity.combined(with: .scale(scale: 0.8)))
+            }
+        }
+        .animation(.ui, value: followsEnd)
         .overlay(alignment: .top) {
             if isFinding {
                 FindBar(query: $query, current: matchIndex, count: matches.count) { step in

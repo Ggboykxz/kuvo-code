@@ -17,6 +17,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - **Undo from any of your messages:** right-click it and choose Undo From Here… to take back the conversation and the agent's file changes since, with the message back in the composer to edit. Redo brings it all back until you send.
 - **Summarize Now** in the context ring's popover shrinks a long conversation to a summary, to make room before the context window fills up.
 - Right-click a step that read or changed a file to open the file in the panel or show it in the Finder.
+- Scrolled up in a conversation, a button takes you back to the newest message.
 - While the agent works, the end of the conversation shows how long it's been at it.
 - Escape in the composer stops the agent, as ⌘. does.
 - ⌘1 to ⌘8 show that session tab, and ⌘9 the last one, as in browsers.
