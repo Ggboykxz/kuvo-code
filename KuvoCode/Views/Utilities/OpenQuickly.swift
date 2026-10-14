@@ -14,8 +14,9 @@ struct OpenQuickly: View {
     @State private var selected = 0
     @FocusState private var isFocused: Bool
 
+    /// Before anything's typed, the files changed most recently.
     private var matches: [ProjectFiles.File] {
-        query.isEmpty ? [] : Mentions.matches(query, in: files.filter { !$0.isFolder }, limit: 10)
+        Mentions.matches(query, in: files.filter { !$0.isFolder }, limit: 10)
     }
 
     var body: some View {
@@ -82,7 +83,7 @@ struct OpenQuickly: View {
         .onAppear { isFocused = true }
         .task {
             let roots = roots.map { URL(filePath: $0) }
-            files = await Task.detached { ProjectFiles.list(roots) }.value
+            files = await Task.detached { ProjectFiles.list(roots, dated: true) }.value
         }
     }
 

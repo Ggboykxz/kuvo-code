@@ -11,6 +11,8 @@ nonisolated enum ProjectFiles {
         /// How "@" names it: inside the primary folder, where the agent works, its path there;
         /// elsewhere, after its folder's name, which the agent knows.
         var mention: String
+        /// When it last changed, when asked for: the newest come first before anything's typed.
+        var modified: Date?
 
         var id: URL { url }
         var name: String { url.lastPathComponent }
@@ -18,17 +20,22 @@ nonisolated enum ProjectFiles {
         var isFolder: Bool { path.hasSuffix("/") }
     }
 
-    /// What "@" can point at: with several folders, each folder first, then every file.
+    /// What "@" can point at: with several folders, each folder first, then every file, with
+    /// when it last changed.
     static func mentionable(_ roots: [URL]) -> [File] {
-        (roots.count > 1 ? roots.enumerated().map { File(path: $1.lastPathComponent + "/", url: $1, folder: $0, mention: $1.lastPathComponent + "/") } : []) + list(roots)
+        (roots.count > 1 ? roots.enumerated().map { File(path: $1.lastPathComponent + "/", url: $1, folder: $0, mention: $1.lastPathComponent + "/") } : []) + list(roots, dated: true)
     }
 
-    /// The files in `roots`, the primary folder's first. Slow for big trees: call it off the
-    /// main thread.
-    static func list(_ roots: [URL]) -> [File] {
+    /// The files in `roots`, the primary folder's first; `dated`, with when each last changed.
+    /// Slow for big trees: call it off the main thread.
+    static func list(_ roots: [URL], dated: Bool = false) -> [File] {
         roots.enumerated().flatMap { index, root in
             let prefix = roots.count > 1 ? root.lastPathComponent + "/" : ""
-            return listFiles(in: root.path).map { File(path: prefix + $0, url: root.appending(path: $0), folder: index, mention: index == 0 ? $0 : prefix + $0) }
+            return listFiles(in: root.path).map { path in
+                let url = root.appending(path: path)
+                let modified = dated ? (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate : nil
+                return File(path: prefix + path, url: url, folder: index, mention: index == 0 ? path : prefix + path, modified: modified)
+            }
         }
     }
 
