@@ -11,6 +11,8 @@ struct SkillsSettings: View {
     @State private var browsing: SkillLibrary.Repository?
     @State private var repositoryName = ""
     @State private var failure: String?
+    /// The skill being written or changed: a new one has no name yet.
+    @State private var writing: SkillDraft?
 
     private var config: EngineConfig { app.engineConfig }
     private var folder: URL { app.skillsFolder }
@@ -38,7 +40,10 @@ struct SkillsSettings: View {
                             }
                         }
                         Spacer()
-                        if installed[skill.id] != nil {
+                        if isYours(skill) {
+                            Button("Edit…") { writing = SkillDraft(name: skill.id) }
+                        }
+                        if installed[skill.id] != nil || isYours(skill) {
                             Button("Remove") { remove(skill.id) }
                         }
                         Toggle("Use \(skill.name)", isOn: isOn(skill.id))
@@ -47,6 +52,7 @@ struct SkillsSettings: View {
                             .controlSize(.small)
                     }
                 }
+                Button("New Skill…") { writing = SkillDraft(name: nil) }
             } header: {
                 Text("Skills the Agent Can Use")
             } footer: {
@@ -109,6 +115,12 @@ struct SkillsSettings: View {
             }
         }
         .task(id: config.settings) { await refresh() }
+        .sheet(item: $writing) { draft in
+            SkillEditor(name: draft.name, folder: folder, taken: Set(skills.map(\.id))) {
+                writing = nil
+                Task { await refresh() }
+            }
+        }
         .sheet(item: $browsing) { repository in
             RepositorySkills(repository: repository, folder: folder) {
                 Task { await refresh() }
@@ -123,6 +135,11 @@ struct SkillsSettings: View {
         // The engine notices a new folder within a moment.
         try? await Task.sleep(for: .milliseconds(500))
         skills = ((try? await app.api?.skills()) ?? []).sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// One you wrote here, rather than added from GitHub or found elsewhere.
+    private func isYours(_ skill: Skill) -> Bool {
+        installed[skill.id] == nil && skill.path?.hasPrefix(folder.path + "/") == true
     }
 
     private func source(of skill: Skill) -> String {
@@ -165,6 +182,153 @@ struct SkillsSettings: View {
                 failure = error.localizedDescription
             }
         }
+    }
+}
+
+private struct SkillDraft: Identifiable {
+    /// Nil for a new skill.
+    var name: String?
+    var id: String { name ?? "" }
+}
+
+/// Writing a skill of your own: its name, when the agent should use it, and its instructions, in
+/// a SKILL.md in its own folder (where scripts and other files it needs can go too).
+private struct SkillEditor: View {
+    /// Nil for a new skill.
+    let name: String?
+    let folder: URL
+    /// Names other skills have.
+    let taken: Set<String>
+    let done: () -> Void
+
+    @State private var newName = ""
+    @State private var summary = ""
+    @State private var instructions = ""
+    @State private var failure: String?
+
+    private var id: String { name ?? SkillFile.name(from: newName) }
+    private var file: URL { folder.appending(path: id).appending(path: "SKILL.md") }
+    private var canSave: Bool {
+        !id.isEmpty && !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && (name != nil || !taken.contains(id))
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Text(name ?? "New Skill")
+                .font(.headline)
+                .padding(.top, 16)
+            Form {
+                Section {
+                    if name == nil {
+                        TextField("Name", text: $newName, prompt: Text("release-notes"))
+                    }
+                    TextField("Use it when", text: $summary, prompt: Text("Writing release notes from the commits since the last tag"), axis: .vertical)
+                        .lineLimit(1...3)
+                } footer: {
+                    Text(name == nil && taken.contains(id) ? "There's a skill called \(id) already." : "The agent reads this to decide when the skill is needed, and loads the instructions only then.")
+                        .foregroundStyle(name == nil && taken.contains(id) ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                }
+                Section {
+                    TextEditor(text: $instructions)
+                        .font(.system(.body, design: .monospaced))
+                        .frame(minHeight: 220)
+                } header: {
+                    Text("Instructions")
+                } footer: {
+                    Text("Markdown. Scripts and other files can go in the skill's folder; mention them here so the agent knows to use them.")
+                        .foregroundStyle(.secondary)
+                }
+                if let failure {
+                    Text(failure).foregroundStyle(.red)
+                }
+            }
+            .formStyle(.grouped)
+            HStack {
+                if name != nil {
+                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([file]) }
+                }
+                Spacer()
+                Button("Cancel", role: .cancel, action: done)
+                    .keyboardShortcut(.cancelAction)
+                Button(name == nil ? "Create Skill" : "Save", action: save)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!canSave)
+            }
+            .padding(16)
+        }
+        .frame(width: 620, height: 600)
+        .onAppear(perform: load)
+    }
+
+    private func load() {
+        guard name != nil, let text = try? String(contentsOf: file, encoding: .utf8) else { return }
+        let parsed = SkillFile.parse(text)
+        summary = parsed.description
+        instructions = parsed.body
+    }
+
+    private func save() {
+        do {
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            // A skill's own file keeps whatever else its header has.
+            let existing = name == nil ? nil : try? String(contentsOf: file, encoding: .utf8)
+            try SkillFile.text(name: id, description: summary, body: instructions, replacing: existing).write(to: file, atomically: true, encoding: .utf8)
+            if name == nil { Analytics.shared.track("skill_written") }
+            done()
+        } catch {
+            failure = error.localizedDescription
+        }
+    }
+}
+
+/// A SKILL.md: a header with its name and description, then its instructions.
+nonisolated enum SkillFile {
+    /// A skill's name as skills want it: lowercase letters, digits and hyphens.
+    static func name(from text: String) -> String {
+        let words = text.lowercased().split { !$0.isLetter && !$0.isNumber }
+        return String(words.joined(separator: "-").filter { $0.isASCII }.prefix(64))
+    }
+
+    static func parse(_ text: String) -> (description: String, body: String) {
+        guard text.hasPrefix("---"), let end = text.range(of: "\n---", range: text.index(text.startIndex, offsetBy: 3)..<text.endIndex) else {
+            return ("", text)
+        }
+        let header = text[text.index(text.startIndex, offsetBy: 3)..<end.lowerBound]
+        var description = ""
+        for line in header.split(separator: "\n") where line.hasPrefix("description:") {
+            description = unquote(line.dropFirst("description:".count).trimmingCharacters(in: .whitespaces))
+        }
+        var body = String(text[end.upperBound...])
+        if let newline = body.firstIndex(of: "\n") { body = String(body[body.index(after: newline)...]) }
+        return (description, body.trimmingCharacters(in: .newlines))
+    }
+
+    /// The file's text. `existing`'s header lines other than the name and description stay.
+    static func text(name: String, description: String, body: String, replacing existing: String? = nil) -> String {
+        var others: [String] = []
+        if let existing, existing.hasPrefix("---"),
+           let end = existing.range(of: "\n---", range: existing.index(existing.startIndex, offsetBy: 3)..<existing.endIndex) {
+            others = existing[existing.index(existing.startIndex, offsetBy: 3)..<end.lowerBound].split(separator: "\n", omittingEmptySubsequences: false)
+                .map(String.init).filter { !$0.isEmpty && !$0.hasPrefix("name:") && !$0.hasPrefix("description:") }
+        }
+        let summary = description.split(whereSeparator: \.isNewline).joined(separator: " ").trimmingCharacters(in: .whitespaces)
+        let header = (["name: \(name)", "description: \(quote(summary))"] + others).joined(separator: "\n")
+        return "---\n\(header)\n---\n\n\(body.trimmingCharacters(in: .newlines))\n"
+    }
+
+    /// YAML's double quotes, so colons and quotes in it read as text.
+    private static func quote(_ text: String) -> String {
+        "\"" + text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
+    }
+
+    private static func unquote(_ text: String) -> String {
+        if text.count >= 2, text.hasPrefix("\""), text.hasSuffix("\"") {
+            return String(text.dropFirst().dropLast()).replacingOccurrences(of: "\\\"", with: "\"").replacingOccurrences(of: "\\\\", with: "\\")
+        }
+        if text.count >= 2, text.hasPrefix("'"), text.hasSuffix("'") {
+            return String(text.dropFirst().dropLast()).replacingOccurrences(of: "''", with: "'")
+        }
+        return text
     }
 }
 
