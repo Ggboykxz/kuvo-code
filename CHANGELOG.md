@@ -6,6 +6,8 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- **The usage panel only shows providers you're signed in to.** One that's turned on but has no login on this Mac stays out of the panel and the menu bar until you sign in, and Customize says why.
+- **Clicking a provider's bar in the usage panel** opens its limits, spend and trend in the same style as the bars, instead of the old card.
 - **Review** button in the Changes tab: the agent reviews what the tab shows, with /review.
 - **Add Screenshot to Message** in the panel's browser attaches what's on the page to your message.
 - Click a picture in the conversation to look closer in Quick Look.

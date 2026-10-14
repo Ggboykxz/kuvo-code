@@ -36,7 +36,7 @@ enum BarMetricSetting: String, Hashable, Sendable, CaseIterable {
 /// The Bars style: a spend bar, then one bar per provider in a pastel of its brand color,
 /// filled to the share its tightest limit shows (left or used, following the global setting), with the
 /// provider's name on the fill and the number on the track. Hovering tells which limit it is
-/// and when it resets; clicking opens the provider's full card underneath.
+/// and when it resets; clicking opens every limit underneath, drawn the same way (`ProviderBarDetail`).
 struct UsageBarsView: View {
     @Environment(AppContainer.self) private var container
     @Environment(LayoutStore.self) private var layout
@@ -55,7 +55,7 @@ struct UsageBarsView: View {
                     .padding(.bottom, 4)
             }
             ForEach(layout.displayGroups) { group in
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 4) {
                     ProviderBar(
                         provider: group.provider,
                         reading: reading(for: group),
@@ -67,8 +67,8 @@ struct UsageBarsView: View {
                     }
                     .contextMenu { menu(for: group) }
                     if expanded == group.id {
-                        WidgetGroupedListView(reorderSpaceName: reorderSpaceName, reorderLift: $reorderLift, onlyProviderID: group.id)
-                            .padding(.bottom, 6)
+                        ProviderBarDetail(group: group)
+                            .padding(.bottom, 4)
                             .transition(.opacity.combined(with: .move(edge: .top)))
                     }
                 }
@@ -217,6 +217,10 @@ struct ProviderBar: View {
 enum BarPalette {
     static let label = Font.system(size: 11, weight: .light, design: .monospaced)
     static let value = Font.system(size: 12, weight: .regular, design: .monospaced)
+    /// A bar's detail (`BarDetailContent`): a metric's name, its reading, and the small print.
+    static let detailLabel = Font.system(size: 10, weight: .regular, design: .monospaced)
+    static let detailValue = Font.system(size: 11, weight: .regular, design: .monospaced)
+    static let detailNote = Font.system(size: 9.5, weight: .regular, design: .monospaced)
 
     /// The brand color, mostly white: pastel in light mode, a touch deeper in dark mode so
     /// it doesn't glare. Brands without a hue (black or white marks, like Cursor's) get a

@@ -29,8 +29,12 @@ here.
 - **API keys pasted into the panel go into the Keychain** (`Providers/APIKeySecrets.swift`), not a
   JSON file; a key an earlier version saved in a file moves there the next time it's read.
 - **A Bars style for the dashboard**, the default (`Views/UsageBarsView.swift`): one compact bar
-  per provider in a pastel of its brand color, with thin monospaced labels, showing the limit closest to running out, with its full card a
-  click away, and today's spend as one bar on top. Settings › Style switches back to the cards.
+  per provider in a pastel of its brand color, with thin monospaced labels, showing the limit closest to running out, and today's spend
+  as one bar on top. Clicking a bar opens every metric underneath in the same style (`Views/UsageBarDetail.swift`), not the card.
+  Settings › Style switches back to the cards.
+- **Only providers with something to show** (`Stores/ProviderAvailability.swift`): a turned-on provider whose refresh finds no login,
+  or no usage for its account, stays off the dashboard, the menu bar and Total Spend, and Customize says why. It keeps being
+  refreshed and comes back once it signs in.
 
 Everything else, including providers, pricing, pace, layout and the views, is upstream code. Kuvo
 Code-specific code lives in `Sources/UsageKit/Embedding` and `Support/HostApp.swift`. Other edits are
