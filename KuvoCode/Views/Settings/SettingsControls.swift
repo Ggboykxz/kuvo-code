@@ -15,12 +15,13 @@ extension EngineConfig {
         Binding(get: { self.value(at: path)?.string }, set: { self.set($0.map(JSONValue.string), at: path) })
     }
 
-    func strings(_ path: [String]) -> [String] {
-        value(at: path)?.array?.compactMap(\.string) ?? []
+    /// A list's items as they are, whatever they hold.
+    func items(_ path: [String]) -> [JSONValue] {
+        value(at: path)?.array ?? []
     }
 
-    func setStrings(_ values: [String], at path: [String]) {
-        set(values.isEmpty ? nil : .array(values.map(JSONValue.string)), at: path)
+    func setItems(_ items: [JSONValue], at path: [String]) {
+        set(items.isEmpty ? nil : .array(items), at: path)
     }
 }
 
@@ -30,49 +31,53 @@ struct ConfigTextField: View {
     let path: [String]
     var prompt = ""
     @Environment(AppModel.self) private var app
-    @State private var text = ""
+    @State private var field = SettingField()
     @FocusState private var isFocused: Bool
 
     var body: some View {
-        TextField(title, text: $text, prompt: Text(prompt))
+        let stored = app.engineConfig.value(at: path)?.string ?? ""
+        TextField(title, text: $field.text, prompt: Text(prompt))
             .focused($isFocused)
             .onSubmit(commit)
             .onChange(of: isFocused) { if !isFocused { commit() } }
-            .onAppear { text = app.engineConfig.value(at: path)?.string ?? "" }
+            .onAppear { field.load(stored) }
+            .onChange(of: stored) { if !isFocused { field.load(stored) } }
             .onDisappear(perform: commit)
     }
 
     private func commit() {
-        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard value != (app.engineConfig.value(at: path)?.string ?? "") else { return }
+        guard let value = field.edit(trimming: true) else { return }
         app.engineConfig.set(value.isEmpty ? nil : .string(value), at: path)
     }
 }
 
-/// A whole-number setting; empty means the engine's default.
+/// A whole-number setting, more than zero; empty means the engine's default.
 struct ConfigNumberField: View {
     let title: String
     let path: [String]
     var prompt = "Default"
     @Environment(AppModel.self) private var app
-    @State private var text = ""
+    @State private var field = SettingField()
     @FocusState private var isFocused: Bool
 
     var body: some View {
-        TextField(title, text: $text, prompt: Text(prompt))
+        let stored = app.engineConfig.value(at: path)?.int.map(String.init) ?? ""
+        TextField(title, text: $field.text, prompt: Text(prompt))
             .multilineTextAlignment(.trailing)
             .focused($isFocused)
             .onSubmit(commit)
             .onChange(of: isFocused) { if !isFocused { commit() } }
-            .onAppear { text = app.engineConfig.value(at: path)?.int.map(String.init) ?? "" }
+            .onAppear { field.load(stored) }
+            .onChange(of: stored) { if !isFocused { field.load(stored) } }
             .onDisappear(perform: commit)
     }
 
     private func commit() {
-        let value = Int(text.filter(\.isNumber))
-        text = value.map(String.init) ?? ""
-        guard value != app.engineConfig.value(at: path)?.int else { return }
-        app.engineConfig.set(value.map { .number(Double($0)) }, at: path)
+        // Digits only; zero isn't a setting the engine takes, so it means the default.
+        let number = Int(field.text.filter(\.isNumber)).flatMap { $0 > 0 ? $0 : nil }
+        field.text = number.map(String.init) ?? ""
+        guard field.edit(trimming: true) != nil else { return }
+        app.engineConfig.set(number.map { .number(Double($0)) }, at: path)
     }
 }
 
@@ -81,23 +86,45 @@ struct ConfigTextEditor: View {
     let path: [String]
     var minHeight: CGFloat = 120
     @Environment(AppModel.self) private var app
-    @State private var text = ""
+    @State private var field = SettingField()
     @FocusState private var isFocused: Bool
 
     var body: some View {
-        TextEditor(text: $text)
+        let stored = app.engineConfig.value(at: path)?.string ?? ""
+        TextEditor(text: $field.text)
             .font(.body)
             .frame(minHeight: minHeight)
             .focused($isFocused)
             .onChange(of: isFocused) { if !isFocused { commit() } }
-            .onAppear { text = app.engineConfig.value(at: path)?.string ?? "" }
+            .onAppear { field.load(stored) }
+            .onChange(of: stored) { if !isFocused { field.load(stored) } }
             .onDisappear(perform: commit)
     }
 
     private func commit() {
-        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard value != (app.engineConfig.value(at: path)?.string ?? "") else { return }
+        guard let value = field.edit(trimming: true) else { return }
         app.engineConfig.set(value.isEmpty ? nil : .string(value), at: path)
+    }
+}
+
+/// A field's text and what the file had when it was shown. Only a change you made is
+/// saved: leaving a field you didn't touch writes nothing (so it can't bring back an entry
+/// you just removed, or undo an edit made to the file elsewhere).
+struct SettingField {
+    var text = ""
+    private var loaded = ""
+
+    mutating func load(_ value: String) {
+        text = value
+        loaded = value
+    }
+
+    /// The text to save, if you changed it; it counts as saved from then on.
+    mutating func edit(trimming: Bool) -> String? {
+        let value = trimming ? text.trimmingCharacters(in: .whitespacesAndNewlines) : text
+        guard value != loaded else { return nil }
+        loaded = value
+        return value
     }
 }
 
@@ -128,7 +155,8 @@ struct ConfigModelPicker: View {
     }
 }
 
-/// A list of strings (paths, patterns, packages): each removable, a field to add one.
+/// A list of strings (paths, patterns, packages): each removable, a field to add one. Items
+/// that aren't plain strings (set up by hand) are kept as they are and shown as such.
 struct ConfigStringList: View {
     let path: [String]
     let prompt: String
@@ -136,34 +164,41 @@ struct ConfigStringList: View {
     @State private var newItem = ""
 
     var body: some View {
-        let items = app.engineConfig.strings(path)
-        ForEach(Array(items.enumerated()), id: \.offset) { index, item in
-            HStack {
-                Text(item)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
-                Spacer()
-                Button {
-                    var items = items
-                    items.remove(at: index)
-                    app.engineConfig.setStrings(items, at: path)
-                } label: {
-                    Image(systemName: "minus.circle.fill")
-                        .foregroundStyle(.secondary)
+        let value = app.engineConfig.value(at: path)
+        if let value, value.array == nil {
+            Text("Set up by hand in the settings file.")
+                .foregroundStyle(.secondary)
+        } else {
+            let items = app.engineConfig.items(path)
+            ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                HStack {
+                    Text(item.string ?? item["package"]?.string ?? "Set up in the settings file")
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                        .foregroundStyle(item.string == nil ? .secondary : .primary)
+                    Spacer()
+                    Button {
+                        var items = items
+                        items.remove(at: index)
+                        app.engineConfig.setItems(items, at: path)
+                    } label: {
+                        Image(systemName: "minus.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Remove")
                 }
-                .buttonStyle(.plain)
-                .help("Remove")
             }
+            TextField("Add", text: $newItem, prompt: Text(prompt))
+                .labelsHidden()
+                .onSubmit {
+                    let item = newItem.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !item.isEmpty, !items.contains(.string(item)) else { return }
+                    app.engineConfig.setItems(items + [.string(item)], at: path)
+                    newItem = ""
+                }
         }
-        TextField("Add", text: $newItem, prompt: Text(prompt))
-            .labelsHidden()
-            .onSubmit {
-                let item = newItem.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !item.isEmpty, !items.contains(item) else { return }
-                app.engineConfig.setStrings(items + [item], at: path)
-                newItem = ""
-            }
     }
 }
 

@@ -6,6 +6,8 @@ struct CommandsSettings: View {
     @Environment(AppModel.self) private var app
     @Environment(Catalog.self) private var catalog
     @State private var editing: CommandEdit?
+    /// What to remove once its sheet has closed (and its fields are done saving).
+    @State private var removal: [String]?
     @State private var isNaming = false
     @State private var newName = ""
 
@@ -67,8 +69,11 @@ struct CommandsSettings: View {
                 }
             }
         }
-        .sheet(item: $editing) { edit in
-            CommandEditor(name: edit.id) { editing = nil }
+        .sheet(item: $editing, onDismiss: removePending) { edit in
+            CommandEditor(name: edit.id) { editing = nil } remove: { path in
+                removal = path
+                editing = nil
+            }
         }
         .alert("New Command", isPresented: $isNaming) {
             TextField("Name, like test", text: $newName)
@@ -87,6 +92,12 @@ struct CommandsSettings: View {
         config.set(.object(["template": .string("")]), at: Self.path + [name])
         editing = CommandEdit(id: name)
     }
+
+    private func removePending() {
+        guard let removal else { return }
+        app.engineConfig.set(nil, at: removal)
+        self.removal = nil
+    }
 }
 
 private struct CommandEdit: Identifiable {
@@ -97,6 +108,8 @@ private struct CommandEdit: Identifiable {
 private struct CommandEditor: View {
     let name: String
     let done: () -> Void
+    /// Removes this entry, once the sheet has closed.
+    let remove: ([String]) -> Void
     @Environment(AppModel.self) private var app
     @Environment(Catalog.self) private var catalog
     @State private var confirmsRemoval = false
@@ -146,8 +159,7 @@ private struct CommandEditor: View {
         .frame(width: 600, height: 560)
         .confirmationDialog("Delete /\(name)?", isPresented: $confirmsRemoval) {
             Button("Delete", role: .destructive) {
-                done()
-                config.set(nil, at: path)
+                remove(path)
             }
         }
     }

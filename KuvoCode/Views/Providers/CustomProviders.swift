@@ -10,6 +10,8 @@ struct CustomProvidersSection: View {
     @Environment(AppModel.self) private var app
     @Environment(Catalog.self) private var catalog
     @State private var editing: ProviderEdit?
+    /// What to remove once its sheet has closed (and its fields are done saving).
+    @State private var removal: [String]?
 
     static let path = ["providers"]
 
@@ -54,9 +56,18 @@ struct CustomProvidersSection: View {
                 .overlay(RoundedRectangle(cornerRadius: Metrics.cardRadius).strokeBorder(.separator))
             }
         }
-        .sheet(item: $editing) { edit in
-            CustomProviderEditor(id: edit.providerID) { editing = nil }
+        .sheet(item: $editing, onDismiss: removePending) { edit in
+            CustomProviderEditor(id: edit.providerID) { editing = nil } remove: { path in
+                removal = path
+                editing = nil
+            }
         }
+    }
+
+    private func removePending() {
+        guard let removal else { return }
+        app.engineConfig.set(nil, at: removal)
+        self.removal = nil
     }
 }
 
@@ -74,6 +85,8 @@ private struct ProviderEdit: Identifiable {
 private struct CustomProviderEditor: View {
     @State var id: String?
     let done: () -> Void
+    /// Removes this entry, once the sheet has closed.
+    let remove: ([String]) -> Void
     @Environment(AppModel.self) private var app
     @Environment(Catalog.self) private var catalog
     @State private var name = ""
@@ -127,9 +140,7 @@ private struct CustomProviderEditor: View {
         .frame(width: 620, height: id == nil ? 220 : 620)
         .confirmationDialog("Remove this provider?", isPresented: $confirmsRemoval) {
             Button("Remove", role: .destructive) {
-                let path = CustomProvidersSection.path + [id ?? ""]
-                done()
-                config.set(nil, at: path)
+                remove(CustomProvidersSection.path + [id ?? ""])
             }
         } message: {
             Text("Its models go away from the model menu. Sessions that used them need another model.")

@@ -7,6 +7,8 @@ struct MCPSettings: View {
     @Environment(AppModel.self) private var app
     @State private var live: [MCPServer] = []
     @State private var editing: ServerEdit?
+    /// What to remove once its sheet has closed (and its fields are done saving).
+    @State private var removal: [String]?
     @State private var isNaming = false
     @State private var newName = ""
 
@@ -63,8 +65,11 @@ struct MCPSettings: View {
                 live = (try? await app.api?.mcpServers()) ?? live
             }
         }
-        .sheet(item: $editing) { edit in
-            ServerEditor(name: edit.id) { editing = nil }
+        .sheet(item: $editing, onDismiss: removePending) { edit in
+            ServerEditor(name: edit.id) { editing = nil } remove: { path in
+                removal = path
+                editing = nil
+            }
         }
         .alert("Add MCP Server", isPresented: $isNaming) {
             TextField("Name, like github", text: $newName)
@@ -142,6 +147,12 @@ struct MCPSettings: View {
         config.set(.object(["type": .string("local"), "command": .array([]), "disabled": .bool(true)]), at: Self.path + [name])
         editing = ServerEdit(id: name)
     }
+
+    private func removePending() {
+        guard let removal else { return }
+        app.engineConfig.set(nil, at: removal)
+        self.removal = nil
+    }
 }
 
 private struct ServerEdit: Identifiable {
@@ -172,8 +183,12 @@ private struct StatusLabel: View {
 private struct ServerEditor: View {
     let name: String
     let done: () -> Void
+    /// Removes this entry, once the sheet has closed.
+    let remove: ([String]) -> Void
     @Environment(AppModel.self) private var app
     @State private var command = ""
+    /// The command as shown, to tell whether you changed it.
+    @State private var shownCommand = ""
     @State private var confirmsRemoval = false
 
     private var config: EngineConfig { app.engineConfig }
@@ -257,11 +272,11 @@ private struct ServerEditor: View {
         .frame(width: 600, height: 560)
         .onAppear {
             command = config.value(at: path + ["command"])?.array?.compactMap(\.string).map(Self.quoted).joined(separator: " ") ?? ""
+            shownCommand = command
         }
         .confirmationDialog("Remove \(name)?", isPresented: $confirmsRemoval) {
             Button("Remove", role: .destructive) {
-                done()
-                config.set(nil, at: path)
+                remove(path)
             }
         } message: {
             Text("The agent loses its tools.")
@@ -271,7 +286,9 @@ private struct ServerEditor: View {
     /// The command as its words (quotes keep spaces in one); a server with a command is
     /// turned on.
     private func saveCommand() {
-        guard !isRemote else { return }
+        // Only what you changed: the file's own form is kept otherwise.
+        guard !isRemote, command != shownCommand else { return }
+        shownCommand = command
         let words = Self.words(command)
         let old = config.value(at: path + ["command"])?.array?.compactMap(\.string) ?? []
         guard words != old else { return }
@@ -279,30 +296,43 @@ private struct ServerEditor: View {
         if old.isEmpty, !words.isEmpty { config.set(nil, at: path + ["disabled"]) }
     }
 
+    /// A command line's words, as a shell splits them: quotes keep spaces in one word, and a
+    /// backslash takes the next character as it is (except inside single quotes).
     static func words(_ line: String) -> [String] {
         var words: [String] = []
         var current = ""
         var quote: Character?
         var hasWord = false
+        var escaped = false
         for character in line {
-            if let open = quote {
+            if escaped {
+                current.append(character)
+                escaped = false
+            } else if character == "\\", quote != "'" {
+                escaped = true
+                hasWord = true
+            } else if let open = quote {
                 if character == open { quote = nil } else { current.append(character) }
             } else if character == "\"" || character == "'" {
                 quote = character
                 hasWord = true
             } else if character.isWhitespace {
-                if hasWord || !current.isEmpty { words.append(current) }
+                if hasWord { words.append(current) }
                 current = ""
                 hasWord = false
             } else {
                 current.append(character)
+                hasWord = true
             }
         }
-        if hasWord || !current.isEmpty { words.append(current) }
+        if hasWord { words.append(current) }
         return words
     }
 
+    /// A word as it can be typed back: in double quotes, with quotes and backslashes escaped,
+    /// when it has spaces, quotes or backslashes.
     static func quoted(_ word: String) -> String {
-        word.contains(where: \.isWhitespace) || word.isEmpty ? "\"\(word)\"" : word
+        guard word.isEmpty || word.contains(where: { $0.isWhitespace || $0 == "\"" || $0 == "'" || $0 == "\\" }) else { return word }
+        return "\"" + word.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
     }
 }

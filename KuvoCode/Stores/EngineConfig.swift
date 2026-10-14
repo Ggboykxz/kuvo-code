@@ -78,6 +78,6 @@ final class EngineConfig {
 // MARK: - Reading values
 
 extension JSONValue {
-    /// Whole numbers as `Int`.
-    var int: Int? { number.map { Int($0) } }
+    /// Whole numbers as `Int`: nil for one that isn't whole or doesn't fit.
+    var int: Int? { number.flatMap { Int(exactly: $0) } }
 }

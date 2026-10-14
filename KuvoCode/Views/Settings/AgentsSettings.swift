@@ -7,6 +7,8 @@ struct AgentsSettings: View {
     @Environment(AppModel.self) private var app
     @Environment(Catalog.self) private var catalog
     @State private var editing: AgentEdit?
+    /// What to remove once its sheet has closed (and its fields are done saving).
+    @State private var removal: [String]?
     @State private var isNaming = false
     @State private var newName = ""
 
@@ -89,8 +91,11 @@ struct AgentsSettings: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .sheet(item: $editing) { edit in
-            AgentEditor(id: edit.id, isBuiltIn: edit.isBuiltIn) { editing = nil }
+        .sheet(item: $editing, onDismiss: removePending) { edit in
+            AgentEditor(id: edit.id, isBuiltIn: edit.isBuiltIn) { editing = nil } remove: { path in
+                removal = path
+                editing = nil
+            }
         }
         .alert("New Agent", isPresented: $isNaming) {
             TextField("Name, like reviewer", text: $newName)
@@ -117,6 +122,12 @@ struct AgentsSettings: View {
         default: "Mode"
         }
     }
+
+    private func removePending() {
+        guard let removal else { return }
+        app.engineConfig.set(nil, at: removal)
+        self.removal = nil
+    }
 }
 
 private struct AgentEdit: Identifiable {
@@ -129,6 +140,8 @@ private struct AgentEditor: View {
     let id: String
     let isBuiltIn: Bool
     let done: () -> Void
+    /// Removes this entry, once the sheet has closed.
+    let remove: ([String]) -> Void
     @Environment(AppModel.self) private var app
     @Environment(Catalog.self) private var catalog
     @State private var confirmsRemoval = false
@@ -196,8 +209,7 @@ private struct AgentEditor: View {
         .navigationTitle(name)
         .confirmationDialog(isBuiltIn ? "Reset \(name) to how it's built in?" : "Delete \(name)?", isPresented: $confirmsRemoval) {
             Button(isBuiltIn ? "Reset" : "Delete", role: .destructive) {
-                done()
-                config.set(nil, at: path)
+                remove(path)
             }
         } message: {
             Text(isBuiltIn ? "Your changes to it are removed." : "It's removed from the engine's settings.")
