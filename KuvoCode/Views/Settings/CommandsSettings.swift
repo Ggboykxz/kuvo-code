@@ -52,7 +52,6 @@ struct CommandsSettings: View {
                 Text("Type / and a command's name at the start of a message to run it. What you type after the name fills in $ARGUMENTS.")
                     .foregroundStyle(.secondary)
             }
-            .settingsTop()
 
             ConfigProblem()
 
@@ -96,7 +95,8 @@ struct CommandsSettings: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("/" + command.name)
                             if let description = command.description {
-                                Text(description)
+                                // The engine's own read "guided AGENTS.md setup": a capital, like ours.
+                                Text(description.prefix(1).uppercased() + description.dropFirst())
                                     .font(.callout)
                                     .foregroundStyle(.secondary)
                             }

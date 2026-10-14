@@ -18,24 +18,24 @@ struct EngineSettings: View {
         ScrollingSettingsForm {
             Section {
                 LabeledContent("Engine", value: "opencode \(OpenCodeEngine.version)")
+                // The dot carries the color; the words stay readable.
                 LabeledContent("Status") {
-                    switch app.engine {
-                    case .ready: Label(app.isLive ? "Running" : "Reconnecting", systemImage: "circle.fill").foregroundStyle(app.isLive ? .green : .orange)
-                    case .failed: Label("Stopped", systemImage: "circle.fill").foregroundStyle(.red)
-                    default: Text("Starting…")
+                    HStack(spacing: 12) {
+                        switch app.engine {
+                        case .ready: StatusText(app.isLive ? "Running" : "Reconnecting", color: app.isLive ? .green : .orange)
+                        case .failed: StatusText("Stopped", color: .red)
+                        default: Text("Starting…")
+                        }
+                        Button("Restart") { Task { await app.restart() } }
                     }
                 }
-                LabeledContent("Data") {
-                    HStack {
-                        Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([AppInfo.supportDirectory]) }
-                        Button("Restart Engine") { Task { await app.restart() } }
-                    }
+                LabeledContent("Data folder") {
+                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([AppInfo.supportDirectory]) }
                 }
             } footer: {
                 Text("Sessions, accounts and settings are kept in the data folder, separate from any opencode you have installed.")
                     .foregroundStyle(.secondary)
             }
-            .settingsTop()
 
             ConfigProblem()
             Section("Behavior") {
@@ -81,7 +81,7 @@ struct EngineSettings: View {
             }
 
             Section {
-                Picker("Web search", selection: Binding<String>(
+                Picker("Search service", selection: Binding<String>(
                     get: {
                         guard let value = config.value(at: ["websearch"]) else { return "" }
                         if value.bool == false { return "off" }
@@ -178,6 +178,24 @@ struct EngineSettings: View {
             shells = (try? await api.shells()) ?? []
             searchProviders = (try? await api.webSearchProviders()) ?? []
             plugins = (try? await api.plugins()) ?? []
+        }
+    }
+}
+
+/// The engine's state: a colored dot, and the words in the usual ink.
+private struct StatusText: View {
+    let title: String
+    let color: Color
+
+    init(_ title: String, color: Color) {
+        self.title = title
+        self.color = color
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle().fill(color).frame(width: 8, height: 8)
+            Text(title)
         }
     }
 }

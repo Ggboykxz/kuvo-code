@@ -54,7 +54,6 @@ struct AgentsSettings: View {
                 Text("New sessions use the model you picked last; this one is for when there's none. A small, fast model is enough for titles.")
                     .foregroundStyle(.secondary)
             }
-            .settingsTop()
 
             ConfigProblem()
 

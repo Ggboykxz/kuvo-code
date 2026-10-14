@@ -43,7 +43,6 @@ struct PermissionsSettings: View {
                 Text("For every session and mode. These come after a mode's own rules, so Allow here also lets Plan mode do it. A session set to Ask First still asks.")
                     .foregroundStyle(.secondary)
             }
-            .settingsTop()
 
             ConfigProblem()
 
@@ -52,7 +51,8 @@ struct PermissionsSettings: View {
             } header: {
                 Text("Rules")
             } footer: {
-                Text("For particular commands, files or sites, like \"git push *\" or \"*.pem\". * matches anything. When rules overlap, the one lower in the list wins.")
+                // Verbatim: as Markdown, the asterisks would turn part of the sentence into italics.
+                Text(verbatim: "For particular commands, files or sites, like \"git push *\" or \"*.pem\". * matches anything. When rules overlap, the one lower in the list wins.")
                     .foregroundStyle(.secondary)
             }
 
@@ -89,7 +89,7 @@ struct PermissionsSettings: View {
             } header: {
                 Text("Blocks")
             } footer: {
-                Text("Blocks win over everything else, including approvals. Block a tool or command as \"shell:git push *\", a provider by its ID, or an MCP server, skill or plugin as \"mcp:name\", \"skill:name\" or \"plugin:name\".")
+                Text(verbatim: "Blocks win over everything else, including approvals. Block a tool or command as \"shell:git push *\", a provider by its ID, or an MCP server, skill or plugin as \"mcp:name\", \"skill:name\" or \"plugin:name\".")
                     .foregroundStyle(.secondary)
             }
         }
@@ -166,6 +166,10 @@ struct RulesEditor: View {
         let shown = items.indices.filter { index in
             guard let rule = items[index].rule else { return false }
             return !(hiding.contains(rule.action) && rule.resource == "*")
+        }
+        if shown.isEmpty {
+            Text("None yet.")
+                .foregroundStyle(.secondary)
         }
         ForEach(shown, id: \.self) { index in
             if let rule = items[index].rule {

@@ -12,6 +12,7 @@ struct ProjectSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(AppModel.self) private var app
+    @Environment(\.colorScheme) private var scheme
     @State private var name: String
     /// What runs in each new worktree; nil until it's known that the primary folder is in a
     /// git repository (and what the engine has for it).
@@ -122,7 +123,9 @@ struct ProjectSheet: View {
             Image(systemName: "folder")
                 .foregroundStyle(.secondary)
                 .frame(width: 42)
-            Divider()
+            Rectangle()
+                .fill(Surface.wellBorder(scheme))
+                .frame(width: 1)
             // Left empty, the project takes its primary folder's name.
             TextField("Project name", text: $name, prompt: Text(folders.first.map { ($0 as NSString).lastPathComponent } ?? "Project name"))
                 .textFieldStyle(.plain)
@@ -131,8 +134,11 @@ struct ProjectSheet: View {
         }
         .font(.system(size: 15))
         .frame(height: 44)
-        .background(.fill.quaternary, in: .rect(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(isNameFocused ? AnyShapeStyle(.tint) : AnyShapeStyle(.separator), lineWidth: isNameFocused ? 2 : 1))
+        // A recessed well, ringed in the accent color while you type.
+        .recessedWell(RoundedRectangle(cornerRadius: 10))
+        .overlay {
+            if isNameFocused { RoundedRectangle(cornerRadius: 10).strokeBorder(.tint, lineWidth: 2) }
+        }
     }
 
     // MARK: Folders
@@ -176,9 +182,9 @@ struct ProjectSheet: View {
                 .buttonStyle(.plain)
             }
         }
-        .background(.background, in: .rect(cornerRadius: Metrics.cardRadius))
+        .background(Surface.cardFill(scheme, focused: false), in: .rect(cornerRadius: Metrics.cardRadius))
         .clipShape(.rect(cornerRadius: Metrics.cardRadius))
-        .overlay(RoundedRectangle(cornerRadius: Metrics.cardRadius).strokeBorder(.separator))
+        .specularRim(RoundedRectangle(cornerRadius: Metrics.cardRadius))
     }
 
     private func addFolders() {
@@ -225,7 +231,7 @@ private struct FolderRow: View {
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
-                    .overlay(Capsule().strokeBorder(.separator))
+                    .recessedWell(Capsule())
                     .help("Sessions run in this folder")
             } else if canChangePrimary {
                 Button("Make Primary", action: makePrimary)

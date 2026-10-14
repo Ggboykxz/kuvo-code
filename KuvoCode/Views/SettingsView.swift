@@ -62,8 +62,8 @@ private struct GeneralSettings: View {
             }
             .pickerStyle(.segmented)
             Toggle(isOn: $showsTabBar) {
-                Text("Show tabs in the title bar")
-                Text("Without them, switch sessions in the sidebar or with ⌘K.")
+                Text("Show the tab bar")
+                Text("The row at the top, with the project, its branch and your sessions as tabs. Without it, switch sessions in the sidebar or with ⌘K.")
             }
             Toggle(isOn: $notifies) {
                 Text("Notify me when a session finishes or needs me")
@@ -90,7 +90,7 @@ private struct UsageSettings: View {
     var body: some View {
         Form {
             Section {
-                Text("Plan limits, pace and spend for Claude, Codex, Copilot, Cursor, OpenCode and more live in the menu bar. Accounts you connect in Kuvo Code count there too, and so do Kuvo Code's own runs.")
+                Text("Plan limits, pace and spend for the accounts you connect in Kuvo Code, like GitHub Copilot, ChatGPT and OpenRouter, live in the menu bar. They count what you use anywhere, not only here.")
                     .foregroundStyle(.secondary)
                 HStack {
                     Button("Usage Settings…") { UsageMenuBar.shared.open(.settings) }
@@ -128,7 +128,7 @@ private struct PanelSettingsView: View {
             Section("New Tab Page") {
                 Toggle("Show tools", isOn: $showsTools)
                 Toggle("Show suggested sites", isOn: $showsSuggestions)
-                Picker("Suggested sites", selection: $suggestionCount) {
+                Picker("Number of sites", selection: $suggestionCount) {
                     ForEach([4, 8, 12, 16], id: \.self) { Text("\($0)").tag($0) }
                 }
                 .disabled(!showsSuggestions)
@@ -137,7 +137,8 @@ private struct PanelSettingsView: View {
                 Picker("Search engine", selection: $searchEngine) {
                     ForEach(SearchEngine.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
-                LabeledContent("Suggested sites") {
+                // The sites you've visited, which the new tab page suggests.
+                LabeledContent("Browsing history") {
                     Button("Clear") { app.utilities.history.clear() }
                         .disabled(app.utilities.history.sites.isEmpty)
                 }

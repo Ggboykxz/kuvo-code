@@ -59,7 +59,6 @@ struct SkillsSettings: View {
                 Text("The agent loads a skill when a task calls for it. Skills in ~/.claude/skills and ~/.agents/skills, and in a project's .opencode/skills, are found on their own.")
                     .foregroundStyle(.secondary)
             }
-            .settingsTop()
 
             ConfigProblem()
 

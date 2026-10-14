@@ -9,6 +9,7 @@ struct CustomProvidersSection: View {
     let connect: (Integration) -> Void
     @Environment(AppModel.self) private var app
     @Environment(Catalog.self) private var catalog
+    @Environment(\.colorScheme) private var scheme
     @State private var editing: ProviderEdit?
     /// What to remove once its sheet has closed (and its fields are done saving).
     @State private var removal: [String]?
@@ -52,8 +53,8 @@ struct CustomProvidersSection: View {
                         if id != ids.last { Divider().padding(.leading, 14) }
                     }
                 }
-                .background(.background, in: .rect(cornerRadius: Metrics.cardRadius))
-                .overlay(RoundedRectangle(cornerRadius: Metrics.cardRadius).strokeBorder(.separator))
+                .background(Surface.cardFill(scheme, focused: false), in: .rect(cornerRadius: Metrics.cardRadius))
+                .specularRim(RoundedRectangle(cornerRadius: Metrics.cardRadius))
             }
         }
         .sheet(item: $editing, onDismiss: removePending) { edit in

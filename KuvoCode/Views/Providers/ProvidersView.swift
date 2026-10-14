@@ -15,6 +15,7 @@ struct ProvidersView: View {
     @Environment(Catalog.self) private var catalog
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
     @State private var connecting: Integration?
     @State private var search = ""
 
@@ -54,13 +55,12 @@ struct ProvidersView: View {
     private var list: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 26) {
-                HStack(alignment: .firstTextBaseline) {
-                    if context == .sheet {
+                // Only in the sheet: in Settings the window's title says it.
+                if context == .sheet {
+                    HStack(alignment: .firstTextBaseline) {
                         Text("Accounts")
                             .font(.largeTitle.weight(.bold))
-                    }
-                    Spacer()
-                    if context == .sheet {
+                        Spacer()
                         Button("Done") { dismiss() }
                             .buttonStyle(.glassProminent)
                             .controlSize(.large)
@@ -84,8 +84,8 @@ struct ProvidersView: View {
                                 }
                             }
                         }
-                        .background(.background, in: .rect(cornerRadius: Metrics.cardRadius))
-                        .overlay(RoundedRectangle(cornerRadius: Metrics.cardRadius).strokeBorder(.separator))
+                        .background(Surface.cardFill(scheme, focused: false), in: .rect(cornerRadius: Metrics.cardRadius))
+                        .specularRim(RoundedRectangle(cornerRadius: Metrics.cardRadius))
                     }
                 }
 
@@ -121,8 +121,8 @@ struct ProvidersView: View {
                             }
                         }
                         .padding(4)
-                        .background(.background, in: .rect(cornerRadius: Metrics.cardRadius))
-                        .overlay(RoundedRectangle(cornerRadius: Metrics.cardRadius).strokeBorder(.separator))
+                        .background(Surface.cardFill(scheme, focused: false), in: .rect(cornerRadius: Metrics.cardRadius))
+                        .specularRim(RoundedRectangle(cornerRadius: Metrics.cardRadius))
                     }
                 }
             }
@@ -153,11 +153,13 @@ struct ProvidersView: View {
     }
 }
 
-/// A rounded search field that lives in the content, not in a toolbar.
+/// A rounded search field that lives in the content, not in a toolbar: a recessed well, ringed
+/// in the accent color while you type.
 private struct SearchField: View {
     @Binding var text: String
     let prompt: String
     @FocusState private var isFocused: Bool
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         HStack(spacing: 8) {
@@ -179,8 +181,11 @@ private struct SearchField: View {
         .font(.body)
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
-        .background(.fill.quaternary, in: .rect(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(isFocused ? AnyShapeStyle(.tint) : AnyShapeStyle(.separator), lineWidth: isFocused ? 2 : 1))
+        // Sunken, like the sidebar's search, with no outline; a touch deeper while you type.
+        .background((scheme == .dark ? Color.black : Surface.slate).opacity(isFocused ? 0.05 : 0), in: .rect(cornerRadius: 10))
+        .background(Surface.well(scheme), in: .rect(cornerRadius: 10))
+        .contentShape(.rect)
+        .onTapGesture { isFocused = true }
     }
 }
 
@@ -188,13 +193,14 @@ private struct SearchField: View {
 private struct ProviderTile: View {
     let provider: Integration
     let action: () -> Void
+    @Environment(\.colorScheme) private var scheme
     @State private var isHovering = false
 
     var body: some View {
         HStack(spacing: 12) {
-            ProviderLogo(id: provider.id, size: 24)
-                .frame(width: 44, height: 44)
-                .background(.fill.quaternary, in: .rect(cornerRadius: 11))
+            ProviderLogo(id: provider.id, size: 20)
+                .frame(width: 36, height: 36)
+                .background(Surface.well(scheme), in: .rect(cornerRadius: 9))
             VStack(alignment: .leading, spacing: 2) {
                 Text(provider.name)
                     .font(.body.weight(.semibold))
@@ -207,21 +213,32 @@ private struct ProviderTile: View {
             Spacer(minLength: 8)
             Button("Connect", action: action)
                 .buttonStyle(.glass)
-                .controlSize(.regular)
+                .controlSize(.small)
         }
         .padding(12)
-        .background(.background, in: .rect(cornerRadius: Metrics.cardRadius))
-        .overlay(RoundedRectangle(cornerRadius: Metrics.cardRadius).strokeBorder(isHovering ? AnyShapeStyle(.tint) : AnyShapeStyle(.separator), lineWidth: isHovering ? 1.5 : 1))
+        .background(Surface.cardFill(scheme, focused: false), in: .rect(cornerRadius: Metrics.cardRadius))
+        .specularRim(RoundedRectangle(cornerRadius: Metrics.cardRadius))
+        // Under the pointer, an accent edge: the whole tile connects.
+        .overlay {
+            RoundedRectangle(cornerRadius: Metrics.cardRadius)
+                .strokeBorder(.tint, lineWidth: 1.5)
+                .opacity(isHovering ? 1 : 0)
+        }
         .contentShape(.rect)
         .onTapGesture(perform: action)
         .onHover { hovering in withAnimation(.easeOut(duration: 0.15)) { isHovering = hovering } }
         .pointerStyle(.link)
     }
 
-    /// The headline way in: "Sign in with ChatGPT", "Login with GitHub Copilot", "API key".
+    /// The headline way in: "Sign in with ChatGPT", "Sign in", "API key".
+    /// ("Login with" is the engine's wording for some; one wording reads better side by side.)
     private var hint: String {
         for method in provider.signInMethods {
-            if case .oauth(_, let label, _) = method, !label.localizedCaseInsensitiveContains("legacy") { return label }
+            if case .oauth(_, let label, _) = method, !label.localizedCaseInsensitiveContains("legacy") {
+                // Under the provider's name, its name again ("OpenCode Console account") says nothing.
+                if label.localizedCaseInsensitiveContains(provider.name) { return "Sign in" }
+                return label.replacingOccurrences(of: "Login with", with: "Sign in with")
+            }
         }
         return provider.signInMethods.contains { $0.id == "key" } ? "API key" : "Connect"
     }
@@ -252,7 +269,7 @@ private struct ProviderRow: View {
                 }
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 9)

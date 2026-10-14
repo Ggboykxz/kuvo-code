@@ -275,32 +275,26 @@ struct ConfigProblem: View {
     }
 }
 
-/// A tab of settings too long for the window: a grouped form that scrolls. Mark its first
-/// section with `settingsTop()`: a form that scrolls opens with its first rows under the
-/// window's toolbar, so it's scrolled to that section once it's shown.
+/// A tab of settings too long for the window: a grouped form that scrolls, and opens at its
+/// top, with the same room above its first section as a tab that doesn't scroll. (Shown, a
+/// form can land elsewhere, under the toolbar or at its end, so it's taken to its top edge
+/// once it's laid out; that edge keeps the room a section's own top would lose.)
 struct ScrollingSettingsForm<Content: View>: View {
     @ViewBuilder var content: Content
+    @State private var position = ScrollPosition(edge: .top)
 
     var body: some View {
-        ScrollViewReader { proxy in
-            Form { content }
-                .formStyle(.grouped)
-                .frame(width: SettingsView.width, height: 620)
-                .onAppear {
-                    Task {
-                        await Task.yield()
-                        proxy.scrollTo(settingsTopID, anchor: .top)
-                    }
+        Form { content }
+            .formStyle(.grouped)
+            .frame(width: SettingsView.width, height: 620)
+            .scrollPosition($position)
+            .onAppear {
+                Task {
+                    await Task.yield()
+                    position.scrollTo(edge: .top)
                 }
-        }
+            }
     }
-}
-
-private let settingsTopID = "settings-top"
-
-extension View {
-    /// The first section of a `ScrollingSettingsForm`.
-    func settingsTop() -> some View { id(settingsTopID) }
 }
 
 /// Signing in to something from Settings (an MCP server, a web search service): the same

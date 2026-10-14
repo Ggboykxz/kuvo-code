@@ -20,7 +20,7 @@ nonisolated enum MCPCatalog {
 
         var title: String {
             switch self {
-            case .signIn: "Sign in"
+            case .signIn: "Needs an account"
             case .open: "No account needed"
             case .local: "Runs on this Mac"
             }
