@@ -10,7 +10,31 @@ nonisolated enum FileLinks {
         guard !span.contains(where: \.isWhitespace), !span.contains("://"),
               span.contains("/") || span.contains(".") else { return nil }
         let path = span.replacing(/(:\d+(-\d+)?|#L\d+(-L?\d+)?)$/, with: "")
-        guard !path.isEmpty, path != ".", path != ".." else { return nil }
+        // A name has a letter in it: not "1.2.3" or "..".
+        guard (path as NSString).lastPathComponent.contains(where: \.isLetter) else { return nil }
+        // A reply is read again on every word that streams in; the disk is asked at most every
+        // few seconds per name (a file the agent is about to create links once it exists).
+        let key = folders.joined(separator: "\n") + "\u{0}" + path as NSString
+        if let known = cache.object(forKey: key), Date().timeIntervalSince(known.checked) < 5 { return known.url }
+        let url = find(path, folders: folders)
+        cache.setObject(Known(url: url), forKey: key)
+        return url
+    }
+
+    private final class Known {
+        let url: URL?
+        let checked = Date()
+        init(url: URL?) { self.url = url }
+    }
+
+    /// NSCache is thread-safe.
+    nonisolated(unsafe) private static let cache: NSCache<NSString, Known> = {
+        let cache = NSCache<NSString, Known>()
+        cache.countLimit = 2000
+        return cache
+    }()
+
+    private static func find(_ path: String, folders: [String]) -> URL? {
         var candidates: [String] = []
         if path.hasPrefix("/") {
             candidates = [path]
