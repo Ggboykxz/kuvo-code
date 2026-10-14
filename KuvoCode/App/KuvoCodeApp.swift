@@ -1,4 +1,5 @@
 import SwiftUI
+import OpenCodeKit
 import UsageKit
 
 @main
@@ -58,6 +59,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Closing the engine's stdin shuts it down cleanly (it would also exit with us).
         model.stop()
         Analytics.shared.flushBeforeQuit()
+    }
+
+    /// Folders dropped on the Dock icon, picked in Finder's Open With, or passed to
+    /// `open -a "Kuvo Code" <folder>`: each becomes a project, with a new session in the first.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        let folders = urls.filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+        for folder in folders.dropFirst().reversed() { model.workspace.addFolder(folder.path(percentEncoded: false)) }
+        if let first = folders.first { model.open(.folder(first.path(percentEncoded: false))) }
+    }
+
+    /// The Dock icon's menu: the latest sessions, and a new one.
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        let menu = NSMenu()
+        let sessions = model.workspace.projects.flatMap(\.sessions).filter { !Workspace.isArchived($0) }
+            .sorted { $0.time.updated > $1.time.updated }.prefix(5)
+        for session in sessions {
+            let id = session.id
+            menu.addItem(ActionItem(session.title ?? "New Session") { [model] in model.open(.session(id)) })
+        }
+        if !sessions.isEmpty { menu.addItem(.separator()) }
+        menu.addItem(ActionItem("New Session") { [model] in model.open(.newSession) })
+        return menu
     }
 
     /// The usage meter stays in the menu bar after the window closes.

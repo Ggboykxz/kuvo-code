@@ -194,6 +194,20 @@ struct MainView: View {
             openTab(id)
             workspace.requestedTab = nil
         }
+        // From outside the window: a folder opened with Kuvo Code, or the Dock menu.
+        .onChange(of: app.request, initial: true) { _, request in
+            guard let request else { return }
+            app.request = nil
+            switch request {
+            case .folder(let path):
+                workspace.addFolder(path)
+                newSession(in: path)
+            case .session(let id):
+                openTab(id)
+            case .newSession:
+                newSession(in: nil)
+            }
+        }
         .onChange(of: workspace.waitingCount, initial: true) { Notifier.shared.setBadge(workspace.waitingCount) }
         .onChange(of: notificationsEnabled) { Notifier.shared.setBadge(workspace.waitingCount) }
         #if DEBUG

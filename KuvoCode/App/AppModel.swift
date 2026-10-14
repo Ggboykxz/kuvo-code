@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import OpenCodeKit
 import os
 
@@ -34,6 +34,31 @@ final class AppModel {
     var skillsFolder: URL { engineFolders.configFile.deletingLastPathComponent().appending(path: "skills") }
     /// Brings the main window back (set by the window itself; the usage menu's "Open Kuvo Code").
     var openMainWindow: (() -> Void)?
+
+    /// Something to open from outside the window: a folder dropped on the Dock icon or opened with
+    /// Kuvo Code, or a pick from the Dock menu. The main window takes it when it's there.
+    enum Request: Equatable {
+        case folder(String)
+        case session(String)
+        case newSession
+    }
+    var request: Request?
+
+    /// Shows the main window and hands it `request`.
+    func open(_ request: Request) {
+        #if DEBUG
+        // A demo copy launched with KUVO_DEMO_BACKGROUND stays behind, so it never takes the keyboard
+        // (opening the window activates the app too).
+        let background = ProcessInfo.processInfo.environment["KUVO_DEMO_BACKGROUND"] != nil
+        #else
+        let background = false
+        #endif
+        if !background {
+            openMainWindow?()
+            NSApp.activate()
+        }
+        self.request = request
+    }
 
     private var server: ServerProcess?
     private var eventTask: Task<Void, Never>?
