@@ -24,7 +24,7 @@ struct TranscriptView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                    RowView(row: row, directory: model.session.location.directory, cancel: model.cancelPending, undo: model.undo(from:), redo: model.redo, fork: fork, retry: model.retry(_:))
+                    RowView(row: row, directory: model.session.location.directory, cancel: model.cancelPending, undo: model.undo(from:), redo: model.redo, fork: fork, retry: model.retry(_:), buildPlan: model.agent == "plan" ? { model.buildPlan() } as () -> Void : nil)
                         .background {
                             if matches.contains(row.id) {
                                 RoundedRectangle(cornerRadius: 8)
@@ -199,8 +199,11 @@ struct TurnStats: Hashable {
     var steps = 0
     /// What the agent wrote, for copying the reply.
     var text: [String] = []
+    /// The mode that answered: a plan can be built from its end.
+    var agent: String?
 
     mutating func add(_ message: Message.Assistant) {
+        agent = message.agent
         cost += message.cost ?? 0
         outputTokens += (message.tokens?.output ?? 0) + (message.tokens?.reasoning ?? 0)
         steps += 1
@@ -262,6 +265,8 @@ private struct RowView: View {
     let redo: () -> Void
     let fork: (Message.User) -> Void
     let retry: (Message.User) -> Void
+    /// While the session is in Plan mode: build what the last answer planned.
+    let buildPlan: (() -> Void)?
     @State private var confirmsUndo = false
 
     /// " 12s", " 1m 5s" after a few seconds, then " · Esc to stop".
@@ -305,7 +310,8 @@ private struct RowView: View {
         case .assistant(let message, let showsError):
             AssistantStepView(message: message, directory: directory, showsError: showsError)
         case .turnEnd(let idle, let stats, let isLast):
-            TurnEndView(idle: idle, stats: stats, retry: isLast ? stats.message.map { message in { retry(message) } } : nil)
+            TurnEndView(idle: idle, stats: stats, retry: isLast ? stats.message.map { message in { retry(message) } } : nil,
+                        build: isLast && stats.agent == "plan" ? buildPlan : nil)
         case .notice(_, let symbol, let text):
             Label(text, systemImage: symbol)
                 .font(.caption)
@@ -471,6 +477,8 @@ private struct TurnEndView: View {
     let stats: TurnStats
     /// Sends the turn's message again; offered on the last turn when it failed.
     var retry: (() -> Void)?
+    /// Builds what a plan described; offered under Plan mode's last answer.
+    var build: (() -> Void)?
 
     var body: some View {
         switch idle.outcome {
@@ -497,6 +505,13 @@ private struct TurnEndView: View {
                 }
                 if !stats.text.isEmpty {
                     CopyButton(text: stats.text.joined(separator: "\n\n"), help: "Copy the Reply")
+                }
+                if let build {
+                    Button("Build It", systemImage: "hammer", action: build)
+                        .buttonStyle(.glass)
+                        .controlSize(.small)
+                        .help("Switch to Build mode and have the agent carry out this plan")
+                        .padding(.leading, 4)
                 }
             }
         }

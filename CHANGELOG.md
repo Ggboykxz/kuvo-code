@@ -22,6 +22,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Escape in the composer stops the agent, as ⌘. does.
 - ⌘1 to ⌘8 show that session tab, and ⌘9 the last one, as in browsers.
 - Right-click a project and choose **Open In** to open it in your editor, terminal or git app.
+- **Build It** under an answer in Plan mode switches to Build and has the agent carry the plan out.
 - **Try Again** under a failed run sends your last message again, in place of the failed attempt.
 - **New Session From Here** on one of your messages starts a new session with the conversation up to it, to try another way while keeping this one.
 - **⌘F finds words in the conversation**, highlighting each message they're in.

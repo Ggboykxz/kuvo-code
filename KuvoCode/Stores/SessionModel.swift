@@ -358,6 +358,18 @@ final class SessionModel {
         return true
     }
 
+    /// After Plan mode's answer: switches to Build, then has the agent carry the plan out.
+    func buildPlan() {
+        session.agent = "build"
+        Task {
+            do { try await api.selectAgent(session: id, agent: "build") } catch {
+                failure = error.localizedDescription
+                return
+            }
+            send("Go ahead and build it, as planned.", for: nil)
+        }
+    }
+
     /// Summarizes the conversation so far, to make room in the context window.
     func compact() {
         Task {
