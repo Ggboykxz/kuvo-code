@@ -24,7 +24,7 @@ struct TranscriptView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                    RowView(row: row, directory: model.session.location.directory, cancel: model.cancelPending, undo: model.undo(from:), redo: model.redo, fork: fork, retry: model.retry(_:), buildPlan: model.agent == "plan" ? { model.buildPlan() } as () -> Void : nil)
+                    RowView(row: row, directory: model.session.location.directory, folders: model.folders, cancel: model.cancelPending, undo: model.undo(from:), redo: model.redo, fork: fork, retry: model.retry(_:), buildPlan: model.agent == "plan" ? { model.buildPlan() } as () -> Void : nil)
                         .background {
                             if matches.contains(row.id) {
                                 RoundedRectangle(cornerRadius: 8)
@@ -276,6 +276,7 @@ enum Row: Identifiable, Hashable {
 private struct RowView: View {
     let row: Row
     let directory: String
+    let folders: () -> [String]
     let cancel: (Transcript.Pending) -> Void
     let undo: (Message.User) -> Void
     let redo: () -> Void
@@ -340,7 +341,7 @@ private struct RowView: View {
                        status: item.isLocal ? "Sending" : item.delivery == .queue ? "Queued" : "Sending")
                 .contextMenu { Button("Cancel", role: .destructive) { cancel(item) } }
         case .assistant(let message, let showsError):
-            AssistantStepView(message: message, directory: directory, showsError: showsError)
+            AssistantStepView(message: message, directory: directory, folders: folders, showsError: showsError)
         case .turnEnd(let idle, let stats, let isLast):
             TurnEndView(idle: idle, stats: stats, directory: directory, retry: isLast ? stats.message.map { message in { retry(message) } } : nil,
                         build: isLast && stats.agent == "plan" ? buildPlan : nil)
@@ -415,6 +416,7 @@ struct UserBubble: View {
 private struct AssistantStepView: View {
     let message: Message.Assistant
     let directory: String
+    let folders: () -> [String]
     let showsError: Bool
 
     var body: some View {
@@ -422,7 +424,7 @@ private struct AssistantStepView: View {
             ForEach(Array(message.content.enumerated()), id: \.offset) { _, block in
                 switch block {
                 case .text(let text):
-                    MarkdownText(text: text.text)
+                    MarkdownText(text: text.text, folders: folders)
                 case .reasoning(let reasoning):
                     ReasoningView(block: reasoning)
                 case .tool(let call):
@@ -446,14 +448,23 @@ private struct AssistantStepView: View {
 
 struct MarkdownText: View {
     let text: String
+    /// The project's folders: file names written as code in them become links.
+    var folders: () -> [String] = { [] }
+    @Environment(AppModel.self) private var app
 
     var body: some View {
-        StructuredText(markdown: text)
+        StructuredText(text, parser: FileLinkingParser(folders: folders))
             .font(.transcript)
             // Closer to the text than the GitHub style, so it wins for code blocks.
             .textual.codeBlockStyle(CopyableCodeBlockStyle())
             .textual.structuredTextStyle(.gitHub)
             .textual.textSelection(.enabled)
+            // A file opens in the side panel; web links in the browser.
+            .environment(\.openURL, OpenURLAction { url in
+                guard url.isFileURL else { return .systemAction }
+                app.utilities.show(url)
+                return .handled
+            })
     }
 }
 

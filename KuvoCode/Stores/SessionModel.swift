@@ -37,6 +37,12 @@ final class SessionModel {
     private(set) var findRequest = 0
 
     func showFind() { findRequest += 1 }
+
+    /// The project's folders as they're set now, the primary one first.
+    func folders() -> [String] {
+        [session.location.directory] + projectFolders()
+    }
+
     func focusComposer() { composerFocus += 1 }
     /// Queued messages wait for Resume: after Stop, a failed run, or when the app finds them
     /// waiting at launch.
