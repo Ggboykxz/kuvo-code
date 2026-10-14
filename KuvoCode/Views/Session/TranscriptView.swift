@@ -203,21 +203,39 @@ struct TurnStats: Hashable {
     var text: [String] = []
     /// The mode that answered: a plan can be built from its end.
     var agent: String?
-    /// The files the agent's edits changed, in the order first changed, with their lines.
-    var files: [FileDiff] = []
+    /// The files the agent changed, in the order first changed, with their lines.
+    var files: [TurnFile] = []
+
+    /// A file a turn changed. A file written whole has no line counts.
+    struct TurnFile: Hashable, Identifiable {
+        var file: String
+        var lines: (additions: Int, deletions: Int)?
+
+        var id: String { file }
+
+        static func == (a: TurnFile, b: TurnFile) -> Bool {
+            a.file == b.file && a.lines?.additions == b.lines?.additions && a.lines?.deletions == b.lines?.deletions
+        }
+
+        func hash(into hasher: inout Hasher) {
+            hasher.combine(file)
+            hasher.combine(lines?.additions)
+            hasher.combine(lines?.deletions)
+        }
+    }
 
     mutating func add(_ message: Message.Assistant) {
         agent = message.agent
         for block in message.content {
-            guard case .tool(let call) = block, case .completed(_, _, let metadata) = call.state,
-                  let diffs = try? metadata?["files"]?.decode(as: [FileDiff].self) else { continue }
-            for diff in diffs {
-                if let index = files.firstIndex(where: { $0.file == diff.file }) {
-                    files[index].additions += diff.additions
-                    files[index].deletions += diff.deletions
-                } else {
-                    files.append(diff)
-                }
+            guard case .tool(let call) = block, case .completed(let input, _, let metadata) = call.state else { continue }
+            // Read straight from the JSON: this runs on every update while a reply streams, and
+            // the diffs carry whole patches.
+            for diff in metadata?["files"]?.array ?? [] {
+                guard let file = diff["file"]?.string else { continue }
+                note(file, lines: (Int(diff["additions"]?.number ?? 0), Int(diff["deletions"]?.number ?? 0)))
+            }
+            if call.name == "write", let path = input["path"]?.string {
+                note(path, lines: nil)
             }
         }
         cost += message.cost ?? 0
@@ -225,6 +243,19 @@ struct TurnStats: Hashable {
         steps += 1
         for block in message.content {
             if case .text(let part) = block, !part.text.isEmpty { text.append(part.text) }
+        }
+    }
+
+    private mutating func note(_ file: String, lines: (additions: Int, deletions: Int)?) {
+        guard let index = files.firstIndex(where: { $0.file == file }) else {
+            files.append(TurnFile(file: file, lines: lines))
+            return
+        }
+        // Once written whole, its lines aren't known.
+        if let old = files[index].lines, let lines {
+            files[index].lines = (old.additions + lines.additions, old.deletions + lines.deletions)
+        } else {
+            files[index].lines = nil
         }
     }
 }
@@ -597,11 +628,17 @@ private struct TurnEndView: View {
         case .failed:
             VStack(alignment: .leading, spacing: 8) {
                 ErrorCard(message: idle.error?.message ?? "The run failed.")
-                if let retry {
-                    Button("Try Again", systemImage: "arrow.clockwise", action: retry)
-                        .buttonStyle(.glass)
-                        .controlSize(.small)
-                        .help("Send your last message again")
+                HStack(spacing: 8) {
+                    if let retry {
+                        Button("Try Again", systemImage: "arrow.clockwise", action: retry)
+                            .buttonStyle(.glass)
+                            .controlSize(.small)
+                            .help("Send your last message again")
+                    }
+                    // What it changed before failing.
+                    if !stats.files.isEmpty {
+                        TurnFiles(files: stats.files, directory: directory)
+                    }
                 }
             }
         case .interrupted:
@@ -701,7 +738,7 @@ private struct FindBar: View {
 
 /// "Edited 3 files" under a turn: the files it changed, each a click from the panel.
 private struct TurnFiles: View {
-    let files: [FileDiff]
+    let files: [TurnStats.TurnFile]
     let directory: String
     @Environment(AppModel.self) private var app
     @State private var isShowing = false
@@ -731,7 +768,12 @@ private struct TurnFiles: View {
                                 .lineLimit(1)
                                 .truncationMode(.head)
                             Spacer(minLength: 12)
-                            DiffStat(additions: file.additions, deletions: file.deletions)
+                            if let lines = file.lines {
+                                DiffStat(additions: lines.additions, deletions: lines.deletions)
+                            } else {
+                                Text("Written")
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                         .padding(.horizontal, 8)
                         .frame(height: 26)
@@ -756,7 +798,7 @@ private struct TurnFiles: View {
         }
     }
 
-    private func url(of file: FileDiff) -> URL {
+    private func url(of file: TurnStats.TurnFile) -> URL {
         file.file.hasPrefix("/") ? URL(filePath: file.file) : URL(filePath: directory).appending(path: file.file)
     }
 
