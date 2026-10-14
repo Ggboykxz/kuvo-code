@@ -283,10 +283,11 @@ struct Composer: View {
     }
 
     /// The commands matching the "/" that starts the message, while its list is open.
+    /// Not while going through sent messages: ↑ and ↓ keep doing that.
     private var commandMatches: [Command]? {
-        guard !dismissedCommands, files.isEmpty, let query = SlashCommands.query(in: text) else { return nil }
-        let matches = SlashCommands.matches(query, in: commands)
-        return matches.isEmpty ? nil : matches
+        guard !dismissedCommands, historyIndex == nil, let query = SlashCommands.query(in: text) else { return nil }
+        let matches = SlashCommands.matches(query, in: commands).prefix(8)
+        return matches.isEmpty ? nil : Array(matches)
     }
 
     /// Picked from the list: runs it, as if "/name" had been typed and sent.

@@ -97,12 +97,9 @@ private struct BottomStack: View {
     }
 
     private func send(queue: Bool) {
-        let commands = catalog.commands(in: model.session.location.directory)
-        // A command takes no attachments; they stay for the next message.
-        let isCommand = SlashCommands.parse(model.draftText, commands: commands) != nil
-        model.submit(model.draftText, files: model.draftFiles, for: catalog.model(model.session.model), queue: queue, commands: commands)
+        model.submit(model.draftText, files: model.draftFiles, for: catalog.model(model.session.model), queue: queue, commands: catalog.commands(in: model.session.location.directory))
         model.draftText = ""
-        if !isCommand { model.draftFiles = [] }
+        model.draftFiles = []
     }
 }
 

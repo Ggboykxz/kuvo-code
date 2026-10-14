@@ -61,8 +61,17 @@ final class SessionModel {
     private var sending: Task<Void, Never>?
     /// Messages sent from here, so a command's message can be told from them.
     private var sentIDs: Set<String> = []
-    /// A command just run, until its message arrives: what it shows, and the messages before it.
-    private var runningCommand: (command: String, before: Set<String>)?
+    /// Commands run from here whose messages haven't arrived yet, oldest first.
+    private var runningCommands: [RunningCommand] = []
+
+    private struct RunningCommand {
+        var id = UUID()
+        /// What its message shows: "/review main".
+        var command: String
+        var started: Date
+        /// The messages there were already, sent or waiting.
+        var before: Set<String>
+    }
 
     /// The project's other folders, as they're set now.
     private let projectFolders: () -> [String]
@@ -130,7 +139,7 @@ final class SessionModel {
 
     func apply(_ event: ServerEvent) {
         transcript.apply(event)
-        if runningCommand != nil { noteCommandMessage() }
+        if !runningCommands.isEmpty { noteCommandMessages() }
         if transcript.isStale { scheduleReload() }
         switch event.type {
         case "session.tool.success", "session.execution.succeeded", "session.execution.failed", "session.revert.committed":
@@ -194,19 +203,30 @@ final class SessionModel {
     /// Sends what's in the composer: a message, or a command for "/name arguments".
     func submit(_ text: String, files: [URL], for model: Model?, queue: Bool, commands: [Command]) {
         if let (name, arguments) = SlashCommands.parse(text, commands: commands) {
-            runCommand(name, arguments: arguments)
+            runCommand(name, arguments: arguments, files: files, for: model, queue: queue)
         } else {
             send(text, files: files, for: model, queue: queue)
         }
     }
 
-    func runCommand(_ name: String, arguments: String) {
-        runningCommand = (arguments.isEmpty ? "/\(name)" : "/\(name) \(arguments)", Set(userMessageIDs))
-        Task {
+    /// Runs a command, with files as a message would carry them. With `queue`, it waits for the
+    /// run, as a queued message does.
+    func runCommand(_ name: String, arguments: String, files: [URL] = [], for model: Model? = nil, queue: Bool = false) {
+        let running = RunningCommand(
+            command: arguments.isEmpty ? "/\(name)" : "/\(name) \(arguments)",
+            started: Date(),
+            before: Set(userMessageIDs + transcript.pending.map(\.id))
+        )
+        runningCommands.append(running)
+        let delivery: InboxItem.Delivery = queue && (isBusy || hasQueue) ? .queue : .steer
+        let previous = sending
+        sending = Task {
+            await previous?.value
             do {
-                try await api.runCommand(session: id, name: name, arguments: arguments)
+                let prepared = await Task.detached { Attachments.prepare(files, for: model) }.value
+                try await api.runCommand(session: id, name: name, arguments: Attachments.text(arguments, adding: prepared.paths), files: prepared.files, delivery: delivery)
             } catch {
-                runningCommand = nil
+                runningCommands.removeAll { $0.id == running.id }
                 failure = error.localizedDescription
             }
         }
@@ -216,12 +236,20 @@ final class SessionModel {
         transcript.messages.compactMap { if case .user(let user) = $0 { user.id } else { nil } }
     }
 
-    /// The first new message that wasn't sent from here is the command's.
-    private func noteCommandMessage() {
-        guard let (command, before) = runningCommand,
-              let id = userMessageIDs.first(where: { !before.contains($0) && !sentIDs.contains($0) }) else { return }
-        CommandMessages.shared.note(id, command: command)
-        runningCommand = nil
+    /// Gives each command its message: the first new one, oldest command first, that wasn't
+    /// sent from here or waiting already, and came after the command was run. A command that
+    /// runs elsewhere (as a subagent's task) never gets one here, so it's let go after a while.
+    private func noteCommandMessages() {
+        runningCommands.removeAll { Date().timeIntervalSince($0.started) > 600 }
+        while let running = runningCommands.first {
+            let since = running.started.timeIntervalSince1970 * 1000 - 2000
+            let message = transcript.messages.lazy.compactMap { if case .user(let user) = $0 { user } else { nil } }.first {
+                !running.before.contains($0.id) && !sentIDs.contains($0.id) && CommandMessages.shared[$0.id] == nil && $0.time.created >= since
+            }
+            guard let message else { return }
+            CommandMessages.shared.note(message.id, command: running.command)
+            runningCommands.removeFirst()
+        }
     }
 
     /// Stops the agent. Waiting messages stay, queued and paused until Resume.
@@ -372,7 +400,7 @@ final class SessionModel {
                 }
                 _ = try await api.stageRevert(session: id, messageID: user.id)
                 if let command = CommandMessages.shared[user.id], let (name, arguments) = SlashCommands.split(command) {
-                    runCommand(name, arguments: arguments)
+                    runCommand(name, arguments: arguments, files: Self.files(of: user))
                     return
                 }
                 let id = Identifier.message()

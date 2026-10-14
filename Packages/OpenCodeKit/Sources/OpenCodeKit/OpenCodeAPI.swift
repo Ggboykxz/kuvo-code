@@ -225,9 +225,11 @@ public struct OpenCodeAPI: Sendable {
         try await send("POST", "api/session/\(session.pathEscaped)/prompt", body: body, as: Empty.self)
     }
 
-    public func runCommand(session: String, name: String, arguments: String) async throws {
-        struct Body: Encodable { var name: String; var text: String }
-        try await send("POST", "api/session/\(session.pathEscaped)/command", body: Body(name: name, text: arguments))
+    /// Runs a slash command, with what follows its name, and files, as a message would carry them.
+    public func runCommand(session: String, name: String, arguments: String, files: [PromptFile] = [], delivery: InboxItem.Delivery? = nil) async throws {
+        struct Body: Encodable { var name: String; var text: String; var files: [PromptFile]?; var delivery: InboxItem.Delivery? }
+        let body = Body(name: name, text: arguments, files: files.isEmpty ? nil : files, delivery: delivery)
+        try await send("POST", "api/session/\(session.pathEscaped)/command", body: body)
     }
 
     public func selectAgent(session: String, agent: String) async throws {
