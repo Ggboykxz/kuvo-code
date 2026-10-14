@@ -384,6 +384,15 @@ private struct BranchMenu: View {
                     model.send("Merge \(target) into this branch (\(tree.branch)), resolve the conflicts, and commit the merge.", for: catalog.model(model.session.model))
                 }
                 Button("Cancel", role: .cancel) {}
+            } else if case .merged = outcome, let model, !workspace.worktreeIsShared(directory, besides: model.id) {
+                // Its work is in the project now: nothing in the worktree is lost.
+                Button("Archive Session and Remove Worktree") {
+                    Task {
+                        do { try await workspace.removeWorktree(directory) } catch { NSAlert(error: error).runModal() }
+                        await workspace.setArchived(model.id, true)
+                    }
+                }
+                Button("Keep", role: .cancel) {}
             } else {
                 Button("OK") {}
             }
@@ -404,7 +413,7 @@ private struct BranchMenu: View {
 
     private var message: String {
         switch outcome {
-        case .merged: "The branch’s commits are in \(workspace.projectName(tree.project)) now. Archive the session to remove its worktree."
+        case .merged: "The branch’s commits are in \(workspace.projectName(tree.project)) now, so its worktree can go."
         case .conflict(let files, let target):
             "\(target) changed some of the same lines: \(files.prefix(5).joined(separator: ", "))\(files.count > 5 ? " and \(files.count - 5) more" : ""). Nothing was merged."
         case .pushed: "Open a pull request for it on your git host."
