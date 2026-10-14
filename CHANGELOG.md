@@ -6,33 +6,33 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- **A project can have several folders.** New Project (⇧⌘N, or + next to Projects) names a project and adds its folders; sessions run in the primary one, and the agent can work in the others too and knows them by name. Right-click a project for **Edit Project…** to rename it or add and remove folders.
+- The **Files** panel lists all of a project's folders, and its filter looks in all of them. The **Changes** panel has a folder menu to show each folder's changes, and comments there name the folder.
+- **Type @ in the composer to mention a file** from any of the project's folders, picked from a list as you type.
 - **⌘Return queues a message** until the agent is done. Queued messages go one after another, as many as you like, and a message sent with Return while the agent works still reaches it first, at its next step.
 - **Messages waiting for the agent are listed above the composer.** Send one now (the agent stops its current step and takes it), put it back in the composer to edit (or press ↑ in an empty composer), or remove it.
 - Stop pauses the queue, and so does a failed run, instead of sending the rest into the same error. **Resume** picks it up again.
-- What you type in the composer stays there when you switch to another session, and when you quit the app.
-- **↑ and ↓ in an empty composer go through the messages you sent**, as in a shell.
-- A step you stopped, with Stop or Send Now, shows as stopped instead of as a red error.
-- **A project can have several folders.** New Project (⇧⌘N, or + next to Projects) names a project and adds its folders; sessions run in the primary one, and the agent can work in the others too and knows them by name. Right-click a project for **Edit Project…** to rename it or add and remove folders.
-- **Notifications:** when a session finishes or needs your answer while you're in another app, you get a notification that opens it, and the Dock icon counts the sessions waiting for you. Settings › General turns them off.
 - **Undo from any of your messages:** right-click it and choose Undo From Here… to take back the conversation and the agent's file changes since, with the message back in the composer to edit. Redo brings it all back until you send.
-- **Summarize Now** in the context ring's popover shrinks a long conversation to a summary, to make room before the context window fills up.
-- Right-click a step that read or changed a file to open the file in the panel or show it in the Finder.
-- Scrolled up in a conversation, a button takes you back to the newest message.
-- While the agent works, the end of the conversation shows how long it's been at it.
-- Escape in the composer stops the agent, as ⌘. does.
-- ⌘1 to ⌘8 show that session tab, and ⌘9 the last one, as in browsers.
-- Right-click a project and choose **Open In** to open it in your editor, terminal or git app.
-- **Build It** under an answer in Plan mode switches to Build and has the agent carry the plan out.
-- **Try Again** under a failed run sends your last message again, in place of the failed attempt.
 - **New Session From Here** on one of your messages starts a new session with the conversation up to it, to try another way while keeping this one.
-- **⌘F finds words in the conversation**, highlighting each message they're in.
-- **Archive sessions** you're done with: they leave the sidebar's lists, and searching still finds them.
-- **Search sessions** from the top of the sidebar, by title or project.
-- A copy button under each reply copies it, and right-clicking one of your messages copies that.
-- **Type @ in the composer to mention a file** from any of the project's folders, picked from a list as you type.
+- **Try Again** under a failed run sends your last message again, in place of the failed attempt.
+- **Build It** under an answer in Plan mode switches to Build and has the agent carry the plan out.
+- **Summarize Now** in the context ring's popover shrinks a long conversation to a summary, to make room before the context window fills up.
 - **Commit from the Changes panel**, and push afterwards if you like: Commit… takes what's staged, or all the changes shown, and the session's model can suggest the message.
 - **Stage, unstage or discard a file's changes** from its menu in the Changes panel. Discarding asks first, and a new file goes to the Trash.
-- The **Files** panel lists all of a project's folders, and its filter looks in all of them. The **Changes** panel has a folder menu to show each folder's changes, and comments there name the folder.
+- **Notifications:** when a session finishes or needs your answer while you're in another app, you get a notification that opens it, and the Dock icon counts the sessions waiting for you. Settings › General turns them off.
+- **Search sessions** from the top of the sidebar, by title or project.
+- **Archive sessions** you're done with: they leave the sidebar's lists, and searching still finds them.
+- **⌘F finds words in the conversation**, highlighting each message they're in.
+- **↑ and ↓ in an empty composer go through the messages you sent**, as in a shell.
+- What you type in the composer stays there when you switch to another session, and when you quit the app.
+- A copy button under each reply copies it, and right-clicking one of your messages copies that.
+- Right-click a project and choose **Open In** to open it in your editor, terminal or git app.
+- Right-click a step that read or changed a file to open the file in the panel or show it in the Finder.
+- ⌘1 to ⌘8 show that session tab, and ⌘9 the last one, as in browsers.
+- Escape in the composer stops the agent, as ⌘. does.
+- While the agent works, the end of the conversation shows how long it's been at it.
+- Scrolled up in a conversation, a button takes you back to the newest message.
+- A step you stopped, with Stop or Send Now, shows as stopped instead of as a red error.
 
 ## 0.1.2
 
