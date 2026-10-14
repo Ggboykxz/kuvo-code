@@ -327,10 +327,11 @@ struct ProjectIdentity: View {
     }
 }
 
-/// As wide as its content, up to `max`: a long name (a worktree's branch is its session's title)
-/// truncates and leaves the tabs room, and a short one leaves no gap before them.
-private struct CappedWidth: Layout {
-    let max: CGFloat
+/// As wide as its content, up to `max` and the room there is: a long name (a worktree's branch
+/// is its session's title) truncates and leaves the tabs room, and a short one leaves no gap
+/// before them. Sized in layout, so it follows its content through animations.
+struct CappedWidth: Layout {
+    var max: CGFloat = .infinity
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         guard let view = subviews.first else { return .zero }

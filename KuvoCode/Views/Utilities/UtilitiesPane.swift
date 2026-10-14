@@ -39,57 +39,63 @@ struct UtilitiesPane: View {
     private var tabStrip: some View {
         HStack(spacing: 6) {
             // Tabs keep a width you can read their names at; past what fits, the row scrolls
-            // sideways, faded at the edge that has more, and the chosen tab is scrolled into view.
-            ScrollViewReader { proxy in
-                ScrollView(.horizontal) {
-                    HStack(spacing: 4) {
-                        ForEach(utilities.tabs) { tab in
-                            UtilityTabButton(
-                                title: title(for: tab),
-                                icon: icon(for: tab),
-                                isSelected: tab.id == utilities.selected?.id,
-                                select: { utilities.selection = tab.id },
-                                close: { withAnimation(.ui) { utilities.close(tab.id) } }
-                            )
-                            .frame(minWidth: 120, maxWidth: 190)
-                            .id(tab.id)
-                            .contextMenu {
-                                Button("Close Tab") { withAnimation(.ui) { utilities.close(tab.id) } }
-                                Button("Close Other Tabs") {
-                                    withAnimation(.ui) { for other in utilities.tabs where other.id != tab.id { utilities.close(other.id) } }
+            // sideways, faded at the edge that has more. The row is as wide as the tabs while they
+            // fit, so New Tab follows the last one, then the room there is. That's worked out in
+            // layout, not measured afterwards, so the row moves with the tabs when one closes.
+            CappedWidth {
+                ScrollViewReader { proxy in
+                    ScrollView(.horizontal) {
+                        HStack(spacing: 4) {
+                            ForEach(utilities.tabs) { tab in
+                                UtilityTabButton(
+                                    title: title(for: tab),
+                                    icon: icon(for: tab),
+                                    isSelected: tab.id == utilities.selected?.id,
+                                    select: { utilities.selection = tab.id },
+                                    close: { withAnimation(.ui) { utilities.close(tab.id) } }
+                                )
+                                .frame(minWidth: 120, maxWidth: 190)
+                                .id(tab.id)
+                                .contextMenu {
+                                    Button("Close Tab") { withAnimation(.ui) { utilities.close(tab.id) } }
+                                    Button("Close Other Tabs") {
+                                        withAnimation(.ui) { for other in utilities.tabs where other.id != tab.id { utilities.close(other.id) } }
+                                    }
+                                    .disabled(utilities.tabs.count < 2)
                                 }
-                                .disabled(utilities.tabs.count < 2)
                             }
                         }
+                        // Room for the chosen tab's lit edge, which the scroll view would cut off.
+                        .padding(1)
                     }
-                    // Room for the chosen tab's lit edge, which the scroll view would cut off.
-                    .padding(1)
-                }
-                .scrollIndicators(.never)
-                .onScrollGeometryChange(for: TabsOverflow.self) { geometry in
-                    TabsOverflow(
-                        width: geometry.contentSize.width,
-                        before: geometry.contentOffset.x > 1,
-                        after: geometry.contentOffset.x + geometry.containerSize.width < geometry.contentSize.width - 1
-                    )
-                } action: { _, overflow in
-                    tabsOverflow = overflow
-                }
-                .mask { tabsFade }
-                // Toward the middle where it can be, so the tabs beside it show too; at the ends,
-                // the row stops at its edge.
-                .onChange(of: utilities.selected?.id) { _, id in
-                    guard let id else { return }
-                    withAnimation(.ui) { proxy.scrollTo(id, anchor: .center) }
-                }
-                // Opened with a tab far along already chosen, or the row resized: once it's laid out.
-                .onChange(of: tabsOverflow.width) {
-                    if let id = utilities.selected?.id { proxy.scrollTo(id, anchor: .center) }
+                    .scrollIndicators(.never)
+                    .onScrollGeometryChange(for: TabsOverflow.self) { geometry in
+                        TabsOverflow(
+                            before: geometry.contentOffset.x > 1,
+                            after: geometry.contentOffset.x + geometry.containerSize.width < geometry.contentSize.width - 1
+                        )
+                    } action: { _, overflow in
+                        tabsOverflow = overflow
+                    }
+                    // The chosen tab, toward the middle where it can be so the tabs beside it show
+                    // too; at the ends, the row stops at its edge. When it's chosen, and when tabs
+                    // come and go (the row's width changes, from its first layout on), gliding along
+                    // with them rather than jumping.
+                    .onChange(of: utilities.selected?.id) { _, id in
+                        guard let id else { return }
+                        withAnimation(.ui) { proxy.scrollTo(id, anchor: .center) }
+                    }
+                    .onScrollGeometryChange(for: CGFloat.self, of: \.contentSize.width) { old, _ in
+                        guard let id = utilities.selected?.id else { return }
+                        if old == 0 {
+                            proxy.scrollTo(id, anchor: .center)
+                        } else {
+                            withAnimation(.ui) { proxy.scrollTo(id, anchor: .center) }
+                        }
+                    }
+                    .mask { tabsFade }
                 }
             }
-            // As wide as the tabs while they fit, so New Tab follows the last one; then the room
-            // there is, with New Tab at its end.
-            .frame(maxWidth: tabsOverflow.width > 0 ? tabsOverflow.width : nil)
             Button { withAnimation(.ui) { utilities.newTab() } } label: {
                 Label("New Tab", systemImage: "plus")
             }
@@ -270,10 +276,8 @@ struct PanelIconStyle: ButtonStyle {
     }
 }
 
-/// How the panel's tabs fit their row: their full width, and whether there are more to scroll
-/// to before or after what shows.
+/// Whether the panel's tabs have more to scroll to before or after what shows.
 private struct TabsOverflow: Equatable {
-    var width: CGFloat = 0
     var before = false
     var after = false
 }
