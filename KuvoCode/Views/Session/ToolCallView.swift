@@ -101,6 +101,11 @@ struct ToolCallView: View {
 
     private var isActive: Bool { !call.state.isFinished }
 
+    /// What the call did, in words: its line in the transcript.
+    static func summary(of call: Message.ToolCall, in directory: String) -> String {
+        ToolCallView(call: call, directory: directory).summary
+    }
+
     private var summary: String {
         let path = relative(string("path"))
         switch call.name {

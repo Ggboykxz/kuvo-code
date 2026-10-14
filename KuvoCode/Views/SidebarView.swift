@@ -1,5 +1,6 @@
 import OpenCodeKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// New Session on top, then projects (each a folder that opens to its sessions), then
 /// the most recent sessions across projects, and the connected accounts at the bottom.
@@ -232,12 +233,31 @@ struct SidebarView: View {
         .contextMenu { menu(for: session) }
     }
 
+    /// Saves the conversation as a Markdown file where you choose.
+    private func export(_ session: Session) async {
+        guard let text = try? await workspace.markdown(of: session.id) else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
+        panel.nameFieldStringValue = (session.title ?? "Conversation").replacingOccurrences(of: "/", with: "-") + ".md"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        try? text.write(to: url, atomically: true, encoding: .utf8)
+    }
+
     @ViewBuilder private func menu(for session: Session) -> some View {
         Button("Rename…") {
             newTitle = session.title ?? ""
             renaming = session
         }
         Button("Show in Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: session.location.directory) }
+        Divider()
+        Button("Copy as Markdown") {
+            Task {
+                guard let text = try? await workspace.markdown(of: session.id) else { return }
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+            }
+        }
+        Button("Export as Markdown…") { Task { await export(session) } }
         Divider()
         if Workspace.isArchived(session) {
             Button("Unarchive") { Task { await workspace.setArchived(session.id, false) } }

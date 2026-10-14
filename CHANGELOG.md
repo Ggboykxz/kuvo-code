@@ -27,6 +27,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - **Search sessions** from the top of the sidebar, by title or project.
 - **Archive sessions** you're done with: they leave the sidebar's lists, and searching still finds them.
 - Right-click a session's tab to rename it.
+- **Copy or export a conversation as Markdown** from the session's menu in the sidebar, to share it in an issue or a chat.
 - **⌘W closes the session tab**, and ⇧⌘T reopens the last one you closed, where it was. ⇧⌘W closes the window.
 - A long message, like a pasted log, shows its first lines in the conversation until you click **Show More**.
 - **⌘F finds words in the conversation**, highlighting each message they're in.

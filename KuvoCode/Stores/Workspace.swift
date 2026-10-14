@@ -86,6 +86,13 @@ final class Workspace {
         return sessions.first { $0.id == id }
     }
 
+    /// A session's conversation as Markdown, to share.
+    func markdown(of id: String) async throws -> String? {
+        guard let api, let session = session(id) else { return nil }
+        let messages = try await ConversationExport.messages(of: session, api: api)
+        return ConversationExport.markdown(title: session.title ?? "New Session", messages: messages, directory: session.location.directory)
+    }
+
     /// The live model behind a session view. Created on first use, then kept so
     /// switching back is instant.
     func model(for id: String) -> SessionModel? {
