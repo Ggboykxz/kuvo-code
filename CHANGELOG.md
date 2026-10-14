@@ -20,6 +20,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - **Summarize Now** in the context ring's popover shrinks a long conversation to a summary, to make room before the context window fills up.
 - **Files a reply names open with a click**, in the side panel.
 - **Add to Message**, when you right-click a selection in a file or a terminal in the side panel, puts those lines (as `@src/app.ts:4-6`) or that output in your message.
+- **See what a subagent is doing.** When the agent hands part of the task to a subagent, its step opens to show what it was asked and each step it takes, live, then what it found.
 - **Under each reply, "Edited 3 files"** lists what that turn changed, with lines added and removed, each a click from the panel.
 - **Commit from the Changes panel**, and push afterwards if you like: Commit… takes what's staged, or all the changes shown, and the session's model can suggest the message.
 - **Stage, unstage or discard a file's changes** from its menu in the Changes panel. Discarding asks first, and a new file goes to the Trash.

@@ -86,6 +86,17 @@ final class Workspace {
         return sessions.first { $0.id == id }
     }
 
+    /// A subagent's session, to show its work inside the step that started it. It has no row
+    /// or tab of its own; its model gets its events like any other.
+    func subagentModel(for id: String) async -> SessionModel? {
+        if let model = models[id] { return model }
+        guard let api, let session = try? await api.session(id) else { return nil }
+        if let model = models[id] { return model }
+        let model = SessionModel(session: session, api: api)
+        models[id] = model
+        return model
+    }
+
     /// A session's conversation as Markdown, to share.
     func markdown(of id: String) async throws -> String? {
         guard let api, let session = session(id) else { return nil }

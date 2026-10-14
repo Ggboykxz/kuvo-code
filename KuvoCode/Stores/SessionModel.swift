@@ -38,6 +38,9 @@ final class SessionModel {
 
     func showFind() { findRequest += 1 }
 
+    /// Started by another session's agent to do part of its task.
+    var isSubagent: Bool { session.parentID != nil }
+
     /// The project's folders as they're set now, the primary one first.
     func folders() -> [String] {
         [session.location.directory] + projectFolders()
@@ -116,7 +119,8 @@ final class SessionModel {
             } else if isLoaded, !isRunning, hasQueue, !isQueuePaused {
                 scheduleDrain()
             }
-            if !isLoaded { await syncFolders() }
+            // A subagent's session is the engine's to set up; it only gets shown.
+            if !isLoaded, !isSubagent { await syncFolders() }
             isLoaded = true
         } catch {
             failure = error.localizedDescription
@@ -520,6 +524,7 @@ final class SessionModel {
     }
 
     private func refreshChanges() {
+        guard !isSubagent else { return }
         changesTask?.cancel()
         changesTask = Task {
             try? await Task.sleep(for: .milliseconds(400))

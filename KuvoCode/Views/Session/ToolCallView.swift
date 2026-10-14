@@ -38,6 +38,8 @@ struct ToolCallView: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
+        // A subagent at work shows what it's doing; opened later, its steps stay folded.
+        .onAppear { if call.name == "subagent", !call.state.isFinished { isExpanded = true } }
     }
 
     private var header: some View {
@@ -190,12 +192,19 @@ struct ToolCallView: View {
         }
     }
 
+    /// The session a subagent works in, once it has started.
+    private var subagentSession: String? {
+        call.name == "subagent" ? call.state.metadata?["sessionID"]?.string : nil
+    }
+
     private var hasDetails: Bool {
-        !diffs.isEmpty || (call.name == "shell" && !outputText.isEmpty) || call.state.isFailure
+        subagentSession != nil || !diffs.isEmpty || (call.name == "shell" && !outputText.isEmpty) || call.state.isFailure
     }
 
     @ViewBuilder private var details: some View {
-        if !diffs.isEmpty {
+        if let subagentSession {
+            SubagentSteps(id: subagentSession, task: string("prompt"), directory: directory)
+        } else if !diffs.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(diffs) { diff in
                     DiffView(diff: diff, title: relative(diff.file) ?? diff.file, maxLines: 80)
@@ -211,6 +220,70 @@ struct ToolCallView: View {
             }
             .frame(maxHeight: 260)
             .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 10))
+        }
+    }
+}
+
+/// What a subagent was asked, and the steps it took and what it said, as they happen.
+private struct SubagentSteps: View {
+    let id: String
+    /// What the agent asked it to do (its session's own first message adds the engine's
+    /// preamble).
+    let task: String?
+    let directory: String
+    @Environment(Workspace.self) private var workspace
+    @State private var model: SessionModel?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let task {
+                Text(task)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(4)
+                    .textSelection(.enabled)
+            }
+            if let model {
+                ForEach(model.transcript.messages) { message in
+                    switch message {
+                    case .assistant(let assistant):
+                        ForEach(Array(assistant.content.enumerated()), id: \.offset) { _, block in
+                            switch block {
+                            case .text(let text):
+                                MarkdownText(text: text.text, folders: { [directory] })
+                            case .tool(let call):
+                                ToolCallView(call: call, directory: directory)
+                            default:
+                                EmptyView()
+                            }
+                        }
+                    default:
+                        EmptyView()
+                    }
+                }
+                if model.isRunning {
+                    HStack(spacing: 8) {
+                        Spinner(size: 11)
+                        Text("Working…")
+                    }
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                }
+            } else {
+                Spinner(size: 11)
+            }
+        }
+        .padding(.leading, 14)
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 1)
+                .fill(.separator)
+                .frame(width: 2)
+        }
+        .padding(.leading, 7)
+        .task(id: id) {
+            let model = await workspace.subagentModel(for: id)
+            if let model, !model.isLoaded { await model.load() }
+            self.model = model
         }
     }
 }
