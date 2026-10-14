@@ -288,7 +288,7 @@ struct MainView: View {
                 } content: {
                     DraftSessionView(directory: directory) { session, text, files in
                         replaceTab(SidebarView.draftTag(directory), with: session.id)
-                        workspace.model(for: session.id)?.send(text, files: files, for: catalog.model(session.model))
+                        workspace.model(for: session.id)?.submit(text, files: files, for: catalog.model(session.model), queue: false, commands: catalog.commands(in: directory))
                     }
                 }
                 .id(directory)

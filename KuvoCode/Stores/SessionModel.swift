@@ -26,7 +26,7 @@ final class SessionModel {
         var texts: [String] = []
         for message in transcript.messages {
             guard case .user(let user) = message else { continue }
-            let text = ReviewComments.split(Attachments.split(user.text).text).text
+            let text = ReviewComments.split(Attachments.split(CommandMessages.shared.text(of: user)).text).text
             if !text.isEmpty, text != texts.last { texts.append(text) }
         }
         return texts
@@ -56,6 +56,10 @@ final class SessionModel {
     /// The last message on its way out; each waits for the one before, so the engine gets
     /// (and queues) them in the order they were written.
     private var sending: Task<Void, Never>?
+    /// Messages sent from here, so a command's message can be told from them.
+    private var sentIDs: Set<String> = []
+    /// A command just run, until its message arrives: what it shows, and the messages before it.
+    private var runningCommand: (command: String, before: Set<String>)?
 
     /// The project's other folders, as they're set now.
     private let projectFolders: () -> [String]
@@ -122,6 +126,7 @@ final class SessionModel {
 
     func apply(_ event: ServerEvent) {
         transcript.apply(event)
+        if runningCommand != nil { noteCommandMessage() }
         if transcript.isStale { scheduleReload() }
         switch event.type {
         case "session.tool.success", "session.execution.succeeded", "session.execution.failed", "session.revert.committed":
@@ -161,6 +166,7 @@ final class SessionModel {
         guard !text.isEmpty || !files.isEmpty else { return }
         reviewComments = []
         let id = Identifier.message()
+        sentIDs.insert(id)
         // With nothing running (or about to) and nothing queued, there's nothing to wait for.
         let delivery: InboxItem.Delivery = queue && (isBusy || hasQueue) ? .queue : .steer
         if delivery == .steer { isQueuePaused = false }
@@ -181,10 +187,37 @@ final class SessionModel {
         }
     }
 
-    func runCommand(_ name: String, arguments: String) {
-        Task {
-            do { try await api.runCommand(session: id, name: name, arguments: arguments) } catch { failure = error.localizedDescription }
+    /// Sends what's in the composer: a message, or a command for "/name arguments".
+    func submit(_ text: String, files: [URL], for model: Model?, queue: Bool, commands: [Command]) {
+        if let (name, arguments) = SlashCommands.parse(text, commands: commands) {
+            runCommand(name, arguments: arguments)
+        } else {
+            send(text, files: files, for: model, queue: queue)
         }
+    }
+
+    func runCommand(_ name: String, arguments: String) {
+        runningCommand = (arguments.isEmpty ? "/\(name)" : "/\(name) \(arguments)", Set(userMessageIDs))
+        Task {
+            do {
+                try await api.runCommand(session: id, name: name, arguments: arguments)
+            } catch {
+                runningCommand = nil
+                failure = error.localizedDescription
+            }
+        }
+    }
+
+    private var userMessageIDs: [String] {
+        transcript.messages.compactMap { if case .user(let user) = $0 { user.id } else { nil } }
+    }
+
+    /// The first new message that wasn't sent from here is the command's.
+    private func noteCommandMessage() {
+        guard let (command, before) = runningCommand,
+              let id = userMessageIDs.first(where: { !before.contains($0) && !sentIDs.contains($0) }) else { return }
+        CommandMessages.shared.note(id, command: command)
+        runningCommand = nil
     }
 
     /// Stops the agent. Waiting messages stay, queued and paused until Resume.
@@ -313,7 +346,7 @@ final class SessionModel {
                 let message = await stored(message)
                 session.revert = try await api.stageRevert(session: id, messageID: message.id)
                 let before = composerState
-                restoreDraft(message.text, files: Self.files(of: message))
+                restoreDraft(CommandMessages.shared.text(of: message), files: Self.files(of: message))
                 undone = (before, composerState)
             } catch {
                 failure = error.localizedDescription
@@ -334,7 +367,12 @@ final class SessionModel {
                     if case .uri(let uri) = file.source { .init(uri: uri, name: file.name) } else { nil }
                 }
                 _ = try await api.stageRevert(session: id, messageID: user.id)
+                if let command = CommandMessages.shared[user.id], let (name, arguments) = SlashCommands.split(command) {
+                    runCommand(name, arguments: arguments)
+                    return
+                }
                 let id = Identifier.message()
+                sentIDs.insert(id)
                 transcript.addLocal(id: id, text: user.text, delivery: .steer)
                 try await api.prompt(session: self.id, id: id, text: user.text, files: files)
             } catch {

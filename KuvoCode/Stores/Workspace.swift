@@ -173,7 +173,7 @@ final class Workspace {
         guard let api else { return }
         let session = try await api.forkSession(id, before: message.id)
         upsert(session)
-        let (withComments, paths) = Attachments.split(message.text)
+        let (withComments, paths) = Attachments.split(CommandMessages.shared.text(of: message))
         // The engine's copy carries the attachments; one seen arrive live doesn't.
         let recent = (try? await api.messages(session: id, limit: 100).data) ?? []
         var stored = message

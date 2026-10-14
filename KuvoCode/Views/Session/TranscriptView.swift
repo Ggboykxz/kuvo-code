@@ -244,7 +244,7 @@ enum Row: Identifiable, Hashable {
     /// The words Find looks in: messages and replies.
     var searchText: String {
         switch self {
-        case .user(let message): message.text
+        case .user(let message): CommandMessages.shared.text(of: message)
         case .assistant(let message, _): message.content.compactMap { if case .text(let part) = $0 { part.text } else { nil } }.joined(separator: " ")
         case .pending(let item): item.text
         default: ""
@@ -302,7 +302,7 @@ private struct RowView: View {
     var body: some View {
         switch row {
         case .user(let message):
-            let (withComments, paths) = Attachments.split(message.text)
+            let (withComments, paths) = Attachments.split(CommandMessages.shared.text(of: message))
             let (text, comments) = ReviewComments.split(withComments)
             let stored = (message.files ?? []).enumerated().map { AttachmentItem.stored($1, id: "\(message.id)#\($0)") }
             VStack(alignment: .trailing, spacing: 2) {

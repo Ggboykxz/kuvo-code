@@ -18,6 +18,8 @@ struct Composer: View {
     var history: [String] = []
     /// The project's folders, the primary one first, for "@" mentions of their files.
     var folders: [String] = []
+    /// What "/" at the start of a message can run.
+    var commands: [Command] = []
     /// Puts the cursor here when it changes.
     var focusRequest = 0
     /// Comments on the changes waiting to go with the next message.
@@ -45,13 +47,18 @@ struct Composer: View {
     @State private var mentionIndex = 0
     /// Where the "@" whose list was closed with Escape is, so it stays closed.
     @State private var dismissedMention: Int?
+    @State private var commandIndex = 0
+    /// The "/" list was closed with Escape; it opens again for a new message.
+    @State private var dismissedCommands = false
 
     private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty || commentCount > 0 }
     private var currentModel: Model? { catalog.model(model) ?? catalog.defaultModel }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let mention {
+            if let commandMatches {
+                CommandList(commands: commandMatches, selected: min(commandIndex, commandMatches.count - 1)) { runCommand($0) }
+            } else if let mention {
                 MentionList(files: mention.matches, selected: min(mentionIndex, max(mention.matches.count - 1, 0))) { insertMention($0) }
             }
             if commentCount > 0 {
@@ -90,6 +97,10 @@ struct Composer: View {
                 .lineLimit(1...12)
                 .focused($isFocused)
                 .onKeyPress(.return, phases: .down) { press in
+                    if let commandMatches, press.modifiers.isEmpty {
+                        runCommand(commandMatches[min(commandIndex, commandMatches.count - 1)])
+                        return .handled
+                    }
                     if let mention, press.modifiers.isEmpty, !mention.matches.isEmpty {
                         insertMention(mention.matches[min(mentionIndex, mention.matches.count - 1)])
                         return .handled
@@ -107,12 +118,20 @@ struct Composer: View {
                     return .handled
                 }
                 .onKeyPress(.tab) {
+                    if let commandMatches {
+                        text = "/" + commandMatches[min(commandIndex, commandMatches.count - 1)].name + " "
+                        return .handled
+                    }
                     guard let mention, !mention.matches.isEmpty else { return .ignored }
                     insertMention(mention.matches[min(mentionIndex, mention.matches.count - 1)])
                     return .handled
                 }
                 .onKeyPress(.escape) {
-                    // Closes the "@" list first; otherwise stops the agent, as ⌘. does.
+                    // Closes the "/" or "@" list first; otherwise stops the agent, as ⌘. does.
+                    if commandMatches != nil {
+                        dismissedCommands = true
+                        return .handled
+                    }
                     if let start = Mentions.query(in: text)?.start, mention != nil {
                         dismissedMention = text.distance(from: text.startIndex, to: start)
                         return .handled
@@ -122,6 +141,10 @@ struct Composer: View {
                     return .handled
                 }
                 .onKeyPress(.upArrow) {
+                    if let commandMatches {
+                        commandIndex = max(0, min(commandIndex, commandMatches.count - 1) - 1)
+                        return .handled
+                    }
                     if let mention, !mention.matches.isEmpty {
                         mentionIndex = max(0, min(mentionIndex, mention.matches.count - 1) - 1)
                         return .handled
@@ -131,6 +154,10 @@ struct Composer: View {
                     return recall(-1) ? .handled : .ignored
                 }
                 .onKeyPress(.downArrow) {
+                    if let commandMatches {
+                        commandIndex = min(commandMatches.count - 1, commandIndex + 1)
+                        return .handled
+                    }
                     if let mention, !mention.matches.isEmpty {
                         mentionIndex = min(mention.matches.count - 1, mentionIndex + 1)
                         return .handled
@@ -141,6 +168,10 @@ struct Composer: View {
                 .onChange(of: text) { _, new in
                     if let index = historyIndex, !history.indices.contains(index) || new != history[index] { historyIndex = nil }
                     mentionTyped(in: new)
+                    if SlashCommands.query(in: new) == nil {
+                        commandIndex = 0
+                        if new.isEmpty { dismissedCommands = false }
+                    }
                 }
                 .onSubmit(send)
 
@@ -251,6 +282,20 @@ struct Composer: View {
         onQueue()
     }
 
+    /// The commands matching the "/" that starts the message, while its list is open.
+    private var commandMatches: [Command]? {
+        guard !dismissedCommands, files.isEmpty, let query = SlashCommands.query(in: text) else { return nil }
+        let matches = SlashCommands.matches(query, in: commands)
+        return matches.isEmpty ? nil : matches
+    }
+
+    /// Picked from the list: runs it, as if "/name" had been typed and sent.
+    private func runCommand(_ command: Command) {
+        text = "/" + command.name
+        commandIndex = 0
+        send()
+    }
+
     /// The "@" being typed and the files it matches, while its list is open.
     private var mention: (query: String, matches: [ProjectFiles.File])? {
         guard !folders.isEmpty, let (query, start) = Mentions.query(in: text),
@@ -353,6 +398,40 @@ private struct MentionList: View {
         }
         .padding(.leading, -8)
         .help("↑ ↓ to choose, Return or Tab to insert, Escape to close")
+    }
+}
+
+/// The commands a "/" matches, above the message field, each with what it does.
+private struct CommandList: View {
+    let commands: [Command]
+    let selected: Int
+    let choose: (Command) -> Void
+
+    var body: some View {
+        VStack(spacing: 1) {
+            ForEach(Array(commands.enumerated()), id: \.element.id) { index, command in
+                Button { choose(command) } label: {
+                    HStack(spacing: 8) {
+                        Text("/" + command.name)
+                            .font(.system(size: 13, weight: .medium))
+                        if let description = command.description {
+                            Text(description)
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .lineLimit(1)
+                    .padding(.horizontal, 8)
+                    .frame(height: 28)
+                    .background(index == selected ? AnyShapeStyle(.tint.opacity(0.16)) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 7))
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.leading, -8)
+        .help("↑ ↓ to choose, Return to run, Tab to add to it, Escape to close")
     }
 }
 

@@ -14,6 +14,7 @@ struct SessionView: View {
             }
             .navigationTitle(model.session.title ?? "New Session")
             .task { if !model.isLoaded { await model.load() } }
+            .task(id: model.session.location.directory) { await catalog.loadCommands(in: model.session.location.directory) }
             .alert("Something went wrong", isPresented: Binding(get: { model.failure != nil }, set: { if !$0 { model.failure = nil } })) {
                 Button("OK") {}
             } message: {
@@ -66,6 +67,7 @@ private struct BottomStack: View {
                     hasQueue: !model.waiting.isEmpty,
                     history: model.sentMessages,
                     folders: [model.session.location.directory] + (workspace.settings[model.session.location.directory]?.folders ?? []),
+                    commands: catalog.commands(in: model.session.location.directory),
                     focusRequest: model.composerFocus,
                     commentCount: model.reviewComments.count,
                     onDiscardComments: { model.reviewComments = [] },
@@ -95,9 +97,12 @@ private struct BottomStack: View {
     }
 
     private func send(queue: Bool) {
-        model.send(model.draftText, files: model.draftFiles, for: catalog.model(model.session.model), queue: queue)
+        let commands = catalog.commands(in: model.session.location.directory)
+        // A command takes no attachments; they stay for the next message.
+        let isCommand = SlashCommands.parse(model.draftText, commands: commands) != nil
+        model.submit(model.draftText, files: model.draftFiles, for: catalog.model(model.session.model), queue: queue, commands: commands)
         model.draftText = ""
-        model.draftFiles = []
+        if !isCommand { model.draftFiles = [] }
     }
 }
 
@@ -132,6 +137,7 @@ struct DraftSessionView: View {
                 model: lastModel ?? catalog.defaultModel?.ref,
                 isRunning: isCreating,
                 folders: [directory] + (workspace.settings[directory]?.folders ?? []),
+                commands: catalog.commands(in: directory),
                 onSelectAgent: { agent = $0 },
                 onSelectApproval: { approval = $0 },
                 onSelectModel: { lastModel = $0 },
@@ -151,6 +157,7 @@ struct DraftSessionView: View {
             Spacer()
         }
         .navigationTitle("New Session")
+        .task(id: directory) { await catalog.loadCommands(in: directory) }
     }
 
     private func send() {

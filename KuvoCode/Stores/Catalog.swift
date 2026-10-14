@@ -15,6 +15,8 @@ final class Catalog {
     private(set) var defaultModel: Model?
     private(set) var agents: [Agent] = []
     private(set) var commands: [Command] = []
+    /// Commands by project folder, with the project's own.
+    private(set) var projectCommands: [String: [Command]] = [:]
     private(set) var isLoaded = false
     /// True while a refresh has been waiting more than a few seconds.
     private(set) var isSlow = false
@@ -75,7 +77,18 @@ final class Catalog {
         do { self.defaultModel = try await defaultModel } catch { log.error("default model: \(String(describing: error), privacy: .public)") }
         do { self.agents = try await agents } catch { log.error("agents: \(String(describing: error), privacy: .public)") }
         do { self.commands = try await commands } catch { log.error("commands: \(String(describing: error), privacy: .public)") }
+        for directory in projectCommands.keys { await loadCommands(in: directory) }
         isLoaded = true
+    }
+
+    /// The commands a session in `directory` can run.
+    func commands(in directory: String) -> [Command] {
+        projectCommands[directory] ?? commands
+    }
+
+    func loadCommands(in directory: String) async {
+        guard let api else { return }
+        do { projectCommands[directory] = try await api.commands(directory: directory) } catch { log.error("commands: \(String(describing: error), privacy: .public)") }
     }
 
     func handle(_ event: ServerEvent) {
