@@ -63,6 +63,15 @@ struct TranscriptView: View {
             position.scrollTo(edge: .bottom)
         }
         .scrollEdgeEffectStyle(.soft, for: .all)
+        // Messages fade out under the card's top edge instead of being cut there. The fade fits in
+        // the space above the first row, so nothing is faded when scrolled all the way up.
+        .mask {
+            VStack(spacing: 0) {
+                LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 22)
+                Color.black
+            }
+        }
         .overlay {
             if model.isLoaded && rows.isEmpty {
                 EmptyConversationView(directory: model.session.location.directory)

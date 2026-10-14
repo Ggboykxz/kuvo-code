@@ -95,6 +95,7 @@ struct AppCommands: Commands {
     let updates: Updates
     @FocusedValue(\.sessionActions) private var actions
     @AppStorage(Appearance.key) private var appearance = Appearance.system
+    @AppStorage(TabBar.showsKey) private var showsTabBar = true
 
     var body: some Commands {
         CommandGroup(after: .appInfo) {
@@ -174,6 +175,8 @@ struct AppCommands: Commands {
             Button("Show Sessions") { actions?.toggleSidebar() }
                 .keyboardShortcut("0")
                 .disabled(actions == nil)
+            Button(showsTabBar ? "Hide Tab Bar" : "Show Tab Bar") { showsTabBar.toggle() }
+                .keyboardShortcut("t", modifiers: [.command, .option])
             Button("Show Next Tab") { actions?.nextTab() }
                 .keyboardShortcut(.tab, modifiers: .control)
                 .disabled(actions == nil)

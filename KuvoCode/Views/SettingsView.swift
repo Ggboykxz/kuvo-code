@@ -52,6 +52,7 @@ struct SettingsView: View {
 private struct GeneralSettings: View {
     @AppStorage(Appearance.key) private var appearance = Appearance.system
     @AppStorage(Notifier.enabledKey) private var notifies = true
+    @AppStorage(TabBar.showsKey) private var showsTabBar = true
     @Environment(Updates.self) private var updates
 
     var body: some View {
@@ -60,6 +61,10 @@ private struct GeneralSettings: View {
                 ForEach(Appearance.allCases, id: \.self) { Text($0.title).tag($0) }
             }
             .pickerStyle(.segmented)
+            Toggle(isOn: $showsTabBar) {
+                Text("Show tabs in the title bar")
+                Text("Without them, switch sessions in the sidebar or with ⌘K.")
+            }
             Toggle(isOn: $notifies) {
                 Text("Notify me when a session finishes or needs me")
                 Text("While you're in another app. The Dock icon counts the sessions waiting for you.")

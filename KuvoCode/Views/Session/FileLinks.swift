@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Textual
 
 /// File names a reply writes as code (`src/App.swift`, `App.swift:42`) become links that open
@@ -58,8 +59,8 @@ nonisolated enum FileLinks {
     }
 }
 
-/// Textual's Markdown, with code spans that name a file made links to it. (Done on the parsed
-/// text: Markdown's own `[`code`](link)` loses the code look.)
+/// Textual's Markdown, with code spans that name a file made links to it, drawn as a file: an
+/// icon and its name ("App.swift:42"), in link color rather than as code.
 struct FileLinkingParser: MarkupParser {
     /// Asked when parsing rather than while the view updates, so replies don't redraw each
     /// time the project's settings change.
@@ -75,7 +76,52 @@ struct FileLinkingParser: MarkupParser {
                 links.append((run.range, url))
             }
         }
-        for (range, url) in links { text[range].link = url }
+        // From the end, so the earlier ranges still point where they did.
+        for (range, url) in links.reversed() {
+            var attributes = text[range].runs.first?.attributes ?? AttributeContainer()
+            var intent = attributes.inlinePresentationIntent ?? []
+            intent.remove(.code)
+            attributes.inlinePresentationIntent = intent.isEmpty ? nil : intent
+            attributes.link = url
+            var name = AttributedString(Self.label(String(text[range].characters)), attributes: attributes)
+            // The icon goes before the link, not in it: Textual draws attachments only outside links.
+            var icon = AttributedString("\u{FFFC}", attributes: attributes)
+            icon.link = nil
+            icon.textual.attachment = AnyAttachment(FileIconAttachment())
+            var gap = AttributedString(" ", attributes: attributes)
+            gap.link = nil
+            name.insert(icon + gap, at: name.startIndex)
+            text.replaceSubrange(range, with: name)
+        }
         return text
+    }
+
+    /// What a link shows: the file's name and any line, as "App.swift:42" for "src/App.swift:42".
+    static func label(_ written: String) -> String {
+        guard let slash = written.lastIndex(of: "/"), written.index(after: slash) < written.endIndex else { return written }
+        return String(written[written.index(after: slash)...])
+    }
+}
+
+/// The document icon before a file's name in a reply, in link color like the name.
+struct FileIconAttachment: Attachment {
+    var description: String { "" }
+    var selectionStyle: AttachmentSelectionStyle { .text }
+
+    // Drawn scaled into its slot in the text, so no frame of its own.
+    var body: some View {
+        Image(systemName: "doc")
+            .resizable()
+            .fontWeight(.light)
+            .aspectRatio(contentMode: .fit)
+            .foregroundStyle(.tint)
+    }
+
+    func baselineOffset(in environment: TextEnvironmentValues) -> CGFloat {
+        FontScaled<CGFloat>.fontScaled(-0.12).resolve(in: environment)
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, in environment: TextEnvironmentValues) -> CGSize {
+        FontScaled<CGSize>.fontScaled(width: 0.78, height: 0.92).resolve(in: environment)
     }
 }

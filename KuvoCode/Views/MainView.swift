@@ -15,6 +15,8 @@ struct MainView: View {
     /// The active tab.
     @SceneStorage("selection") private var selection: String?
     @SceneStorage("showsSidebar") private var showsSidebar = true
+    /// The tabs in the title bar; hidden, sessions are switched from the sidebar or ⌘K.
+    @AppStorage(TabBar.showsKey) private var showsTabBar = true
     @SceneStorage("showsPanel") private var showsPanel = false
     /// The panel over the conversation, for room.
     @State private var panelExpanded = false
@@ -252,7 +254,7 @@ struct MainView: View {
                 ) {
                     if let activeDirectory { Task { await workspace.loadBranch(for: activeDirectory) } }
                 }
-                if !tabItems.isEmpty {
+                if showsTabBar, !tabItems.isEmpty {
                     TabStrip(tabs: tabItems, selection: $selection, close: { closeTab($0) }, closeAll: closeTabs(except:)) { id in
                         guard let session = workspace.session(id) else { return }
                         newTitle = session.title ?? ""
@@ -605,6 +607,7 @@ struct MainView: View {
         add("Show Files", "folder", "⌥⌘F", actions.showFiles)
         add(showsPanel ? "Hide Panel" : "Show Panel", "sidebar.right", "⌥⌘0", actions.togglePanel)
         add(showsSidebar ? "Hide Sessions" : "Show Sessions", "sidebar.left", "⌘0", actions.toggleSidebar)
+        add(showsTabBar ? "Hide Tab Bar" : "Show Tab Bar", "rectangle.topthird.inset.filled", "⌥⌘T") { showsTabBar.toggle() }
         add("New Project…", "folder.badge.plus", "⇧⌘N", actions.newProject)
         add("Open Folder…", "folder", "⌘O", actions.openFolder)
         if let directory = activeDirectory {

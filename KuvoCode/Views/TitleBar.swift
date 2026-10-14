@@ -1,6 +1,11 @@
 import OpenCodeKit
 import SwiftUI
 
+/// The tab bar in the title bar can be hidden (View › Hide Tab Bar, or Settings › General).
+enum TabBar {
+    static let showsKey = "showsTabBar"
+}
+
 /// An open tab: a session, or a new one being written (`draft:<folder>`).
 struct TabItem: Identifiable, Equatable {
     var id: String
