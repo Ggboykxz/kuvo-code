@@ -141,7 +141,11 @@ struct MainView: View {
             if let activeDirectory { await workspace.loadBranch(for: activeDirectory) }
         }
         .onChange(of: workspace.sessions.map(\.id)) { _, ids in dropClosedSessions(ids) }
-        .onChange(of: workspace.isLoaded) { startIfEmpty() }
+        .onChange(of: workspace.isLoaded) {
+            // The list arrives just before loading counts as done, so check it again here.
+            dropClosedSessions(workspace.sessions.map(\.id))
+            startIfEmpty()
+        }
         .onAppear(perform: startIfEmpty)
         .onAppear { Notifier.shared.open = { openTab($0) } }
         .onChange(of: workspace.requestedTab) { _, id in
@@ -356,6 +360,9 @@ struct MainView: View {
         for key in tabs where SidebarView.draftDirectory(from: key) == nil && !known.contains(key) {
             closeTab(key)
         }
+        // A selection that isn't one of the tabs (its session went while the app was closed)
+        // shows nothing; show the last tab instead.
+        if let selection, !tabs.contains(selection) { self.selection = tabs.last }
     }
 
     // MARK: Actions
