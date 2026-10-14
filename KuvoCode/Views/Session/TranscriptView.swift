@@ -7,6 +7,7 @@ import Textual
 /// scroll up to read.
 struct TranscriptView: View {
     let model: SessionModel
+    @Environment(Workspace.self) private var workspace
     @State private var position = ScrollPosition(edge: .bottom)
     /// Whether to keep the newest text in view: true until you scroll up, true again
     /// once you scroll back to the end.
@@ -18,7 +19,7 @@ struct TranscriptView: View {
             let rows = rows
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                    RowView(row: row, directory: model.session.location.directory, cancel: model.cancelPending, undo: model.undo(from:), redo: model.redo)
+                    RowView(row: row, directory: model.session.location.directory, cancel: model.cancelPending, undo: model.undo(from:), redo: model.redo, fork: fork)
                         .padding(.top, index == 0 ? 0 : row.spacing(after: rows[index - 1]))
                         .transition(.opacity.combined(with: .offset(y: 8)))
                 }
@@ -115,6 +116,12 @@ struct TranscriptView: View {
         return rows
     }
 
+    private func fork(_ message: Message.User) {
+        Task {
+            do { try await workspace.fork(model.id, from: message) } catch { model.failure = error.localizedDescription }
+        }
+    }
+
     /// Whether the last message already shows activity (streaming text, open reasoning, a running tool).
     private func isVisiblyWorking(_ message: Message?) -> Bool {
         guard case .assistant(let assistant) = message, assistant.time.completed == nil, let last = assistant.content.last else { return false }
@@ -183,6 +190,7 @@ private struct RowView: View {
     let cancel: (Transcript.Pending) -> Void
     let undo: (Message.User) -> Void
     let redo: () -> Void
+    let fork: (Message.User) -> Void
     @State private var confirmsUndo = false
 
     var body: some View {
@@ -199,6 +207,7 @@ private struct RowView: View {
                     }
                     .disabled(text.isEmpty)
                     Divider()
+                    Button("New Session From Here") { fork(message) }
                     Button("Undo From Here…") { confirmsUndo = true }
                 }
                 .alert("Undo from this message?", isPresented: $confirmsUndo) {

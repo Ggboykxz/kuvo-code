@@ -18,6 +18,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - **Summarize Now** in the context ring's popover shrinks a long conversation to a summary, to make room before the context window fills up.
 - ⌘1 to ⌘8 show that session tab, and ⌘9 the last one, as in browsers.
 - Right-click a project and choose **Open In** to open it in your editor, terminal or git app.
+- **New Session From Here** on one of your messages starts a new session with the conversation up to it, to try another way while keeping this one.
 - **Search sessions** from the top of the sidebar, by title or project.
 - A copy button under each reply copies it, and right-clicking one of your messages copies that.
 - **Type @ in the composer to mention a file** from any of the project's folders, picked from a list as you type.

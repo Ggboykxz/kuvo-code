@@ -139,6 +139,11 @@ struct MainView: View {
         .onChange(of: workspace.isLoaded) { startIfEmpty() }
         .onAppear(perform: startIfEmpty)
         .onAppear { Notifier.shared.open = { openTab($0) } }
+        .onChange(of: workspace.requestedTab) { _, id in
+            guard let id else { return }
+            openTab(id)
+            workspace.requestedTab = nil
+        }
         .onChange(of: workspace.waitingCount, initial: true) { Notifier.shared.setBadge(workspace.waitingCount) }
         .onChange(of: notificationsEnabled) { Notifier.shared.setBadge(workspace.waitingCount) }
         #if DEBUG

@@ -146,6 +146,20 @@ final class Workspace {
         UserDefaults.standard.set(try? JSONEncoder().encode(settings), forKey: "projectSettings")
     }
 
+    /// A session the window should open: a fork, say.
+    var requestedTab: String?
+
+    /// A new session with `id`'s conversation before `message`, opened in a tab with the
+    /// message in its composer, ready to try another way.
+    func fork(_ id: String, from message: Message.User) async throws {
+        guard let api else { return }
+        let session = try await api.forkSession(id, before: message.id)
+        upsert(session)
+        let (withComments, paths) = Attachments.split(message.text)
+        Drafts.shared[session.id] = Drafts.Draft(text: ReviewComments.split(withComments).text, files: paths.map { URL(filePath: $0) })
+        requestedTab = session.id
+    }
+
     func delete(_ id: String) async {
         sessions.removeAll { $0.id == id }
         models[id] = nil
