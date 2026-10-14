@@ -15,13 +15,25 @@ struct CustomizeProviderListView: View {
     @State private var activeProviderID: String?
     @AppStorage(DensitySetting.key) private var density = DensitySetting.regular
 
-    private var orderedRows: [ProviderRow] { layout.customizeProviderRows }
+    /// Fork addition: only providers whose accounts are connected in the host.
+    private var orderedRows: [ProviderRow] { layout.customizeProviderRows.filter { container.availability.isConnected($0.id) } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: density.sectionSpacing) {
             VStack(spacing: 0) {
                 ForEach(orderedRows) { row in
                     providerRow(row)
+                }
+                if orderedRows.isEmpty {
+                    VStack(spacing: 10) {
+                        Text("Connect an account in \(HostApp.name), like GitHub Copilot or ChatGPT, and its usage shows up here.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                        Button("Open \(HostApp.name)") { UsageMenuBar.openHostApp() }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(20)
                 }
             }
             .cardSurface()

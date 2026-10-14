@@ -42,7 +42,9 @@ struct FirstLaunchWelcomeView: View {
                 ScrollView {
                     VStack(spacing: 0) {
                         if !setup.isDetecting, setup.visibleChoices.isEmpty {
-                            Text("No sign-ins found yet. Choose Show All to add a provider, or set up later.")
+                            Text(setup.hasNothingConnected
+                                 ? "Connect an account in \(HostApp.name) first, like GitHub Copilot or ChatGPT. Its usage shows up here."
+                                 : "No sign-ins found yet. Choose Show All to add a provider, or set up later.")
                                 .font(.callout).foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity).padding(24)
                         }

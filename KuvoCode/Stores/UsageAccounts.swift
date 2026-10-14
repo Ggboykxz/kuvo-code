@@ -19,7 +19,8 @@ final class UsageAccounts {
         UsageMenuBar.shared.start(openHostApp: openApp)
     }
 
-    /// Hands the engine's active accounts to UsageKit. Secrets stay in memory.
+    /// Hands the engine's active accounts to UsageKit, and which of its providers they stand for:
+    /// the panel follows only those. Secrets stay in memory.
     func sync() async {
         guard let api else { return }
         do {
@@ -28,8 +29,27 @@ final class UsageAccounts {
                 guard let secret = credential.value.access ?? credential.value.key, !secret.isEmpty else { return nil }
                 return HostCredential(integrationID: credential.integrationID, secret: secret)
             })
+            HostAccounts.setConnectedProviders(Set(credentials.filter(\.active).compactMap {
+                Self.usageProvider(for: $0.integrationID, signedIn: $0.value.type == "oauth" || $0.value.access != nil)
+            }))
         } catch {
             log.error("credentials: \(String(describing: error), privacy: .public)")
+        }
+    }
+
+    /// The usage panel's provider for an account connected here, if it has one: a plan with limits
+    /// to follow. ChatGPT's sign-in is Codex; an OpenAI API key has no plan. (Anthropic only takes
+    /// API keys here, so Claude's plan never counts.)
+    static func usageProvider(for integrationID: String, signedIn: Bool) -> String? {
+        switch integrationID {
+        case "github-copilot": "copilot"
+        case "openai": signedIn ? "codex" : nil
+        case "opencode", "opencode-go": "opencode"
+        case "openrouter": "openrouter"
+        case "zai", "zai-coding-plan": "zai"
+        case "xai": "grok"
+        case "ollama-cloud": "ollama"
+        default: nil
         }
     }
 

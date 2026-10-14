@@ -3,6 +3,12 @@ import SwiftUI
 
 struct EmptyDashboardView: View {
     let chooseProviders: () -> Void
+    @Environment(AppContainer.self) private var container
+
+    /// Fork addition: nothing to follow until an account is connected in the host.
+    private var hasNothingConnected: Bool {
+        container.availability.connected?.isEmpty == true
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -17,7 +23,9 @@ struct EmptyDashboardView: View {
             Text("Make It Yours")
                 .font(.system(size: 19, weight: .semibold))
                 .padding(.bottom, 7)
-            Text("Bring your AI usage, limits, and spend together. Choose what goes on your dashboard.")
+            Text(hasNothingConnected
+                 ? "Connect an account in \(HostApp.name), like GitHub Copilot or ChatGPT, and its limits and spend show up here."
+                 : "Bring your AI usage, limits, and spend together. Choose what goes on your dashboard.")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -25,8 +33,8 @@ struct EmptyDashboardView: View {
                 .frame(maxWidth: 230)
                 .padding(.bottom, 20)
 
-            Button(action: chooseProviders) {
-                Label("Choose Providers", systemImage: "plus")
+            Button(action: hasNothingConnected ? { UsageMenuBar.openHostApp() } : chooseProviders) {
+                Label(hasNothingConnected ? "Open \(HostApp.name)" : "Choose Providers", systemImage: hasNothingConnected ? "arrow.up.forward.app" : "plus")
                     .font(.system(size: 12, weight: .semibold))
                     .padding(.horizontal, 12)
                     .padding(.vertical, 3)

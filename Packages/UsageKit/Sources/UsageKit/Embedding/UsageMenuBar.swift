@@ -60,6 +60,21 @@ public final class UsageMenuBar {
         }
     }
 
+    /// The host's accounts, by provider: the panel follows only these, and turns on the ones
+    /// newly connected. Before the panel is up, they're kept for when it is.
+    func connectedProvidersDidChange(_ providers: Set<String>) {
+        guard let container else {
+            pendingConnected = providers
+            return
+        }
+        let added = container.availability.setConnected(providers)
+        for card in container.providers.map(\.provider.id) where added.contains(ProviderAccountID.family(of: card)) {
+            container.enablement.setEnabled(true, for: card)
+        }
+    }
+
+    private var pendingConnected: Set<String>?
+
     /// Called each time the panel opens, for the host's own records.
     public var onPanelShown: (() -> Void)?
 
@@ -93,6 +108,10 @@ public final class UsageMenuBar {
         if showsWelcome { KeychainAccessGuard.holdPopups() }
         let container = await AppContainer(isFreshInstall: isFreshInstall || showsWelcome)
         self.container = container
+        if let pendingConnected {
+            self.pendingConnected = nil
+            connectedProvidersDidChange(pendingConnected)
+        }
         let controller = StatusItemController(container: container)
         controller.onShow = { [weak self] in self?.onPanelShown?() }
         statusItemController = controller
@@ -111,7 +130,8 @@ public final class UsageMenuBar {
                 providers: ProviderCatalog.make().map(\.provider),
                 cards: container.providers,
                 enablement: container.enablement,
-                dataStore: container.dataStore
+                dataStore: container.dataStore,
+                isConnected: { [availability = container.availability] in availability.isConnected($0) }
             )
             // The hop lets the clicked button's action return before its window is torn down.
             welcome = FirstLaunchWindowController(setup: setup) { [weak self] in

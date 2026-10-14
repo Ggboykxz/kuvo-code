@@ -8,7 +8,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 - **You can tell what's clickable.** Buttons, icons, menus and rows light up under the pointer: the icons under messages and replies, Copy on code blocks, the branch name (now with a menu chevron), the Changes tab's menus and file headers, the agent's steps, pick lists, attachments, tabs and more.
 - **Code blocks have line numbers.** Copying, whether with Copy or by selecting part of the code, leaves them out.
-- **The usage panel only shows providers you're signed in to.** One that's turned on but has no login on this Mac stays out of the panel and the menu bar until you sign in, and Customize says why.
+- **The usage panel follows the accounts you connected in Kuvo Code**: GitHub Copilot, ChatGPT (Codex), OpenCode, OpenRouter, Z.ai, xAI and Ollama Cloud. Connecting one turns it on; tools signed in elsewhere on your Mac, like Claude Code, no longer show up. One with no usage to read stays out of the panel, and Customize says why.
 - **Clicking a provider's bar in the usage panel** opens its limits, spend and trend in the same style as the bars, instead of the old card.
 - **Review** button in the Changes tab: the agent reviews what the tab shows, with /review.
 - **Add Screenshot to Message** in the panel's browser attaches what's on the page to your message.

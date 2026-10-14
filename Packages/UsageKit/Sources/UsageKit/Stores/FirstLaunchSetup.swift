@@ -39,13 +39,18 @@ final class FirstLaunchSetup {
     private let cards: [ProviderRuntime]
     private let enablement: ProviderEnablementStore
     private let dataStore: WidgetDataStore
+    /// Fork addition: whether the host has the provider's account connected; the welcome offers
+    /// only those.
+    private let isConnected: (String) -> Bool
     private(set) var choices: [Choice]
     var selectedIDs: Set<String> = []
     var showAll = false
     private(set) var isDetecting = true
     private(set) var isConnecting = false
     private(set) var hasAttemptedConnection = false
-    var visibleChoices: [Choice] { choices.filter { showAll || $0.detected } }
+    var visibleChoices: [Choice] { choices.filter { isConnected($0.id) && (showAll || $0.detected) } }
+    /// Fork addition: no account in the host to follow at all.
+    var hasNothingConnected: Bool { !choices.contains { isConnected($0.id) } }
     var hasFailures: Bool {
         choices.contains { if case .failed = $0.connection { true } else { false } }
     }
@@ -56,11 +61,13 @@ final class FirstLaunchSetup {
         providers: [Provider],
         cards: [ProviderRuntime],
         enablement: ProviderEnablementStore,
-        dataStore: WidgetDataStore
+        dataStore: WidgetDataStore,
+        isConnected: @escaping (String) -> Bool = { _ in true }
     ) {
         self.cards = cards
         self.enablement = enablement
         self.dataStore = dataStore
+        self.isConnected = isConnected
         self.choices = providers.map { Choice(provider: $0) }
     }
 
@@ -71,7 +78,7 @@ final class FirstLaunchSetup {
         for index in choices.indices where detected.contains(choices[index].id) {
             choices[index].detected = true
         }
-        selectedIDs = detected
+        selectedIDs = detected.filter(isConnected)
         isDetecting = false
         AppLog.info(.config, "welcome: detected \(detected.sorted())")
     }

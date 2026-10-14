@@ -32,6 +32,13 @@ public enum HostAccounts {
         if changed { UsageMenuBar.shared.refresh(providerIDs: ["copilot", "openrouter", "zai", "opencode"]) }
     }
 
+    /// The panel's providers (`codex`, `copilot`, …) whose accounts are connected in the host: the
+    /// only ones it follows. A newly connected one is turned on.
+    @MainActor
+    public static func setConnectedProviders(_ providers: Set<String>) {
+        UsageMenuBar.shared.connectedProvidersDidChange(providers)
+    }
+
     /// Adds opencode data folders (each holding `opencode*.db`) to read alongside the user's own.
     public static func setOpenCodeDataDirectories(_ paths: [String]) {
         openCodeDirectories.withLock { $0 = paths }

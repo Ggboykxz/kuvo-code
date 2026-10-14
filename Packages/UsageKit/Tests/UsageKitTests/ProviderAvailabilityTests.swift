@@ -40,6 +40,22 @@ final class ProviderAvailabilityTests: XCTestCase {
         XCTAssertFalse(availability.isAvailable("claude"), "a network failure doesn't prove a login appeared")
     }
 
+    func testOnlyProvidersConnectedInTheHostAreFollowed() {
+        let defaults = makeDefaults()
+        let availability = ProviderAvailability(defaults: defaults)
+        XCTAssertTrue(availability.isAvailable("claude"), "until the host says, nothing is left out")
+
+        XCTAssertEqual(availability.setConnected(["codex", "copilot"]), ["codex", "copilot"])
+        XCTAssertFalse(availability.isAvailable("claude"), "Claude Code signed in on the Mac isn't an account connected here")
+        XCTAssertTrue(availability.note(for: "claude")?.hasPrefix("Not connected in") == true)
+        XCTAssertTrue(availability.isAvailable("codex"))
+        XCTAssertTrue(availability.isAvailable("codex@work"), "every account of a connected provider")
+
+        XCTAssertEqual(availability.setConnected(["codex", "copilot", "openrouter"]), ["openrouter"], "only the new one turns on")
+        XCTAssertEqual(availability.setConnected(["codex", "copilot", "openrouter"]), [])
+        XCTAssertFalse(ProviderAvailability(defaults: defaults).isAvailable("claude"), "remembered at the next launch")
+    }
+
     func testItIsRememberedAcrossLaunches() {
         let defaults = makeDefaults()
         ProviderAvailability(defaults: defaults).record("grok", succeeded: false, category: .notLoggedIn)

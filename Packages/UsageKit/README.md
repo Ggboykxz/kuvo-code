@@ -32,9 +32,10 @@ here.
   per provider in a pastel of its brand color, with thin monospaced labels, showing the limit closest to running out, and today's spend
   as one bar on top. Clicking a bar opens every metric underneath in the same style (`Views/UsageBarDetail.swift`), not the card.
   Settings › Style switches back to the cards.
-- **Only providers with something to show** (`Stores/ProviderAvailability.swift`): a turned-on provider whose refresh finds no login,
-  or no usage for its account, stays off the dashboard, the menu bar and Total Spend, and Customize says why. It keeps being
-  refreshed and comes back once it signs in.
+- **Only the host's accounts** (`Stores/ProviderAvailability.swift`): the panel follows the providers whose accounts are connected in
+  Kuvo Code (`HostAccounts.setConnectedProviders`), turning on newly connected ones, and leaves out tools signed in elsewhere on the
+  Mac. Of those, one whose refresh finds no login, or no usage for its account, stays off the dashboard, the menu bar and Total
+  Spend too, and Customize (which lists only connected providers) says why.
 
 Everything else, including providers, pricing, pace, layout and the views, is upstream code. Kuvo
 Code-specific code lives in `Sources/UsageKit/Embedding` and `Support/HostApp.swift`. Other edits are
