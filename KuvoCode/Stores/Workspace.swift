@@ -442,9 +442,12 @@ final class Workspace {
         case "permission.asked":
             guard let request = try? event.payload(as: PermissionRequest.self) else { return }
             asking[request.id] = request.sessionID
-            notifyAsk(request.sessionID, body: Self.describe(request))
+            notifyAsk(request.sessionID, body: Self.describe(request), permission: request.id)
         case "permission.replied":
-            if let reply = try? event.payload(as: EventPayload.PermissionReplied.self) { asking[reply.requestID] = nil }
+            if let reply = try? event.payload(as: EventPayload.PermissionReplied.self) {
+                asking[reply.requestID] = nil
+                Notifier.shared.clear(request: reply.requestID)
+            }
         case "form.created":
             guard let form = try? event.payload(as: EventPayload.FormCreated.self).form else { return }
             asking[form.id] = form.sessionID
@@ -456,7 +459,8 @@ final class Workspace {
         }
     }
 
-    private func notifyAsk(_ id: String, body: String) {
+    /// `permission` is the request, for a notification whose buttons answer it.
+    private func notifyAsk(_ id: String, body: String, permission: String? = nil) {
         Task {
             // A subagent's session has no row or tab of its own; its request shows in the
             // session that started it.
@@ -467,7 +471,8 @@ final class Workspace {
                 session = self.session(next)
                 parent = session == nil ? (try? await api?.session(next))?.parentID : nil
             }
-            Notifier.shared.notify(session: session?.id ?? id, title: session?.title ?? AppInfo.name, subtitle: session.map { projectName($0.location.directory) }, body: body)
+            Notifier.shared.notify(session: session?.id ?? id, title: session?.title ?? AppInfo.name, subtitle: session.map { projectName($0.location.directory) }, body: body,
+                                   permission: permission.map { (session: id, request: $0) })
         }
     }
 
@@ -483,6 +488,13 @@ final class Workspace {
         }
         guard let resource = request.resources.first, resource != "*" else { return "Wants to \(what)." }
         return "Wants to \(what): \(resource)"
+    }
+
+    /// A permission request answered from its notification.
+    func answer(_ request: String, in session: String, with answer: Notifier.PermissionAnswer) {
+        Analytics.shared.track("permission_answered", ["decision": answer.rawValue, "from": "notification"])
+        guard let decision = PermissionRequest.Decision(rawValue: answer.rawValue) else { return }
+        Task { try? await api?.reply(session: session, permission: request, decision: decision) }
     }
 
     func markViewed(_ id: String) {
