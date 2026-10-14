@@ -28,6 +28,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - **Archive sessions** you're done with: they leave the sidebar's lists, and searching still finds them.
 - Right-click a session's tab to rename it.
 - **⌘W closes the session tab**, and ⇧⌘T reopens the last one you closed, where it was. ⇧⌘W closes the window.
+- A long message, like a pasted log, shows its first lines in the conversation until you click **Show More**.
 - **⌘F finds words in the conversation**, highlighting each message they're in.
 - **↑ and ↓ in an empty composer go through the messages you sent**, as in a shell.
 - What you type in the composer stays there when you switch to another session, and when you quit the app.

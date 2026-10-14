@@ -395,12 +395,7 @@ struct UserBubble: View {
                 CommentReference(comment: comment)
             }
             if !text.isEmpty {
-                Text(text)
-                    .font(.transcript)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(.fill.tertiary, in: .rect(cornerRadius: Metrics.bubbleRadius))
+                MessageText(text: text)
             }
             if let status {
                 Text(status)
@@ -411,6 +406,62 @@ struct UserBubble: View {
         .opacity(status == nil ? 1 : 0.7)
         .frame(maxWidth: .infinity, alignment: .trailing)
         .padding(.leading, 80)
+    }
+}
+
+/// A message's words in its bubble. A long one (a pasted log, say) shows its first lines,
+/// fading out, until you ask for the rest.
+private struct MessageText: View {
+    let text: String
+    @State private var isExpanded = false
+    @State private var shownHeight: CGFloat = 0
+    @State private var fullHeight: CGFloat = 0
+    private static let lines = 12
+
+    /// Short messages can't reach the limit, so they aren't measured twice.
+    private var mayBeLong: Bool {
+        text.count > 300 || text.utf8.count { $0 == 10 } >= Self.lines
+    }
+
+    private var isCut: Bool { isExpanded || fullHeight > shownHeight + 1 }
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 4) {
+            Text(text)
+                .font(.transcript)
+                .lineLimit(isExpanded ? nil : Self.lines)
+                .textSelection(.enabled)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { shownHeight = $0 }
+                .background(alignment: .top) {
+                    // The whole text, unseen, to tell whether the limit cuts anything.
+                    if mayBeLong, !isExpanded {
+                        Text(text)
+                            .font(.transcript)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .hidden()
+                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fullHeight = $0 }
+                    }
+                }
+                .mask {
+                    if isCut && !isExpanded {
+                        LinearGradient(stops: [.init(color: .black, location: 0.7), .init(color: .black.opacity(0.15), location: 1)], startPoint: .top, endPoint: .bottom)
+                    } else {
+                        Color.black
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(.fill.tertiary, in: .rect(cornerRadius: Metrics.bubbleRadius))
+            if mayBeLong, isCut {
+                Button(isExpanded ? "Show Less" : "Show More") {
+                    withAnimation(.ui) { isExpanded.toggle() }
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .padding(.trailing, 6)
+            }
+        }
     }
 }
 
