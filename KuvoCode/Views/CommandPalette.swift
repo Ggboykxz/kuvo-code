@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// One thing the palette can do: an action, a session to open, or a file to show.
 struct PaletteItem: Identifiable {
@@ -137,7 +138,7 @@ struct CommandPalette: View {
             HStack(spacing: 8) {
                 Group {
                     if item.kind == .file {
-                        Image(nsImage: NSWorkspace.shared.icon(forFileType: ((item.title as NSString).pathExtension)))
+                        Image(nsImage: NSWorkspace.shared.icon(for: UTType(filenameExtension: (item.title as NSString).pathExtension) ?? .data))
                             .resizable()
                     } else {
                         Image(systemName: item.symbol ?? (item.kind == .session ? "bubble.left" : "command"))
