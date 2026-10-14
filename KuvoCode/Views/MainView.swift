@@ -15,7 +15,8 @@ struct MainView: View {
     /// The active tab.
     @SceneStorage("selection") private var selection: String?
     @SceneStorage("showsSidebar") private var showsSidebar = true
-    /// The tabs in the title bar; hidden, sessions are switched from the sidebar or ⌘K.
+    /// The row at the top: the project, its branch and the tabs. Hidden, sessions are switched
+    /// from the sidebar or ⌘K.
     @AppStorage(TabBar.showsKey) private var showsTabBar = true
     @SceneStorage("showsPanel") private var showsPanel = false
     /// The panel over the conversation, for room.
@@ -121,7 +122,10 @@ struct MainView: View {
         .onDisappear { utilities.closeAll() }
         // The agent started browsing: show it.
         .onChange(of: utilities.revealRequest) { withAnimation(.ui) { showsPanel = true } }
-        .toolbar { titleBar }
+        // Hiding the tab bar takes the whole row away: with nothing in it, the window keeps
+        // just its title bar and buttons. The sidebar and panel are still ⌘0 and ⌥⌘0, and
+        // sessions are in ⌘K.
+        .toolbar { if showsTabBar { titleBar } }
         .toolbar(removing: .title)
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .iconOnlyToolbar()
@@ -254,7 +258,7 @@ struct MainView: View {
                 ) {
                     if let activeDirectory { Task { await workspace.loadBranch(for: activeDirectory) } }
                 }
-                if showsTabBar, !tabItems.isEmpty {
+                if !tabItems.isEmpty {
                     TabStrip(tabs: tabItems, selection: $selection, close: { closeTab($0) }, closeAll: closeTabs(except:)) { id in
                         guard let session = workspace.session(id) else { return }
                         newTitle = session.title ?? ""

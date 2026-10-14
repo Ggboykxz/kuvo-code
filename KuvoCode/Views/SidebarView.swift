@@ -4,9 +4,10 @@ import UniformTypeIdentifiers
 
 /// New Session on top, then projects (each a folder that opens to its sessions), then
 /// the most recent sessions across projects, and the connected accounts at the bottom.
-/// Rows are flat: a soft fill under the pointer, a stronger one for the open session.
+/// Rows are flat: a soft fill under the pointer, accent glass under the open session.
 struct SidebarView: View {
     @Environment(Workspace.self) private var workspace
+    @Environment(\.colorScheme) private var scheme
 
     @Binding var selection: String?
     let newSession: (String?) -> Void
@@ -18,9 +19,10 @@ struct SidebarView: View {
     @AppStorage("collapsedProjects") private var collapsedStorage = ""
     /// Projects showing all their sessions instead of the latest few.
     @State private var showsAll: Set<String> = []
-    /// Where the open session was picked from. A session shows in its project and in
-    /// Recents; only the row you clicked is highlighted (both open the same tab).
-    @State private var pickedIn: (place: Place, id: String)?
+    /// Where sessions were picked from. A session shows in its project and in Recents; only
+    /// the row you clicked is highlighted (both open the same tab). The one you leave keeps its
+    /// place until the selection has moved, so its highlight doesn't jump to its project first.
+    @State private var pickedIn: [String: Place] = [:]
     @State private var renaming: Session?
     /// The session waiting for the user to confirm its deletion.
     @State private var deleting: Session?
@@ -133,7 +135,10 @@ struct SidebarView: View {
                     .padding(.bottom, 10)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
-            Divider()
+            // A hairline, not a gray rule, like the edges of the cards.
+            Rectangle()
+                .fill(Surface.hairline(scheme))
+                .frame(height: 1)
                 .padding(.horizontal, 10)
             AccountsRow(action: showProviders)
                 .padding(.horizontal, 10)
@@ -144,6 +149,8 @@ struct SidebarView: View {
         // KUVO_DEMO_SEARCH: text in the sidebar's search field.
         .onAppear { if let text = ProcessInfo.processInfo.environment["KUVO_DEMO_SEARCH"] { search = text } }
         #endif
+        // Only the open session's place is remembered; picked elsewhere, it shows in its project.
+        .onChange(of: selection) { pickedIn = pickedIn.filter { $0.key == selection } }
         // Titles match as you type; conversations once you pause.
         .task(id: search) {
             let query = search.trimmingCharacters(in: .whitespaces)
@@ -320,13 +327,13 @@ struct SidebarView: View {
     /// Highlighted where it was picked; picked elsewhere (a tab, a new session), in its project.
     private func isHighlighted(_ id: String, in place: Place) -> Bool {
         guard selection == id else { return false }
-        if let pickedIn, pickedIn.id == id { return pickedIn.place == place }
+        if let picked = pickedIn[id] { return picked == place }
         return place == .project
     }
 
     private func sessionRow(_ session: Session, in place: Place) -> some View {
         SidebarRow(isSelected: isHighlighted(session.id, in: place), indented: place == .project, action: {
-            pickedIn = (place, session.id)
+            pickedIn[session.id] = place
             selection = session.id
         }) {
             EmptyView()
@@ -466,16 +473,18 @@ private struct ConversationResultRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .hoverHighlight(selected: isSelected)
+            .modifier(RowHighlight(isSelected: isSelected))
         }
         .buttonStyle(.plain)
     }
 }
 
-/// Finding a session: a quiet field shaped like a row, cleared with its button or Escape.
+/// Finding a session: a quiet field shaped like a row, set into the card like a well so it
+/// doesn't read as a selected row; cleared with its button or Escape.
 private struct SearchRow: View {
     @Binding var text: String
     @FocusState private var isFocused: Bool
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         HStack(spacing: 10) {
@@ -500,7 +509,9 @@ private struct SearchRow: View {
         }
         .padding(.horizontal, 10)
         .frame(height: SidebarMetrics.rowHeight)
-        .background(Color.primary.opacity(isFocused ? 0.07 : 0.04), in: .rect(cornerRadius: 8))
+        // Sunken, without a border of its own; a touch deeper while you type in it.
+        .background((scheme == .dark ? Color.black : Surface.slate).opacity(isFocused ? 0.05 : 0), in: .rect(cornerRadius: 8))
+        .background(Surface.well(scheme), in: .rect(cornerRadius: 8))
         .contentShape(.rect)
         .onTapGesture { isFocused = true }
         .padding(.vertical, 4)
@@ -510,6 +521,24 @@ private struct SearchRow: View {
 private enum SidebarMetrics {
     static let rowHeight: CGFloat = 32
     static let iconWidth: CGFloat = 18
+}
+
+/// A row's highlight: accent glass under the open session, so it stands apart from the
+/// chrome around it, and a soft neutral fill under the pointer on the others. Neither
+/// moves or resizes the row.
+private struct RowHighlight: ViewModifier {
+    let isSelected: Bool
+    @State private var isHovering = false
+
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 8)
+        content
+            .background(isHovering && !isSelected ? Color.primary.opacity(0.06) : .clear, in: shape)
+            .accentGlass(shape, isOn: isSelected)
+            .contentShape(shape)
+            .onHover { isHovering = $0 }
+            .animation(.easeOut(duration: 0.12), value: isHovering)
+    }
 }
 
 /// One line in the sidebar: an optional icon, a title, an optional trailing accessory.
@@ -542,7 +571,7 @@ private struct SidebarRow<Icon: View, Title: View, Accessory: View>: View {
             }
             .padding(.horizontal, 10)
             .frame(height: SidebarMetrics.rowHeight)
-            .hoverHighlight(selected: isSelected)
+            .modifier(RowHighlight(isSelected: isSelected))
         }
         .buttonStyle(.plain)
     }
@@ -658,7 +687,7 @@ private struct AccountsRow: View {
                 } else {
                     HStack(spacing: 8) {
                         ForEach(catalog.connectedProviders.prefix(3)) { provider in
-                            ProviderLogo(id: provider.id, size: 18)
+                            ProviderLogo(id: provider.id, size: 18, colored: true)
                         }
                     }
                 }

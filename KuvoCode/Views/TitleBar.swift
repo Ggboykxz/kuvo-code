@@ -41,6 +41,7 @@ struct TabStrip: View {
     var rename: ((String) -> Void)?
 
     @Namespace private var pill
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         HStack(spacing: 0) {
@@ -56,10 +57,20 @@ struct TabStrip: View {
                             .matchedGeometryEffect(id: "pill", in: pill)
                     }
                 }
-                // Hairlines between inactive neighbours, like Rex; none next to the pill.
+                // Hairlines between inactive neighbours, like Rex; none next to the pill. They
+                // fade out at both ends, so they read as a crease in the glass, not a drawn line.
                 if index < tabs.count - 1, !isActive, tabs[index + 1].id != selection {
                     Rectangle()
-                        .fill(.separator)
+                        .fill(LinearGradient(
+                            stops: [
+                                .init(color: .clear, location: 0),
+                                .init(color: Surface.hairline(scheme), location: 0.3),
+                                .init(color: Surface.hairline(scheme), location: 0.7),
+                                .init(color: .clear, location: 1),
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        ))
                         .frame(width: 1, height: 16)
                 }
             }
@@ -85,14 +96,17 @@ struct TabStrip: View {
     }
 }
 
+/// Rex's raised pill: white (a lighter glass in dark mode) with a lit edge, held off the
+/// track by a tight contact shadow and a soft one under it.
 private struct ActivePill: View {
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         Capsule()
             .fill(scheme == .dark ? Color.white.opacity(0.17) : Color.white)
-            .overlay(Capsule().strokeBorder(.white.opacity(scheme == .dark ? 0.12 : 0.6), lineWidth: 0.5))
-            .shadow(color: .black.opacity(scheme == .dark ? 0.3 : 0.12), radius: 3, y: 1)
+            .specularRim(Capsule())
+            .shadow(color: .black.opacity(scheme == .dark ? 0.35 : 0.1), radius: 0.5, y: 0.5)
+            .shadow(color: .black.opacity(scheme == .dark ? 0.3 : 0.08), radius: 6, y: 2)
     }
 }
 
@@ -148,10 +162,11 @@ private struct TabButton: View {
     }
 }
 
-/// An app-icon tile, like Rex: the model maker's logo large on a soft tile, wrapped
-/// tightly in a white rim. How the session is doing shows as a badge in its corner,
-/// with the sidebar's marks: a spinner while the agent works, a hand while it waits
-/// for you, a red mark after a failed run, a dot when a run finished out of sight.
+/// An app-icon tile, like Rex's full-color tab badges: the model maker's logo large, in
+/// the maker's own color on a tile washed with it, wrapped tightly in a white rim. How
+/// the session is doing shows as a colored badge in its corner, with the sidebar's
+/// marks: a spinner while the agent works, a hand while it waits for you, a red mark
+/// after a failed run, a dot when a run finished out of sight.
 struct TabIcon: View {
     let logo: String?
     /// Shown when there's no logo: a pencil for a draft, a bubble for a session.
@@ -173,7 +188,9 @@ struct TabIcon: View {
     }
 }
 
-/// How the session is doing, in the tile's corner: the same marks the sidebar uses.
+/// How the session is doing, in the tile's corner: the sidebar's marks, each on a glossy
+/// disc of its own color (the accent while it works or has news, orange while it waits,
+/// red when it failed) inside a white ring.
 private struct StatusBadge: View {
     let status: TabItem.Status
     @Environment(\.colorScheme) private var scheme
@@ -183,13 +200,15 @@ private struct StatusBadge: View {
             Circle().fill(scheme == .dark ? Color(white: 0.2) : .white)
             switch status {
             case .working:
-                Spinner(size: 9)
+                disc(.accentColor)
+                Spinner(size: 8)
+                    .foregroundStyle(.white, .white)
             case .waiting:
-                mark("hand.raised.fill", on: .orange)
+                disc(.orange).overlay { mark("hand.raised.fill") }
             case .failed:
-                mark("exclamationmark", on: .red)
+                disc(.red).overlay { mark("exclamationmark") }
             case .unread:
-                Circle().fill(.tint).padding(3)
+                disc(.accentColor).padding(1.5)
             case .idle:
                 EmptyView()
             }
@@ -198,40 +217,59 @@ private struct StatusBadge: View {
         .shadow(color: .black.opacity(scheme == .dark ? 0.45 : 0.2), radius: 1, y: 0.5)
     }
 
-    private func mark(_ symbol: String, on color: Color) -> some View {
-        Circle().fill(color.gradient)
+    /// Lighter at the top, like the system's own badges, so the color reads rich, not flat.
+    private func disc(_ color: Color) -> some View {
+        Circle()
+            .fill(LinearGradient(colors: [color.mix(with: .white, by: 0.3), color], startPoint: .top, endPoint: .bottom))
             .padding(1.5)
-            .overlay {
-                Image(systemName: symbol)
-                    .font(.system(size: 6.5, weight: .bold))
-                    .foregroundStyle(.white)
-            }
+    }
+
+    private func mark(_ symbol: String) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 6.5, weight: .bold))
+            .foregroundStyle(.white)
     }
 }
 
-/// The white rim around every tile, with a soft shadow so it holds on a white pill.
+/// The white rim around every tile, with a soft shadow so it holds on a white pill. In
+/// dark mode the rim is lit from above instead of a flat gray.
 private struct TileRim: ViewModifier {
     @Environment(\.colorScheme) private var scheme
 
     func body(content: Content) -> some View {
         content
             .clipShape(.rect(cornerRadius: 5.5))
-            .overlay(RoundedRectangle(cornerRadius: 5.5).strokeBorder(scheme == .dark ? Color(white: 0.62) : .white, lineWidth: 1.5))
+            .overlay {
+                RoundedRectangle(cornerRadius: 5.5)
+                    .strokeBorder(
+                        scheme == .dark
+                            ? AnyShapeStyle(LinearGradient(colors: [.white.opacity(0.8), .white.opacity(0.4)], startPoint: .top, endPoint: .bottom))
+                            : AnyShapeStyle(Color.white),
+                        lineWidth: 1.5
+                    )
+            }
             .shadow(color: .black.opacity(scheme == .dark ? 0.45 : 0.22), radius: 1.2, y: 0.5)
     }
 }
 
+/// The tile itself: the maker's color with its mark in white, like an app icon, when the mark
+/// has a color; otherwise soft white (soft gray in dark mode) with the mark in ink.
 private struct FrontTile: View {
     let logo: String?
     let symbol: String
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
+        let maker = logo.flatMap { ProviderLogo.makerColor($0, in: .light) }
         ZStack {
-            LinearGradient(
-                colors: scheme == .dark ? [Color(white: 0.3), Color(white: 0.22)] : [Color(white: 0.97), Color(white: 0.9)],
-                startPoint: .top, endPoint: .bottom
-            )
+            if let maker {
+                LinearGradient(colors: [maker.mix(with: .white, by: 0.12), maker.mix(with: .black, by: 0.08)], startPoint: .top, endPoint: .bottom)
+            } else {
+                LinearGradient(
+                    colors: scheme == .dark ? [Color(white: 0.3), Color(white: 0.22)] : [Color(white: 0.97), Color(white: 0.9)],
+                    startPoint: .top, endPoint: .bottom
+                )
+            }
             Group {
                 if let logo {
                     ProviderLogo(id: logo, size: 13)
@@ -240,7 +278,7 @@ private struct FrontTile: View {
                         .font(.system(size: 10.5, weight: .semibold))
                 }
             }
-            .foregroundStyle(scheme == .dark ? Color.white : Color(white: 0.18))
+            .foregroundStyle(maker != nil || scheme == .dark ? Color.white : Color(white: 0.18))
         }
         .frame(width: TabIcon.tileSize.width, height: TabIcon.tileSize.height)
         .modifier(TileRim())
@@ -273,24 +311,41 @@ struct ProjectIdentity: View {
             .help(showsSidebar ? "Hide Sessions (⌘0)" : "Show Sessions (⌘0)")
 
             if let name {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(name)
-                        .font(.system(size: 13, weight: .semibold))
-                    if let branch {
-                        if let directory, !isWorktree {
-                            BranchSwitcher(branch: branch, directory: directory, environment: environment, switched: switched)
-                        } else {
-                            BranchLabel(branch: branch)
-                                .help(isWorktree ? "This session's own branch, in its worktree" : "")
+                CappedWidth(max: 220) {
+                    // A gap under the name for the branch's hover fill, which reaches above the branch.
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(name)
+                            .font(.system(size: 13, weight: .semibold))
+                        if let branch {
+                            if let directory, !isWorktree {
+                                BranchSwitcher(branch: branch, directory: directory, environment: environment, switched: switched)
+                            } else {
+                                BranchLabel(branch: branch)
+                                    .help(isWorktree ? "This session's own branch, in its worktree" : "")
+                            }
                         }
                     }
+                    .lineLimit(1)
+                    .truncationMode(.tail)
                 }
-                .lineLimit(1)
-                .truncationMode(.tail)
-                // A long branch name (a worktree's is its session's title) leaves the tabs room.
-                .frame(minWidth: 50, maxWidth: 220, alignment: .leading)
             }
         }
+    }
+}
+
+/// As wide as its content, up to `max`: a long name (a worktree's branch is its session's title)
+/// truncates and leaves the tabs room, and a short one leaves no gap before them.
+private struct CappedWidth: Layout {
+    let max: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let view = subviews.first else { return .zero }
+        let width = Swift.min(view.sizeThatFits(.unspecified).width, max, proposal.width ?? .infinity)
+        return CGSize(width: width, height: view.sizeThatFits(ProposedViewSize(width: width, height: proposal.height)).height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
     }
 }
 
