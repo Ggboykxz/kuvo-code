@@ -46,8 +46,8 @@ or start with free models that need no account.
   step.
 - **Attach anything.** Drop, paste or pick files of any kind.
 - **Plans and spend in the menu bar.** Limits with pace and reset times, and
-  spend across Claude, Codex, Copilot, Cursor, OpenCode, OpenRouter, Z.ai and
-  more.
+  spend, for the accounts you connect: GitHub Copilot, ChatGPT (Codex),
+  OpenCode, OpenRouter and Z.ai.
 - **A native app.** SwiftUI and AppKit with Liquid Glass. No Electron.
 
 ## Getting started
@@ -87,9 +87,10 @@ side panel and the usage menu.
   from this repository's releases. Releases are signed with a Developer ID and
   notarized by Apple.
 - **The usage menu** is UsageKit, our fork of
-  [OpenUsage](https://github.com/robinebers/openusage) by Robin Ebers. It reads
-  the logins those tools already keep on your Mac, plus the accounts you
-  connect in Kuvo Code, and renews them when they expire, as those tools would.
+  [OpenUsage](https://github.com/robinebers/openusage) by Robin Ebers. It
+  follows the accounts you connect in Kuvo Code and reads their usage with
+  them; Codex's comes from the Codex app's own sign-in on your Mac. It renews
+  sign-ins when they expire, as those tools would.
 
 ## Build from source
 
