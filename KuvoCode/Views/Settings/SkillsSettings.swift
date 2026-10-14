@@ -7,7 +7,7 @@ import SwiftUI
 struct SkillsSettings: View {
     @Environment(AppModel.self) private var app
     @State private var skills: [Skill] = []
-    @State private var installed: [String: String] = [:]
+    @State private var installed: [String: SkillLibrary.Source] = [:]
     @State private var browsing: SkillLibrary.Repository?
     @State private var repositoryName = ""
     @State private var failure: String?
@@ -126,7 +126,7 @@ struct SkillsSettings: View {
     }
 
     private func source(of skill: Skill) -> String {
-        if let repository = installed[skill.id] { return repository }
+        if let source = installed[skill.id] { return source.repository }
         guard let path = skill.path else { return "" }
         if path.hasPrefix("/builtin/") { return "Built in" }
         if path.hasPrefix(folder.path + "/") { return "Added here" }
@@ -175,9 +175,13 @@ private struct RepositorySkills: View {
     let changed: () -> Void
     let done: () -> Void
     @State private var skills: [SkillLibrary.RemoteSkill]?
-    @State private var installed: [String: String] = [:]
+    @State private var isPartial = false
+    @State private var installed: [String: SkillLibrary.Source] = [:]
     @State private var query = ""
+    /// Why the list couldn't be loaded.
     @State private var failure: String?
+    /// Why a skill couldn't be added: the list stays.
+    @State private var installFailure: String?
     @State private var confirming: SkillLibrary.RemoteSkill?
     @State private var working: String?
 
@@ -206,12 +210,19 @@ private struct RepositorySkills: View {
                 } else if shown.isEmpty {
                     ContentUnavailableView("No Skills", systemImage: "magnifyingglass")
                 } else {
-                    List(shown) { skill in
-                        RemoteSkillRow(skill: skill, installedFrom: installed[skill.id], isWorking: working == skill.id) {
-                            confirming = skill
-                        } remove: {
-                            try? FileManager.default.trashItem(at: folder.appending(path: skill.id), resultingItemURL: nil)
-                            reload()
+                    List {
+                        ForEach(shown) { skill in
+                            RemoteSkillRow(skill: skill, installed: installed[skill.name], isWorking: working == skill.id) {
+                                confirming = skill
+                            } remove: {
+                                try? FileManager.default.trashItem(at: folder.appending(path: skill.name), resultingItemURL: nil)
+                                reload()
+                            }
+                        }
+                        if isPartial {
+                            Text("This collection is too big for GitHub to list in full, so some of its skills aren't here.")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -226,9 +237,20 @@ private struct RepositorySkills: View {
         .frame(width: 600, height: 600)
         .task {
             reload()
-            do { skills = try await SkillLibrary.skills(in: repository) } catch { failure = error.localizedDescription }
+            do {
+                let listing = try await SkillLibrary.skills(in: repository)
+                skills = listing.skills
+                isPartial = listing.isPartial
+            } catch {
+                failure = error.localizedDescription
+            }
         }
-        .confirmationDialog("Add \(confirming?.id ?? "")?", isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }), presenting: confirming) { skill in
+        .alert("Couldn't Add the Skill", isPresented: Binding(get: { installFailure != nil }, set: { if !$0 { installFailure = nil } })) {
+            Button("OK") {}
+        } message: {
+            Text(installFailure ?? "")
+        }
+        .confirmationDialog("Add \(confirming?.name ?? "")?", isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }), presenting: confirming) { skill in
             Button("Add Skill") { install(skill) }
             Button("Cancel", role: .cancel) {}
         } message: { skill in
@@ -259,7 +281,7 @@ private struct RepositorySkills: View {
                 try await SkillLibrary.install(skill, into: folder)
                 reload()
             } catch {
-                failure = error.localizedDescription
+                installFailure = error.localizedDescription
             }
         }
     }
@@ -267,7 +289,8 @@ private struct RepositorySkills: View {
 
 private struct RemoteSkillRow: View {
     let skill: SkillLibrary.RemoteSkill
-    let installedFrom: String?
+    /// The skill installed under this one's name, from wherever it came.
+    let installed: SkillLibrary.Source?
     let isWorking: Bool
     let add: () -> Void
     let remove: () -> Void
@@ -276,7 +299,7 @@ private struct RemoteSkillRow: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(about?.name ?? skill.id)
+                Text(about?.name ?? skill.name)
                 Text(about?.description ?? " ")
                     .font(.callout)
                     .foregroundStyle(.secondary)
@@ -285,11 +308,12 @@ private struct RemoteSkillRow: View {
             Spacer()
             if isWorking {
                 ProgressView().controlSize(.small)
-            } else if let installedFrom {
-                if installedFrom == skill.repository.id {
+            } else if let installed {
+                if installed.repository == skill.repository.id, installed.path == skill.path {
                     Button("Remove", action: remove)
                 } else {
-                    Text("Added from \(installedFrom)")
+                    // Another skill by this name is installed (they'd share a folder).
+                    Text("\(skill.name) from \(installed.repository) is added")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

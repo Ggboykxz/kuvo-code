@@ -83,7 +83,7 @@ struct OpenQuickly: View {
         .onAppear { isFocused = true }
         .task {
             let roots = roots.map { URL(filePath: $0) }
-            files = await Task.detached { ProjectFiles.list(roots, dated: true) }.value
+            files = await Task.detached { ProjectFiles.newestFirst(ProjectFiles.list(roots, dated: true)) }.value
         }
     }
 

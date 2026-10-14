@@ -32,7 +32,7 @@ nonisolated enum SkillLibrary {
         Repository(owner: "wshobson", name: "agents", title: "wshobson/agents", summary: "A big set of plugins with skills for many languages and tools."),
     ]
 
-    /// A skill in a repository: the folder its SKILL.md is in, named by the folder.
+    /// A skill in a repository: the folder its SKILL.md is in.
     struct RemoteSkill: Hashable, Identifiable, Sendable {
         var repository: Repository
         /// The folder in the repository, like `skills/pdf`.
@@ -40,8 +40,22 @@ nonisolated enum SkillLibrary {
         /// Every file in it, relative to the repository.
         var files: [String]
 
-        /// The engine knows a skill by its folder's name.
-        var id: String { (path as NSString).lastPathComponent }
+        /// Unique in its repository; two folders can share a name.
+        var id: String { path }
+        /// The engine knows a skill by its folder's name, and it's installed under it.
+        var name: String { (path as NSString).lastPathComponent }
+    }
+
+    /// A repository's skills, and whether GitHub cut the list short (a very big repository).
+    struct Listing: Sendable {
+        var skills: [RemoteSkill]
+        var isPartial: Bool
+    }
+
+    /// Where an installed skill came from.
+    struct Source: Sendable, Hashable {
+        var repository: String
+        var path: String
     }
 
     /// What a SKILL.md says about itself.
@@ -65,7 +79,7 @@ nonisolated enum SkillLibrary {
     }
 
     /// A repository you name ("owner/name", or its GitHub URL), with its default branch.
-    static func repository(named text: String) async throws -> Repository {
+    @concurrent static func repository(named text: String) async throws -> Repository {
         var name = text.trimmingCharacters(in: .whitespacesAndNewlines)
         for prefix in ["https://github.com/", "http://github.com/", "github.com/"] where name.hasPrefix(prefix) { name.removeFirst(prefix.count) }
         let parts = name.split(separator: "/").prefix(2).map(String.init)
@@ -79,9 +93,10 @@ nonisolated enum SkillLibrary {
     }
 
     /// The skills in a repository, from its file list (one request to GitHub's API).
-    static func skills(in repository: Repository) async throws -> [RemoteSkill] {
+    @concurrent static func skills(in repository: Repository) async throws -> Listing {
         struct Tree: Decodable {
             var tree: [Entry]
+            var truncated: Bool?
             struct Entry: Decodable { var path: String; var type: String }
         }
         let url = URL(string: "https://api.github.com/repos/\(repository.owner)/\(repository.name)/git/trees/\(repository.branch)?recursive=1")!
@@ -91,15 +106,22 @@ nonisolated enum SkillLibrary {
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         if status == 403 || status == 429 { throw Failure.limited }
         guard status == 200 else { throw Failure.notFound(repository.id) }
-        let files = try JSONDecoder().decode(Tree.self, from: data).tree.filter { $0.type == "blob" }.map(\.path)
-        let folders = files.filter { ($0 as NSString).lastPathComponent == "SKILL.md" }.map { ($0 as NSString).deletingLastPathComponent }.filter { !$0.isEmpty }
-        return folders.sorted().map { folder in
-            RemoteSkill(repository: repository, path: folder, files: files.filter { $0.hasPrefix(folder + "/") })
+        let tree = try JSONDecoder().decode(Tree.self, from: data)
+        let files = tree.tree.filter { $0.type == "blob" }.map(\.path)
+        let folders = Set(files.filter { ($0 as NSString).lastPathComponent == "SKILL.md" }.map { ($0 as NSString).deletingLastPathComponent }.filter { !$0.isEmpty })
+        // Each file to the skill folder it's in (the deepest one, for skills inside skills).
+        var byFolder: [String: [String]] = [:]
+        for file in files {
+            var folder = (file as NSString).deletingLastPathComponent
+            while !folder.isEmpty, !folders.contains(folder) { folder = (folder as NSString).deletingLastPathComponent }
+            if !folder.isEmpty { byFolder[folder, default: []].append(file) }
         }
+        let skills = folders.sorted().map { RemoteSkill(repository: repository, path: $0, files: byFolder[$0] ?? []) }
+        return Listing(skills: skills, isPartial: tree.truncated == true)
     }
 
     /// The name and description in a skill's SKILL.md.
-    static func about(_ skill: RemoteSkill) async -> About {
+    @concurrent static func about(_ skill: RemoteSkill) async -> About {
         guard let data = try? await URLSession.shared.data(from: rawURL(skill.repository, skill.path + "/SKILL.md")).0 else { return About() }
         return about(markdown: String(decoding: data, as: UTF8.self))
     }
@@ -133,10 +155,10 @@ nonisolated enum SkillLibrary {
         return about
     }
 
-    /// Copies a skill's files into `folder/<id>`, with a note of where they came from.
-    static func install(_ skill: RemoteSkill, into folder: URL) async throws {
-        let destination = folder.appending(path: skill.id)
-        if FileManager.default.fileExists(atPath: destination.path) { throw Failure.taken(skill.id) }
+    /// Copies a skill's files into `folder/<name>`, with a note of where they came from.
+    @concurrent static func install(_ skill: RemoteSkill, into folder: URL) async throws {
+        let destination = folder.appending(path: skill.name)
+        if FileManager.default.fileExists(atPath: destination.path) { throw Failure.taken(skill.name) }
         let staging = FileManager.default.temporaryDirectory.appending(path: "skill-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: staging) }
         for file in skill.files {
@@ -152,14 +174,15 @@ nonisolated enum SkillLibrary {
         try FileManager.default.moveItem(at: staging, to: destination)
     }
 
-    /// Skills installed from GitHub: their folder's name, and the repository they came from.
-    static func installed(in folder: URL) -> [String: String] {
+    /// Skills installed from GitHub, by their folder's name, with where they came from.
+    static func installed(in folder: URL) -> [String: Source] {
         let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
-        var installed: [String: String] = [:]
+        var installed: [String: Source] = [:]
         for name in names {
             guard let data = try? Data(contentsOf: folder.appending(path: name).appending(path: sourceFile)),
-                  let source = try? JSONSerialization.jsonObject(with: data) as? [String: String] else { continue }
-            installed[name] = source["repository"]
+                  let source = try? JSONSerialization.jsonObject(with: data) as? [String: String],
+                  let repository = source["repository"] else { continue }
+            installed[name] = Source(repository: repository, path: source["path"] ?? "")
         }
         return installed
     }

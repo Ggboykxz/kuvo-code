@@ -23,7 +23,13 @@ nonisolated enum ProjectFiles {
     /// What "@" can point at: with several folders, each folder first, then every file, with
     /// when it last changed.
     static func mentionable(_ roots: [URL]) -> [File] {
-        (roots.count > 1 ? roots.enumerated().map { File(path: $1.lastPathComponent + "/", url: $1, folder: $0, mention: $1.lastPathComponent + "/") } : []) + list(roots, dated: true)
+        (roots.count > 1 ? roots.enumerated().map { File(path: $1.lastPathComponent + "/", url: $1, folder: $0, mention: $1.lastPathComponent + "/") } : []) + newestFirst(list(roots, dated: true))
+    }
+
+    /// Files sorted by when they last changed, newest first: what a list shows before
+    /// anything's typed. Sorted once here, off the main thread.
+    static func newestFirst(_ files: [File]) -> [File] {
+        files.sorted { ($0.modified ?? .distantPast) > ($1.modified ?? .distantPast) }
     }
 
     /// The files in `roots`, the primary folder's first; `dated`, with when each last changed.

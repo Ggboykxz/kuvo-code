@@ -16,13 +16,12 @@ nonisolated enum Mentions {
 
     /// The best matches first: the name itself, then names starting with it, then names
     /// containing it, then anywhere in the path; among equals, the primary folder's and
-    /// shorter paths first. Before anything's typed: the project's folders, then the files
-    /// changed most recently.
+    /// shorter paths first. Before anything's typed: the project's folders, then the first
+    /// files, which `ProjectFiles.newestFirst` puts in order.
     static func matches(_ query: String, in files: [ProjectFiles.File], limit: Int = 8) -> [ProjectFiles.File] {
         let query = query.lowercased()
         guard !query.isEmpty else {
-            let recent = files.filter { !$0.isFolder }.sorted { ($0.modified ?? .distantPast) > ($1.modified ?? .distantPast) }
-            return Array((files.filter(\.isFolder) + recent).prefix(limit))
+            return Array((files.filter(\.isFolder) + files.lazy.filter { !$0.isFolder }.prefix(limit)).prefix(limit))
         }
         func rank(_ file: ProjectFiles.File) -> Int? {
             let name = file.name.lowercased()
