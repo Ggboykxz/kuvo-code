@@ -373,6 +373,7 @@ struct MainView: View {
             toggleSidebar: { withAnimation(.ui) { showsSidebar.toggle() } },
             nextTab: { cycleTabs(by: 1) },
             previousTab: { cycleTabs(by: -1) },
+            find: { activeModel?.showFind() },
             showTab: { number in
                 let tabs = tabs
                 guard !tabs.isEmpty else { return }

@@ -33,6 +33,10 @@ final class SessionModel {
     }
     /// Goes up to put the cursor in the composer (after a message comes back to it for editing).
     private(set) var composerFocus = 0
+    /// Goes up to open the find bar on the conversation (⌘F).
+    private(set) var findRequest = 0
+
+    func showFind() { findRequest += 1 }
     /// Queued messages wait for Resume: after Stop, a failed run, or when the app finds them
     /// waiting at launch.
     private(set) var isQueuePaused = false

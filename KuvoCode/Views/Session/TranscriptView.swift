@@ -13,13 +13,26 @@ struct TranscriptView: View {
     /// once you scroll back to the end.
     @State private var followsEnd = true
     @State private var isScrolling = false
+    /// Find in the conversation (⌘F): what's looked for, and which match is in view.
+    @State private var isFinding = false
+    @State private var query = ""
+    @State private var matchIndex = 0
 
     var body: some View {
+        let rows = rows
+        let matches = isFinding ? Self.matches(of: query, in: rows) : []
         ScrollView {
-            let rows = rows
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                     RowView(row: row, directory: model.session.location.directory, cancel: model.cancelPending, undo: model.undo(from:), redo: model.redo, fork: fork, retry: model.retry)
+                        .background {
+                            if matches.contains(row.id) {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(Color.yellow.opacity(matches.indices.contains(matchIndex) && matches[matchIndex] == row.id ? 0.3 : 0.12))
+                                    .padding(-6)
+                            }
+                        }
+                        .id(row.id)
                         .padding(.top, index == 0 ? 0 : row.spacing(after: rows[index - 1]))
                         .transition(.opacity.combined(with: .offset(y: 8)))
                 }
@@ -53,6 +66,36 @@ struct TranscriptView: View {
                 EmptyConversationView(directory: model.session.location.directory)
             }
         }
+        .overlay(alignment: .top) {
+            if isFinding {
+                FindBar(query: $query, current: matchIndex, count: matches.count) { step in
+                    guard !matches.isEmpty else { return }
+                    matchIndex = (matchIndex + step + matches.count) % matches.count
+                    reveal(matches[matchIndex])
+                } close: {
+                    withAnimation(.ui) { isFinding = false }
+                }
+                .padding(.top, 10)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .onChange(of: query) {
+            matchIndex = 0
+            if let first = Self.matches(of: query, in: self.rows).first { reveal(first) }
+        }
+        .onChange(of: model.findRequest) { withAnimation(.ui) { isFinding = true } }
+    }
+
+    /// Rows whose words have `query`, in order.
+    private static func matches(of query: String, in rows: [Row]) -> [String] {
+        let query = query.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return [] }
+        return rows.filter { $0.searchText.localizedStandardContains(query) }.map(\.id)
+    }
+
+    private func reveal(_ id: String) {
+        followsEnd = false
+        withAnimation(.ui) { position.scrollTo(id: id, anchor: .center) }
     }
 
     /// Messages, turned into what's drawn: notices are condensed, each finished
@@ -162,6 +205,16 @@ enum Row: Identifiable, Hashable {
     /// An undo that the next message makes final, with how many messages it took back.
     case undone(Int)
     case working
+
+    /// The words Find looks in: messages and replies.
+    var searchText: String {
+        switch self {
+        case .user(let message): message.text
+        case .assistant(let message, _): message.content.compactMap { if case .text(let part) = $0 { part.text } else { nil } }.joined(separator: " ")
+        case .pending(let item): item.text
+        default: ""
+        }
+    }
 
     /// Space above this row: steps of one reply sit close, a new message gets room.
     func spacing(after previous: Row) -> CGFloat {
@@ -431,6 +484,56 @@ private struct TurnEndView: View {
         if stats.outputTokens > 0 { parts.append("\(stats.outputTokens.compactTokens) tokens") }
         if let cost = stats.cost.formattedCost { parts.append(cost) }
         return parts
+    }
+}
+
+/// Find in the conversation: the words, which match is in view, and a way through them.
+/// Return goes to the next match, Shift-Return to the previous, Escape closes.
+private struct FindBar: View {
+    @Binding var query: String
+    let current: Int
+    let count: Int
+    let step: (Int) -> Void
+    let close: () -> Void
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+            TextField("Find in Conversation", text: $query)
+                .textFieldStyle(.plain)
+                .focused($isFocused)
+                .frame(width: 220)
+                .onKeyPress(.return, phases: .down) { press in
+                    step(press.modifiers.contains(.shift) ? -1 : 1)
+                    return .handled
+                }
+                .onExitCommand(perform: close)
+            if !query.isEmpty {
+                Text(count == 0 ? "No matches" : "\(current + 1) of \(count)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
+            }
+            Button("Previous", systemImage: "chevron.up") { step(-1) }
+                .buttonStyle(CardActionStyle())
+                .disabled(count == 0)
+                .help("Previous Match (⇧Return)")
+            Button("Next", systemImage: "chevron.down") { step(1) }
+                .buttonStyle(CardActionStyle())
+                .disabled(count == 0)
+                .help("Next Match (Return)")
+            Button("Done", action: close)
+                .buttonStyle(.borderless)
+                .font(.callout.weight(.medium))
+        }
+        .font(.callout)
+        .padding(.leading, 14)
+        .padding(.trailing, 10)
+        .padding(.vertical, 6)
+        .glassEffect(.regular, in: .capsule)
+        .onAppear { isFocused = true }
     }
 }
 

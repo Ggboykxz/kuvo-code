@@ -21,6 +21,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Right-click a project and choose **Open In** to open it in your editor, terminal or git app.
 - **Try Again** under a failed run sends your last message again, in place of the failed attempt.
 - **New Session From Here** on one of your messages starts a new session with the conversation up to it, to try another way while keeping this one.
+- **⌘F finds words in the conversation**, highlighting each message they're in.
 - **Search sessions** from the top of the sidebar, by title or project.
 - A copy button under each reply copies it, and right-clicking one of your messages copies that.
 - **Type @ in the composer to mention a file** from any of the project's folders, picked from a list as you type.

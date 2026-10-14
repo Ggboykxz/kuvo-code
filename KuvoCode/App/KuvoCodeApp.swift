@@ -86,6 +86,11 @@ struct AppCommands: Commands {
                 .keyboardShortcut("o")
                 .disabled(actions == nil)
         }
+        CommandGroup(before: .textEditing) {
+            Button("Find in Conversation…") { actions?.find() }
+                .keyboardShortcut("f")
+                .disabled(actions?.hasSession != true)
+        }
         CommandMenu("Session") {
             Button("Stop") { actions?.stop() }
                 .keyboardShortcut(".")
@@ -163,6 +168,7 @@ struct SessionActions {
     var toggleSidebar: () -> Void
     var nextTab: () -> Void
     var previousTab: () -> Void
+    var find: () -> Void
     /// The tab at this place, 1 first; 9 is the last.
     var showTab: (Int) -> Void
     var showProviders: () -> Void
