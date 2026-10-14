@@ -42,6 +42,7 @@ struct CustomizeProviderListView: View {
             provider: row.provider,
             isEnabled: row.isEnabled,
             metricCount: row.metricCount,
+            note: row.isEnabled ? container.availability.note(for: row.id) : nil,
             // The grip leads the tappable bar; a tap opens L2, a drag reorders. Drag-reorder is enabled
             // only for active providers — `reorderProvider` operates on the enabled set, so a disabled
             // row's grip stays inert (the row still opens/toggles).

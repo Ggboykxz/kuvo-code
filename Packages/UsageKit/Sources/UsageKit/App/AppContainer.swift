@@ -13,6 +13,9 @@ final class AppContainer {
     /// Single source of truth for which providers the user has turned off. Both stores consult it (via
     /// injected closures) and the Customize provider list drives it.
     let enablement: ProviderEnablementStore
+    /// Fork addition: turned-on providers with nothing to show here (no login), left off the
+    /// dashboard, the menu bar and Total Spend.
+    let availability: ProviderAvailability
     /// Providers that need a user-supplied API key (currently OpenRouter and Z.ai), conforming to
     /// `APIKeyManaging`. Each matching Customize provider detail shows an API Key section and writes
     /// changes through the capability. Empty when no installed provider needs a user key.
@@ -69,6 +72,7 @@ final class AppContainer {
         let registry = WidgetRegistry.from(providers)
         let apiKeyProviders = providers.compactMap { $0 as? any APIKeyManaging }
         let enablement = ProviderEnablementStore()
+        let availability = ProviderAvailability()
         let notificationSettings = NotificationSettingsStore()
         let accountDefaults: ([String]) -> [String] = { metricIDs in
             DefaultLayout.expandingAccounts(metricIDs, providerIDs: registry.providers.map(\.id))
@@ -80,6 +84,9 @@ final class AppContainer {
             defaultExpandedMetricIDs: accountDefaults(DefaultLayout.expandedMetricIDs),
             isProviderEnabled: { [enablement] in enablement.isEnabled($0) }
         )
+        // What the panel shows of the turned-on providers: those with something to show here. Refreshing
+        // and Customize go by enablement alone, so a provider comes back once its user signs in.
+        layout.isProviderShown = { [availability] in availability.isAvailable($0) }
         let dataStore = WidgetDataStore(
             registry: registry,
             providers: providers,
@@ -88,6 +95,7 @@ final class AppContainer {
             notificationSettings: { notificationSettings },
             providerIdentityKeys: accountAssembly.identityKeysByCard
         )
+        dataStore.availability = availability
         // Re-enabling a provider should fetch it promptly, so clear any leftover failure backoff before
         // the enablement wake refreshes. `weak` breaks the cycle (dataStore already captures enablement).
         enablement.onProviderEnabled = { [weak dataStore] id in dataStore?.clearFailureBackoff(for: id) }
@@ -114,6 +122,7 @@ final class AppContainer {
         self.onboarding = onboarding
         self.registry = registry
         self.enablement = enablement
+        self.availability = availability
         self.apiKeyProviders = apiKeyProviders
         self.notificationSettings = notificationSettings
         self.layout = layout

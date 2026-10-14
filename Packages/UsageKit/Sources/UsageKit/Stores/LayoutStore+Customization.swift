@@ -12,7 +12,7 @@ extension LayoutStore {
     var visiblePlaced: [PlacedWidget] {
         placed.filter { widget in
             guard let providerID = providerID(of: widget) else { return true }
-            return isProviderEnabled(providerID)
+            return isProviderEnabled(providerID) && isProviderShown(providerID)
         }
     }
 
@@ -34,7 +34,7 @@ extension LayoutStore {
     /// "Today") must not.
     var spendCapableProviders: [Provider] {
         let capableIDs = Set(registry.descriptors.filter(\.isSpendTile).map(\.providerID))
-        return orderedProviders().filter { capableIDs.contains($0.id) && isProviderEnabled($0.id) }
+        return orderedProviders().filter { capableIDs.contains($0.id) && isProviderEnabled($0.id) && isProviderShown($0.id) }
     }
 
     // MARK: - Provider grouping
@@ -140,7 +140,7 @@ extension LayoutStore {
     /// but keeps its pins. Drives the menu-bar strip.
     var pinnedGroups: [ProviderMetrics] {
         orderedProviders().compactMap { provider in
-            guard isProviderEnabled(provider.id) else { return nil }
+            guard isProviderEnabled(provider.id), isProviderShown(provider.id) else { return nil }
             // Keep the strip order matching Customize: always-shown pins first, then expanded ones.
             let metrics = orderedSupportedMetrics(for: provider.id).filter { pinnedMetricIDs.contains($0.id) }
             return metrics.isEmpty ? nil : ProviderMetrics(

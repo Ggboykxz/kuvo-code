@@ -109,6 +109,10 @@ final class LayoutStore {
     private let defaultExpandedMetricIDs: [String]
     var defaultExpandedOnEnableIDs: Set<String>
     let isProviderEnabled: @MainActor (String) -> Bool
+    /// Fork addition: whether a turned-on provider has something to show here (a login). The
+    /// dashboard, the menu bar strip and Total Spend leave out the ones that don't; Customize still
+    /// lists them, as turned on.
+    var isProviderShown: @MainActor (String) -> Bool = { _ in true }
 
     init(
         registry: WidgetRegistry,

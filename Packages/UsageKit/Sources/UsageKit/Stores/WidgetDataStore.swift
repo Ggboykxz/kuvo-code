@@ -98,6 +98,8 @@ final class WidgetDataStore {
     /// bulk — so the recorder can roll daily usage and error counts up into one event per provider per
     /// day. `nil` (and so a no-op) in tests and previews. Not observable UI state.
     @ObservationIgnored var onRefreshOutcome: (@MainActor (String, RefreshOutcome, ErrorCategory?, Bool) -> Void)?
+    /// Fork addition: told each refresh's outcome, to leave out providers with nothing to show.
+    @ObservationIgnored var availability: ProviderAvailability?
     /// Wired by `ICloudUsageSyncStore`; debounced there so a concurrent provider batch produces one file.
     @ObservationIgnored var onLocalHistoryChanged: (@MainActor () -> Void)?
     @ObservationIgnored private var peerHistoryDocuments: [UsageHistoryDocument] = []
@@ -360,6 +362,7 @@ final class WidgetDataStore {
             // Negative-cache the failure so a wake burst can't re-probe this provider in a tight loop.
             failureRetryAfter[providerID] = now().addingTimeInterval(Self.failureRetryBackoff)
             AppLog.warn(.refresh, "\(providerID) failed: \(message)")
+            availability?.record(providerID, succeeded: false, category: snapshot.errorCategory)
             onRefreshOutcome?(providerID, .failed, snapshot.errorCategory, force)
             return .failed
         }
@@ -393,6 +396,7 @@ final class WidgetDataStore {
         rebuildRenderedSnapshots()
         if notifyHistoryChange { onLocalHistoryChanged?() }
         AppLog.info(.refresh, "\(providerID) ok (\(durationMs)ms)")
+        availability?.record(providerID, succeeded: true, category: nil)
         onRefreshOutcome?(providerID, .refreshed, nil, force)
         return .refreshed
     }

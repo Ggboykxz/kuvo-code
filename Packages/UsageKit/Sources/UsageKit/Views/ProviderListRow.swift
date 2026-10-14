@@ -10,6 +10,9 @@ struct ProviderListRow<Handle: View>: View {
     let provider: Provider
     let isEnabled: Bool
     let metricCount: Int
+    /// Fork addition: said instead of the metric count, like why a turned-on provider isn't on the
+    /// dashboard.
+    var note: String?
     let handle: (AnyView) -> Handle
     var onToggle: ((Bool) -> Void) = { _ in }
     var onOpen: () -> Void = {}
@@ -33,7 +36,7 @@ struct ProviderListRow<Handle: View>: View {
                         .font(.system(size: density.headerPointSize, weight: .semibold))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
-                    Text("\(metricCount) metrics")
+                    Text(note ?? "\(metricCount) metrics")
                         .font(.system(size: density.planBadgePointSize))
                         .foregroundStyle(.secondary)
                 }

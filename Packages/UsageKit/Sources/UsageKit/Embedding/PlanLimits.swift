@@ -47,6 +47,6 @@ extension UsageMenuBar {
     /// own counts. Empty while the tracker isn't running. (Fork addition.)
     public var trackedProviderIDs: [String] {
         guard let container else { return [] }
-        return container.dataStore.snapshots.keys.filter { container.enablement.isEnabled($0) }.sorted()
+        return container.dataStore.snapshots.keys.filter { container.enablement.isEnabled($0) && container.availability.isAvailable($0) }.sorted()
     }
 }
