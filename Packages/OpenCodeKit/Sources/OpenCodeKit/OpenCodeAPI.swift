@@ -49,6 +49,45 @@ public struct OpenCodeAPI: Sendable {
         try await get("api/command", directory: directory, as: LocatedEnvelope<[Command]>.self).data
     }
 
+    // MARK: Settings
+
+    /// Shells the engine can run commands in.
+    public func shells() async throws -> [ShellOption] {
+        try await get("api/config/shell")
+    }
+
+    public func mcpServers(directory: String? = nil) async throws -> [MCPServer] {
+        try await get("api/mcp", directory: directory, as: LocatedEnvelope<[MCPServer]>.self).data
+    }
+
+    public func connectMCP(_ name: String) async throws {
+        try await send("POST", "api/experimental/mcp/\(name.pathEscaped)/connect")
+    }
+
+    public func disconnectMCP(_ name: String) async throws {
+        try await send("POST", "api/experimental/mcp/\(name.pathEscaped)/disconnect")
+    }
+
+    public func skills(directory: String? = nil) async throws -> [Skill] {
+        try await get("api/skill", directory: directory, as: LocatedEnvelope<[Skill]>.self).data
+    }
+
+    public func webSearchProviders(directory: String? = nil) async throws -> [WebSearchProvider] {
+        try await get("api/websearch/provider", directory: directory, as: LocatedEnvelope<[WebSearchProvider]>.self).data
+    }
+
+    public func savedPermissions() async throws -> [SavedPermission] {
+        try await get("api/permission/saved", as: DataEnvelope<[SavedPermission]>.self).data
+    }
+
+    public func removeSavedPermission(_ id: String) async throws {
+        try await send("DELETE", "api/permission/saved/\(id.pathEscaped)")
+    }
+
+    public func plugins(directory: String? = nil) async throws -> [PluginInfo] {
+        try await get("api/plugin", directory: directory, as: LocatedEnvelope<[PluginInfo]>.self).data
+    }
+
     /// The project's version control state: today, its current git branch.
     /// One answer from the session's model, with the session's context, leaving its history
     /// as it was.

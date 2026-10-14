@@ -17,6 +17,10 @@ public struct EngineFolders: Sendable {
     /// Where the engine keeps its database (`opencode*.db`) and logs.
     public var dataDirectory: URL { root.appending(path: "data/opencode") }
 
+    /// The engine's global settings file, which it reloads when the file changes. Its
+    /// `skills` folder beside it holds skills every project can use.
+    public var configFile: URL { root.appending(path: "config/opencode/opencode.json") }
+
     var environment: [String: String] {
         [
             "XDG_DATA_HOME": root.appending(path: "data").path,
