@@ -11,6 +11,8 @@ struct AgentsSettings: View {
     @State private var removal: [String]?
     @State private var isNaming = false
     @State private var newName = ""
+    /// Claude Code's agents, to bring over.
+    @State private var claudeAgents: [ClaudeAgents.Agent] = []
 
     private var config: EngineConfig { app.engineConfig }
 
@@ -90,7 +92,39 @@ struct AgentsSettings: View {
                 Text("Primary agents are the modes you pick in the composer. Subagents are ones the agent hands part of a task to.")
                     .foregroundStyle(.secondary)
             }
+
+            if !claudeAgents.isEmpty {
+                Section {
+                    ForEach(claudeAgents) { agent in
+                        HStack(alignment: .firstTextBaseline) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(agent.name)
+                                if !agent.description.isEmpty {
+                                    Text(agent.description)
+                                        .font(.callout)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(2)
+                                }
+                            }
+                            Spacer()
+                            if config.value(at: ["agents", agent.id]) != nil {
+                                Label("Imported", systemImage: "checkmark")
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Button("Import") { importAgent(agent) }
+                            }
+                        }
+                    }
+                } header: {
+                    Text("From Claude Code")
+                } footer: {
+                    Text("Agents in ~/.claude/agents, brought over as subagents with their description and instructions. They use the session's model and the permissions here, not the tools and model Claude Code gives them.")
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
+        .task { claudeAgents = await Task.detached { ClaudeAgents.load() }.value }
         .sheet(item: $editing, onDismiss: removePending) { edit in
             AgentEditor(id: edit.id, isBuiltIn: edit.isBuiltIn) { editing = nil } remove: { path in
                 removal = path
@@ -114,6 +148,11 @@ struct AgentsSettings: View {
         config.set(.object(["mode": .string("primary"), "description": .string("")]), at: ["agents", id])
         Analytics.shared.track("agent_created")
         editing = AgentEdit(id: id, isBuiltIn: false)
+    }
+
+    private func importAgent(_ agent: ClaudeAgents.Agent) {
+        config.set(.object(["mode": .string("subagent"), "description": .string(agent.description), "system": .string(agent.instructions)]), at: ["agents", agent.id])
+        Analytics.shared.track("agent_created", ["from": "claude"])
     }
 
     static func modeTitle(_ mode: String) -> String {
