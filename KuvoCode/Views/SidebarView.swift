@@ -25,7 +25,7 @@ struct SidebarView: View {
     /// The session waiting for the user to confirm its deletion.
     @State private var deleting: Session?
 
-    private enum Place { case project, recents }
+    private enum Place { case pinned, project, recents }
     @State private var newTitle = ""
     /// Sessions whose title or project has this, instead of the usual lists.
     @State private var search = ""
@@ -67,6 +67,12 @@ struct SidebarView: View {
                             sessionRow(session, in: .recents)
                         }
                     } else {
+                    if !pinned.isEmpty {
+                        SectionHeader(title: "Pinned") { EmptyView() }
+                        ForEach(pinned) { session in
+                            sessionRow(session, in: .pinned)
+                        }
+                    }
                     SectionHeader(title: "Projects") {
                         Button(action: newProject) {
                             Image(systemName: "plus")
@@ -200,8 +206,13 @@ struct SidebarView: View {
         .sorted { $0.time.updated > $1.time.updated }
     }
 
+    /// Pinned ones are already at the top.
     private var recents: [Session] {
-        Array(workspace.projects.flatMap(\.sessions).sorted { $0.time.updated > $1.time.updated }.prefix(Self.recentCount))
+        Array(workspace.projects.flatMap(\.sessions).filter { !Workspace.isPinned($0) }.sorted { $0.time.updated > $1.time.updated }.prefix(Self.recentCount))
+    }
+
+    private var pinned: [Session] {
+        workspace.projects.flatMap(\.sessions).filter(Workspace.isPinned).sorted { $0.time.updated > $1.time.updated }
     }
 
     /// Highlighted where it was picked; picked elsewhere (a tab, a new session), in its project.
@@ -248,6 +259,13 @@ struct SidebarView: View {
     }
 
     @ViewBuilder private func menu(for session: Session) -> some View {
+        if !Workspace.isArchived(session) {
+            if Workspace.isPinned(session) {
+                Button("Unpin") { Task { await workspace.setPinned(session.id, false) } }
+            } else {
+                Button("Pin") { Task { await workspace.setPinned(session.id, true) } }
+            }
+        }
         Button("Rename…") {
             newTitle = session.title ?? ""
             renaming = session

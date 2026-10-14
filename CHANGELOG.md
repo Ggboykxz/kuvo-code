@@ -29,6 +29,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - **Commit from the Changes panel**, and push afterwards if you like: Commit… takes what's staged, or all the changes shown, and the session's model can suggest the message.
 - **Stage, unstage or discard a file's changes** from its menu in the Changes panel. Discarding asks first, and a new file goes to the Trash.
 - **Notifications:** when a session finishes or needs your answer while you're in another app, you get a notification that opens it, and the Dock icon counts the sessions waiting for you. Settings › General turns them off.
+- **Pin sessions** you keep coming back to: they stay at the top of the sidebar.
 - **Search sessions** from the top of the sidebar, by title or project.
 - **Archive sessions** you're done with: they leave the sidebar's lists, and searching still finds them.
 - Right-click a session's tab to rename it.

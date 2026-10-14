@@ -71,12 +71,28 @@ final class Workspace {
 
     private static let archivedKey = "kuvo.archived"
 
+    /// Kept at the top of the sidebar, a note in the session's metadata.
+    static func isPinned(_ session: Session) -> Bool {
+        session.metadata?[pinnedKey]?.bool == true
+    }
+
+    private static let pinnedKey = "kuvo.pinned"
+
     /// Archives a session, or brings it back.
     func setArchived(_ id: String, _ archived: Bool) async {
+        await setFlag(Self.archivedKey, archived, of: id)
+    }
+
+    /// Pins a session to the top of the sidebar, or takes it off.
+    func setPinned(_ id: String, _ pinned: Bool) async {
+        await setFlag(Self.pinnedKey, pinned, of: id)
+    }
+
+    private func setFlag(_ key: String, _ value: Bool, of id: String) async {
         guard let api, let index = sessions.firstIndex(where: { $0.id == id }) else { return }
         var metadata = sessions[index].metadata?.object ?? [:]
         // Written either way: the engine may merge metadata rather than replace it.
-        metadata[Self.archivedKey] = .bool(archived)
+        metadata[key] = .bool(value)
         sessions[index].metadata = .object(metadata)
         try? await api.setMetadata(session: id, .object(metadata))
     }
