@@ -368,6 +368,12 @@ struct MainView: View {
             toggleSidebar: { withAnimation(.ui) { showsSidebar.toggle() } },
             nextTab: { cycleTabs(by: 1) },
             previousTab: { cycleTabs(by: -1) },
+            showTab: { number in
+                let tabs = tabs
+                guard !tabs.isEmpty else { return }
+                let index = number == 9 ? tabs.count - 1 : number - 1
+                if tabs.indices.contains(index) { withAnimation(.ui) { selection = tabs[index] } }
+            },
             showProviders: { showsProviders = true }
         )
     }

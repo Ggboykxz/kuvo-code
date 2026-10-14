@@ -124,6 +124,14 @@ struct AppCommands: Commands {
             Button("Show Previous Tab") { actions?.previousTab() }
                 .keyboardShortcut(.tab, modifiers: [.control, .shift])
                 .disabled(actions == nil)
+            // ⌘1 to ⌘8 show that tab, ⌘9 the last one, as in browsers.
+            Menu("Show Tab") {
+                ForEach(1...9, id: \.self) { number in
+                    Button(number == 9 ? "Last Tab" : "Tab \(number)") { actions?.showTab(number) }
+                        .keyboardShortcut(KeyEquivalent(Character("\(number)")))
+                }
+            }
+            .disabled(actions == nil)
             Divider()
             Picker("Appearance", selection: $appearance) {
                 ForEach(Appearance.allCases, id: \.self) { Text($0.title).tag($0) }
@@ -155,6 +163,8 @@ struct SessionActions {
     var toggleSidebar: () -> Void
     var nextTab: () -> Void
     var previousTab: () -> Void
+    /// The tab at this place, 1 first; 9 is the last.
+    var showTab: (Int) -> Void
     var showProviders: () -> Void
 }
 

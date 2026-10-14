@@ -16,6 +16,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - **Notifications:** when a session finishes or needs your answer while you're in another app, you get a notification that opens it, and the Dock icon counts the sessions waiting for you. Settings › General turns them off.
 - **Undo from any of your messages:** right-click it and choose Undo From Here… to take back the conversation and the agent's file changes since, with the message back in the composer to edit. Redo brings it all back until you send.
 - **Summarize Now** in the context ring's popover shrinks a long conversation to a summary, to make room before the context window fills up.
+- ⌘1 to ⌘8 show that session tab, and ⌘9 the last one, as in browsers.
 - Right-click a project and choose **Open In** to open it in your editor, terminal or git app.
 - **Search sessions** from the top of the sidebar, by title or project.
 - A copy button under each reply copies it, and right-clicking one of your messages copies that.
