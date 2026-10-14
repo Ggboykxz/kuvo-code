@@ -189,12 +189,12 @@ struct SidebarView: View {
 
     // MARK: Sessions
 
-    /// Sessions whose title or project name has the search, newest first.
+    /// Sessions whose title or project name has the search, newest first; archived ones too.
     private var results: [Session] {
         let query = search.trimmingCharacters(in: .whitespaces)
-        return workspace.projects.flatMap { project in
-            let inName = project.name.localizedStandardContains(query)
-            return project.sessions.filter { inName || ($0.title ?? "New Session").localizedStandardContains(query) }
+        return workspace.sessions.filter { session in
+            workspace.projectName(session.location.directory).localizedStandardContains(query)
+                || (session.title ?? "New Session").localizedStandardContains(query)
         }
         .sorted { $0.time.updated > $1.time.updated }
     }
@@ -219,8 +219,15 @@ struct SidebarView: View {
         } title: {
             Text(session.title ?? "New Session")
                 .fontWeight(session.isUnread ? .semibold : .regular)
+                .foregroundStyle(Workspace.isArchived(session) ? .secondary : .primary)
         } accessory: {
-            SessionStatus(session: session)
+            if Workspace.isArchived(session) {
+                Text("Archived")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+            } else {
+                SessionStatus(session: session)
+            }
         }
         .contextMenu { menu(for: session) }
     }
@@ -232,6 +239,11 @@ struct SidebarView: View {
         }
         Button("Show in Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: session.location.directory) }
         Divider()
+        if Workspace.isArchived(session) {
+            Button("Unarchive") { Task { await workspace.setArchived(session.id, false) } }
+        } else {
+            Button("Archive") { Task { await workspace.setArchived(session.id, true) } }
+        }
         Button("Delete…", role: .destructive) { deleting = session }
     }
 }

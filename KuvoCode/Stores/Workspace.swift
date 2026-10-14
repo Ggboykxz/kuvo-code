@@ -26,7 +26,7 @@ final class Workspace {
     /// Sessions that finished while you were elsewhere, or wait for your answer: the
     /// number on the Dock icon.
     var waitingCount: Int {
-        Set(sessions.filter { $0.isUnread && $0.time.archived == nil }.map(\.id)).union(asking.values).count
+        Set(sessions.filter { $0.isUnread && !Self.isArchived($0) }.map(\.id)).union(asking.values).count
     }
 
     struct Project: Identifiable, Hashable {
@@ -51,7 +51,7 @@ final class Workspace {
 
     /// Projects with their sessions, most recently active first.
     var projects: [Project] {
-        let grouped = Dictionary(grouping: sessions.filter { $0.time.archived == nil }, by: \.location.directory)
+        let grouped = Dictionary(grouping: sessions.filter { !Self.isArchived($0) }, by: \.location.directory)
         let directories = Set(grouped.keys).union(folders)
         return directories.map { directory in
             Project(directory: directory, sessions: (grouped[directory] ?? []).sorted { $0.time.updated > $1.time.updated }, settings: settings[directory] ?? ProjectSettings())
@@ -61,6 +61,23 @@ final class Workspace {
             let right = rhs.sessions.first?.time.updated ?? 0
             return left != right ? left > right : lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
         }
+    }
+
+    /// Put away: out of Projects and Recents, still found by searching. Archived here (a
+    /// note in the session's metadata), or by an older opencode.
+    static func isArchived(_ session: Session) -> Bool {
+        session.time.archived != nil || session.metadata?[archivedKey]?.bool == true
+    }
+
+    private static let archivedKey = "kuvo.archived"
+
+    /// Archives a session, or brings it back.
+    func setArchived(_ id: String, _ archived: Bool) async {
+        guard let api, let index = sessions.firstIndex(where: { $0.id == id }) else { return }
+        var metadata = sessions[index].metadata?.object ?? [:]
+        metadata[Self.archivedKey] = archived ? .bool(true) : nil
+        sessions[index].metadata = .object(metadata)
+        try? await api.setMetadata(session: id, .object(metadata))
     }
 
     func session(_ id: String?) -> Session? {
@@ -200,7 +217,7 @@ final class Workspace {
         guard let id = event.sessionID else { return }
 
         switch event.type {
-        case "session.created", "session.renamed", "session.moved", "session.revert.staged", "session.revert.cleared", "session.revert.committed":
+        case "session.created", "session.renamed", "session.moved", "session.metadata.updated", "session.revert.staged", "session.revert.cleared", "session.revert.committed":
             Task { await reload(id) }
         case "session.deleted":
             sessions.removeAll { $0.id == id }
