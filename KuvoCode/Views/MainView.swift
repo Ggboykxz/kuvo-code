@@ -31,6 +31,8 @@ struct MainView: View {
     @State private var draftFocus = 0
     /// Open Quickly's palette is showing.
     @State private var showsOpenQuickly = false
+    /// The command palette (⌘K) is showing.
+    @State private var showsPalette = false
     /// A tab's session being renamed, and the title being typed.
     @State private var renaming: Session?
     @State private var newTitle = ""
@@ -148,6 +150,25 @@ struct MainView: View {
             }
         }
         .animation(.ui, value: showsOpenQuickly)
+        .overlay(alignment: .top) {
+            if showsPalette {
+                ZStack(alignment: .top) {
+                    Color.black.opacity(0.001)
+                        .onTapGesture { showsPalette = false }
+                    CommandPalette(
+                        initialQuery: Self.demoPaletteQuery,
+                        actions: paletteActions,
+                        sessions: paletteSessions,
+                        roots: activeDirectory.map { [$0] + workspace.extraFolders($0) } ?? [],
+                        openFile: { url in showInPanel { utilities.show(url) } },
+                        dismiss: { showsPalette = false }
+                    )
+                    .padding(.top, 80)
+                }
+                .transition(.opacity)
+            }
+        }
+        .animation(.ui, value: showsPalette)
         .sheet(isPresented: $showsProviders) {
             ProvidersView()
                 .frame(width: 720, height: 620)
@@ -521,8 +542,84 @@ struct MainView: View {
                 if tabs.indices.contains(index) { withAnimation(.ui) { selection = tabs[index] } }
             },
             showProviders: { showsProviders = true },
-            openQuickly: { showsOpenQuickly = true }
+            openQuickly: {
+                showsPalette = false
+                showsOpenQuickly = true
+            },
+            commandPalette: {
+                showsOpenQuickly = false
+                showsPalette.toggle()
+            }
         )
+    }
+
+    // MARK: Command palette
+
+    #if DEBUG
+    private static let demoPaletteQuery = ProcessInfo.processInfo.environment["KUVO_DEMO_PALETTE"] ?? ""
+    #else
+    private static let demoPaletteQuery = ""
+    #endif
+
+    /// Every session not put away, the latest first, with its project.
+    private var paletteSessions: [PaletteItem] {
+        workspace.projects.flatMap(\.sessions).sorted { $0.time.updated > $1.time.updated }.map { session in
+            PaletteItem(id: "session:" + session.id, kind: .session, title: session.title ?? "New Session", detail: workspace.projectName(session.location.directory),
+                        symbol: workspace.worktrees[session.location.directory] == nil ? "bubble.left" : "arrow.triangle.branch") { openTab(session.id) }
+        }
+    }
+
+    /// What the menus do, with their shortcuts, and each Settings tab. The usual ones first.
+    private var paletteActions: [PaletteItem] {
+        let actions = actions
+        var items: [PaletteItem] = []
+        func add(_ title: String, _ symbol: String, _ shortcut: String? = nil, detail: String? = nil, _ run: @escaping () -> Void) {
+            items.append(PaletteItem(id: "action:" + title, kind: .action, title: title, detail: detail, symbol: symbol, shortcut: shortcut, run: run))
+        }
+        add("New Session", "square.and.pencil", "⌘N", actions.newSession)
+        if actions.hasProject {
+            add("Run", "play.fill", "⌘R", detail: runCommand, actions.run)
+        }
+        add("New Terminal", "terminal", "⌃`", actions.newTerminal)
+        add("New Browser Tab", "globe", "⌥⌘B", actions.newBrowser)
+        add("Show Changes", "plusminus", "⌥⌘I", actions.showChanges)
+        if actions.hasProject {
+            add("Open Quickly…", "doc.text.magnifyingglass", "⇧⌘O", actions.openQuickly)
+        }
+        add("Accounts…", "person.crop.circle", "⇧⌘K", actions.showProviders)
+        add("Show Files", "folder", "⌥⌘F", actions.showFiles)
+        add(showsPanel ? "Hide Panel" : "Show Panel", "sidebar.right", "⌥⌘0", actions.togglePanel)
+        add(showsSidebar ? "Hide Sessions" : "Show Sessions", "sidebar.left", "⌘0", actions.toggleSidebar)
+        add("New Project…", "folder.badge.plus", "⇧⌘N", actions.newProject)
+        add("Open Folder…", "folder", "⌘O", actions.openFolder)
+        if let directory = activeDirectory {
+            let primary = workspace.projectDirectory(directory)
+            add("Edit Project…", "slider.horizontal.3", detail: workspace.projectName(primary)) {
+                projectSheet = ProjectSheetRequest(project: workspace.projects.first { $0.directory == primary } ?? Workspace.Project(directory: primary, sessions: [], settings: workspace.settings[primary] ?? .init()))
+            }
+        }
+        if let model = activeModel {
+            add("Build Mode", "hammer", "⌥⌘1") { actions.selectAgent("build") }
+            add("Plan Mode", "list.bullet.clipboard", "⌥⌘2") { actions.selectAgent("plan") }
+            add("Find in Conversation…", "magnifyingglass", "⌘F", actions.find)
+            add("Rename Session…", "pencil") {
+                newTitle = model.session.title ?? ""
+                renaming = model.session
+            }
+        }
+        if actions.canReopenTab {
+            add("Reopen Closed Tab", "arrow.uturn.backward", "⇧⌘T", actions.reopenTab)
+        }
+        for (tab, title, symbol) in [("general", "General", "gearshape"), ("accounts", "Accounts", "person.crop.circle"), ("agents", "Agents", "person.2"),
+                                     ("permissions", "Permissions", "hand.raised"), ("mcp", "MCP", "puzzlepiece.extension"), ("skills", "Skills", "graduationcap"),
+                                     ("commands", "Commands", "command"), ("panel", "Panel", "sidebar.right"), ("usage", "Usage", "gauge.with.dots.needle.50percent"),
+                                     ("engine", "Engine", "cpu")] {
+            add("Settings › \(title)", symbol, tab == "general" ? "⌘," : nil) {
+                UserDefaults.standard.set(tab, forKey: "settings.tab")
+                openSettings()
+            }
+        }
+        return items
     }
 
     /// The active project's run command, if it has one.
@@ -588,6 +685,8 @@ struct MainView: View {
         default: break
         }
         if environment["KUVO_DEMO_CHANGES"] != nil { showsPanel = true }
+        // KUVO_DEMO_PALETTE=<text>: the command palette, with that typed in it.
+        if workspace.isLoaded, environment["KUVO_DEMO_PALETTE"] != nil { showsPalette = true }
         // KUVO_DEMO_WINDOW=WIDTHxHEIGHT resizes the window, for checking narrow layouts.
         if let size = environment["KUVO_DEMO_WINDOW"]?.split(separator: "x").compactMap({ Double($0) }), size.count == 2,
            let window = NSApp.windows.first(where: \.isVisible) {

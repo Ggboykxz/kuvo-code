@@ -166,6 +166,10 @@ struct AppCommands: Commands {
             .disabled(actions == nil)
         }
         CommandGroup(before: .sidebar) {
+            Button("Command Palette…") { actions?.commandPalette() }
+                .keyboardShortcut("k")
+                .disabled(actions == nil)
+            Divider()
             Button("Show Sessions") { actions?.toggleSidebar() }
                 .keyboardShortcut("0")
                 .disabled(actions == nil)
@@ -226,6 +230,7 @@ struct SessionActions {
     var showTab: (Int) -> Void
     var showProviders: () -> Void
     var openQuickly: () -> Void
+    var commandPalette: () -> Void
 }
 
 extension FocusedValues {

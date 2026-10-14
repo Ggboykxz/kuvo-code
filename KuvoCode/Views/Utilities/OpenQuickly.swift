@@ -66,6 +66,8 @@ struct OpenQuickly: View {
             }
         }
         .frame(width: 560)
+        // Over a busy transcript, plain glass lets the words behind it through.
+        .background(.background.opacity(0.75), in: .rect(cornerRadius: 18))
         .glassEffect(.regular, in: .rect(cornerRadius: 18))
         .onKeyPress(.upArrow) {
             selected = max(0, min(selected, matches.count - 1) - 1)
