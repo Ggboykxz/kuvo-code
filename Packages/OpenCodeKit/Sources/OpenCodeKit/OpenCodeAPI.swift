@@ -151,6 +151,12 @@ public struct OpenCodeAPI: Sendable {
         try await send("DELETE", "api/experimental/session/\(id.pathEscaped)/instructions/entries/\(key.pathEscaped)")
     }
 
+    /// A new session with this one's conversation up to (not including) `before`.
+    public func forkSession(_ id: String, before: String) async throws -> Session {
+        struct Body: Encodable { var before: String }
+        return try await send("POST", "api/session/\(id.pathEscaped)/fork", body: Body(before: before), as: DataEnvelope<Session>.self).data
+    }
+
     public func deleteSession(_ id: String) async throws {
         try await send("DELETE", "api/session/\(id.pathEscaped)")
     }
