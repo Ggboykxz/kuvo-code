@@ -56,15 +56,12 @@ struct ModeChip: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.tertiary)
             }
-            .font(.callout.weight(.medium))
-            .foregroundStyle(agent == "plan" ? AnyShapeStyle(.orange) : AnyShapeStyle(.primary))
+            .font(.callout)
+            .foregroundStyle(agent == "plan" ? AnyShapeStyle(.orange) : AnyShapeStyle(.foreground))
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
-            .hoverHighlight(in: Capsule())
+            .hoverHighlight(in: Capsule(), mutesInk: true)
         }
         .help("Mode and tool permissions (⌥⌘1 Build, ⌥⌘2 Plan)")
     }
@@ -118,14 +115,11 @@ struct WorkplaceChip: View {
             HStack(spacing: 6) {
                 Image(systemName: worktree ? "arrow.triangle.branch" : "folder")
                 Text(worktree ? (attempts > 1 ? "Worktree ×\(attempts)" : "Worktree") : "Local")
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.tertiary)
             }
-            .font(.callout.weight(.medium))
+            .font(.callout)
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
-            .hoverHighlight(in: Capsule())
+            .hoverHighlight(in: Capsule(), mutesInk: true)
         }
         .help("Where the session works: in the project's folder, or in a worktree of its own")
     }
@@ -173,14 +167,11 @@ struct ModelChip: View {
                     Text("· \(variant.capitalized)")
                         .foregroundStyle(.secondary)
                 }
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.tertiary)
             }
             .font(.callout)
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
-            .hoverHighlight(in: Capsule())
+            .hoverHighlight(in: Capsule(), mutesInk: true)
         }
         .help("Model and effort")
         .onAppear { LogoImages.shared.prefetch(catalog.models.flatMap { [$0.makerLogoID, $0.providerID] }) }

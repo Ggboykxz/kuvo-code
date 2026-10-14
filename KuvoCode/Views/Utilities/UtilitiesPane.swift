@@ -119,7 +119,7 @@ struct UtilitiesPane: View {
                 }
             case .terminal:
                 if let session = utilities.terminals[tab.id] {
-                    TerminalHost(session: session, isFocused: isFocused)
+                    TerminalHost(session: session)
                         .id(tab.id)
                 }
             case .browser:
@@ -146,7 +146,7 @@ enum TabGlyph {
 }
 
 /// A tab in the panel's strip, like a browser's: icon and title in a rounded tab, the
-/// selected one filled, and a close button on hover.
+/// selected one raised, and a close button on hover.
 private struct UtilityTabButton: View {
     let title: String
     let icon: TabGlyph
@@ -154,6 +154,7 @@ private struct UtilityTabButton: View {
     let select: () -> Void
     let close: () -> Void
     @State private var isHovering = false
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         HStack(spacing: 7) {
@@ -189,8 +190,16 @@ private struct UtilityTabButton: View {
         .padding(.trailing, 6)
         .frame(height: 30)
         .background {
-            RoundedRectangle(cornerRadius: 9)
-                .fill(isSelected ? Color.primary.opacity(0.08) : (isHovering ? Color.primary.opacity(0.04) : .clear))
+            if isSelected {
+                // A lit chip: a firmer fill than hover's, with a bright edge, on a white card
+                // as well as an ivory one.
+                RoundedRectangle(cornerRadius: 9)
+                    .fill(scheme == .dark ? Color.white.opacity(0.1) : Surface.slate.opacity(0.07))
+                    .specularRim(RoundedRectangle(cornerRadius: 9))
+            } else if isHovering {
+                RoundedRectangle(cornerRadius: 9)
+                    .fill(Color.primary.opacity(0.04))
+            }
         }
         .contentShape(.rect(cornerRadius: 9))
         .onTapGesture(perform: select)

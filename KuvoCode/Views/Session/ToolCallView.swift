@@ -3,12 +3,17 @@ import OpenCodeKit
 import SwiftUI
 
 /// One tool call: a single line saying what the agent did, which opens to show
-/// the details (a diff for edits, output for commands).
+/// the details (a diff for edits, output for commands) inline under it, joined to its icon
+/// by a thin line, like a tree.
 struct ToolCallView: View {
     let call: Message.ToolCall
     let directory: String
     @Environment(AppModel.self) private var app
     @State private var isExpanded = false
+
+    /// The icon's column, and the gap after it: the details line up with the title.
+    private static let iconWidth: CGFloat = 16
+    private static let iconGap: CGFloat = 8
 
     /// The file a read, write or edit was about, where it is on disk.
     private var file: URL? {
@@ -40,7 +45,16 @@ struct ToolCallView: View {
 
             if isExpanded, hasDetails {
                 details
+                    .padding(.leading, Self.iconWidth + Self.iconGap)
                     .padding(.top, 8)
+                    .overlay(alignment: .topLeading) {
+                        // The line down from the icon, beside what it opened.
+                        Capsule()
+                            .fill(.separator)
+                            .frame(width: 1)
+                            .padding(.top, 3)
+                            .padding(.leading, (Self.iconWidth - 1) / 2)
+                    }
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
@@ -49,9 +63,9 @@ struct ToolCallView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: Self.iconGap) {
             icon
-                .frame(width: 16)
+                .frame(width: Self.iconWidth)
             Text(summary)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -225,9 +239,13 @@ struct ToolCallView: View {
                 if !outputText.isEmpty { OutputBlock(text: outputText) }
             }
         } else if !diffs.isEmpty {
+            // The step names a single file already; several get a title each, and so does one
+            // the patch created or deleted, since only its title says so.
+            let diffs = diffs
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(diffs) { diff in
-                    DiffView(diff: diff, title: relative(diff.file) ?? diff.file, maxLines: 80)
+                    let titled = diffs.count > 1 || (diff.status != nil && diff.status != .modified)
+                    DiffView(diff: diff, title: titled ? (relative(diff.file) ?? diff.file) : nil, maxLines: 80)
                 }
             }
         } else {
@@ -236,7 +254,7 @@ struct ToolCallView: View {
     }
 }
 
-/// A command's output or a step's code, in a box that scrolls sideways for long lines.
+/// A command's output or a step's code, in a recessed well that scrolls sideways for long lines.
 private struct OutputBlock: View {
     let text: String
 
@@ -249,11 +267,13 @@ private struct OutputBlock: View {
                 .padding(12)
         }
         .frame(maxHeight: 260)
-        .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .recessedWell(RoundedRectangle(cornerRadius: 10))
     }
 }
 
-/// What a subagent was asked, and the steps it took and what it said, as they happen.
+/// What a subagent was asked, and the steps it took and what it said, as they happen, under
+/// its step (which draws the line beside them).
 private struct SubagentSteps: View {
     let id: String
     /// What the agent asked it to do (its session's own first message adds the engine's
@@ -315,13 +335,6 @@ private struct SubagentSteps: View {
                 Spinner(size: 11)
             }
         }
-        .padding(.leading, 14)
-        .overlay(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 1)
-                .fill(.separator)
-                .frame(width: 2)
-        }
-        .padding(.leading, 7)
         .task(id: id) {
             let model = await workspace.subagentModel(for: id)
             if let model, !model.isLoaded { await model.load() }

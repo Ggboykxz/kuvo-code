@@ -9,7 +9,9 @@ struct SessionView: View {
 
     var body: some View {
         TranscriptView(model: model)
-            .safeAreaInset(edge: .bottom, spacing: 0) {
+            // A bar, not just an inset: the conversation scrolls on under the composer, softly
+            // blurred there by the scroll view's edge effect.
+            .safeAreaBar(edge: .bottom, spacing: 0) {
                 BottomStack(model: model, lastModel: $lastModel)
             }
             .navigationTitle(model.session.title ?? "New Session")

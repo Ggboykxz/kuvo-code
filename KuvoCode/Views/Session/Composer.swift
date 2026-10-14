@@ -42,6 +42,8 @@ struct Composer: View {
     var onStop: () -> Void
 
     @Environment(Catalog.self) private var catalog
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.cardIsFocused) private var cardIsFocused
     @FocusState private var isFocused: Bool
     @Namespace private var glass
     @State private var isTargeted = false
@@ -89,9 +91,12 @@ struct Composer: View {
                             ComposerAttachment(url: file, route: Attachments.route(file, for: currentModel)) { files.removeAll { $0 == file } }
                         }
                     }
-                    // Room for each chip's remove button, which sits on its corner.
+                    // Room for each chip's remove button, which sits on its corner, and for
+                    // the hairline around each chip.
                     .padding(.top, 6)
                     .padding(.trailing, 6)
+                    .padding(.leading, 1)
+                    .padding(.bottom, 1)
                 }
                 .scrollIndicators(.hidden)
             }
@@ -185,7 +190,7 @@ struct Composer: View {
                     Image(systemName: "paperclip")
                         .font(.system(size: 14, weight: .medium))
                         .frame(width: 30, height: 28)
-                        .hoverHighlight(in: Capsule())
+                        .hoverHighlight(in: Capsule(), mutesInk: true)
                 }
                 .buttonStyle(.plain)
                 .help("Attach Files… You can also drop files here, or paste them.")
@@ -202,12 +207,17 @@ struct Composer: View {
             .padding(.leading, -8)
         }
         .padding(.horizontal, 16)
-        .padding(.top, 14)
-        .padding(.bottom, 10)
-        .glassEffect(.regular, in: .rect(cornerRadius: Metrics.composerRadius))
-        // An edge and a soft lift, so it reads as a control and not as more of the page.
-        .overlay(RoundedRectangle(cornerRadius: Metrics.composerRadius).strokeBorder(.primary.opacity(0.1)))
-        .shadow(color: .black.opacity(0.08), radius: 10, y: 3)
+        .padding(.top, 10)
+        .padding(.bottom, 7)
+        // Quiet, so the message draws the eye and not the box: a step off the card, opaque
+        // since messages scroll under it, a lit top edge, no outline, and only a tiny lift.
+        .background {
+            RoundedRectangle(cornerRadius: Metrics.composerRadius)
+                .fill(Surface.cardFill(scheme, focused: cardIsFocused))
+                .overlay(RoundedRectangle(cornerRadius: Metrics.composerRadius).fill(scheme == .dark ? Color.white.opacity(0.035) : Surface.slate.opacity(0.02)))
+                .shadow(color: scheme == .dark ? .black.opacity(0.25) : Surface.slate.opacity(0.06), radius: 3, y: 1)
+        }
+        .specularRim(RoundedRectangle(cornerRadius: Metrics.composerRadius))
         .overlay {
             if isTargeted {
                 RoundedRectangle(cornerRadius: Metrics.composerRadius)
@@ -252,20 +262,18 @@ struct Composer: View {
                 Button(action: onStop) {
                     Image(systemName: "stop.fill")
                         .font(.system(size: 12, weight: .bold))
-                        .frame(width: 18, height: 18)
                 }
-                .buttonStyle(.glass)
-                .buttonBorderShape(.circle)
+                .buttonStyle(ActionButtonStyle(isAccent: false))
+                .glassEffect(.regular, in: .circle)
                 .glassEffectID("action", in: glass)
                 .help("Stop (⌘.)")
             } else {
                 Button(action: send) {
                     Image(systemName: "arrow.up")
                         .font(.system(size: 13, weight: .bold))
-                        .frame(width: 18, height: 18)
                 }
-                .buttonStyle(.glassProminent)
-                .buttonBorderShape(.circle)
+                .buttonStyle(ActionButtonStyle())
+                .glassEffect(.regular, in: .circle)
                 .disabled(!canSend)
                 .glassEffectID("action", in: glass)
                 .help(isRunning ? "Send: the agent reads it at its next step (Return). ⌘Return queues it for after this run." : "Send (Return)")
@@ -276,8 +284,8 @@ struct Composer: View {
                 }
             }
         }
-        .controlSize(.large)
         .animation(.ui, value: isRunning && !canSend)
+        .animation(.easeOut(duration: 0.15), value: canSend)
     }
 
     private func send() {
@@ -366,6 +374,47 @@ struct Composer: View {
         panel.message = "Choose files or folders to attach."
         guard panel.runModal() == .OK else { return }
         attach(panel.urls)
+    }
+}
+
+/// The composer's round button, on glass: Send in accent glass while there's something to
+/// send, so the main action stands apart from the flat pills beside it; with nothing to send,
+/// plain glass and a faint arrow. Stop stays neutral. Under the pointer its fill deepens; it
+/// never grows or moves.
+private struct ActionButtonStyle: ButtonStyle {
+    var isAccent = true
+
+    func makeBody(configuration: Configuration) -> some View {
+        ActionButton(configuration: configuration, isAccent: isAccent)
+    }
+
+    private struct ActionButton: View {
+        let configuration: ButtonStyleConfiguration
+        let isAccent: Bool
+        @State private var isHovering = false
+        @Environment(\.isEnabled) private var isEnabled
+
+        var body: some View {
+            let isLit = isAccent && isEnabled
+            configuration.label
+                .foregroundStyle(isLit ? AnyShapeStyle(.tint) : isEnabled ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
+                .frame(width: 32, height: 32)
+                .background(fill, in: .circle)
+                .accentGlass(Circle(), isOn: isLit)
+                .contentShape(.circle)
+                .onHover { isHovering = $0 }
+                .animation(.easeOut(duration: 0.12), value: isHovering)
+        }
+
+        private var fill: Color {
+            guard isEnabled else { return .clear }
+            if !isAccent {
+                if configuration.isPressed { return Pressable.pressedFill }
+                return isHovering ? Pressable.hoverFill : .clear
+            }
+            if configuration.isPressed { return Color.accentColor.opacity(0.13) }
+            return isHovering ? Color.accentColor.opacity(0.08) : .clear
+        }
     }
 }
 

@@ -34,7 +34,8 @@ struct PermissionCard: View {
                     .lineLimit(6)
                     .padding(10)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.fill.tertiary, in: .rect(cornerRadius: 10))
+                    // Sunk in like a code block, as it's paths and commands.
+                    .recessedWell(RoundedRectangle(cornerRadius: 10))
             }
 
             HStack(spacing: 8) {

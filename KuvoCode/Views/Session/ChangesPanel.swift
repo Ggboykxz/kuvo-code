@@ -535,6 +535,7 @@ private struct FileHeader: View {
     let toggle: () -> Void
     let perform: (ProjectChanges.Action) -> Void
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.cardIsFocused) private var cardIsFocused
     @State private var confirmsDiscard = false
     @State private var isHovering = false
 
@@ -604,7 +605,9 @@ private struct FileHeader: View {
         // Opaque: the header stays pinned while the file's lines scroll under it. A plain
         // rectangle: without a shape, the background takes the rounded shape of its container.
         .background(headerFill, in: .rect)
-        .overlay(alignment: .bottom) { Divider() }
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Surface.wellBorder(scheme)).frame(height: 1)
+        }
         .contentShape(.rect)
         .onHover { isHovering = $0 && hasBody }
         .animation(.easeOut(duration: 0.12), value: isHovering)
@@ -631,11 +634,11 @@ private struct FileHeader: View {
         return Text("\(folderText)\(nameText)")
     }
 
-    /// Opaque, so the header stays readable while lines scroll under it; a shade deeper under
-    /// the pointer.
+    /// The card's own fill, opaque, so the header stays readable while lines scroll under it
+    /// and still reads as part of the card (white or ivory); a shade deeper under the pointer.
     private var headerFill: Color {
-        if scheme == .dark { return Color(white: isHovering ? 0.25 : 0.21) }
-        return isHovering ? Color(white: 0.955) : .white
+        Surface.cardFill(scheme, focused: cardIsFocused)
+            .mix(with: scheme == .dark ? .white : .black, by: isHovering ? 0.045 : 0, in: .device)
     }
 
     private var statusLabel: String {
@@ -717,6 +720,7 @@ private struct FileBody: View {
 private struct ImageDiff: View {
     let file: ChangedFile
     @State private var images: Pair?
+    @Environment(\.colorScheme) private var scheme
 
     struct Pair { var old: NSImage?; var new: NSImage? }
 
@@ -751,7 +755,7 @@ private struct ImageDiff: View {
                 .interpolation(.high)
                 .aspectRatio(contentMode: .fit)
                 .frame(maxWidth: 260, maxHeight: 220, alignment: .topLeading)
-                .background(Color.primary.opacity(0.04))
+                .background(Surface.well(scheme))
                 .clipShape(.rect(cornerRadius: 6))
                 .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(edge.opacity(0.6), lineWidth: 1))
             if let rep = image.representations.first, rep.pixelsWide > 0 {
@@ -979,7 +983,8 @@ nonisolated struct DiffHighlighting: Sendable {
 
 // MARK: - Comments
 
-/// A comment under its line, until it's sent.
+/// A comment under its line, until it's sent. In accent glass, like your messages: it's yours,
+/// and goes with the next one.
 struct CommentCard: View {
     let comment: ReviewComment
     var delete: (() -> Void)?
@@ -1009,14 +1014,14 @@ struct CommentCard: View {
             }
         }
         .padding(12)
-        .background(Color(nsColor: .controlBackgroundColor), in: .rect(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.primary.opacity(0.1)))
+        .modifier(RaisedNote())
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
     }
 }
 
-/// A comment as sent, in the transcript: where it points, the line, and what it says.
+/// A comment as sent, in the transcript: where it points, the line, and what it says. In
+/// accent glass, like the message it went with.
 struct CommentReference: View {
     let comment: ReviewComment
 
@@ -1045,11 +1050,12 @@ struct CommentReference: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .frame(maxWidth: 420, alignment: .leading)
-        .background(.fill.tertiary, in: .rect(cornerRadius: 14))
+        .accentGlass(RoundedRectangle(cornerRadius: 14))
     }
 }
 
-/// Writing a comment: ⌘Return saves, Escape cancels.
+/// Writing a comment: ⌘Return saves, Escape cancels. In the same accent glass as the comment
+/// it becomes.
 private struct CommentEditor: View {
     let cancel: () -> Void
     let save: (String) -> Void
@@ -1088,8 +1094,7 @@ private struct CommentEditor: View {
             .font(.system(size: 12))
         }
         .padding(12)
-        .background(Color(nsColor: .controlBackgroundColor), in: .rect(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.accentColor.opacity(0.5)))
+        .modifier(RaisedNote())
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .onAppear { focused = true }
@@ -1121,5 +1126,23 @@ private struct Avatar: View {
         let parts = name.split(separator: " ").prefix(2)
         let letters = parts.compactMap(\.first).map(String.init).joined()
         return letters.isEmpty ? "?" : letters.uppercased()
+    }
+}
+
+/// A review comment in the diff: a raised note in the card's own color with a lit edge. Neutral,
+/// so with a green or red accent it never reads as added or removed lines.
+private struct RaisedNote: ViewModifier {
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.cardIsFocused) private var cardIsFocused
+
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 10)
+        content
+            .background {
+                shape
+                    .fill(Surface.cardFill(scheme, focused: cardIsFocused))
+                    .shadow(color: scheme == .dark ? .black.opacity(0.3) : Surface.slate.opacity(0.08), radius: 4, y: 1)
+            }
+            .specularRim(shape)
     }
 }

@@ -38,7 +38,8 @@ struct TranscriptView: View {
                 }
             }
             .padding(.horizontal, Metrics.gutter)
-            .padding(.top, 24)
+            // Room under the card's header, which the conversation scrolls beneath.
+            .padding(.top, 16)
             // Room under the last reply, so it doesn't sit on the composer.
             .padding(.bottom, 32)
             .readableColumn()
@@ -62,16 +63,9 @@ struct TranscriptView: View {
             guard followsEnd, !isScrolling, new != old else { return }
             position.scrollTo(edge: .bottom)
         }
+        // Messages scroll on under the card's header and the composer, blurring away there
+        // instead of being cut at an edge.
         .scrollEdgeEffectStyle(.soft, for: .all)
-        // Messages fade out under the card's top edge instead of being cut there. The fade fits in
-        // the space above the first row, so nothing is faded when scrolled all the way up.
-        .mask {
-            VStack(spacing: 0) {
-                LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
-                    .frame(height: 22)
-                Color.black
-            }
-        }
         .overlay {
             if model.isLoaded && rows.isEmpty {
                 EmptyConversationView(directory: model.session.location.directory)
@@ -513,7 +507,8 @@ private struct MessageText: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
-                .background(.fill.tertiary, in: .rect(cornerRadius: Metrics.bubbleRadius))
+                // Your words in accent glass, apart from the agent's on the card.
+                .accentGlass(RoundedRectangle(cornerRadius: Metrics.bubbleRadius))
             if mayBeLong, isCut {
                 Button(isExpanded ? "Show Less" : "Show More") {
                     withAnimation(.ui) { isExpanded.toggle() }
@@ -571,6 +566,7 @@ struct MarkdownText: View {
             .font(.transcript)
             // Closer to the text than the GitHub style, so it wins for code blocks.
             .textual.codeBlockStyle(CopyableCodeBlockStyle())
+            .textual.highlighterTheme(CodeColors.theme)
             .textual.structuredTextStyle(.gitHub)
             .textual.textSelection(.enabled)
             // A file opens in the side panel; web links in the browser.
@@ -592,7 +588,7 @@ private struct ReasoningView: View {
             Button {
                 withAnimation(.ui) { isExpanded.toggle() }
             } label: {
-                HStack(spacing: 6) {
+                HStack(spacing: 8) {
                     Image(systemName: "brain")
                         .frame(width: 16)
                     if block.isComplete {
@@ -614,7 +610,14 @@ private struct ReasoningView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
-                    .padding(.leading, 22)
+                    .padding(.leading, 24)
+                    .overlay(alignment: .topLeading) {
+                        // The line down from the icon, beside the thinking, as steps have.
+                        Capsule()
+                            .fill(.separator)
+                            .frame(width: 1)
+                            .padding(.leading, 7.5)
+                    }
                     .transition(.opacity)
             }
         }

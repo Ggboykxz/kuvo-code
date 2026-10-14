@@ -307,6 +307,7 @@ private struct FileViewer: View {
                         StructuredText(markdown: text)
                             .font(.transcript)
                             .textual.codeBlockStyle(CopyableCodeBlockStyle())
+                            .textual.highlighterTheme(CodeColors.theme)
                             .textual.structuredTextStyle(.gitHub)
                             .textual.textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)

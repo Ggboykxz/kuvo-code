@@ -1,15 +1,20 @@
 import OpenCodeKit
 import SwiftUI
 
-/// A short diff in a card, for a tool call or a permission request: the same lines,
+/// A short diff in a recessed well, for a tool call or a permission request: the same lines,
 /// numbers and colors as the Changes panel, without folding or comments.
 struct DiffView: View {
     let diff: FileDiff
-    var title: String
+    /// The file's name over the lines; nil when what it's under names the file already.
+    var title: String?
     /// Long diffs are cut here, with a note.
     var maxLines = Int.max
 
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.cardIsFocused) private var cardIsFocused
     @State private var highlighting: DiffHighlighting?
+
+    private static let shape = RoundedRectangle(cornerRadius: 10)
 
     private var file: ChangedFile { DiffParser.file(from: diff, directory: "/") }
 
@@ -18,20 +23,25 @@ struct DiffView: View {
         let shown = Array(file.lines.prefix(maxLines))
         let gutter = DiffLineRow.gutterWidth(for: shown)
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Image(systemName: diff.status == .added ? "doc.badge.plus" : diff.status == .deleted ? "doc.badge.minus" : "doc")
-                    .foregroundStyle(.secondary)
-                Text(title)
-                    .font(.callout.weight(.medium))
-                    .lineLimit(1)
-                    .truncationMode(.head)
-                Spacer()
-                DiffStat(additions: diff.additions, deletions: diff.deletions)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            if let title {
+                HStack {
+                    Image(systemName: diff.status == .added ? "doc.badge.plus" : diff.status == .deleted ? "doc.badge.minus" : "doc")
+                        .foregroundStyle(.secondary)
+                    Text(title)
+                        .font(.callout.weight(.medium))
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                    Spacer()
+                    DiffStat(additions: diff.additions, deletions: diff.deletions)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
 
-            Divider()
+                // The same line as the well's edge, not a darker rule.
+                Rectangle()
+                    .fill(Surface.wellBorder(scheme))
+                    .frame(height: 1)
+            }
 
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(shown.enumerated()), id: \.offset) { index, line in
@@ -57,9 +67,10 @@ struct DiffView: View {
                     .padding(.vertical, 6)
             }
         }
-        .background(.background.secondary, in: .rect(cornerRadius: 10))
-        .clipShape(.rect(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator.opacity(0.6)))
+        .clipShape(Self.shape)
+        // Solid under the well: on a permission card's glass, code needs a surface of its own.
+        .background(Surface.cardFill(scheme, focused: cardIsFocused), in: Self.shape)
+        .recessedWell(Self.shape)
         .task(id: diff) {
             var named = file
             named.path = diff.file

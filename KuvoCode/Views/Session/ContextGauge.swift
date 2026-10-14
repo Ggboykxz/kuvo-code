@@ -23,7 +23,7 @@ struct ContextGauge: View {
                             .rotationEffect(.degrees(-90))
                     }
                     .frame(width: 12, height: 12)
-                    Text(fraction.formatted(.percent.precision(.fractionLength(0))))
+                    Text(Self.percent(fraction))
                         .font(.system(size: 11, weight: .medium).monospacedDigit())
                         .foregroundStyle(fraction > 0.8 ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
                 }
@@ -86,6 +86,14 @@ struct ContextGauge: View {
 }
 
 /// The gauge's popover: the context window, the plan's limits and the session's cost.
+extension ContextGauge {
+    /// "21%", with the sign after the number in any region: Turkey's pattern reads "%21", which
+    /// looks wrong in an English interface.
+    static func percent(_ fraction: Double) -> String {
+        "\(Int((fraction * 100).rounded()).formatted())%"
+    }
+}
+
 private struct ContextDetails: View {
     let used: Int
     let limit: Int
@@ -158,7 +166,7 @@ private struct ContextDetails: View {
                     Text(detail)
                         .foregroundStyle(.secondary)
                 }
-                Text(fraction.formatted(.percent.precision(.fractionLength(0))))
+                Text(ContextGauge.percent(fraction))
                     .foregroundStyle(fraction > 0.8 ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
             }
             .monospacedDigit()

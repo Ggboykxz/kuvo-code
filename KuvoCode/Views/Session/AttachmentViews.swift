@@ -138,6 +138,7 @@ struct ComposerAttachment: View {
         .padding(.trailing, 10)
         .padding(.vertical, 6)
         .background(Color.primary.opacity(0.05), in: .rect(cornerRadius: 10))
+        .specularRim(RoundedRectangle(cornerRadius: 10))
         .overlay(alignment: .topTrailing) {
             Button(action: remove) {
                 Image(systemName: "xmark.circle.fill")
@@ -222,6 +223,7 @@ private struct AttachmentPicture: View {
     let height: CGFloat
     @State private var image: NSImage?
     @State private var isHovering = false
+    @Environment(\.colorScheme) private var scheme
 
     private static let maxWidth: CGFloat = 360
 
@@ -241,11 +243,12 @@ private struct AttachmentPicture: View {
             }
         }
         .clipShape(.rect(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Surface.wellBorder(scheme)).allowsHitTesting(false))
         // Under the pointer, a firmer edge and a touch of shade: it opens.
         .overlay {
             RoundedRectangle(cornerRadius: 12)
                 .fill(Color.black.opacity(isHovering ? 0.06 : 0))
-                .strokeBorder(.primary.opacity(isHovering ? 0.25 : 0.08), lineWidth: isHovering ? 1.5 : 1)
+                .strokeBorder(.primary.opacity(isHovering ? 0.25 : 0), lineWidth: 1.5)
         }
         .contentShape(.rect(cornerRadius: 12))
         .onHover { isHovering = $0 }
@@ -288,6 +291,7 @@ private struct AttachmentRow: View {
             .padding(.trailing, 14)
             .padding(.vertical, 8)
             .background(isHovering ? AnyShapeStyle(.fill.secondary) : AnyShapeStyle(.fill.tertiary), in: .rect(cornerRadius: 14))
+            .specularRim(RoundedRectangle(cornerRadius: 14))
             .contentShape(.rect(cornerRadius: 14))
         }
         .buttonStyle(.plain)

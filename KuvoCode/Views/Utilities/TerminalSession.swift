@@ -62,7 +62,7 @@ final class TerminalSession: NSObject {
     func apply(dark: Bool, focused: Bool) {
         guard appliedLook.map({ $0 != (dark, focused) }) ?? true else { return }
         appliedLook = (dark, focused)
-        let background = CardFill.solid(dark: dark, focused: focused)
+        let background = Surface.cardFillColor(dark: dark, focused: focused)
         view.nativeBackgroundColor = background
         view.layer?.backgroundColor = background.cgColor
         view.needsDisplay = true
@@ -145,8 +145,9 @@ extension TerminalSession: @preconcurrency LocalProcessTerminalViewDelegate {
 /// being shown, so the shell keeps its state while you look at something else.
 struct TerminalHost: View {
     let session: TerminalSession
-    var isFocused = true
     @Environment(\.colorScheme) private var scheme
+    /// The card's focus: the terminal's color follows the card's as focus moves.
+    @Environment(\.cardIsFocused) private var isFocused
 
     var body: some View {
         TerminalRepresentable(session: session, dark: scheme == .dark, focused: isFocused)
@@ -154,7 +155,7 @@ struct TerminalHost: View {
             .padding(.leading, 16)
             .padding(.top, 4)
             .padding(.bottom, 12)
-            .background(Color(nsColor: CardFill.solid(dark: scheme == .dark, focused: isFocused)))
+            .background(Surface.cardFill(scheme, focused: isFocused))
     }
 }
 
