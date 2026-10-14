@@ -6,9 +6,15 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
-- **Hide the tab bar** with View › Hide Tab Bar (⌥⌘T) or in Settings › General, and switch sessions from the sidebar or ⌘K.
+- **A livelier look.** Cards have lit edges instead of gray outlines, the window's glass picks up your desktop's color, and your messages, the selected session and the send button are tinted with your accent color. Code sits in one recessed block, and the agent's steps open inline. Dark mode is deeper and cooler, with brighter code colors.
+- Messages fade out under the conversation's header instead of being cut off, and run on under the composer.
+- **A quieter composer**: no outline, smaller corners, and its buttons stay in the background until you point at them.
+- **Hide the tab bar**, the whole row at the top, with View › Hide Tab Bar (⌥⌘T) or in Settings › General, and switch sessions from the sidebar or ⌘K.
 - **Files a reply names look like files**: an icon and the name in link color, instead of code.
-- The conversation fades out under the top of its card instead of being cut off.
+- **Settings**: long tabs open at the top, Accounts fits each provider's name, and clearer labels in Engine and Panel.
+- Fixed: on a Mac set to Turkey's region, percentages read "%21"; they read "21%" now.
+- Fixed: switching sessions from Recents briefly highlighted the other session under its project.
+- Fixed: the tabs started far from the project's name, and the branch's hover fill covered the name.
 - **You can tell what's clickable.** Buttons, icons, menus and rows light up under the pointer: the icons under messages and replies, Copy on code blocks, the branch name (now with a menu chevron), the Changes tab's menus and file headers, the agent's steps, pick lists, attachments, tabs and more.
 - **Code blocks have line numbers.** Copying, whether with Copy or by selecting part of the code, leaves them out.
 - **The usage panel follows the accounts you connected in Kuvo Code**: GitHub Copilot, ChatGPT (Codex), OpenCode, OpenRouter and Z.ai. Connecting one turns it on; tools signed in elsewhere on your Mac, like Claude Code, no longer show up. One with no usage to read stays out of the panel, and Customize says why.
