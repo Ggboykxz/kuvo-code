@@ -201,9 +201,23 @@ struct TurnStats: Hashable {
     var text: [String] = []
     /// The mode that answered: a plan can be built from its end.
     var agent: String?
+    /// The files the agent's edits changed, in the order first changed, with their lines.
+    var files: [FileDiff] = []
 
     mutating func add(_ message: Message.Assistant) {
         agent = message.agent
+        for block in message.content {
+            guard case .tool(let call) = block, case .completed(_, _, let metadata) = call.state,
+                  let diffs = try? metadata?["files"]?.decode(as: [FileDiff].self) else { continue }
+            for diff in diffs {
+                if let index = files.firstIndex(where: { $0.file == diff.file }) {
+                    files[index].additions += diff.additions
+                    files[index].deletions += diff.deletions
+                } else {
+                    files.append(diff)
+                }
+            }
+        }
         cost += message.cost ?? 0
         outputTokens += (message.tokens?.output ?? 0) + (message.tokens?.reasoning ?? 0)
         steps += 1
@@ -328,7 +342,7 @@ private struct RowView: View {
         case .assistant(let message, let showsError):
             AssistantStepView(message: message, directory: directory, showsError: showsError)
         case .turnEnd(let idle, let stats, let isLast):
-            TurnEndView(idle: idle, stats: stats, retry: isLast ? stats.message.map { message in { retry(message) } } : nil,
+            TurnEndView(idle: idle, stats: stats, directory: directory, retry: isLast ? stats.message.map { message in { retry(message) } } : nil,
                         build: isLast && stats.agent == "plan" ? buildPlan : nil)
         case .notice(_, let symbol, let text):
             Label(text, systemImage: symbol)
@@ -493,6 +507,8 @@ private struct ReasoningView: View {
 private struct TurnEndView: View {
     let idle: Message.Idle
     let stats: TurnStats
+    /// The session's folder, where the files the turn changed are.
+    let directory: String
     /// Sends the turn's message again; offered on the last turn when it failed.
     var retry: (() -> Void)?
     /// Builds what a plan described; offered under Plan mode's last answer.
@@ -511,15 +527,23 @@ private struct TurnEndView: View {
                 }
             }
         case .interrupted:
-            Label("Stopped", systemImage: "stop.circle")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                Label("Stopped", systemImage: "stop.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if !stats.files.isEmpty {
+                    TurnFiles(files: stats.files, directory: directory)
+                }
+            }
         case .succeeded:
             HStack(spacing: 6) {
                 if !parts.isEmpty {
                     Text(parts.joined(separator: " · "))
                         .font(.caption)
                         .foregroundStyle(.tertiary)
+                }
+                if !stats.files.isEmpty {
+                    TurnFiles(files: stats.files, directory: directory)
                 }
                 if !stats.text.isEmpty {
                     CopyButton(text: stats.text.joined(separator: "\n\n"), help: "Copy the Reply")
@@ -594,6 +618,72 @@ private struct FindBar: View {
         .padding(.vertical, 6)
         .glassEffect(.regular, in: .capsule)
         .onAppear { isFocused = true }
+    }
+}
+
+/// "Edited 3 files" under a turn: the files it changed, each a click from the panel.
+private struct TurnFiles: View {
+    let files: [FileDiff]
+    let directory: String
+    @Environment(AppModel.self) private var app
+    @State private var isShowing = false
+
+    var body: some View {
+        Button {
+            isShowing.toggle()
+        } label: {
+            Label(files.count == 1 ? "Edited 1 file" : "Edited \(files.count) files", systemImage: "plus.forwardslash.minus")
+                .font(.caption)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .help("What this turn changed")
+        .popover(isPresented: $isShowing, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(files) { file in
+                    Button {
+                        isShowing = false
+                        app.utilities.show(url(of: file))
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(nsImage: NSWorkspace.shared.icon(forFile: url(of: file).path))
+                                .resizable()
+                                .frame(width: 16, height: 16)
+                            Text(relative(file.file))
+                                .lineLimit(1)
+                                .truncationMode(.head)
+                            Spacer(minLength: 12)
+                            DiffStat(additions: file.additions, deletions: file.deletions)
+                        }
+                        .padding(.horizontal, 8)
+                        .frame(height: 26)
+                        .contentShape(.rect)
+                        .hoverHighlight(in: RoundedRectangle(cornerRadius: 6))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open in the Panel")
+                }
+                Divider().padding(.vertical, 4)
+                Button("Show All Changes") {
+                    isShowing = false
+                    app.utilities.revealChanges()
+                }
+                .buttonStyle(.link)
+                .font(.callout)
+                .padding(.horizontal, 8)
+            }
+            .font(.callout)
+            .padding(8)
+            .frame(width: 320)
+        }
+    }
+
+    private func url(of file: FileDiff) -> URL {
+        file.file.hasPrefix("/") ? URL(filePath: file.file) : URL(filePath: directory).appending(path: file.file)
+    }
+
+    private func relative(_ path: String) -> String {
+        path.hasPrefix(directory + "/") ? String(path.dropFirst(directory.count + 1)) : path
     }
 }
 

@@ -114,6 +114,12 @@ final class Utilities {
         close(id)
     }
 
+    /// Shows the Changes tab and brings the panel into view: you asked to see it.
+    func revealChanges() {
+        showChanges()
+        revealRequest += 1
+    }
+
     /// Opens `url` in a file tab and brings the panel into view: you asked to see it.
     func show(_ url: URL) {
         open(url)
