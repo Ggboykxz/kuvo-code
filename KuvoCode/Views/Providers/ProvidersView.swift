@@ -13,6 +13,7 @@ struct ProvidersView: View {
     var context = Context.sheet
 
     @Environment(Catalog.self) private var catalog
+    @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
     @State private var connecting: Integration?
     @State private var search = ""
@@ -98,6 +99,10 @@ struct ProvidersView: View {
                     }
                 }
 
+                if search.isEmpty {
+                    CustomProvidersSection { connecting = $0 }
+                }
+
                 if others.isEmpty, !search.isEmpty {
                     ContentUnavailableView {
                         Label("No Results for “\(search.trimmingCharacters(in: .whitespaces))”", systemImage: "magnifyingglass")
@@ -132,8 +137,9 @@ struct ProvidersView: View {
     private var others: [Integration] {
         let query = search.trimmingCharacters(in: .whitespaces)
         if query.isEmpty {
-            let featuredIDs = Set(Catalog.featured)
-            return catalog.providers.filter { !featuredIDs.contains($0.id) && !$0.isConnected }
+            // Your own are listed in their own section.
+            let shown = Set(Catalog.featured).union(app.engineConfig.value(at: CustomProvidersSection.path)?.object?.keys ?? [:].keys)
+            return catalog.providers.filter { !shown.contains($0.id) && !$0.isConnected }
         }
         return catalog.providers.filter { $0.name.localizedCaseInsensitiveContains(query) || $0.id.localizedCaseInsensitiveContains(query) }
     }
