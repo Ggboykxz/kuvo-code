@@ -21,6 +21,7 @@ struct KuvoCodeApp: App {
             SettingsView()
                 .environment(delegate.model)
                 .environment(delegate.model.catalog)
+                .environment(delegate.model.workspace)
                 .environment(delegate.updates)
         }
     }

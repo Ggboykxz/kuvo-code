@@ -1,0 +1,232 @@
+import OpenCodeKit
+import SwiftUI
+
+/// What the agent may do without asking: a choice for each kind of action, rules for
+/// particular commands or files, approvals saved with "Always", and blocks nothing overrides.
+struct PermissionsSettings: View {
+    @Environment(AppModel.self) private var app
+    @Environment(Workspace.self) private var workspace
+    @State private var saved: [SavedPermission] = []
+
+    private var config: EngineConfig { app.engineConfig }
+    private static let path = ["permissions"]
+
+    /// The kinds of action, with what they cover; each is a rule for every resource ("*").
+    static let actions: [(id: String, title: String, detail: String)] = [
+        ("edit", "Edit files", "Changing, creating or deleting files."),
+        ("shell", "Run commands", "In the terminal."),
+        ("read", "Read files", "Files ending in .env ask first unless you allow this."),
+        ("external_directory", "Work outside the project", "In folders that aren't the project's. Asks by default."),
+        ("webfetch", "Open web pages", ""),
+        ("websearch", "Search the web", ""),
+        ("subagent", "Hand work to subagents", ""),
+        ("skill", "Use skills", ""),
+    ]
+
+    var body: some View {
+        ScrollingSettingsForm {
+            Section {
+                ForEach(Self.actions, id: \.id) { action in
+                    Picker(selection: effect(for: action.id)) {
+                        Text("Default").tag(PermissionRule.Effect?.none)
+                        Text("Allow").tag(Optional(PermissionRule.Effect.allow))
+                        Text("Ask First").tag(Optional(PermissionRule.Effect.ask))
+                        Text("Don't Allow").tag(Optional(PermissionRule.Effect.deny))
+                    } label: {
+                        Text(action.title)
+                        if !action.detail.isEmpty { Text(action.detail) }
+                    }
+                }
+            } header: {
+                Text("When the Agent Wants To")
+            } footer: {
+                Text("For every session, on top of each mode's own rules. A session set to Ask First still asks.")
+                    .foregroundStyle(.secondary)
+            }
+            .settingsTop()
+
+            ConfigProblem()
+
+            Section {
+                RulesEditor(path: Self.path, hiding: Set(Self.actions.map(\.id)))
+            } header: {
+                Text("Rules")
+            } footer: {
+                Text("For particular commands, files or sites, like \"git push *\" or \"*.pem\". * matches anything. When rules overlap, the one lower in the list wins.")
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                if saved.isEmpty {
+                    Text("None yet. Choosing Always when the agent asks saves an approval here.")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(saved) { permission in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("\(Self.title(of: permission.action)): \(permission.resource)")
+                                .lineLimit(2)
+                                .truncationMode(.middle)
+                            Text(projectName(permission.projectID))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Remove") {
+                            Task {
+                                try? await app.api?.removeSavedPermission(permission.id)
+                                await loadSaved()
+                            }
+                        }
+                    }
+                }
+            } header: {
+                Text("Always Allowed")
+            }
+
+            Section {
+                RulesEditor(path: ["experimental", "policies"], actions: Self.policyKinds, effects: [.deny, .allow])
+            } header: {
+                Text("Blocks")
+            } footer: {
+                Text("Blocks win over everything else, including approvals. Block a tool or command as \"shell:git push *\", a provider by its ID, or an MCP server, skill or plugin as \"mcp:name\", \"skill:name\" or \"plugin:name\".")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .task { await loadSaved() }
+    }
+
+    static let policyKinds: [(id: String, title: String)] = [
+        ("tool.use", "Tool or command"),
+        ("provider.use", "Provider"),
+        ("integration.use", "MCP server, skill or plugin"),
+    ]
+
+    private func loadSaved() async {
+        saved = (try? await app.api?.savedPermissions()) ?? []
+    }
+
+    private func projectName(_ id: String) -> String {
+        workspace.sessions.first { $0.projectID == id }.map { workspace.projectName($0.location.directory) } ?? "A project"
+    }
+
+    static func title(of action: String) -> String {
+        actions.first { $0.id == action }?.title ?? action
+    }
+
+    /// The rule for every resource of `action`, kept at the front so specific rules win.
+    private func effect(for action: String) -> Binding<PermissionRule.Effect?> {
+        Binding {
+            rules().last { $0.action == action && $0.resource == "*" }?.effect
+        } set: { effect in
+            var rules = rules().filter { !($0.action == action && $0.resource == "*") }
+            if let effect { rules.insert(PermissionRule(action: action, resource: "*", effect: effect), at: 0) }
+            save(rules)
+        }
+    }
+
+    private func rules() -> [PermissionRule] {
+        (try? config.value(at: Self.path)?.decode(as: [PermissionRule].self)) ?? []
+    }
+
+    private func save(_ rules: [PermissionRule]) {
+        config.set(rules.isEmpty ? nil : .array(rules.map(\.json)), at: Self.path)
+    }
+}
+
+extension PermissionRule {
+    var json: JSONValue {
+        .object(["action": .string(action), "resource": .string(resource), "effect": .string(effect.rawValue)])
+    }
+}
+
+/// An ordered list of `{action, resource, effect}` rules at a path in the settings, each
+/// editable in place, with a button to add one. Rules for actions in `hiding`, for everything
+/// ("*"), are left out: they have their own controls.
+struct RulesEditor: View {
+    let path: [String]
+    var actions: [(id: String, title: String)] = PermissionsSettings.actions.map { ($0.id, $0.title) }
+    var effects: [PermissionRule.Effect] = [.allow, .ask, .deny]
+    var hiding: Set<String> = []
+    @Environment(AppModel.self) private var app
+
+    var body: some View {
+        let all = rules()
+        let shown = all.indices.filter { !(hiding.contains(all[$0].action) && all[$0].resource == "*") }
+        ForEach(shown, id: \.self) { index in
+            RuleRow(rule: all[index], actions: actions, effects: effects) { changed in
+                var rules = rules()
+                guard rules.indices.contains(index) else { return }
+                if let changed { rules[index] = changed } else { rules.remove(at: index) }
+                save(rules)
+            }
+        }
+        Button("Add Rule") {
+            save(rules() + [PermissionRule(action: actions.first?.id ?? "shell", resource: "", effect: effects.first ?? .ask)])
+        }
+    }
+
+    private func rules() -> [PermissionRule] {
+        (try? app.engineConfig.value(at: path)?.decode(as: [PermissionRule].self)) ?? []
+    }
+
+    private func save(_ rules: [PermissionRule]) {
+        app.engineConfig.set(rules.isEmpty ? nil : .array(rules.map(\.json)), at: path)
+    }
+}
+
+/// One rule: what kind of action, which (a pattern), and what happens.
+private struct RuleRow: View {
+    let rule: PermissionRule
+    let actions: [(id: String, title: String)]
+    let effects: [PermissionRule.Effect]
+    /// The rule as changed, or nil to remove it.
+    let change: (PermissionRule?) -> Void
+    @State private var resource = ""
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Picker("Action", selection: Binding(get: { rule.action }, set: { change(PermissionRule(action: $0, resource: rule.resource, effect: rule.effect)) })) {
+                ForEach(actions, id: \.id) { Text($0.title).tag($0.id) }
+                if !actions.contains(where: { $0.id == rule.action }) { Text(rule.action).tag(rule.action) }
+            }
+            .labelsHidden()
+            .fixedSize()
+            .frame(width: 190, alignment: .leading)
+            TextField("Pattern", text: $resource, prompt: Text("Pattern, like git push *"))
+                .labelsHidden()
+                .focused($isFocused)
+                .onSubmit(commit)
+                .onChange(of: isFocused) { if !isFocused { commit() } }
+            Picker("Effect", selection: Binding(get: { rule.effect }, set: { change(PermissionRule(action: rule.action, resource: rule.resource, effect: $0)) })) {
+                ForEach(effects, id: \.self) { Text(Self.title(of: $0)).tag($0) }
+            }
+            .labelsHidden()
+            .frame(width: 120)
+            Button {
+                change(nil)
+            } label: {
+                Image(systemName: "minus.circle.fill").foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Remove Rule")
+        }
+        .onAppear { resource = rule.resource }
+        .onChange(of: rule.resource) { resource = rule.resource }
+    }
+
+    private func commit() {
+        let value = resource.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard value != rule.resource else { return }
+        change(PermissionRule(action: rule.action, resource: value.isEmpty ? "*" : value, effect: rule.effect))
+    }
+
+    static func title(of effect: PermissionRule.Effect) -> String {
+        switch effect {
+        case .allow: "Allow"
+        case .ask: "Ask First"
+        case .deny: "Don't Allow"
+        }
+    }
+}

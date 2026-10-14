@@ -28,6 +28,10 @@ final class AppModel {
     @ObservationIgnored private(set) lazy var browserTools = BrowserToolServer(agent: BrowserAgent(utilities: utilities))
     let workspace = Workspace()
     let usage = UsageAccounts()
+    /// The engine's settings file, for Settings.
+    @ObservationIgnored private(set) lazy var engineConfig = EngineConfig(file: engineFolders.configFile)
+    /// Skills added in Settings, beside the settings file: the engine reads them for every project.
+    var skillsFolder: URL { engineFolders.configFile.deletingLastPathComponent().appending(path: "skills") }
     /// Brings the main window back (set by the window itself; the usage menu's "Open Kuvo Code").
     var openMainWindow: (() -> Void)?
 
@@ -175,6 +179,8 @@ final class AppModel {
                 case .disconnected:
                     isLive = false
                 case .event(let event):
+                    // The file changed, here or elsewhere: show what it says now.
+                    if event.type == "config.updated" { engineConfig.reload() }
                     catalog.handle(event)
                     workspace.handle(event)
                     usage.handle(event)

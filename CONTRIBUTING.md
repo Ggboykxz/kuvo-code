@@ -99,7 +99,7 @@ without clicking, for trying a change or taking screenshots:
 | `KUVO_DEMO_WINDOW` | Window size, as `WIDTHxHEIGHT` |
 | `KUVO_DEMO_MENU` | Open the `mode` or `model` menu (`models` for its first submenu) |
 | `KUVO_DEMO_USAGE` | Open the menu bar's usage panel on `dashboard`, `customize` or `settings`, or `off` to leave the usage tracker out |
-| `KUVO_DEMO_SETTINGS` | Open Settings on a tab: `general`, `accounts`, `panel`, `usage` or `engine` |
+| `KUVO_DEMO_SETTINGS` | Open Settings on a tab: `general`, `accounts`, `agents`, `permissions`, `mcp`, `skills`, `commands`, `panel`, `usage` or `engine` |
 | `KUVO_DEMO_NAME` | A name to use instead of yours, for the initials on review comments |
 | `KUVO_DEMO_COMMENT` | Add a review comment to the session in view, as `<path in the project>:<line>:<text>` |
 

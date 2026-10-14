@@ -553,7 +553,8 @@ struct MainView: View {
         if workspace.isLoaded, let list = environment["KUVO_DEMO_NEW_PROJECT"] {
             projectSheet = ProjectSheetRequest(project: nil, folders: list.split(separator: ",").map(String.init))
         }
-        // KUVO_DEMO_SETTINGS=<tab> opens Settings on that tab: general, accounts, panel, usage, engine.
+        // KUVO_DEMO_SETTINGS=<tab> opens Settings on that tab: general, accounts, agents, permissions,
+        // mcp, skills, commands, panel, usage, engine.
         if workspace.isLoaded, let tab = environment["KUVO_DEMO_SETTINGS"] {
             UserDefaults.standard.set(tab, forKey: "settings.tab")
             openSettings()

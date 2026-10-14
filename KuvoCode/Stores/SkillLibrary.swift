@@ -1,0 +1,174 @@
+import AppKit
+import Foundation
+
+/// Skills from public GitHub repositories: the popular collections to choose from, the skills
+/// in each, and installing one into the engine's skills folder (where every project can use
+/// it). Nothing is fetched until you open a collection.
+nonisolated enum SkillLibrary {
+    struct Repository: Hashable, Identifiable, Sendable {
+        var owner: String
+        var name: String
+        var title: String
+        var summary: String
+        var branch = "main"
+
+        var id: String { "\(owner)/\(name)" }
+        var webURL: URL { URL(string: "https://github.com/\(owner)/\(name)")! }
+    }
+
+    /// Well-known collections, roughly most popular first. Anyone can add another by name.
+    static let repositories: [Repository] = [
+        Repository(owner: "anthropics", name: "skills", title: "Anthropic", summary: "The reference set: documents, spreadsheets, slides, PDFs, design and more."),
+        Repository(owner: "openai", name: "skills", title: "OpenAI", summary: "Codex's catalog of curated skills."),
+        Repository(owner: "obra", name: "superpowers", title: "Superpowers", summary: "Ways of working: test-driven development, debugging, planning, code review."),
+        Repository(owner: "mattpocock", name: "skills", title: "Matt Pocock", summary: "Engineering and productivity skills, TypeScript-minded."),
+        Repository(owner: "addyosmani", name: "agent-skills", title: "Addy Osmani", summary: "Production engineering practices: performance, accessibility, testing."),
+        Repository(owner: "vercel-labs", name: "agent-skills", title: "Vercel", summary: "React, Next.js and deploying to Vercel."),
+        Repository(owner: "github", name: "awesome-copilot", title: "GitHub Awesome Copilot", summary: "Hundreds of community skills; quality varies."),
+        Repository(owner: "huggingface", name: "skills", title: "Hugging Face", summary: "Models, datasets and training with Hugging Face."),
+        Repository(owner: "cloudflare", name: "skills", title: "Cloudflare", summary: "Workers, Pages and the rest of Cloudflare's platform."),
+        Repository(owner: "trailofbits", name: "skills", title: "Trail of Bits", summary: "Security auditing and code review."),
+        Repository(owner: "K-Dense-AI", name: "scientific-agent-skills", title: "Scientific Skills", summary: "A large library for science: biology, chemistry, data analysis."),
+        Repository(owner: "wshobson", name: "agents", title: "wshobson/agents", summary: "A big set of plugins with skills for many languages and tools."),
+    ]
+
+    /// A skill in a repository: the folder its SKILL.md is in, named by the folder.
+    struct RemoteSkill: Hashable, Identifiable, Sendable {
+        var repository: Repository
+        /// The folder in the repository, like `skills/pdf`.
+        var path: String
+        /// Every file in it, relative to the repository.
+        var files: [String]
+
+        /// The engine knows a skill by its folder's name.
+        var id: String { (path as NSString).lastPathComponent }
+    }
+
+    /// What a SKILL.md says about itself.
+    struct About: Sendable {
+        var name: String?
+        var description: String?
+    }
+
+    enum Failure: LocalizedError {
+        case notFound(String)
+        case limited
+        case taken(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .notFound(let repository): "\(repository) wasn't found on GitHub."
+            case .limited: "GitHub is limiting requests for now. Try again in a while."
+            case .taken(let id): "A skill named \(id) is already installed."
+            }
+        }
+    }
+
+    /// A repository you name ("owner/name", or its GitHub URL), with its default branch.
+    static func repository(named text: String) async throws -> Repository {
+        var name = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        for prefix in ["https://github.com/", "http://github.com/", "github.com/"] where name.hasPrefix(prefix) { name.removeFirst(prefix.count) }
+        let parts = name.split(separator: "/").prefix(2).map(String.init)
+        guard parts.count == 2 else { throw Failure.notFound(text) }
+        struct Info: Decodable { var default_branch: String; var description: String? }
+        let (data, response) = try await URLSession.shared.data(from: URL(string: "https://api.github.com/repos/\(parts[0])/\(parts[1])")!)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if status == 403 || status == 429 { throw Failure.limited }
+        guard status == 200, let info = try? JSONDecoder().decode(Info.self, from: data) else { throw Failure.notFound(name) }
+        return Repository(owner: parts[0], name: parts[1], title: name, summary: info.description ?? "", branch: info.default_branch)
+    }
+
+    /// The skills in a repository, from its file list (one request to GitHub's API).
+    static func skills(in repository: Repository) async throws -> [RemoteSkill] {
+        struct Tree: Decodable {
+            var tree: [Entry]
+            struct Entry: Decodable { var path: String; var type: String }
+        }
+        let url = URL(string: "https://api.github.com/repos/\(repository.owner)/\(repository.name)/git/trees/\(repository.branch)?recursive=1")!
+        var request = URLRequest(url: url)
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if status == 403 || status == 429 { throw Failure.limited }
+        guard status == 200 else { throw Failure.notFound(repository.id) }
+        let files = try JSONDecoder().decode(Tree.self, from: data).tree.filter { $0.type == "blob" }.map(\.path)
+        let folders = files.filter { ($0 as NSString).lastPathComponent == "SKILL.md" }.map { ($0 as NSString).deletingLastPathComponent }.filter { !$0.isEmpty }
+        return folders.sorted().map { folder in
+            RemoteSkill(repository: repository, path: folder, files: files.filter { $0.hasPrefix(folder + "/") })
+        }
+    }
+
+    /// The name and description in a skill's SKILL.md.
+    static func about(_ skill: RemoteSkill) async -> About {
+        guard let data = try? await URLSession.shared.data(from: rawURL(skill.repository, skill.path + "/SKILL.md")).0 else { return About() }
+        return about(markdown: String(decoding: data, as: UTF8.self))
+    }
+
+    /// The front matter's `name` and `description`.
+    static func about(markdown: String) -> About {
+        let lines = markdown.components(separatedBy: .newlines)
+        guard lines.first?.trimmingCharacters(in: .whitespaces) == "---" else { return About() }
+        var about = About()
+        var index = 1
+        while index < lines.count, lines[index].trimmingCharacters(in: .whitespaces) != "---" {
+            let line = lines[index]
+            if let colon = line.firstIndex(of: ":"), !line.hasPrefix(" ") {
+                let key = line[..<colon].trimmingCharacters(in: .whitespaces)
+                var value = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+                // A folded or literal block: the indented lines after it.
+                if value == ">" || value == "|" || value == ">-" || value == "|-" {
+                    var parts: [String] = []
+                    while index + 1 < lines.count, lines[index + 1].hasPrefix(" ") {
+                        index += 1
+                        parts.append(lines[index].trimmingCharacters(in: .whitespaces))
+                    }
+                    value = parts.joined(separator: " ")
+                }
+                value = value.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+                if key == "name" { about.name = value }
+                if key == "description" { about.description = value }
+            }
+            index += 1
+        }
+        return about
+    }
+
+    /// Copies a skill's files into `folder/<id>`, with a note of where they came from.
+    static func install(_ skill: RemoteSkill, into folder: URL) async throws {
+        let destination = folder.appending(path: skill.id)
+        if FileManager.default.fileExists(atPath: destination.path) { throw Failure.taken(skill.id) }
+        let staging = FileManager.default.temporaryDirectory.appending(path: "skill-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: staging) }
+        for file in skill.files {
+            let (data, response) = try await URLSession.shared.data(from: rawURL(skill.repository, file))
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw Failure.notFound(file) }
+            let target = staging.appending(path: String(file.dropFirst(skill.path.count + 1)))
+            try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: target)
+        }
+        let source = ["repository": skill.repository.id, "path": skill.path, "branch": skill.repository.branch]
+        try JSONSerialization.data(withJSONObject: source, options: [.prettyPrinted, .sortedKeys]).write(to: staging.appending(path: sourceFile))
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try FileManager.default.moveItem(at: staging, to: destination)
+    }
+
+    /// Skills installed from GitHub: their folder's name, and the repository they came from.
+    static func installed(in folder: URL) -> [String: String] {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+        var installed: [String: String] = [:]
+        for name in names {
+            guard let data = try? Data(contentsOf: folder.appending(path: name).appending(path: sourceFile)),
+                  let source = try? JSONSerialization.jsonObject(with: data) as? [String: String] else { continue }
+            installed[name] = source["repository"]
+        }
+        return installed
+    }
+
+    /// Where a skill came from, kept in its folder.
+    static let sourceFile = ".kuvo-source.json"
+
+    private static func rawURL(_ repository: Repository, _ path: String) -> URL {
+        let escaped = path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path
+        return URL(string: "https://raw.githubusercontent.com/\(repository.owner)/\(repository.name)/\(repository.branch)/\(escaped)")!
+    }
+}

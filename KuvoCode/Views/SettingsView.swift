@@ -19,6 +19,21 @@ struct SettingsView: View {
                 ProvidersView(context: .settings)
                     .frame(width: SettingsView.width, height: 600)
             }
+            Tab("Agents", systemImage: "person.2", value: "agents") {
+                AgentsSettings()
+            }
+            Tab("Permissions", systemImage: "hand.raised", value: "permissions") {
+                PermissionsSettings()
+            }
+            Tab("MCP", systemImage: "puzzlepiece.extension", value: "mcp") {
+                MCPSettings()
+            }
+            Tab("Skills", systemImage: "graduationcap", value: "skills") {
+                SkillsSettings()
+            }
+            Tab("Commands", systemImage: "command", value: "commands") {
+                CommandsSettings()
+            }
             Tab("Panel", systemImage: "sidebar.right", value: "panel") {
                 PanelSettingsView()
             }
@@ -135,36 +150,5 @@ private struct PanelSettingsView: View {
         } message: {
             Text("You'll be signed out of every site in the panel's browser. Your other browsers aren't affected.")
         }
-    }
-}
-
-private struct EngineSettings: View {
-    @Environment(AppModel.self) private var app
-
-    var body: some View {
-        Form {
-            LabeledContent("Engine", value: "opencode \(OpenCodeEngine.version)")
-            LabeledContent("Status") {
-                switch app.engine {
-                case .ready: Label(app.isLive ? "Running" : "Reconnecting", systemImage: "circle.fill").foregroundStyle(app.isLive ? .green : .orange)
-                case .failed: Label("Stopped", systemImage: "circle.fill").foregroundStyle(.red)
-                default: Text("Starting…")
-                }
-            }
-            LabeledContent("Data") {
-                Button("Show in Finder") {
-                    NSWorkspace.shared.activateFileViewerSelecting([AppInfo.supportDirectory])
-                }
-            }
-            Section {
-                Button("Restart Engine") { Task { await app.restart() } }
-            } footer: {
-                Text("Sessions, accounts and settings are kept in the data folder, separate from any opencode you have installed.")
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .formStyle(.grouped)
-        .frame(width: SettingsView.width)
-        .fixedSize()
     }
 }
