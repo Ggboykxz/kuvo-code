@@ -1,15 +1,19 @@
 import SwiftUI
 
 /// A folder outline that opens when its project is open. SF Symbols has no open folder,
-/// so both states are drawn here, with the same stroke.
+/// so both states are drawn here, with the same stroke over a faint fill of the same ink,
+/// so the folder has a body instead of being only a wire outline.
 struct FolderIcon: View {
     let isOpen: Bool
     var size: CGFloat = 16
 
     var body: some View {
-        FolderShape(open: isOpen)
-            .stroke(style: StrokeStyle(lineWidth: size / 11.5, lineCap: .round, lineJoin: .round))
-            .frame(width: size, height: size * 13 / 16)
+        let shape = FolderShape(open: isOpen)
+        ZStack {
+            shape.fill(.foreground.opacity(0.2))
+            shape.stroke(style: StrokeStyle(lineWidth: size / 11.5, lineCap: .round, lineJoin: .round))
+        }
+        .frame(width: size, height: size * 13 / 16)
     }
 }
 

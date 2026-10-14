@@ -6,10 +6,14 @@ import SwiftUI
 struct HoverHighlight<S: Shape>: ViewModifier {
     let shape: S
     var isSelected = false
+    /// Secondary ink until the pointer is on it, for controls that shouldn't outshout what's
+    /// around them (the composer's).
+    var mutesInk = false
     @State private var isHovering = false
 
     func body(content: Content) -> some View {
         content
+            .foregroundStyle(mutesInk && !isHovering ? AnyShapeStyle(.secondary) : AnyShapeStyle(.foreground))
             .background(fill, in: shape)
             .contentShape(shape)
             .onHover { isHovering = $0 }
@@ -23,8 +27,8 @@ struct HoverHighlight<S: Shape>: ViewModifier {
 }
 
 extension View {
-    func hoverHighlight<S: Shape>(in shape: S, selected: Bool = false) -> some View {
-        modifier(HoverHighlight(shape: shape, isSelected: selected))
+    func hoverHighlight<S: Shape>(in shape: S, selected: Bool = false, mutesInk: Bool = false) -> some View {
+        modifier(HoverHighlight(shape: shape, isSelected: selected, mutesInk: mutesInk))
     }
 
     func hoverHighlight(selected: Bool = false) -> some View {

@@ -4,8 +4,10 @@ import SwiftUI
 enum Metrics {
     /// The transcript and composer column. Long lines are hard to read.
     static let readableWidth: CGFloat = 760
-    static let composerRadius: CGFloat = 24
+    static let composerRadius: CGFloat = 14
     static let cardRadius: CGFloat = 14
+    /// A card's header bar: icon, title and actions.
+    static let cardHeaderHeight: CGFloat = 38
     /// Space between cards, and between cards and the window's edge.
     static let paneGap: CGFloat = 8
     static let bubbleRadius: CGFloat = 18

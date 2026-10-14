@@ -1,10 +1,13 @@
-import AppKit
 import SwiftUI
 
 /// The window's building block: a rounded pane floating on the window's glass,
-/// with a header (icon, title, actions) and content. The focused card is solid;
-/// the others are slightly frosted, but stay opaque enough to read over any
-/// wallpaper (a grey one turned 55% white into a muddy grey).
+/// with a header (icon, title, actions) and content. Like Rex, the focused card is
+/// crisp (white in light mode) and the others a warm ivory, all of them opaque so
+/// they read over any wallpaper. Edges are lit rather than outlined in gray, and a
+/// soft shadow lifts the cards off the glass.
+///
+/// The header is a bar the content scrolls under: messages run on beneath it and
+/// blur away instead of being cut off at a hard line.
 struct Card<Icon: View, Actions: View, Content: View>: View {
     var title: String
     var detail: String?
@@ -18,26 +21,59 @@ struct Card<Icon: View, Actions: View, Content: View>: View {
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        VStack(spacing: 0) {
-            if showsHeader { header }
+        let shape = RoundedRectangle(cornerRadius: Metrics.cardRadius)
+        framedContent
+            // Opaque fills inside the card (the terminal, pinned rows) match the card's own.
+            .environment(\.cardIsFocused, isFocused)
+            .clipShape(shape)
+            // The shadow comes from the fill alone, so it's drawn from one shape rather than
+            // worked out again from everything in the card each time it scrolls.
+            .background {
+                shape
+                    .fill(Surface.cardFill(scheme, focused: isFocused))
+                    .shadow(color: shadowColor, radius: isFocused ? 16 : 6, y: isFocused ? 6 : 2)
+            }
+            .specularRim(shape)
+            // The focused card's shadow falls on its neighbors, never theirs on it.
+            .zIndex(isFocused ? 1 : 0)
+            .animation(.ui, value: isFocused)
+    }
+
+    /// The content, under its header. The header takes its room at the top, so content that
+    /// doesn't scroll starts below it, while scroll views run on beneath it and fade out there.
+    @ViewBuilder private var framedContent: some View {
+        if showsHeader {
+            content()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .safeAreaBar(edge: .top, spacing: 0) {
+                    header.background(alignment: .top) { headerFade }
+                }
+                .scrollEdgeEffectStyle(.soft, for: .top)
+        } else {
             content()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .background(fill, in: .rect(cornerRadius: Metrics.cardRadius))
-        .overlay {
-            // Dark mode: a glassy highlight, brighter at the top edge. Light mode: a dark
-            // hairline, since a white edge vanishes against white.
-            RoundedRectangle(cornerRadius: Metrics.cardRadius)
-                .strokeBorder(
-                    scheme == .dark
-                        ? AnyShapeStyle(LinearGradient(colors: [.white.opacity(0.14), .white.opacity(0.04)], startPoint: .top, endPoint: .bottom))
-                        : AnyShapeStyle(Color.black.opacity(isFocused ? 0.09 : 0.07)),
-                    lineWidth: 1
+    }
+
+    /// What scrolls up fades out in the card's own color just below the header, and is gone
+    /// behind the title: no line cut off in mid-air, nothing showing through the words.
+    private var headerFade: some View {
+        Surface.cardFill(scheme, focused: isFocused)
+            .mask {
+                LinearGradient(
+                    stops: [
+                        .init(color: .black, location: 0),
+                        .init(color: .black, location: 0.6),
+                        .init(color: .black.opacity(0.75), location: 0.74),
+                        .init(color: .black.opacity(0.3), location: 0.88),
+                        .init(color: .clear, location: 1),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
                 )
-        }
-        .clipShape(.rect(cornerRadius: Metrics.cardRadius))
-        .shadow(color: .black.opacity(scheme == .dark ? 0.35 : (isFocused ? 0.1 : 0.04)), radius: isFocused ? 12 : 4, y: isFocused ? 4 : 1)
-        .animation(.ui, value: isFocused)
+            }
+            .frame(height: Metrics.cardHeaderHeight + 24)
+            .allowsHitTesting(false)
     }
 
     private var header: some View {
@@ -63,29 +99,17 @@ struct Card<Icon: View, Actions: View, Content: View>: View {
         }
         .padding(.leading, 14)
         .padding(.trailing, 8)
-        .frame(height: 38)
+        .frame(height: Metrics.cardHeaderHeight)
+        // The whole bar takes clicks, so nothing scrolled under it is clicked by accident.
+        .contentShape(.rect)
     }
 
-    private var fill: Color {
-        switch (scheme, isFocused) {
-        case (.dark, true): Color(white: 0.21, opacity: 0.92)
-        case (.dark, false): Color(white: 0.19, opacity: 0.8)
-        case (_, true): Color.white
-        case (_, false): Color(white: 0.965, opacity: 0.94)
-        }
-    }
-}
-
-/// The card's fill as it shows over the window's glass, as one solid color: for content that
-/// paints its own background, like the terminal, and has to blend into the card.
-enum CardFill {
-    static func solid(dark: Bool, focused: Bool) -> NSColor {
-        switch (dark, focused) {
-        case (true, true): NSColor(white: 0.2, alpha: 1)
-        case (true, false): NSColor(white: 0.17, alpha: 1)
-        case (false, true): .white
-        case (false, false): NSColor(white: 0.953, alpha: 1)
-        }
+    /// Soft elevation in place of a dark outline: a wide, faint shadow, a little deeper under
+    /// the focused card.
+    private var shadowColor: Color {
+        scheme == .dark
+            ? .black.opacity(isFocused ? 0.36 : 0.22)
+            : Surface.slate.opacity(isFocused ? 0.1 : 0.07)
     }
 }
 

@@ -7,6 +7,10 @@ extension View {
     /// this one shows through as shapes and even text (a dark app under a light
     /// window looked like a smudge). A tint matched to the appearance on top keeps
     /// the see-through feel, like Rex: what's behind comes through as colour only.
+    ///
+    /// Glass over flat grey reads as muddy grey, though, so the tint is kept light
+    /// and carries a faint warm-to-cool light: the frame picks up colour from the
+    /// desktop, and has a little of its own even over a grey one.
     func windowGlass() -> some View {
         modifier(WindowGlass())
     }
@@ -19,9 +23,11 @@ private struct WindowGlass: ViewModifier {
         content
             .containerBackground(.regularMaterial, for: .window)
             .background {
-                // Light: a mid-grey surface, a clear step below the white cards so they stand off it.
-                (scheme == .dark ? Color(white: 0.07, opacity: 0.55) : Color(white: 0.82, opacity: 0.6))
-                    .ignoresSafeArea()
+                ZStack {
+                    Surface.canvasTint(scheme)
+                    Surface.ambient(scheme)
+                }
+                .ignoresSafeArea()
             }
     }
 }
