@@ -113,7 +113,7 @@ struct ChangesPanel: View {
                     .font(.system(size: 12, weight: .medium))
                     .help("Commit the changes, and push them if you like")
                     .popover(isPresented: $isCommitting, arrowEdge: .bottom) {
-                        CommitForm(changes: changes, environment: app.shellEnvironment) { isCommitting = false }
+                        CommitForm(changes: changes, environment: app.shellEnvironment, api: app.api, session: model?.id, model: model?.session.model) { isCommitting = false }
                     }
             }
             Button {
@@ -188,7 +188,12 @@ struct ChangesPanel: View {
 private struct CommitForm: View {
     let changes: ProjectChanges
     let environment: [String: String]
+    let api: OpenCodeAPI?
+    /// The session open in the window: its model suggests the message.
+    let session: String?
+    let model: ModelRef?
     let done: () -> Void
+    @State private var isSuggesting = false
     @State private var message = ""
     @State private var hasStaged: Bool?
     @State private var failure: String?
@@ -204,6 +209,17 @@ private struct CommitForm: View {
                 .lineLimit(3...10)
                 .textFieldStyle(.roundedBorder)
                 .focused($isFocused)
+            if api != nil {
+                Button {
+                    suggest()
+                } label: {
+                    Label(isSuggesting ? "Writing…" : "Suggest a Message", systemImage: "sparkles")
+                }
+                .buttonStyle(.link)
+                .font(.callout)
+                .disabled(isSuggesting)
+                .help("Have the session's model write a message from the changes")
+            }
             if let hasStaged {
                 Text(hasStaged ? "Commits what's staged." : "Commits all the changes shown, \(changes.files.count) \(changes.files.count == 1 ? "file" : "files").")
                     .font(.callout)
@@ -233,6 +249,28 @@ private struct CommitForm: View {
         .task {
             isFocused = true
             hasStaged = await changes.hasStaged()
+        }
+    }
+
+    private func suggest() {
+        guard let api else { return }
+        isSuggesting = true
+        failure = nil
+        Task {
+            defer { isSuggesting = false }
+            let diff = await changes.commitDiff()
+            let prompt = """
+            Write a git commit message for the changes below. A summary line in the imperative mood, under 72 characters; then, only if it helps, a blank line and a few short lines on what changed and why. Reply with the message alone: no quotes, no code fences.
+
+            \(diff)
+            """
+            do {
+                // Through the session where there is one: free models only answer there.
+                let text = if let session { try await api.generate(prompt, session: session) } else { try await api.generate(prompt, model: model) }
+                message = text.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "`\"")))
+            } catch {
+                failure = error.localizedDescription
+            }
         }
     }
 

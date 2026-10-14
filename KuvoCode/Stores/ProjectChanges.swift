@@ -111,6 +111,13 @@ final class ProjectChanges {
         return failure
     }
 
+    /// The diff a commit would take (what's staged, or everything with new files' names),
+    /// cut to a size a model reads quickly.
+    func commitDiff() async -> String {
+        let directory = directory
+        return await Task.detached { Git.commitDiff(in: directory) }.value
+    }
+
     /// Whether anything is staged, which is what a commit takes then.
     func hasStaged() async -> Bool {
         let directory = directory
@@ -187,6 +194,18 @@ nonisolated enum Git {
             }
             return git(["restore", "--source=HEAD", "--staged", "--worktree", "--", file.path])
         }
+    }
+
+    static func commitDiff(in directory: String, limit: Int = 40_000) -> String {
+        var text: String
+        if hasStaged(in: directory) {
+            text = run(["diff", "--cached", "--no-color", "--no-ext-diff"], in: directory) ?? ""
+        } else {
+            text = run(["diff", "HEAD", "--no-color", "--no-ext-diff"], in: directory) ?? ""
+            let untracked = run(["ls-files", "--others", "--exclude-standard"], in: directory) ?? ""
+            if !untracked.isEmpty { text += "\nNew files:\n" + untracked }
+        }
+        return text.count > limit ? String(text.prefix(limit)) + "\n…" : text
     }
 
     static func hasStaged(in directory: String) -> Bool {
