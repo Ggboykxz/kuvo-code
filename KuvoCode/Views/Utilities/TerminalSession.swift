@@ -13,7 +13,8 @@ final class TerminalSession: NSObject {
     @ObservationIgnored var addToMessage: ((String) -> Void)?
     @ObservationIgnored private var appliedLook: (dark: Bool, focused: Bool)?
 
-    init(directory: String, environment: [String: String]) {
+    /// A shell, typing `command` once it starts (so it stays a shell when the command ends).
+    init(directory: String, environment: [String: String], command: String? = nil) {
         view = LocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
         super.init()
         view.processDelegate = self
@@ -37,6 +38,16 @@ final class TerminalSession: NSObject {
             execName: "-" + (shell as NSString).lastPathComponent,
             currentDirectory: directory
         )
+        if let command { view.send(txt: command + "\r") }
+    }
+
+    /// Interrupts whatever runs in the shell (Control-C), then types `command`.
+    func run(_ command: String) {
+        view.send([0x03])
+        Task {
+            try? await Task.sleep(for: .milliseconds(300))
+            view.send(txt: command + "\r")
+        }
     }
 
     func terminate() {

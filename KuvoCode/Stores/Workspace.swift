@@ -51,6 +51,8 @@ final class Workspace {
         var name: String?
         /// Other folders the agent works with, besides the primary one.
         var folders: [String] = []
+        /// What Run (⌘R) runs in a terminal: a dev server, say.
+        var run: String?
     }
 
     /// A copy of a project for sessions to work in apart from the rest: a git worktree of its
@@ -203,6 +205,8 @@ final class Workspace {
         project.name = project.name?.trimmingCharacters(in: .whitespacesAndNewlines)
         if project.name?.isEmpty == true || project.name == (directory as NSString).lastPathComponent { project.name = nil }
         project.folders = project.folders.filter { $0 != directory }
+        project.run = project.run?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if project.run?.isEmpty == true { project.run = nil }
         settings[directory] = project == ProjectSettings() ? nil : project
         saveSettings()
         // Sessions not open yet catch up when they open.

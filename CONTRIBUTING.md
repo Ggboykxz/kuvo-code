@@ -96,7 +96,7 @@ without clicking, for trying a change or taking screenshots:
 | `KUVO_DEMO_PROVIDERS` | Open Accounts (on a provider's sign-in if it names one) |
 | `KUVO_DEMO_APPEARANCE` | `light` or `dark` |
 | `KUVO_DEMO_CHANGES` | Show the side panel |
-| `KUVO_DEMO_PANEL` | Open tools in the panel, comma-separated: `terminal`, `browser=<address>`, `files`, `file=<path>`, `changes`, `expand` |
+| `KUVO_DEMO_PANEL` | Open tools in the panel, comma-separated: `terminal`, `browser=<address>`, `files`, `file=<path>`, `changes`, `run`, `expand` |
 | `KUVO_DEMO_WINDOW` | Window size, as `WIDTHxHEIGHT` |
 | `KUVO_DEMO_MENU` | Open the `mode` or `model` menu (`models` for its first submenu) |
 | `KUVO_DEMO_USAGE` | Open the menu bar's usage panel on `dashboard`, `customize` or `settings`, or `off` to leave the usage tracker out |

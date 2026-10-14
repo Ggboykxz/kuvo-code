@@ -160,7 +160,7 @@ struct MainView: View {
             Button("Cancel", role: .cancel) {}
         }
         .sheet(item: $projectSheet) { request in
-            ProjectSheet(project: request.project, folders: request.folders) { primary, settings in
+            ProjectSheet(project: request.project, folders: request.folders, focusesRun: request.focusesRun) { primary, settings in
                 workspace.saveProject(primary, settings: settings)
                 if request.project == nil { newSession(in: primary) }
             }
@@ -233,11 +233,27 @@ struct MainView: View {
                     }
                 }
             }
-            // A width from the window (minus the traffic lights and the Changes button), so a
+            // A width from the window (minus the traffic lights and the buttons on the right), so a
             // narrow window squeezes the tabs instead of pushing them into a » menu.
-            .frame(width: max(240, contentWidth - 150), alignment: .leading)
+            .frame(width: max(240, contentWidth - (runCommand == nil ? 150 : 190)), alignment: .leading)
         }
         .sharedBackgroundVisibility(.hidden)
+
+        if let runCommand {
+            ToolbarItem(placement: .primaryAction) {
+                Button(action: runProject) {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 13))
+                        .frame(width: 28, height: 28)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("Run")
+                .help("Run \(runCommand) (⌘R)")
+            }
+            .sharedBackgroundVisibility(.hidden)
+        }
 
         // Mirrors the sessions toggle on the left, and looks the same: a plain icon, not a
         // highlighted toggle.
@@ -487,6 +503,7 @@ struct MainView: View {
             showChanges: { showInPanel { utilities.showChanges() } },
             showFiles: { showInPanel { utilities.showFiles() } },
             newTerminal: { showInPanel { utilities.newTerminal(in: activeDirectory, environment: app.shellEnvironment) } },
+            run: runProject,
             newBrowser: { showInPanel { utilities.newBrowser() } },
             toggleSidebar: { withAnimation(.ui) { showsSidebar.toggle() } },
             nextTab: { cycleTabs(by: 1) },
@@ -506,6 +523,24 @@ struct MainView: View {
             showProviders: { showsProviders = true },
             openQuickly: { showsOpenQuickly = true }
         )
+    }
+
+    /// The active project's run command, if it has one.
+    private var runCommand: String? {
+        activeDirectory.flatMap { workspace.settings[workspace.projectDirectory($0)]?.run }
+    }
+
+    /// Runs the project's run command in a terminal, in the session's folder (its worktree, if it
+    /// has one). Without a command yet, Edit Project opens to set one.
+    private func runProject() {
+        guard let directory = activeDirectory else { return }
+        guard let command = runCommand else {
+            let primary = workspace.projectDirectory(directory)
+            let project = workspace.projects.first { $0.directory == primary } ?? Workspace.Project(directory: primary, sessions: [], settings: workspace.settings[primary] ?? .init())
+            projectSheet = ProjectSheetRequest(project: project, focusesRun: true)
+            return
+        }
+        showInPanel { utilities.run(command, in: directory, environment: app.shellEnvironment) }
     }
 
     /// Starts a draft in `directory`, or in the current project (a worktree's, for a session in one).
@@ -577,7 +612,7 @@ struct MainView: View {
         guard workspace.isLoaded, !Self.ranDemo else { return }
         Self.ranDemo = true
         // KUVO_DEMO_PANEL: tools to open in the panel, comma-separated: terminal,
-        // browser=<address>, files, file=<path>, changes, expand.
+        // browser=<address>, files, file=<path>, changes, run (the project's run command), expand.
         for item in (environment["KUVO_DEMO_PANEL"] ?? "").split(separator: ",").map(String.init) {
             let parts = item.split(separator: "=", maxSplits: 1).map(String.init)
             switch parts.first {
@@ -586,6 +621,7 @@ struct MainView: View {
             case "files": utilities.showFiles()
             case "file" where parts.count > 1: utilities.open(URL(filePath: parts[1]))
             case "changes": utilities.showChanges()
+            case "run": runProject()
             case "expand": panelExpanded = true
             default: continue
             }
@@ -690,6 +726,8 @@ struct ProjectSheetRequest: Identifiable {
     let project: Workspace.Project?
     /// Folders a new project starts with.
     var folders: [String] = []
+    /// Puts the cursor in the run command, for Run without one.
+    var focusesRun = false
 }
 
 /// Shown before there's any project.

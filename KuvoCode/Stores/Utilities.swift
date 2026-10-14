@@ -24,6 +24,8 @@ final class Utilities {
     /// Whether file tabs show the tree beside the file.
     var showsTree = true
     private(set) var terminals: [UUID: TerminalSession] = [:]
+    /// The terminals Run runs a project's command in, by the folder they run in.
+    private var runs: [String: UUID] = [:]
     private(set) var browsers: [UUID: BrowserSession] = [:]
     /// Sites the browser visits, for the new tab page.
     let history = BrowserHistory()
@@ -59,6 +61,23 @@ final class Utilities {
         let terminal = TerminalSession(directory: directory ?? NSHomeDirectory(), environment: environment)
         terminal.addToMessage = { [weak self] text in self?.addToMessage?(text) }
         terminals[tab.id] = terminal
+        add(tab)
+    }
+
+    /// Runs a project's run command in `directory`, in a terminal of its own. Run again, it
+    /// stops what's still running there and starts the command over.
+    func run(_ command: String, in directory: String, environment: [String: String]) {
+        Analytics.shared.track("project_run")
+        if let id = runs[directory], let terminal = terminals[id], terminal.isRunning {
+            terminal.run(command)
+            selection = id
+            return
+        }
+        let tab = Tab(kind: .terminal)
+        let terminal = TerminalSession(directory: directory, environment: environment, command: command)
+        terminal.addToMessage = { [weak self] text in self?.addToMessage?(text) }
+        terminals[tab.id] = terminal
+        runs[directory] = tab.id
         add(tab)
     }
 

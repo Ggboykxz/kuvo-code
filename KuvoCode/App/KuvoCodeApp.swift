@@ -152,6 +152,9 @@ struct AppCommands: Commands {
                     .keyboardShortcut("i", modifiers: [.command, .option])
                 Button("Show Files") { actions?.showFiles() }
                     .keyboardShortcut("f", modifiers: [.command, .option])
+                Button("Run") { actions?.run() }
+                    .keyboardShortcut("r")
+                    .disabled(actions?.hasProject != true)
                 Button("New Terminal") { actions?.newTerminal() }
                     .keyboardShortcut("`", modifiers: .control)
                 Button("New Browser Tab") { actions?.newBrowser() }
@@ -210,6 +213,8 @@ struct SessionActions {
     var showChanges: () -> Void
     var showFiles: () -> Void
     var newTerminal: () -> Void
+    /// The project's run command, in a terminal.
+    var run: () -> Void
     var newBrowser: () -> Void
     var toggleSidebar: () -> Void
     var nextTab: () -> Void

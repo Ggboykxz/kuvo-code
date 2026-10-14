@@ -18,14 +18,19 @@ struct ProjectSheet: View {
     @State private var setup: String?
     @State private var savedSetup: String?
     @State private var engineProject: String?
+    @State private var run: String
+    @FocusState private var isRunFocused: Bool
+    private let focusesRun: Bool
     /// The primary folder first.
     @State private var folders: [String]
     @FocusState private var isNameFocused: Bool
 
-    init(project: Workspace.Project?, folders: [String] = [], save: @escaping (String, Workspace.ProjectSettings) -> Void) {
+    init(project: Workspace.Project?, folders: [String] = [], focusesRun: Bool = false, save: @escaping (String, Workspace.ProjectSettings) -> Void) {
         self.project = project
         self.save = save
+        self.focusesRun = focusesRun
         _name = State(initialValue: project?.settings.name ?? "")
+        _run = State(initialValue: project?.settings.run ?? "")
         _folders = State(initialValue: project?.allFolders ?? folders)
     }
 
@@ -44,14 +49,22 @@ struct ProjectSheet: View {
                 folderList
             }
 
-            if setup != nil {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Worktree Setup")
-                        .font(.headline)
-                    TextField("Setup command", text: Binding(get: { setup ?? "" }, set: { setup = $0 }), prompt: Text("npm install && cp \"$OPENCODE_WORKTREE_BASE/.env\" ."), axis: .vertical)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Commands")
+                    .font(.headline)
+                TextField("Run", text: $run, prompt: Text("npm run dev"))
+                    .font(.system(.body, design: .monospaced))
+                    .textFieldStyle(.roundedBorder)
+                    .focused($isRunFocused)
+                Text("Run (⌘R) runs it in a terminal in the panel, in the session's folder.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                if setup != nil {
+                    TextField("Worktree setup", text: Binding(get: { setup ?? "" }, set: { setup = $0 }), prompt: Text("npm install && cp \"$OPENCODE_WORKTREE_BASE/.env\" ."), axis: .vertical)
                         .font(.system(.body, design: .monospaced))
                         .lineLimit(1...4)
                         .textFieldStyle(.roundedBorder)
+                        .padding(.top, 6)
                     Text("Runs in each new worktree before its session starts, to install dependencies or copy files git doesn't have. $OPENCODE_WORKTREE_BASE is the project's folder.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
@@ -66,7 +79,7 @@ struct ProjectSheet: View {
                     .buttonStyle(.glass)
                 Button(isNew ? "Create Project" : "Save") {
                     guard let primary = folders.first else { return }
-                    save(primary, Workspace.ProjectSettings(name: name, folders: Array(folders.dropFirst())))
+                    save(primary, Workspace.ProjectSettings(name: name, folders: Array(folders.dropFirst()), run: run))
                     saveSetup()
                     dismiss()
                 }
@@ -78,7 +91,7 @@ struct ProjectSheet: View {
         }
         .padding(28)
         .frame(width: 560)
-        .onAppear { isNameFocused = true }
+        .onAppear { if focusesRun { isRunFocused = true } else { isNameFocused = true } }
         .task(id: folders.first) { await loadSetup() }
     }
 
