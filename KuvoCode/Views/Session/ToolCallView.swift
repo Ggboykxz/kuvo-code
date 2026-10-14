@@ -259,6 +259,15 @@ private struct SubagentSteps: View {
     @Environment(Workspace.self) private var workspace
     @State private var model: SessionModel?
 
+    /// What it used, as a turn shows it: "4.2K tokens · $0.01".
+    static func usage(_ model: SessionModel) -> String? {
+        let steps = model.transcript.messages.compactMap { if case .assistant(let step) = $0 { step } else { nil } }
+        let tokens = steps.reduce(0) { $0 + ($1.tokens?.output ?? 0) + ($1.tokens?.reasoning ?? 0) }
+        guard tokens > 0 else { return nil }
+        let cost = steps.reduce(0) { $0 + ($1.cost ?? 0) }
+        return (["\(tokens.compactTokens) tokens"] + [cost.formattedCost].compactMap { $0 }).joined(separator: " · ")
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if let task {
@@ -293,6 +302,10 @@ private struct SubagentSteps: View {
                     }
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                } else if let usage = Self.usage(model) {
+                    Text(usage)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
                 }
             } else {
                 Spinner(size: 11)
