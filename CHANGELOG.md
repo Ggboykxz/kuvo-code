@@ -4,7 +4,7 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
-## Unreleased
+## 0.3.0
 
 - **A livelier look.** Cards have lit edges instead of gray outlines, the window's glass picks up your desktop's color, and your messages, the selected session and the send button are tinted with your accent color. Code sits in one recessed block, and the agent's steps open inline. Dark mode is deeper and cooler, with brighter code colors; in light mode the window's frame is a bright warm ivory whatever your wallpaper.
 - Messages fade out under the conversation's header instead of being cut off, and run on under the composer.
