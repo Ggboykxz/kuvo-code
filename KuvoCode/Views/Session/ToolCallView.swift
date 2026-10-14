@@ -18,13 +18,19 @@ struct ToolCallView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button {
-                guard hasDetails else { return }
-                withAnimation(.ui) { isExpanded.toggle() }
-            } label: {
-                header
+            // A step with details opens like a button, and lights up like one; the rest are lines.
+            Group {
+                if hasDetails {
+                    Button {
+                        withAnimation(.ui) { isExpanded.toggle() }
+                    } label: {
+                        header
+                    }
+                    .buttonStyle(TextButtonStyle(outset: true))
+                } else {
+                    header.foregroundStyle(.secondary)
+                }
             }
-            .buttonStyle(.plain)
             .contextMenu {
                 if let file, FileManager.default.fileExists(atPath: file.path) {
                     Button("Open in Panel") { app.utilities.show(file) }
@@ -64,13 +70,11 @@ struct ToolCallView: View {
             if hasDetails {
                 Image(systemName: "chevron.right")
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.tertiary)
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
             }
             Spacer(minLength: 0)
         }
         .font(.callout)
-        .foregroundStyle(.secondary)
         .contentShape(.rect)
     }
 

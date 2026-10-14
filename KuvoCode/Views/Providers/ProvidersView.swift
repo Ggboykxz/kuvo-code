@@ -171,9 +171,8 @@ private struct SearchField: View {
                     text = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(ClearFieldButtonStyle())
                 .help("Clear")
             }
         }

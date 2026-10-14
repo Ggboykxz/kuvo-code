@@ -96,12 +96,16 @@ struct ChangesPanel: View {
                     }
                     .pickerStyle(.inline)
                 } label: {
-                    Label((changes.directory as NSString).lastPathComponent, systemImage: "folder")
-                        .labelStyle(.titleAndIcon)
-                        .font(.system(size: 13, weight: .semibold))
+                    HStack(spacing: 4) {
+                        Label((changes.directory as NSString).lastPathComponent, systemImage: "folder")
+                            .labelStyle(.titleAndIcon)
+                        MenuChevron()
+                    }
+                    .font(.system(size: 13, weight: .semibold))
                 }
                 .menuStyle(.button)
-                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .buttonStyle(TextButtonStyle(outset: true, dimsAtRest: false))
                 .fixedSize()
                 .help("Which of the project's folders to show")
             }
@@ -126,12 +130,17 @@ struct ChangesPanel: View {
                         .pickerStyle(.inline)
                     }
                 } label: {
-                    Text(changes.scope == .branch ? changes.base.map { "Since \($0)" } ?? "Branch" : changes.scope.title)
-                        .font(.system(size: 13, weight: .semibold))
+                    HStack(spacing: 4) {
+                        Text(changes.scope == .branch ? changes.base.map { "Since \($0)" } ?? "Branch" : changes.scope.title)
+                        MenuChevron()
+                    }
+                    .font(.system(size: 13, weight: .semibold))
                 }
                 .menuStyle(.button)
-                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .buttonStyle(TextButtonStyle(outset: true, dimsAtRest: false))
                 .fixedSize()
+                .help("What to show: uncommitted, unstaged or staged changes, and more")
             } else {
                 Text("This Session")
                     .font(.system(size: 13, weight: .semibold))
@@ -527,9 +536,16 @@ private struct FileHeader: View {
     let perform: (ProjectChanges.Action) -> Void
     @Environment(\.colorScheme) private var scheme
     @State private var confirmsDiscard = false
+    @State private var isHovering = false
 
     var body: some View {
         HStack(spacing: 8) {
+            // Clicking the header folds the file away; the chevron says so.
+            Image(systemName: "chevron.right")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(hasBody ? (isHovering ? .primary : .secondary) : .quaternary)
+                .rotationEffect(.degrees(isCollapsed ? 0 : 90))
+                .frame(width: 10)
             Image(nsImage: NSWorkspace.shared.icon(forFile: file.url.path))
                 .resizable()
                 .frame(width: 18, height: 18)
@@ -587,9 +603,11 @@ private struct FileHeader: View {
         .frame(height: 38)
         // Opaque: the header stays pinned while the file's lines scroll under it. A plain
         // rectangle: without a shape, the background takes the rounded shape of its container.
-        .background(scheme == .dark ? Color(white: 0.21) : .white, in: .rect)
+        .background(headerFill, in: .rect)
         .overlay(alignment: .bottom) { Divider() }
         .contentShape(.rect)
+        .onHover { isHovering = $0 && hasBody }
+        .animation(.easeOut(duration: 0.12), value: isHovering)
         .onTapGesture { if hasBody { toggle() } }
         .alert("Discard the changes to \((file.path as NSString).lastPathComponent)?", isPresented: $confirmsDiscard) {
             Button("Discard", role: .destructive) { perform(.discard) }
@@ -611,6 +629,13 @@ private struct FileHeader: View {
         let folderText = Text(folder).foregroundStyle(.secondary).font(.system(size: 13))
         let nameText = Text(name).font(.system(size: 13, weight: .semibold))
         return Text("\(folderText)\(nameText)")
+    }
+
+    /// Opaque, so the header stays readable while lines scroll under it; a shade deeper under
+    /// the pointer.
+    private var headerFill: Color {
+        if scheme == .dark { return Color(white: isHovering ? 0.25 : 0.21) }
+        return isHovering ? Color(white: 0.955) : .white
     }
 
     private var statusLabel: String {
@@ -825,10 +850,8 @@ private struct FoldRow: View {
             .font(.system(size: 12))
             .foregroundStyle(.secondary)
             .frame(height: 26)
-            .background(Color.primary.opacity(0.04), in: .rect)
-            .contentShape(.rect)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(FilledButtonStyle(shape: .rect, rest: 0.04))
         .disabled(count == nil)
         .help(count == nil ? "" : "Show these lines")
     }
@@ -868,7 +891,7 @@ struct DiffLineRow: View {
                                 .frame(width: 16, height: 16)
                                 .background(Color.accentColor, in: .rect(cornerRadius: 4))
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(AccentBadgeButtonStyle())
                         .offset(x: 2)
                         .help("Comment on This Line")
                     }
@@ -980,9 +1003,8 @@ struct CommentCard: View {
                 HStack {
                     Spacer()
                     Button("Delete", action: delete)
-                        .buttonStyle(.plain)
+                        .buttonStyle(TextButtonStyle(outset: true))
                         .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
                 }
             }
         }
@@ -1056,8 +1078,7 @@ private struct CommentEditor: View {
             HStack {
                 Spacer()
                 Button("Cancel", action: cancel)
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
+                    .buttonStyle(TextButtonStyle(outset: true))
                 Button("Comment") { submit() }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)

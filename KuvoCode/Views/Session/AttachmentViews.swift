@@ -142,10 +142,8 @@ struct ComposerAttachment: View {
             Button(action: remove) {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: 14))
-                    .symbolRenderingMode(.palette)
-                    .foregroundStyle(.white, .gray)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(BadgeButtonStyle())
             .offset(x: 5, y: -5)
             .opacity(isHovering ? 1 : 0)
             .help("Remove")
@@ -223,6 +221,7 @@ private struct AttachmentPicture: View {
     let item: AttachmentItem
     let height: CGFloat
     @State private var image: NSImage?
+    @State private var isHovering = false
 
     private static let maxWidth: CGFloat = 360
 
@@ -242,8 +241,15 @@ private struct AttachmentPicture: View {
             }
         }
         .clipShape(.rect(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.primary.opacity(0.08)))
+        // Under the pointer, a firmer edge and a touch of shade: it opens.
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.black.opacity(isHovering ? 0.06 : 0))
+                .strokeBorder(.primary.opacity(isHovering ? 0.25 : 0.08), lineWidth: isHovering ? 1.5 : 1)
+        }
         .contentShape(.rect(cornerRadius: 12))
+        .onHover { isHovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovering)
         .onTapGesture(count: 2) { item.open() }
         .onTapGesture { item.preview() }
         .contextMenu { AttachmentMenu(item: item) }
@@ -261,6 +267,7 @@ private struct AttachmentPicture: View {
 
 private struct AttachmentRow: View {
     let item: AttachmentItem
+    @State private var isHovering = false
 
     var body: some View {
         Button(action: item.open) {
@@ -280,10 +287,12 @@ private struct AttachmentRow: View {
             .padding(.leading, 8)
             .padding(.trailing, 14)
             .padding(.vertical, 8)
-            .background(.fill.tertiary, in: .rect(cornerRadius: 14))
+            .background(isHovering ? AnyShapeStyle(.fill.secondary) : AnyShapeStyle(.fill.tertiary), in: .rect(cornerRadius: 14))
             .contentShape(.rect(cornerRadius: 14))
         }
         .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovering)
         .contextMenu { AttachmentMenu(item: item) }
         .help(item.fileURL?.path ?? item.name)
     }

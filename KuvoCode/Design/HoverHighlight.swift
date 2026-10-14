@@ -18,7 +18,7 @@ struct HoverHighlight<S: Shape>: ViewModifier {
 
     private var fill: Color {
         if isSelected { return Color.primary.opacity(0.08) }
-        return isHovering ? Color.primary.opacity(0.05) : .clear
+        return isHovering ? Color.primary.opacity(0.06) : .clear
     }
 }
 

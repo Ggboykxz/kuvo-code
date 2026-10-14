@@ -217,9 +217,9 @@ private struct RuleRow: View {
             Button {
                 change(nil)
             } label: {
-                Image(systemName: "minus.circle.fill").foregroundStyle(.secondary)
+                Image(systemName: "minus.circle.fill")
             }
-            .buttonStyle(.plain)
+            .buttonStyle(RemoveButtonStyle())
             .help("Remove Rule")
         }
         .onAppear { resource = rule.resource }

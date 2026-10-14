@@ -126,17 +126,16 @@ private struct TabButton: View {
             Button(action: close) {
                 Image(systemName: "xmark")
                     .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 16, height: 16)
-                    .background(.fill.tertiary, in: .circle)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(IconButtonStyle(width: 16, height: 16, cornerRadius: 8))
             .opacity(isHovering ? 1 : 0)
             .help("Close Tab")
         }
         .padding(.leading, 6)
         .padding(.trailing, 8)
         .frame(height: 30)
+        // Another tab lights up under the pointer, like a button.
+        .background(isHovering && !isActive ? Pressable.hoverFill : .clear, in: .capsule)
         .contentShape(.capsule)
         .onTapGesture(perform: select)
         .onHover { hovering in withAnimation(.easeOut(duration: 0.12)) { isHovering = hovering } }
@@ -264,11 +263,8 @@ struct ProjectIdentity: View {
             } label: {
                 Image(systemName: "sidebar.left")
                     .font(.system(size: 14))
-                    .frame(width: 28, height: 28)
-                    .contentShape(.rect)
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
+            .buttonStyle(IconButtonStyle(width: 28, height: 28, cornerRadius: 7))
             .help(showsSidebar ? "Hide Sessions (⌘0)" : "Show Sessions (⌘0)")
 
             if let name {
@@ -295,13 +291,21 @@ struct ProjectIdentity: View {
 
 private struct BranchLabel: View {
     let branch: String
+    /// A menu: a chevron says so, and the ink is left to the button style.
+    var isMenu = false
 
     var body: some View {
-        Label(branch, systemImage: "arrow.triangle.branch")
-            .labelStyle(.titleAndIcon)
-            .font(.system(size: 11))
-            .foregroundStyle(.secondary)
-            .imageScale(.small)
+        HStack(spacing: 3) {
+            Label(branch, systemImage: "arrow.triangle.branch")
+                .labelStyle(.titleAndIcon)
+                .imageScale(.small)
+            if isMenu {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7, weight: .bold))
+            }
+        }
+        .font(.system(size: 11))
+        .foregroundStyle(isMenu ? AnyShapeStyle(.foreground) : AnyShapeStyle(.secondary))
     }
 }
 
@@ -331,11 +335,12 @@ private struct BranchSwitcher: View {
                 isNaming = true
             }
         } label: {
-            BranchLabel(branch: branch)
+            BranchLabel(branch: branch, isMenu: true)
         }
         .menuStyle(.button)
         .menuIndicator(.hidden)
-        .buttonStyle(.plain)
+        // The fill hugs the label without moving it out of line with the project's name.
+        .buttonStyle(TextButtonStyle(cornerRadius: 4, outset: true))
         .fixedSize()
         .help("Switch branches, or start a new one")
         .task(id: directory + "\n" + branch) { await load() }

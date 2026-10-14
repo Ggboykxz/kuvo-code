@@ -184,9 +184,8 @@ struct ConfigStringList: View {
                         app.engineConfig.setItems(items, at: path)
                     } label: {
                         Image(systemName: "minus.circle.fill")
-                            .foregroundStyle(.secondary)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(RemoveButtonStyle())
                     .help("Remove")
                 }
             }
@@ -225,9 +224,9 @@ struct ConfigKeyValueList: View {
                 Button {
                     app.engineConfig.set(nil, at: path + [item.key])
                 } label: {
-                    Image(systemName: "minus.circle.fill").foregroundStyle(.secondary)
+                    Image(systemName: "minus.circle.fill")
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(RemoveButtonStyle())
                 .help("Remove")
             }
         }

@@ -271,11 +271,8 @@ struct MainView: View {
                 Button(action: runProject) {
                     Image(systemName: "play.fill")
                         .font(.system(size: 13))
-                        .frame(width: 28, height: 28)
-                        .contentShape(.rect)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+                .buttonStyle(IconButtonStyle(width: 28, height: 28, cornerRadius: 7))
                 .accessibilityLabel("Run")
                 .help("Run \(runCommand) (⌘R)")
             }
@@ -290,11 +287,8 @@ struct MainView: View {
             } label: {
                 Image(systemName: "sidebar.right")
                     .font(.system(size: 14))
-                    .frame(width: 28, height: 28)
-                    .contentShape(.rect)
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
+            .buttonStyle(IconButtonStyle(width: 28, height: 28, cornerRadius: 7))
             .accessibilityLabel(showsPanel ? "Hide Panel" : "Show Panel")
             .help(showsPanel ? "Hide Panel (⌥⌘0)" : "Show Panel: Changes, Files, Terminal, Browser (⌥⌘0)")
         }

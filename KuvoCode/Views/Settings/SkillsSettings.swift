@@ -82,11 +82,10 @@ struct SkillsSettings: View {
                             }
                             Spacer()
                             Image(systemName: "chevron.right")
-                                .foregroundStyle(.tertiary)
+                                .foregroundStyle(.secondary)
                         }
-                        .contentShape(.rect)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(TextButtonStyle(outset: true, dimsAtRest: false))
                 }
                 HStack {
                     TextField("Repository", text: $repositoryName, prompt: Text("Another repository on GitHub, like owner/skills"))

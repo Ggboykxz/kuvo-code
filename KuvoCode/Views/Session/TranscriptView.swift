@@ -509,9 +509,8 @@ private struct MessageText: View {
                 Button(isExpanded ? "Show Less" : "Show More") {
                     withAnimation(.ui) { isExpanded.toggle() }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(TextButtonStyle(outset: true))
                 .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.secondary)
                 .padding(.trailing, 6)
             }
         }
@@ -594,14 +593,11 @@ private struct ReasoningView: View {
                     }
                     Image(systemName: "chevron.right")
                         .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.tertiary)
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                 }
                 .font(.callout)
-                .foregroundStyle(.secondary)
-                .contentShape(.rect)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(TextButtonStyle(outset: true))
             .disabled(block.text.isEmpty)
 
             if isExpanded {
@@ -760,8 +756,7 @@ private struct TurnFiles: View {
             Label(files.count == 1 ? "Edited 1 file" : "Edited \(files.count) files", systemImage: "plus.forwardslash.minus")
                 .font(.caption)
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
+        .buttonStyle(TextButtonStyle(outset: true))
         .help("What this turn changed")
         .popover(isPresented: $isShowing, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 2) {
@@ -817,7 +812,7 @@ private struct TurnFiles: View {
     }
 }
 
-/// One of the small buttons under a message, quiet like the copy icon beside it.
+/// One of the small buttons under a message, like the copy icon beside it.
 private struct MessageActionButton: View {
     let symbol: String
     let help: String
@@ -827,16 +822,13 @@ private struct MessageActionButton: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 11))
-                .frame(width: 22, height: 20)
-                .contentShape(.rect)
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(.tertiary)
+        .buttonStyle(IconButtonStyle())
         .help(help)
     }
 }
 
-/// A quiet copy icon that turns into a checkmark for a moment once it's copied.
+/// A copy icon that turns into a checkmark for a moment once it's copied.
 struct CopyButton: View {
     let text: String
     var help = "Copy"
@@ -855,11 +847,8 @@ struct CopyButton: View {
             Image(systemName: copied ? "checkmark" : "doc.on.doc")
                 .font(.system(size: 11))
                 .contentTransition(.symbolEffect(.replace))
-                .frame(width: 22, height: 20)
-                .contentShape(.rect)
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(.tertiary)
+        .buttonStyle(IconButtonStyle())
         .help(copied ? "Copied" : help)
     }
 }

@@ -99,11 +99,8 @@ struct SidebarView: View {
                         Button(action: newProject) {
                             Image(systemName: "plus")
                                 .font(.system(size: 12, weight: .semibold))
-                                .frame(width: 22, height: 22)
-                                .contentShape(.rect)
                         }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
+                        .buttonStyle(IconButtonStyle(width: 22, height: 22))
                         .help("New Project… (⇧⌘N)")
                     }
                     if workspace.isLoaded && workspace.projects.isEmpty {
@@ -497,8 +494,7 @@ private struct SearchRow: View {
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.tertiary)
+                .buttonStyle(ClearFieldButtonStyle())
                 .help("Clear")
             }
         }
@@ -589,11 +585,8 @@ private struct ProjectRow: View {
             Button(action: newSession) {
                 Image(systemName: "square.and.pencil")
                     .font(.system(size: 13, weight: .medium))
-                    .frame(width: 26, height: 24)
-                    .contentShape(.rect)
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
+            .buttonStyle(IconButtonStyle(width: 26, height: 24))
             .padding(.trailing, 4)
             .opacity(isHovering ? 1 : 0)
             .help("New Session in \(project.name)")

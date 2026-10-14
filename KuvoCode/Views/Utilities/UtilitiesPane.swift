@@ -180,12 +180,8 @@ private struct UtilityTabButton: View {
             Button(action: close) {
                 Image(systemName: "xmark")
                     .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 16, height: 16)
-                    .background(isHovering ? AnyShapeStyle(.fill.tertiary) : AnyShapeStyle(.clear), in: .circle)
-                    .contentShape(.circle)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(IconButtonStyle(width: 16, height: 16, cornerRadius: 8))
             .opacity(isHovering || isSelected ? 1 : 0)
             .help("Close Tab")
         }

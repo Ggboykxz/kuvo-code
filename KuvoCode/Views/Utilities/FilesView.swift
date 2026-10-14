@@ -156,8 +156,7 @@ private struct FileTreeView: View {
                     .textFieldStyle(.plain)
                 if !tree.filter.isEmpty {
                     Button { tree.filter = "" } label: { Image(systemName: "xmark.circle.fill") }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.tertiary)
+                        .buttonStyle(ClearFieldButtonStyle())
                 }
             }
             .font(.system(size: 13))

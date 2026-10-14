@@ -56,10 +56,8 @@ struct OpenQuickly: View {
                             .lineLimit(1)
                             .padding(.horizontal, 10)
                             .frame(height: 30)
-                            .background(index == min(selected, matches.count - 1) ? AnyShapeStyle(.tint.opacity(0.16)) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 8))
-                            .contentShape(.rect)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(ListRowButtonStyle(isSelected: index == min(selected, matches.count - 1), cornerRadius: 8))
                     }
                 }
                 .padding(6)

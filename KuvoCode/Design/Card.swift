@@ -103,10 +103,9 @@ struct CardActionStyle: ButtonStyle {
         configuration.label
             .labelStyle(.iconOnly)
             .font(.system(size: 13, weight: .regular))
-            .foregroundStyle(isHovering ? .primary : .tertiary)
+            .foregroundStyle(isHovering ? .primary : .secondary)
             .frame(width: 26, height: 24)
-            .background(isHovering ? AnyShapeStyle(.fill.tertiary) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 6))
-            .opacity(configuration.isPressed ? 0.6 : 1)
+            .background(configuration.isPressed ? Pressable.pressedFill : isHovering ? Pressable.hoverFill : .clear, in: .rect(cornerRadius: 6))
             .contentShape(.rect)
             .onHover { isHovering = $0 }
     }

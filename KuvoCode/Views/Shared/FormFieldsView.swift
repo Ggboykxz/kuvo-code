@@ -184,10 +184,10 @@ private struct OptionList: View {
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 9)
-                    .background(isSelected ? AnyShapeStyle(Color.accentColor.opacity(0.12)) : AnyShapeStyle(.fill.quaternary), in: .rect(cornerRadius: 10))
-                    .contentShape(.rect)
+                    .background(isSelected ? AnyShapeStyle(Color.accentColor.opacity(0.12)) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 10))
                 }
-                .buttonStyle(.plain)
+                // An option lights up under the pointer, like the button it is.
+                .buttonStyle(FilledButtonStyle(shape: .rect(cornerRadius: 10), rest: isSelected ? 0 : 0.045))
             }
         }
     }

@@ -164,10 +164,8 @@ struct CommandPalette: View {
             .lineLimit(1)
             .padding(.horizontal, 10)
             .frame(height: 30)
-            .background(isSelected ? AnyShapeStyle(.tint.opacity(0.16)) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 8))
-            .contentShape(.rect)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ListRowButtonStyle(isSelected: isSelected, cornerRadius: 8))
     }
 
     private func choose(_ item: PaletteItem) {

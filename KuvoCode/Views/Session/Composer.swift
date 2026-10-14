@@ -75,11 +75,10 @@ struct Composer: View {
                         .font(.system(size: 12, weight: .medium))
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)
-                        .background(Color.primary.opacity(0.06), in: .capsule)
                 }
                 .menuStyle(.button)
                 .menuIndicator(.hidden)
-                .buttonStyle(.plain)
+                .buttonStyle(FilledButtonStyle(shape: .capsule, rest: 0.06))
                 .fixedSize()
                 .help("Your comments on the changes go with this message.")
             }
@@ -400,10 +399,8 @@ private struct MentionList: View {
                     }
                     .padding(.horizontal, 8)
                     .frame(height: 28)
-                    .background(index == selected ? AnyShapeStyle(.tint.opacity(0.16)) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 7))
-                    .contentShape(.rect)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(ListRowButtonStyle(isSelected: index == selected))
             }
         }
         .padding(.leading, -8)
@@ -434,10 +431,8 @@ private struct CommandList: View {
                     .lineLimit(1)
                     .padding(.horizontal, 8)
                     .frame(height: 28)
-                    .background(index == selected ? AnyShapeStyle(.tint.opacity(0.16)) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 7))
-                    .contentShape(.rect)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(ListRowButtonStyle(isSelected: index == selected))
             }
         }
         .padding(.leading, -8)

@@ -183,9 +183,9 @@ private struct CustomProviderEditor: View {
                         Button {
                             config.set(nil, at: path + ["models", model])
                         } label: {
-                            Image(systemName: "minus.circle.fill").foregroundStyle(.secondary)
+                            Image(systemName: "minus.circle.fill")
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(RemoveButtonStyle())
                         .help("Remove Model")
                     }
                 }
