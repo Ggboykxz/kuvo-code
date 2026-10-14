@@ -244,8 +244,13 @@ struct MainView: View {
                 ProjectIdentity(
                     name: activeDirectory.map(workspace.projectName),
                     branch: activeDirectory.flatMap { workspace.branches[$0] },
+                    directory: activeDirectory,
+                    isWorktree: activeDirectory.map { workspace.worktrees[$0] != nil } ?? false,
+                    environment: app.shellEnvironment,
                     showsSidebar: $showsSidebar
-                )
+                ) {
+                    if let activeDirectory { Task { await workspace.loadBranch(for: activeDirectory) } }
+                }
                 if !tabItems.isEmpty {
                     TabStrip(tabs: tabItems, selection: $selection, close: { closeTab($0) }, closeAll: closeTabs(except:)) { id in
                         guard let session = workspace.session(id) else { return }

@@ -248,7 +248,14 @@ private struct FrontTile: View {
 struct ProjectIdentity: View {
     let name: String?
     let branch: String?
+    /// Where the session runs, for switching its branch.
+    var directory: String?
+    /// A session's own worktree keeps its branch.
+    var isWorktree = false
+    var environment: [String: String] = [:]
     @Binding var showsSidebar: Bool
+    /// After switching branches.
+    var switched: () -> Void = {}
 
     var body: some View {
         HStack(spacing: 10) {
@@ -269,17 +276,99 @@ struct ProjectIdentity: View {
                     Text(name)
                         .font(.system(size: 13, weight: .semibold))
                     if let branch {
-                        Label(branch, systemImage: "arrow.triangle.branch")
-                            .labelStyle(.titleAndIcon)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .imageScale(.small)
+                        if let directory, !isWorktree {
+                            BranchSwitcher(branch: branch, directory: directory, environment: environment, switched: switched)
+                        } else {
+                            BranchLabel(branch: branch)
+                                .help(isWorktree ? "This session's own branch, in its worktree" : "")
+                        }
                     }
                 }
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(minWidth: 50, alignment: .leading)
             }
+        }
+    }
+}
+
+private struct BranchLabel: View {
+    let branch: String
+
+    var body: some View {
+        Label(branch, systemImage: "arrow.triangle.branch")
+            .labelStyle(.titleAndIcon)
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+            .imageScale(.small)
+    }
+}
+
+/// The branch under the project's name, as a menu: switch to another of the repository's
+/// branches (the latest first), or start a new one.
+private struct BranchSwitcher: View {
+    let branch: String
+    let directory: String
+    let environment: [String: String]
+    let switched: () -> Void
+    @State private var branches: [String] = []
+    @State private var isNaming = false
+    @State private var newName = ""
+    @State private var failure: String?
+
+    var body: some View {
+        Menu {
+            if branches.count > 1 {
+                Section("Switch To") {
+                    ForEach(branches.filter { $0 != branch }.prefix(15), id: \.self) { name in
+                        Button(name) { run(["switch", name], created: false) }
+                    }
+                }
+            }
+            Button("New Branch…") {
+                newName = ""
+                isNaming = true
+            }
+        } label: {
+            BranchLabel(branch: branch)
+        }
+        .menuStyle(.button)
+        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
+        .fixedSize()
+        .help("Switch branches, or start a new one")
+        .task(id: directory + "\n" + branch) { await load() }
+        // Branches made elsewhere show up the next time the pointer comes by.
+        .onHover { if $0 { Task { await load() } } }
+        .alert("New Branch", isPresented: $isNaming) {
+            TextField("Name", text: $newName)
+            Button("Create") { run(["switch", "-c", newName.trimmingCharacters(in: .whitespaces)], created: true) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("It starts from \(branch), and changes you haven't committed come along.")
+        }
+        .alert("Couldn't Switch Branches", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
+            Button("OK") {}
+        } message: {
+            Text(failure ?? "")
+        }
+    }
+
+    private func load() async {
+        let directory = directory
+        let list = await Task.detached {
+            Git.run(["for-each-ref", "--sort=-committerdate", "--format=%(refname:short)", "refs/heads"], in: directory) ?? ""
+        }.value
+        branches = list.split(separator: "\n").map(String.init)
+    }
+
+    private func run(_ arguments: [String], created: Bool) {
+        guard arguments.last?.isEmpty == false else { return }
+        let directory = directory, environment = environment
+        Task {
+            failure = await Task.detached { Git.report(arguments, in: directory, environment: environment) }.value
+            if failure == nil { Analytics.shared.track("branch_switched", ["created": created]) }
+            switched()
         }
     }
 }
