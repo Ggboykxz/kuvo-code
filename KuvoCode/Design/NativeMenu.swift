@@ -9,13 +9,15 @@ import os
 struct NativeMenuButton<Label: View>: View {
     /// Identifies the menu for the KUVO_DEMO_MENU debug hook.
     var name = ""
+    /// Below the button, for one near the top of a card; above it by default, for the composer's.
+    var opensBelow = false
     let menu: () -> NSMenu
     @ViewBuilder let label: () -> Label
     @State private var anchor = Anchor()
 
     var body: some View {
         Button {
-            anchor.popUp(menu())
+            anchor.popUp(menu(), below: opensBelow)
         } label: {
             label()
         }
@@ -27,7 +29,7 @@ struct NativeMenuButton<Label: View>: View {
             guard let wanted = ProcessInfo.processInfo.environment["KUVO_DEMO_MENU"], !name.isEmpty, wanted == name || wanted == name + "s" else { return }
             try? await Task.sleep(for: .seconds(3))
             let menu = menu()
-            anchor.popUp(wanted == name ? menu : menu.items.first { $0.submenu != nil }?.submenu ?? menu)
+            anchor.popUp(wanted == name ? menu : menu.items.first { $0.submenu != nil }?.submenu ?? menu, below: opensBelow)
         }
         #endif
     }
@@ -35,10 +37,13 @@ struct NativeMenuButton<Label: View>: View {
     final class Anchor {
         weak var view: NSView?
 
-        /// Opens the menu just above the button (the composer sits at the bottom of the window).
-        func popUp(_ menu: NSMenu) {
+        /// Opens the menu just above the button (the composer sits at the bottom of the window),
+        /// or just below it.
+        func popUp(_ menu: NSMenu, below: Bool = false) {
             guard let view else { return }
-            let origin = NSPoint(x: -8, y: view.bounds.height + menu.size.height + 8)
+            let origin = below
+                ? NSPoint(x: 0, y: -4)
+                : NSPoint(x: -8, y: view.bounds.height + menu.size.height + 8)
             menu.popUp(positioning: nil, at: origin, in: view)
         }
     }

@@ -20,7 +20,8 @@ struct NewTabPage: View {
             VStack(alignment: .leading, spacing: 28) {
                 if showsTools {
                     section("Tools") {
-                        LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                        // Two across when the panel has room for them, one when it doesn't.
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 10)], spacing: 10) {
                             ToolCard(title: "Changes", symbol: "plus.forwardslash.minus", shortcut: "⌥⌘I") {
                                 replace { utilities.showChanges() }
                             }
@@ -96,22 +97,11 @@ private struct ToolCard: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: symbol)
-                    .font(.system(size: 14))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 20)
-                Text(title)
-                    .font(.system(size: 14))
-                Spacer(minLength: 6)
-                if let shortcut {
-                    Text(shortcut)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(Color.primary.opacity(0.07), in: .capsule)
-                }
+            // The shortcut only when there's room for it beside the name; the name stays on
+            // one line either way.
+            ViewThatFits(in: .horizontal) {
+                row(showsShortcut: true)
+                row(showsShortcut: false)
             }
             .padding(.horizontal, 14)
             .frame(height: 48)
@@ -120,6 +110,29 @@ private struct ToolCard: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
+    }
+
+    private func row(showsShortcut: Bool) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol)
+                .font(.system(size: 14))
+                .foregroundStyle(.secondary)
+                .frame(width: 20)
+            Text(title)
+                .font(.system(size: 14))
+                .lineLimit(1)
+                .fixedSize()
+            Spacer(minLength: 6)
+            if showsShortcut, let shortcut {
+                Text(shortcut)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Color.primary.opacity(0.07), in: .capsule)
+                    .fixedSize()
+            }
+        }
     }
 }
 

@@ -399,48 +399,92 @@ private struct FileViewer: View {
     }
 }
 
-/// "Open" in the file's default app, with the other apps that open it a click away.
+/// "Open" in the file's default app, and beside it a chevron for the other apps that open it.
+/// (A menu behind a long press went unnoticed: a click only ever opened the default.)
 private struct OpenMenu: View {
     let url: URL
 
     var body: some View {
         let workspace = NSWorkspace.shared
         let defaultApp = workspace.urlForApplication(toOpen: url)
-        Menu {
-            ForEach(workspace.urlsForApplications(toOpen: url).prefix(10), id: \.self) { app in
-                Button {
-                    workspace.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
-                } label: {
-                    Label {
-                        Text(FileManager.default.displayName(atPath: app.path).replacingOccurrences(of: ".app", with: ""))
-                    } icon: {
-                        Image(nsImage: workspace.icon(forFile: app.path))
+        HStack(spacing: 0) {
+            Button { workspace.open(url) } label: {
+                HStack(spacing: 6) {
+                    if let defaultApp {
+                        Image(nsImage: workspace.icon(forFile: defaultApp.path))
+                            .resizable()
+                            .frame(width: 16, height: 16)
                     }
+                    Text("Open")
                 }
             }
-            Divider()
-            Button("Show in Finder") { workspace.activateFileViewerSelecting([url]) }
-            Button("Copy Path") { copyPath(url) }
-        } label: {
-            HStack(spacing: 6) {
-                if let defaultApp {
-                    Image(nsImage: workspace.icon(forFile: defaultApp.path))
-                        .resizable()
-                        .frame(width: 16, height: 16)
-                }
-                Text("Open")
+            .buttonStyle(TextButtonStyle(cornerRadius: 7))
+            .help(defaultApp.map { "Open in \(OpenWith.name(of: $0))" } ?? "Open")
+            // An AppKit menu: SwiftUI's leaves out the apps' icons.
+            NativeMenuButton(name: "openwith", opensBelow: true) {
+                let menu = NSMenu()
+                OpenWith.items(for: url).forEach(menu.addItem)
+                menu.addItem(.separator())
+                menu.addItem(ActionItem("Show in Finder") { workspace.activateFileViewerSelecting([url]) })
+                menu.addItem(ActionItem("Copy Path") { copyPath(url) })
+                return menu
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+                    .frame(width: 20, height: 24)
+                    .hoverHighlight(in: RoundedRectangle(cornerRadius: 7), mutesInk: true)
             }
-        } primaryAction: {
-            workspace.open(url)
+            .help("Open With")
         }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
         .font(.system(size: 12, weight: .medium))
-        .padding(.horizontal, 10)
-        .frame(height: 26)
-        .hoverHighlight(in: Capsule())
         .fixedSize()
-        .help(defaultApp.map { "Open in \(FileManager.default.displayName(atPath: $0.path))" } ?? "Open")
+    }
+}
+
+/// The apps that open a file, as menu items with their icons: its default first, then the others
+/// macOS knows for it, five in all, and Other… for any app.
+enum OpenWith {
+    static func items(for url: URL) -> [NSMenuItem] {
+        let workspace = NSWorkspace.shared
+        let defaultApp = workspace.urlForApplication(toOpen: url)
+        var items: [NSMenuItem] = apps(for: url).map { app in
+            ActionItem(app == defaultApp ? "\(name(of: app)) (Default)" : name(of: app), image: icon(of: app)) {
+                workspace.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
+            }
+        }
+        items.append(ActionItem("Other…") { chooseApp(for: url) })
+        return items
+    }
+
+    static func apps(for url: URL) -> [URL] {
+        let workspace = NSWorkspace.shared
+        var apps = workspace.urlsForApplications(toOpen: url)
+        if let defaultApp = workspace.urlForApplication(toOpen: url) {
+            apps.removeAll { $0 == defaultApp }
+            apps.insert(defaultApp, at: 0)
+        }
+        return Array(apps.prefix(5))
+    }
+
+    static func name(of app: URL) -> String {
+        FileManager.default.displayName(atPath: app.path).replacingOccurrences(of: ".app", with: "")
+    }
+
+    /// At menu size: an app's icon comes large.
+    private static func icon(of app: URL) -> NSImage {
+        let icon = NSWorkspace.shared.icon(forFile: app.path).copy() as? NSImage ?? NSImage()
+        icon.size = NSSize(width: 16, height: 16)
+        return icon
+    }
+
+    private static func chooseApp(for url: URL) {
+        let panel = NSOpenPanel()
+        panel.directoryURL = URL(filePath: "/Applications")
+        panel.allowedContentTypes = [.application]
+        panel.prompt = "Open"
+        panel.message = "Choose an app to open \(url.lastPathComponent) with."
+        guard panel.runModal() == .OK, let app = panel.url else { return }
+        NSWorkspace.shared.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
     }
 }
 

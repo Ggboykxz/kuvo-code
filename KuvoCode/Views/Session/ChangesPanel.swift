@@ -572,31 +572,14 @@ private struct FileHeader: View {
             .buttonStyle(CardActionStyle())
             .help("Open in Editor")
             .disabled(file.status == .deleted)
-            Menu {
-                Button("Open in Editor") { NSWorkspace.shared.open(file.url) }
-                    .disabled(file.status == .deleted)
-                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([file.url]) }
-                    .disabled(file.status == .deleted)
-                Divider()
-                Button("Copy Path") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(file.path, forType: .string)
-                }
-                if let scope {
-                    Divider()
-                    if scope == .staged {
-                        Button("Unstage") { perform(.unstage) }
-                    } else {
-                        Button("Stage") { perform(.stage) }
-                        Button("Discard Changes…", role: .destructive) { confirmsDiscard = true }
-                    }
-                }
-            } label: {
+            // An AppKit menu, so Open With shows the apps' icons (SwiftUI's leaves them out).
+            NativeMenuButton(opensBelow: true, menu: fileMenu) {
                 Image(systemName: "ellipsis")
+                    .font(.system(size: 13))
+                    .frame(width: 26, height: 24)
+                    .hoverHighlight(in: RoundedRectangle(cornerRadius: 6), mutesInk: true)
             }
-            .menuStyle(.button)
-            .menuIndicator(.hidden)
-            .buttonStyle(CardActionStyle())
+            .help("More")
             .fixedSize()
         }
         .padding(.leading, 14)
@@ -639,6 +622,40 @@ private struct FileHeader: View {
     private var headerFill: Color {
         Surface.cardFill(scheme, focused: cardIsFocused)
             .mix(with: scheme == .dark ? .white : .black, by: isHovering ? 0.045 : 0, in: .device)
+    }
+
+    /// The file's ⋯ menu: opening it, its path, and staging it.
+    private func fileMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let exists = file.status != .deleted
+        let open = ActionItem("Open in Editor") { NSWorkspace.shared.open(file.url) }
+        open.isEnabled = exists
+        menu.addItem(open)
+        let openWith = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
+        let apps = NSMenu()
+        OpenWith.items(for: file.url).forEach(apps.addItem)
+        openWith.submenu = apps
+        openWith.isEnabled = exists
+        menu.addItem(openWith)
+        let finder = ActionItem("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([file.url]) }
+        finder.isEnabled = exists
+        menu.addItem(finder)
+        menu.addItem(.separator())
+        menu.addItem(ActionItem("Copy Path") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(file.path, forType: .string)
+        })
+        if let scope {
+            menu.addItem(.separator())
+            if scope == .staged {
+                menu.addItem(ActionItem("Unstage") { perform(.unstage) })
+            } else {
+                menu.addItem(ActionItem("Stage") { perform(.stage) })
+                menu.addItem(ActionItem("Discard Changes…") { confirmsDiscard = true })
+            }
+        }
+        return menu
     }
 
     private var statusLabel: String {

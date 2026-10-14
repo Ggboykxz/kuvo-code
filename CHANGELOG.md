@@ -10,6 +10,8 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Messages fade out under the conversation's header instead of being cut off, and run on under the composer.
 - **A quieter composer**: no outline, smaller corners, and its buttons stay in the background until you point at them.
 - **Hide the tab bar**, the whole row at the top, with View › Hide Tab Bar (⌥⌘T) or in Settings › General: the cards reach the top of the window, with the sidebar button next to the window's own. Switch sessions from the sidebar or ⌘K.
+- **Open With**: the file viewer's Open button has a menu beside it, and the Changes tab's ⋯ menu an Open With submenu, listing the apps that open the file with their icons, the default first, and Other… for any app.
+- The side panel's new tab page fits a narrow panel: its tools stack in one column instead of breaking their names.
 - **Many tabs in the side panel** stay readable: each keeps its name, and past what fits the row scrolls sideways, fading at the edge with more and keeping the chosen tab in view.
 - **New Project and Edit Project** read as one form: the folders are rows of a field like the name, with adding one as its last row, and Run and Worktree Setup are fields of their own.
 - The sidebar sits on the window's glass instead of a card of its own, its rows lined up under the window's buttons, and the tabs start where the conversation does.
