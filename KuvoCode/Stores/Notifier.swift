@@ -41,8 +41,9 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
 
     /// Takes a session's notifications away once you've looked at it.
     func clear(session: String) {
-        let center = UNUserNotificationCenter.current()
-        center.getDeliveredNotifications { delivered in
+        Task {
+            let center = UNUserNotificationCenter.current()
+            let delivered = await center.deliveredNotifications()
             let ids = delivered.filter { $0.request.content.threadIdentifier == session }.map(\.request.identifier)
             if !ids.isEmpty { center.removeDeliveredNotifications(withIdentifiers: ids) }
         }

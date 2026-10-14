@@ -126,10 +126,15 @@ struct MainView: View {
             }
         }
         .focusedSceneValue(\.sessionActions, actions)
+        // Viewed only while you're here: finished while you're in another app, it waits for you
+        // on the Dock icon, and counts as seen when you come back.
         .onChange(of: sessionID) { _, id in
-            if let id { workspace.markViewed(id) }
+            if let id, NSApp.isActive { workspace.markViewed(id) }
         }
         .onChange(of: workspace.session(sessionID)?.time.idle) {
+            if let sessionID, NSApp.isActive { workspace.markViewed(sessionID) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             if let sessionID { workspace.markViewed(sessionID) }
         }
         .task(id: activeDirectory) {

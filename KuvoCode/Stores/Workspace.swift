@@ -75,7 +75,8 @@ final class Workspace {
     func setArchived(_ id: String, _ archived: Bool) async {
         guard let api, let index = sessions.firstIndex(where: { $0.id == id }) else { return }
         var metadata = sessions[index].metadata?.object ?? [:]
-        metadata[Self.archivedKey] = archived ? .bool(true) : nil
+        // Written either way: the engine may merge metadata rather than replace it.
+        metadata[Self.archivedKey] = .bool(archived)
         sessions[index].metadata = .object(metadata)
         try? await api.setMetadata(session: id, .object(metadata))
     }
@@ -173,7 +174,11 @@ final class Workspace {
         let session = try await api.forkSession(id, before: message.id)
         upsert(session)
         let (withComments, paths) = Attachments.split(message.text)
-        Drafts.shared[session.id] = Drafts.Draft(text: ReviewComments.split(withComments).text, files: paths.map { URL(filePath: $0) })
+        // The engine's copy carries the attachments; one seen arrive live doesn't.
+        let recent = (try? await api.messages(session: id, limit: 100).data) ?? []
+        var stored = message
+        for case .user(let user) in recent where user.id == message.id { stored = user }
+        Drafts.shared[session.id] = Drafts.Draft(text: ReviewComments.split(withComments).text, files: SessionModel.files(of: stored) + paths.map { URL(filePath: $0) })
         requestedTab = session.id
     }
 
@@ -199,10 +204,16 @@ final class Workspace {
         isLoaded = true
     }
 
-    /// After a reconnect: re-read the list and every open session.
+    /// After a reconnect: re-read the list and every open session. Requests asked while
+    /// disconnected are known again from the open sessions.
     func resync() async {
         await refresh()
-        for model in models.values { await model.load() }
+        asking = [:]
+        for model in models.values {
+            await model.load()
+            for request in model.transcript.permissions { asking[request.id] = request.sessionID }
+            for form in model.transcript.forms { asking[form.id] = form.sessionID }
+        }
     }
 
     func handle(_ event: ServerEvent) {
@@ -222,6 +233,7 @@ final class Workspace {
         case "session.deleted":
             sessions.removeAll { $0.id == id }
             models[id] = nil
+            asking = asking.filter { $0.value != id }
         case "session.execution.started":
             running.insert(id)
             touch(id)
@@ -279,9 +291,18 @@ final class Workspace {
     }
 
     private func notifyAsk(_ id: String, body: String) {
-        // A subagent's session has no row of its own; its request shows in its parent's.
-        let session = session(id)
-        Notifier.shared.notify(session: id, title: session?.title ?? AppInfo.name, subtitle: session.map { projectName($0.location.directory) }, body: body)
+        Task {
+            // A subagent's session has no row or tab of its own; its request shows in the
+            // session that started it.
+            var session = session(id)
+            var parent = session == nil ? (try? await api?.session(id))?.parentID : nil
+            for _ in 0..<5 where session == nil {
+                guard let next = parent else { break }
+                session = self.session(next)
+                parent = session == nil ? (try? await api?.session(next))?.parentID : nil
+            }
+            Notifier.shared.notify(session: session?.id ?? id, title: session?.title ?? AppInfo.name, subtitle: session.map { projectName($0.location.directory) }, body: body)
+        }
     }
 
     /// "Wants to run a command: npm test".
