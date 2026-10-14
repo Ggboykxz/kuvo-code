@@ -50,6 +50,22 @@ public struct OpenCodeAPI: Sendable {
     }
 
     /// The project's version control state: today, its current git branch.
+    /// One answer from the session's model, with the session's context, leaving its history
+    /// as it was.
+    public func generate(_ prompt: String, session: String) async throws -> String {
+        struct Body: Encodable { var prompt: String }
+        struct Response: Decodable { var data: Text; struct Text: Decodable { var text: String } }
+        return try await send("POST", "api/session/\(session.pathEscaped)/generate", body: Body(prompt: prompt), as: Response.self).data.text
+    }
+
+    /// One answer from a model (the default one without `model`), outside any session.
+    /// OpenCode's free models don't answer these.
+    public func generate(_ prompt: String, model: ModelRef? = nil) async throws -> String {
+        struct Body: Encodable { var prompt: String; var model: ModelRef? }
+        struct Response: Decodable { var data: Text; struct Text: Decodable { var text: String } }
+        return try await send("POST", "api/experimental/generate", body: Body(prompt: prompt, model: model), as: Response.self).data.text
+    }
+
     public func vcs(directory: String) async throws -> VCSInfo {
         try await get("api/vcs", directory: directory, as: LocatedEnvelope<VCSInfo>.self).data
     }
