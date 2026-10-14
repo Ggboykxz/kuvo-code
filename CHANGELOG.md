@@ -23,6 +23,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - **Notifications:** when a session finishes or needs your answer while you're in another app, you get a notification that opens it, and the Dock icon counts the sessions waiting for you. Settings › General turns them off.
 - **Search sessions** from the top of the sidebar, by title or project.
 - **Archive sessions** you're done with: they leave the sidebar's lists, and searching still finds them.
+- **⌘W closes the session tab**, and ⇧⌘T reopens the last one you closed, where it was. ⇧⌘W closes the window.
 - **⌘F finds words in the conversation**, highlighting each message they're in.
 - **↑ and ↓ in an empty composer go through the messages you sent**, as in a shell.
 - What you type in the composer stays there when you switch to another session, and when you quit the app.

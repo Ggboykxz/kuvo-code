@@ -25,10 +25,17 @@ struct MainView: View {
     /// The New Project or Edit Project sheet, while it's open.
     @State private var projectSheet: ProjectSheetRequest?
     @State private var focus = Pane.conversation
+    /// Tabs you closed, last one last, with where they were: ⇧⌘T opens them again.
+    @State private var closedTabs: [ClosedTab] = []
     /// The window's content width; the title bar is sized from it.
     @State private var contentWidth: CGFloat = 1200
 
     enum Pane { case sessions, conversation, changes }
+
+    struct ClosedTab {
+        var key: String
+        var index: Int
+    }
 
     private var tabs: [String] {
         get { tabStorage.split(separator: "\n").map(String.init) }
@@ -171,7 +178,7 @@ struct MainView: View {
                     showsSidebar: $showsSidebar
                 )
                 if !tabItems.isEmpty {
-                    TabStrip(tabs: tabItems, selection: $selection, close: closeTab, closeAll: closeTabs(except:))
+                    TabStrip(tabs: tabItems, selection: $selection, close: { closeTab($0) }, closeAll: closeTabs(except:))
                 }
             }
             // A width from the window (minus the traffic lights and the Changes button), so a
@@ -318,10 +325,12 @@ struct MainView: View {
         }
     }
 
-    private func closeTab(_ key: String) {
+    /// Closes a tab; one you close (rather than a deleted session's) can be reopened.
+    private func closeTab(_ key: String, remember: Bool = true) {
         var tabs = tabs
         guard let index = tabs.firstIndex(of: key) else { return }
         tabs.remove(at: index)
+        if remember { rememberClosed([ClosedTab(key: key, index: index)]) }
         withAnimation(.ui) {
             self.tabs = tabs
             if selection == key {
@@ -332,9 +341,32 @@ struct MainView: View {
 
     /// Closes every tab but `key`, or all of them when it's nil.
     private func closeTabs(except key: String?) {
+        // Reopened last first, so the leftmost comes back last.
+        rememberClosed(tabs.enumerated().filter { $0.element != key }.map { ClosedTab(key: $0.element, index: $0.offset) }.reversed())
         withAnimation(.ui) {
             tabs = tabs.filter { $0 == key }
             selection = key
+        }
+    }
+
+    private func rememberClosed(_ closed: [ClosedTab]) {
+        closedTabs.append(contentsOf: closed)
+        if closedTabs.count > 50 { closedTabs.removeFirst(closedTabs.count - 50) }
+    }
+
+    /// Opens the tab closed last, where it was, skipping sessions deleted since.
+    private func reopenClosedTab() {
+        while let closed = closedTabs.popLast() {
+            var tabs = tabs
+            guard !tabs.contains(closed.key) else { continue }
+            if SidebarView.draftDirectory(from: closed.key) == nil, workspace.session(closed.key) == nil { continue }
+            tabs.insert(closed.key, at: min(closed.index, tabs.count))
+            withAnimation(.ui) {
+                self.tabs = tabs
+                selection = closed.key
+                focus = .conversation
+            }
+            return
         }
     }
 
@@ -358,7 +390,7 @@ struct MainView: View {
         guard workspace.isLoaded else { return }
         let known = Set(ids)
         for key in tabs where SidebarView.draftDirectory(from: key) == nil && !known.contains(key) {
-            closeTab(key)
+            closeTab(key, remember: false)
         }
         // A selection that isn't one of the tabs (its session went while the app was closed)
         // shows nothing; show the last tab instead.
@@ -372,6 +404,7 @@ struct MainView: View {
         return SessionActions(
             hasSession: model != nil,
             canStop: model?.isRunning == true,
+            canReopenTab: !closedTabs.isEmpty,
             newSession: { newSession(in: nil) },
             openFolder: openFolder,
             newProject: { projectSheet = ProjectSheetRequest(project: nil) },
@@ -385,6 +418,11 @@ struct MainView: View {
             toggleSidebar: { withAnimation(.ui) { showsSidebar.toggle() } },
             nextTab: { cycleTabs(by: 1) },
             previousTab: { cycleTabs(by: -1) },
+            closeTab: {
+                // With no tab left, ⌘W closes the window, as it does in browsers.
+                if let selection { closeTab(selection) } else { NSApp.keyWindow?.performClose(nil) }
+            },
+            reopenTab: reopenClosedTab,
             find: { activeModel?.showFind() },
             showTab: { number in
                 let tabs = tabs

@@ -86,6 +86,19 @@ struct AppCommands: Commands {
                 .keyboardShortcut("o")
                 .disabled(actions == nil)
         }
+        // In place of Close and Close All: ⌘W closes the session tab, as in browsers.
+        CommandGroup(replacing: .saveItem) {
+            Button("Close Tab") {
+                // Another window, like Settings, just closes.
+                if let actions { actions.closeTab() } else { NSApp.keyWindow?.performClose(nil) }
+            }
+            .keyboardShortcut("w")
+            Button("Close Window") { NSApp.keyWindow?.performClose(nil) }
+                .keyboardShortcut("w", modifiers: [.command, .shift])
+            Button("Reopen Closed Tab") { actions?.reopenTab() }
+                .keyboardShortcut("t", modifiers: [.command, .shift])
+                .disabled(actions?.canReopenTab != true)
+        }
         CommandGroup(before: .textEditing) {
             Button("Find in Conversation…") { actions?.find() }
                 .keyboardShortcut("f")
@@ -155,6 +168,7 @@ struct AppCommands: Commands {
 struct SessionActions {
     var hasSession: Bool
     var canStop: Bool
+    var canReopenTab: Bool
     var newSession: () -> Void
     var openFolder: () -> Void
     var newProject: () -> Void
@@ -168,6 +182,8 @@ struct SessionActions {
     var toggleSidebar: () -> Void
     var nextTab: () -> Void
     var previousTab: () -> Void
+    var closeTab: () -> Void
+    var reopenTab: () -> Void
     var find: () -> Void
     /// The tab at this place, 1 first; 9 is the last.
     var showTab: (Int) -> Void
