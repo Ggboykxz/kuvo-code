@@ -25,6 +25,9 @@ struct UtilitiesPane: View {
                 content
                     .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
                     .clipped()
+                    // Scroll bars shown all the time (a Mac set to always show them) took a
+                    // strip off every tab; the panel scrolls without them, as the sidebar does.
+                    .scrollIndicators(.never)
             }
         }
     }

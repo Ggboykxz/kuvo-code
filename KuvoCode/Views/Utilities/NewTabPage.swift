@@ -70,7 +70,7 @@ struct NewTabPage: View {
             .frame(maxWidth: 640, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
-        .scrollIndicators(.automatic)
+        .scrollIndicators(.never)
     }
 
     private func replace(_ open: () -> Void) {

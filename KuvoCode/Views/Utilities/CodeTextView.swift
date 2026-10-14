@@ -25,7 +25,9 @@ struct CodeTextView: NSViewRepresentable {
 
         let scroll = NSScrollView()
         scroll.documentView = textView
-        scroll.hasVerticalScroller = true
+        // No scroll bar, like the rest of the panel: one shown all the time takes a strip off
+        // the code.
+        scroll.hasVerticalScroller = false
         scroll.drawsBackground = false
         scroll.autohidesScrollers = true
         // It sits in the panel, not under the title bar, so it needs no room for one; and since
