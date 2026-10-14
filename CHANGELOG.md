@@ -29,6 +29,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - **Search sessions** from the top of the sidebar, by title or project.
 - A copy button under each reply copies it, and right-clicking one of your messages copies that.
 - **Type @ in the composer to mention a file** from any of the project's folders, picked from a list as you type.
+- **Stage, unstage or discard a file's changes** from its menu in the Changes panel. Discarding asks first, and a new file goes to the Trash.
 - The **Files** panel lists all of a project's folders, and its filter looks in all of them. The **Changes** panel has a folder menu to show each folder's changes, and comments there name the folder.
 
 ## 0.1.2

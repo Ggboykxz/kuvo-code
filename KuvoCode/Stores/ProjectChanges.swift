@@ -88,6 +88,19 @@ final class ProjectChanges {
         isLoaded = true
     }
 
+    enum Action { case stage, unstage, discard }
+
+    /// Stages, unstages or discards one file's changes, then reads the changes again. Discard
+    /// follows the scope: in Unstaged only what isn't staged, otherwise back to the last commit.
+    /// A file git doesn't know yet goes to the Trash. Returns git's complaint, if any.
+    func perform(_ action: Action, on file: ChangedFile) async -> String? {
+        guard let root = file.root else { return nil }
+        let scope = scope
+        let failure = await Task.detached { Git.perform(action, on: file, root: root, scope: scope) }.value
+        await refresh()
+        return failure
+    }
+
     /// Only publishes when something changed, so a refresh doesn't redraw the panel.
     private func apply(_ files: [ChangedFile]) {
         let signature = files.hashValue
@@ -130,6 +143,34 @@ nonisolated enum Git {
             }
         }
         return files.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+    }
+
+    static func perform(_ action: ProjectChanges.Action, on file: ChangedFile, root: String, scope: ProjectChanges.Scope) -> String? {
+        let paths = [file.path] + (file.oldPath.map { [$0] } ?? [])
+        let tracked = run(["ls-files", "--error-unmatch", "--", file.path], in: root) != nil
+        func git(_ arguments: [String]) -> String? {
+            run(arguments, in: root) == nil ? "git couldn't \(arguments.first ?? "do that") \(file.path)." : nil
+        }
+        switch action {
+        case .stage:
+            return git(["add", "-A", "--"] + paths)
+        case .unstage:
+            return git(["restore", "--staged", "--"] + paths)
+        case .discard:
+            // New to git (or only staged): it has no committed version to go back to.
+            if file.status == .added, scope != .unstaged || !tracked {
+                if tracked { _ = run(["rm", "--cached", "-q", "--", file.path], in: root) }
+                do { try FileManager.default.trashItem(at: file.url, resultingItemURL: nil) } catch { return error.localizedDescription }
+                return nil
+            }
+            if scope == .unstaged { return git(["restore", "--worktree", "--"] + paths) }
+            if file.status == .renamed, let old = file.oldPath {
+                _ = run(["rm", "--cached", "-q", "--", file.path], in: root)
+                try? FileManager.default.trashItem(at: file.url, resultingItemURL: nil)
+                return git(["restore", "--source=HEAD", "--staged", "--worktree", "--", old])
+            }
+            return git(["restore", "--source=HEAD", "--staged", "--worktree", "--", file.path])
+        }
     }
 
     /// An untracked file, as all-new lines.

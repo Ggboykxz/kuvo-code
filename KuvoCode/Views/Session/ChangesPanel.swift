@@ -152,9 +152,13 @@ struct ChangesPanel: View {
                                 )
                             }
                         } header: {
-                            FileHeader(file: file, isCollapsed: collapsed.contains(file.id)) {
+                            FileHeader(file: file, isCollapsed: collapsed.contains(file.id), scope: changes.isRepository ? changes.scope : nil) {
                                 withAnimation(.ui) {
                                     if collapsed.contains(file.id) { collapsed.remove(file.id) } else { collapsed.insert(file.id) }
+                                }
+                            } perform: { action in
+                                Task {
+                                    if let failure = await changes.perform(action, on: file) { model?.failure = failure }
                                 }
                             }
                         }
@@ -171,8 +175,12 @@ struct ChangesPanel: View {
 private struct FileHeader: View {
     let file: ChangedFile
     let isCollapsed: Bool
+    /// What the panel shows, for which git actions make sense; nil outside a repository.
+    let scope: ProjectChanges.Scope?
     let toggle: () -> Void
+    let perform: (ProjectChanges.Action) -> Void
     @Environment(\.colorScheme) private var scheme
+    @State private var confirmsDiscard = false
 
     var body: some View {
         HStack(spacing: 8) {
@@ -211,6 +219,15 @@ private struct FileHeader: View {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(file.path, forType: .string)
                 }
+                if let scope {
+                    Divider()
+                    if scope == .staged {
+                        Button("Unstage") { perform(.unstage) }
+                    } else {
+                        Button("Stage") { perform(.stage) }
+                        Button("Discard Changes…", role: .destructive) { confirmsDiscard = true }
+                    }
+                }
             } label: {
                 Image(systemName: "ellipsis")
             }
@@ -228,6 +245,14 @@ private struct FileHeader: View {
         .overlay(alignment: .bottom) { Divider() }
         .contentShape(.rect)
         .onTapGesture { if hasBody { toggle() } }
+        .alert("Discard the changes to \((file.path as NSString).lastPathComponent)?", isPresented: $confirmsDiscard) {
+            Button("Discard", role: .destructive) { perform(.discard) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(file.status == .added
+                 ? "It's a new file, so it goes to the Trash."
+                 : scope == .unstaged ? "Its unstaged changes are thrown away; staged ones stay. This can't be undone." : "It goes back to how it was in the last commit. This can't be undone.")
+        }
     }
 
     /// Binary files other than pictures have nothing to open.
