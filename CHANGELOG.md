@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- **Create Pull Request** from the Changes tab on any branch other than the main one: it pushes the branch and opens the pull request page on GitHub or GitLab.
 - **This Session** in the Changes tab shows only what the session's agent changed, apart from your own edits and other sessions'.
 - Fixed: outside a git repository, the Changes tab listed the agent's edits without their lines.
 - **Command palette (⌘K).** Find a session in any project, a file in this one, or something to do, from New Terminal to any Settings tab, with its shortcut. Before you type, it lists your latest sessions.

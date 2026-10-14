@@ -139,7 +139,11 @@ struct ChangesPanel: View {
             DiffStat(additions: changes.additions, deletions: changes.deletions)
             Spacer()
             if let worktree {
-                WorktreeMenu(tree: worktree, directory: changes.directory, model: model, environment: app.shellEnvironment)
+                BranchMenu(tree: worktree, isWorktree: true, directory: changes.directory, model: model, environment: app.shellEnvironment)
+            } else if let base, let branch = workspace.branches[changes.directory] {
+                // A branch of your own, in the project's folder: it can go up for a pull request.
+                BranchMenu(tree: Workspace.Worktree(project: changes.directory, root: changes.directory, branch: branch, base: base), isWorktree: false,
+                           directory: changes.directory, model: model, environment: app.shellEnvironment)
             }
             // Kept while its form is open, so a push problem stays readable after the commit.
             if changes.isRepository, !changes.files.isEmpty && changes.hasUncommitted || isCommitting {
@@ -326,10 +330,12 @@ private struct CommitForm: View {
 
 // MARK: - Worktree
 
-/// A session's own branch, and bringing its work back: merged into the project's folder, or
+/// A branch, and bringing its work back: a worktree's merged into the project's folder, or any
 /// pushed for a pull request.
-private struct WorktreeMenu: View {
+private struct BranchMenu: View {
     let tree: Workspace.Worktree
+    /// A session's own worktree, rather than a branch checked out in the project's folder.
+    let isWorktree: Bool
     /// Where the session runs, in the worktree.
     let directory: String
     let model: SessionModel?
@@ -349,11 +355,15 @@ private struct WorktreeMenu: View {
     var body: some View {
         Menu {
             Section(tree.branch) {
-                Button("Merge into \(tree.base ?? "the Project’s Branch")", systemImage: "arrow.triangle.merge", action: merge)
+                if isWorktree {
+                    Button("Merge into \(tree.base ?? "the Project’s Branch")", systemImage: "arrow.triangle.merge", action: merge)
+                }
                 Button("Create Pull Request", systemImage: "arrow.up.forward.square", action: pullRequest)
             }
-            Divider()
-            Button("Show Worktree in Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: directory) }
+            if isWorktree {
+                Divider()
+                Button("Show Worktree in Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: directory) }
+            }
         } label: {
             if isWorking {
                 Spinner(size: 12)
@@ -366,7 +376,7 @@ private struct WorktreeMenu: View {
         .buttonStyle(CardActionStyle())
         .fixedSize()
         .disabled(isWorking)
-        .help("This session works on its own branch, \(tree.branch). Merge it or create a pull request.")
+        .help(isWorktree ? "This session works on its own branch, \(tree.branch). Merge it or create a pull request." : "Create a pull request for \(tree.branch)")
         .alert(title, isPresented: Binding(get: { outcome != nil }, set: { if !$0 { outcome = nil } })) {
             if case .conflict(_, let target) = outcome, let model {
                 Button("Ask the Agent to Fix It") {
