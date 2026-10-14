@@ -40,7 +40,8 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - **⌘F finds words in the conversation**, highlighting each message they're in.
 - **↑ and ↓ in an empty composer go through the messages you sent**, as in a shell.
 - What you type in the composer stays there when you switch to another session, and when you quit the app.
-- Copy buttons under each reply and, when you hover, under each of your messages and on code blocks.
+- Copy buttons under each reply and, when you hover, under each of your messages.
+- Code blocks show their language and have their own **Copy** button.
 - Hovering over one of your messages shows when you sent it.
 - Right-click a project and choose **Open In** to open it in your editor, terminal or git app.
 - Right-click a step that read or changed a file to open the file in the panel or show it in the Finder.
