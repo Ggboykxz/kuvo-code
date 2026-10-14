@@ -27,6 +27,8 @@ struct MainView: View {
     @State private var focus = Pane.conversation
     /// Tabs you closed, last one last, with where they were: ⇧⌘T opens them again.
     @State private var closedTabs: [ClosedTab] = []
+    /// Open Quickly's palette is showing.
+    @State private var showsOpenQuickly = false
     /// A tab's session being renamed, and the title being typed.
     @State private var renaming: Session?
     @State private var newTitle = ""
@@ -125,6 +127,24 @@ struct MainView: View {
             }
         }
         .animation(.ui, value: catalog.isSlow)
+        .overlay(alignment: .top) {
+            if showsOpenQuickly, let directory = activeDirectory {
+                ZStack(alignment: .top) {
+                    // A click outside closes it.
+                    Color.black.opacity(0.001)
+                        .onTapGesture { showsOpenQuickly = false }
+                    OpenQuickly(roots: [directory] + (workspace.settings[directory]?.folders ?? [])) { url in
+                        showsOpenQuickly = false
+                        showInPanel { utilities.show(url) }
+                    } dismiss: {
+                        showsOpenQuickly = false
+                    }
+                    .padding(.top, 80)
+                }
+                .transition(.opacity)
+            }
+        }
+        .animation(.ui, value: showsOpenQuickly)
         .sheet(isPresented: $showsProviders) {
             ProvidersView()
                 .frame(width: 720, height: 620)
@@ -432,6 +452,7 @@ struct MainView: View {
         let model = activeModel
         return SessionActions(
             hasSession: model != nil,
+            hasProject: activeDirectory != nil,
             canStop: model?.isRunning == true,
             canReopenTab: !closedTabs.isEmpty,
             newSession: { newSession(in: nil) },
@@ -459,7 +480,8 @@ struct MainView: View {
                 let index = number == 9 ? tabs.count - 1 : number - 1
                 if tabs.indices.contains(index) { withAnimation(.ui) { selection = tabs[index] } }
             },
-            showProviders: { showsProviders = true }
+            showProviders: { showsProviders = true },
+            openQuickly: { showsOpenQuickly = true }
         )
     }
 

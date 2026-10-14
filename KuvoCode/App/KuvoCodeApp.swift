@@ -85,6 +85,9 @@ struct AppCommands: Commands {
             Button("Open Folder…") { actions?.openFolder() }
                 .keyboardShortcut("o")
                 .disabled(actions == nil)
+            Button("Open Quickly…") { actions?.openQuickly() }
+                .keyboardShortcut("o", modifiers: [.command, .shift])
+                .disabled(actions?.hasProject != true)
         }
         // In place of Close and Close All: ⌘W closes the session tab, as in browsers.
         CommandGroup(replacing: .saveItem) {
@@ -167,6 +170,8 @@ struct AppCommands: Commands {
 /// What the menu bar can do in the focused window.
 struct SessionActions {
     var hasSession: Bool
+    /// A session or a new one is open, so there's a project to look in.
+    var hasProject: Bool
     var canStop: Bool
     var canReopenTab: Bool
     var newSession: () -> Void
@@ -188,6 +193,7 @@ struct SessionActions {
     /// The tab at this place, 1 first; 9 is the last.
     var showTab: (Int) -> Void
     var showProviders: () -> Void
+    var openQuickly: () -> Void
 }
 
 extension FocusedValues {
