@@ -186,6 +186,11 @@ final class Workspace {
             try? await api.setInstruction(session: session.id, key: ProjectFolders.instructionKey, text: ProjectFolders.instructions(primary: directory, folders: extra))
         }
         upsert(session)
+        let used = model ?? session.model
+        var props = Analytics.model(provider: used?.providerID, model: used?.id)
+        props["mode"] = Analytics.mode(agent)
+        props["approval"] = approval == .approveAll ? "all" : "ask"
+        Analytics.shared.track("session_created", props)
         return session
     }
 

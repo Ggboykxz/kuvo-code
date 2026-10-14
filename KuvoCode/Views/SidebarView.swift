@@ -108,6 +108,12 @@ struct SidebarView: View {
             }
             .scrollIndicators(.never)
 
+            if !Analytics.shared.noticeShown {
+                AnalyticsNotice()
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 10)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
             Divider()
                 .padding(.horizontal, 10)
             AccountsRow(action: showProviders)

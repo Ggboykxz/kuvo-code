@@ -45,6 +45,7 @@ final class Utilities {
 
     /// Shows the Changes tab, opening it again if it was closed.
     func showChanges() {
+        Analytics.shared.track("panel_opened", ["tool": "changes"])
         if let tab = tabs.first(where: { $0.kind == .changes }) {
             selection = tab.id
         } else {
@@ -53,6 +54,7 @@ final class Utilities {
     }
 
     func newTerminal(in directory: String?, environment: [String: String]) {
+        Analytics.shared.track("panel_opened", ["tool": "terminal"])
         let tab = Tab(kind: .terminal)
         let terminal = TerminalSession(directory: directory ?? NSHomeDirectory(), environment: environment)
         terminal.addToMessage = { [weak self] text in self?.addToMessage?(text) }
@@ -63,7 +65,9 @@ final class Utilities {
     /// A browser tab at `address`; or, given WebKit's configuration, a window a page opened, placed
     /// right after the page's tab. When that window closes itself, its page's tab comes back.
     @discardableResult
-    func newBrowser(_ address: String? = nil, configuration: WKWebViewConfiguration? = nil, openedFrom opener: UUID? = nil) -> BrowserSession {
+    func newBrowser(_ address: String? = nil, configuration: WKWebViewConfiguration? = nil, openedFrom opener: UUID? = nil, byAgent: Bool = false) -> BrowserSession {
+        // Yours only: not the agent's tabs, nor windows a page opened.
+        if !byAgent, configuration == nil { Analytics.shared.track("panel_opened", ["tool": "browser"]) }
         let tab = Tab(kind: .browser)
         let browser = BrowserSession(configuration: configuration)
         browser.onVisit = { [weak history] url, title, icon in history?.record(url, title: title, iconURL: icon) }
@@ -83,6 +87,7 @@ final class Utilities {
 
     /// The file tree, in a tab of its own.
     func showFiles() {
+        Analytics.shared.track("panel_opened", ["tool": "files"])
         if let tab = tabs.first(where: { $0.kind == .file(nil) }) {
             selection = tab.id
         } else {

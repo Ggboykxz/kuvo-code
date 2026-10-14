@@ -60,6 +60,8 @@ final class AppModel {
     func start() async {
         guard engine != .ready, engine != .starting else { return }
         isStopping = false
+        // How far it got, for analytics when it fails: the download, the launch, or the connection.
+        var stage = "download"
         do {
             // Set KUVO_OPENCODE_BINARY to run a local opencode build instead of the pinned download.
             async let environment = ShellEnvironment.load()
@@ -78,6 +80,7 @@ final class AppModel {
             }
 
             engine = .starting
+            stage = "launch"
             var shell = await environment
             shellEnvironment = shell
             // The browser tools, for the engine to connect to. Without them the agent
@@ -95,6 +98,7 @@ final class AppModel {
                 onExit: { status in Task { @MainActor in self.engineExited(status: status) } }
             )
             self.server = server
+            stage = "connect"
             let api = OpenCodeAPI(endpoint: server.endpoint)
             try await waitUntilReady(api)
             self.api = api
@@ -102,6 +106,7 @@ final class AppModel {
             workspace.api = api
             usage.api = api
             engine = .ready
+            Analytics.shared.trackOnce("engine_ready")
             listen(to: api)
             Task { await usage.sync() }
             // In parallel: the catalog can wait on the engine's plugins (and they on a
@@ -111,6 +116,7 @@ final class AppModel {
             _ = await (catalogLoaded, workspaceLoaded)
         } catch {
             log.error("Engine failed to start: \(error.localizedDescription, privacy: .public)")
+            Analytics.shared.track("engine_failed", ["reason": stage])
             engine = .failed(error.localizedDescription)
         }
     }

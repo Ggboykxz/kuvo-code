@@ -278,7 +278,7 @@ struct ConnectView: View {
                     if attempt.mode == .auto { poll(attempt) }
                 case .external(let id, _, _):
                     try await api.connectExternal(integration: integrationID, method: id, answer: answer.isEmpty ? nil : answer)
-                    finish()
+                    finish(method: "external")
                 default:
                     break
                 }
@@ -296,7 +296,7 @@ struct ConnectView: View {
             defer { isWorking = false }
             do {
                 try await api.connectKey(integration: integrationID, key: key.trimmingCharacters(in: .whitespacesAndNewlines), answer: answer.isEmpty ? nil : answer)
-                finish()
+                finish(method: "api_key")
             } catch {
                 step = .failed(error.localizedDescription)
             }
@@ -313,7 +313,7 @@ struct ConnectView: View {
                 guard let status = try? await api.oauthStatus(integration: integrationID, attempt: attempt.attemptID) else { continue }
                 switch status.status {
                 case .pending: continue
-                case .complete: finish(); return
+                case .complete: finish(method: "oauth"); return
                 case .failed: step = .failed(status.message ?? "Signing in didn't work."); return
                 case .expired: step = .failed("The sign-in timed out. Try again."); return
                 }
@@ -328,14 +328,15 @@ struct ConnectView: View {
             defer { isWorking = false }
             do {
                 try await api.completeOAuth(integration: integrationID, attempt: attempt.attemptID, code: pastedCode.trimmingCharacters(in: .whitespacesAndNewlines))
-                finish()
+                finish(method: "oauth")
             } catch {
                 step = .failed(error.localizedDescription)
             }
         }
     }
 
-    private func finish() {
+    private func finish(method: String) {
+        Analytics.shared.track("account_connected", ["provider": Analytics.provider(integrationID), "method": method])
         pollTask?.cancel()
         pollTask = nil
         step = .connected

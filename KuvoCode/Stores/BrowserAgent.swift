@@ -24,7 +24,8 @@ final class BrowserAgent {
     }
 
     func newTab(_ address: String?) async -> String {
-        let browser = utilities.newBrowser(address)
+        let browser = utilities.newBrowser(address, byAgent: true)
+        Analytics.shared.trackOnce("agent_used_browser")
         utilities.reveal()
         if address != nil { await settle(browser, expectNavigation: true) }
         return await snapshot()
@@ -136,7 +137,8 @@ final class BrowserAgent {
 
     /// The browser in view, or a new one; either way the panel shows it.
     private func browser() -> BrowserSession {
-        let browser = utilities.activeBrowser ?? utilities.newBrowser()
+        let browser = utilities.activeBrowser ?? utilities.newBrowser(byAgent: true)
+        Analytics.shared.trackOnce("agent_used_browser")
         utilities.reveal(browser)
         return browser
     }

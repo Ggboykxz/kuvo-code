@@ -107,6 +107,7 @@ final class ProjectChanges {
     func commit(message: String, push: Bool, environment: [String: String]) async -> String? {
         let directory = directory
         let failure = await Task.detached { Git.commit(message: message, push: push, in: directory, environment: environment) }.value
+        if failure == nil { Analytics.shared.track("changes_committed", ["pushed": push]) }
         await refresh()
         return failure
     }

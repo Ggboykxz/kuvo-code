@@ -44,6 +44,8 @@ struct SettingsView: View {
                 EngineSettings()
             }
         }
+        .onAppear { Analytics.shared.track("settings_opened", ["tab": tab]) }
+        .onChange(of: tab) { Analytics.shared.track("settings_opened", ["tab": tab]) }
     }
 }
 
@@ -65,6 +67,11 @@ private struct GeneralSettings: View {
             if updates.isAvailable {
                 @Bindable var updates = updates
                 Toggle("Check for updates automatically", isOn: $updates.checksAutomatically)
+            }
+            @Bindable var analytics = Analytics.shared
+            Toggle(isOn: $analytics.isEnabled) {
+                Text("Share anonymous usage")
+                Text("Which features you use and how often, with the app and macOS versions. Never your code, prompts, files or accounts. [What's sent](https://www.kuvo.run/code/docs/privacy/)")
             }
         }
         .formStyle(.grouped)

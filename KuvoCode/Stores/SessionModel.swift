@@ -184,6 +184,12 @@ final class SessionModel {
         let delivery: InboxItem.Delivery = queue && (isBusy || hasQueue) ? .queue : .steer
         if delivery == .steer { isQueuePaused = false }
         transcript.addLocal(id: id, text: text, delivery: delivery, files: files)
+        var props = Analytics.model(provider: model?.providerID ?? session.model?.providerID, model: model?.id ?? session.model?.id)
+        props["mode"] = Analytics.mode(agent)
+        props["queued"] = delivery == .queue
+        props["files"] = !files.isEmpty
+        props["comments"] = !comments.isEmpty
+        Analytics.shared.track("message_sent", props)
         let previous = sending
         sending = Task {
             await previous?.value
@@ -218,6 +224,8 @@ final class SessionModel {
             before: Set(userMessageIDs + transcript.pending.map(\.id))
         )
         runningCommands.append(running)
+        // The engine's own commands by name; yours (named by you) as "custom".
+        Analytics.shared.track("command_run", ["command": ["init", "review"].contains(name) ? name : "custom"])
         let delivery: InboxItem.Delivery = queue && (isBusy || hasQueue) ? .queue : .steer
         let previous = sending
         sending = Task {

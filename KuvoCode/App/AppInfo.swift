@@ -13,6 +13,14 @@ nonisolated enum AppInfo {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
     }
 
+    static var build: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0"
+    }
+
+    static var bundleID: String {
+        Bundle.main.bundleIdentifier ?? "run.kuvo.code"
+    }
+
     /// `~/Library/Application Support/<bundle id>`: the engine binary and its data live here.
     static var supportDirectory: URL {
         URL.applicationSupportDirectory.appending(path: Bundle.main.bundleIdentifier ?? "run.kuvo.code")

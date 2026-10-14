@@ -33,6 +33,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Notifier.shared.start()
+        Analytics.shared.start()
+        UsageMenuBar.shared.onPanelShown = { Analytics.shared.track("usage_panel_opened") }
         #if DEBUG
         // KUVO_DEMO_USAGE=off leaves the usage tracker out, so a second copy of the app
         // (for screenshots) never renews the logins the first one is using.
@@ -55,6 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         // Closing the engine's stdin shuts it down cleanly (it would also exit with us).
         model.stop()
+        Analytics.shared.flushBeforeQuit()
     }
 
     /// The usage meter stays in the menu bar after the window closes.

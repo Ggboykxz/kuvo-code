@@ -159,6 +159,7 @@ struct ChangesPanel: View {
                                         var comment = comment
                                         comment.file = commentPrefix + comment.file
                                         model.reviewComments.append(comment)
+                                        Analytics.shared.track("review_comment_added")
                                     } },
                                     deleteComment: { comment in model?.reviewComments.removeAll { $0.id == comment.id } }
                                 )

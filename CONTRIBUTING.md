@@ -102,6 +102,7 @@ without clicking, for trying a change or taking screenshots:
 | `KUVO_DEMO_SETTINGS` | Open Settings on a tab: `general`, `accounts`, `agents`, `permissions`, `mcp`, `skills`, `commands`, `panel`, `usage` or `engine` |
 | `KUVO_DEMO_NAME` | A name to use instead of yours, for the initials on review comments |
 | `KUVO_DEMO_COMMENT` | Add a review comment to the session in view, as `<path in the project>:<line>:<text>` |
+| `KUVO_ANALYTICS_URL` | Send anonymous usage to this collector, e.g. `http://127.0.0.1:8787/kuvo/code`; debug builds send none otherwise |
 
 ### The icon
 
