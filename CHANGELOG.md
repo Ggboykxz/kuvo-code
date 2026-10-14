@@ -12,8 +12,8 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - **⌘Return queues a message** until the agent is done. Queued messages go one after another, as many as you like, and a message sent with Return while the agent works still reaches it first, at its next step.
 - **Messages waiting for the agent are listed above the composer.** Send one now (the agent stops its current step and takes it), put it back in the composer to edit (or press ↑ in an empty composer), or remove it.
 - Stop pauses the queue, and so does a failed run, instead of sending the rest into the same error. **Resume** picks it up again.
-- **Undo from any of your messages:** right-click it and choose Undo From Here… to take back the conversation and the agent's file changes since, with the message back in the composer to edit. Redo brings it all back until you send.
-- **New Session From Here** on one of your messages starts a new session with the conversation up to it, to try another way while keeping this one.
+- **Undo from any of your messages:** hover over it and click Undo From Here to take back the conversation and the agent's file changes since, with the message back in the composer to edit. Redo brings it all back until you send.
+- **New Session From Here**, under one of your messages, starts a new session with the conversation up to it, to try another way while keeping this one.
 - **Try Again** under a failed run sends your last message again, in place of the failed attempt.
 - **Build It** under an answer in Plan mode switches to Build and has the agent carry the plan out.
 - **Summarize Now** in the context ring's popover shrinks a long conversation to a summary, to make room before the context window fills up.
@@ -25,7 +25,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - **⌘F finds words in the conversation**, highlighting each message they're in.
 - **↑ and ↓ in an empty composer go through the messages you sent**, as in a shell.
 - What you type in the composer stays there when you switch to another session, and when you quit the app.
-- A copy button under each reply copies it, and right-clicking one of your messages copies that.
+- Copy buttons under each reply and, when you hover, under each of your messages.
 - Right-click a project and choose **Open In** to open it in your editor, terminal or git app.
 - Right-click a step that read or changed a file to open the file in the panel or show it in the Finder.
 - ⌘1 to ⌘8 show that session tab, and ⌘9 the last one, as in browsers.
@@ -33,6 +33,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - While the agent works, the end of the conversation shows how long it's been at it.
 - Scrolled up in a conversation, a button takes you back to the newest message.
 - A step you stopped, with Stop or Send Now, shows as stopped instead of as a red error.
+- The panel no longer shows scroll bars, which took a strip off its content on Macs set to always show them.
 
 ## 0.1.2
 

@@ -240,6 +240,8 @@ enum Row: Identifiable, Hashable {
         switch (previous, self) {
         case (.assistant, .assistant), (.assistant, .turnEnd), (.assistant, .working(_)): 10
         case (_, .user), (_, .pending): 28
+        // A message's buttons already take room under it.
+        case (.user, _): 4
         default: 16
         }
     }
@@ -268,6 +270,8 @@ private struct RowView: View {
     /// While the session is in Plan mode: build what the last answer planned.
     let buildPlan: (() -> Void)?
     @State private var confirmsUndo = false
+    /// Under the pointer: a message shows its buttons.
+    @State private var isHovering = false
 
     /// " 12s", " 1m 5s" after a few seconds, then " · Esc to stop".
     static func elapsed(since: Milliseconds?, now: Date) -> String {
@@ -284,7 +288,21 @@ private struct RowView: View {
             let (withComments, paths) = Attachments.split(message.text)
             let (text, comments) = ReviewComments.split(withComments)
             let stored = (message.files ?? []).enumerated().map { AttachmentItem.stored($1, id: "\(message.id)#\($0)") }
-            UserBubble(text: text, attachments: stored + paths.map(AttachmentItem.path), comments: comments)
+            VStack(alignment: .trailing, spacing: 2) {
+                UserBubble(text: text, attachments: stored + paths.map(AttachmentItem.path), comments: comments)
+                // Always laid out, shown under the pointer: nothing moves when they appear.
+                HStack(spacing: 0) {
+                    if !text.isEmpty {
+                        CopyButton(text: text, help: "Copy")
+                    }
+                    MessageActionButton(symbol: "arrow.triangle.branch", help: "New Session From Here") { fork(message) }
+                    MessageActionButton(symbol: "arrow.uturn.backward", help: "Undo From Here…") { confirmsUndo = true }
+                }
+                .opacity(isHovering ? 1 : 0)
+                .animation(.easeOut(duration: 0.12), value: isHovering)
+            }
+            .contentShape(.rect)
+            .onHover { isHovering = $0 }
                 .contextMenu {
                     Button("Copy") {
                         NSPasteboard.general.clearContents()
@@ -576,6 +594,25 @@ private struct FindBar: View {
         .padding(.vertical, 6)
         .glassEffect(.regular, in: .capsule)
         .onAppear { isFocused = true }
+    }
+}
+
+/// One of the small buttons under a message, quiet like the copy icon beside it.
+private struct MessageActionButton: View {
+    let symbol: String
+    let help: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 11))
+                .frame(width: 22, height: 20)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.tertiary)
+        .help(help)
     }
 }
 
