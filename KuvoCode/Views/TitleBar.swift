@@ -32,6 +32,8 @@ struct TabStrip: View {
     let close: (String) -> Void
     /// Closes every tab except the given one, or all of them when it's nil.
     let closeAll: (_ except: String?) -> Void
+    /// Renames a session's tab (a new session's has no title to change yet).
+    var rename: ((String) -> Void)?
 
     @Namespace private var pill
 
@@ -42,16 +44,7 @@ struct TabStrip: View {
                 TabButton(tab: tab, isActive: isActive, close: { close(tab.id) }) {
                     withAnimation(.ui) { selection = tab.id }
                 }
-                .rightClickMenu {
-                    let others = ActionItem("Close Other Tabs") { closeAll(tab.id) }
-                    others.isEnabled = tabs.count > 1
-                    return [
-                        ActionItem("Close Tab") { close(tab.id) },
-                        others,
-                        .separator(),
-                        ActionItem("Close All Tabs") { closeAll(nil) },
-                    ]
-                }
+                .rightClickMenu { menu(for: tab) }
                 .background {
                     if isActive {
                         ActivePill()
@@ -69,6 +62,21 @@ struct TabStrip: View {
         .padding(3)
         .glassEffect(.regular, in: .capsule)
         .animation(.ui, value: tabs.map(\.id))
+    }
+
+    private func menu(for tab: TabItem) -> [NSMenuItem] {
+        var items: [NSMenuItem] = []
+        if let rename, SidebarView.draftDirectory(from: tab.id) == nil {
+            items += [ActionItem("Rename…") { rename(tab.id) }, .separator()]
+        }
+        let others = ActionItem("Close Other Tabs") { closeAll(tab.id) }
+        others.isEnabled = tabs.count > 1
+        return items + [
+            ActionItem("Close Tab") { close(tab.id) },
+            others,
+            .separator(),
+            ActionItem("Close All Tabs") { closeAll(nil) },
+        ]
     }
 }
 

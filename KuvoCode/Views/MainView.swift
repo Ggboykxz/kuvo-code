@@ -27,6 +27,9 @@ struct MainView: View {
     @State private var focus = Pane.conversation
     /// Tabs you closed, last one last, with where they were: ⇧⌘T opens them again.
     @State private var closedTabs: [ClosedTab] = []
+    /// A tab's session being renamed, and the title being typed.
+    @State private var renaming: Session?
+    @State private var newTitle = ""
     /// The window's content width; the title bar is sized from it.
     @State private var contentWidth: CGFloat = 1200
 
@@ -126,6 +129,13 @@ struct MainView: View {
             ProvidersView()
                 .frame(width: 720, height: 620)
         }
+        .alert("Rename Session", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+            TextField("Title", text: $newTitle)
+            Button("Rename") {
+                if let session = renaming { Task { await workspace.rename(session.id, to: newTitle) } }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
         .sheet(item: $projectSheet) { request in
             ProjectSheet(project: request.project, folders: request.folders) { primary, settings in
                 workspace.saveProject(primary, settings: settings)
@@ -179,7 +189,11 @@ struct MainView: View {
                     showsSidebar: $showsSidebar
                 )
                 if !tabItems.isEmpty {
-                    TabStrip(tabs: tabItems, selection: $selection, close: { closeTab($0) }, closeAll: closeTabs(except:))
+                    TabStrip(tabs: tabItems, selection: $selection, close: { closeTab($0) }, closeAll: closeTabs(except:)) { id in
+                        guard let session = workspace.session(id) else { return }
+                        newTitle = session.title ?? ""
+                        renaming = session
+                    }
                 }
             }
             // A width from the window (minus the traffic lights and the Changes button), so a
