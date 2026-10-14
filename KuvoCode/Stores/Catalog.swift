@@ -36,6 +36,14 @@ final class Catalog {
         agents.filter(\.isPrimary)
     }
 
+    /// The mode a new session starts in: the one chosen in Settings, if it's still a mode you
+    /// can pick; otherwise Build, or the first mode there is when Build is turned off.
+    func startingAgent(chosen: String?) -> String {
+        let modes = primaryAgents.map(\.id)
+        if let chosen, modes.contains(chosen) { return chosen }
+        return modes.isEmpty || modes.contains("build") ? "build" : modes[0]
+    }
+
     /// Models grouped by provider, providers in the order people tend to look for them.
     var modelsByProvider: [(provider: String, models: [Model])] {
         let groups = Dictionary(grouping: models.filter(\.enabled), by: \.providerID)

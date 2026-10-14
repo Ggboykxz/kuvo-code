@@ -112,7 +112,10 @@ struct DraftSessionView: View {
 
     @Environment(Workspace.self) private var workspace
     @Environment(Catalog.self) private var catalog
-    @State private var agent = "build"
+    @Environment(AppModel.self) private var app
+    /// Picked in the composer; until then, the mode Settings starts new sessions in.
+    @State private var pickedAgent: String?
+    private var agent: String { pickedAgent ?? catalog.startingAgent(chosen: app.engineConfig.value(at: ["default_agent"])?.string) }
     @AppStorage(ToolApproval.key) private var approval = ToolApproval.approveAll
     @State private var isCreating = false
 
@@ -138,7 +141,7 @@ struct DraftSessionView: View {
                 folders: [directory] + (workspace.settings[directory]?.folders ?? []),
                 commands: catalog.commands(in: directory),
                 focusRequest: focusRequest,
-                onSelectAgent: { agent = $0 },
+                onSelectAgent: { pickedAgent = $0 },
                 onSelectApproval: { approval = $0 },
                 onSelectModel: { lastModel = $0 },
                 onSend: send,

@@ -599,7 +599,7 @@ struct MainView: View {
         let parts = environment["KUVO_DEMO_MODEL"]?.split(separator: "/", maxSplits: 1).map(String.init)
         let model = parts.flatMap { $0.count == 2 ? ModelRef(id: $0[1], providerID: $0[0]) : nil }
         // Like a new session from the UI: the chosen model, or the default one.
-        guard let session = try? await workspace.createSession(in: folder, model: model ?? catalog.defaultModel?.ref, agent: "build") else { return }
+        guard let session = try? await workspace.createSession(in: folder, model: model ?? catalog.defaultModel?.ref, agent: catalog.startingAgent(chosen: app.engineConfig.value(at: ["default_agent"])?.string)) else { return }
         openTab(session.id)
         // KUVO_DEMO_FILES: comma-separated paths to attach.
         let files = environment["KUVO_DEMO_FILES"]?.split(separator: ",").map { URL(filePath: String($0)) } ?? []
