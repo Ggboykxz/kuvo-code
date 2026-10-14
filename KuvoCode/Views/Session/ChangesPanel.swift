@@ -342,6 +342,7 @@ private struct BranchMenu: View {
     let environment: [String: String]
     @Environment(Catalog.self) private var catalog
     @Environment(Workspace.self) private var workspace
+    @Environment(AppModel.self) private var app
     @State private var isWorking = false
     @State private var outcome: Outcome?
 
@@ -458,16 +459,31 @@ private struct BranchMenu: View {
                     return .failure(error as? GitFailure ?? GitFailure(message: error.localizedDescription))
                 }
             }.value
-            isWorking = false
             if case .success(let page) = result {
                 Analytics.shared.track("pull_request_opened", ["host": page?.host()?.contains("gitlab") == true ? "gitlab" : page == nil ? "other" : "github"])
             }
             switch result {
-            case .success(let page?): NSWorkspace.shared.open(page)
+            case .success(let page?): NSWorkspace.shared.open(await described(page))
             case .success(nil): outcome = .pushed
             case .failure(let failure): outcome = .failed(title: "Couldn’t Push", message: failure.message)
             }
+            isWorking = false
         }
+    }
+
+    /// The pull request page with a title and description the session's model wrote from the
+    /// branch's commits and diff; as it was, without a session or an answer.
+    private func described(_ page: URL) async -> URL {
+        guard let api = app.api, let session = model?.id else { return page }
+        let base = tree.base, directory = directory
+        let summary = await Task.detached { Git.pullRequestSummary(against: base, in: directory) }.value
+        let prompt = """
+        Write a pull request for the changes below. The first line is its title: under 72 characters, in the imperative mood. Then a blank line and a short description in Markdown: what changed and why, in a few bullet points, and anything a reviewer should check. Reply with the pull request alone: no preamble, no code fences.
+
+        \(summary)
+        """
+        guard let text = try? await api.generate(prompt, session: session), let pull = Git.parsePullRequest(text) else { return page }
+        return Git.pullRequestPage(page, title: pull.title, body: pull.body)
     }
 }
 

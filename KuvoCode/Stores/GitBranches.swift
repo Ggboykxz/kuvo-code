@@ -101,6 +101,43 @@ nonisolated extension Git {
         return nil
     }
 
+    /// What a pull request for `directory`'s branch would bring: its commits, the files they
+    /// change, and the diff, cut to a size a model reads quickly.
+    static func pullRequestSummary(against base: String?, in directory: String, limit: Int = 30_000) -> String {
+        let range = base.map { $0 + "...HEAD" } ?? "HEAD~1...HEAD"
+        let commits = run(["log", "--no-color", "--format=- %s%n%b", base.map { $0 + "..HEAD" } ?? "-1"], in: directory) ?? ""
+        let files = run(["diff", "--no-color", "--stat", range], in: directory) ?? ""
+        var diff = run(["diff", "--no-color", "--no-ext-diff", range], in: directory) ?? ""
+        if diff.count > limit { diff = String(diff.prefix(limit)) + "\n…" }
+        return "Commits:\n\(commits)\nFiles:\n\(files)\nDiff:\n\(diff)"
+    }
+
+    /// The pull request page with its title and description filled in.
+    static func pullRequestPage(_ page: URL, title: String, body: String) -> URL {
+        guard var components = URLComponents(url: page, resolvingAgainstBaseURL: false) else { return page }
+        let allowed = CharacterSet.urlQueryAllowed.subtracting(CharacterSet(charactersIn: "&=+?#"))
+        func item(_ name: String, _ value: String) -> URLQueryItem {
+            URLQueryItem(name: name.addingPercentEncoding(withAllowedCharacters: allowed) ?? name, value: value.addingPercentEncoding(withAllowedCharacters: allowed))
+        }
+        let items = page.host()?.contains("gitlab") == true
+            ? [item("merge_request[title]", title), item("merge_request[description]", body)]
+            : [item("title", title), item("body", body)]
+        components.percentEncodedQueryItems = (components.percentEncodedQueryItems ?? []) + items
+        return components.url ?? page
+    }
+
+    /// A model's pull request, as a title (its first line) and a description (the rest).
+    static func parsePullRequest(_ text: String) -> (title: String, body: String)? {
+        var lines = text.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "\n")
+        lines.removeAll { $0.hasPrefix("```") }
+        guard let first = lines.first?.trimmingCharacters(in: .whitespaces), !first.isEmpty else { return nil }
+        var title = first
+        for prefix in ["# ", "Title: ", "title: "] where title.hasPrefix(prefix) { title = String(title.dropFirst(prefix.count)) }
+        title = title.trimmingCharacters(in: CharacterSet(charactersIn: "*`\" "))
+        let body = lines.dropFirst().joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        return title.isEmpty ? nil : (String(title.prefix(120)), String(body.prefix(4_000)))
+    }
+
     /// A remote's web page: `git@github.com:me/app.git` and `https://github.com/me/app.git`
     /// are both https://github.com/me/app.
     static func webPage(of remote: String) -> URL? {
