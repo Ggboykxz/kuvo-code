@@ -120,7 +120,6 @@ struct ProviderBar: View {
     @State private var isHovering = false
     @Environment(\.self) private var environment
     @Environment(\.colorScheme) private var scheme
-    @Environment(\.locale) private var locale
 
     static let height: CGFloat = 30
     static let radius: CGFloat = 7
@@ -135,8 +134,9 @@ struct ProviderBar: View {
     private var value: String {
         guard let reading else { return WidgetData.noDataHeadline }
         guard reading.isBounded else { return reading.menuBarValue }
+        // Like every other percentage here, "89%" in any region (Turkey's pattern reads "%89").
         if reading.kind == .percent {
-            return fraction.formatted(.percent.precision(.fractionLength(0)).locale(locale))
+            return MetricFormatter.number(fraction * 100, kind: .percent, style: .row)
         }
         return reading.menuBarValue
     }
