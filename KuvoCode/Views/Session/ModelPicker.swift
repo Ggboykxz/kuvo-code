@@ -13,18 +13,19 @@ enum EffortLevel {
     }
 }
 
-/// The model, then its effort, in one card that stays open: pick a model from the list and the
-/// card turns to its effort, a slider, with the model's name above it to go back. A model without
-/// levels closes the card. **More models** has every model by provider, and typing searches them.
-/// What you chose goes to the session as the card closes, once.
+/// The model's effort, and the model, in one card that stays open, as Codex does: it opens on the
+/// effort, a slider, under the level and the model, which open the model list. Picking a model
+/// there turns back to its effort (a model without levels closes the card). **More models** has
+/// every model by provider, and typing searches them. What you chose goes to the session as the
+/// card closes, once.
 struct ModelPicker: View {
     let catalog: Catalog
     let selection: ModelRef?
     let onSelect: (ModelRef) -> Void
     let close: () -> Void
     var startsExpanded = false
-    /// On the model's effort (KUVO_DEMO_MENU=effort).
-    var startsOnEffort = false
+    /// On the model list rather than the effort (KUVO_DEMO_MENU=list).
+    var startsOnList = false
     @AppStorage("recentModels") private var recentStorage = ""
     /// What you've picked, until the card closes.
     @State private var picked: ModelRef?
@@ -55,7 +56,8 @@ struct ModelPicker: View {
         .focused($focus, equals: .card)
         .onKeyPress(phases: .down, action: key)
         .onAppear {
-            page = startsExpanded ? .all : (startsOnEffort ? .effort : .models)
+            // The effort first, for a model that has levels; else the list.
+            page = startsExpanded ? .all : (startsOnList || current?.variants.isEmpty != false ? .models : .effort)
             focus = .card
             highlight = shortList.first { $0.ref.sameModel(as: current?.ref) }.map { row($0) }
         }
@@ -217,27 +219,33 @@ struct ModelPicker: View {
     private var effortPage: some View {
         VStack(spacing: 14) {
             ZStack {
-                VStack(spacing: 2) {
-                    Text(variant.map(EffortLevel.title) ?? "Default")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(variant == nil ? AnyShapeStyle(.primary) : AnyShapeStyle(.tint))
-                    Button { go(.models) } label: {
+                // The level and the model: all of it opens the model list.
+                Button { go(.models) } label: {
+                    VStack(spacing: 2) {
+                        Text(variant.map(EffortLevel.title) ?? "Default")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(variant == nil ? AnyShapeStyle(.primary) : AnyShapeStyle(.tint))
                         HStack(spacing: 3) {
                             Text(current?.name ?? "")
+                                .lineLimit(1)
                             Image(systemName: "chevron.right")
                                 .font(.system(size: 10, weight: .semibold))
                         }
                         .font(.system(size: 13))
                         .foregroundStyle(.secondary)
-                        .contentShape(.rect)
                     }
-                    .buttonStyle(.plain)
-                    .help("Choose another model")
+                    .padding(.horizontal, 36)
+                    .padding(.vertical, 7)
+                    .frame(maxWidth: .infinity)
+                    .hoverHighlight(in: RoundedRectangle(cornerRadius: 12))
                 }
-                // Beside the title, without moving it: who made the model, and back to its default.
+                .buttonStyle(.plain)
+                .help("Choose another model")
+                // Beside it, without moving it: who made the model, and back to its default.
                 HStack {
                     if let current {
                         ProviderLogo(id: current.makerLogoID, size: 16)
+                            .allowsHitTesting(false)
                     }
                     Spacer()
                     Button { pickEffort(nil) } label: {
@@ -252,14 +260,15 @@ struct ModelPicker: View {
                     .disabled(variant == nil)
                     .help("Back to the model's default effort")
                 }
+                .padding(.horizontal, 8)
             }
             if let current {
                 EffortSlider(levels: current.variants.map(\.id), selected: variant) { pickEffort($0) }
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 16)
-        .padding(.bottom, 18)
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 16)
     }
 
     // MARK: Choosing

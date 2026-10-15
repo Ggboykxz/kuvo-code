@@ -157,7 +157,7 @@ struct ModelChip<Label: View>: View {
     @ViewBuilder let label: (Model?, String?) -> Label
     @State private var isOpen = false
     @State private var startsExpanded = false
-    @State private var startsOnEffort = false
+    @State private var startsOnList = false
 
     private var current: Model? { catalog.model(selection) ?? catalog.defaultModel }
     private var variant: String? { current.flatMap { model in selection?.sameModel(as: model.ref) == true ? selection?.variant : nil } }
@@ -171,17 +171,17 @@ struct ModelChip<Label: View>: View {
         .buttonStyle(.plain)
         .help("Model and effort")
         .popover(isPresented: $isOpen, arrowEdge: opensBelow ? .bottom : .top) {
-            ModelPicker(catalog: catalog, selection: selection, onSelect: onSelect, close: { isOpen = false }, startsExpanded: startsExpanded, startsOnEffort: startsOnEffort)
+            ModelPicker(catalog: catalog, selection: selection, onSelect: onSelect, close: { isOpen = false }, startsExpanded: startsExpanded, startsOnList: startsOnList)
         }
         .onAppear { LogoImages.shared.prefetch(catalog.models.flatMap { [$0.makerLogoID, $0.providerID] }) }
         #if DEBUG
         .task {
-            // KUVO_DEMO_MENU=model opens the picker after launch; =models, with every model shown;
-            // =effort, on the model's effort.
-            guard let wanted = ProcessInfo.processInfo.environment["KUVO_DEMO_MENU"], ["model", "models", "effort"].contains(wanted) else { return }
+            // KUVO_DEMO_MENU=model opens the picker after launch; =list, on the model list; =models,
+            // with every model shown.
+            guard let wanted = ProcessInfo.processInfo.environment["KUVO_DEMO_MENU"], ["model", "list", "models"].contains(wanted) else { return }
             try? await Task.sleep(for: .seconds(3))
             startsExpanded = wanted == "models"
-            startsOnEffort = wanted == "effort"
+            startsOnList = wanted == "list"
             isOpen = true
             // KUVO_DEMO_EFFORT=<level>: with it set, as if picked.
             if let level = ProcessInfo.processInfo.environment["KUVO_DEMO_EFFORT"], let current {
