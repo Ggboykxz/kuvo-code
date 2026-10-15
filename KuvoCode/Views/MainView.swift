@@ -195,7 +195,6 @@ struct MainView: View {
         .animation(.ui, value: showsSidebar)
         .animation(.ui, value: showsPanel)
         .animation(.ui, value: panelExpanded)
-        .onDisappear { utilities.closeAll() }
         .animation(.ui, value: app.showsSettings)
         // Typing mustn't go on into a composer or terminal that Settings now hide.
         .onChange(of: app.showsSettings) { _, shows in
@@ -1048,6 +1047,15 @@ struct MainView: View {
                 model.submit(model.draftText, files: model.draftFiles, for: nil, queue: false, commands: [])
                 model.draftText = ""
                 model.draftFiles = []
+            }
+        }
+        // KUVO_DEMO_REOPEN_WINDOW=<seconds>: closes the window after that long, and opens it again.
+        if let wait = environment["KUVO_DEMO_REOPEN_WINDOW"].flatMap(Double.init) {
+            Task { [app] in
+                try? await Task.sleep(for: .seconds(wait))
+                NSApp.windows.first { $0.isVisible && $0.canBecomeMain }?.performClose(nil)
+                try? await Task.sleep(for: .seconds(2))
+                app.openMainWindow?()
             }
         }
         // KUVO_DEMO_TOGGLE_PANEL=<seconds>: shows and hides the panel every so often, a few times.

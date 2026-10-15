@@ -38,6 +38,9 @@ struct RootView: View {
         .animation(.ui, value: app.showsSettings)
         // A picture you sent, looked at closer, over everything.
         .overlay { ImageViewerOverlay() }
+        // The window closing ends the panel's terminals and pages. (Not the sessions' view going
+        // away: that also happens while the engine restarts, and they should outlive that.)
+        .onDisappear { app.utilities.closeAll() }
         .frame(minWidth: 620, minHeight: 520)
         // The window itself is frosted glass, tinted by what's behind it; cards float on it.
         .windowGlass()

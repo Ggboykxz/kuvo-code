@@ -40,7 +40,13 @@ final class Utilities {
     var selected: Tab? { tabs.first { $0.id == selection } ?? tabs.first }
 
     init() {
-        // Settings › Panel can start the panel on a new tab instead of Changes.
+        startOver()
+    }
+
+    /// The panel as it opens: on Changes, or on a new tab if Settings › Panel says so.
+    private func startOver() {
+        tabs = [Tab(kind: .changes)]
+        selection = nil
         if UserDefaults.standard.string(forKey: PanelSettings.startsWith) == PanelSettings.Start.newTab.rawValue {
             tabs = []
             newTab()
@@ -181,12 +187,15 @@ final class Utilities {
         if tabs.isEmpty { newTab() }
     }
 
-    /// Ends every terminal (the window is closing).
+    /// Ends every terminal and page, and starts the panel over: the window is closing, and its
+    /// tabs go with what they showed (a tab left without its terminal or page would show nothing).
     func closeAll() {
         for terminal in terminals.values { terminal.terminate() }
         for browser in browsers.values { browser.close() }
         terminals = [:]
         browsers = [:]
+        runs = [:]
+        startOver()
     }
 
     private func add(_ tab: Tab, at index: Int? = nil) {

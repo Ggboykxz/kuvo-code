@@ -173,6 +173,8 @@ struct UtilitiesPane: View {
                 if let session = utilities.terminals[tab.id] {
                     TerminalHost(session: session)
                         .id(tab.id)
+                } else {
+                    placeholder("Terminal Closed", symbol: "terminal", detail: "Close this tab, or open a new one.")
                 }
             case .browser:
                 if let session = utilities.browsers[tab.id] {
@@ -180,6 +182,8 @@ struct UtilitiesPane: View {
                         NewTabPage(utilities: utilities, tabID: tab.id, directory: directory, environment: environment, browser: session)
                     }
                     .id(tab.id)
+                } else {
+                    placeholder("Page Closed", symbol: "globe", detail: "Close this tab, or open a new one.")
                 }
             }
         }
