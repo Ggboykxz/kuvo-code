@@ -132,6 +132,10 @@ struct ToolCallView: View {
 
     private var summary: String {
         let path = relative(string("path"))
+        // A bot's memory file goes by what it is.
+        if let raw = string("path"), Bots.isMemory(raw), ["read", "write", "edit"].contains(call.name) {
+            return call.name == "read" ? (isActive ? "Reading its memory" : "Read its memory") : (isActive ? "Updating its memory" : "Updated its memory")
+        }
         switch call.name {
         case "read": return (isActive ? "Reading " : "Read ") + (path ?? "a file")
         case "write": return (isActive ? "Writing " : "Wrote ") + (path ?? "a file")

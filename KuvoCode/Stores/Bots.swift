@@ -94,7 +94,9 @@ final class Bots {
             try await Wakes.install(on: engine.machine.connection)
             let made = try await engine.machine.connection.run("""
                 B="$HOME/\(RemoteEngineInstaller.root)/bots/\(id)"
-                mkdir -p "$B/workspace" "$B/wakes" && cd "$B" && pwd
+                mkdir -p "$B/workspace" "$B/wakes" && cd "$B" || exit 1
+                [ -f MEMORY.md ] || printf '%s' \(SSHConnection.quoted(Self.blankMemory(name))) >MEMORY.md
+                pwd
                 """).trimmingCharacters(in: .whitespacesAndNewlines)
             guard made.hasPrefix("/") else { throw Failure.noFolder }
             folder = made
@@ -103,6 +105,7 @@ final class Bots {
             try FileManager.default.createDirectory(at: url.appending(path: "workspace"), withIntermediateDirectories: true)
             try FileManager.default.createDirectory(at: url.appending(path: "wakes"), withIntermediateDirectories: true)
             try Self.installCommand()
+            try Data(Self.blankMemory(name).utf8).write(to: url.appending(path: "MEMORY.md"))
             folder = url.path
         }
 
@@ -196,6 +199,10 @@ final class Bots {
     func startWaking() {
         guard waking == nil else { return }
         try? Self.installCommand()
+        // Bots made before their memory file was made with them.
+        for bot in list where bot.machine == nil && !FileManager.default.fileExists(atPath: bot.memoryFile) {
+            try? Data(Self.blankMemory(bot.name).utf8).write(to: URL(filePath: bot.memoryFile))
+        }
         waking = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.wakeDue()
@@ -252,6 +259,16 @@ final class Bots {
     }
 
     // MARK: Its job, for the engine
+
+    /// A new bot's memory file, so there's one to read from the start.
+    static func blankMemory(_ name: String) -> String {
+        "# \(name)'s memory\n\nWhat \(name) keeps for next time: preferences, how things are set up, where ongoing work stands. Nothing yet.\n"
+    }
+
+    /// Whether a path is a bot's memory file.
+    static func isMemory(_ path: String) -> Bool {
+        path.hasSuffix("/MEMORY.md") && path.contains("/bots/bot_")
+    }
 
     /// What the bot's session knows about being a bot: who it is, its job, its memory and how to
     /// wake itself up.

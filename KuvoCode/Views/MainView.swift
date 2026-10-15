@@ -80,8 +80,9 @@ struct MainView: View {
     }
 
     /// Under a bot's name in its card: its job, and where it lives if not here.
-    private func botDetail(_ bot: Bot) -> String {
-        [bot.job.isEmpty ? nil : bot.job, bot.machine.map { "on \($0)" }].compactMap(\.self).joined(separator: " · ")
+    private func botDetail(_ bot: Bot) -> String? {
+        let parts = [bot.job.isEmpty ? nil : bot.job, bot.machine.map { "on \($0)" }].compactMap(\.self)
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     /// The machine a folder is on, for a project there; nil for this Mac's.
