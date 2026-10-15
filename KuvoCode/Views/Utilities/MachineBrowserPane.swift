@@ -1,14 +1,26 @@
 import AppKit
 import SwiftUI
 
-/// A machine's browser in the panel: its page live, with back, forward, reload and the address,
-/// its pages in a menu, and what the agent is doing. Clicks, scrolling and typing go to the page.
-struct MachineBrowserPane: View {
+/// A page of a machine's browser, in its tab: the page live, with back, forward, reload and the
+/// address, and what the agent is doing. Clicks, scrolling and typing go to the page. A new tab,
+/// or a blank page, shows the new tab page until you go somewhere.
+struct MachineBrowserPane<NewTab: View>: View {
     let browser: MachineBrowser
+    /// The page this tab shows; nil for a new tab that hasn't opened one yet.
+    let page: String?
     /// Attaches files to the message being written, for Add Screenshot to Message.
     var attach: ([URL]) -> Void = { _ in }
+    @ViewBuilder let newTab: () -> NewTab
+    /// Goes to an address typed in a new tab (opening its page).
+    let onSubmit: (String) -> Void
     @State private var address = ""
     @FocusState private var editing: Bool
+
+    private var isShown: Bool { page != nil && browser.shownPage == page }
+    private var isLive: Bool { browser.state == .live && isShown }
+    private var url: URL? { browser.url(of: page) }
+    /// Nothing to show yet: a new tab, or a page that hasn't gone anywhere.
+    private var isBlank: Bool { page == nil || (browser.page(page)?.isBlank ?? true) && !(isShown && browser.isLoading) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -19,7 +31,7 @@ struct MachineBrowserPane: View {
             }
             .padding(.horizontal, 10)
             .padding(.bottom, 8)
-            if let dialog = browser.dialog {
+            if isShown, let dialog = browser.dialog {
                 DialogBar(dialog: dialog, browser: browser)
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
@@ -28,13 +40,19 @@ struct MachineBrowserPane: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .animation(.ui, value: browser.dialog)
-        .onAppear {
-            browser.show()
-            address = displayAddress
+        .task(id: page) {
+            // While this tab shows its page, that's the page in use, live.
+            guard let page else { return }
+            browser.show(page)
+            while !Task.isCancelled { try? await Task.sleep(for: .seconds(3600)) }
+            browser.hide(page)
         }
-        .onDisappear { browser.hide() }
-        .onChange(of: browser.url) { if !editing { address = displayAddress } }
-        .onChange(of: editing) { _, isEditing in address = isEditing ? (browser.url?.absoluteString ?? "") : displayAddress }
+        .onAppear {
+            address = displayAddress
+            if isBlank, !AppInfo.staysInBackground { editing = true }
+        }
+        .onChange(of: url) { if !editing { address = displayAddress } }
+        .onChange(of: editing) { _, isEditing in address = isEditing ? (url?.absoluteString ?? "") : displayAddress }
     }
 
     @ViewBuilder private var content: some View {
@@ -46,16 +64,11 @@ struct MachineBrowserPane: View {
         case .failed(let message):
             problem("Couldn’t Set Up the Browser", message) { browser.retry() }
         case .ready:
-            switch browser.state {
-            case .failed(let message):
+            if case .failed(let message) = browser.state {
                 problem("The Browser Isn’t Available", message) { browser.retry() }
-            case .idle, .connecting:
-                ZStack {
-                    LivePage(browser: browser)
-                        .opacity(0.4)
-                    Spinner(size: 16)
-                }
-            case .live:
+            } else if isBlank {
+                newTab()
+            } else if isLive {
                 LivePage(browser: browser)
                     .overlay(alignment: .bottom) {
                         if browser.isAgentBrowsing {
@@ -64,13 +77,13 @@ struct MachineBrowserPane: View {
                                 .transition(.opacity)
                         }
                     }
-                    .overlay {
-                        if browser.url == nil, !browser.isLoading {
-                            EmptyPageHint(machine: browser.machine.name)
-                                .allowsHitTesting(false)
-                        }
-                    }
                     .animation(.ui, value: browser.isAgentBrowsing)
+            } else {
+                ZStack {
+                    LivePage(browser: browser)
+                        .opacity(0.4)
+                    Spinner(size: 16)
+                }
             }
         }
     }
@@ -86,8 +99,6 @@ struct MachineBrowserPane: View {
         }
     }
 
-    private var isLive: Bool { browser.state == .live }
-
     private var navigation: some View {
         HStack(spacing: 0) {
             Button { browser.goBack() } label: { Label("Back", systemImage: "arrow.left") }
@@ -100,10 +111,10 @@ struct MachineBrowserPane: View {
             Button {
                 if browser.isLoading { browser.stopLoading() } else { browser.reload() }
             } label: {
-                Label(browser.isLoading ? "Stop" : "Reload", systemImage: browser.isLoading ? "xmark" : "arrow.clockwise")
+                Label(isLive && browser.isLoading ? "Stop" : "Reload", systemImage: isLive && browser.isLoading ? "xmark" : "arrow.clockwise")
             }
-            .disabled(!isLive || browser.url == nil)
-            .help(browser.isLoading ? "Stop" : "Reload")
+            .disabled(!isLive || url == nil)
+            .help(isLive && browser.isLoading ? "Stop" : "Reload")
         }
         .buttonStyle(ToolbarGroupStyle())
         .padding(.horizontal, 3)
@@ -113,16 +124,15 @@ struct MachineBrowserPane: View {
 
     private var addressField: some View {
         HStack(spacing: 7) {
-            Image(systemName: browser.url?.scheme == "https" && !editing ? "lock.fill" : "magnifyingglass")
+            Image(systemName: url?.scheme == "https" && !editing ? "lock.fill" : "magnifyingglass")
                 .font(.system(size: 11))
                 .foregroundStyle(.tertiary)
             TextField("Search or enter a URL", text: $address)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .focused($editing)
-                .disabled(!isLive)
                 .onSubmit {
-                    browser.load(address)
+                    if page == nil { onSubmit(address) } else { browser.load(address) }
                     editing = false
                 }
         }
@@ -130,59 +140,35 @@ struct MachineBrowserPane: View {
         .frame(height: 34)
         .background(Color.primary.opacity(0.06), in: .capsule)
         .overlay(alignment: .bottom) {
-            if browser.isLoading {
+            if isLive, browser.isLoading {
                 Capsule().fill(.tint).frame(height: 2)
                     .padding(.horizontal, 16)
                     .opacity(0.6)
             }
         }
         .contentShape(.capsule)
-        .onTapGesture { if isLive { editing = true } }
-        .help("The page loads on \(browser.machine.name), so localhost is that machine")
+        .onTapGesture { editing = true }
+        .help("Pages open on \(browser.machine.name), so localhost is that machine")
     }
 
     private var actions: some View {
         HStack(spacing: 0) {
-            Menu {
-                ForEach(browser.pages) { page in
-                    Button {
-                        browser.select(page.id)
-                    } label: {
-                        if page.id == browser.activeID {
-                            Label(page.name, systemImage: "checkmark")
-                        } else {
-                            Text(page.name)
-                        }
-                    }
-                }
-                Divider()
-                Button("New Page") { browser.newPage() }
-                Button("Close Page") { if let id = browser.activeID { browser.close(id) } }
-                    .disabled(browser.activeID == nil)
-            } label: {
-                Label("Pages", systemImage: "square.on.square")
-            }
-            .menuStyle(.button)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .disabled(!isLive)
-            .help(browser.pages.count == 1 ? "1 page open on \(browser.machine.name)" : "\(browser.pages.count) pages open on \(browser.machine.name)")
             Button {
                 if let file = browser.screenshotFile() { attach([file]) }
             } label: {
                 Label("Add Screenshot to Message", systemImage: "camera.viewfinder")
             }
-            .disabled(!isLive || browser.frame == nil || browser.url == nil)
+            .disabled(!isLive || browser.frame == nil || url == nil)
             .help("Add a screenshot of the page to your message, so the agent sees what you see")
             Menu {
                 Button("Copy Address") {
-                    guard let url = browser.url else { return }
+                    guard let url else { return }
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(url.absoluteString, forType: .string)
                 }
-                .disabled(browser.url == nil)
+                .disabled(url == nil)
                 Button("Reload Page") { browser.reload() }
-                    .disabled(!isLive || browser.url == nil)
+                    .disabled(!isLive || url == nil)
             } label: {
                 Label("More", systemImage: "ellipsis")
             }
@@ -199,7 +185,7 @@ struct MachineBrowserPane: View {
 
     /// The host while browsing, the full address while editing.
     private var displayAddress: String {
-        guard let url = browser.url else { return "" }
+        guard let url else { return "" }
         if editing { return url.absoluteString }
         return url.host()?.replacingOccurrences(of: "www.", with: "") ?? url.absoluteString
     }
@@ -245,28 +231,6 @@ private struct SetupCard: View {
             }
         }
         .padding(24)
-    }
-}
-
-/// A page with nothing on it yet: what this browser is.
-private struct EmptyPageHint: View {
-    let machine: String
-
-    var body: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "server.rack")
-                .font(.system(size: 26))
-                .foregroundStyle(.tertiary)
-            Text("Browser on \(machine)")
-                .font(.system(size: 15, weight: .semibold))
-            Text("It runs on the machine and keeps running when you quit. Agents there browse with it, and you can watch or take over here.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 320)
-        }
-        .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

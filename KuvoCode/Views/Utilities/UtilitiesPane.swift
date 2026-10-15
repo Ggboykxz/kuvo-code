@@ -48,7 +48,7 @@ struct UtilitiesPane: View {
                 ScrollViewReader { proxy in
                     ScrollView(.horizontal) {
                         HStack(spacing: 4) {
-                            ForEach(utilities.tabs) { tab in
+                            ForEach(utilities.visibleTabs) { tab in
                                 UtilityTabButton(
                                     title: title(for: tab),
                                     icon: icon(for: tab),
@@ -61,9 +61,9 @@ struct UtilitiesPane: View {
                                 .contextMenu {
                                     Button("Close Tab") { withAnimation(.ui) { utilities.close(tab.id) } }
                                     Button("Close Other Tabs") {
-                                        withAnimation(.ui) { for other in utilities.tabs where other.id != tab.id { utilities.close(other.id) } }
+                                        withAnimation(.ui) { for other in utilities.visibleTabs where other.id != tab.id { utilities.close(other.id) } }
                                     }
-                                    .disabled(utilities.tabs.count < 2)
+                                    .disabled(utilities.visibleTabs.count < 2)
                                 }
                             }
                         }
@@ -133,8 +133,8 @@ struct UtilitiesPane: View {
         case .file(let url): url?.lastPathComponent ?? "Files"
         case .terminal: utilities.terminals[tab.id]?.title ?? "Terminal"
         case .browser: utilities.browsers[tab.id]?.displayTitle ?? "New Tab"
-        case .machineBrowser(let machine):
-            app.machines.engine(machine)?.browser.active.flatMap { $0.url == "about:blank" ? nil : $0.name } ?? machine
+        case .machinePage(let machine, let page):
+            app.machines.engine(machine)?.browser.page(page)?.name ?? "New Tab"
         }
     }
 
@@ -150,7 +150,13 @@ struct UtilitiesPane: View {
             } else {
                 .symbol("globe")
             }
-        case .machineBrowser: .symbol("server.rack")
+        case .machinePage(let machine, let page):
+            if let url = app.machines.engine(machine)?.browser.url(of: page), let host = url.host()?.replacingOccurrences(of: "www.", with: ""),
+               let site = utilities.history.sites.first(where: { $0.host == host }), let image = utilities.history.icon(for: site) {
+                .image(image)
+            } else {
+                .symbol("globe")
+            }
         }
     }
 
@@ -183,16 +189,29 @@ struct UtilitiesPane: View {
             case .browser:
                 if let session = utilities.browsers[tab.id] {
                     BrowserPane(session: session, attach: { utilities.attachToMessage?($0) }) {
-                        NewTabPage(utilities: utilities, tabID: tab.id, directory: directory, environment: environment, browser: session)
+                        NewTabPage(utilities: utilities, tabID: tab.id, directory: directory, environment: environment) { address in
+                            session.load(address)
+                        } openInNewTab: { address in
+                            utilities.newBrowser(address)
+                        }
                     }
                     .id(tab.id)
                 } else {
                     placeholder("Page Closed", symbol: "globe", detail: "Close this tab, or open a new one.")
                 }
-            case .machineBrowser(let machine):
+            case .machinePage(let machine, let page):
                 if let browser = app.machines.engine(machine)?.browser {
-                    MachineBrowserPane(browser: browser, attach: { utilities.attachToMessage?($0) })
-                        .id(tab.id)
+                    MachineBrowserPane(browser: browser, page: page, attach: { utilities.attachToMessage?($0) }) {
+                        NewTabPage(utilities: utilities, tabID: tab.id, directory: directory, environment: environment) { address in
+                            // A new tab opens its page; a blank page goes there.
+                            if page == nil { utilities.open(address, inTab: tab.id) } else { browser.load(address) }
+                        } openInNewTab: { address in
+                            utilities.newMachinePage(machine, address: address)
+                        }
+                    } onSubmit: { address in
+                        utilities.open(address, inTab: tab.id)
+                    }
+                    .id(tab.id)
                 } else {
                     placeholder("Machine Removed", symbol: "server.rack", detail: "\(machine) isn’t one of your machines anymore. Close this tab.")
                 }

@@ -12,7 +12,8 @@ extension AppModel {
         workspace.machines = Set(machines.list.map(\.id))
         // An agent on a machine browses with the machine's browser: the panel shows it, as it
         // shows its own browser for an agent here.
-        workspace.onMachineBrowsing = { [weak self] machine in self?.utilities.showMachineBrowser(machine, byAgent: true) }
+        workspace.onMachineBrowsing = { [weak self] machine in self?.utilities.revealMachineBrowser(machine) }
+        utilities.machineBrowser = { [weak self] machine in self?.machines.engine(machine)?.browser }
         // A machine whose connection dropped while the Mac slept, and that gave up trying, gets
         // another go once it's awake and the network is back.
         NotificationCenter.default.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
@@ -40,6 +41,9 @@ extension AppModel {
     /// feeds its sessions into the workspace.
     func connect(_ engine: MachineEngine) {
         let machine = engine.machine.id
+        // Its pages are the panel's browser tabs while a session there is in view.
+        engine.browser.onPages = { [weak self] pages in self?.utilities.syncMachinePages(machine, pages) }
+        engine.browser.onActive = { [weak self] page, byAgent in self?.utilities.machinePageActive(machine, page: page, byAgent: byAgent) }
         engine.onEvent = { [weak self] event in self?.workspace.handle(event, machine: machine) }
         engine.onReconnect = { [weak self] in await self?.workspace.refresh(engine) }
         engine.onExit = { [weak self] in
@@ -78,6 +82,7 @@ extension AppModel {
     /// working: then it carries on, and its work is there when you connect again.
     func disconnect(_ engine: MachineEngine) {
         engine.browser.reset()
+        utilities.closeMachineBrowser(engine.machine.id)
         let busy = workspace.isRunning(on: engine.machine.id)
         if busy { engine.disconnect() } else { Task { await engine.stopEngine() } }
         workspace.forget(engine.machine.id)

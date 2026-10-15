@@ -289,6 +289,11 @@ struct MainView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             if let sessionID { workspace.markViewed(sessionID) }
         }
+        // The panel's browser is that of the place the session in view runs: this Mac's, or its
+        // machine's.
+        .onChange(of: activeDirectory, initial: true) { _, directory in
+            utilities.place = directory.flatMap(RemoteFolder.machine(of:))
+        }
         .task(id: activeDirectory) {
             if let activeDirectory { await workspace.loadBranch(for: activeDirectory) }
         }
@@ -1002,14 +1007,16 @@ struct MainView: View {
         // The folder's new session first, so the panel's tools open in it.
         if let folder = environment["KUVO_DEMO_FOLDER"], environment["KUVO_DEMO_PROMPT"] == nil { newSession(in: folder) }
         // KUVO_DEMO_PANEL: tools to open in the panel, comma-separated: terminal,
-        // browser=<address>, machine=<machine> (its browser), files, file=<path>, changes, run (the
-        // project's run command), expand.
+        // browser=<address>, machine=<machine>[=<address>] (a tab in its browser, with a session
+        // there in view), files, file=<path>, changes, run (the project's run command), expand.
         for item in (environment["KUVO_DEMO_PANEL"] ?? "").split(separator: ",").map(String.init) {
             let parts = item.split(separator: "=", maxSplits: 1).map(String.init)
             switch parts.first {
             case "terminal": utilities.newTerminal(in: activeDirectory, environment: app.shellEnvironment)
             case "browser": utilities.newBrowser(parts.count > 1 ? parts[1] : nil)
-            case "machine" where parts.count > 1: utilities.showMachineBrowser(parts[1])
+            case "machine" where parts.count > 1:
+                let rest = parts[1].split(separator: "=", maxSplits: 1).map(String.init)
+                utilities.newMachinePage(rest[0], address: rest.count > 1 ? rest[1] : nil)
             case "files": utilities.showFiles()
             case "file" where parts.count > 1: utilities.open(RemoteFolder.url(parts[1]))
             case "changes": utilities.showChanges()

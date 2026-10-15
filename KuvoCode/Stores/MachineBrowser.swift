@@ -5,8 +5,8 @@ import os
 
 /// A machine's browser: a Chromium kept running on the machine (`kuvo-browser.js`), which the
 /// agents there browse with, so it carries on while this Mac is off. Kuvo Code sets it up when it
-/// connects to the machine, and the panel shows it live while its tab is in view: you see what
-/// the agent does, and can click and type in it yourself.
+/// connects to the machine. Its pages are the panel's browser tabs while a session on the machine
+/// is in view: the one you look at shows live, and you can click and type in it yourself.
 @Observable
 final class MachineBrowser {
     enum Setup: Equatable {
@@ -29,11 +29,15 @@ final class MachineBrowser {
         var title: String
         var url: String
 
-        /// Its title, else its address, for menus.
+        /// Nothing on it yet.
+        var isBlank: Bool { url.isEmpty || url == "about:blank" }
+
+        /// Its title, else its address, for tabs and menus.
         var name: String {
-            if !title.isEmpty, title != url { return title }
-            if url.isEmpty || url == "about:blank" { return "New Page" }
-            return URL(string: url)?.host() ?? url
+            if isBlank { return "New Tab" }
+            // Until a page sets its title, Chromium gives its address without the scheme.
+            if !title.isEmpty, title != url, !url.hasSuffix("://" + title) { return title }
+            return URL(string: url)?.host()?.replacingOccurrences(of: "www.", with: "") ?? url
         }
     }
 
@@ -47,9 +51,12 @@ final class MachineBrowser {
     let machine: Machine
     private(set) var setup = Setup.unknown
     private(set) var state = State.idle
+    /// The browser's pages, in the order they opened.
     private(set) var pages: [Page] = []
+    /// The page in use: the one the agent or you last used.
     private(set) var activeID: String?
-    /// The latest picture of the page in view, and the page's size in CSS pixels.
+    /// The page the panel shows, its latest picture, and its size in CSS pixels.
+    private(set) var shownPage: String?
     private(set) var frame: CGImage?
     private(set) var frameSize = CGSize(width: 1280, height: 800)
     private(set) var isLoading = false
@@ -59,12 +66,18 @@ final class MachineBrowser {
     private(set) var isAgentBrowsing = false
     private(set) var dialog: Dialog?
 
+    /// Told when pages open or close, and when the agent moves to another page (or you do).
+    @ObservationIgnored var onPages: ([Page]) -> Void = { _ in }
+    @ObservationIgnored var onActive: (_ page: String, _ byAgent: Bool) -> Void = { _, _ in }
+
     @ObservationIgnored private var link: MachineBrowserLink?
     @ObservationIgnored private var session: String?
     /// Goes up with each page shown, so a slower earlier switch can't win.
     @ObservationIgnored private var generation = 0
+    /// The panel wants the browser while its tabs are in the strip, and while a tab shows a page.
+    @ObservationIgnored private var keepers = 0
     @ObservationIgnored private var viewers = 0
-    @ObservationIgnored private var hideTask: Task<Void, Never>?
+    @ObservationIgnored private var dropTask: Task<Void, Never>?
     @ObservationIgnored private var viewport = (size: CGSize(width: 800, height: 600), scale: CGFloat(2))
     @ObservationIgnored private var viewportTask: Task<Void, Never>?
     @ObservationIgnored private var history: [Int] = []
@@ -91,12 +104,16 @@ final class MachineBrowser {
     /// Where this Mac keeps the browser for machines, put together, so the next needs no download.
     static var cache: URL { AppInfo.supportDirectory.appending(path: "browser-linux") }
 
-    var active: Page? { pages.first { $0.id == activeID } }
+    private var isWanted: Bool { keepers > 0 || viewers > 0 }
 
-    /// The page's address, unless it's empty.
-    var url: URL? {
-        guard let address = active?.url, address != "about:blank", !address.isEmpty else { return nil }
-        return URL(string: address)
+    func page(_ id: String?) -> Page? {
+        pages.first { $0.id == id }
+    }
+
+    /// A page's address, unless it's empty.
+    func url(of id: String?) -> URL? {
+        guard let page = page(id), !page.isBlank else { return nil }
+        return URL(string: page.url)
     }
 
     // MARK: Setting it up
@@ -109,7 +126,7 @@ final class MachineBrowser {
         preparing = task
         await task.value
         preparing = nil
-        if setup == .ready, viewers > 0, link == nil { connect() }
+        if setup == .ready, isWanted, link == nil { connect() }
     }
 
     private func install() async {
@@ -144,44 +161,73 @@ final class MachineBrowser {
     func reset() {
         disconnect()
         state = .idle
+        pages = []
+        shownPage = nil
         if case .failed = setup { setup = .unknown }
     }
 
-    /// The machine is connected (again, maybe after the Mac slept): a browser tab in view comes
-    /// back live.
+    /// The machine is connected (again, maybe after the Mac slept): tabs in view come back live.
     func resume() {
         reconnects = 0
-        guard viewers > 0 else { return }
-        if setup != .ready {
-            Task { await prepare() }
-        } else if link == nil {
-            connect()
-        }
+        guard isWanted else { return }
+        connectWhenReady()
     }
 
-    // MARK: The live view
+    // MARK: What the panel wants
 
-    /// A view shows the browser: connects to it, if it isn't already.
-    func show() {
+    /// The panel has this browser's tabs in its strip (or stops having them): the browser stays
+    /// connected while it does, to keep them in step with its pages.
+    func keep(_ keeping: Bool) {
+        keepers = max(0, keepers + (keeping ? 1 : -1))
+        wantsChanged()
+    }
+
+    /// A tab shows `page`: it's the page in use now, and it shows live.
+    func show(_ page: String) {
         viewers += 1
-        hideTask?.cancel()
+        shownPage = page
+        if activeID != page {
+            activeID = page
+            link?.fire("Kuvo.setActive", ["targetId": page, "by": "user"])
+        }
+        wantsChanged()
+        if state == .live { Task { await attach(page) } }
+    }
+
+    /// A tab stopped showing `page` (another took its place, or the panel closed).
+    func hide(_ page: String) {
+        viewers = max(0, viewers - 1)
+        if viewers == 0, shownPage == page {
+            // A moment later, unless another tab shows it again: no more pictures.
+            Task {
+                try? await Task.sleep(for: .milliseconds(500))
+                guard viewers == 0, shownPage == page else { return }
+                stopShowing()
+            }
+        }
+        wantsChanged()
+    }
+
+    private func wantsChanged() {
+        dropTask?.cancel()
+        if isWanted {
+            connectWhenReady()
+        } else {
+            // A few seconds later, if nothing wants it again: the connection closes (the browser
+            // keeps running on the machine).
+            dropTask = Task {
+                try? await Task.sleep(for: .seconds(5))
+                guard !Task.isCancelled, !isWanted else { return }
+                disconnect()
+            }
+        }
+    }
+
+    private func connectWhenReady() {
         if setup != .ready {
             Task { await prepare() }
         } else if link == nil {
             connect()
-        }
-    }
-
-    /// A view stopped showing it: a few seconds later, with nothing else showing it, the live view
-    /// ends (the browser keeps running on the machine).
-    func hide() {
-        viewers = max(0, viewers - 1)
-        guard viewers == 0 else { return }
-        hideTask?.cancel()
-        hideTask = Task {
-            try? await Task.sleep(for: .seconds(5))
-            guard !Task.isCancelled, viewers == 0 else { return }
-            disconnect()
         }
     }
 
@@ -239,16 +285,16 @@ final class MachineBrowser {
         isAgentBrowsing = false
         if case .failed = state { return }
         // It stopped (the machine restarted, the browser quit): back by itself if it can.
-        if viewers > 0, reconnects < 3 {
+        if isWanted, reconnects < 3 {
             reconnects += 1
             state = .connecting
             Task {
                 try? await Task.sleep(for: .seconds(wasLive ? 1 : 3))
-                guard viewers > 0, link == nil else { return }
+                guard isWanted, link == nil else { return }
                 connect()
             }
         } else {
-            state = viewers > 0 ? .failed(reason.isEmpty ? "The connection to the browser on \(machine.name) closed." : reason) : .idle
+            state = isWanted ? .failed(reason.isEmpty ? "The connection to the browser on \(machine.name) closed." : reason) : .idle
         }
     }
 
@@ -271,25 +317,33 @@ final class MachineBrowser {
                 state = .failed(message)
             }
         case "Kuvo.activeChanged":
-            let id = params["targetId"] as? String
-            guard id != activeID || id == nil else { return }
+            guard let id = params["targetId"] as? String else {
+                activeID = nil
+                return
+            }
+            let byAgent = params["by"] as? String == "agent"
+            guard id != activeID || byAgent else { return }
             activeID = id
-            Task { await attach() }
+            onActive(id, byAgent)
         case "Kuvo.status":
             isAgentBrowsing = params["working"] as? Bool ?? false
         case "Target.targetCreated", "Target.targetInfoChanged":
             if let info = params["targetInfo"] as? [String: Any] { note(info) }
         case "Target.targetDestroyed":
-            pages.removeAll { $0.id == params["targetId"] as? String }
+            let id = params["targetId"] as? String
+            guard pages.contains(where: { $0.id == id }) else { return }
+            pages.removeAll { $0.id == id }
+            if shownPage == id { stopShowing() }
+            onPages(pages)
         case "Target.detachedFromTarget":
             if params["sessionId"] as? String == session { session = nil }
         default:
             guard sessionID != nil, sessionID == session else { return }
             switch method {
             case "Page.frameStartedLoading":
-                if params["frameId"] as? String == activeID { isLoading = true }
+                if params["frameId"] as? String == shownPage { isLoading = true }
             case "Page.frameStoppedLoading":
-                if params["frameId"] as? String == activeID { isLoading = false }
+                if params["frameId"] as? String == shownPage { isLoading = false }
             case "Page.frameNavigated":
                 if (params["frame"] as? [String: Any])?["parentId"] == nil { Task { await refreshHistory() } }
             case "Page.navigatedWithinDocument":
@@ -314,20 +368,24 @@ final class MachineBrowser {
             if pages[index] != page { pages[index] = page }
         } else {
             pages.append(page)
+            onPages(pages)
         }
     }
 
-    /// Once connected: the pages, and the one in use, live.
+    /// Once connected: the pages, and the one a tab shows, live.
     private func begin() async {
         guard let link else { return }
         do {
             _ = try await link.send("Target.setDiscoverTargets", ["discover": true])
             let infos = try await link.send("Target.getTargets")["targetInfos"] as? [[String: Any]] ?? []
-            pages = []
-            for info in infos { note(info) }
+            pages = infos.compactMap { info in
+                guard info["type"] as? String == "page", let id = info["targetId"] as? String else { return nil }
+                return Page(id: id, title: info["title"] as? String ?? "", url: info["url"] as? String ?? "")
+            }
             state = .live
             reconnects = 0
-            await attach()
+            onPages(pages)
+            if let shownPage { await attach(shownPage) }
             keepTitles(link)
         } catch {
             state = .failed(error.localizedDescription)
@@ -338,8 +396,10 @@ final class MachineBrowser {
     private func refreshPages() async {
         guard let link, let infos = try? await link.send("Target.getTargets")["targetInfos"] as? [[String: Any]], self.link === link else { return }
         let open = Set(infos.compactMap { $0["type"] as? String == "page" ? $0["targetId"] as? String : nil })
+        let gone = pages.contains { !open.contains($0.id) }
         pages.removeAll { !open.contains($0.id) }
         for info in infos { note(info) }
+        if gone { onPages(pages) }
     }
 
     /// Every few seconds while live, for pages that change their title as you use them.
@@ -353,21 +413,11 @@ final class MachineBrowser {
         }
     }
 
-    /// Shows the page in use: the one the agent or you last used, else the newest, else a new one.
-    /// A page that closed as it was picked is passed over for another.
-    private func attach(retries: Int = 2) async {
-        guard let link else { return }
+    /// Shows `target` live: its pictures, at the panel's size.
+    private func attach(_ target: String) async {
+        guard let link, shownPage == target else { return }
         generation += 1
         let current = generation
-        var target = activeID.flatMap { id in pages.contains { $0.id == id } ? id : nil }
-        if target == nil {
-            target = pages.last?.id
-            if target == nil { target = try? await link.send("Target.createTarget", ["url": "about:blank"])["targetId"] as? String }
-            guard generation == current, let target else { return }
-            activeID = target
-            link.fire("Kuvo.setActive", ["targetId": target, "by": "user"])
-        }
-        guard let target else { return }
         if let old = session {
             session = nil
             link.fire("Target.detachFromTarget", ["sessionId": old])
@@ -378,7 +428,7 @@ final class MachineBrowser {
         do {
             let attached = try await link.send("Target.attachToTarget", ["targetId": target, "flatten": true])
             guard let id = attached["sessionId"] as? String else { return }
-            guard generation == current, self.link === link else {
+            guard generation == current, self.link === link, shownPage == target else {
                 link.fire("Target.detachFromTarget", ["sessionId": id])
                 return
             }
@@ -389,17 +439,23 @@ final class MachineBrowser {
             await applyViewport()
             await refreshHistory()
         } catch {
+            // Closed as it was picked: its tab goes with it.
             log.error("Couldn't show a page: \(error.localizedDescription, privacy: .public)")
-            guard generation == current, self.link === link, retries > 0 else { return }
             await refreshPages()
-            pages.removeAll { $0.id == target }
-            if activeID == target { activeID = nil }
-            await attach(retries: retries - 1)
         }
     }
 
-    /// The view's size: the page takes it, at the screen's scale, so it lays out for the room the
-    /// panel has, as the panel's own browser does.
+    /// No tab shows a page: no more pictures, though the connection stays for the tabs.
+    private func stopShowing() {
+        generation += 1
+        if let old = session { link?.fire("Target.detachFromTarget", ["sessionId": old]) }
+        session = nil
+        shownPage = nil
+        frame = nil
+        isLoading = false
+        dialog = nil
+    }
+
     /// The browser's window size on the machine (`--window-size`), which pages have when nobody
     /// watching has set their own.
     static let windowSize = CGSize(width: 1280, height: 800)
@@ -412,6 +468,8 @@ final class MachineBrowser {
         Task { await applyViewport() }
     }
 
+    /// The view's size: the page takes it, at the screen's scale, so it lays out for the room the
+    /// panel has, as the panel's own browser does.
     func resize(to size: CGSize, scale: CGFloat) {
         let size = CGSize(width: max(200, size.width.rounded()), height: max(150, size.height.rounded()))
         guard size != viewport.size || scale != viewport.scale else { return }
@@ -443,6 +501,7 @@ final class MachineBrowser {
 
     // MARK: What you do
 
+    /// Goes to an address, or searches for anything else, in the page shown.
     func load(_ input: String) {
         guard let url = BrowserSession.url(from: input) else { return }
         fire("Page.navigate", ["url": url.absoluteString])
@@ -459,23 +518,32 @@ final class MachineBrowser {
     func reload() { fire("Page.reload") }
     func stopLoading() { fire("Page.stopLoading") }
 
-    /// A new page, in front.
-    func newPage() {
-        guard let link else { return }
-        Task {
-            guard let id = try? await link.send("Target.createTarget", ["url": "about:blank"])["targetId"] as? String else { return }
-            select(id)
+    /// A new page, at `address` if given: its ID once the browser has opened it, or nil if it
+    /// couldn't. Waits for the browser to be set up and connected first (the first time on a
+    /// machine, that's a download and an upload).
+    func newPage(_ address: String? = nil) async -> String? {
+        connectWhenReady()
+        let deadline = ContinuousClock.now + .seconds(900)
+        while state != .live {
+            if case .failed = setup { return nil }
+            if case .failed = state { return nil }
+            if ContinuousClock.now > deadline { return nil }
+            try? await Task.sleep(for: .milliseconds(200))
         }
+        guard let link else { return nil }
+        let url = address.flatMap { BrowserSession.url(from: $0)?.absoluteString } ?? "about:blank"
+        guard let id = try? await link.send("Target.createTarget", ["url": url])["targetId"] as? String else { return nil }
+        if !pages.contains(where: { $0.id == id }) {
+            pages.append(Page(id: id, title: "", url: url))
+            onPages(pages)
+        }
+        return id
     }
 
-    func select(_ id: String) {
-        guard let link, id != activeID else { return }
-        activeID = id
-        link.fire("Kuvo.setActive", ["targetId": id, "by": "user"])
-        Task { await attach() }
-    }
-
+    /// Closes a page (its tab closed).
     func close(_ id: String) {
+        pages.removeAll { $0.id == id }
+        if shownPage == id { stopShowing() }
         link?.fire("Target.closeTarget", ["targetId": id])
     }
 
@@ -538,7 +606,7 @@ final class MachineBrowser {
     /// The page in view as a PNG file in Attachments, for Add Screenshot to Message.
     func screenshotFile() -> URL? {
         guard let frame else { return nil }
-        let host = url?.host()?.replacingOccurrences(of: "www.", with: "") ?? "page"
+        let host = url(of: shownPage)?.host()?.replacingOccurrences(of: "www.", with: "") ?? "page"
         guard let png = NSBitmapImageRep(cgImage: frame).representation(using: .png, properties: [:]) else { return nil }
         return Attachments.write(png, named: "Screenshot of \(host)", extension: "png")
     }

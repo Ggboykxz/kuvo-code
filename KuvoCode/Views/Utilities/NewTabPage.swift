@@ -9,7 +9,9 @@ struct NewTabPage: View {
     let tabID: UUID
     let directory: String?
     let environment: [String: String]
-    let browser: BrowserSession
+    /// Opens an address in this tab, and in a new one.
+    let open: (String) -> Void
+    let openInNewTab: (String) -> Void
     @AppStorage(PanelSettings.showsTools) private var showsTools = true
     @AppStorage(PanelSettings.showsSuggestions) private var showsSuggestions = true
     @AppStorage(PanelSettings.suggestionCount) private var suggestionCount = 8
@@ -31,12 +33,6 @@ struct NewTabPage: View {
                             ToolCard(title: "Files", symbol: "folder", shortcut: "⌥⌘F") {
                                 replace { utilities.showFiles() }
                             }
-                            if let machine = directory.flatMap(RemoteFolder.machine(of:)) {
-                                // The browser the project's agents use, on its machine.
-                                ToolCard(title: "Browser on \(machine)", symbol: "server.rack", shortcut: nil) {
-                                    replace { utilities.showMachineBrowser(machine) }
-                                }
-                            }
                             ToolCard(title: "Customize…", symbol: "slider.horizontal.3", shortcut: nil) {
                                 app.openSettings(.panel)
                             }
@@ -54,10 +50,10 @@ struct NewTabPage: View {
                             LazyVGrid(columns: [GridItem(.adaptive(minimum: 104, maximum: 160), spacing: 8)], spacing: 8) {
                                 ForEach(sites) { site in
                                     SiteTile(site: site, icon: utilities.history.icon(for: site)) {
-                                        browser.load(site.url.absoluteString)
+                                        open(site.url.absoluteString)
                                     }
                                     .contextMenu {
-                                        Button("Open in New Tab") { utilities.newBrowser(site.url.absoluteString) }
+                                        Button("Open in New Tab") { openInNewTab(site.url.absoluteString) }
                                         Divider()
                                         Button("Remove from Suggested") { withAnimation(.ui) { utilities.history.remove(site) } }
                                     }
