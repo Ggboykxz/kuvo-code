@@ -30,7 +30,8 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Two Macs on one machine no longer take turns restarting its engine: the second uses the one that's running.
 - The panel's browser handles files: a page's upload button opens the file picker, and downloads go to your Downloads folder, with a bar that shows their progress and **Show in Finder**.
 - In a machine's browser, what a page downloads stays on the machine; **Save to Mac** copies it into your Downloads folder.
-- Agents can list, switch and close browser tabs, attach files to a page's upload, and find what they download.
+- The panel's browser shows a page's alerts, confirmations and questions in a bar over it. Before, they were skipped, and a confirmation always answered no.
+- Agents can list, switch and close browser tabs, attach files to a page's upload, find what they download, and accept a page's confirmation when it should go ahead.
 - **Agents can sign in for you**: when a page wants a sign-in, the agent asks in its conversation, like a permission request. Type your username and password there (or pick a saved one) and they go straight into the page, in your Mac's browser or a machine's; the agent and the model never see them, and they're blanked out of what the agent reads and its screenshots. It asks the same way for a two-step code, and for a step only you can do, like approving the sign-in on your phone. The conversation shows the hand in the sidebar until you answer.
 - After your Mac wakes, a machine that lost its connection while it slept connects again by itself.
 

@@ -689,6 +689,8 @@ const noteOnce = (note) => {
   if (!notes.includes(note)) notes.push(note);
 };
 let busy = false;
+// The tool at work said to accept confirmations and prompts, rather than decline them.
+let acceptDialogs = false;
 // Asks waiting for the user's answer, by ID.
 const waiting = new Map();
 // A file picker an upload is waiting for, by page session.
@@ -928,9 +930,10 @@ async function capture(p) {
 /// agent hears about it with the tool's result.
 function answer(sessionId, dialog) {
   dialogs.delete(sessionId);
-  const accept = dialog.type === "alert" || dialog.type === "beforeunload";
-  link?.send("Page.handleJavaScriptDialog", { accept }, sessionId).catch(() => {});
-  notes.push(`The page showed ${dialog.type === "alert" ? "an alert" : "a dialog"}: “${dialog.message}” (${accept ? "accepted" : "declined"}).`);
+  const accept = dialog.type === "alert" || dialog.type === "beforeunload" || acceptDialogs;
+  link?.send("Page.handleJavaScriptDialog", { accept, promptText: dialog.defaultPrompt || "" }, sessionId).catch(() => {});
+  const what = dialog.type === "alert" ? "an alert" : dialog.type === "confirm" ? "a confirmation" : dialog.type === "prompt" ? "a question" : "a dialog";
+  notes.push(`The page showed ${what}: “${dialog.message}” (${accept ? "accepted" : "declined"}).` + (accept ? "" : " If it should go ahead, do it again with accept_dialog: true."));
 }
 
 /// Asks the user, in Kuvo Code, and waits for the answer (15 minutes at most).
@@ -1223,12 +1226,14 @@ async function mcp() {
           try {
             await browser();
             busy = true;
+            acceptDialogs = params.arguments?.accept_dialog === true;
             status(true);
             reply(await tool(name, params.arguments || {}));
           } catch (error) {
             reply(text(error instanceof ToolError ? error.message : "The browser ran into a problem: " + error.message, true));
           } finally {
             busy = false;
+            acceptDialogs = false;
             notes.length = 0;
             status(false);
           }

@@ -24,6 +24,18 @@ final class BrowserSession: NSObject {
     /// The saved logins for the page's site, and whether it has a field to fill them into.
     private(set) var savedLogins: [Passwords.Login] = []
     private(set) var hasLoginField = false
+    /// What the page asks you (an alert, a confirmation, a question), until you answer.
+    private(set) var dialog: PageDialog?
+    @ObservationIgnored private var dialogAnswer: ((Bool, String?) -> Void)?
+
+    struct PageDialog: Identifiable, Equatable {
+        let id = UUID()
+        enum Kind { case alert, confirm, prompt }
+        var kind: Kind
+        var message: String
+        var defaultText = ""
+    }
+
     /// Files the page downloaded, the latest last, while the bar shows them.
     private(set) var downloads: [Download] = []
     /// What happened since the agent last looked (a download started or finished), for its next
@@ -152,6 +164,42 @@ final class BrowserSession: NSObject {
 }
 
 extension BrowserSession: WKUIDelegate {
+    /// The page's alerts, confirmations and questions show in a bar over it. While the agent is
+    /// at work they're answered at once: an alert accepted, the others declined unless the agent
+    /// said to accept them; the agent hears about it.
+    func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
+        ask(PageDialog(kind: .alert, message: message)) { _, _ in completionHandler() }
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+        ask(PageDialog(kind: .confirm, message: message)) { accepted, _ in completionHandler(accepted) }
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (String?) -> Void) {
+        ask(PageDialog(kind: .prompt, message: prompt, defaultText: defaultText ?? "")) { accepted, text in completionHandler(accepted ? text ?? "" : nil) }
+    }
+
+    private func ask(_ dialog: PageDialog, answer: @escaping (Bool, String?) -> Void) {
+        if BrowserAgent.isWorking {
+            let accept = dialog.kind == .alert || BrowserAgent.acceptsDialogs
+            answer(accept, dialog.defaultText)
+            let what = dialog.kind == .alert ? "an alert" : dialog.kind == .confirm ? "a confirmation" : "a question"
+            agentNotes.append("The page showed \(what): “\(dialog.message)” (\(accept ? "accepted" : "declined"))." + (accept ? "" : " If it should go ahead, do it again with accept_dialog: true."))
+            return
+        }
+        // One at a time: an older one is turned down.
+        dialogAnswer?(false, nil)
+        dialogAnswer = answer
+        withAnimation(.ui) { self.dialog = dialog }
+    }
+
+    func answerDialog(accept: Bool, text: String? = nil) {
+        let answer = dialogAnswer
+        dialogAnswer = nil
+        withAnimation(.ui) { dialog = nil }
+        answer?(accept, text)
+    }
+
     /// The page's file picker: the Mac's open panel, over the window.
     func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
         let panel = NSOpenPanel()
@@ -349,6 +397,11 @@ struct BrowserPane<NewTab: View>: View {
                 SaveLoginBar(login: login, session: session)
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
+            if let dialog = session.dialog {
+                PageDialogBar(dialog: dialog, session: session)
+                    .id(dialog.id)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
             if let download = session.downloads.last {
                 DownloadBar(download: download, more: session.downloads.count - 1, session: session)
                     .transition(.move(edge: .top).combined(with: .opacity))
@@ -536,6 +589,43 @@ private struct SaveLoginBar: View {
         .background(Surface.well(scheme), in: .rect(cornerRadius: 10))
         .padding(.horizontal, 10)
         .padding(.bottom, 8)
+    }
+}
+
+/// The page asks something (an alert, a confirmation, a question): answer it here.
+private struct PageDialogBar: View {
+    let dialog: BrowserSession.PageDialog
+    let session: BrowserSession
+    @State private var text = ""
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(dialog.message.isEmpty ? "The page asks to continue." : dialog.message)
+                .font(.system(size: 13))
+                .textSelection(.enabled)
+                .lineLimit(6)
+            if dialog.kind == .prompt {
+                TextField("", text: $text)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { session.answerDialog(accept: true, text: text) }
+            }
+            HStack {
+                Spacer()
+                if dialog.kind != .alert {
+                    Button("Cancel") { session.answerDialog(accept: false) }
+                        .keyboardShortcut(.cancelAction)
+                }
+                Button("OK") { session.answerDialog(accept: true, text: text) }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .controlSize(.small)
+        .padding(12)
+        .background(Surface.well(scheme), in: .rect(cornerRadius: 10))
+        .padding(.horizontal, 10)
+        .padding(.bottom, 8)
+        .onAppear { text = dialog.defaultText }
     }
 }
 

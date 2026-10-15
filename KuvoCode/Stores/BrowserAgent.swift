@@ -67,6 +67,11 @@ final class BrowserAgent {
         return notes.isEmpty ? "" : notes.joined(separator: "\n") + "\n\n"
     }
 
+    /// A browser tool is at work: dialogs pages show are answered at once.
+    static var isWorking = false
+    /// And confirmations and prompts are accepted rather than declined.
+    static var acceptsDialogs = false
+
     /// The panel's browser tabs, numbered from 1; or switches to one, or closes one.
     func tabs(_ action: String, tab number: Int?) async -> String {
         let open = utilities.tabs.compactMap { tab in utilities.browsers[tab.id].map { (id: tab.id, browser: $0) } }

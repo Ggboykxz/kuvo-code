@@ -254,7 +254,6 @@ private struct AgentBadge: View {
     }
 }
 
-/// The page asks something (an alert, a confirmation, a question): answer it here.
 /// A page downloaded a file on the machine: where it is, and a copy for this Mac.
 private struct MachineDownloadBar: View {
     let download: MachineBrowser.Download
@@ -320,6 +319,7 @@ private struct MachineDownloadBar: View {
     }
 }
 
+/// The page asks something (an alert, a confirmation, a question): answer it here.
 private struct DialogBar: View {
     let dialog: MachineBrowser.Dialog
     let browser: MachineBrowser

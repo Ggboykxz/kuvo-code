@@ -146,7 +146,7 @@ enum BrowserTools {
              ["url": ["type": "string", "description": "An address like example.com, or words to search for."]], required: ["url"]),
         tool("browser_snapshot", "Read the current page: title, address, scroll position, and its interactive elements numbered like [3], with visible text."),
         tool("browser_click", "Click the element with this number from the latest snapshot.",
-             ["index": ["type": "integer", "description": "The element's number, like 3 for [3]."]], required: ["index"]),
+             ["index": ["type": "integer", "description": "The element's number, like 3 for [3]."], "accept_dialog": ["type": "boolean", "description": "Accept a confirmation or prompt the page shows on the way (they're declined otherwise)."]], required: ["index"]),
         tool("browser_type", "Type text into the input with this number. Replaces what's there unless clear is false.",
              ["index": ["type": "integer"], "text": ["type": "string"],
               "submit": ["type": "boolean", "description": "Press Enter afterwards (submits search boxes and forms)."],
@@ -156,7 +156,7 @@ enum BrowserTools {
         tool("browser_scroll", "Scroll the page up or down by screens.",
              ["direction": ["type": "string", "enum": ["up", "down"]], "pages": ["type": "number", "description": "How many screens. Defaults to 1."]], required: ["direction"]),
         tool("browser_press", "Press a key on the focused element: Enter, Escape, Tab, ArrowUp, ArrowDown, ArrowLeft, ArrowRight or Backspace. For typing text, use browser_type.",
-             ["key": ["type": "string"]], required: ["key"]),
+             ["key": ["type": "string"], "accept_dialog": ["type": "boolean", "description": "Accept a confirmation or prompt the page shows on the way (they're declined otherwise)."]], required: ["key"]),
         tool("browser_back", "Go back a page."),
         tool("browser_forward", "Go forward a page."),
         tool("browser_text", "Read all the text on the current page, for long articles or docs."),
@@ -197,6 +197,14 @@ enum BrowserTools {
     }
 
     static func call(_ name: String, arguments: [String: Any], agent: BrowserAgent) async -> [String: Any] {
+        // While the tool works, a dialog the page shows is answered at once (it would hold the
+        // page, and the tool, until someone did).
+        BrowserAgent.isWorking = true
+        BrowserAgent.acceptsDialogs = (arguments["accept_dialog"] as? NSNumber)?.boolValue ?? false
+        defer {
+            BrowserAgent.isWorking = false
+            BrowserAgent.acceptsDialogs = false
+        }
         var result = await perform(name, arguments: arguments, agent: agent)
         // Downloads that started or finished meanwhile, ahead of the tool's own result.
         let notes = agent.takeNotes()
