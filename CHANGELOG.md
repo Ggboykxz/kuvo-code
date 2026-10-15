@@ -6,6 +6,12 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- **A new Settings window**: its pages in groups in a sidebar, with a search field, and each page in a card under its title, like the main window. New pages: Appearance, Notifications, Keyboard Shortcuts, Privacy, Storage, Git, Worktrees, Archived Sessions, Browser and Passwords.
+- **Appearance**: pick an accent color (macOS's own, one of its colors, or any color), a frosted or solid window, and the conversation's text size and typeface, with a live preview.
+- **Storage** shows what Kuvo Code keeps on your Mac, by kind, and cleans up sessions you haven't used in a while, logs, and the engine download kept for machines.
+- **Passwords in the panel's browser**: it offers to save a password when you sign in to a site, in your login keychain, and fills it in when you click the key in its toolbar. It never fills one in on its own, and the agent never sees them. Settings › Passwords shows, copies or deletes them.
+- **Archived Sessions** brings archived sessions back or deletes them. **Worktrees** lists sessions' worktrees with their size. **Git** sets what sessions' branches start with, and instructions for the commit messages and pull requests Kuvo Code writes. **Browser** lists the sites that keep data in the panel's browser, to remove one at a time.
+- Code and text files can open in the editor you choose, in Settings › General. Notifications can go without a sound, and the Dock count has its own switch.
 - **Run a command yourself**: start a message with `!`, like `!npm test`, to run it in the session's folder (on the server, for a project on a remote machine). The composer switches to a shell look while you type it, and the command shows in the conversation with its output, which the agent sees with your next message.
 - The welcome screen shows Kuvo Code's own icon.
 - **Remote machines**: open projects on a Linux server you reach with SSH, like a home server or a VPS, next to your Mac's. Add one in Settings › Machines, or under Location in New Project. Kuvo Code installs its engine there and runs the project's sessions on it; Changes, Files, the terminal and Run work on the machine too. A task carries on while your Mac sleeps or is off, and its work is there when you come back. Your API keys and GitHub Copilot sign-in go along, held in memory, and if the connection drops, Kuvo Code reconnects by itself.
