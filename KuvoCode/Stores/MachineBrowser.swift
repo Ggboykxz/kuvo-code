@@ -3,6 +3,11 @@ import ImageIO
 import OpenCodeKit
 import os
 
+/// Where a machine's browser sends its page's pictures as they come.
+@MainActor protocol PictureView: AnyObject {
+    func show(_ picture: MachineBrowser.Picture?)
+}
+
 /// A machine's browser: a Chromium kept running on the machine (`kuvo-browser.js`), which the
 /// agents there browse with, so it carries on while this Mac is off. Kuvo Code sets it up when it
 /// connects to the machine. Its pages are the panel's browser tabs while a session on the machine
@@ -55,10 +60,27 @@ final class MachineBrowser {
     private(set) var pages: [Page] = []
     /// The page in use: the one the agent or you last used.
     private(set) var activeID: String?
-    /// The page the panel shows, its latest picture, and its size in CSS pixels.
+    /// The page the panel shows.
     private(set) var shownPage: String?
-    private(set) var frame: CGImage?
-    private(set) var frameSize = CGSize(width: 1280, height: 800)
+    /// Its latest picture, which goes straight to the view showing it (`pictureView`), never
+    /// through SwiftUI: they come many times a second.
+    @ObservationIgnored private(set) var picture: Picture? {
+        didSet {
+            pictureView?.show(picture)
+            if (picture != nil) != hasPicture { hasPicture = picture != nil }
+        }
+    }
+    private(set) var hasPicture = false
+    @ObservationIgnored weak var pictureView: PictureView? {
+        didSet { pictureView?.show(picture) }
+    }
+
+    /// A picture of the page: its size and where it was scrolled to, in CSS pixels.
+    struct Picture {
+        var image: CGImage
+        var size: CGSize
+        var scroll: CGPoint
+    }
     private(set) var isLoading = false
     private(set) var canGoBack = false
     private(set) var canGoForward = false
@@ -255,12 +277,14 @@ final class MachineBrowser {
         state = .connecting
         let link = MachineBrowserLink(connection: machine.connection, command: MachineBrowserInstaller.command("connect"))
         link.onEvent = { [weak self] method, params, session in self?.handle(method, params, session) }
-        link.onFrame = { [weak self] image, size, session in
-            guard let self, session == self.session else { return }
-            frame = image
-            frameSize = size
+        link.onFrame = { [weak self] frame in
+            guard let self, frame.session == self.session else { return }
+            #if DEBUG
+            meter.frame(frame.image)
+            #endif
+            picture = Picture(image: frame.image, size: frame.size, scroll: frame.scroll)
             // Back at the browser's own size: another viewer (another Mac) that set its size left.
-            if size == Self.windowSize, viewport.size != Self.windowSize { reapplyViewport() }
+            if frame.size == Self.windowSize, viewport.size != Self.windowSize { reapplyViewport() }
         }
         link.onClose = { [weak self, weak link] reason in
             guard let self, let link, self.link === link else { return }
@@ -476,7 +500,7 @@ final class MachineBrowser {
             session = nil
             link.fire("Target.detachFromTarget", ["sessionId": old])
         }
-        frame = nil
+        picture = nil
         isLoading = false
         dialog = nil
         do {
@@ -505,7 +529,7 @@ final class MachineBrowser {
         if let old = session { link?.fire("Target.detachFromTarget", ["sessionId": old]) }
         session = nil
         shownPage = nil
-        frame = nil
+        picture = nil
         isLoading = false
         dialog = nil
     }
@@ -540,7 +564,7 @@ final class MachineBrowser {
         guard let link, let session else { return }
         let (size, scale) = viewport
         _ = try? await link.send("Emulation.setDeviceMetricsOverride", ["width": Int(size.width), "height": Int(size.height), "deviceScaleFactor": scale, "mobile": false], session: session)
-        _ = try? await link.send("Page.startScreencast", ["format": "jpeg", "quality": 80, "maxWidth": Int(size.width * scale), "maxHeight": Int(size.height * scale)], session: session)
+        _ = try? await link.send("Page.startScreencast", ["format": "jpeg", "quality": 75, "maxWidth": Int(size.width * scale), "maxHeight": Int(size.height * scale)], session: session)
     }
 
     private func refreshHistory() async {
@@ -608,6 +632,38 @@ final class MachineBrowser {
         self.dialog = nil
     }
 
+    #if DEBUG
+    /// KUVO_DEMO_LOG_FRAMES: the live view's frames a second, their size, and how long after you
+    /// scroll the page's next picture arrives, in the log.
+    @ObservationIgnored private let meter = FrameMeter()
+
+    final class FrameMeter {
+        private let on = ProcessInfo.processInfo.environment["KUVO_DEMO_LOG_FRAMES"] != nil
+        private let log = Logger(subsystem: "run.kuvo.code", category: "machine-browser")
+        private var count = 0, since = Date.now, waitingSince: Date?, delays: [Double] = []
+        private var size = ""
+
+        func input() { if on, waitingSince == nil { waitingSince = .now } }
+
+        func frame(_ image: CGImage) {
+            guard on else { return }
+            count += 1
+            size = "\(image.width)x\(image.height)"
+            if let start = waitingSince {
+                delays.append(Date.now.timeIntervalSince(start) * 1000)
+                waitingSince = nil
+            }
+            let elapsed = Date.now.timeIntervalSince(since)
+            guard elapsed >= 1 else { return }
+            let delay = delays.isEmpty ? "-" : String(format: "%.0f", delays.reduce(0, +) / Double(delays.count))
+            log.notice("frames \(String(format: "%.1f", Double(self.count) / elapsed), privacy: .public)/s \(self.size, privacy: .public), scroll to frame \(delay, privacy: .public) ms")
+            count = 0
+            since = .now
+            delays = []
+        }
+    }
+    #endif
+
     // MARK: Input
 
     /// CDP's modifier bits: Alt 1, Control 2, Meta 4, Shift 8.
@@ -620,6 +676,9 @@ final class MachineBrowser {
     }
 
     func wheel(at point: CGPoint, dx: CGFloat, dy: CGFloat, modifiers: Int) {
+        #if DEBUG
+        meter.input()
+        #endif
         fire("Input.dispatchMouseEvent", ["type": "mouseWheel", "x": point.x, "y": point.y, "deltaX": dx, "deltaY": dy, "modifiers": modifiers])
     }
 
@@ -659,7 +718,7 @@ final class MachineBrowser {
 
     /// The page in view as a PNG file in Attachments, for Add Screenshot to Message.
     func screenshotFile() -> URL? {
-        guard let frame else { return nil }
+        guard let frame = picture?.image else { return nil }
         let host = url(of: shownPage)?.host()?.replacingOccurrences(of: "www.", with: "") ?? "page"
         guard let png = NSBitmapImageRep(cgImage: frame).representation(using: .png, properties: [:]) else { return nil }
         return Attachments.write(png, named: "Screenshot of \(host)", extension: "png")
@@ -683,7 +742,7 @@ final class MachineBrowserLink {
     private var waiting: [Int: CheckedContinuation<Message, Error>] = [:]
     private var stopped = false
     var onEvent: (String, [String: Any], String?) -> Void = { _, _, _ in }
-    var onFrame: (CGImage, CGSize, String?) -> Void = { _, _, _ in }
+    var onFrame: (Reader.Frame) -> Void = { _ in }
     var onClose: (String) -> Void = { _ in }
 
     /// A message as it crosses from the reading thread.
@@ -709,7 +768,7 @@ final class MachineBrowserLink {
             DispatchQueue.main.async { MainActor.assumeIsolated { self?.receive(message) } }
         }
         reader.deliverFrame = { [weak self] frame in
-            DispatchQueue.main.async { MainActor.assumeIsolated { self?.onFrame(frame.image, frame.size, frame.session) } }
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.onFrame(frame) } }
         }
         output.fileHandleForReading.readabilityHandler = { [reader] handle in
             let data = handle.availableData
@@ -801,6 +860,7 @@ final class MachineBrowserLink {
         struct Frame: @unchecked Sendable {
             var image: CGImage
             var size: CGSize
+            var scroll: CGPoint
             var session: String?
         }
 
@@ -853,7 +913,8 @@ final class MachineBrowserLink {
             let metadata = params["metadata"] as? [String: Any] ?? [:]
             let width = (metadata["deviceWidth"] as? NSNumber)?.doubleValue ?? Double(image.width)
             let height = (metadata["deviceHeight"] as? NSNumber)?.doubleValue ?? Double(image.height)
-            deliverFrame(Frame(image: image, size: CGSize(width: width, height: height), session: session))
+            let scroll = CGPoint(x: (metadata["scrollOffsetX"] as? NSNumber)?.doubleValue ?? 0, y: (metadata["scrollOffsetY"] as? NSNumber)?.doubleValue ?? 0)
+            deliverFrame(Frame(image: image, size: CGSize(width: width, height: height), scroll: scroll, session: session))
         }
     }
 }

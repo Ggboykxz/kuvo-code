@@ -158,7 +158,7 @@ struct MachineBrowserPane<NewTab: View>: View {
             } label: {
                 Label("Add Screenshot to Message", systemImage: "camera.viewfinder")
             }
-            .disabled(!isLive || browser.frame == nil || url == nil)
+            .disabled(!isLive || !browser.hasPicture || url == nil)
             .help("Add a screenshot of the page to your message, so the agent sees what you see")
             Menu {
                 Button("Copy Address") {
@@ -191,12 +191,12 @@ struct MachineBrowserPane<NewTab: View>: View {
     }
 }
 
-/// The page, live: only this view follows each new picture, not the toolbar around it.
+/// The page, live. Its pictures go straight to the view, not through SwiftUI.
 private struct LivePage: View {
     let browser: MachineBrowser
 
     var body: some View {
-        RemotePage(browser: browser, image: browser.frame, size: browser.frameSize)
+        RemotePage(browser: browser)
     }
 }
 
@@ -291,22 +291,33 @@ private struct DialogBar: View {
 /// Shows the page's pictures, fitted to the width, and sends what you do there to the page.
 private struct RemotePage: NSViewRepresentable {
     let browser: MachineBrowser
-    let image: CGImage?
-    let size: CGSize
 
     func makeNSView(context: Context) -> RemotePageView {
-        RemotePageView(browser: browser)
+        let view = RemotePageView(browser: browser)
+        browser.pictureView = view
+        return view
     }
 
-    func updateNSView(_ view: RemotePageView, context: Context) {
-        view.show(image, size: size)
+    func updateNSView(_ view: RemotePageView, context: Context) {}
+
+    static func dismantleNSView(_ view: RemotePageView, coordinator: ()) {
+        if view.browser.pictureView === view { view.browser.pictureView = nil }
     }
 }
 
-final class RemotePageView: NSView, @preconcurrency NSTextInputClient {
-    private let browser: MachineBrowser
+final class RemotePageView: NSView, @preconcurrency NSTextInputClient, PictureView {
+    let browser: MachineBrowser
     private let imageLayer = CALayer()
     private var pageSize = CGSize(width: 1280, height: 800)
+    /// Scrolling shows at once: the picture moves by what you scrolled until the page's next one
+    /// catches up (a picture takes a moment to come from the machine), once the page has shown
+    /// that it scrolls as a whole, not a part of it.
+    private var ahead = CGPoint.zero
+    private var pageScroll: CGPoint?
+    private var pageScrolls = false
+    private var lastScroll = Date.distantPast
+    private var aheadSince: Date?
+    private var settle: Task<Void, Never>?
     private var tracking: NSTrackingArea?
     private var lastMove = Date.distantPast
     private var marked: String?
@@ -316,6 +327,8 @@ final class RemotePageView: NSView, @preconcurrency NSTextInputClient {
         super.init(frame: .zero)
         wantsLayer = true
         layer?.backgroundColor = NSColor.white.cgColor
+        // A picture shown ahead of the page's scrolling stays inside the page's room.
+        layer?.masksToBounds = true
         imageLayer.contentsGravity = .resize
         imageLayer.magnificationFilter = .linear
         imageLayer.minificationFilter = .trilinear
@@ -327,13 +340,46 @@ final class RemotePageView: NSView, @preconcurrency NSTextInputClient {
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
-    func show(_ image: CGImage?, size: CGSize) {
+    func show(_ picture: MachineBrowser.Picture?) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        imageLayer.contents = image
-        if size.width > 0, size.height > 0 { pageSize = size }
+        imageLayer.contents = picture?.image
+        if let picture {
+            if picture.size.width > 0, picture.size.height > 0 { pageSize = picture.size }
+            caughtUp(to: picture.scroll)
+        } else {
+            ahead = .zero
+            pageScroll = nil
+            pageScrolls = false
+        }
         placeImage()
         CATransaction.commit()
+    }
+
+    /// A new picture, scrolled to `scroll`: what it shows of your scrolling needn't be shown ahead
+    /// any more.
+    private func caughtUp(to scroll: CGPoint) {
+        defer { pageScroll = scroll }
+        guard let before = pageScroll else { return }
+        let moved = CGPoint(x: scroll.x - before.x, y: scroll.y - before.y)
+        // The page scrolled with your scrolling: it does as a whole, so scrolling shows ahead.
+        if Date.now.timeIntervalSince(lastScroll) < 0.5, moved != .zero { pageScrolls = true }
+        // A while into your scrolling, the page shows changes but hasn't moved: a part of it
+        // scrolls (a list, a pane), so the picture stays put.
+        if moved == .zero, ahead != .zero, let since = aheadSince, Date.now.timeIntervalSince(since) > 0.25 {
+            pageScrolls = false
+            ahead = .zero
+        }
+        ahead.x = Self.remaining(ahead.x, after: moved.x)
+        ahead.y = Self.remaining(ahead.y, after: moved.y)
+        if ahead == .zero { aheadSince = nil }
+    }
+
+    /// What's still ahead of the page after it moved: never past where it is.
+    private static func remaining(_ ahead: CGFloat, after moved: CGFloat) -> CGFloat {
+        guard ahead != 0 else { return 0 }
+        let left = ahead - moved
+        return left * ahead > 0 ? left : 0
     }
 
     override func layout() {
@@ -365,7 +411,9 @@ final class RemotePageView: NSView, @preconcurrency NSTextInputClient {
     }
 
     private func placeImage() {
-        imageLayer.frame = pageRect
+        let rect = pageRect
+        let scale = pageSize.width > 0 ? rect.width / pageSize.width : 1
+        imageLayer.frame = rect.offsetBy(dx: -ahead.x * scale, dy: ahead.y * scale)
     }
 
     /// A point in the view, in the page's CSS pixels.
@@ -435,6 +483,33 @@ final class RemotePageView: NSView, @preconcurrency NSTextInputClient {
         }
         guard dx != 0 || dy != 0 else { return }
         browser.wheel(at: pagePoint(event), dx: dx, dy: dy, modifiers: MachineBrowser.modifiers(event.modifierFlags))
+        showAhead(dx: dx, dy: dy)
+    }
+
+    /// Moves the picture by what you scrolled, while the page's own picture is on its way: never
+    /// above the page's top or left, and back where the page is if it doesn't follow (a page that
+    /// can't scroll further).
+    private func showAhead(dx: CGFloat, dy: CGFloat) {
+        lastScroll = .now
+        guard pageScrolls, let scroll = pageScroll else { return }
+        if ahead == .zero { aheadSince = .now }
+        ahead.x = max(ahead.x + dx, -scroll.x)
+        ahead.y = max(ahead.y + dy, -scroll.y)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        placeImage()
+        CATransaction.commit()
+        settle?.cancel()
+        settle = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard let self, !Task.isCancelled, self.ahead != .zero else { return }
+            self.ahead = .zero
+            self.aheadSince = nil
+            CATransaction.begin()
+            CATransaction.setAnimationDuration(0.18)
+            self.placeImage()
+            CATransaction.commit()
+        }
     }
 
     // MARK: Keyboard

@@ -38,7 +38,7 @@ const IDLE = Number(process.env.KUVO_BROWSER_IDLE || 10 * 60) * 1000;
 
 // Goes up with every change to the keeper (host mode): a newer one replaces one that's running
 // (its pages close, its sign-ins stay), and an older one never replaces a newer.
-const KEEPER = 4;
+const KEEPER = 5;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -230,6 +230,9 @@ async function launchChrome(sandbox) {
     "--remote-debugging-pipe",
     `--user-data-dir=${PROFILE}`,
     "--window-size=1280,800",
+    // A Retina screen's scale, so pictures of the page are as sharp as the Mac shows them: an
+    // emulated scale alone lays the page out for it, but the live view still comes at half size.
+    "--force-device-scale-factor=2",
     "--no-first-run",
     "--no-default-browser-check",
     "--disable-dev-shm-usage",
