@@ -20,6 +20,29 @@ public struct EngineRelease: Sendable, Equatable {
         integrity: "sha512-2tJOM20RpOjNeWsYcV3VfRFPDTeu1yMMbEqAQm1sEKmHX9087Sx/TxhwBlvtiudOGq6Kr3zyKmW1t7aFF6qCsQ==",
         teamIdentifier: "5NZ4Q7NXJ4"
     )
+
+    /// The same version for Linux machines reached over SSH, by `uname -m`. Linux builds carry no
+    /// Apple signature: npm's checksum, checked on this Mac before upload, is what vouches for them.
+    public static func linux(machine: String) -> EngineRelease? {
+        switch machine {
+        case "x86_64", "amd64":
+            EngineRelease(
+                version: OpenCodeEngine.version,
+                tarball: URL(string: "https://registry.npmjs.org/@opencode/cli-linux-x64/-/cli-linux-x64-2.0.29.tgz")!,
+                integrity: "sha512-pdG/T4uBxSC3hjUTOrTlx2pXlZl2VqABlb0AgDlZ8VO/q1pUUOYvooWmN5VeSi+EP8cKGVUsj0GUmMDeB2ympA==",
+                teamIdentifier: ""
+            )
+        case "aarch64", "arm64":
+            EngineRelease(
+                version: OpenCodeEngine.version,
+                tarball: URL(string: "https://registry.npmjs.org/@opencode/cli-linux-arm64/-/cli-linux-arm64-2.0.29.tgz")!,
+                integrity: "sha512-EsCnvp5lMJNem0YoQJM9PkXY0KrkiugL55M9J2JlImQzKdQnZ4CKutrPAXOnsa889qHhY5tjRpAnD/ZYFzhkRA==",
+                teamIdentifier: ""
+            )
+        default:
+            nil
+        }
+    }
 }
 
 public enum EngineInstallError: LocalizedError {
@@ -62,13 +85,8 @@ public struct EngineInstaller: Sendable {
     public func install(progress: @escaping @Sendable (Double) -> Void = { _ in }) async throws -> URL {
         if let url = installed() { return url }
 
-        let observer = DownloadProgress(report: progress)
-        let (download, response) = try await URLSession.shared.download(from: release.tarball, delegate: observer)
+        let download = try await Self.download(release, progress: progress)
         defer { try? FileManager.default.removeItem(at: download) }
-        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            throw URLError(.badServerResponse)
-        }
-        try verifyIntegrity(of: download)
 
         // Unpack next to the final location, then move into place, so a crash never
         // leaves a half-written binary where `installed()` would find it.
@@ -90,7 +108,24 @@ public struct EngineInstaller: Sendable {
         return executable
     }
 
-    private func verifyIntegrity(of file: URL) throws {
+    /// Downloads a release's tarball to a temporary file and checks it against npm's checksum.
+    static func download(_ release: EngineRelease, progress: @escaping @Sendable (Double) -> Void) async throws -> URL {
+        let observer = DownloadProgress(report: progress)
+        let (download, response) = try await URLSession.shared.download(from: release.tarball, delegate: observer)
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            try? FileManager.default.removeItem(at: download)
+            throw URLError(.badServerResponse)
+        }
+        do {
+            try verifyIntegrity(of: download, against: release)
+        } catch {
+            try? FileManager.default.removeItem(at: download)
+            throw error
+        }
+        return download
+    }
+
+    static func verifyIntegrity(of file: URL, against release: EngineRelease) throws {
         guard release.integrity.hasPrefix("sha512-") else { throw EngineInstallError.integrityMismatch }
         let expected = Data(base64Encoded: String(release.integrity.dropFirst("sha512-".count)))
         var hasher = SHA512()

@@ -167,7 +167,7 @@ public final class ServerProcess: @unchecked Sendable {
         return handshake.url
     }
 
-    private static func randomPassword() -> String {
+    static func randomPassword() -> String {
         var bytes = [UInt8](repeating: 0, count: 32)
         _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
         return Data(bytes).base64EncodedString()
