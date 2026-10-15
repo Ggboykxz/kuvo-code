@@ -33,6 +33,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - In a machine's browser, what a page downloads stays on the machine; **Save to Mac** copies it into your Downloads folder.
 - In a machine's browser, your pointer turns into a hand over links and a text cursor over fields, as the page says.
 - The panel's browser shows a page's alerts, confirmations and questions in a bar over it. Before, they were skipped, and a confirmation always answered no.
+- A step that brings back a picture, like the agent's screenshot of a page, shows it when you open the step; click it to look closer.
 - **See where the agent acts**: when it browses, a pointer glides to what it clicks, pulses as it clicks, and rings the field it types into, in your Mac's browser and in a machine's.
 - Agents can list, switch and close browser tabs, attach files to a page's upload, find what they download, and accept a page's confirmation when it should go ahead.
 - **Start a bot from a ready-made one**: New Bot offers bots to begin with, like a morning news digest, a page watcher, a price tracker, a researcher, a build keeper and a morning standup, each with a job, instructions and a look to change as you like.

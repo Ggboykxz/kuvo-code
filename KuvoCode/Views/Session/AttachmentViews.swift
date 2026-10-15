@@ -218,6 +218,34 @@ struct MessageAttachments: View {
     }
 }
 
+/// Pictures a step brought back (a screenshot of the page the agent browses), under the step.
+struct StepPictures: View {
+    let items: [AttachmentItem]
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 6) {
+            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                AttachmentPicture(item: item, height: items.count == 1 ? 220 : 140) {
+                    ImageViewer.shared.show(items, at: index)
+                }
+            }
+        }
+    }
+
+    /// The pictures among a step's results, from the data they carry or the files they name.
+    static func items(in output: [Message.ToolOutput], step: String) -> [AttachmentItem] {
+        output.enumerated().compactMap { index, part -> AttachmentItem? in
+            guard case .file(let uri, let mime, let name) = part, mime.hasPrefix("image/") else { return nil }
+            let fallback = "Screenshot." + (mime.split(separator: "/").last.map(String.init) ?? "png")
+            if uri.hasPrefix("data:"), let comma = uri.firstIndex(of: ",") {
+                let data = String(uri[uri.index(after: comma)...])
+                return .stored(Message.User.Attachment(mime: mime, name: name ?? fallback, data: data, source: .inline), id: "\(step)-\(index)")
+            }
+            return .stored(Message.User.Attachment(mime: mime, name: name ?? fallback, source: .uri(uri)), id: "\(step)-\(index)")
+        }
+    }
+}
+
 private struct AttachmentPicture: View {
     let item: AttachmentItem
     let height: CGFloat

@@ -279,7 +279,13 @@ struct ToolCallView: View {
     }
 
     private var hasDetails: Bool {
-        subagentSession != nil || !diffs.isEmpty || (call.name == "shell" && !outputText.isEmpty) || code != nil || call.state.isFailure
+        subagentSession != nil || !diffs.isEmpty || (call.name == "shell" && !outputText.isEmpty) || code != nil || call.state.isFailure || !pictures.isEmpty
+    }
+
+    /// Pictures the step brought back, like a screenshot of the page.
+    private var pictures: [AttachmentItem] {
+        guard case .completed(_, let output, _) = call.state else { return [] }
+        return StepPictures.items(in: output, step: call.id)
     }
 
     /// The code a Code Mode step ran.
@@ -288,7 +294,9 @@ struct ToolCallView: View {
     }
 
     @ViewBuilder private var details: some View {
-        if let subagentSession {
+        if !pictures.isEmpty {
+            StepPictures(items: pictures)
+        } else if let subagentSession {
             SubagentSteps(id: subagentSession, task: string("prompt"), directory: directory)
         } else if let code {
             VStack(alignment: .leading, spacing: 8) {
