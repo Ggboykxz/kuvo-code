@@ -252,6 +252,13 @@ public struct OpenCodeAPI: Sendable {
         try await send("PATCH", "api/session/\(id.pathEscaped)", body: Body(title: title))
     }
 
+    /// Moves the session to another folder (and that folder's project): right away when it's
+    /// idle, otherwise at the agent's next step. The folder must exist.
+    public func moveSession(_ id: String, to directory: String) async throws {
+        struct Body: Encodable { var directory: String }
+        try await send("POST", "api/session/\(id.pathEscaped)/move", body: Body(directory: enginePath(directory)))
+    }
+
     /// Replaces the session's own permission rules (the agent's still apply underneath).
     public func setPermissions(session id: String, rules: [PermissionRule]) async throws {
         struct Body: Encodable { var permissions: [PermissionRule] }
