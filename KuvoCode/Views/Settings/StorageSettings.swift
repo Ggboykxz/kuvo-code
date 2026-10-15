@@ -5,7 +5,7 @@ import SwiftUI
 /// Storage: what Kuvo Code keeps on this Mac, by kind, as a bar, and the room you can get back.
 struct StorageSettings: View {
     @Environment(Workspace.self) private var workspace
-    @AppStorage("settings.tab") private var tab = SettingsPage.storage.rawValue
+    @AppStorage(SettingsPage.storageKey) private var tab = SettingsPage.storage.rawValue
     @State private var report: StorageReport?
     @State private var cleaningUp = false
     @State private var confirmingLogs = false

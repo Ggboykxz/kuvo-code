@@ -12,21 +12,13 @@ struct KuvoCodeApp: App {
                 .environment(delegate.model)
                 .environment(delegate.model.catalog)
                 .environment(delegate.model.workspace)
+                .environment(delegate.updates)
                 .task { await delegate.model.start() }
         }
         .defaultSize(width: 1180, height: 760)
         .windowToolbarStyle(.unified)
-        .commands { AppCommands(updates: delegate.updates) }
-
-        Settings {
-            SettingsView()
-                .environment(delegate.model)
-                .environment(delegate.model.catalog)
-                .environment(delegate.model.workspace)
-                .environment(delegate.updates)
-        }
-        .defaultSize(width: 1040, height: 760)
-        .windowResizability(.contentMinSize)
+        // Settings open in this window (AppModel.openSettings), so there's no Settings scene.
+        .commands { AppCommands(model: delegate.model, updates: delegate.updates) }
     }
 }
 
@@ -95,6 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 /// Menu commands. They act on whatever the focused window exposes.
 struct AppCommands: Commands {
+    let model: AppModel
     let updates: Updates
     @FocusedValue(\.sessionActions) private var actions
     @AppStorage(Appearance.key) private var appearance = Appearance.system
@@ -124,7 +117,7 @@ struct AppCommands: Commands {
         // In place of Close and Close All: ⌘W closes the session tab, as in browsers.
         CommandGroup(replacing: .saveItem) {
             Button("Close Tab") {
-                // Another window in front, like Settings or an update window, just closes.
+                // Another window in front, like an update window, just closes.
                 if let actions, NSApp.keyWindow?.identifier?.rawValue == "main" { actions.closeTab() } else { NSApp.keyWindow?.performClose(nil) }
             }
             .keyboardShortcut("w")
@@ -200,7 +193,9 @@ struct AppCommands: Commands {
             }
             Divider()
         }
-        CommandGroup(after: .appSettings) {
+        CommandGroup(replacing: .appSettings) {
+            Button("Settings…") { model.openSettings() }
+                .keyboardShortcut(",")
             Button("Connect Providers…") { actions?.showProviders() }
                 .keyboardShortcut("k", modifiers: [.command, .shift])
                 .disabled(actions == nil)

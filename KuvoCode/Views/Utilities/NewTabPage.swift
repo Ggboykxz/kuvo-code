@@ -13,7 +13,7 @@ struct NewTabPage: View {
     @AppStorage(PanelSettings.showsTools) private var showsTools = true
     @AppStorage(PanelSettings.showsSuggestions) private var showsSuggestions = true
     @AppStorage(PanelSettings.suggestionCount) private var suggestionCount = 8
-    @Environment(\.openSettings) private var openSettings
+    @Environment(AppModel.self) private var app
 
     var body: some View {
         ScrollView {
@@ -32,8 +32,7 @@ struct NewTabPage: View {
                                 replace { utilities.showFiles() }
                             }
                             ToolCard(title: "Customize…", symbol: "slider.horizontal.3", shortcut: nil) {
-                                UserDefaults.standard.set("panel", forKey: "settings.tab")
-                                openSettings()
+                                app.openSettings(.panel)
                             }
                         }
                     }

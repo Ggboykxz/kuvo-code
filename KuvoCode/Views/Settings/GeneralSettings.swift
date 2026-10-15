@@ -86,7 +86,7 @@ struct NotificationSettings: View {
 
 /// Privacy: anonymous usage, and where your data is.
 struct PrivacySettings: View {
-    @AppStorage("settings.tab") private var tab = SettingsPage.privacy.rawValue
+    @AppStorage(SettingsPage.storageKey) private var tab = SettingsPage.privacy.rawValue
 
     var body: some View {
         ScrollingSettingsForm {

@@ -6,7 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
-- **A new Settings window**: its pages in groups in a sidebar, with a search field, and each page in a card under its title, like the main window. New pages: Appearance, Notifications, Keyboard Shortcuts, Privacy, Storage, Git, Worktrees, Archived Sessions, Browser and Passwords.
+- **A new Settings**, in the main window in place of your sessions: ⌘, opens it, and the back arrow or Esc returns to where you were. Its pages are in groups in a sidebar, with a search field, each in a card under its title. New pages: Appearance, Notifications, Keyboard Shortcuts, Privacy, Storage, Git, Worktrees, Archived Sessions, Browser and Passwords.
 - **Appearance**: pick an accent color (macOS's own, one of its colors, or any color), a frosted or solid window, and the conversation's text size and typeface, with a live preview.
 - **Storage** shows what Kuvo Code keeps on your Mac, by kind, and cleans up sessions you haven't used in a while, logs, and the engine download kept for machines.
 - **Passwords in the panel's browser**: it offers to save a password when you sign in to a site, in your login keychain, and fills it in when you click the key in its toolbar. It never fills one in on its own, and the agent never sees them. Settings › Passwords shows, copies or deletes them.

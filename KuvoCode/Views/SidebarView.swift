@@ -61,7 +61,7 @@ struct SidebarView: View {
                     }
                     .help("New Session (⌘N)")
 
-                    SearchRow(text: $search)
+                    SidebarSearchRow(text: $search)
 
                     if !search.isEmpty {
                         let inConversations = conversationResults.filter { found in !results.contains { $0.id == found.session.id } }
@@ -496,9 +496,9 @@ private struct ConversationResultRow: View {
     }
 }
 
-/// Finding a session: a quiet field shaped like a row, set into the card like a well so it
-/// doesn't read as a selected row; cleared with its button or Escape.
-private struct SearchRow: View {
+/// Finding a session (or a Settings page): a quiet field shaped like a row, set into the glass
+/// like a well so it doesn't read as a selected row; cleared with its button or Escape.
+struct SidebarSearchRow: View {
     @Binding var text: String
     @FocusState private var isFocused: Bool
     @Environment(\.colorScheme) private var scheme
@@ -535,7 +535,7 @@ private struct SearchRow: View {
     }
 }
 
-private enum SidebarMetrics {
+enum SidebarMetrics {
     static let rowHeight: CGFloat = 32
     static let iconWidth: CGFloat = 18
 }

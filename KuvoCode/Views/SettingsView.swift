@@ -1,25 +1,34 @@
 import OpenCodeKit
 import SwiftUI
 
-/// Settings: a sidebar of pages in groups, with a search field, on the window's glass, and the
-/// open page in a card beside it, under its title, the way the main window shows a session.
+/// Settings, in the main window in place of the sessions: a sidebar of pages in groups, with a
+/// search field, on the window's glass where the sessions' sidebar was, and the open page in a
+/// card beside it, under its title, the way a session shows.
 struct SettingsView: View {
     /// Every sheet a page opens (an agent, a server, a command, a skill, a sign-in) is this
     /// wide, and this tall unless it's short.
     static let sheetWidth: CGFloat = 620
     static let sheetHeight: CGFloat = 600
 
-    /// Which page is open; other places (the menu bar's "Accounts…", the browser) can set it.
-    @AppStorage("settings.tab") private var tab = SettingsPage.general.rawValue
+    /// The sessions' sidebar width, so the window keeps its shape.
+    var sidebarWidth: CGFloat = 280
+    /// Room above the sidebar's first row for the window's buttons, when they sit there.
+    var topInset: CGFloat = 0
+    /// Back to the sessions.
+    let close: () -> Void
+
+    /// Which page is open; other places (the command palette, the browser) can set it.
+    @AppStorage(SettingsPage.storageKey) private var tab = SettingsPage.general.rawValue
     @State private var search = ""
     @Environment(\.colorScheme) private var scheme
 
     private var page: SettingsPage { SettingsPage(rawValue: tab) ?? .general }
 
     var body: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: Metrics.paneGap) {
             SettingsSidebar(selection: Binding(get: { page }, set: { tab = $0.rawValue }), search: $search)
-                .frame(width: 232)
+                .padding(.top, topInset)
+                .frame(width: sidebarWidth)
             VStack(alignment: .leading, spacing: 0) {
                 SettingsPageHeader(page: page)
                 page.content
@@ -31,21 +40,41 @@ struct SettingsView: View {
             .clipShape(.rect(cornerRadius: Metrics.cardRadius))
             .specularRim(RoundedRectangle(cornerRadius: Metrics.cardRadius))
             .shadow(color: .black.opacity(scheme == .dark ? 0.3 : 0.06), radius: 6, y: 1)
-            .padding([.trailing, .bottom], Metrics.paneGap)
             .id(page)
         }
-        .frame(minWidth: 860, idealWidth: 1040, minHeight: 600, idealHeight: 760)
-        .windowGlass()
-        .appLook()
-        .toolbar(removing: .title)
-        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        // Escape goes back to the sessions, from anywhere on the page; a sheet takes its own.
+        .background {
+            Button("Back to Sessions", action: close)
+                .keyboardShortcut(.escape, modifiers: [])
+                .opacity(0)
+                .frame(width: 0, height: 0)
+                .accessibilityHidden(true)
+        }
         .onAppear { Analytics.shared.track("settings_opened", ["tab": tab]) }
         .onChange(of: tab) { Analytics.shared.track("settings_opened", ["tab": tab]) }
     }
 }
 
+/// The title bar's way back from Settings to the sessions.
+struct SettingsBackButton: View {
+    let close: () -> Void
+
+    var body: some View {
+        Button(action: close) {
+            Image(systemName: "chevron.backward")
+                .font(.system(size: 14, weight: .medium))
+        }
+        .buttonStyle(IconButtonStyle(width: 28, height: 28, cornerRadius: 7))
+        .accessibilityLabel("Back to Sessions")
+        .help("Back to Sessions (Esc)")
+    }
+}
+
 /// A page of Settings: where it sits in the sidebar, what it's called, and what it shows.
 enum SettingsPage: String, CaseIterable, Identifiable {
+    /// The open page, in UserDefaults; its values are the pages' raw values.
+    static let storageKey = "settings.tab"
+
     case general, appearance, notifications, shortcuts, privacy, storage
     case accounts, usage
     case agents, permissions, commands, skills, mcp, engine
@@ -211,32 +240,38 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     }
 }
 
-/// The pages, by group, with a search field that narrows them down.
+/// The pages, by group, with a search field that narrows them down: drawn like the sessions'
+/// sidebar it stands in for, its rows lined up under the window's buttons.
 private struct SettingsSidebar: View {
     @Binding var selection: SettingsPage
     @Binding var search: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SearchField(text: $search, prompt: "Search")
+        VStack(alignment: .leading, spacing: 1) {
+            Text("Settings")
+                .font(.system(size: 20, weight: .bold))
                 .padding(.horizontal, 10)
+                .frame(height: SidebarMetrics.rowHeight)
+            SidebarSearchRow(text: $search)
             ScrollView {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 1) {
                     let pages = SettingsPage.allCases.filter { $0.matches(search) }
                     if pages.isEmpty {
                         Text("No Results")
+                            .font(.system(size: 13))
                             .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity)
-                            .padding(.top, 24)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
                     }
                     ForEach(SettingsPage.Group.allCases, id: \.self) { group in
                         let members = pages.filter { $0.group == group }
                         if !members.isEmpty {
                             Text(group.rawValue)
-                                .font(.system(size: 12, weight: .medium))
+                                .font(.system(size: 13, weight: .medium))
                                 .foregroundStyle(.secondary)
-                                .padding(.horizontal, 10)
-                                .padding(.top, group == pages.first?.group ? 4 : 16)
+                                .frame(height: 22)
+                                .padding(.leading, 10)
+                                .padding(.top, group == pages.first?.group ? 8 : 16)
                                 .padding(.bottom, 4)
                             ForEach(members) { page in
                                 Button {
@@ -246,14 +281,14 @@ private struct SettingsSidebar: View {
                                         Image(systemName: page.symbol)
                                             .font(.system(size: 14))
                                             .foregroundStyle(.secondary)
-                                            .frame(width: 18)
+                                            .frame(width: SidebarMetrics.iconWidth)
                                         Text(page.title)
                                             .font(.system(size: 14))
                                             .lineLimit(1)
                                         Spacer(minLength: 0)
                                     }
                                     .padding(.horizontal, 10)
-                                    .frame(height: 30)
+                                    .frame(height: SidebarMetrics.rowHeight)
                                     .modifier(RowHighlight(isSelected: page == selection))
                                 }
                                 .buttonStyle(.plain)
@@ -261,7 +296,6 @@ private struct SettingsSidebar: View {
                         }
                     }
                 }
-                .padding(.horizontal, 10)
                 .padding(.bottom, 12)
             }
             .scrollIndicators(.never)
@@ -271,7 +305,7 @@ private struct SettingsSidebar: View {
                 if !search.isEmpty, !pages.contains(selection), let first = pages.first { selection = first }
             }
         }
-        .padding(.top, 4)
+        .padding(.top, 10)
     }
 }
 

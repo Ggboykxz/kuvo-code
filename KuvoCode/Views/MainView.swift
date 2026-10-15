@@ -7,7 +7,6 @@ struct MainView: View {
     @Environment(AppModel.self) private var app
     @Environment(Catalog.self) private var catalog
     @Environment(Workspace.self) private var workspace
-    @Environment(\.openSettings) private var openSettings
 
     /// Open tabs, in order: session IDs, or `draft:<folder>` for a new session
     /// that doesn't exist on the server until its first message.
@@ -133,6 +132,22 @@ struct MainView: View {
                         .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
             }
+            // Settings take the window's place. The sessions stay underneath, hidden and out of
+            // reach, so the panel's terminals and pages carry on and everything is where it was.
+            .opacity(app.showsSettings ? 0 : 1)
+            .allowsHitTesting(!app.showsSettings)
+            .disabled(app.showsSettings)
+            .accessibilityHidden(app.showsSettings)
+            .overlay {
+                if app.showsSettings {
+                    SettingsView(
+                        sidebarWidth: min(max(layout.sessions ?? sessionsWidth, PaneLayout.sessionsRange.lowerBound), proxy.size.width * 0.4),
+                        topInset: showsTabBar ? 0 : Metrics.windowControlsHeight,
+                        close: closeSettings
+                    )
+                    .transition(.opacity)
+                }
+            }
         }
         .onGeometryChange(for: CGFloat.self, of: \.size.width) { contentWidth = $0 }
         .padding(.horizontal, Metrics.paneGap)
@@ -145,13 +160,22 @@ struct MainView: View {
         .animation(.ui, value: showsPanel)
         .animation(.ui, value: panelExpanded)
         .onDisappear { utilities.closeAll() }
+        .animation(.ui, value: app.showsSettings)
+        // Typing mustn't go on into a composer or terminal that Settings now hide.
+        .onChange(of: app.showsSettings) { _, shows in
+            if shows { NSApp.mainWindow?.makeFirstResponder(nil) }
+        }
         // The agent started browsing: show it.
         .onChange(of: utilities.revealRequest) { withAnimation(.ui) { showsPanel = true } }
         // Hiding the tab bar takes the whole row away and the cards reach the top. The sidebar
         // button stays, so the window's buttons keep a toolbar's height, centered on the cards'
         // header row, and the sidebar is a click away. The panel is still ⌥⌘0, and sessions ⌘K.
         .toolbar {
-            if showsTabBar {
+            if app.showsSettings {
+                // In Settings, the title bar has only the way back.
+                ToolbarItem(placement: .navigation) { SettingsBackButton(close: closeSettings) }
+                    .sharedBackgroundVisibility(.hidden)
+            } else if showsTabBar {
                 titleBar
             } else {
                 ToolbarItem(placement: .navigation) { SidebarToggle(showsSidebar: $showsSidebar) }
@@ -486,7 +510,13 @@ struct MainView: View {
         withAnimation(.ui) {
             open()
             showsPanel = true
+            app.showsSettings = false
         }
+    }
+
+    /// Back from Settings to the sessions, as they were.
+    private func closeSettings() {
+        withAnimation(.ui) { app.showsSettings = false }
     }
 
     // MARK: Tabs
@@ -502,6 +532,7 @@ struct MainView: View {
         withAnimation(.ui) {
             selection = key
             focus = .conversation
+            app.showsSettings = false
         }
     }
 
@@ -631,8 +662,9 @@ struct MainView: View {
             nextTab: { cycleTabs(by: 1) },
             previousTab: { cycleTabs(by: -1) },
             closeTab: {
-                // With no tab left, ⌘W closes the window, as it does in browsers.
-                if let selection { closeTab(selection) } else { NSApp.keyWindow?.performClose(nil) }
+                // In Settings, ⌘W goes back to the sessions. With no tab left, it closes the
+                // window, as it does in browsers.
+                if app.showsSettings { closeSettings() } else if let selection { closeTab(selection) } else { NSApp.keyWindow?.performClose(nil) }
             },
             reopenTab: reopenClosedTab,
             find: { activeModel?.showFind() },
@@ -640,7 +672,7 @@ struct MainView: View {
                 let tabs = tabs
                 guard !tabs.isEmpty else { return }
                 let index = number == 9 ? tabs.count - 1 : number - 1
-                if tabs.indices.contains(index) { withAnimation(.ui) { selection = tabs[index] } }
+                if tabs.indices.contains(index) { openTab(tabs[index]) }
             },
             showProviders: { showsProviders = true },
             openQuickly: {
@@ -712,14 +744,8 @@ struct MainView: View {
         if actions.canReopenTab {
             add("Reopen Closed Tab", "arrow.uturn.backward", "⇧⌘T", actions.reopenTab)
         }
-        for (tab, title, symbol) in [("general", "General", "gearshape"), ("accounts", "Accounts", "person.crop.circle"), ("agents", "Agents", "person.2"),
-                                     ("permissions", "Permissions", "hand.raised"), ("mcp", "MCP", "puzzlepiece.extension"), ("skills", "Skills", "graduationcap"),
-                                     ("commands", "Commands", "command"), ("panel", "Panel", "sidebar.right"), ("usage", "Usage", "gauge.with.dots.needle.50percent"),
-                                     ("engine", "Engine", "cpu")] {
-            add("Settings › \(title)", symbol, tab == "general" ? "⌘," : nil) {
-                UserDefaults.standard.set(tab, forKey: "settings.tab")
-                openSettings()
-            }
+        for page in SettingsPage.allCases {
+            add("Settings › \(page.title)", page.symbol, page == .general ? "⌘," : nil) { app.openSettings(page) }
         }
         return items
     }
@@ -807,8 +833,7 @@ struct MainView: View {
         // KUVO_DEMO_SETTINGS=<page> opens Settings on that page, by its SettingsPage name: general,
         // appearance, storage, accounts, agents, mcp, git, browser, passwords and so on.
         if workspace.isLoaded, let tab = environment["KUVO_DEMO_SETTINGS"] {
-            UserDefaults.standard.set(tab, forKey: "settings.tab")
-            openSettings()
+            app.openSettings(SettingsPage(rawValue: tab))
         }
         guard workspace.isLoaded, !Self.ranDemo else { return }
         Self.ranDemo = true

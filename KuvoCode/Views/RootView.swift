@@ -14,11 +14,28 @@ struct RootView: View {
                 MainView()
                     .transition(.opacity)
             default:
-                EngineSetupView()
-                    .transition(.opacity.combined(with: .scale(0.98)))
+                // Settings are there before the engine is, for its own page among others.
+                if app.showsSettings {
+                    SettingsView { withAnimation(.ui) { app.showsSettings = false } }
+                        .padding(.horizontal, Metrics.paneGap)
+                        .padding(.bottom, Metrics.paneGap)
+                        .toolbar {
+                            ToolbarItem(placement: .navigation) {
+                                SettingsBackButton { withAnimation(.ui) { app.showsSettings = false } }
+                            }
+                            .sharedBackgroundVisibility(.hidden)
+                        }
+                        .toolbar(removing: .title)
+                        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+                        .transition(.opacity)
+                } else {
+                    EngineSetupView()
+                        .transition(.opacity.combined(with: .scale(0.98)))
+                }
             }
         }
         .animation(.ui, value: app.engine == .ready)
+        .animation(.ui, value: app.showsSettings)
         .frame(minWidth: 620, minHeight: 520)
         // The window itself is frosted glass, tinted by what's behind it; cards float on it.
         .windowGlass()

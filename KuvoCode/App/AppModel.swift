@@ -36,6 +36,23 @@ final class AppModel {
     var skillsFolder: URL { engineFolders.configFile.deletingLastPathComponent().appending(path: "skills") }
     /// Brings the main window back (set by the window itself; the usage menu's "Open Kuvo Code").
     var openMainWindow: (() -> Void)?
+    /// Settings fill the main window in place of the sessions while this is on.
+    var showsSettings = false
+
+    /// Shows Settings in the main window, on `page` if one is given (otherwise the last one open).
+    func openSettings(_ page: SettingsPage? = nil) {
+        if let page { UserDefaults.standard.set(page.rawValue, forKey: SettingsPage.storageKey) }
+        #if DEBUG
+        let background = ProcessInfo.processInfo.environment["KUVO_DEMO_BACKGROUND"] != nil
+        #else
+        let background = false
+        #endif
+        if !background {
+            openMainWindow?()
+            NSApp.activate()
+        }
+        showsSettings = true
+    }
 
     /// Something to open from outside the window: a folder dropped on the Dock icon or opened with
     /// Kuvo Code, or a pick from the Dock menu. The main window takes it when it's there.

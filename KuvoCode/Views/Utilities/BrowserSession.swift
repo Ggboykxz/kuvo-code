@@ -180,7 +180,7 @@ struct BrowserPane<NewTab: View>: View {
     @ViewBuilder let newTab: () -> NewTab
     @State private var address = ""
     @FocusState private var editing: Bool
-    @Environment(\.openSettings) private var openSettings
+    @Environment(AppModel.self) private var app
 
     var body: some View {
         VStack(spacing: 0) {
@@ -272,10 +272,7 @@ struct BrowserPane<NewTab: View>: View {
                         Button(login.account.isEmpty ? "No username" : login.account) { session.fill(login) }
                     }
                     Divider()
-                    Button("Passwords…") {
-                        UserDefaults.standard.set(SettingsPage.passwords.rawValue, forKey: "settings.tab")
-                        openSettings()
-                    }
+                    Button("Passwords…") { app.openSettings(.passwords) }
                 } label: {
                     Label("Fill Password", systemImage: "key.fill")
                 } primaryAction: {
@@ -310,10 +307,7 @@ struct BrowserPane<NewTab: View>: View {
                 Button("Zoom In") { session.webView.magnification = min(session.webView.magnification + 0.1, 3) }
                 Button("Zoom Out") { session.webView.magnification = max(session.webView.magnification - 0.1, 0.5) }
                 Divider()
-                Button("Browser Settings…") {
-                    UserDefaults.standard.set(SettingsPage.browser.rawValue, forKey: "settings.tab")
-                    openSettings()
-                }
+                Button("Browser Settings…") { app.openSettings(.browser) }
             } label: {
                 Label("More", systemImage: "ellipsis")
             }
