@@ -877,12 +877,13 @@ struct MainView: View {
         openTab(session.id)
         // KUVO_DEMO_FILES: comma-separated paths to attach.
         let files = environment["KUVO_DEMO_FILES"]?.split(separator: ",").map { URL(filePath: String($0)) } ?? []
-        workspace.model(for: session.id)?.send(prompt, files: files, for: catalog.model(session.model))
+        // As the composer sends it: "/" runs a command, "!" a shell command.
+        workspace.model(for: session.id)?.submit(prompt, files: files, for: catalog.model(session.model), queue: false, commands: catalog.commands(in: folder))
         // KUVO_DEMO_QUEUE: messages separated by "|", queued once the agent is working.
         guard let queue = environment["KUVO_DEMO_QUEUE"], let model = workspace.model(for: session.id) else { return }
         for _ in 0..<40 where !model.isRunning { try? await Task.sleep(for: .milliseconds(250)) }
         for message in queue.split(separator: "|") {
-            model.send(String(message), for: catalog.model(session.model), queue: true)
+            model.submit(String(message), files: [], for: catalog.model(session.model), queue: true, commands: catalog.commands(in: folder))
         }
     }
     #endif

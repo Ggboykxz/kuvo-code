@@ -164,7 +164,7 @@ struct TranscriptView: View {
             case .compaction(let compaction):
                 rows.append(.notice(compaction.id, "rectangle.compress.vertical", compaction.status == "running" ? "Summarizing the conversation…" : "Summarized the conversation to save space"))
             case .shell(let shell):
-                rows.append(.notice(shell.id, "terminal", "$ \(shell.command)" + (shell.exit.map { " (exit \($0))" } ?? "")))
+                rows.append(.shell(shell))
             case .synthetic(let notice), .system(let notice):
                 let sources = notice.instructionSources
                 if !sources.isEmpty, sources.allSatisfy({ $0.contains(ProjectFolders.instructionKey) }) {
@@ -279,6 +279,8 @@ enum Row: Identifiable, Hashable {
     /// `isLast`: the conversation ends here, so a failed run can be tried again.
     case turnEnd(Message.Idle, TurnStats, isLast: Bool)
     case notice(String, String, String)
+    /// A command you ran with "!".
+    case shell(Message.Shell)
     case pending(Transcript.Pending)
     /// An undo that the next message makes final, with how many messages it took back.
     case undone(Int)
@@ -291,6 +293,7 @@ enum Row: Identifiable, Hashable {
         case .user(let message): CommandMessages.shared.text(of: message)
         case .assistant(let message, _): message.content.compactMap { if case .text(let part) = $0 { part.text } else { nil } }.joined(separator: " ")
         case .pending(let item): item.text
+        case .shell(let shell): shell.command + " " + (shell.output?.output ?? "")
         default: ""
         }
     }
@@ -300,6 +303,8 @@ enum Row: Identifiable, Hashable {
         switch (previous, self) {
         case (.assistant, .assistant), (.assistant, .turnEnd), (.assistant, .working(_)): 10
         case (_, .user), (_, .pending): 28
+        case (.shell, .shell): 12
+        case (_, .shell): 20
         // A message's buttons already take room under it.
         case (.user, _): 4
         default: 16
@@ -312,6 +317,7 @@ enum Row: Identifiable, Hashable {
         case .assistant(let m, _): m.id
         case .turnEnd(let m, _, _): m.id
         case .notice(let id, _, _): id
+        case .shell(let m): m.id
         case .pending(let item): item.id
         case .undone: "undone"
         case .working: "working"
@@ -403,6 +409,8 @@ private struct RowView: View {
         case .turnEnd(let idle, let stats, let isLast):
             TurnEndView(idle: idle, stats: stats, directory: directory, retry: isLast ? stats.message.map { message in { retry(message) } } : nil,
                         build: isLast && stats.agent == "plan" ? buildPlan : nil)
+        case .shell(let shell):
+            ShellRow(shell: shell)
         case .notice(_, let symbol, let text):
             Label(text, systemImage: symbol)
                 .font(.caption)

@@ -25,8 +25,13 @@ final class SessionModel {
     var sentMessages: [String] {
         var texts: [String] = []
         for message in transcript.messages {
-            guard case .user(let user) = message else { continue }
-            let text = ReviewComments.split(Attachments.split(CommandMessages.shared.text(of: user)).text).text
+            let text: String
+            switch message {
+            case .user(let user): text = ReviewComments.split(Attachments.split(CommandMessages.shared.text(of: user)).text).text
+            // Commands you ran come back as you typed them.
+            case .shell(let shell): text = "!" + shell.command
+            default: continue
+            }
             if !text.isEmpty, text != texts.last { texts.append(text) }
         }
         return texts
@@ -213,10 +218,31 @@ final class SessionModel {
 
     /// Sends what's in the composer: a message, or a command for "/name arguments".
     func submit(_ text: String, files: [URL], for model: Model?, queue: Bool, commands: [Command]) {
-        if let (name, arguments) = SlashCommands.parse(text, commands: commands) {
+        if let command = Self.shellCommand(in: text) {
+            runShell(command)
+        } else if let (name, arguments) = SlashCommands.parse(text, commands: commands) {
             runCommand(name, arguments: arguments, files: files, for: model, queue: queue)
         } else {
             send(text, files: files, for: model, queue: queue)
+        }
+    }
+
+    /// "!" at the start of a message: the rest is a command to run in the session's folder.
+    static func shellCommand(in text: String) -> String? {
+        guard text.hasPrefix("!") else { return nil }
+        let command = text.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
+        return command.isEmpty ? nil : command
+    }
+
+    /// Runs a command in the session's folder (on its machine, for a project on one) as you,
+    /// right away, without waking the agent; it and its output join the conversation, and the
+    /// agent gets them with your next message.
+    func runShell(_ command: String) {
+        Analytics.shared.track("shell_run")
+        let previous = sending
+        sending = Task {
+            await previous?.value
+            do { try await api.runShell(session: id, command: command) } catch { failure = error.localizedDescription }
         }
     }
 

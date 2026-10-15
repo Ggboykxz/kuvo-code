@@ -59,7 +59,13 @@ struct Composer: View {
     /// The "/" list was closed with Escape; it opens again for a new message.
     @State private var dismissedCommands = false
 
-    private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty || commentCount > 0 }
+    private var canSend: Bool {
+        if isShell { return SessionModel.shellCommand(in: text) != nil }
+        return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty || commentCount > 0
+    }
+
+    /// "!" first: the message is a command to run in the project's folder, not words for the agent.
+    private var isShell: Bool { text.hasPrefix("!") }
     private var currentModel: Model? { catalog.model(model) ?? catalog.defaultModel }
 
     var body: some View {
@@ -103,7 +109,7 @@ struct Composer: View {
 
             TextField(placeholder, text: $text, axis: .vertical)
                 .textFieldStyle(.plain)
-                .font(.system(size: 14))
+                .font(isShell ? .system(size: 13.5, design: .monospaced) : .system(size: 14))
                 .lineLimit(1...12)
                 .focused($isFocused)
                 .onKeyPress(.return, phases: .down) { press in
@@ -186,22 +192,31 @@ struct Composer: View {
                 .onSubmit(send)
 
             HStack(spacing: 4) {
-                Button(action: chooseFiles) {
-                    Image(systemName: "paperclip")
-                        .font(.system(size: 14, weight: .medium))
-                        .frame(width: 30, height: 28)
-                        .hoverHighlight(in: Capsule(), mutesInk: true)
-                }
-                .buttonStyle(.plain)
-                .help("Attach Files… You can also drop files here, or paste them.")
-                ModeChip(agent: agent, approval: approval, onSelectAgent: onSelectAgent, onSelectApproval: onSelectApproval)
-                ModelChip(selection: model, onSelect: onSelectModel)
-                if let worktree {
-                    WorkplaceChip(worktree: worktree, attempts: attempts, onSelect: onSelectWorktree, onSelectAttempts: onSelectAttempts)
+                if isShell {
+                    ShellModeLabel(folder: folders.first)
+                        .transition(.opacity)
+                } else {
+                    Group {
+                        Button(action: chooseFiles) {
+                            Image(systemName: "paperclip")
+                                .font(.system(size: 14, weight: .medium))
+                                .frame(width: 30, height: 28)
+                                .hoverHighlight(in: Capsule(), mutesInk: true)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Attach Files… You can also drop files here, or paste them.")
+                        ModeChip(agent: agent, approval: approval, onSelectAgent: onSelectAgent, onSelectApproval: onSelectApproval)
+                        ModelChip(selection: model, onSelect: onSelectModel)
+                        if let worktree {
+                            WorkplaceChip(worktree: worktree, attempts: attempts, onSelect: onSelectWorktree, onSelectAttempts: onSelectAttempts)
+                        }
+                    }
+                    .transition(.opacity)
                 }
                 Spacer(minLength: 0)
                 actionButton
             }
+            .animation(.easeOut(duration: 0.15), value: isShell)
             // The pills are flat, so their text lines up with the message field above;
             // their hover fill reaches past it.
             .padding(.leading, -8)
@@ -285,7 +300,7 @@ struct Composer: View {
                 .glassEffect(.regular, in: .circle)
                 .disabled(!canSend)
                 .glassEffectID("action", in: glass)
-                .help(isRunning ? "Send: the agent reads it at its next step (Return). ⌘Return queues it for after this run." : "Send (Return)")
+                .help(isShell ? "Run the Command (Return)" : isRunning ? "Send: the agent reads it at its next step (Return). ⌘Return queues it for after this run." : "Send (Return)")
                 .contextMenu {
                     Button("Send", action: send)
                     Button("Queue for After This Run", action: queue)
@@ -324,7 +339,7 @@ struct Composer: View {
 
     /// The "@" being typed and the files it matches, while its list is open.
     private var mention: (query: String, matches: [ProjectFiles.File])? {
-        guard !folders.isEmpty, let (query, start) = Mentions.query(in: text),
+        guard !folders.isEmpty, !isShell, let (query, start) = Mentions.query(in: text),
               text.distance(from: text.startIndex, to: start) != dismissedMention else { return nil }
         let matches = Mentions.matches(query, in: mentionFiles)
         return matches.isEmpty ? nil : (query, matches)
@@ -537,5 +552,35 @@ private struct PasteAttachments: ViewModifier {
         // A picture without text: a copied screenshot, an image copied from Preview.
         guard board.string(forType: .string) == nil, let image = NSImage(pasteboard: board) else { return nil }
         return Attachments.save(image, named: Attachments.pastedImageName).map { [$0] }
+    }
+}
+
+/// In place of the composer's chips while a "!" command is typed: what it is, and where it runs.
+private struct ShellModeLabel: View {
+    let folder: String?
+
+    private var place: String {
+        guard let folder else { return "in the project’s folder" }
+        if let machine = RemoteFolder.machine(of: folder) { return "on \(machine)" }
+        return "in \((folder as NSString).lastPathComponent)"
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "terminal")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.tint)
+            Text("Shell")
+                .fontWeight(.medium)
+            Text("runs \(place)")
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .font(.system(size: 13))
+        // Lined up with the message field, as the chips are.
+        .padding(.leading, 8)
+        .frame(height: 28)
+        .help("Runs the command in the project’s folder, without the agent. It and its output join the conversation, and the agent sees them with your next message. Delete the ! to talk to the agent again.")
     }
 }

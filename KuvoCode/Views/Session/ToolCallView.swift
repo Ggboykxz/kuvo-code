@@ -257,7 +257,7 @@ struct ToolCallView: View {
 }
 
 /// A command's output or a step's code, in a recessed well that scrolls sideways for long lines.
-private struct OutputBlock: View {
+struct OutputBlock: View {
     let text: String
 
     var body: some View {

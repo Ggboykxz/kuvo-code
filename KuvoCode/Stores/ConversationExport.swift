@@ -41,7 +41,8 @@ enum ConversationExport {
                     }
                 }
             case .shell(let shell):
-                say("You", "Ran `\(shell.command)`")
+                let output = shell.output?.output.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                say("You", "Ran `\(shell.command)`" + (output.isEmpty ? "" : "\n\n```\n\(output)\n```"))
             case .compaction:
                 say("Agent", "_Summarized the conversation so far._")
             default:
