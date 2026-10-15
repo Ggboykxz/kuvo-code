@@ -386,7 +386,7 @@ private struct LookPicker: View {
             row("Shape") {
                 ForEach(BotLook.Form.allCases) { form in
                     Tile(isOn: look.shape == form, help: form.title) { look.shape = form } label: {
-                        BotAvatar(look: BotLook(color: look.color, shape: form, face: look.face), size: 26)
+                        BotAvatar(look: BotLook(color: look.color, shape: form, face: look.face), size: 26, animates: false)
                     }
                 }
             }
@@ -394,7 +394,7 @@ private struct LookPicker: View {
             row("Face") {
                 ForEach(BotLook.Face.allCases) { face in
                     Tile(isOn: look.face == face, help: face.title) { look.face = face } label: {
-                        BotAvatar(look: BotLook(color: look.color, shape: look.shape, face: face), size: 26)
+                        BotAvatar(look: BotLook(color: look.color, shape: look.shape, face: face), size: 26, animates: false)
                     }
                 }
             }

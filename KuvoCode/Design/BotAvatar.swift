@@ -76,11 +76,14 @@ struct BotAvatar: View {
     var mood: BotMood = .idle
     /// The pointer is on it: an idle bot notices, happy, with a little bounce.
     var noticed = false
+    /// False where the bot also shows, moving, somewhere else on screen: it holds a still pose
+    /// for its mood, and only moves when it's pointed at. One bot moves in one place at a time.
+    var animates = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.appearsActive) private var appearsActive
 
     var body: some View {
-        if reduceMotion {
+        if reduceMotion || (!animates && !noticed) {
             figure(BotPose.still(mood, noticed: noticed))
         } else {
             // Smoothest while you're in the app; slower, but still alive, while it's beside another.
@@ -198,7 +201,8 @@ struct GroupAvatar: View {
         let each = size * (shown.count >= 3 ? 0.58 : shown.count == 2 ? 0.68 : 1)
         ZStack {
             ForEach(Array(shown.enumerated()), id: \.offset) { index, face in
-                BotAvatar(look: face.look, size: each, mood: face.mood)
+                // Still: its bots move in their own rows.
+                BotAvatar(look: face.look, size: each, mood: face.mood, animates: false)
                     .offset(place(index, of: shown.count))
                     // The lead in front.
                     .zIndex(Double(shown.count - index))

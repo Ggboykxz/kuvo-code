@@ -108,7 +108,8 @@ private struct GroupMessageRow: View {
         } else {
             HStack(alignment: .top, spacing: 10) {
                 if let author {
-                    BotAvatar(look: author.look, size: 28, noticed: isHovering)
+                    // Still: the bot moves in its row, or where it's typing.
+                    BotAvatar(look: author.look, size: 28, noticed: isHovering, animates: false)
                 } else {
                     Image(systemName: "person.crop.circle.badge.questionmark")
                         .font(.system(size: 22))
@@ -239,7 +240,7 @@ private struct GroupComposer: View {
                     Button {
                         mention(bot)
                     } label: {
-                        BotAvatar(look: bot.look, size: 20)
+                        BotAvatar(look: bot.look, size: 20, animates: false)
                             .frame(width: 30, height: 28)
                             .hoverHighlight(in: Capsule(), mutesInk: true)
                     }

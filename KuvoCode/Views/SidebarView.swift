@@ -19,6 +19,8 @@ struct SidebarView: View {
     let editBot: (Bot) -> Void
     let newGroup: () -> Void
     let editGroup: (BotGroup) -> Void
+    /// Bots moving in the main card; their rows hold still.
+    var stagedBots: Set<String> = []
     @Environment(Bots.self) private var bots
     @Environment(BotGroups.self) private var groups
     /// The group chat waiting for the user to confirm its deletion.
@@ -140,7 +142,7 @@ struct SidebarView: View {
                         .help("A teammate with one job, that keeps working while you're away")
                     }
                     ForEach(bots.list) { bot in
-                        BotRow(bot: bot, isSelected: selection == bot.sessionID) {
+                        BotRow(bot: bot, isSelected: selection == bot.sessionID, animates: !stagedBots.contains(bot.id)) {
                             selection = bot.sessionID
                         }
                         .contextMenu {
@@ -808,6 +810,7 @@ private struct GroupRow: View {
 private struct BotRow: View {
     let bot: Bot
     let isSelected: Bool
+    var animates = true
     let action: () -> Void
     @Environment(Workspace.self) private var workspace
     @Environment(Bots.self) private var bots
@@ -819,7 +822,7 @@ private struct BotRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 10) {
-                BotAvatar(look: bot.look, size: 28, mood: bots.mood(of: bot, in: workspace), noticed: isHovering)
+                BotAvatar(look: bot.look, size: 28, mood: bots.mood(of: bot, in: workspace), noticed: isHovering, animates: animates)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(bot.name)
                         .font(.system(size: 14))

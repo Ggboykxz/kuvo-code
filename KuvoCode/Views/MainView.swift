@@ -411,6 +411,16 @@ struct MainView: View {
         }
     }
 
+    /// Bots moving in the main card (their conversation, the one talking in a group chat, the one
+    /// being edited): their sidebar rows hold still, so each moves in one place at a time.
+    private var stagedBots: Set<String> {
+        if let request = botEditor { return Set([request.bot?.id].compactMap(\.self)) }
+        if groupEditor != nil { return [] }
+        if let id = sessionID, let bot = bots.bot(forSession: id) { return [bot.id] }
+        if let id = groupID, let speaker = groups.speaking[id] { return [speaker] }
+        return []
+    }
+
     /// A group chat's bots, the one talking at work.
     private func faces(of group: BotGroup) -> [GroupAvatar.Face] {
         let speaker = groups.speaking[group.id]
@@ -448,7 +458,8 @@ struct MainView: View {
                 newBot: { openBotEditor(bot: nil) },
                 editBot: { openBotEditor(bot: $0) },
                 newGroup: { openGroupEditor(group: nil) },
-                editGroup: { openGroupEditor(group: $0) }
+                editGroup: { openGroupEditor(group: $0) },
+                stagedBots: stagedBots
             )
             // Room for the window's buttons above the first row, when they sit here.
             .padding(.top, showsTabBar ? 0 : Metrics.windowControlsHeight)
@@ -477,7 +488,7 @@ struct MainView: View {
                 .id(request.id)
             } else if let request = botEditor {
                 Card(title: request.bot.map { "Edit \($0.name)" } ?? "New Bot", isFocused: focus == .conversation) {
-                    if let bot = request.bot { BotAvatar(look: bot.look, size: 18) } else { Image(systemName: "face.smiling") }
+                    if let bot = request.bot { BotAvatar(look: bot.look, size: 18, animates: false) } else { Image(systemName: "face.smiling") }
                 } actions: {
                     Button("Close", systemImage: "xmark") { withAnimation(.ui) { botEditor = nil } }
                         .help("Close")
@@ -507,7 +518,8 @@ struct MainView: View {
                 let bot = bots.bot(forSession: id)
                 Card(title: bot?.name ?? model.session.title ?? "New Session", detail: bot.map(botDetail) ?? workspace.projectName(directory), isFocused: focus == .conversation) {
                     if let bot {
-                        BotAvatar(look: bot.look, size: 18, mood: bots.mood(of: bot, in: workspace))
+                        // Still: in view, the bot moves in its conversation.
+                        BotAvatar(look: bot.look, size: 18, mood: bots.mood(of: bot, in: workspace), animates: false)
                     } else if let logo = logo(for: model.session.model, in: directory) { ProviderLogo(id: logo, size: 14) } else { Image(systemName: "bubble.left") }
                 } actions: {
                     if let bot {

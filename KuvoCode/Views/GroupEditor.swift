@@ -135,7 +135,7 @@ struct GroupEditor: View {
             return menu
         } label: {
             WellRow {
-                if let lead = picked.first { BotAvatar(look: lead.look, size: 22) } else { Image(systemName: "star") }
+                if let lead = picked.first { BotAvatar(look: lead.look, size: 22, animates: false) } else { Image(systemName: "star") }
             } content: {
                 HStack(spacing: 8) {
                     Text(picked.first?.name ?? "")
@@ -204,7 +204,7 @@ private struct MemberRow: View {
     var body: some View {
         Button(action: toggle) {
             HStack(spacing: 12) {
-                BotAvatar(look: bot.look, size: 26, noticed: isHovering)
+                BotAvatar(look: bot.look, size: 26, noticed: isHovering, animates: false)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(bot.name)
                     if !bot.job.isEmpty {

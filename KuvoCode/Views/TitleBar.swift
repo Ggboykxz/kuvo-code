@@ -191,7 +191,8 @@ struct TabIcon: View {
                 GroupAvatar(faces: group, size: 22)
                     .frame(width: Self.tileSize.width, height: Self.tileSize.height)
             } else if let bot {
-                BotAvatar(look: bot, size: 21, mood: botMood)
+                // Still: the bot moves in the sidebar or its conversation.
+                BotAvatar(look: bot, size: 21, mood: botMood, animates: false)
                     .frame(width: Self.tileSize.width, height: Self.tileSize.height)
             } else {
                 FrontTile(logo: logo, symbol: symbol)
