@@ -1023,7 +1023,8 @@ struct MainView: View {
         if let folder = environment["KUVO_DEMO_MOVE_CHAT"] {
             Task {
                 while !workspace.isLoaded { try? await Task.sleep(for: .seconds(1)) }
-                try? await Task.sleep(for: .seconds(3))
+                // With KUVO_DEMO_CHAT, after its reply, while it's open.
+                try? await Task.sleep(for: .seconds(environment["KUVO_DEMO_CHAT"] == nil ? 3 : 16))
                 let log = Logger(subsystem: "run.kuvo.code", category: "demo")
                 guard let chat = workspace.chats.first else { return log.error("KUVO_DEMO_MOVE_CHAT: no chat") }
                 do {

@@ -176,9 +176,8 @@ final class Workspace {
         } else {
             try? await api.setInstruction(session: id, key: ProjectFolders.instructionKey, text: ProjectFolders.instructions(primary: directory, folders: extra))
         }
+        // Its open conversation stays as it is, now in its new place.
         await reload(id)
-        // Made again when it's next shown, with the project's folders.
-        if self.session(id)?.location.directory == directory { models[id] = nil }
         Analytics.shared.track("chat_moved")
     }
 
@@ -303,7 +302,11 @@ final class Workspace {
         if let model = models[id] { return model }
         guard let session = session(id), let api = api(forFolder: session.location.directory) else { return nil }
         let directory = session.location.directory
-        let model = SessionModel(session: session, api: api) { [weak self] in self?.extraFolders(directory) ?? [] }
+        // The project's folders where the session is now: a chat moved into a project gets its folders.
+        let model = SessionModel(session: session, api: api) { [weak self] in
+            guard let self else { return [] }
+            return self.extraFolders(self.session(id)?.location.directory ?? directory)
+        }
         models[id] = model
         return model
     }
