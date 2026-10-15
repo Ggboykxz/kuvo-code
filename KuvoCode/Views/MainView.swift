@@ -1035,6 +1035,21 @@ struct MainView: View {
                 }
             }
         }
+        // KUVO_DEMO_UNDO_RESEND=<seconds>: in the session in view, undoes its last message, then
+        // sends it again after that many seconds.
+        if let wait = environment["KUVO_DEMO_UNDO_RESEND"].flatMap(Double.init) {
+            Task {
+                try? await Task.sleep(for: .seconds(6))
+                guard let id = sessionID, let model = workspace.model(for: id) else { return }
+                if !model.isLoaded { await model.load() }
+                guard let last = model.transcript.messages.last(where: { if case .user = $0 { true } else { false } }), case .user(let user) = last else { return }
+                model.undo(from: user)
+                try? await Task.sleep(for: .seconds(wait))
+                model.submit(model.draftText, files: model.draftFiles, for: nil, queue: false, commands: [])
+                model.draftText = ""
+                model.draftFiles = []
+            }
+        }
         // KUVO_DEMO_TOGGLE_PANEL=<seconds>: shows and hides the panel every so often, a few times.
         if let every = environment["KUVO_DEMO_TOGGLE_PANEL"].flatMap(Double.init) {
             Task {

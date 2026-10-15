@@ -19,6 +19,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - **Kuvo Code's own loader**: the prompt mark draws itself in quiet dashes wherever something's loading or working.
 - A bot moves in one place at a time: where it's working in the conversation in view, otherwise in the sidebar.
 - Showing or hiding the side panel or the sidebar no longer makes the conversation flicker and jump: it takes its new width at once while the panel slides.
+- Sending a message after an undo no longer makes the conversation flicker: the undone part goes and your message appears in one step. A message that starts the agent no longer flashes in the waiting list above the composer.
 
 ## 0.4.0
 

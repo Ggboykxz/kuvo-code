@@ -141,6 +141,10 @@ final class Workspace {
         seats.contains(session.id) || Self.isSeat(session)
     }
 
+    #if DEBUG
+    private static let logsEvents = ProcessInfo.processInfo.environment["KUVO_DEMO_LOG_EVENTS"] != nil
+    #endif
+
     /// How many runs of each session have ended since the app started: a run someone is
     /// waiting on has ended once its count goes up.
     @ObservationIgnored private(set) var endedRuns: [String: Int] = [:]
@@ -588,6 +592,12 @@ final class Workspace {
 
     /// An event from this Mac's engine, or from `machine`'s.
     func handle(_ event: ServerEvent, machine: String? = nil) {
+        #if DEBUG
+        // KUVO_DEMO_LOG_EVENTS: each session event in the log, to see their order.
+        if Self.logsEvents, event.sessionID != nil {
+            log.notice("event \(event.type, privacy: .public) \(String(decoding: event.raw.prefix(300), as: UTF8.self), privacy: .public)")
+        }
+        #endif
         if let machine, let id = event.sessionID { sessionMachines[id] = machine }
         if event.type == "vcs.branch.updated", let directory = event.location?.directory {
             struct Branch: Decodable { var branch: String? }

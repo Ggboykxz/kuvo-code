@@ -100,11 +100,16 @@ final class SessionModel {
     var agent: String { session.agent ?? "build" }
 
     /// Messages waiting for the agent, in the order it gets them: those for its next step, then
-    /// the queue. A message sent while it's idle goes straight to the transcript instead.
+    /// the queue. A message sent while it's idle goes straight to the transcript instead, and
+    /// stays there while the run it starts gets going.
     var waiting: [Transcript.Pending] {
-        let pending = transcript.pending
+        let pending = transcript.pending.filter { !starters.contains($0.id) }
         return (isRunning ? pending.filter { $0.delivery == .steer } : []) + pending.filter { $0.delivery == .queue }
     }
+
+    /// Messages sent while the agent was idle, until it has them: each starts a run, and the run
+    /// begins a moment before the agent takes it, which isn't waiting.
+    private var starters: Set<String> = []
 
     private var hasQueue: Bool { transcript.pending.contains { $0.delivery == .queue } }
 
@@ -169,9 +174,14 @@ final class SessionModel {
             // Queued while nothing runs: the engine waits for a run to end, so nudge it.
             if !transcript.isRunning, !isQueuePaused, hasQueue { scheduleDrain() }
         case "session.inbox.cancelled", "session.inbox.delivered":
-            if let id = try? event.payload(as: EventPayload.InboxChanged.self).inboxID, editing.contains(id) {
-                settledEdits[id] = event.type == "session.inbox.cancelled"
+            if let id = try? event.payload(as: EventPayload.InboxChanged.self).inboxID {
+                starters.remove(id)
+                if editing.contains(id) { settledEdits[id] = event.type == "session.inbox.cancelled" }
             }
+        case "session.revert.committed":
+            // Final: there's nothing left to redo, and the conversation no longer ends at the undo.
+            session.revert = nil
+            undone = nil
         default:
             break
         }
@@ -193,6 +203,8 @@ final class SessionModel {
         // With nothing running (or about to) and nothing queued, there's nothing to wait for.
         let delivery: InboxItem.Delivery = queue && (isBusy || hasQueue) ? .queue : .steer
         if delivery == .steer { isQueuePaused = false }
+        if delivery == .steer, !isBusy { starters.insert(id) }
+        commitUndo()
         transcript.addLocal(id: id, text: text, delivery: delivery, files: files)
         var props = Analytics.model(provider: model?.providerID ?? session.model?.providerID, model: model?.id ?? session.model?.id)
         props["mode"] = Analytics.mode(agent)
@@ -446,12 +458,22 @@ final class SessionModel {
                 }
                 let id = Identifier.message()
                 sentIDs.insert(id)
+                starters.insert(id)
                 transcript.addLocal(id: id, text: user.text, delivery: .steer)
                 try await api.prompt(session: self.id, id: id, text: user.text, files: files)
             } catch {
                 failure = error.localizedDescription
             }
         }
+    }
+
+    /// A message after an undo makes it final: the undone part goes now, in the same moment the
+    /// message appears, rather than as the engine's word of it comes in.
+    private func commitUndo() {
+        guard let revert = session.revert else { return }
+        transcript.commitRevert(to: revert.messageID)
+        session.revert = nil
+        undone = nil
     }
 
     /// Takes back an undo: the conversation and the files come back as they were.
