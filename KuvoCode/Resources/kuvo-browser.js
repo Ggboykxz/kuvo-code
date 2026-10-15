@@ -143,15 +143,39 @@ function fail(kind, message) {
   process.exit(1);
 }
 
-function userAgent() {
-  let version = "";
+function chromiumVersion() {
   try {
-    version = fs.readFileSync(path.join(CURRENT, "chromium-version"), "utf8").trim();
-  } catch {}
-  const major = version.split(".")[0] || "130";
+    return fs.readFileSync(path.join(CURRENT, "chromium-version"), "utf8").trim();
+  } catch {
+    return "130.0.0.0";
+  }
+}
+
+// What the browser says it is: Chromium on Linux. Sites serve a reduced page, or none, to one that
+// says "HeadlessChrome" (x.com answers 403), and it says so in two places: the user agent, and
+// the brand hints (Sec-CH-UA) pages send and read.
+function userAgent() {
+  const major = chromiumVersion().split(".")[0];
   const platform = process.arch === "arm64" ? "aarch64" : "x86_64";
-  // As Chrome on Linux: sites serve some a reduced page, or none, when they see "HeadlessChrome".
   return `Mozilla/5.0 (X11; Linux ${platform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`;
+}
+
+function identity() {
+  const version = chromiumVersion();
+  const major = version.split(".")[0];
+  return {
+    userAgent: userAgent(),
+    userAgentMetadata: {
+      brands: [{ brand: "Chromium", version: major }, { brand: "Not-A.Brand", version: "24" }],
+      fullVersionList: [{ brand: "Chromium", version }, { brand: "Not-A.Brand", version: "24.0.0.0" }],
+      platform: "Linux",
+      platformVersion: "",
+      architecture: process.arch === "arm64" ? "arm" : "x86",
+      bitness: "64",
+      model: "",
+      mobile: false,
+    },
+  };
 }
 
 /// Starts Chromium and waits until it answers on its pipe.
@@ -255,6 +279,10 @@ async function host() {
   let active = null;
   // The pages there are, so the one in use is always one of them.
   const targets = new Set();
+  // The keeper's own session with each page and worker, which says what the browser is before
+  // it loads anything; the ones clients open come after it.
+  const own = new Map();
+  const browserIdentity = identity();
   let status = { working: false };
   let idle = null;
 
@@ -332,9 +360,18 @@ async function host() {
       owner?.sessions.delete(message.params.sessionId);
       owners.delete(message.params.sessionId);
     }
+    if (message.method === "Target.attachedToTarget" && !message.sessionId && !own.has(message.params.targetInfo.targetId)) {
+      const { sessionId, targetInfo, waitingForDebugger } = message.params;
+      own.set(targetInfo.targetId, sessionId);
+      toChrome({ id: next++, method: "Network.setUserAgentOverride", params: browserIdentity, sessionId });
+      if (waitingForDebugger) toChrome({ id: next++, method: "Runtime.runIfWaitingForDebugger", params: {}, sessionId });
+      return;
+    }
+    if (message.method === "Target.detachedFromTarget" && [...own.values()].includes(message.params.sessionId)) return;
     if (message.method === "Target.targetCreated" && message.params.targetInfo.type === "page") targets.add(message.params.targetInfo.targetId);
     if (message.method === "Target.targetDestroyed") {
       targets.delete(message.params.targetId);
+      own.delete(message.params.targetId);
       if (message.params.targetId === active) setActive(null, "browser");
     }
     const owner = message.sessionId ? owners.get(message.sessionId) : null;
@@ -389,8 +426,10 @@ async function host() {
     });
   });
   server.on("error", (error) => fail("failed", "The browser couldn't listen for Kuvo Code: " + error.message));
-  // Its own view of the pages there, whoever else asks for it.
+  // Its own view of the pages there, whoever else asks for it, and a session with each, held
+  // before it starts.
   internal("Target.setDiscoverTargets", { discover: true });
+  internal("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: true, flatten: true });
   const mask = process.umask(0o077);
   server.listen(SOCKET, () => {
     process.umask(mask);
