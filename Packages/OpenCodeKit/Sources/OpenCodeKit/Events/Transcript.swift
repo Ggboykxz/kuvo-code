@@ -286,12 +286,14 @@ public struct Transcript: Sendable, Equatable {
             let shell = try event.payload(as: Started.self).shell
             messages.append(.shell(Message.Shell(id: messageID, time: Message.Time(created: now), shellID: shell.id, command: shell.command, status: shell.status, exit: shell.exit)))
         case "session.shell.ended":
-            struct Ended: Decodable { var shell: ShellInfo }
-            let shell = try event.payload(as: Ended.self).shell
+            struct Ended: Decodable { var shell: ShellInfo; var output: Message.Shell.Output? }
+            let ended = try event.payload(as: Ended.self)
+            let shell = ended.shell
             if let index = messages.lastIndex(where: { if case .shell(let m) = $0 { m.shellID == shell.id } else { false } }),
                case .shell(var message) = messages[index] {
                 message.status = shell.status
                 message.exit = shell.exit
+                message.output = ended.output
                 message.time.completed = now
                 messages[index] = .shell(message)
             }

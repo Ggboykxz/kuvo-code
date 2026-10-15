@@ -168,6 +168,8 @@ public enum Message: Codable, Sendable, Hashable, Identifiable {
         }
     }
 
+    /// A command you ran yourself in the session's folder; the agent gets it and its output with
+    /// your next message.
     public struct Shell: Codable, Sendable, Hashable {
         public var id: String
         public var time: Time
@@ -175,6 +177,16 @@ public enum Message: Codable, Sendable, Hashable, Identifiable {
         public var command: String
         public var status: String
         public var exit: Int?
+        /// What it printed (stdout and stderr together), once it's done.
+        public var output: Output? = nil
+
+        public struct Output: Codable, Sendable, Hashable {
+            public var output: String
+            /// Cut short by the engine: it was longer than it keeps.
+            public var truncated: Bool
+        }
+
+        public var isRunning: Bool { status == "running" }
     }
 
     public struct AgentSwitch: Codable, Sendable, Hashable {

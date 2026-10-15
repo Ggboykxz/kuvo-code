@@ -386,6 +386,14 @@ public struct OpenCodeAPI: Sendable {
         try await send("PATCH", "api/session/\(session.pathEscaped)/inbox/\(item.pathEscaped)", body: Body(delivery: delivery))
     }
 
+    /// Runs one command in the session's folder, as you, without waking the agent: it gets the
+    /// command and its output with the next message.
+    /// It shows up through the session's events (`session.shell.started`, `…ended`).
+    public func runShell(session: String, command: String) async throws {
+        struct Body: Encodable { var command: String }
+        try await send("POST", "api/session/\(session.pathEscaped)/shell", body: Body(command: command))
+    }
+
     // MARK: Permissions and questions
 
     public func permissions(session: String) async throws -> [PermissionRequest] {
