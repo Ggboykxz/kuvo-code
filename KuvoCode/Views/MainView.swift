@@ -8,6 +8,7 @@ struct MainView: View {
     @Environment(Catalog.self) private var catalog
     @Environment(Workspace.self) private var workspace
     @Environment(Bots.self) private var bots
+    @Environment(BotGroups.self) private var groups
 
     /// Open tabs, in order: session IDs, or `draft:<folder>` for a new session
     /// that doesn't exist on the server until its first message.
@@ -29,6 +30,8 @@ struct MainView: View {
     @State private var projectSheet: ProjectSheetRequest?
     /// Making or changing a bot, in the main card while it's open.
     @State private var botEditor: BotEditorRequest?
+    /// Making or changing a group chat, the same way.
+    @State private var groupEditor: GroupEditorRequest?
     @State private var focus = Pane.conversation
     /// Tabs you closed, last one last, with where they were: ⇧⌘T opens them again.
     @State private var closedTabs: [ClosedTab] = []
@@ -63,7 +66,12 @@ struct MainView: View {
     private var utilities: Utilities { app.utilities }
 
     private var sessionID: String? {
-        selection.flatMap { SidebarView.draftDirectory(from: $0) == nil ? $0 : nil }
+        selection.flatMap { SidebarView.draftDirectory(from: $0) == nil && BotGroups.groupID(fromTab: $0) == nil ? $0 : nil }
+    }
+
+    /// The group chat in view.
+    private var groupID: String? {
+        selection.flatMap(BotGroups.groupID(fromTab:))
     }
 
     private var draftDirectory: String? {
@@ -286,6 +294,7 @@ struct MainView: View {
             if let activeDirectory { await workspace.loadBranch(for: activeDirectory) }
         }
         .onChange(of: workspace.sessions.map(\.id)) { _, ids in dropClosedSessions(ids) }
+        .onChange(of: groups.list.map(\.id)) { dropClosedSessions(workspace.sessions.map(\.id)) }
         .onChange(of: workspace.isLoaded) {
             // The list arrives just before loading counts as done, so check it again here.
             dropClosedSessions(workspace.sessions.map(\.id))
@@ -387,11 +396,24 @@ struct MainView: View {
             if workspace.waitingMachine(for: key) != nil {
                 return TabItem(id: key, title: workspace.remoteTitle(key) ?? "Session", logo: nil, status: .idle)
             }
+            if let id = BotGroups.groupID(fromTab: key) {
+                guard let group = groups.group(id) else { return nil }
+                let status: TabItem.Status = groups.discussing.contains(id) ? .working : groups.isUnread(group) && groupID != id ? .unread : .idle
+                return TabItem(id: key, title: group.name, logo: nil, group: faces(of: group), status: status)
+            }
             guard let session = workspace.session(key) else { return nil }
             if let bot = bots.bot(forSession: key) {
                 return TabItem(id: key, title: bot.name, logo: nil, bot: bot.look, botMood: bots.mood(of: bot, in: workspace), status: status(of: session))
             }
             return TabItem(id: key, title: session.title ?? "New Session", logo: logo(for: session.model, in: session.location.directory), status: status(of: session))
+        }
+    }
+
+    /// A group chat's bots, the one talking at work.
+    private func faces(of group: BotGroup) -> [GroupAvatar.Face] {
+        let speaker = groups.speaking[group.id]
+        return group.members.compactMap { id in
+            bots.bot(id).map { GroupAvatar.Face(look: $0.look, mood: $0.id == speaker ? .working : .idle) }
         }
     }
 
@@ -422,7 +444,9 @@ struct MainView: View {
                 editProject: { projectSheet = ProjectSheetRequest(project: $0) },
                 showProviders: { showsProviders = true },
                 newBot: { openBotEditor(bot: nil) },
-                editBot: { openBotEditor(bot: $0) }
+                editBot: { openBotEditor(bot: $0) },
+                newGroup: { openGroupEditor(group: nil) },
+                editGroup: { openGroupEditor(group: $0) }
             )
             // Room for the window's buttons above the first row, when they sit here.
             .padding(.top, showsTabBar ? 0 : Metrics.windowControlsHeight)
@@ -435,7 +459,21 @@ struct MainView: View {
 
     @ViewBuilder private var conversationCard: some View {
         Group {
-            if let request = botEditor {
+            if let request = groupEditor {
+                Card(title: request.group.map { "Edit \($0.name)" } ?? "New Group Chat", isFocused: focus == .conversation) {
+                    if let group = request.group { GroupAvatar(faces: faces(of: group), size: 20) } else { Image(systemName: "person.2") }
+                } actions: {
+                    Button("Close", systemImage: "xmark") { withAnimation(.ui) { groupEditor = nil } }
+                        .help("Close")
+                } content: {
+                    GroupEditor(group: request.group, newBot: { openBotEditor(bot: nil) }) {
+                        withAnimation(.ui) { groupEditor = nil }
+                    } created: { group in
+                        openTab(BotGroups.tabKey(group.id))
+                    }
+                }
+                .id(request.id)
+            } else if let request = botEditor {
                 Card(title: request.bot.map { "Edit \($0.name)" } ?? "New Bot", isFocused: focus == .conversation) {
                     if let bot = request.bot { BotAvatar(look: bot.look, size: 18) } else { Image(systemName: "face.smiling") }
                 } actions: {
@@ -449,6 +487,18 @@ struct MainView: View {
                     }
                 }
                 .id(request.id)
+            } else if let id = groupID, let group = groups.group(id) {
+                Card(title: group.name, detail: groupDetail(group), isFocused: focus == .conversation) {
+                    GroupAvatar(faces: faces(of: group), size: 20)
+                } actions: {
+                    Button("Edit Group Chat", systemImage: "slider.horizontal.3") { openGroupEditor(group: group) }
+                        .help("Edit Group Chat: its name, bots and lead")
+                    Button("Close Tab", systemImage: "xmark") { closeTab(BotGroups.tabKey(id)) }
+                        .help("Close Tab")
+                } content: {
+                    GroupChatView(group: group)
+                }
+                .id(BotGroups.tabKey(id))
             } else if let id = sessionID, let model = workspace.model(for: id) {
                 let directory = model.session.location.directory
                 let machine = machine(for: directory)
@@ -556,9 +606,27 @@ struct MainView: View {
         withAnimation(.ui) {
             panelExpanded = false
             app.showsSettings = false
+            groupEditor = nil
             botEditor = BotEditorRequest(bot: bot)
         }
         focus = .conversation
+    }
+
+    /// Makes a group chat, or changes `group`, in the main card.
+    private func openGroupEditor(group: BotGroup?) {
+        withAnimation(.ui) {
+            panelExpanded = false
+            app.showsSettings = false
+            botEditor = nil
+            groupEditor = GroupEditorRequest(group: group)
+        }
+        focus = .conversation
+    }
+
+    /// Under a group chat's name: who's in it.
+    private func groupDetail(_ group: BotGroup) -> String? {
+        let names = group.members.compactMap { bots.bot($0)?.name }
+        return names.isEmpty ? nil : names.joined(separator: ", ")
     }
 
     /// Back from Settings to the sessions, as they were.
@@ -581,6 +649,7 @@ struct MainView: View {
             focus = .conversation
             app.showsSettings = false
             botEditor = nil
+            groupEditor = nil
         }
     }
 
@@ -615,7 +684,8 @@ struct MainView: View {
 
     /// Not open again already, and not a session deleted since.
     private func canReopen(_ closed: ClosedTab) -> Bool {
-        !tabs.contains(closed.key) && (SidebarView.draftDirectory(from: closed.key) != nil || workspace.session(closed.key) != nil)
+        !tabs.contains(closed.key) && (SidebarView.draftDirectory(from: closed.key) != nil || workspace.session(closed.key) != nil
+            || groups.group(BotGroups.groupID(fromTab: closed.key)) != nil)
     }
 
     /// Opens the tab closed last, where it was, skipping sessions deleted since.
@@ -679,6 +749,8 @@ struct MainView: View {
         let known = Set(ids)
         // A machine's sessions wait for it to connect.
         for key in tabs where SidebarView.draftDirectory(from: key) == nil && !known.contains(key) && workspace.waitingMachine(for: key) == nil {
+            // A group chat's tab stays as long as the chat does.
+            if let id = BotGroups.groupID(fromTab: key), groups.group(id) != nil { continue }
             closeTab(key, remember: false)
         }
         // A selection that isn't one of the tabs (its session went while the app was closed)
@@ -699,6 +771,7 @@ struct MainView: View {
             openFolder: openFolder,
             newProject: { projectSheet = ProjectSheetRequest(project: nil) },
             newBot: { openBotEditor(bot: nil) },
+            newGroup: { openGroupEditor(group: nil) },
             stop: { model?.stop() },
             selectAgent: { model?.selectAgent($0) },
             togglePanel: { withAnimation(.ui) { showsPanel.toggle() } },
@@ -916,6 +989,32 @@ struct MainView: View {
         // window settles, which would cut the session's creation short.
         Task { await runDemoSession(environment) }
         Task { await runDemoBot(environment) }
+        Task { await runDemoGroup(environment) }
+    }
+
+    /// KUVO_DEMO_GROUP=<name>|<bot>,<bot>,…[|<message>] makes that group chat of those bots unless
+    /// one has the name, opens it, and sends it the message; KUVO_DEMO_EDIT_GROUP opens its editor.
+    private func runDemoGroup(_ environment: [String: String]) async {
+        if environment["KUVO_DEMO_NEW_GROUP"] != nil { openGroupEditor(group: nil) }
+        guard let spec = environment["KUVO_DEMO_GROUP"] else { return }
+        let parts = spec.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
+        guard let name = parts.first, !name.isEmpty else { return }
+        let members = (parts.count > 1 ? parts[1] : "").split(separator: ",").compactMap { member in
+            bots.list.first { $0.name == member.trimmingCharacters(in: .whitespaces) }?.id
+        }
+        let group = groups.list.first { $0.name == name } ?? groups.create(name: name, members: members)
+        openTab(BotGroups.tabKey(group.id))
+        if environment["KUVO_DEMO_EDIT_GROUP"] != nil { openGroupEditor(group: group) }
+        guard parts.count > 2, !parts[2].isEmpty else { return }
+        while app.api == nil { try? await Task.sleep(for: .seconds(1)) }
+        try? await Task.sleep(for: .seconds(2))
+        groups.send(parts[2], to: group.id)
+        // KUVO_DEMO_GROUP_LATER=<seconds>|<message>: another message, sent while they talk.
+        let later = (environment["KUVO_DEMO_GROUP_LATER"] ?? "").split(separator: "|", maxSplits: 1).map(String.init)
+        if later.count == 2, let seconds = Double(later[0]) {
+            try? await Task.sleep(for: .seconds(seconds))
+            groups.send(later[1], to: group.id)
+        }
     }
 
     /// KUVO_DEMO_BOT=<name>|<job>|<instructions>[|<machine>] makes that bot unless one has the
@@ -932,7 +1031,7 @@ struct MainView: View {
             }
             do {
                 bot = try await bots.create(name: name, job: parts.count > 1 ? parts[1] : "", instructions: parts.count > 2 ? parts[2] : "",
-                                            look: .random(), machine: parts.count > 3 ? parts[3] : nil, project: nil)
+                                            look: .random(), model: nil, machine: parts.count > 3 ? parts[3] : nil, project: nil)
             } catch {
                 print("KUVO_DEMO_BOT failed: \(error.localizedDescription)")
                 return
@@ -1056,6 +1155,11 @@ private struct SlowEngineNotice: View {
 struct BotEditorRequest: Identifiable {
     let id = UUID()
     let bot: Bot?
+}
+
+struct GroupEditorRequest: Identifiable {
+    let id = UUID()
+    let group: BotGroup?
 }
 
 struct ProjectSheetRequest: Identifiable {

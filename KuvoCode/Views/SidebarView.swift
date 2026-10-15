@@ -17,7 +17,12 @@ struct SidebarView: View {
     let showProviders: () -> Void
     let newBot: () -> Void
     let editBot: (Bot) -> Void
+    let newGroup: () -> Void
+    let editGroup: (BotGroup) -> Void
     @Environment(Bots.self) private var bots
+    @Environment(BotGroups.self) private var groups
+    /// The group chat waiting for the user to confirm its deletion.
+    @State private var deletingGroup: BotGroup?
 
     /// Folders the user closed, by path (newline-separated).
     @AppStorage("collapsedProjects") private var collapsedStorage = ""
@@ -102,12 +107,28 @@ struct SidebarView: View {
                         }
                     }
                     SectionHeader(title: "Bots") {
-                        Button(action: newBot) {
-                            Image(systemName: "plus")
-                                .font(.system(size: 12, weight: .semibold))
+                        // With bots enough for one, a group chat is made from here too.
+                        if bots.list.count >= 2 {
+                            NativeMenuButton(opensBelow: true) {
+                                let menu = NSMenu()
+                                menu.addItem(ActionItem("New Bot…", image: NSImage(systemSymbolName: "face.smiling", accessibilityDescription: nil)) { newBot() })
+                                menu.addItem(ActionItem("New Group Chat…", image: NSImage(systemSymbolName: "person.2", accessibilityDescription: nil)) { newGroup() })
+                                return menu
+                            } label: {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .frame(width: 22, height: 22)
+                                    .hoverHighlight(in: RoundedRectangle(cornerRadius: 6), mutesInk: true)
+                            }
+                            .help("New Bot or Group Chat")
+                        } else {
+                            Button(action: newBot) {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 12, weight: .semibold))
+                            }
+                            .buttonStyle(IconButtonStyle(width: 22, height: 22))
+                            .help("New Bot…")
                         }
-                        .buttonStyle(IconButtonStyle(width: 22, height: 22))
-                        .help("New Bot…")
                     }
                     if bots.list.isEmpty {
                         SidebarRow(isSelected: false, action: newBot) {
@@ -124,6 +145,18 @@ struct SidebarView: View {
                         }
                         .contextMenu {
                             Button("Edit Bot…") { editBot(bot) }
+                        }
+                    }
+                    // Group chats, under the bots they're with.
+                    ForEach(groups.list) { group in
+                        let key = BotGroups.tabKey(group.id)
+                        GroupRow(group: group, isSelected: selection == key) {
+                            selection = key
+                        }
+                        .contextMenu {
+                            Button("Edit Group Chat…") { editGroup(group) }
+                            Divider()
+                            Button("Delete Group Chat…", role: .destructive) { deletingGroup = group }
                         }
                     }
                     SectionHeader(title: "Projects") {
@@ -204,6 +237,15 @@ struct SidebarView: View {
             conversationResults = found
             isSearchingConversations = false
             Analytics.shared.track("conversations_searched", ["found": min(found.count, 20)])
+        }
+        .alert("Delete \(deletingGroup?.name ?? "This Group Chat")?", isPresented: Binding(get: { deletingGroup != nil }, set: { if !$0 { deletingGroup = nil } })) {
+            Button("Delete", role: .destructive) {
+                if let group = deletingGroup { Task { await groups.delete(group) } }
+                deletingGroup = nil
+            }
+            Button("Cancel", role: .cancel) { deletingGroup = nil }
+        } message: {
+            Text("Its messages are deleted, and its bots stop remembering it. This can’t be undone.")
         }
         .alert("Rename Session", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Title", text: $newTitle)
@@ -702,6 +744,63 @@ private struct MachineLabel: View {
         .font(.system(size: 11, weight: .medium))
         .foregroundStyle(.secondary)
         .help(engine.statusText)
+    }
+}
+
+/// A group chat: its bots, its name, and who's talking or what was said last.
+private struct GroupRow: View {
+    let group: BotGroup
+    let isSelected: Bool
+    let action: () -> Void
+    @Environment(Bots.self) private var bots
+    @Environment(BotGroups.self) private var groups
+
+    var body: some View {
+        let speaker = groups.speaking[group.id].flatMap { bots.bot($0) }
+        let isUnread = groups.isUnread(group) && !isSelected
+        Button(action: action) {
+            HStack(spacing: 10) {
+                GroupAvatar(faces: group.members.compactMap { id in
+                    bots.bot(id).map { GroupAvatar.Face(look: $0.look, mood: $0.id == speaker?.id ? .working : .idle) }
+                }, size: 28)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(group.name)
+                        .font(.system(size: 14))
+                        .fontWeight(isUnread ? .semibold : .regular)
+                    Group {
+                        if let speaker {
+                            ShimmerText(text: "\(speaker.name) is typing…")
+                        } else if groups.discussing.contains(group.id) {
+                            ShimmerText(text: "Talking it over…")
+                        } else {
+                            Text(lastLine)
+                        }
+                    }
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                }
+                .lineLimit(1)
+                Spacer(minLength: 6)
+                if isUnread {
+                    Circle().fill(.tint).frame(width: 7, height: 7)
+                        .help("New messages")
+                }
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 46)
+            .modifier(RowHighlight(isSelected: isSelected))
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// "Mira: Let's ship on Friday", or who's in it before anything's been said.
+    private var lastLine: String {
+        if let last = groups.messages(in: group.id).last(where: { $0.kind != .note }) {
+            let who = last.author.map { bots.bot($0)?.name ?? "A bot" } ?? "You"
+            // Plain words: no Markdown marks, all on one line.
+            return who + ": " + last.text.filter { !"*`#>".contains($0) }.split(whereSeparator: \.isNewline).joined(separator: " ")
+        }
+        return group.members.compactMap { bots.bot($0)?.name }.joined(separator: ", ")
     }
 }
 

@@ -32,6 +32,7 @@ final class AppModel {
     let usage = UsageAccounts()
     /// Bots: named agents with one job each, on this Mac or a machine.
     let bots = Bots()
+    let groups = BotGroups()
     /// The engine's settings file, for Settings.
     @ObservationIgnored private(set) lazy var engineConfig = EngineConfig(file: engineFolders.configFile)
     /// Skills added in Settings, beside the settings file: the engine reads them for every project.
@@ -158,7 +159,9 @@ final class AppModel {
             workspace.api = api
             workspace.machineAPI = { [weak self] machine in self?.machines.engine(machine)?.api }
             bots.app = self
+            groups.app = self
             workspace.botSessions = bots.sessionIDs
+            workspace.seats = groups.seatIDs
             usage.api = api
             engine = .ready
             Analytics.shared.trackOnce("engine_ready", ["seconds": Int(Date.now.timeIntervalSince(began)), "downloaded": downloaded])

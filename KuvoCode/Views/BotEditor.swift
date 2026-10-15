@@ -16,7 +16,11 @@ struct BotEditor: View {
     @Environment(AppModel.self) private var app
     @Environment(Bots.self) private var bots
     @Environment(Workspace.self) private var workspace
+    @Environment(Catalog.self) private var catalog
+    @LastModel private var lastModel
     @State private var look: BotLook
+    /// Its default model.
+    @State private var model: ModelRef?
     @State private var name: String
     @State private var job: String
     @State private var instructions: String
@@ -43,6 +47,12 @@ struct BotEditor: View {
         _instructions = State(initialValue: bot?.instructions ?? "")
         _machine = State(initialValue: bot?.machine)
         _project = State(initialValue: bot?.project)
+        _model = State(initialValue: bot?.model)
+    }
+
+    /// The models of the engine where it lives.
+    private var placeCatalog: Catalog {
+        machine.flatMap { app.machines.engine($0)?.catalog } ?? catalog
     }
 
     private var isNew: Bool { bot == nil }
@@ -67,7 +77,11 @@ struct BotEditor: View {
                 .padding(.bottom, 20)
                 .frame(maxWidth: .infinity)
         }
-        .onAppear { if isNew { focus = .name } }
+        .onAppear {
+            if isNew { focus = .name }
+            // A bot made before bots had a model: the one its conversation uses.
+            if model == nil { model = bot.flatMap { workspace.session($0.sessionID)?.model } ?? lastModel ?? placeCatalog.defaultModel?.ref }
+        }
         .sheet(isPresented: $showsAddMachine) {
             MachineSheet { machine = $0; project = nil }
         }
@@ -98,6 +112,29 @@ struct BotEditor: View {
                             .lineLimit(4...10)
                             .focused($focus, equals: .instructions)
                             .padding(12)
+                    }
+                }
+
+                section("Model", note: "It uses this in group chats, and in its own conversation unless you pick another there.") {
+                    WellGroup {
+                        ModelChip(selection: model, onSelect: { model = $0 }, opensBelow: true) { current, variant in
+                            WellRow {
+                                if let current { ProviderLogo(id: current.makerLogoID, size: 16) } else { Image(systemName: "cpu") }
+                            } content: {
+                                HStack(spacing: 6) {
+                                    Text(current?.name ?? "Choose a Model")
+                                        .foregroundStyle(.primary)
+                                    if let variant {
+                                        Text("· \(variant.capitalized)")
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer(minLength: 8)
+                                    MenuChevron()
+                                }
+                            }
+                            .contentShape(.rect)
+                        }
+                        .environment(placeCatalog)
                     }
                 }
 
@@ -284,6 +321,7 @@ struct BotEditor: View {
             bot.job = job
             bot.instructions = instructions
             bot.look = look
+            bot.model = model
             Task { await bots.update(bot) }
             close()
             return
@@ -293,7 +331,7 @@ struct BotEditor: View {
         Task {
             defer { isWorking = false }
             do {
-                let bot = try await bots.create(name: trimmedName, job: job, instructions: instructions, look: look, machine: machine, project: project)
+                let bot = try await bots.create(name: trimmedName, job: job, instructions: instructions, look: look, model: model, machine: machine, project: project)
                 created(bot)
             } catch {
                 failure = error.localizedDescription

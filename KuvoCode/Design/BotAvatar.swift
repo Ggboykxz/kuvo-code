@@ -182,6 +182,41 @@ struct BotAvatar: View {
     }
 }
 
+/// A group chat's picture: its first bots, close together, each moving with what it's up to.
+struct GroupAvatar: View {
+    struct Face: Equatable {
+        var look: BotLook
+        var mood: BotMood = .idle
+    }
+
+    let faces: [Face]
+    /// The square they share.
+    var size: CGFloat = 28
+
+    var body: some View {
+        let shown = Array(faces.prefix(3))
+        let each = size * (shown.count >= 3 ? 0.58 : shown.count == 2 ? 0.68 : 1)
+        ZStack {
+            ForEach(Array(shown.enumerated()), id: \.offset) { index, face in
+                BotAvatar(look: face.look, size: each, mood: face.mood)
+                    .offset(place(index, of: shown.count))
+                    // The lead in front.
+                    .zIndex(Double(shown.count - index))
+            }
+        }
+        .frame(width: size, height: size)
+    }
+
+    /// Two side by side, one a little higher; three in a triangle, the lead on top.
+    private func place(_ index: Int, of count: Int) -> CGSize {
+        switch count {
+        case 2: index == 0 ? CGSize(width: -size * 0.17, height: -size * 0.1) : CGSize(width: size * 0.17, height: size * 0.12)
+        case 3: [CGSize(width: 0, height: -size * 0.2), CGSize(width: -size * 0.22, height: size * 0.18), CGSize(width: size * 0.22, height: size * 0.18)][index]
+        default: .zero
+        }
+    }
+}
+
 /// A four-pointed sparkle.
 nonisolated private struct Star: Shape {
     func path(in rect: CGRect) -> Path {

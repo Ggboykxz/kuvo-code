@@ -73,7 +73,7 @@ final class Workspace {
     /// Sessions that finished while you were elsewhere, or wait for your answer: the
     /// number on the Dock icon.
     var waitingCount: Int {
-        Set(sessions.filter { $0.isUnread && !Self.isArchived($0) }.map(\.id)).union(asking.values).count
+        Set(sessions.filter { $0.isUnread && !Self.isArchived($0) }.map(\.id)).union(asking.values.filter { !seats.contains($0) }).count
     }
 
     struct Project: Identifiable, Hashable {
@@ -127,6 +127,23 @@ final class Workspace {
 
     /// Bots' sessions: each bot's conversation, shown with the bot rather than in its project.
     var botSessions: Set<String> = []
+    /// Bots' seats in group chats: sessions that never get a row, a tab or a notification.
+    var seats: Set<String> = [] {
+        didSet { sessions.removeAll { seats.contains($0.id) } }
+    }
+
+    /// A bot's seat in a group chat, by its metadata, before it's in `seats`.
+    static func isSeat(_ session: Session) -> Bool {
+        session.metadata?["kuvo"]?["seat"] != nil
+    }
+
+    private func isHidden(_ session: Session) -> Bool {
+        seats.contains(session.id) || Self.isSeat(session)
+    }
+
+    /// How many runs of each session have ended since the app started: a run someone is
+    /// waiting on has ended once its count goes up.
+    @ObservationIgnored private(set) var endedRuns: [String: Int] = [:]
 
     /// Projects with their sessions, most recently active first.
     var projects: [Project] {
@@ -451,7 +468,7 @@ final class Workspace {
     func refresh() async {
         guard let api else { return }
         do {
-            let local = try await api.sessions().data
+            let local = try await api.sessions().data.filter { !isHidden($0) }
             sessions = local + sessions.filter { RemoteFolder.isRemote($0.location.directory) }
         } catch { log.error("sessions: \(String(describing: error), privacy: .public)") }
         do {
@@ -474,7 +491,7 @@ final class Workspace {
         guard let api = engine.api else { return }
         let machine = engine.machine.id
         do {
-            let theirs = try await api.sessions().data
+            let theirs = try await api.sessions().data.filter { !isHidden($0) }
             sessions = sessions.filter { RemoteFolder.machine(of: $0.location.directory) != machine } + theirs
             for session in theirs { sessionMachines[session.id] = machine }
             remoteSessions = remoteSessions.filter { $0.value.machine != machine }
@@ -555,6 +572,7 @@ final class Workspace {
             touch(id)
         case "session.execution.succeeded", "session.execution.failed", "session.execution.interrupted":
             running.remove(id)
+            endedRuns[id, default: 0] += 1
             noteTurn(id, event)
             // Picks up the new idle time (unread state) and outcome.
             Task {
@@ -636,6 +654,8 @@ final class Workspace {
 
     /// `permission` is the request, for a notification whose buttons answer it.
     private func notifyAsk(_ id: String, body: String, permission: String? = nil) {
+        // A seat's requests are answered by its group chat.
+        guard !seats.contains(id) else { return }
         Task {
             // A subagent's session has no row or tab of its own; its request shows in the
             // session that started it.
@@ -693,6 +713,10 @@ final class Workspace {
     }
 
     private func upsert(_ session: Session) {
+        guard !isHidden(session) else {
+            sessions.removeAll { $0.id == session.id }
+            return
+        }
         nameBranch(of: session)
         if let index = sessions.firstIndex(where: { $0.id == session.id }) {
             sessions[index] = session

@@ -22,6 +22,9 @@ struct Bot: Codable, Identifiable, Hashable {
     /// Its conversation.
     var sessionID: String
     var created: Date
+    /// The model it uses unless you pick another in its conversation: in group chats, and for
+    /// its conversation when it's made. Nil for one made before bots had one.
+    var model: ModelRef?
 
     /// Where its session runs, the app's way of writing it.
     var directory: String {
@@ -114,7 +117,7 @@ final class Bots {
 
     /// Makes a bot: its folder where it lives, its session there with its job, and its place in
     /// the list.
-    func create(name: String, job: String, instructions: String, look: BotLook, machine: String?, project: String?) async throws -> Bot {
+    func create(name: String, job: String, instructions: String, look: BotLook, model: ModelRef?, machine: String?, project: String?) async throws -> Bot {
         guard let app else { throw CancellationError() }
         let id = "bot_" + String((0..<10).map { _ in "abcdefghijklmnopqrstuvwxyz0123456789".randomElement()! })
         let folder: String
@@ -149,8 +152,9 @@ final class Bots {
             PermissionRule(action: "shell", resource: "\"\(full)\" \(id) *", effect: .allow),
         ]
         let catalog = machine.flatMap { app.machines.engine($0)?.catalog } ?? app.catalog
-        let model = Self.lastModel.flatMap { catalog.model($0) != nil ? $0 : nil }
-        let session = try await api.createSession(directory: bot.directory, title: name, model: model, permissions: rules)
+        // The one picked, if the engine where it lives has it; otherwise the last one used.
+        bot.model = [model, Self.lastModel].compactMap { $0 }.first { catalog.model($0) != nil }
+        let session = try await api.createSession(directory: bot.directory, title: name, model: bot.model, permissions: rules)
         bot.sessionID = session.id
         try? await api.setMetadata(session: session.id, .object(["kuvo": .object(["bot": .string(id)])]))
         try await api.setInstruction(session: session.id, key: Self.instructionKey, text: Self.instructions(for: bot))
@@ -164,20 +168,29 @@ final class Bots {
         return bot
     }
 
-    /// Saves a change to a bot, and tells its session about a new name or job.
+    /// Saves a change to a bot, and tells its session about a new name, job or model; its group
+    /// chats hear about them too.
     func update(_ bot: Bot) async {
         guard let index = list.firstIndex(where: { $0.id == bot.id }) else { return }
         let old = list[index]
         list[index] = bot
         save()
-        guard old.name != bot.name || old.job != bot.job || old.instructions != bot.instructions,
-              let api = app?.workspace.api(forFolder: bot.directory) else { return }
-        try? await api.setInstruction(session: bot.sessionID, key: Self.instructionKey, text: Self.instructions(for: bot))
-        if old.name != bot.name { try? await api.renameSession(bot.sessionID, title: bot.name) }
+        guard let api = app?.workspace.api(forFolder: bot.directory) else { return }
+        if old.name != bot.name || old.job != bot.job || old.instructions != bot.instructions {
+            try? await api.setInstruction(session: bot.sessionID, key: Self.instructionKey, text: Self.instructions(for: bot))
+            if old.name != bot.name { try? await api.renameSession(bot.sessionID, title: bot.name) }
+            await app?.groups.botChanged(bot)
+        }
+        // A new default model applies to its conversation too; you can still pick another there.
+        if old.model != bot.model, let model = bot.model {
+            try? await api.selectModel(session: bot.sessionID, model: model)
+            await app?.groups.modelChanged(of: bot)
+        }
     }
 
     /// Deletes a bot: its conversation, its folder and its wake-ups. A project it worked in stays.
     func delete(_ bot: Bot) async {
+        await app?.groups.remove(bot)
         list.removeAll { $0.id == bot.id }
         save()
         wakes[bot.id] = nil
@@ -354,7 +367,7 @@ final class Bots {
 
     // MARK: Storage
 
-    private static var lastModel: ModelRef? {
+    static var lastModel: ModelRef? {
         let parts = (UserDefaults.standard.string(forKey: "lastModel") ?? "").split(separator: "/", maxSplits: 2).map(String.init)
         guard parts.count >= 2 else { return nil }
         return ModelRef(id: parts[1], providerID: parts[0], variant: parts.count > 2 ? parts[2] : nil)

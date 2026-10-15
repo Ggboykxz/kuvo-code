@@ -112,6 +112,10 @@ without clicking, for trying a change or taking screenshots:
 | `KUVO_DEMO_NEW_BOT` | The New Bot editor, open |
 | `KUVO_DEMO_BOT`, `KUVO_DEMO_BOT_PROMPT` | Make the bot `<name>\|<job>\|<instructions>[\|<machine>]` unless one has that name, open it, and give it this task |
 | `KUVO_DEMO_EDIT_BOT` | With `KUVO_DEMO_BOT`: that bot's editor, open |
+| `KUVO_DEMO_NEW_GROUP` | The New Group Chat editor, open |
+| `KUVO_DEMO_GROUP` | Make the group chat `<name>\|<bot>,<bot>,…` unless one has that name, open it, and send it `\|<message>` if one follows |
+| `KUVO_DEMO_GROUP_LATER` | With a message in `KUVO_DEMO_GROUP`: another one, sent while they talk, as `<seconds>\|<message>` |
+| `KUVO_DEMO_EDIT_GROUP` | With `KUVO_DEMO_GROUP`: its editor, open |
 | `KUVO_DEMO_BOT_MOODS` | Show bots in a mood, as `<name>=<mood>,…` with `working`, `waiting`, `news`, `sleeping` or `idle` |
 | `KUVO_DEMO_NAME` | A name to use instead of yours, for the initials on review comments |
 | `KUVO_DEMO_COMMENT` | Add a review comment to the session in view, as `<path in the project>:<line>:<text>` |
