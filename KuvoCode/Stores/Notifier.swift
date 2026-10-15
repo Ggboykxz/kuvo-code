@@ -121,7 +121,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         guard let session = info["session"] as? String else { return }
         await MainActor.run {
             NSApp.activate()
-            Notifier.shared.open?(session)
+            if !session.isEmpty { Notifier.shared.open?(session) }
         }
     }
 }

@@ -96,6 +96,11 @@ final class BotGroups {
     /// Every seat, so they stay out of the lists.
     var seatIDs: Set<String> { Set(list.flatMap(\.seats.values)) }
 
+    /// The chat a seat is in.
+    func group(seat: String) -> BotGroup? {
+        list.first { $0.seats.values.contains(seat) }
+    }
+
     func messages(in id: String) -> [GroupMessage] {
         logs[id] ?? []
     }

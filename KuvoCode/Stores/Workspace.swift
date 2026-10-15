@@ -69,11 +69,13 @@ final class Workspace {
     private(set) var defaultBranches: [String: String] = [:]
     /// Open permission requests and questions, by ID, with the session they're for.
     private(set) var asking: [String: String] = [:]
+    /// Sessions whose agent asks you for something in its browser (a sign-in, a code, a step).
+    var askingInBrowser: Set<String> = []
 
     /// Sessions that finished while you were elsewhere, or wait for your answer: the
     /// number on the Dock icon.
     var waitingCount: Int {
-        Set(sessions.filter { $0.isUnread && !Self.isArchived($0) }.map(\.id)).union(asking.values.filter { !seats.contains($0) }).count
+        Set(sessions.filter { $0.isUnread && !Self.isArchived($0) }.map(\.id)).union(asking.values.filter { !seats.contains($0) }).union(askingInBrowser.subtracting(seats)).count
     }
 
     struct Project: Identifiable, Hashable {
@@ -322,6 +324,7 @@ final class Workspace {
     }
 
     func needsAttention(_ id: String) -> Bool {
+        if askingInBrowser.contains(id) { return true }
         guard let model = models[id] else { return false }
         return !model.transcript.permissions.isEmpty || !model.transcript.forms.isEmpty
     }
@@ -592,6 +595,8 @@ final class Workspace {
 
     /// An agent on a machine started using its browser.
     @ObservationIgnored var onMachineBrowsing: ((String) -> Void)?
+    /// An agent (in a session, on a machine or this Mac) is asking you for something in its browser.
+    @ObservationIgnored var onBrowserAsk: ((_ session: String, _ machine: String?) -> Void)?
 
     /// An event from this Mac's engine, or from `machine`'s.
     func handle(_ event: ServerEvent, machine: String? = nil) {
@@ -602,9 +607,12 @@ final class Workspace {
         }
         #endif
         if let machine, let id = event.sessionID { sessionMachines[id] = machine }
-        if let machine, event.type == "session.tool.input.started",
+        if event.type == "session.tool.input.started", let id = event.sessionID,
            let started = try? event.payload(as: EventPayload.ToolInputStarted.self), started.name.hasPrefix("kuvo-browser_") {
-            onMachineBrowsing?(machine)
+            if let machine { onMachineBrowsing?(machine) }
+            if ["kuvo-browser_browser_sign_in", "kuvo-browser_browser_ask_code", "kuvo-browser_browser_ask_user"].contains(started.name) {
+                onBrowserAsk?(id, machine)
+            }
         }
         if event.type == "vcs.branch.updated", let directory = event.location?.directory {
             struct Branch: Decodable { var branch: String? }

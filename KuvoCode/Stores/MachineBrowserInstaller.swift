@@ -334,9 +334,13 @@ extension MachineBrowserInstaller {
                 "type": BrowserAgent.typeScript,
                 "select": BrowserAgent.selectScript,
                 "press": BrowserAgent.pressScript,
+                "fieldKind": BrowserAgent.fieldKindScript,
+                "fill": BrowserAgent.fillScript,
+                "mask": BrowserAgent.maskScript,
+                "unmask": BrowserAgent.unmaskScript,
             ],
             "tools": BrowserTools.definitions,
-            "instructions": "Use these tools to browse in the browser on this machine, which the user can watch in Kuvo Code's panel. Start with browser_navigate, read pages with browser_snapshot, and act on elements by their number. localhost is this machine, so you can open servers you run here.",
+            "instructions": BrowserTools.instructions(machine: true),
             "version": AppInfo.version,
         ]
         let json = (try? JSONSerialization.data(withJSONObject: config, options: [.sortedKeys])).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
@@ -382,6 +386,8 @@ extension MachineBrowserInstaller {
             "environment": ["KUVO_SEARCH": searchTemplate],
             // Plain tools, so every model calls them directly.
             "codemode": false,
+            // A tool that asks you (to sign in, for a code) waits for you.
+            "timeout": ["execution": BrowserTools.executionTimeout],
         ] as [String: Any]]]]
     }
 

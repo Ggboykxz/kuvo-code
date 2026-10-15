@@ -103,7 +103,8 @@ nonisolated enum Passwords {
       const report = (scope) => {
         const fields = [...(scope || document).querySelectorAll('input')];
         const password = fields.find((field) => field.type === 'password' && field.value);
-        if (!password) return;
+        // One the agent filled in came from its card, which asked whether to save it.
+        if (!password || password.hasAttribute('data-kuvo-secret')) return;
         const before = fields.slice(0, fields.indexOf(password)).reverse();
         const user = before.find((field) => ['text', 'email', 'tel'].includes(field.type) && field.value)
           || fields.find((field) => (field.autocomplete || '').includes('username') && field.value);

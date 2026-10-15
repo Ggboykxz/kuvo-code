@@ -231,6 +231,19 @@ final class Utilities {
         if PanelSettings.isOn(PanelSettings.revealsForAgent) { revealRequest += 1 }
     }
 
+    /// Brings the panel into view on the browser of the place in view, at the page in use: you
+    /// asked to see it.
+    func revealBrowser() {
+        if let place {
+            let tab = tabs.first { $0.kind == .machinePage(place, machineBrowser?(place)?.activeID) }
+                ?? tabs.last { if case .machinePage(place, _) = $0.kind { true } else { false } }
+            if let tab { selection = tab.id }
+        } else if let browser = activeBrowser, let id = browsers.first(where: { $0.value === browser })?.key {
+            selection = id
+        }
+        revealRequest += 1
+    }
+
     /// Closes a machine's tabs: the machine was removed or disconnected.
     func closeMachineBrowser(_ machine: String) {
         for tab in tabs {

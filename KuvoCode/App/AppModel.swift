@@ -24,8 +24,10 @@ final class AppModel {
     let catalog = Catalog()
     /// The right panel's tools; one window, so one set.
     let utilities = Utilities()
+    /// What the agent asks you for while it browses: sign-ins, codes, steps only you can do.
+    let browserAsks = BrowserAsks()
     /// The panel's browser as MCP tools for the agent.
-    @ObservationIgnored private(set) lazy var browserTools = BrowserToolServer(agent: BrowserAgent(utilities: utilities))
+    @ObservationIgnored private(set) lazy var browserTools = BrowserToolServer(agent: BrowserAgent(utilities: utilities, asks: browserAsks))
     let workspace = Workspace()
     /// Other computers whose engines run over SSH, next to this Mac's.
     let machines = Machines()

@@ -36,9 +36,9 @@ const SCRIPT = process.argv[1];
 // How long Chromium keeps running with nobody connected.
 const IDLE = Number(process.env.KUVO_BROWSER_IDLE || 10 * 60) * 1000;
 
-// Goes up when the keeper changes: a newer one replaces one that's running (its pages close, its
-// sign-ins stay), and an older one never replaces a newer.
-const KEEPER = 3;
+// Goes up with every change to the keeper (host mode): a newer one replaces one that's running
+// (its pages close, its sign-ins stay), and an older one never replaces a newer.
+const KEEPER = 4;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -358,6 +358,12 @@ async function host() {
   const browserIdentity = identity();
   let status = { working: false };
   let idle = null;
+  // What agents ask the user for (a sign-in, a code, a step), by ID: who asked, and the ask. The
+  // answer goes to the one who asked, and no one else.
+  const asks = new Map();
+  const closeAsk = (id) => {
+    if (asks.delete(id)) broadcast({ method: "Kuvo.askClosed", params: { id } });
+  };
 
   const send = (client, message) => {
     if (!client.closed) client.socket.write((typeof message === "string" ? message : JSON.stringify(message)) + "\n");
@@ -464,9 +470,10 @@ async function host() {
         owners.delete(sessionId);
         internal("Target.detachFromTarget", { sessionId });
       }
+      for (const [id, ask] of asks) if (ask.client === client) closeAsk(id);
       if (!clients.size) idleSoon();
     });
-    send(client, { method: "Kuvo.hello", params: { targetId: active, status, version: CONFIG.version, keeper: KEEPER } });
+    send(client, { method: "Kuvo.hello", params: { targetId: active, status, version: CONFIG.version, keeper: KEEPER, asks: [...asks.values()].map((ask) => ask.params) } });
     lines(socket, (text) => {
       let message;
       try {
@@ -489,6 +496,22 @@ async function host() {
           return message.id !== undefined && send(client, { id: message.id, result: {} });
         case "Kuvo.stop":
           return stop();
+        case "Kuvo.ask": {
+          const params = message.params ?? {};
+          if (!params.id) return;
+          asks.set(params.id, { client, params });
+          return broadcast({ method: "Kuvo.asked", params });
+        }
+        case "Kuvo.answer": {
+          const ask = asks.get(message.params?.id);
+          if (ask) {
+            send(ask.client, { method: "Kuvo.answered", params: { id: message.params.id, answer: message.params.answer } });
+            closeAsk(message.params.id);
+          }
+          return message.id !== undefined && send(client, { id: message.id, result: {} });
+        }
+        case "Kuvo.cancelAsk":
+          return closeAsk(message.params?.id);
       }
       if (message.id === undefined || typeof message.method !== "string") return;
       const id = next++;
@@ -611,6 +634,8 @@ const sessions = new Map();
 const dialogs = new Map();
 const notes = [];
 let busy = false;
+// Asks waiting for the user's answer, by ID.
+const waiting = new Map();
 
 async function browser() {
   if (link && !link.closed) return link;
@@ -636,6 +661,14 @@ async function browser() {
         break;
       case "Page.javascriptDialogClosed":
         dialogs.delete(message.sessionId);
+        break;
+      case "Kuvo.answered":
+        waiting.get(message.params.id)?.(message.params.answer ?? { type: "declined" });
+        waiting.delete(message.params.id);
+        break;
+      case "Kuvo.closed":
+        for (const resolve of waiting.values()) resolve({ type: "lost" });
+        waiting.clear();
         break;
     }
   });
@@ -800,6 +833,16 @@ async function history(p, step) {
 
 /// What's in view, as a PNG at most 1280 pixels wide.
 async function screenshot(p) {
+  // What the user filled in stays out of the picture.
+  await run(p, CONFIG.scripts.mask);
+  try {
+    return await capture(p);
+  } finally {
+    await run(p, CONFIG.scripts.unmask);
+  }
+}
+
+async function capture(p) {
   const { cssVisualViewport: view } = await link.send("Page.getLayoutMetrics", {}, p.session);
   const ratio = (await evaluate(p, "window.devicePixelRatio").catch(() => 1)) || 1;
   const scale = Math.min(1, 1280 / Math.max(view.clientWidth, 1));
@@ -819,6 +862,47 @@ function answer(sessionId, dialog) {
   link?.send("Page.handleJavaScriptDialog", { accept }, sessionId).catch(() => {});
   notes.push(`The page showed ${dialog.type === "alert" ? "an alert" : "a dialog"}: “${dialog.message}” (${accept ? "accepted" : "declined"}).`);
 }
+
+/// Asks the user, in Kuvo Code, and waits for the answer (15 minutes at most).
+function askUser(params) {
+  const id = crypto.randomUUID();
+  link.notify("Kuvo.ask", { id, ...params });
+  return new Promise((resolve) => {
+    waiting.set(id, resolve);
+    setTimeout(() => {
+      if (!waiting.delete(id)) return;
+      link?.notify("Kuvo.cancelAsk", { id });
+      resolve({ type: "timedOut" });
+    }, 900_000);
+  });
+}
+
+/// The site a page is on, as the ask names it and Passwords keeps it: its host, or for a page
+/// from a file, that it is one.
+function hostOf(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === "file:") return "a file on this machine";
+    return parsed.hostname || null;
+  } catch {
+    return null;
+  }
+}
+
+/// Nil if the field is there and takes `wanted` ("password" or "text"), else why not.
+async function checkField(p, index, wanted) {
+  const kind = await run(p, CONFIG.scripts.find + CONFIG.scripts.fieldKind, { index });
+  if (kind === "missing") return `There's no element [${index}] on the page now. Take a fresh browser_snapshot.`;
+  if (wanted === "password" && kind !== "password") return `[${index}] isn't a password field: a password only goes into one.`;
+  if (wanted === "text" && kind !== "text") return `[${index}] isn't a field for a username or email.`;
+  if (wanted === "code" && kind !== "text" && kind !== "password") return `[${index}] isn't a field to type a code into.`;
+  return null;
+}
+
+const noAnswer = (answer, what) =>
+  answer.type === "timedOut" ? "The user didn't answer in time. Ask them in the chat how to go on."
+    : answer.type === "lost" ? "The connection to the browser closed while the user was answering. Try again."
+    : `The user didn't ${what}. Ask them in the chat how to go on.`;
 
 const text = (value, isError = false) => ({ content: [{ type: "text", text: value }], isError });
 
@@ -912,6 +996,52 @@ async function tool(name, args) {
       } catch {
         return text("Couldn't capture the page.", true);
       }
+    }
+    case "browser_sign_in": {
+      const username = integer("username");
+      const password = integer("password");
+      if (username === null && password === null) return text("Name the username field, the password field, or both, by number.", true);
+      const host = hostOf(await address(p));
+      if (!host || isEmpty(await address(p))) return text(note() + "Open the sign-in page first.");
+      for (const [index, wanted] of [[password, "password"], [username, "text"]]) {
+        if (index === null) continue;
+        const problem = await checkField(p, index, wanted);
+        if (problem) return text(note() + problem);
+      }
+      const answer = await askUser({ kind: "signIn", host, username: username !== null, password: password !== null });
+      if (answer.type !== "signIn") return text(note() + noAnswer(answer, "sign in"));
+      const filled = [];
+      for (const [index, value, what] of [[username, answer.username, "the username"], [password, answer.password, "the password"]]) {
+        if (index === null || !value) continue;
+        const outcome = await run(p, scripts.find + scripts.fill, { index, value });
+        if (outcome !== "ok") return text(note() + outcome);
+        filled.push(what);
+      }
+      if (!filled.length) return text(note() + "The user didn't give a sign-in for that.");
+      await sleep(300);
+      return withNote(snapshot(p).then((page) => `Filled ${filled.join(" and ")} for ${host} (you can't see them). Submit the form to sign in.\n\n` + page));
+    }
+    case "browser_ask_code": {
+      const index = integer("index");
+      if (index === null) return text("Missing index.", true);
+      const host = hostOf(await address(p));
+      if (!host) return text(note() + "Open the page that asks for the code first.");
+      const problem = await checkField(p, index, "code");
+      if (problem) return text(note() + problem);
+      const answer = await askUser({ kind: "code", host, prompt: string("prompt") ?? "" });
+      if (answer.type !== "code" || !answer.code) return text(note() + noAnswer(answer, "give a code"));
+      const outcome = await run(p, scripts.find + scripts.fill, { index, value: answer.code });
+      if (outcome !== "ok") return text(note() + outcome);
+      await sleep(300);
+      return withNote(snapshot(p).then((page) => "Filled the code (you can't see it). Submit it if the page doesn't on its own.\n\n" + page));
+    }
+    case "browser_ask_user": {
+      const instruction = string("instruction");
+      if (!instruction) return text("Missing instruction.", true);
+      const answer = await askUser({ kind: "action", host: hostOf(await address(p)) ?? "the page", instruction });
+      if (answer.type !== "done") return text(note() + noAnswer(answer, "do it"));
+      await settle(p, false);
+      return withNote(snapshot(p).then((page) => "The user says it's done.\n\n" + page));
     }
     case "browser_wait": {
       const seconds = Math.min(Math.max(Number(args.seconds) || 2, 0), 10);

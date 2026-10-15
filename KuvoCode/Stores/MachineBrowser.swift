@@ -69,6 +69,13 @@ final class MachineBrowser {
     /// Told when pages open or close, and when the agent moves to another page (or you do).
     @ObservationIgnored var onPages: ([Page]) -> Void = { _ in }
     @ObservationIgnored var onActive: (_ page: String, _ byAgent: Bool) -> Void = { _, _ in }
+    /// Told when the agent asks you for something (a sign-in, a code, a step only you can do),
+    /// and when that ask ends without you (it stopped waiting, or another Mac answered).
+    @ObservationIgnored var onAsk: (BrowserAsks.Ask) -> Void = { _ in }
+    @ObservationIgnored var onAskClosed: (String) -> Void = { _ in }
+    /// The asks open on the machine.
+    @ObservationIgnored private var openAsks: Set<String> = []
+    @ObservationIgnored private var expecting = false
 
     @ObservationIgnored private var link: MachineBrowserLink?
     @ObservationIgnored private var session: String?
@@ -303,7 +310,12 @@ final class MachineBrowser {
         case "Kuvo.hello":
             activeID = params["targetId"] as? String
             isAgentBrowsing = (params["status"] as? [String: Any])?["working"] as? Bool ?? false
+            for ask in params["asks"] as? [[String: Any]] ?? [] { asked(ask) }
             Task { await begin() }
+        case "Kuvo.asked":
+            asked(params)
+        case "Kuvo.askClosed":
+            if let id = params["id"] as? String, openAsks.remove(id) != nil { onAskClosed(id) }
         case "Kuvo.error":
             let message = params["message"] as? String ?? "The browser couldn't start."
             link?.stop()
@@ -358,6 +370,48 @@ final class MachineBrowser {
             default:
                 break
             }
+        }
+    }
+
+    private func asked(_ params: [String: Any]) {
+        guard let id = params["id"] as? String, !openAsks.contains(id), let host = params["host"] as? String else { return }
+        let kind: BrowserAsks.Kind
+        switch params["kind"] as? String {
+        case "signIn": kind = .signIn(username: params["username"] as? Bool ?? false, password: params["password"] as? Bool ?? false)
+        case "code": kind = .code(prompt: params["prompt"] as? String ?? "")
+        case "action": kind = .action(instruction: params["instruction"] as? String ?? "")
+        default: return
+        }
+        openAsks.insert(id)
+        onAsk(BrowserAsks.Ask(id: id, kind: kind, host: host, machine: machine.id))
+    }
+
+    /// Your answer to an ask, back to the machine's browser, which fills it in.
+    func answer(_ id: String, _ answer: BrowserAsks.Answer) {
+        openAsks.remove(id)
+        let value: [String: Any] = switch answer {
+        case .signIn(let username, let password): ["type": "signIn", "username": username ?? NSNull(), "password": password ?? NSNull()]
+        case .code(let code): ["type": "code", "code": code]
+        case .done: ["type": "done"]
+        case .declined, .timedOut: ["type": "declined"]
+        }
+        link?.fire("Kuvo.answer", ["id": id, "answer": value])
+    }
+
+    /// An agent on the machine is about to ask you something: the browser stays connected, to
+    /// hear it, until it's answered (or a while goes by without one).
+    func expectAsk() {
+        guard !expecting else { return }
+        expecting = true
+        keep(true)
+        Task {
+            let start = ContinuousClock.now
+            while ContinuousClock.now < start + .seconds(960) {
+                try? await Task.sleep(for: .seconds(5))
+                if openAsks.isEmpty, ContinuousClock.now > start + .seconds(30) { break }
+            }
+            expecting = false
+            keep(false)
         }
     }
 

@@ -8,9 +8,11 @@ import WebKit
 @MainActor
 final class BrowserAgent {
     private let utilities: Utilities
+    private let asks: BrowserAsks
 
-    init(utilities: Utilities) {
+    init(utilities: Utilities, asks: BrowserAsks) {
         self.utilities = utilities
+        self.asks = asks
     }
 
     // MARK: Actions
@@ -117,7 +119,11 @@ final class BrowserAgent {
     /// What's on screen, as a PNG (base64), at most 1280 points wide.
     func screenshot() async -> String? {
         let browser = browser()
-        guard let image = try? await browser.webView.takeSnapshot(configuration: nil) else { return nil }
+        // What you filled in stays out of the picture.
+        _ = await run(Self.maskScript, [:], in: browser)
+        let image = try? await browser.webView.takeSnapshot(configuration: nil)
+        _ = await run(Self.unmaskScript, [:], in: browser)
+        guard let image else { return nil }
         let scale = min(1, 1280 / max(image.size.width, 1))
         let size = NSSize(width: (image.size.width * scale).rounded(), height: (image.size.height * scale).rounded())
         guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width), pixelsHigh: Int(size.height), bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
@@ -126,6 +132,94 @@ final class BrowserAgent {
         image.draw(in: NSRect(origin: .zero, size: size))
         NSGraphicsContext.restoreGraphicsState()
         return bitmap.representation(using: .png, properties: [:])?.base64EncodedString()
+    }
+
+    // MARK: Asking you
+
+    /// Signs in with your username and password, which you type (or pick from your saved
+    /// passwords) in Kuvo Code: they go straight into the fields named, and the agent never sees
+    /// them. A password only goes into a password field.
+    func signIn(username: Int?, password: Int?) async -> String {
+        let browser = browser()
+        guard let host = Self.site(of: browser.url) else { return "Open the sign-in page first." }
+        guard username != nil || password != nil else { return "Name the username field, the password field, or both, by number." }
+        if let problem = await checkFields(username: username, password: password, in: browser) { return problem }
+        switch await asks.ask(.signIn(username: username != nil, password: password != nil), host: host) {
+        case .signIn(let user, let secret):
+            var filled: [String] = []
+            if let username, let user, !user.isEmpty {
+                let outcome = await run(Self.fillScript, ["index": username, "value": user], in: browser)
+                guard outcome == "ok" else { return outcome }
+                filled.append("the username")
+            }
+            if let password, let secret, !secret.isEmpty {
+                let outcome = await run(Self.fillScript, ["index": password, "value": secret], in: browser)
+                guard outcome == "ok" else { return outcome }
+                filled.append("the password")
+            }
+            guard !filled.isEmpty else { return "The user didn't give a sign-in for that." }
+            try? await Task.sleep(for: .milliseconds(300))
+            return "Filled \(filled.joined(separator: " and ")) for \(host) (you can't see them). Submit the form to sign in.\n\n" + (await snapshot())
+        case .timedOut:
+            return "The user didn't answer in time. Ask them in the chat how to go on."
+        default:
+            return "The user didn't sign in. Ask them in the chat how to go on."
+        }
+    }
+
+    /// A one-time code (from a text, an email or an authenticator) that you type in Kuvo Code,
+    /// filled into the field named.
+    func askCode(_ index: Int, prompt: String?) async -> String {
+        let browser = browser()
+        guard let host = Self.site(of: browser.url) else { return "Open the page that asks for the code first." }
+        let kind = await run(Self.fieldKindScript, ["index": index], in: browser)
+        guard kind == "text" || kind == "password" else { return kind == "missing" ? "There's no element [\(index)] on the page now. Take a fresh browser_snapshot." : "[\(index)] isn't a field to type a code into." }
+        switch await asks.ask(.code(prompt: prompt ?? ""), host: host) {
+        case .code(let code):
+            let outcome = await run(Self.fillScript, ["index": index, "value": code], in: browser)
+            guard outcome == "ok" else { return outcome }
+            try? await Task.sleep(for: .milliseconds(300))
+            return "Filled the code (you can't see it). Submit it if the page doesn't on its own.\n\n" + (await snapshot())
+        case .timedOut:
+            return "The user didn't answer in time. Ask them in the chat how to go on."
+        default:
+            return "The user didn't give a code. Ask them in the chat how to go on."
+        }
+    }
+
+    /// Something only you can do on the page (a CAPTCHA, approving the sign-in on your phone):
+    /// waits until you say you're done.
+    func askUser(_ instruction: String) async -> String {
+        let browser = browser()
+        let host = Self.site(of: browser.url) ?? "the page"
+        switch await asks.ask(.action(instruction: instruction), host: host) {
+        case .done:
+            await settle(browser, expectNavigation: false)
+            return "The user says it's done.\n\n" + (await snapshot())
+        case .timedOut:
+            return "The user didn't answer in time. Ask them in the chat how to go on."
+        default:
+            return "The user couldn't do it. Ask them in the chat how to go on."
+        }
+    }
+
+    /// The site a page is on, as the ask names it and Passwords keeps it: its host, or for a page
+    /// from a file, that it is one.
+    static func site(of url: URL?) -> String? {
+        guard let url else { return nil }
+        return url.isFileURL ? "a file on this Mac" : url.host()
+    }
+
+    /// Nil if the fields are there and fit what goes in them, else why not.
+    private func checkFields(username: Int?, password: Int?, in browser: BrowserSession) async -> String? {
+        for (index, wanted) in [(password, "password"), (username, "text")] {
+            guard let index else { continue }
+            let kind = await run(Self.fieldKindScript, ["index": index], in: browser)
+            if kind == "missing" { return "There's no element [\(index)] on the page now. Take a fresh browser_snapshot." }
+            if wanted == "password", kind != "password" { return "[\(index)] isn't a password field: a password only goes into one." }
+            if wanted == "text", kind != "text" { return "[\(index)] isn't a field for a username or email." }
+        }
+        return nil
     }
 
     func wait(_ seconds: Double) async -> String {
@@ -219,6 +313,8 @@ final class BrowserAgent {
           .filter((name) => node.attributes && node.attributes[name])
           // A password field's value never goes to the model.
           .filter((name) => !(name === 'value' && String(node.attributes.type).toLowerCase() === 'password'))
+          // Nor what the user filled in through Kuvo Code.
+          .filter((name) => !(name === 'value' && node.attributes['data-kuvo-secret'] !== undefined))
           .map((name) => `${name}="${String(node.attributes[name]).slice(0, 100)}"`)
           .join(' ');
         const tag = node.tagName || 'element';
@@ -302,6 +398,50 @@ final class BrowserAgent {
     element.value = match.value;
     element.dispatchEvent(new Event('input', { bubbles: true }));
     element.dispatchEvent(new Event('change', { bubbles: true }));
+    return 'ok';
+    """
+
+    /// What kind of field [index] is: "password", "text" (a username, an email, a code), "other"
+    /// or "missing".
+    static let fieldKindScript = """
+    const element = find(index);
+    if (!element) return 'missing';
+    if (element instanceof HTMLInputElement) {
+      const type = (element.type || 'text').toLowerCase();
+      if (type === 'password') return 'password';
+      return ['text', 'email', 'tel', 'number', 'search', 'url'].includes(type) ? 'text' : 'other';
+    }
+    return element instanceof HTMLTextAreaElement ? 'text' : 'other';
+    """
+
+    /// Puts what the user gave into [index], as typing would, and marks it so it stays out of
+    /// what the agent reads and sees.
+    static let fillScript = """
+    const element = find(index);
+    if (!element) return missing(index);
+    element.scrollIntoView({ block: 'center' });
+    element.focus();
+    const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(prototype, 'value').set.call(element, value);
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+    element.setAttribute('data-kuvo-secret', '');
+    return 'ok';
+    """
+
+    /// Hides what the user filled in, for a screenshot, and shows it again.
+    static let maskScript = """
+    if (!document.getElementById('kuvo-secret-mask')) {
+      const style = document.createElement('style');
+      style.id = 'kuvo-secret-mask';
+      style.textContent = '[data-kuvo-secret]{color:transparent!important;-webkit-text-fill-color:transparent!important;text-shadow:none!important}';
+      (document.head || document.documentElement).appendChild(style);
+    }
+    return 'ok';
+    """
+
+    static let unmaskScript = """
+    document.getElementById('kuvo-secret-mask')?.remove();
     return 'ok';
     """
 

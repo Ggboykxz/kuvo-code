@@ -13,6 +13,19 @@ extension AppModel {
         // An agent on a machine browses with the machine's browser: the panel shows it, as it
         // shows its own browser for an agent here.
         workspace.onMachineBrowsing = { [weak self] machine in self?.utilities.revealMachineBrowser(machine) }
+        // An agent asks you for something in its browser: who's asking, and on a machine, the
+        // connection that brings the ask here.
+        browserAsks.onChange = { [weak self] sessions in self?.workspace.askingInBrowser = sessions }
+        browserAsks.tab = { [weak self] ask in
+            guard let session = ask.session else { return nil }
+            return self?.groups.group(seat: session).map { BotGroups.tabKey($0.id) } ?? session
+        }
+        workspace.onBrowserAsk = { [weak self] session, machine in
+            guard let self else { return }
+            let name = bots.bot(forSession: session)?.name ?? workspace.session(session)?.title ?? "The agent"
+            browserAsks.noteAsker(name, session: session, machine: machine)
+            if let machine { machines.engine(machine)?.browser.expectAsk() }
+        }
         utilities.machineBrowser = { [weak self] machine in self?.machines.engine(machine)?.browser }
         // A machine whose connection dropped while the Mac slept, and that gave up trying, gets
         // another go once it's awake and the network is back.
@@ -44,6 +57,11 @@ extension AppModel {
         // Its pages are the panel's browser tabs while a session there is in view.
         engine.browser.onPages = { [weak self] pages in self?.utilities.syncMachinePages(machine, pages) }
         engine.browser.onActive = { [weak self] page, byAgent in self?.utilities.machinePageActive(machine, page: page, byAgent: byAgent) }
+        // What its agents ask you for, answered in the window, filled in there.
+        engine.browser.onAsk = { [weak self, weak browser = engine.browser] ask in
+            self?.browserAsks.add(ask) { answer in browser?.answer(ask.id, answer) }
+        }
+        engine.browser.onAskClosed = { [weak self] id in self?.browserAsks.closed(id) }
         engine.onEvent = { [weak self] event in self?.workspace.handle(event, machine: machine) }
         engine.onReconnect = { [weak self] in await self?.workspace.refresh(engine) }
         engine.onExit = { [weak self] in
@@ -92,6 +110,7 @@ extension AppModel {
     /// sessions stay on the machine, for when it's added again.
     func removeMachine(_ id: String) {
         machines.engine(id)?.browser.reset()
+        browserAsks.closeAll(on: id)
         utilities.closeMachineBrowser(id)
         machines.remove(id)
         workspace.machines = Set(machines.list.map(\.id))

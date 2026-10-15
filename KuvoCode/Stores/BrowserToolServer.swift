@@ -29,7 +29,9 @@ final class BrowserToolServer {
             "oauth": false,
             // Plain tools, so every model calls them directly.
             "codemode": false,
-        ]]]]
+            // A tool that asks you (to sign in, for a code) waits for you.
+            "timeout": ["execution": BrowserTools.executionTimeout],
+        ] as [String: Any]]]]
     }
 
     /// Starts listening on a free loopback port and returns the address.
@@ -118,7 +120,7 @@ final class BrowserToolServer {
                 "protocolVersion": requested.flatMap { supported.contains($0) ? $0 : nil } ?? "2025-06-18",
                 "capabilities": ["tools": ["listChanged": false]],
                 "serverInfo": ["name": "kuvo-browser", "title": "Kuvo Code browser", "version": AppInfo.version],
-                "instructions": "Use these tools to browse in the browser panel the user sees. Start with browser_navigate, read pages with browser_snapshot, and act on elements by their number.",
+                "instructions": BrowserTools.instructions(machine: false),
             ])
         case "ping":
             return reply([:])
@@ -163,7 +165,25 @@ enum BrowserTools {
              ["seconds": ["type": "number"]], required: ["seconds"]),
         tool("browser_new_tab", "Open a new browser tab in the panel, optionally at an address.",
              ["url": ["type": "string"]]),
+        tool("browser_sign_in", "Sign in on the page with the user's own username and password: they type them in Kuvo Code (or pick a saved one), and they go straight into the fields you name. You never see them. Use this for every sign-in, and never ask for a password in the chat. Name the fields the page has now (on a sign-in that asks for the username and the password on pages of their own, call it on each; the user answers once). Then submit the form yourself.",
+             ["username": ["type": "integer", "description": "The number of the username or email field, if the page has one."],
+              "password": ["type": "integer", "description": "The number of the password field, if the page has one."]]),
+        tool("browser_ask_code", "Ask the user for a one-time code (from a text message, an email or an authenticator app), which goes straight into the field with this number. You never see it. Then submit it if the page doesn't on its own.",
+             ["index": ["type": "integer"], "prompt": ["type": "string", "description": "What to tell the user, like \"Enter the 6-digit code texted to your phone\"."]], required: ["index"]),
+        tool("browser_ask_user", "Ask the user to do something on the page themselves: a CAPTCHA, approving the sign-in on their phone, or anything else you can't do. Waits until they say it's done (up to 15 minutes), then reads the page again.",
+             ["instruction": ["type": "string", "description": "What they should do, in a sentence."]], required: ["instruction"]),
     ]
+
+    /// How long the engine lets a tool run: longer than the agent waits for the user.
+    static let executionTimeout = 960_000
+
+    /// What the engine tells the model about the tools.
+    nonisolated static func instructions(machine: Bool) -> String {
+        let place = machine
+            ? "Use these tools to browse in the browser on this machine, which the user can watch in Kuvo Code's panel. localhost is this machine, so you can open servers you run here."
+            : "Use these tools to browse in the browser panel the user sees."
+        return place + " Start with browser_navigate, read pages with browser_snapshot, and act on elements by their number. To sign in, use browser_sign_in; for a one-time code, browser_ask_code; for anything only the user can do (a CAPTCHA, approving on their phone), browser_ask_user. Never ask the user for a password or a code in the chat."
+    }
 
     private static func tool(_ name: String, _ description: String, _ properties: [String: Any] = [:], required: [String] = []) -> [String: Any] {
         var schema: [String: Any] = ["type": "object", "properties": properties]
@@ -213,6 +233,14 @@ enum BrowserTools {
             return text(await agent.wait((arguments["seconds"] as? NSNumber)?.doubleValue ?? 2))
         case "browser_new_tab":
             return text(await agent.newTab(string("url")))
+        case "browser_sign_in":
+            return text(await agent.signIn(username: int("username"), password: int("password")))
+        case "browser_ask_code":
+            guard let index = int("index") else { return text("Missing index.", error: true) }
+            return text(await agent.askCode(index, prompt: string("prompt")))
+        case "browser_ask_user":
+            guard let instruction = string("instruction"), !instruction.isEmpty else { return text("Missing instruction.", error: true) }
+            return text(await agent.askUser(instruction))
         default:
             return text("Unknown tool \(name).", error: true)
         }

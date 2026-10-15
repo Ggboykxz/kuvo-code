@@ -32,6 +32,7 @@ private struct BottomStack: View {
     @Binding var lastModel: ModelRef?
     @Environment(Catalog.self) private var catalog
     @Environment(Workspace.self) private var workspace
+    @Environment(AppModel.self) private var app
     @AppStorage(ToolApproval.key) private var defaultApproval = ToolApproval.approveAll
     @Namespace private var glass
 
@@ -53,6 +54,11 @@ private struct BottomStack: View {
                     }
                     .glassEffect(.regular, in: .rect(cornerRadius: Metrics.composerRadius))
                     .glassEffectID(form.id, in: glass)
+                }
+                ForEach(app.browserAsks.asks(for: model.session.id)) { ask in
+                    BrowserAskCard(ask: ask)
+                        .glassEffect(.regular, in: .rect(cornerRadius: Metrics.composerRadius))
+                        .glassEffectID(ask.id, in: glass)
                 }
                 if !model.waiting.isEmpty {
                     QueueDock(model: model)
@@ -92,6 +98,7 @@ private struct BottomStack: View {
             .animation(.ui, value: model.transcript.permissions.map(\.id))
             .animation(.ui, value: model.transcript.forms.map(\.id))
             .animation(.ui, value: model.waiting.isEmpty)
+            .animation(.ui, value: app.browserAsks.asks(for: model.session.id).map(\.id))
         }
         .padding(.horizontal, Metrics.gutter)
         .padding(.bottom, 16)
