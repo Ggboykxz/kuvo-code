@@ -271,6 +271,8 @@ final class Bots {
     func setPaused(_ pause: Bool, _ bot: Bot) async {
         let file = Self.pauseFile(of: bot)
         if let machine = bot.machine {
+            // A machine's kuvo-wake from before pausing would send them anyway.
+            if pause, let engine = app?.machines.engine(machine) { try? await Wakes.install(on: engine.machine.connection) }
             let script = pause ? ": > \(SSHConnection.quoted(file))" : "rm -f \(SSHConnection.quoted(file))"
             guard await Task.detached(operation: { RemoteShell.run(script, on: machine) }).value != nil else { return }
         } else if pause {
