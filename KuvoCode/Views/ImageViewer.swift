@@ -62,6 +62,8 @@ private struct ImageLightbox: View {
     @State private var offset: CGSize = .zero
     @State private var drag: CGSize = .zero
     @State private var appeared = false
+    /// Just copied: the button shows a check for a moment.
+    @State private var copied = false
     @FocusState private var isFocused: Bool
 
     init(request: ImageViewer.Request) {
@@ -150,6 +152,11 @@ private struct ImageLightbox: View {
             return .handled
         }
         .onKeyPress(.leftArrow) { step(-1) ? .handled : .ignored }
+        .onKeyPress(characters: ["c"], phases: .down) { press in
+            guard press.modifiers == .command else { return .ignored }
+            copy()
+            return .handled
+        }
         .onKeyPress(.rightArrow) { step(1) ? .handled : .ignored }
         .onAppear {
             isFocused = true
@@ -173,6 +180,10 @@ private struct ImageLightbox: View {
             .frame(maxWidth: 320, alignment: .leading)
             Spacer(minLength: 12)
             HStack(spacing: 2) {
+                Button(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc", action: copy)
+                    .contentTransition(.symbolEffect(.replace))
+                    .disabled(image == nil)
+                    .help("Copy the picture (⌘C)")
                 Button("Open in Preview", systemImage: "arrow.up.forward.app") {
                     item.open()
                     ImageViewer.shared.close()
@@ -207,6 +218,23 @@ private struct ImageLightbox: View {
         .buttonBorderShape(.circle)
         .disabled(!request.items.indices.contains(index + direction))
         .help(direction < 0 ? "Previous (←)" : "Next (→)")
+    }
+
+    /// The picture to the clipboard, as one item that pastes as a picture anywhere.
+    private func copy() {
+        guard let image, let tiff = image.tiffRepresentation else { return }
+        let entry = NSPasteboardItem()
+        if let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+            entry.setData(png, forType: .png)
+        }
+        entry.setData(tiff, forType: .tiff)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.writeObjects([entry])
+        withAnimation(.ui) { copied = true }
+        Task {
+            try? await Task.sleep(for: .seconds(1.4))
+            withAnimation(.ui) { copied = false }
+        }
     }
 
     /// To the picture before or after, if there's one.

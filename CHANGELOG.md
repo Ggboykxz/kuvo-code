@@ -13,7 +13,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - In group chats, @mentions stand out: the bot's name in its own color, and in its messages, its face in place of the @. A group chat can also say what it's for, and its bots keep that in mind.
 - **Each bot has a model**, picked when you make it or in Edit Bot. Group chats use it; in a bot's own conversation you can still pick another.
 - **Personalities for bots**: pick how a bot talks, like Straight Shooter, Skeptic or Mentor, or write your own. It shows in its own conversation and in group chats.
-- **Pictures open in the window**: click one you sent to look closer, right away, instead of waiting for Preview. Pinch or double-click to zoom; the arrow keys go to the message's other pictures.
+- **Pictures open in the window**: click one you sent to look closer, right away, instead of waiting for Preview. Pinch or double-click to zoom, the arrow keys go to the message's other pictures, and Copy (⌘C) puts it on the clipboard.
 - **Kuvo Code's own loader**: the prompt mark draws itself in quiet dashes wherever something's loading or working.
 - A bot moves in one place at a time: where it's working in the conversation in view, otherwise in the sidebar.
 
