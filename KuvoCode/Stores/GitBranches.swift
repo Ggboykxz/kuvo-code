@@ -11,7 +11,7 @@ nonisolated extension Git {
 
     /// Where `directory` is in its repository ("" at the top).
     static func pathInRepository(of directory: String) -> String {
-        guard let root = run(["rev-parse", "--show-toplevel"], in: directory)?.trimmingCharacters(in: .whitespacesAndNewlines) else { return "" }
+        guard let root = toplevel(of: directory) else { return "" }
         return relativePath(of: directory, in: root)
     }
 

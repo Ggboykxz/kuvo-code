@@ -1,4 +1,5 @@
 import AppKit
+import OpenCodeKit
 import SwiftTerm
 import SwiftUI
 
@@ -30,14 +31,25 @@ final class TerminalSession: NSObject {
         environment["COLORTERM"] = "truecolor"
         environment["TERM_PROGRAM"] = "KuvoCode"
         if environment["LANG"] == nil { environment["LANG"] = "en_US.UTF-8" }
-        let shell = environment["SHELL"] ?? "/bin/zsh"
-        // A leading "-" in the process name makes it a login shell, as Terminal does.
-        view.startProcess(
-            executable: shell,
-            environment: environment.map { "\($0.key)=\($0.value)" },
-            execName: "-" + (shell as NSString).lastPathComponent,
-            currentDirectory: directory
-        )
+        if let remote = RemoteFolder.parse(directory) {
+            // A folder on a machine: the machine's own login shell, there, over SSH.
+            let script = "cd \(SSHConnection.quoted(remote.path)) 2>/dev/null; exec \"${SHELL:-/bin/sh}\" -l"
+            view.startProcess(
+                executable: "/usr/bin/ssh",
+                args: SSHConnection(destination: remote.machine).arguments(running: script, extra: ["-t"]),
+                environment: environment.map { "\($0.key)=\($0.value)" },
+                currentDirectory: NSHomeDirectory()
+            )
+        } else {
+            let shell = environment["SHELL"] ?? "/bin/zsh"
+            // A leading "-" in the process name makes it a login shell, as Terminal does.
+            view.startProcess(
+                executable: shell,
+                environment: environment.map { "\($0.key)=\($0.value)" },
+                execName: "-" + (shell as NSString).lastPathComponent,
+                currentDirectory: directory
+            )
+        }
         if let command { view.send(txt: command + "\r") }
     }
 

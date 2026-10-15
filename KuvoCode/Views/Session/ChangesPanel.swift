@@ -173,7 +173,7 @@ struct ChangesPanel: View {
                     .font(.system(size: 12, weight: .medium))
                     .help("Commit the changes, and push them if you like")
                     .popover(isPresented: $isCommitting, arrowEdge: .bottom) {
-                        CommitForm(changes: changes, environment: app.shellEnvironment, api: app.api, session: model?.id, model: model?.session.model) { isCommitting = false }
+                        CommitForm(changes: changes, environment: app.shellEnvironment, api: model.flatMap { workspace.api(forSession: $0.id) } ?? app.api, session: model?.id, model: model?.session.model) { isCommitting = false }
                     }
             }
             Button {
@@ -512,7 +512,7 @@ private struct BranchMenu: View {
     /// The pull request page with a title and description the session's model wrote from the
     /// branch's commits and diff; as it was, without a session or an answer.
     private func described(_ page: URL) async -> URL {
-        guard let api = app.api, let session = model?.id else { return page }
+        guard let session = model?.id, let api = workspace.api(forSession: session) else { return page }
         let base = tree.base, directory = directory
         let summary = await Task.detached { Git.pullRequestSummary(against: base, in: directory) }.value
         let prompt = """
@@ -547,7 +547,7 @@ private struct FileHeader: View {
                 .foregroundStyle(hasBody ? (isHovering ? .primary : .secondary) : .quaternary)
                 .rotationEffect(.degrees(isCollapsed ? 0 : 90))
                 .frame(width: 10)
-            Image(nsImage: NSWorkspace.shared.icon(forFile: file.url.path))
+            Image(nsImage: NSWorkspace.shared.icon(of: file.url))
                 .resizable()
                 .frame(width: 18, height: 18)
             pathText
@@ -564,14 +564,17 @@ private struct FileHeader: View {
             }
             Spacer(minLength: 6)
             DiffStat(additions: file.additions, deletions: file.deletions)
-            Button {
-                NSWorkspace.shared.open(file.url)
-            } label: {
-                Image(systemName: "arrow.up.forward.square")
+            // A machine's files open nowhere on this Mac.
+            if file.url.isFileURL {
+                Button {
+                    NSWorkspace.shared.open(file.url)
+                } label: {
+                    Image(systemName: "arrow.up.forward.square")
+                }
+                .buttonStyle(CardActionStyle())
+                .help("Open in Editor")
+                .disabled(file.status == .deleted)
             }
-            .buttonStyle(CardActionStyle())
-            .help("Open in Editor")
-            .disabled(file.status == .deleted)
             // An AppKit menu, so Open With shows the apps' icons (SwiftUI's leaves them out).
             NativeMenuButton(opensBelow: true, menu: fileMenu) {
                 Image(systemName: "ellipsis")
@@ -629,19 +632,21 @@ private struct FileHeader: View {
         let menu = NSMenu()
         menu.autoenablesItems = false
         let exists = file.status != .deleted
-        let open = ActionItem("Open in Editor") { NSWorkspace.shared.open(file.url) }
-        open.isEnabled = exists
-        menu.addItem(open)
-        let openWith = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
-        let apps = NSMenu()
-        OpenWith.items(for: file.url).forEach(apps.addItem)
-        openWith.submenu = apps
-        openWith.isEnabled = exists
-        menu.addItem(openWith)
-        let finder = ActionItem("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([file.url]) }
-        finder.isEnabled = exists
-        menu.addItem(finder)
-        menu.addItem(.separator())
+        if file.url.isFileURL {
+            let open = ActionItem("Open in Editor") { NSWorkspace.shared.open(file.url) }
+            open.isEnabled = exists
+            menu.addItem(open)
+            let openWith = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
+            let apps = NSMenu()
+            OpenWith.items(for: file.url).forEach(apps.addItem)
+            openWith.submenu = apps
+            openWith.isEnabled = exists
+            menu.addItem(openWith)
+            let finder = ActionItem("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([file.url]) }
+            finder.isEnabled = exists
+            menu.addItem(finder)
+            menu.addItem(.separator())
+        }
         menu.addItem(ActionItem("Copy Path") {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(file.path, forType: .string)
@@ -788,6 +793,7 @@ private struct ImageDiff: View {
         await Task.detached {
             func read(_ object: String?, disk: URL?) -> NSImage? {
                 if let object, let root = file.root, let data = Git.data(["show", object], in: root) { return NSImage(data: data) }
+                if let disk, !disk.isFileURL { return RemoteShell.read(disk, limit: 20_000_000).flatMap(NSImage.init(data:)) }
                 if let disk, FileManager.default.fileExists(atPath: disk.path) { return NSImage(contentsOf: disk) }
                 return nil
             }

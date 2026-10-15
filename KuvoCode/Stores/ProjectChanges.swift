@@ -158,8 +158,7 @@ final class ProjectChanges {
 nonisolated enum Git {
     /// The changed files in `scope`, or nil when `directory` isn't in a repository.
     static func changes(in directory: String, scope: ProjectChanges.Scope, base branch: String? = nil) -> [ChangedFile]? {
-        guard let root = run(["rev-parse", "--show-toplevel"], in: directory)?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !root.isEmpty else { return nil }
+        guard let root = toplevel(of: directory) else { return nil }
         // A repository without commits yet: compare with the empty tree.
         var base = run(["rev-parse", "--verify", "-q", "HEAD"], in: root) == nil ? "4b825dc642cb6eb9a060e54bf8d69288fbee4904" : "HEAD"
         // Since the branch left its base: from where they part, to the files as they are now.
@@ -209,17 +208,23 @@ nonisolated enum Git {
             // New to git (or only staged): it has no committed version to go back to.
             if file.status == .added, scope != .unstaged || !tracked {
                 if tracked { _ = run(["rm", "--cached", "-q", "--", file.path], in: root) }
-                do { try FileManager.default.trashItem(at: file.url, resultingItemURL: nil) } catch { return error.localizedDescription }
+                do { try trash(file.url) } catch { return error.localizedDescription }
                 return nil
             }
             if scope == .unstaged { return git(["restore", "--worktree", "--"] + paths) }
             if file.status == .renamed, let old = file.oldPath {
                 _ = run(["rm", "--cached", "-q", "--", file.path], in: root)
-                try? FileManager.default.trashItem(at: file.url, resultingItemURL: nil)
+                try? trash(file.url)
                 return git(["restore", "--source=HEAD", "--staged", "--worktree", "--", old])
             }
             return git(["restore", "--source=HEAD", "--staged", "--worktree", "--", file.path])
         }
+    }
+
+    /// To the Trash on this Mac; on a machine, which has none, to `~/.kuvo-code/trash` there.
+    private static func trash(_ url: URL) throws {
+        if url.isFileURL { return try FileManager.default.trashItem(at: url, resultingItemURL: nil) }
+        if let failure = RemoteShell.trash(url) { throw CocoaError(.fileWriteUnknown, userInfo: [NSLocalizedDescriptionKey: failure]) }
     }
 
     static func commitDiff(in directory: String, limit: Int = 40_000) -> String {
@@ -240,7 +245,7 @@ nonisolated enum Git {
     }
 
     static func commit(message: String, push: Bool, in directory: String, environment: [String: String]) -> String? {
-        guard let root = run(["rev-parse", "--show-toplevel"], in: directory)?.trimmingCharacters(in: .whitespacesAndNewlines) else { return "Not a git repository." }
+        guard let root = toplevel(of: directory) else { return "Not a git repository." }
         if !hasStaged(in: root) {
             let limit = relativePath(of: directory, in: root)
             if let failure = report(["add", "-A", "--", limit.isEmpty ? "." : limit], in: root, environment: environment) { return failure }
@@ -258,13 +263,9 @@ nonisolated enum Git {
     /// Runs git for something that changes the repository; nil when it worked, else what git
     /// said. It never waits for a password: with nothing to answer, it fails instead.
     static func report(_ arguments: [String], in directory: String, environment: [String: String]) -> String? {
-        let process = Process()
-        process.executableURL = URL(filePath: "/usr/bin/git")
-        process.arguments = arguments
-        process.currentDirectoryURL = URL(filePath: directory)
         var environment = environment.isEmpty ? ProcessInfo.processInfo.environment : environment
         environment["GIT_TERMINAL_PROMPT"] = "0"
-        process.environment = environment
+        let process = process(arguments, in: directory, environment: environment)
         let output = Pipe()
         process.standardOutput = output
         process.standardError = output
@@ -278,11 +279,17 @@ nonisolated enum Git {
 
     /// An untracked file, as all-new lines.
     private static func newFile(_ path: String, root: String) -> ChangedFile {
-        let url = URL(filePath: root).appending(path: path)
+        let url = RemoteFolder.url(root).appending(path: path)
         var file = ChangedFile(path: path, status: .added, url: url)
         file.root = root
-        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
-        guard size <= 2_000_000, let data = try? Data(contentsOf: url), !data.contains(0),
+        let data: Data?
+        if url.isFileURL {
+            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+            data = size <= 2_000_000 ? try? Data(contentsOf: url) : nil
+        } else {
+            data = RemoteShell.read(url, limit: 2_000_001).flatMap { $0.count <= 2_000_000 ? $0 : nil }
+        }
+        guard let data, !data.contains(0),
               let text = String(data: data, encoding: .utf8) else {
             file.isBinary = true
             return file
@@ -294,10 +301,41 @@ nonisolated enum Git {
     }
 
     static func relativePath(of directory: String, in root: String) -> String {
+        if let folder = RemoteFolder.parse(directory), let top = RemoteFolder.parse(root) {
+            guard folder.path.hasPrefix(top.path) else { return "" }
+            return String(folder.path.dropFirst(top.path.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        }
         let resolved = URL(filePath: directory).resolvingSymlinksInPath().path
         let base = URL(filePath: root).resolvingSymlinksInPath().path
         guard resolved.hasPrefix(base) else { return "" }
         return String(resolved.dropFirst(base.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    }
+
+    /// The repository's top folder, written the way `directory` is (on its machine, for a
+    /// machine's folder), or nil when it isn't in one.
+    static func toplevel(of directory: String) -> String? {
+        guard let path = run(["rev-parse", "--show-toplevel"], in: directory)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !path.isEmpty else { return nil }
+        return RemoteFolder.machine(of: directory).map { RemoteFolder.folder(path, on: $0) } ?? path
+    }
+
+    /// git in `directory`: this Mac's, or, for a folder on a machine, the machine's own git over
+    /// SSH (its credentials, not this Mac's; only git's own settings go along).
+    private static func process(_ arguments: [String], in directory: String, environment: [String: String]) -> Process {
+        let process = Process()
+        if let remote = RemoteFolder.parse(directory) {
+            let settings = environment.filter { $0.key.hasPrefix("GIT_") }.map { "\($0.key)=\(SSHConnection.quoted($0.value))" }.sorted()
+            let command = (["exec", "env"] + settings + ["git"] + arguments.map(SSHConnection.quoted)).joined(separator: " ")
+            process.executableURL = URL(filePath: "/usr/bin/ssh")
+            process.arguments = SSHConnection(destination: remote.machine).arguments(running: "cd \(SSHConnection.quoted(remote.path)) && \(command)")
+            process.standardInput = FileHandle.nullDevice
+        } else {
+            process.executableURL = URL(filePath: "/usr/bin/git")
+            process.arguments = arguments
+            process.currentDirectoryURL = URL(filePath: directory)
+            process.environment = environment
+        }
+        return process
     }
 
     /// Runs git and returns its output, or nil when it fails.
@@ -307,13 +345,9 @@ nonisolated enum Git {
 
     /// Runs git and returns its raw output (for file contents), or nil when it fails.
     static func data(_ arguments: [String], in directory: String) -> Data? {
-        let process = Process()
-        process.executableURL = URL(filePath: "/usr/bin/git")
-        process.arguments = arguments
-        process.currentDirectoryURL = URL(filePath: directory)
         var environment = ProcessInfo.processInfo.environment
         environment["GIT_OPTIONAL_LOCKS"] = "0"  // Reading only: don't hold the index lock.
-        process.environment = environment
+        let process = process(arguments, in: directory, environment: environment)
         let output = Pipe()
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
@@ -343,7 +377,7 @@ nonisolated enum DiffParser {
             if line.hasPrefix("diff --git ") {
                 finish()
                 let path = pathFromHeader(line)
-                current = ChangedFile(path: path, status: .modified, url: URL(filePath: root).appending(path: path))
+                current = ChangedFile(path: path, status: .modified, url: RemoteFolder.url(root).appending(path: path))
                 sawHunk = false
                 continue
             }
@@ -363,7 +397,7 @@ nonisolated enum DiffParser {
                 else if line.hasPrefix("rename from ") { file.oldPath = String(line.dropFirst("rename from ".count)); file.status = .renamed }
                 else if line.hasPrefix("rename to ") {
                     file.path = String(line.dropFirst("rename to ".count))
-                    file.url = URL(filePath: root).appending(path: file.path)
+                    file.url = RemoteFolder.url(root).appending(path: file.path)
                 }
                 else if line.hasPrefix("Binary files ") { file.isBinary = true }
                 continue
@@ -385,9 +419,11 @@ nonisolated enum DiffParser {
 
     /// The engine's diff of one file (patch text, a few lines of context).
     static func file(from diff: FileDiff, directory: String) -> ChangedFile {
-        let base = directory.hasSuffix("/") ? directory : directory + "/"
+        // The engine names files by their paths where it runs: on a machine, plain paths there.
+        let plain = RemoteFolder.parse(directory)?.path ?? directory
+        let base = plain.hasSuffix("/") ? plain : plain + "/"
         let path = diff.file.hasPrefix(base) ? String(diff.file.dropFirst(base.count)) : diff.file
-        let url = URL(filePath: diff.file.hasPrefix("/") ? diff.file : base + diff.file)
+        let url = RemoteFolder.fileURL(diff.file, in: directory)
         // The engine's patches may come with git's header already; a second one would read as an
         // empty file before this one.
         let patch = diff.patch.hasPrefix("diff --git ") ? diff.patch : "diff --git a/\(path) b/\(path)\n" + diff.patch

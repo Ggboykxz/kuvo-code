@@ -37,9 +37,10 @@ nonisolated enum ProjectFiles {
     static func list(_ roots: [URL], dated: Bool = false) -> [File] {
         roots.enumerated().flatMap { index, root in
             let prefix = roots.count > 1 ? root.lastPathComponent + "/" : ""
-            return listFiles(in: root.path).map { path in
+            return listFiles(in: root).map { path in
                 let url = root.appending(path: path)
-                let modified = dated ? (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate : nil
+                // (A machine's files go without: a date each would be a round trip each.)
+                let modified = dated && url.isFileURL ? (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate : nil
                 return File(path: prefix + path, url: url, folder: index, mention: index == 0 ? path : prefix + path, modified: modified)
             }
         }
@@ -47,13 +48,14 @@ nonisolated enum ProjectFiles {
 
     /// git's list (tracked and new, without ignored files) in a repository; otherwise a
     /// walk that skips the usual heavy folders.
-    private static func listFiles(in root: String) -> [String] {
-        if let listed = Git.run(["ls-files", "--cached", "--others", "--exclude-standard"], in: root) {
+    private static func listFiles(in root: URL) -> [String] {
+        if let listed = Git.run(["ls-files", "--cached", "--others", "--exclude-standard"], in: RemoteFolder.folder(of: root)) {
             return listed.split(separator: "\n").map(String.init)
         }
         let skip: Set<String> = [".git", "node_modules", "build", "DerivedData", ".build", "Pods", "dist", ".next"]
+        if !root.isFileURL { return RemoteShell.files(in: root, skipping: skip, limit: 20_000) ?? [] }
         var files: [String] = []
-        let base = URL(filePath: root)
+        let base = root
         guard let walker = FileManager.default.enumerator(at: base, includingPropertiesForKeys: [.isDirectoryKey]) else { return [] }
         for case let url as URL in walker {
             if skip.contains(url.lastPathComponent) { walker.skipDescendants(); continue }

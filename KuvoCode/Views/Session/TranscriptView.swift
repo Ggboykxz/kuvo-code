@@ -778,7 +778,7 @@ private struct TurnFiles: View {
                         app.utilities.show(url(of: file))
                     } label: {
                         HStack(spacing: 8) {
-                            Image(nsImage: NSWorkspace.shared.icon(forFile: url(of: file).path))
+                            Image(nsImage: NSWorkspace.shared.icon(of: url(of: file)))
                                 .resizable()
                                 .frame(width: 16, height: 16)
                             Text(relative(file.file))
@@ -816,7 +816,7 @@ private struct TurnFiles: View {
     }
 
     private func url(of file: TurnStats.TurnFile) -> URL {
-        file.file.hasPrefix("/") ? URL(filePath: file.file) : URL(filePath: directory).appending(path: file.file)
+        RemoteFolder.fileURL(file.file, in: directory)
     }
 
     private func relative(_ path: String) -> String {

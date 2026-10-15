@@ -339,7 +339,7 @@ struct Composer: View {
         }
         guard mentionFilesRead.map({ Date().timeIntervalSince($0) > 30 }) ?? true else { return }
         mentionFilesRead = Date()
-        let roots = folders.map { URL(filePath: $0) }
+        let roots = folders.map(RemoteFolder.url)
         Task { mentionFiles = await Task.detached { ProjectFiles.mentionable(roots) }.value }
     }
 
@@ -439,7 +439,7 @@ private struct MentionList: View {
             ForEach(Array(files.enumerated()), id: \.element.id) { index, file in
                 Button { choose(file) } label: {
                     HStack(spacing: 8) {
-                        Image(nsImage: NSWorkspace.shared.icon(forFile: file.url.path))
+                        Image(nsImage: NSWorkspace.shared.icon(of: file.url))
                             .resizable()
                             .frame(width: 16, height: 16)
                         Text(file.isFolder ? String(file.path.dropLast()) : file.name)

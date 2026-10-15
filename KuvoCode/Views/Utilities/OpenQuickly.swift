@@ -39,7 +39,7 @@ struct OpenQuickly: View {
                     ForEach(Array(matches.enumerated()), id: \.element.id) { index, file in
                         Button { open(file.url) } label: {
                             HStack(spacing: 8) {
-                                Image(nsImage: NSWorkspace.shared.icon(forFile: file.url.path))
+                                Image(nsImage: NSWorkspace.shared.icon(of: file.url))
                                     .resizable()
                                     .frame(width: 16, height: 16)
                                 Text(file.name)
@@ -82,7 +82,7 @@ struct OpenQuickly: View {
         .onChange(of: query) { selected = 0 }
         .onAppear { isFocused = true }
         .task {
-            let roots = roots.map { URL(filePath: $0) }
+            let roots = roots.map(RemoteFolder.url)
             files = await Task.detached { ProjectFiles.newestFirst(ProjectFiles.list(roots, dated: true)) }.value
         }
     }

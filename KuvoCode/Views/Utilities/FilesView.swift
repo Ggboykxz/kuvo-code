@@ -20,7 +20,7 @@ struct FilesView: View {
         self.file = file
         _showsTree = showsTree
         self.open = open
-        _tree = State(initialValue: FileTree(roots: roots.map { URL(filePath: $0) }))
+        _tree = State(initialValue: FileTree(roots: roots.map(RemoteFolder.url)))
     }
 
     /// The folder `file` is in, for its breadcrumb.
@@ -33,7 +33,7 @@ struct FilesView: View {
     private func mention(of file: URL) -> String {
         guard let index = roots.firstIndex(where: { file.path.hasPrefix($0 + "/") }) else { return file.path }
         let relative = String(file.path.dropFirst(roots[index].count + 1))
-        return index == 0 ? relative : URL(filePath: roots[index]).lastPathComponent + "/" + relative
+        return index == 0 ? relative : RemoteFolder.url(roots[index]).lastPathComponent + "/" + relative
     }
 
     var body: some View {
@@ -120,6 +120,17 @@ final class FileTree {
 
     func entries(in directory: URL) -> [Entry] {
         if let cached = children[directory] { return cached }
+        if !directory.isFileURL {
+            // On a machine: read in the background, shown when it's in.
+            children[directory] = []
+            Task {
+                let listed = await Task.detached { RemoteShell.list(directory) ?? [] }.value
+                children[directory] = listed
+                    .map { Entry(url: directory.appending(path: $0.name, directoryHint: $0.isDirectory ? .isDirectory : .notDirectory), isDirectory: $0.isDirectory) }
+                    .sorted { ($0.isDirectory ? 0 : 1, $0.name.lowercased()) < ($1.isDirectory ? 0 : 1, $1.name.lowercased()) }
+            }
+            return []
+        }
         let urls = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.isDirectoryKey])) ?? []
         let entries = urls
             .filter { $0.lastPathComponent != ".DS_Store" }
@@ -217,7 +228,7 @@ private struct TreeRow: View {
                             .foregroundStyle(.secondary)
                             .rotationEffect(.degrees(isOpen ? 90 : 0))
                     } else {
-                        Image(nsImage: NSWorkspace.shared.icon(forFile: entry.url.path))
+                        Image(nsImage: NSWorkspace.shared.icon(of: entry.url))
                             .resizable()
                             .frame(width: 16, height: 16)
                     }
@@ -236,7 +247,9 @@ private struct TreeRow: View {
         }
         .buttonStyle(.plain)
         .contextMenu {
-            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([entry.url]) }
+            if entry.url.isFileURL {
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([entry.url]) }
+            }
             Button("Copy Path") { copyPath(entry.url) }
         }
     }
@@ -267,6 +280,15 @@ private struct MatchRow: View {
             .hoverHighlight(in: RoundedRectangle(cornerRadius: 6), selected: isSelected)
         }
         .buttonStyle(.plain)
+    }
+}
+
+extension NSWorkspace {
+    /// A file's icon: its own on this Mac; for a file on a machine, its kind's.
+    func icon(of url: URL) -> NSImage {
+        if url.isFileURL { return icon(forFile: url.path) }
+        if url.hasDirectoryPath { return icon(for: .folder) }
+        return icon(for: UTType(filenameExtension: url.pathExtension) ?? .data)
     }
 }
 
@@ -326,6 +348,8 @@ private struct FileViewer: View {
                             .frame(maxWidth: image.size.width, maxHeight: image.size.height)
                             .padding(20)
                     }
+                case .preview where !url.isFileURL:
+                    ContentUnavailableView("No Preview", systemImage: "doc", description: Text("This file can’t be shown here."))
                 case .preview:
                     QuickLookView(url: url)
                 case nil:
@@ -357,7 +381,8 @@ private struct FileViewer: View {
             }
             .buttonStyle(CardActionStyle())
             .help(showsTree ? "Hide Files" : "Show Files")
-            OpenMenu(url: url)
+            // A machine's files open nowhere on this Mac.
+            if url.isFileURL { OpenMenu(url: url) }
         }
         .padding(.leading, 14)
         .padding(.trailing, 8)
@@ -366,7 +391,7 @@ private struct FileViewer: View {
 
     /// "kuvo-ai › Sources › App.swift".
     private var breadcrumb: Text {
-        let base = URL(filePath: root)
+        let base = RemoteFolder.url(root)
         // A file outside the project shows under its own folder.
         let parts = url.path.hasPrefix(base.path + "/")
             ? [base.lastPathComponent] + url.path.dropFirst(base.path.count + 1).split(separator: "/").map(String.init)
@@ -387,6 +412,13 @@ private struct FileViewer: View {
     private static func load(_ url: URL) async -> Content {
         await Task.detached { () -> Content in
             let type = UTType(filenameExtension: url.pathExtension)
+            if !url.isFileURL {
+                // On a machine: pictures and text, read over SSH; nothing for Quick Look there.
+                guard let data = RemoteShell.read(url, limit: 2_000_001) else { return .preview }
+                if type?.conforms(to: .image) == true, let image = NSImage(data: data) { return .image(image) }
+                if data.count <= 2_000_000, !data.contains(0), let text = String(data: data, encoding: .utf8) { return .text(text) }
+                return .preview
+            }
             if type?.conforms(to: .image) == true, let image = NSImage(contentsOf: url) { return .image(image) }
             if type?.conforms(to: .pdf) == true { return .preview }
             let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0

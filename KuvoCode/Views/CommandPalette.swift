@@ -128,7 +128,7 @@ struct CommandPalette: View {
         }
         .task {
             guard !roots.isEmpty else { return }
-            let roots = roots.map { URL(filePath: $0) }
+            let roots = roots.map(RemoteFolder.url)
             files = await Task.detached { ProjectFiles.newestFirst(ProjectFiles.list(roots, dated: true)) }.value
         }
     }
