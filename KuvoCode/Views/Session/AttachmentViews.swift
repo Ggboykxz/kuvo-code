@@ -79,11 +79,6 @@ nonisolated enum AttachmentItem: Identifiable, Sendable {
         if let url = localURL() { NSWorkspace.shared.open(url) }
     }
 
-    /// Shows it in Quick Look, to zoom into a picture.
-    @MainActor func preview() {
-        if let url = localURL() { QuickLook.shared.show([url]) }
-    }
-
     /// Where it is on this Mac; a pasted image that only the engine has is written out first.
     private func localURL() -> URL? {
         if let url = fileURL { return url }
@@ -150,6 +145,9 @@ struct ComposerAttachment: View {
             .help("Remove")
         }
         .onHover { isHovering = $0 }
+        // A picture opens in the viewer.
+        .contentShape(.rect(cornerRadius: 10))
+        .onTapGesture { if item.isImage { ImageViewer.shared.show([item]) } }
         .help(reason.map { "\(url.path)\n\($0)" } ?? url.path)
     }
 
@@ -206,8 +204,10 @@ struct MessageAttachments: View {
             let images = items.filter(\.isImage)
             if !images.isEmpty {
                 TrailingFlow(spacing: 6) {
-                    ForEach(images) { item in
-                        AttachmentPicture(item: item, height: images.count == 1 ? 220 : 140)
+                    ForEach(Array(images.enumerated()), id: \.element.id) { index, item in
+                        AttachmentPicture(item: item, height: images.count == 1 ? 220 : 140) {
+                            ImageViewer.shared.show(images, at: index)
+                        }
                     }
                 }
             }
@@ -221,6 +221,8 @@ struct MessageAttachments: View {
 private struct AttachmentPicture: View {
     let item: AttachmentItem
     let height: CGFloat
+    /// Opens it in the viewer.
+    let view: () -> Void
     @State private var image: NSImage?
     @State private var isHovering = false
     @Environment(\.colorScheme) private var scheme
@@ -253,10 +255,9 @@ private struct AttachmentPicture: View {
         .contentShape(.rect(cornerRadius: 12))
         .onHover { isHovering = $0 }
         .animation(.easeOut(duration: 0.12), value: isHovering)
-        .onTapGesture(count: 2) { item.open() }
-        .onTapGesture { item.preview() }
+        .onTapGesture(perform: view)
         .contextMenu { AttachmentMenu(item: item) }
-        .help("\(item.name) — click to look closer, double-click to open")
+        .help("\(item.name) — click to look closer")
         .task(id: item.id) { image = await item.loadImage() }
     }
 

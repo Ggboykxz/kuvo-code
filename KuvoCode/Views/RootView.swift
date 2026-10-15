@@ -36,6 +36,8 @@ struct RootView: View {
         }
         .animation(.ui, value: app.engine == .ready)
         .animation(.ui, value: app.showsSettings)
+        // A picture you sent, looked at closer, over everything.
+        .overlay { ImageViewerOverlay() }
         .frame(minWidth: 620, minHeight: 520)
         // The window itself is frosted glass, tinted by what's behind it; cards float on it.
         .windowGlass()
@@ -80,8 +82,7 @@ struct EngineSetupView: View {
                     .buttonStyle(.glassProminent)
                     .controlSize(.large)
             default:
-                ProgressView()
-                    .controlSize(.small)
+                Spinner(size: 16)
             }
         }
         .padding(40)

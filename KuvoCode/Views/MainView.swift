@@ -361,6 +361,7 @@ struct MainView: View {
             // A width from the window (minus the traffic lights and the buttons on the right), so a
             // narrow window squeezes the tabs instead of pushing them into a » menu.
             .frame(width: max(240, contentWidth - (runCommand == nil ? 150 : 190)), alignment: .leading)
+            .modifier(UnderImageViewer())
         }
         .sharedBackgroundVisibility(.hidden)
 
@@ -373,11 +374,12 @@ struct MainView: View {
                 .buttonStyle(IconButtonStyle(width: 28, height: 28, cornerRadius: 7))
                 .accessibilityLabel("Run")
                 .help("Run \(runCommand) (⌘R)")
+                .modifier(UnderImageViewer())
             }
             .sharedBackgroundVisibility(.hidden)
         }
 
-        ToolbarItem(placement: .primaryAction) { PanelToggle(showsPanel: $showsPanel) }
+        ToolbarItem(placement: .primaryAction) { PanelToggle(showsPanel: $showsPanel).modifier(UnderImageViewer()) }
             .sharedBackgroundVisibility(.hidden)
     }
 
@@ -982,6 +984,10 @@ struct MainView: View {
             default: continue
             }
             showsPanel = true
+        }
+        // KUVO_DEMO_VIEW_IMAGE=<path>,…: those pictures in the image viewer.
+        if let paths = environment["KUVO_DEMO_VIEW_IMAGE"] {
+            ImageViewer.shared.show(paths.split(separator: ",").map { AttachmentItem.local(URL(filePath: String($0))) })
         }
         // KUVO_DEMO_NEW_BOT: the New Bot sheet.
         if environment["KUVO_DEMO_NEW_BOT"] != nil { openBotEditor(bot: nil) }
