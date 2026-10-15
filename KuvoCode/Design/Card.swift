@@ -22,6 +22,7 @@ struct Card<Icon: View, Actions: View, Content: View>: View {
 
     @Environment(\.colorScheme) private var scheme
     @Environment(\.windowControlsInset) private var windowControlsInset
+    @Environment(\.windowControlsTrailingInset) private var windowControlsTrailingInset
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: Metrics.cardRadius)
@@ -105,7 +106,7 @@ struct Card<Icon: View, Actions: View, Content: View>: View {
             .buttonStyle(CardActionStyle())
         }
         .padding(.leading, 14 + windowControlsInset)
-        .padding(.trailing, 8)
+        .padding(.trailing, 8 + windowControlsTrailingInset)
         .frame(height: Metrics.cardHeaderHeight)
         // The whole bar takes clicks, so nothing scrolled under it is clicked by accident.
         .contentShape(.rect)
@@ -146,6 +147,9 @@ extension EnvironmentValues {
     /// Room the leftmost card leaves at its top left for the window's close, minimize and zoom
     /// buttons, when the tab bar is hidden and they sit over it.
     @Entry var windowControlsInset: CGFloat = 0
+    /// Room the rightmost card leaves at its top right for the panel button, when the tab bar is
+    /// hidden and it sits over it.
+    @Entry var windowControlsTrailingInset: CGFloat = 0
 }
 
 /// Drags the window, where the title bar would be when the tab bar is hidden.

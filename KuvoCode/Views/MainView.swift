@@ -128,6 +128,8 @@ struct MainView: View {
                     }
                 }
                 .environment(\.windowControlsInset, controlsInset)
+                // With the tab bar hidden, the panel button sits over the rightmost card.
+                .environment(\.windowControlsTrailingInset, !showsTabBar && layout.changes == nil ? 36 : 0)
                 .onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .global).minX }) { mainPaneX = $0 }
                 if let width = layout.changes {
                     PaneResizer(
@@ -137,6 +139,7 @@ struct MainView: View {
                     )
                     utilitiesPane
                         .frame(width: width)
+                        .environment(\.windowControlsTrailingInset, showsTabBar ? 0 : 36)
                         .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
             }
@@ -164,6 +167,16 @@ struct MainView: View {
         // at the top of the sidebar.
         .padding(.top, showsTabBar ? 0 : Metrics.paneGap)
         .ignoresSafeArea(.container, edges: showsTabBar ? [] : .top)
+        // Without the tab bar, the panel's button stays at the top right, on the rightmost card's
+        // header row, so the panel can still be found.
+        .overlay(alignment: .topTrailing) {
+            if !showsTabBar && !app.showsSettings {
+                PanelToggle(showsPanel: $showsPanel)
+                    .padding(.top, Metrics.paneGap + (Metrics.cardHeaderHeight - 28) / 2)
+                    .padding(.trailing, Metrics.paneGap + 6)
+                    .ignoresSafeArea(.container, edges: .top)
+            }
+        }
         .animation(.ui, value: showsSidebar)
         .animation(.ui, value: showsPanel)
         .animation(.ui, value: panelExpanded)
@@ -354,20 +367,8 @@ struct MainView: View {
             .sharedBackgroundVisibility(.hidden)
         }
 
-        // Mirrors the sessions toggle on the left, and looks the same: a plain icon, not a
-        // highlighted toggle.
-        ToolbarItem(placement: .primaryAction) {
-            Button {
-                withAnimation(.ui) { showsPanel.toggle() }
-            } label: {
-                Image(systemName: "sidebar.right")
-                    .font(.system(size: 14))
-            }
-            .buttonStyle(IconButtonStyle(width: 28, height: 28, cornerRadius: 7))
-            .accessibilityLabel(showsPanel ? "Hide Panel" : "Show Panel")
-            .help(showsPanel ? "Hide Panel (⌥⌘0)" : "Show Panel: Changes, Files, Terminal, Browser (⌥⌘0)")
-        }
-        .sharedBackgroundVisibility(.hidden)
+        ToolbarItem(placement: .primaryAction) { PanelToggle(showsPanel: $showsPanel) }
+            .sharedBackgroundVisibility(.hidden)
     }
 
     /// The project's width in the title bar: up to the middle card, when the sidebar leaves

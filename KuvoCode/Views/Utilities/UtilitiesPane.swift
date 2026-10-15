@@ -14,6 +14,7 @@ struct UtilitiesPane: View {
     @Binding var isExpanded: Bool
     var isFocused = true
     @Environment(\.windowControlsInset) private var windowControlsInset
+    @Environment(\.windowControlsTrailingInset) private var windowControlsTrailingInset
     @State private var tabsOverflow = TabsOverflow()
 
     var body: some View {
@@ -109,7 +110,7 @@ struct UtilitiesPane: View {
             .help(isExpanded ? "Restore" : "Expand")
         }
         .padding(.leading, 8 + windowControlsInset)
-        .padding(.trailing, 8)
+        .padding(.trailing, 8 + windowControlsTrailingInset)
         .frame(height: 44)
     }
 

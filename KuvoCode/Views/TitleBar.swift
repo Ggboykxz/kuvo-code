@@ -462,6 +462,24 @@ struct SidebarToggle: View {
     }
 }
 
+/// Shows or hides the side panel: mirrors the sessions toggle on the left, and looks the same,
+/// a plain icon, not a highlighted toggle.
+struct PanelToggle: View {
+    @Binding var showsPanel: Bool
+
+    var body: some View {
+        Button {
+            withAnimation(.ui) { showsPanel.toggle() }
+        } label: {
+            Image(systemName: "sidebar.right")
+                .font(.system(size: 14))
+        }
+        .buttonStyle(IconButtonStyle(width: 28, height: 28, cornerRadius: 7))
+        .accessibilityLabel(showsPanel ? "Hide Panel" : "Show Panel")
+        .help(showsPanel ? "Hide Panel (⌥⌘0)" : "Show Panel: Changes, Files, Terminal, Browser (⌥⌘0)")
+    }
+}
+
 /// Reports where it sits in its window, horizontally: for lining up title bar items, which live
 /// in the toolbar's own views, with the window's content.
 struct WindowXReader: NSViewRepresentable {
