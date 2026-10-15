@@ -724,7 +724,7 @@ private struct BotRow: View {
                     Text(bot.name)
                         .font(.system(size: 14))
                         .fontWeight(session?.isUnread == true ? .semibold : .regular)
-                    Text(status)
+                    status
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
@@ -744,14 +744,25 @@ private struct BotRow: View {
     }
 
     /// What it's up to: working, waiting for you, when it wakes next, or its job.
-    private var status: String {
-        if workspace.needsAttention(bot.sessionID) { return "Needs you" }
-        if workspace.running.contains(bot.sessionID) { return "Working…" }
-        if let machine = bot.machine, app.machines.engine(machine)?.isReady != true { return "On \(machine), not connected" }
-        if let next = bots.wakes[bot.id]?.first {
-            return "Wakes " + next.due.formatted(Date.RelativeFormatStyle(presentation: .named, unitsStyle: .wide))
+    @ViewBuilder private var status: some View {
+        if workspace.needsAttention(bot.sessionID) {
+            Text("Needs you")
+        } else if workspace.running.contains(bot.sessionID) {
+            ShimmerText(text: "Working…")
+        } else if let machine = bot.machine, app.machines.engine(machine)?.isReady != true {
+            Text("On \(machine), not connected")
+        } else if let wakes = bots.wakes[bot.id], !wakes.isEmpty {
+            // Kept current: "in 2 minutes", then, once it's due and on its way, "Waking up…".
+            TimelineView(.periodic(from: .now, by: 5)) { context in
+                if let next = wakes.first(where: { $0.due > context.date }) {
+                    Text("Wakes " + next.due.formatted(Date.RelativeFormatStyle(presentation: .named, unitsStyle: .wide)))
+                } else {
+                    ShimmerText(text: "Waking up…")
+                }
+            }
+        } else {
+            Text(bot.job.isEmpty ? (bot.machine.map { "On \($0)" } ?? "On this Mac") : bot.job)
         }
-        return bot.job.isEmpty ? (bot.machine.map { "On \($0)" } ?? "On this Mac") : bot.job
     }
 }
 

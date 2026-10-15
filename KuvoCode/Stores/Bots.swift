@@ -209,7 +209,9 @@ final class Bots {
             while !Task.isCancelled {
                 await self?.syncInstructions()
                 await self?.wakeDue()
-                try? await Task.sleep(for: .seconds(20))
+                // On time: up to the next one due here, at most 20 seconds.
+                let next = self?.nextLocalWake().map { $0.timeIntervalSinceNow } ?? 20
+                try? await Task.sleep(for: .seconds(min(20, max(0.5, next))))
             }
         }
     }
@@ -229,6 +231,11 @@ final class Bots {
             let left = Self.localWakes(of: bot)
             if wakes[bot.id] != left { wakes[bot.id] = left }
         }
+    }
+
+    /// When the next wake-up on this Mac is due.
+    private func nextLocalWake() -> Date? {
+        list.filter { $0.machine == nil }.compactMap { wakes[$0.id]?.first?.due }.min()
     }
 
     private static func localWakes(of bot: Bot) -> [Wakes.Pending] {
