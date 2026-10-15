@@ -28,6 +28,27 @@ public enum Wakes {
         }
     }
 
+    /// A `kuvo-wake` command a bot ran, read back: what it did, and for `add`, when and the note.
+    public struct Command: Sendable, Equatable {
+        public enum Verb: String, Sendable { case add, list, cancel }
+        public let verb: Verb
+        /// As written: +2h, 2026-10-16T09:00, …
+        public let when: String?
+        public let note: String?
+    }
+
+    /// The command, if `line` runs `kuvo-wake` for a bot (by name, or by its full path).
+    public static func command(in line: String) -> Command? {
+        let pattern = #/kuvo-wake"?\s+(?:"[^"]*"|'[^']*'|\S+)\s+(add|list|cancel)\b\s*(.*)$/#
+        guard let match = line.firstMatch(of: pattern), let verb = Command.Verb(rawValue: String(match.1)) else { return nil }
+        guard verb == .add else { return Command(verb: verb, when: nil, note: nil) }
+        let rest = match.2.trimmingCharacters(in: .whitespaces)
+        let when = rest.prefix { !$0.isWhitespace }
+        var note = rest.dropFirst(when.count).trimmingCharacters(in: .whitespaces)
+        if let first = note.first, first == "\"" || first == "'", note.last == first, note.count >= 2 { note = String(note.dropFirst().dropLast()) }
+        return Command(verb: verb, when: when.isEmpty ? nil : String(when), note: note.isEmpty ? nil : note)
+    }
+
     /// Puts `kuvo-wake` in `$K/bin` on a machine, and the bots' folder beside it (needs `$K`).
     static var installScript: String {
         """
@@ -44,22 +65,23 @@ public enum Wakes {
         try await connection.run(RemoteEngineInstaller.folders + "\n" + installScript)
     }
 
-    /// The command, in POSIX sh, for macOS and Linux:
+    /// The command, in POSIX sh, for macOS and Linux. A bot is named by its ID, its folder being
+    /// in `$KUVO_BOTS` (`~/.kuvo-code/bots` by default), or by its folder's path:
     ///
-    ///     kuvo-wake <bot folder> add <when> <note>    when: +30m, +2h, +1d, or 2026-10-16T09:00
-    ///     kuvo-wake <bot folder> list
-    ///     kuvo-wake <bot folder> cancel <id>
+    ///     kuvo-wake <bot> add <when> <note>    when: +30m, +2h, +1d, or 2026-10-16T09:00
+    ///     kuvo-wake <bot> list
+    ///     kuvo-wake <bot> cancel <id>
     ///     kuvo-wake fire <bots folder> <engine.json>   sends what's due (the watchdog, on a machine)
     public static let script = #"""
     #!/bin/sh
-    # Kuvo Code's wake-ups for bots. See `kuvo-wake <bot folder> help`.
+    # Kuvo Code's wake-ups for bots. See `kuvo-wake <bot> help`.
     now=$(date +%s)
 
     usage() {
       echo "Usage:"
-      echo "  kuvo-wake <bot folder> add <when> <note>   when: +30m, +2h, +1d, or a time like 2026-10-16T09:00 on this computer's clock"
-      echo "  kuvo-wake <bot folder> list"
-      echo "  kuvo-wake <bot folder> cancel <id>"
+      echo "  kuvo-wake <bot> add <when> <note>   when: +30m, +2h, +1d, or a time like 2026-10-16T09:00 on this computer's clock"
+      echo "  kuvo-wake <bot> list"
+      echo "  kuvo-wake <bot> cancel <id>"
     }
 
     # A time as seconds since 1970, from +30m, +2h, +1d, an ISO date and time, or seconds.
@@ -117,7 +139,8 @@ public enum Wakes {
     fi
 
     bot=$1; command=$2
-    if [ -z "$bot" ] || [ ! -d "$bot" ]; then usage >&2; exit 2; fi
+    case "$bot" in */*) ;; ?*) bot="${KUVO_BOTS:-$HOME/.kuvo-code/bots}/$bot" ;; esac
+    if [ -z "$1" ] || [ ! -d "$bot" ]; then usage >&2; exit 2; fi
     case "$command" in
       add)
         due=$(seconds "$3") || { echo "Couldn't read the time \"$3\". Use +30m, +2h, +1d, or a time like 2026-10-16T09:00." >&2; exit 2; }
@@ -139,7 +162,7 @@ public enum Wakes {
         done
         [ -n "$found" ] || echo "No wake-ups scheduled." ;;
       cancel)
-        [ -n "$3" ] && [ -f "$bot/wakes/$3" ] || { echo "No wake-up \"$3\". See kuvo-wake <bot folder> list." >&2; exit 2; }
+        [ -n "$3" ] && [ -f "$bot/wakes/$3" ] || { echo "No wake-up \"$3\". See kuvo-wake $1 list." >&2; exit 2; }
         rm -f "$bot/wakes/$3"; echo "Canceled $3." ;;
       *) usage ;;
     esac

@@ -304,6 +304,7 @@ public final class RemoteServer: @unchecked Sendable {
         \(RemoteEngineInstaller.folders)
         R="$K/run"; mkdir -p "$R"; chmod 700 "$R"
         \(Wakes.installScript)
+        export PATH="$K/bin:$PATH"
         cd "$K/workspace"
         touch "$R/attached"
         setsid "$K/engine/\(OpenCodeEngine.version)/opencode" serve --port "$port" --hostname 127.0.0.1 >"$R/engine.log" 2>&1 </dev/null &

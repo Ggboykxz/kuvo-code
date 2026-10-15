@@ -50,6 +50,27 @@ struct WakesTests {
         #expect(try sh("\"\(wake)\" \"\(bot.path)\" list", in: k).output.contains("No wake-ups"))
     }
 
+    @Test func readsTheCommandsABotRuns() {
+        let add = Wakes.command(in: #"kuvo-wake bot_abc add +2h "check whether CI passed""#)
+        #expect(add == Wakes.Command(verb: .add, when: "+2h", note: "check whether CI passed"))
+        let full = Wakes.command(in: #""/Users/me/Library/Application Support/x/bin/kuvo-wake" bot_abc add 2026-10-16T09:00 'morning report'"#)
+        #expect(full?.when == "2026-10-16T09:00")
+        #expect(full?.note == "morning report")
+        #expect(Wakes.command(in: "kuvo-wake bot_abc list")?.verb == .list)
+        #expect(Wakes.command(in: "kuvo-wake bot_abc cancel 1792080986-CkytYD")?.verb == .cancel)
+        #expect(Wakes.command(in: "npm test") == nil)
+    }
+
+    @Test func namesABotByItsID() throws {
+        let k = try folder()
+        defer { try? FileManager.default.removeItem(at: k) }
+        #expect(try sh(Wakes.installScript, in: k).status == 0)
+        try FileManager.default.createDirectory(at: k.appending(path: "bots/bot_x"), withIntermediateDirectories: true)
+        let added = try sh("KUVO_BOTS=\"$K/bots\" \"$K/bin/kuvo-wake\" bot_x add +1d 'tomorrow'", in: k)
+        #expect(added.status == 0)
+        #expect(try sh("KUVO_BOTS=\"$K/bots\" \"$K/bin/kuvo-wake\" nobody list", in: k).status != 0)
+    }
+
     @Test func aWakeUpsTimeComesFromItsName() {
         let wake = Wakes.Pending(id: "1792080986-CkytYD", note: "hi")
         #expect(wake?.due == Date(timeIntervalSince1970: 1_792_080_986))
