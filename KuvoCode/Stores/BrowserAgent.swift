@@ -324,6 +324,17 @@ final class BrowserAgent {
       (node.children || []).forEach((child) => walk(child, inside));
     })(result.rootId, false);
     window.__kuvoIndex = index;
+    // A page that asks to sign in (or for a one-time code) says what to do about it, where the
+    // agent reads it: ask the user in Kuvo Code, not in the chat.
+    const shown = (field) => !field.disabled && field.getClientRects().length > 0 && getComputedStyle(field).visibility !== 'hidden';
+    const fields = [...document.querySelectorAll('input')].filter(shown);
+    const filled = fields.some((field) => field.hasAttribute('data-kuvo-secret'));
+    const autocomplete = (pattern) => fields.some((field) => pattern.test(field.autocomplete || ''));
+    if (!filled && autocomplete(/one-time-code/)) {
+      lines.unshift('(This page asks for a one-time code: call browser_ask_code with its field now, unless the user already said no. The user types it in Kuvo Code; never ask for it in the chat.)', '');
+    } else if (!filled && (fields.some((field) => field.type === 'password') || autocomplete(/\\busername\\b|current-password/))) {
+      lines.unshift('(This page asks to sign in: call browser_sign_in with its fields now, unless the user already said no. The user answers in Kuvo Code, where they can also say Not Now; do not ask in the chat whether to sign in, or for their password.)', '');
+    }
     const scrollHeight = Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0);
     return {
       text: lines.join('\\n'),

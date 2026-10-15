@@ -41,8 +41,9 @@ final class BrowserAsks {
     private(set) var asks: [Ask] = []
 
     @ObservationIgnored private var responders: [String: (Answer) -> Void] = [:]
-    /// Sign-ins you gave in the last few minutes, by machine and site.
-    @ObservationIgnored private var remembered: [String: (username: String?, password: String?, at: Date)] = [:]
+    /// Sign-ins you gave in the last few minutes, by machine and site, with the conversation they
+    /// were for.
+    @ObservationIgnored private var remembered: [String: (username: String?, password: String?, at: Date, session: String?)] = [:]
     /// Sessions whose agent started asking, by machine ("" for this Mac), oldest first: the asks
     /// that arrive go to them in that order.
     @ObservationIgnored private var askers: [String: [(name: String, session: String, at: Date)]] = [:]
@@ -95,16 +96,17 @@ final class BrowserAsks {
 
     /// An ask from a machine's browser; `respond` sends the answer back there.
     func add(_ ask: Ask, respond: @escaping (Answer) -> Void) {
-        // The rest of a sign-in you just gave (its password, on the page after the username's).
-        if case .signIn(let needsUsername, let needsPassword) = ask.kind, let saved = remembered[key(ask)],
-           Date.now.timeIntervalSince(saved.at) < 300, !needsUsername || saved.username != nil, !needsPassword || saved.password != nil {
-            respond(.signIn(username: saved.username, password: saved.password))
-            return
-        }
         var ask = ask
         if let asker = nextAsker(on: ask.machine) {
             ask.asker = asker.name
             ask.session = asker.session
+        }
+        // The rest of a sign-in you just gave the same conversation (its password, on the page
+        // after the username's).
+        if case .signIn(let needsUsername, let needsPassword) = ask.kind, let saved = remembered[key(ask)], saved.session == ask.session,
+           Date.now.timeIntervalSince(saved.at) < 300, !needsUsername || saved.username != nil, !needsPassword || saved.password != nil {
+            respond(.signIn(username: saved.username, password: saved.password))
+            return
         }
         responders[ask.id] = respond
         withAnimation(.ui) { asks.append(ask) }
@@ -119,7 +121,7 @@ final class BrowserAsks {
     func answer(_ id: String, _ answer: Answer) {
         guard let respond = responders.removeValue(forKey: id) else { return }
         if case .signIn(let username, let password) = answer, let ask = asks.first(where: { $0.id == id }) {
-            remembered[key(ask)] = (username, password, .now)
+            remembered[key(ask)] = (username, password, .now, ask.session)
         }
         withAnimation(.ui) { asks.removeAll { $0.id == id } }
         changed()
