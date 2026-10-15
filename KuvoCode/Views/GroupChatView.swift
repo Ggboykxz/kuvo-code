@@ -20,7 +20,9 @@ struct GroupChatView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 18) {
                 ForEach(messages) { message in
-                    GroupMessageRow(message: message, author: message.author.flatMap { bots.bot($0) }, members: members)
+                    GroupMessageRow(message: message, author: message.author.flatMap { bots.bot($0) }, members: members) {
+                        undo(from: message)
+                    }
                         .id(message.id)
                         .transition(.opacity.combined(with: .offset(y: 8)))
                 }
@@ -79,6 +81,14 @@ struct GroupChatView: View {
         .onChange(of: messages.count) { groups.markViewed(group.id) }
     }
 
+    /// Takes the chat back to before your message, which comes back to the composer, ahead of
+    /// anything already there.
+    private func undo(from message: GroupMessage) {
+        guard let text = groups.undo(from: message.id, in: group.id) else { return }
+        let draft = Drafts.shared[draftKey].text
+        Drafts.shared[draftKey].text = [text, draft].filter { !$0.isEmpty }.joined(separator: "\n\n")
+    }
+
     private func send() {
         let text = Drafts.shared[draftKey].text
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
@@ -96,7 +106,18 @@ private struct GroupMessageRow: View {
     let author: Bot?
     /// The chat's bots, for their mentions.
     let members: [Bot]
-    @State private var isHovering = false
+    /// Takes the chat back to before this message of yours.
+    let undo: () -> Void
+    @State private var hovering = false
+    @State private var confirmsUndo = false
+
+    /// Under the pointer; KUVO_DEMO_SHOW_HOVER shows every message's buttons, for screenshots.
+    private var isHovering: Bool {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["KUVO_DEMO_SHOW_HOVER"] != nil { return true }
+        #endif
+        return hovering
+    }
 
     var body: some View {
         if message.kind == .note {
@@ -106,7 +127,33 @@ private struct GroupMessageRow: View {
                 .frame(maxWidth: .infinity)
                 .multilineTextAlignment(.center)
         } else if message.author == nil {
-            UserBubble(text: message.text, styled: GroupMentions.styled(message.text, bots: members))
+            VStack(alignment: .trailing, spacing: 2) {
+                UserBubble(text: message.text, styled: GroupMentions.styled(message.text, bots: members))
+                // Always laid out, shown under the pointer: nothing moves when they appear.
+                HStack(spacing: 0) {
+                    Text(MessageTime.sentAt(message.time))
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .padding(.trailing, 6)
+                    CopyButton(text: message.text, help: "Copy")
+                    MessageActionButton(symbol: "arrow.uturn.backward", help: "Undo From Here…") { confirmsUndo = true }
+                }
+                .opacity(isHovering ? 1 : 0)
+                .animation(.easeOut(duration: 0.12), value: isHovering)
+            }
+            .contentShape(.rect)
+            .onHover { hovering = $0 }
+            .contextMenu {
+                Button("Copy") { copy() }
+                Divider()
+                Button("Undo From Here…") { confirmsUndo = true }
+            }
+            .alert("Undo from this message?", isPresented: $confirmsUndo) {
+                Button("Undo", action: undo)
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("The chat goes back to before this message, and the message comes back to the composer. The bots are told to set aside what was taken back.")
+            }
         } else {
             HStack(alignment: .top, spacing: 10) {
                 if let author {
@@ -133,12 +180,26 @@ private struct GroupMessageRow: View {
                         Text(message.time, format: .dateTime.hour().minute())
                             .font(.caption)
                             .foregroundStyle(.tertiary)
+                        // Shown under the pointer, always laid out.
+                        CopyButton(text: message.text, help: "Copy")
+                            .opacity(isHovering ? 1 : 0)
+                            .animation(.easeOut(duration: 0.12), value: isHovering)
                     }
+                    .frame(height: 20)
                     MarkdownText(text: message.text, mentions: members)
                 }
             }
-            .onHover { isHovering = $0 }
+            .contentShape(.rect)
+            .onHover { hovering = $0 }
+            .contextMenu {
+                Button("Copy") { copy() }
+            }
         }
+    }
+
+    private func copy() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(message.text, forType: .string)
     }
 }
 

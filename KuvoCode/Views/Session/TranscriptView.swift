@@ -341,12 +341,8 @@ private struct RowView: View {
     /// Under the pointer: a message shows its buttons.
     @State private var isHovering = false
 
-    /// When a message was sent: the time today, the day and time before that.
     static func sentAt(_ created: Milliseconds) -> String {
-        let date = Date(timeIntervalSince1970: created / 1000)
-        if Calendar.current.isDateInToday(date) { return date.formatted(date: .omitted, time: .shortened) }
-        if Calendar.current.isDateInYesterday(date) { return "Yesterday " + date.formatted(date: .omitted, time: .shortened) }
-        return date.formatted(.dateTime.month(.abbreviated).day().hour().minute())
+        MessageTime.sentAt(Date(timeIntervalSince1970: created / 1000))
     }
 
     /// " 12s", " 1m 5s" after a few seconds, then " · Esc to stop".
@@ -850,7 +846,16 @@ private struct TurnFiles: View {
 }
 
 /// One of the small buttons under a message, like the copy icon beside it.
-private struct MessageActionButton: View {
+/// When a message was sent: the time today, the day and time before that.
+enum MessageTime {
+    static func sentAt(_ date: Date) -> String {
+        if Calendar.current.isDateInToday(date) { return date.formatted(date: .omitted, time: .shortened) }
+        if Calendar.current.isDateInYesterday(date) { return "Yesterday " + date.formatted(date: .omitted, time: .shortened) }
+        return date.formatted(.dateTime.month(.abbreviated).day().hour().minute())
+    }
+}
+
+struct MessageActionButton: View {
     let symbol: String
     let help: String
     let action: () -> Void

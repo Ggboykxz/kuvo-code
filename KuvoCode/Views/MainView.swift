@@ -1085,6 +1085,14 @@ struct MainView: View {
         let group = groups.list.first { $0.name == name } ?? groups.create(name: name, members: members)
         openTab(BotGroups.tabKey(group.id))
         if environment["KUVO_DEMO_EDIT_GROUP"] != nil { openGroupEditor(group: group) }
+        // KUVO_DEMO_GROUP_UNDO=<seconds>: then undoes from your last message there, into the composer.
+        if let wait = environment["KUVO_DEMO_GROUP_UNDO"].flatMap(Double.init) {
+            try? await Task.sleep(for: .seconds(wait))
+            if let last = groups.messages(in: group.id).last(where: { $0.author == nil && $0.kind != .note }),
+               let text = groups.undo(from: last.id, in: group.id) {
+                Drafts.shared[BotGroups.tabKey(group.id)].text = text
+            }
+        }
         guard parts.count > 2, !parts[2].isEmpty else { return }
         while app.api == nil { try? await Task.sleep(for: .seconds(1)) }
         try? await Task.sleep(for: .seconds(2))

@@ -19,6 +19,9 @@ struct BotGroup: Codable, Identifiable, Hashable {
     var created: Date
     /// When you last looked at it.
     var viewed: Date?
+    /// Bots that heard messages you since took back, with the start of the first of them: they're
+    /// told to set it aside at their next turn.
+    var retracted: [String: String]?
 
     var lead: String? { members.first }
 }
@@ -197,6 +200,34 @@ final class BotGroups {
         if discussions[id] == nil { start(id) }
     }
 
+    /// Takes the chat back to before one of your messages: it and everything said after it leave
+    /// the chat, the discussion stops, and bots that heard any of it are told at their next turn
+    /// to set it aside. Returns the message's words, for the composer.
+    @discardableResult
+    func undo(from messageID: String, in id: String) -> String? {
+        guard let index = list.firstIndex(where: { $0.id == id }), var messages = logs[id],
+              let cut = messages.firstIndex(where: { $0.id == messageID }) else { return nil }
+        stop(id)
+        let taken = messages[cut...]
+        let text = messages[cut].text
+        messages.removeSubrange(cut...)
+        logs[id] = messages
+        saveLog(id)
+        var group = list[index]
+        var retracted = group.retracted ?? [:]
+        for bot in group.members {
+            guard let heard = group.heard[bot], taken.contains(where: { $0.id == heard }) else { continue }
+            group.heard[bot] = messages.last?.id
+            if retracted[bot] == nil { retracted[bot] = String(text.prefix(120)) }
+        }
+        group.retracted = retracted.isEmpty ? nil : retracted
+        list[index] = group
+        save()
+        rememberSoon(id)
+        Analytics.shared.track("group_undo")
+        return text
+    }
+
     /// Stops the discussion; the bot talking stops mid-sentence.
     func stop(_ id: String) {
         discussions.removeValue(forKey: id)?.cancel()
@@ -337,6 +368,11 @@ final class BotGroups {
             let ended = app.workspace.endedRuns[seat, default: 0]
             try await api.prompt(session: seat, id: promptID, text: turnText(for: bot, in: group, unheard: Array(unheard), wrapUp: wrapUp), delivery: .queue)
             if let last = all.last { setHeard(last.id, by: botID, in: id) }
+            if let index = list.firstIndex(where: { $0.id == id }), list[index].retracted?[botID] != nil {
+                list[index].retracted?[botID] = nil
+                if list[index].retracted?.isEmpty == true { list[index].retracted = nil }
+                save()
+            }
             let sent = Date.now
             try await waitForRun(of: seat, after: ended, since: sent, api: api)
             let (text, error) = try await reply(in: seat, after: promptID, since: sent, api: api)
@@ -446,6 +482,9 @@ final class BotGroups {
     /// What a bot is told at its turn: what was said since it last spoke.
     private func turnText(for bot: Bot, in group: BotGroup, unheard: [GroupMessage], wrapUp: Bool) -> String {
         var text = ""
+        if let taken = group.retracted?[bot.id] {
+            text += "The user took back their message starting \"\(taken)\" and everything said after it. Set all of that aside: it no longer stands.\n\n"
+        }
         if unheard.isEmpty {
             text = "Nothing new in \"\(group.name)\" since you last spoke.\n"
         } else {

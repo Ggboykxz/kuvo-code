@@ -115,6 +115,7 @@ without clicking, for trying a change or taking screenshots:
 | `KUVO_DEMO_NEW_GROUP` | The New Group Chat editor, open |
 | `KUVO_DEMO_GROUP` | Make the group chat `<name>\|<bot>,<bot>,…` unless one has that name, open it, and send it `\|<message>` if one follows |
 | `KUVO_DEMO_GROUP_LATER` | With a message in `KUVO_DEMO_GROUP`: another one, sent while they talk, as `<seconds>\|<message>` |
+| `KUVO_DEMO_GROUP_UNDO` | With `KUVO_DEMO_GROUP`: undo from your last message there after this many seconds |
 | `KUVO_DEMO_EDIT_GROUP` | With `KUVO_DEMO_GROUP`: its editor, open |
 | `KUVO_DEMO_BOT_MOODS` | Show bots in a mood, as `<name>=<mood>,…` with `working`, `waiting`, `news`, `sleeping` or `idle` |
 | `KUVO_DEMO_VIEW_IMAGE` | Show these comma-separated pictures in the image viewer |
@@ -124,6 +125,7 @@ without clicking, for trying a change or taking screenshots:
 | `KUVO_DEMO_MOVE_CHAT` | Move the newest chat into the project at this folder |
 | `KUVO_DEMO_UNDO_RESEND` | In the session in view, undo its last message and send it again this many seconds later |
 | `KUVO_DEMO_LOG_EVENTS` | Log each session event from the engine, to see the order they come in (`log show --predicate 'subsystem == "run.kuvo.code"'`) |
+| `KUVO_DEMO_SHOW_HOVER` | Show group chat messages' buttons as if under the pointer |
 | `KUVO_DEMO_NAME` | A name to use instead of yours, for the initials on review comments |
 | `KUVO_DEMO_COMMENT` | Add a review comment to the session in view, as `<path in the project>:<line>:<text>` |
 | `KUVO_ANALYTICS_URL` | Send anonymous usage to this collector, e.g. `http://127.0.0.1:8787/kuvo/code`; debug builds send none otherwise |
