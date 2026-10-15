@@ -595,6 +595,26 @@ final class Workspace {
 
     /// An agent on a machine started using its browser.
     @ObservationIgnored var onMachineBrowsing: ((String) -> Void)?
+    /// A bot's name, by its session, for its notifications.
+    @ObservationIgnored var botName: ((String) -> String?)?
+
+    /// The text of a session's last reply, shortened for a notification.
+    private func lastReply(of id: String) async -> String? {
+        guard Notifier.isEnabled, let page = try? await api(forSession: id)?.messages(session: id, limit: 6) else { return nil }
+        for message in page.data.reversed() {
+            guard case .assistant(let reply) = message else { continue }
+            let text = reply.content.compactMap { content -> String? in
+                if case .text(let text) = content { text.text } else { nil }
+            }.joined(separator: " ")
+            let plain = text
+                .replacingOccurrences(of: #"[*_`#>]+"#, with: "", options: .regularExpression)
+                .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                .trimmingCharacters(in: .whitespaces)
+            guard !plain.isEmpty else { continue }
+            return plain.count > 220 ? String(plain.prefix(219)) + "…" : plain
+        }
+        return nil
+    }
     /// An agent (in a session, on a machine or this Mac) is asking you for something in its browser.
     @ObservationIgnored var onBrowserAsk: ((_ session: String, _ machine: String?) -> Void)?
 
@@ -646,11 +666,14 @@ final class Workspace {
                 await reload(id)
                 // A run you stopped needs no news.
                 if event.type != "session.execution.interrupted", let session = session(id) {
+                    let failed = event.type == "session.execution.failed"
+                    // What it said last, as a chat app's notification shows the message.
+                    let reply = failed ? nil : await lastReply(of: id)
                     Notifier.shared.notify(
                         session: id,
-                        title: session.title ?? "New Session",
-                        subtitle: projectName(session.location.directory),
-                        body: event.type == "session.execution.failed" ? "Stopped with an error." : "Finished."
+                        title: botName?(id) ?? session.title ?? "New Session",
+                        subtitle: botName?(id) == nil ? projectName(session.location.directory) : nil,
+                        body: failed ? "Stopped with an error." : reply ?? "Finished."
                     )
                 }
             }

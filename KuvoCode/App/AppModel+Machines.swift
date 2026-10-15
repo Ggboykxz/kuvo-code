@@ -16,6 +16,7 @@ extension AppModel {
         // An agent asks you for something in its browser: who's asking, and on a machine, the
         // connection that brings the ask here.
         browserAsks.onChange = { [weak self] sessions in self?.workspace.askingInBrowser = sessions }
+        workspace.botName = { [weak self] session in self?.bots.bot(forSession: session)?.name }
         browserAsks.askerName = { [weak self] session in
             self?.bots.bot(forSession: session)?.name ?? self?.workspace.session(session)?.title
         }
