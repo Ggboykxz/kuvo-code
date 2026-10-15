@@ -44,7 +44,7 @@ const TAB_IDLE = Number(process.env.KUVO_BROWSER_TAB_IDLE || 12 * 3600) * 1000;
 
 // Goes up with every change to the keeper (host mode): a newer one replaces one that's running
 // (its pages close, its sign-ins stay), and an older one never replaces a newer.
-const KEEPER = 11;
+const KEEPER = 12;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -409,6 +409,10 @@ async function host() {
     if (!client.closed) client.socket.write((typeof message === "string" ? message : JSON.stringify(message)) + "\n");
   };
   const viewers = () => [...clients].filter((client) => client.viewer && !client.closed).length;
+  const everyStatus = () => {
+    const working = [...clients].filter((client) => client.status?.working && !client.closed);
+    return { working: working.length > 0, tool: working[0]?.status.tool, pages: working.map((client) => client.status.targetId).filter(Boolean) };
+  };
   const broadcast = (message) => {
     const text = typeof message === "string" ? message : JSON.stringify(message);
     for (const client of clients) send(client, text);
@@ -545,6 +549,7 @@ async function host() {
         internal("Target.detachFromTarget", { sessionId });
       }
       for (const [id, ask] of asks) if (ask.client === client) closeAsk(id);
+      if (client.status?.working) broadcast({ method: "Kuvo.status", params: (status = everyStatus()) });
       if (client.viewer) broadcast({ method: "Kuvo.viewers", params: { count: viewers() } });
       if (!clients.size) idleSoon();
     });
@@ -578,7 +583,9 @@ async function host() {
           return message.id !== undefined && send(client, { id: message.id, result: {} });
         }
         case "Kuvo.setStatus":
-          status = message.params ?? { working: false };
+          // Each helper's: the pages agents are at work in, all together.
+          client.status = message.params ?? { working: false };
+          status = everyStatus();
           broadcast({ method: "Kuvo.status", params: status });
           return message.id !== undefined && send(client, { id: message.id, result: {} });
         case "Kuvo.stop":
@@ -748,6 +755,9 @@ const noteOnce = (note) => {
   if (!notes.includes(note)) notes.push(note);
 };
 let busy = false;
+// The tool at work, and the page it works in.
+let currentTool = null;
+let workingIn = null;
 // The tool at work said to accept confirmations and prompts, rather than decline them.
 let acceptDialogs = false;
 // The session whose tool call is under way, when the engine says.
@@ -853,6 +863,11 @@ async function use(target) {
   if (active !== target) {
     active = target;
     c.notify("Kuvo.setActive", { targetId: target, by: "agent", ...(caller ? { session: caller } : {}) });
+  }
+  // At work in this page: a Mac showing it says so.
+  if (busy && workingIn !== target) {
+    workingIn = target;
+    c.notify("Kuvo.setStatus", { working: true, tool: currentTool, targetId: target });
   }
   return { target, session };
 }
@@ -1354,7 +1369,11 @@ async function mcp() {
       case "tools/call":
         queue = queue.then(async () => {
           const name = params.name || "";
-          const status = (working) => link?.notify("Kuvo.setStatus", working ? { working, tool: name } : { working });
+          const status = (working) => {
+            currentTool = working ? name : null;
+            workingIn = null;
+            link?.notify("Kuvo.setStatus", working ? { working, tool: name } : { working });
+          };
           try {
             await browser();
             busy = true;

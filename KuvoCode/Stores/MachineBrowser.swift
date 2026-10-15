@@ -99,7 +99,15 @@ final class MachineBrowser {
     private(set) var canGoBack = false
     private(set) var canGoForward = false
     /// An agent is using the browser right now.
-    private(set) var isAgentBrowsing = false
+    /// An agent is at work in the page shown.
+    var isAgentBrowsing: Bool { shownPage.map(workingPages.contains) ?? false }
+    /// The pages agents are at work in.
+    private var workingPages: Set<String> = []
+
+    private static func workingPages(_ status: [String: Any]) -> Set<String> {
+        guard status["working"] as? Bool == true else { return [] }
+        return Set(status["pages"] as? [String] ?? [])
+    }
     private(set) var dialog: Dialog?
 
     /// Told when pages open or close, and when the agent moves to another page (or you do).
@@ -322,7 +330,7 @@ final class MachineBrowser {
         link?.stop()
         link = nil
         session = nil
-        isAgentBrowsing = false
+        workingPages = []
         dialog = nil
         if case .live = state { state = .idle }
         if case .connecting = state { state = .idle }
@@ -332,7 +340,7 @@ final class MachineBrowser {
         let wasLive = state == .live
         link = nil
         session = nil
-        isAgentBrowsing = false
+        workingPages = []
         if case .failed = state { return }
         // It stopped (the machine restarted, the browser quit): back by itself if it can.
         if isWanted, reconnects < 3 {
@@ -354,7 +362,7 @@ final class MachineBrowser {
             // This Mac can answer what agents ask in the browser.
             link?.fire("Kuvo.viewing")
             activeID = params["targetId"] as? String
-            isAgentBrowsing = (params["status"] as? [String: Any])?["working"] as? Bool ?? false
+            workingPages = (params["status"] as? [String: Any]).map(Self.workingPages) ?? []
             for ask in params["asks"] as? [[String: Any]] ?? [] { asked(ask) }
             Task { await begin() }
         case "Kuvo.asked":
@@ -400,7 +408,7 @@ final class MachineBrowser {
             activeID = id
             onActive(id, byAgent, params["session"] as? String)
         case "Kuvo.status":
-            isAgentBrowsing = params["working"] as? Bool ?? false
+            workingPages = Self.workingPages(params)
         case "Target.targetCreated", "Target.targetInfoChanged":
             if let info = params["targetInfo"] as? [String: Any] { note(info) }
         case "Target.targetDestroyed":
