@@ -158,7 +158,7 @@ struct TranscriptView: View {
                 rows.append(.turnEnd(idle, turn, isLast: index == messages.count - 1))
                 turn = TurnStats()
             case .modelSwitched(let change):
-                rows.append(.notice(change.id, "cpu", "Switched to \(change.model.id)"))
+                rows.append(.notice(change.id, "cpu", "Switched to \(change.model.id)" + (change.model.variant.map { " · \(EffortLevel.title($0))" } ?? "")))
             case .agentSwitched(let change):
                 rows.append(.notice(change.id, change.agent == "plan" ? "list.bullet.clipboard" : "hammer", "\(change.agent.capitalized) mode"))
             case .compaction(let compaction):

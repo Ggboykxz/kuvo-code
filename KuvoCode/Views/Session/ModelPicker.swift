@@ -16,7 +16,8 @@ enum EffortLevel {
 /// The model and its effort, in a card that stays open while you choose both: pick a model and
 /// its levels show below, right away. The short list first (1–9 pick one), every model by
 /// provider a click away, and typing searches them all. ↑ ↓ move through the list, ← → change the
-/// effort, Return or a click outside closes it.
+/// effort, Return or a click outside closes it. What you chose goes to the session as it closes,
+/// once, rather than with each click on the way.
 struct ModelPicker: View {
     let catalog: Catalog
     let selection: ModelRef?
@@ -24,7 +25,7 @@ struct ModelPicker: View {
     let close: () -> Void
     var startsExpanded = false
     @AppStorage("recentModels") private var recentStorage = ""
-    /// What you just picked, shown before the session catches up.
+    /// What you've picked, until the card closes.
     @State private var picked: ModelRef?
     @State private var query = ""
     @State private var expanded = false
@@ -83,6 +84,9 @@ struct ModelPicker: View {
         .onAppear {
             expanded = startsExpanded
             focus = .list
+        }
+        .onDisappear {
+            if let picked, !(picked.sameModel(as: selection) && picked.variant == selection?.variant) { onSelect(picked) }
         }
         .onChange(of: selection) { picked = nil }
     }
@@ -252,7 +256,6 @@ struct ModelPicker: View {
 
     private func choose(_ ref: ModelRef) {
         picked = ref
-        onSelect(ref)
     }
 
     private func pickHighlighted(closing: Bool) {
