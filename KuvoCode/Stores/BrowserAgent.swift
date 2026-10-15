@@ -299,6 +299,27 @@ final class BrowserAgent {
         return await snapshot()
     }
 
+    /// Until `wanted` shows on the page, for 30 seconds at most.
+    func wait(for wanted: String) async -> String {
+        let browser = browser()
+        let deadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < deadline {
+            let found = try? await browser.webView.callAsyncJavaScript("return (document.body ? document.body.innerText : '').toLowerCase().includes(wanted.toLowerCase())", arguments: ["wanted": wanted], contentWorld: .page) as? Bool
+            if found == true { return "“\(wanted)” is on the page.\n\n" + (await snapshot()) }
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+        return "“\(wanted)” didn't show up in 30 seconds.\n\n" + (await snapshot())
+    }
+
+    func hover(_ index: Int) async -> String {
+        let browser = browser()
+        await point(.hover, at: index, in: browser)
+        let outcome = await run(Self.hoverScript, ["index": index], in: browser)
+        guard outcome == "ok" else { return outcome }
+        try? await Task.sleep(for: .milliseconds(400))
+        return "Hovered over [\(index)].\n\n" + (await snapshot())
+    }
+
     // MARK: Helpers
 
     /// The browser in view, or a new one; either way the panel shows it.
@@ -445,6 +466,20 @@ final class BrowserAgent {
     element.scrollIntoView({ block: 'center', inline: 'nearest' });
     const r = element.getBoundingClientRect();
     return JSON.stringify({ x: r.left, y: r.top, width: r.width, height: r.height });
+    """
+
+    /// What the page hears when the pointer comes over [index].
+    static let hoverScript = """
+    const element = find(index);
+    if (!element) return missing(index);
+    element.scrollIntoView({ block: 'center', inline: 'nearest' });
+    const rect = element.getBoundingClientRect();
+    const options = { bubbles: true, cancelable: true, view: window, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 };
+    for (const type of ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'pointermove', 'mousemove']) {
+      const bubbles = !type.endsWith('enter');
+      element.dispatchEvent(type.startsWith('pointer') ? new PointerEvent(type, { ...options, bubbles }) : new MouseEvent(type, { ...options, bubbles }));
+    }
+    return 'ok';
     """
 
     static let clickScript = """

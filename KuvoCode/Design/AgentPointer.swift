@@ -7,7 +7,7 @@ import SwiftUI
 nonisolated enum AgentPointer {
     /// What the agent does there.
     enum Action: String {
-        case click, type, select
+        case click, type, select, hover
     }
 
     /// The arrow, its tip at the origin, pointing up and to the left in a y-up space, about 20
@@ -85,6 +85,7 @@ final class AgentPointerLayers {
         switch action {
         case .click: pulse(at: point)
         case .type, .select: ring(around: rect)
+        case .hover: break
         }
         hide?.cancel()
         hide = Task { @MainActor [weak self] in
@@ -154,7 +155,7 @@ struct AgentPointerOverlay: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             if let shown {
-                if shown.action != .click {
+                if shown.action == .type || shown.action == .select {
                     RoundedRectangle(cornerRadius: 6)
                         .stroke(Color.accentColor, lineWidth: 2)
                         .frame(width: shown.rect.width + 6, height: shown.rect.height + 6)

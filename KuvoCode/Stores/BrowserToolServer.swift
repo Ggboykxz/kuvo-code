@@ -164,8 +164,10 @@ enum BrowserTools {
         tool("browser_forward", "Go forward a page."),
         tool("browser_text", "Read all the text on the current page, for long articles or docs."),
         tool("browser_screenshot", "See the visible part of the page as an image (for models that take images)."),
-        tool("browser_wait", "Wait for the page to change (up to 10 seconds), then read it again.",
-             ["seconds": ["type": "number"]], required: ["seconds"]),
+        tool("browser_wait", "Wait for the page, then read it again: until a text shows on it (up to 30 seconds), or for some seconds (up to 10).",
+             ["seconds": ["type": "number"], "text": ["type": "string", "description": "Text to wait for, like a result's title or \"Saved\"."]]),
+        tool("browser_hover", "Move the pointer over the element with this number, for menus and tips that open on hover.",
+             ["index": ["type": "integer"]], required: ["index"]),
         tool("browser_new_tab", "Open a new browser tab in the panel, optionally at an address.",
              ["url": ["type": "string"]]),
         tool("browser_upload", "Attach files to the page's file input with this number (or the upload button it belongs to), as choosing them in the file picker would. Give the files' full paths.",
@@ -257,7 +259,11 @@ enum BrowserTools {
             guard let png = await agent.screenshot() else { return text("Couldn't capture the page.", error: true) }
             return ["content": [["type": "image", "data": png, "mimeType": "image/png"]]]
         case "browser_wait":
+            if let wanted = string("text"), !wanted.isEmpty { return text(await agent.wait(for: wanted)) }
             return text(await agent.wait((arguments["seconds"] as? NSNumber)?.doubleValue ?? 2))
+        case "browser_hover":
+            guard let index = int("index") else { return text("Missing index.", error: true) }
+            return text(await agent.hover(index))
         case "browser_new_tab":
             return text(await agent.newTab(string("url")))
         case "browser_upload":

@@ -181,7 +181,8 @@ struct ToolCallView: View {
         case "browser_back": return "Went back"
         case "browser_forward": return "Went forward"
         case "browser_screenshot": return isActive ? "Taking a screenshot" : "Took a screenshot"
-        case "browser_wait": return "Waited for the page"
+        case "browser_wait": return string("text").map { (isActive ? "Waiting for “" : "Waited for “") + $0 + "”" } ?? "Waited for the page"
+        case "browser_hover": return (isActive ? "Hovering over " : "Hovered over ") + index
         case "browser_tabs":
             let tab = input?["tab"]?.number.map { " [\(Int($0))]" } ?? ""
             switch string("action") {

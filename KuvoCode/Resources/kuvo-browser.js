@@ -962,9 +962,10 @@ async function point(p, index, action) {
     const value = await run(p, CONFIG.scripts.find + CONFIG.scripts.rect, { index });
     rect = value && value !== "ok" ? JSON.parse(value) : null;
   } catch {}
-  if (!rect) return;
+  if (!rect) return null;
   link?.notify("Kuvo.pointer", { targetId: p.target, action, rect });
   await sleep(150);
+  return rect;
 }
 
 /// Asks the user, in Kuvo Code, and waits for the answer (15 minutes at most).
@@ -1227,9 +1228,29 @@ async function tool(name, args) {
       return withNote(snapshot(p).then((page) => "The user says it's done.\n\n" + page));
     }
     case "browser_wait": {
+      const wanted = string("text");
+      if (wanted) {
+        const deadline = Date.now() + 30_000;
+        while (Date.now() < deadline) {
+          const found = await evaluate(p, `(document.body ? document.body.innerText : '').toLowerCase().includes(${JSON.stringify(wanted.toLowerCase())})`).catch(() => false);
+          if (found) return withNote(snapshot(p).then((page) => `“${wanted}” is on the page.\n\n` + page));
+          await sleep(500);
+        }
+        return withNote(snapshot(p).then((page) => `“${wanted}” didn't show up in 30 seconds.\n\n` + page));
+      }
       const seconds = Math.min(Math.max(Number(args.seconds) || 2, 0), 10);
       await sleep(seconds * 1000);
       return withNote(snapshot(p));
+    }
+    case "browser_hover": {
+      const index = integer("index");
+      if (index === null) return text("Missing index.", true);
+      const rect = await point(p, index, "hover");
+      if (!rect) return text(`There's no element [${index}] on the page now. Take a fresh browser_snapshot.`);
+      // A real pointer over it, so the page's own hover styles show too.
+      await link.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }, p.session);
+      await sleep(400);
+      return withNote(snapshot(p).then((page) => `Hovered over [${index}].\n\n` + page));
     }
     default:
       return text(`Unknown tool ${name}.`, true);
