@@ -3,6 +3,15 @@ import AppKit
 /// The app's identity, read from the bundle so renaming the app only touches
 /// `Config/App.xcconfig`.
 nonisolated enum AppInfo {
+    /// A copy launched with KUVO_DEMO_BACKGROUND, which never takes the keyboard (DEBUG builds).
+    static var staysInBackground: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.environment["KUVO_DEMO_BACKGROUND"] != nil
+        #else
+        false
+        #endif
+    }
+
     static var name: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
             ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String

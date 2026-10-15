@@ -204,7 +204,7 @@ struct BrowserPane<NewTab: View>: View {
         }
         .onAppear {
             address = displayAddress
-            if session.url == nil { editing = true }
+            if session.url == nil, !AppInfo.staysInBackground { editing = true }
         }
         .onChange(of: session.url) { if !editing { address = displayAddress } }
         .onChange(of: editing) { _, isEditing in address = isEditing ? (session.url?.absoluteString ?? "") : displayAddress }

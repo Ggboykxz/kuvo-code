@@ -127,6 +127,7 @@ without clicking, for trying a change or taking screenshots:
 | `KUVO_DEMO_UNDO_RESEND` | In the session in view, undo its last message and send it again this many seconds later |
 | `KUVO_DEMO_LOG_EVENTS` | Log each session event from the engine, to see the order they come in (`log show --predicate 'subsystem == "run.kuvo.code"'`) |
 | `KUVO_DEMO_SHOW_HOVER` | Show group chat messages' buttons as if under the pointer |
+| `KUVO_DEMO_CYCLE_TABS` | Go to the next session tab every this many seconds, a few times |
 | `KUVO_DEMO_REOPEN_WINDOW` | Close the window after this many seconds, and open it again |
 | `KUVO_DEMO_NAME` | A name to use instead of yours, for the initials on review comments |
 | `KUVO_DEMO_MACHINE_BROWSING` | As if an agent on this machine started browsing, as `<machine>\|<seconds after launch>` |

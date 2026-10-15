@@ -954,6 +954,16 @@ struct MainView: View {
         // Launched from Terminal for screenshots, the window would otherwise stay inactive.
         // KUVO_DEMO_BACKGROUND leaves the copy behind other apps, so it doesn't take the keyboard.
         if environment.keys.contains(where: { $0.hasPrefix("KUVO_DEMO_") }), environment["KUVO_DEMO_BACKGROUND"] == nil { NSApp.activate() }
+        if AppInfo.staysInBackground {
+            // Behind every other window, not just the one in front: when you close or hide that,
+            // macOS brings forward the app whose window is next.
+            Task {
+                for _ in 0..<3 {
+                    for window in NSApp.windows where window.isVisible { window.orderBack(nil) }
+                    try? await Task.sleep(for: .seconds(1))
+                }
+            }
+        }
         switch environment["KUVO_DEMO_APPEARANCE"] {
         case "light": NSApp.appearance = NSAppearance(named: .aqua)
         case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
@@ -1057,6 +1067,15 @@ struct MainView: View {
                 try? await Task.sleep(for: .seconds(parts.count > 1 ? Double(parts[1]) ?? 3 : 3))
                 let json = #"{"id":"evt_demo","type":"session.tool.input.started","data":{"sessionID":"ses_demo","assistantMessageID":"msg_demo","id":"call_demo","name":"kuvo-browser_browser_navigate"}}"#
                 if let event = try? ServerEvent(json: Data(json.utf8)) { workspace.handle(event, machine: parts[0]) }
+            }
+        }
+        // KUVO_DEMO_CYCLE_TABS=<seconds>: goes to the next session tab every so often, a few times.
+        if let wait = environment["KUVO_DEMO_CYCLE_TABS"].flatMap(Double.init) {
+            Task {
+                for _ in 0..<4 {
+                    try? await Task.sleep(for: .seconds(wait))
+                    cycleTabs(by: 1)
+                }
             }
         }
         // KUVO_DEMO_REOPEN_WINDOW=<seconds>: closes the window after that long, and opens it again.
