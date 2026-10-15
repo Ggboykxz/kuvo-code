@@ -375,8 +375,20 @@ extension MachineBrowserInstaller {
         K="$HOME/\(RemoteEngineInstaller.root)"; E="$K/engine/\(OpenCodeEngine.version)/opencode"; \
         [ -x "$E" ] || E=$(ls -d "$K"/engine/*/opencode 2>/dev/null | tail -n 1); \
         XDG_DATA_HOME="$K/data" XDG_CONFIG_HOME="$K/config" XDG_STATE_HOME="$K/state" XDG_CACHE_HOME="$K/cache" \
-        BUN_INSTALL="$K/cache/bun" KUVO_HOME="$K" BUN_BE_BUN=1 exec "$E" "\(helperPath)" \(mode)
+        BUN_INSTALL="$K/cache/bun" KUVO_HOME="$K" KUVO_LANG="\(languages)" BUN_BE_BUN=1 exec "$E" "\(helperPath)" \(mode)
         """
+    }
+
+    /// This Mac's preferred languages, for the browser there to ask sites for, as yours does:
+    /// "en-GB,en,tr-TR,tr".
+    static var languages: String {
+        var tags: [String] = []
+        for language in Locale.preferredLanguages {
+            let tag = language.replacingOccurrences(of: "_", with: "-")
+            guard tag.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" }) else { continue }
+            for candidate in [tag, String(tag.prefix { $0 != "-" })] where !tags.contains(candidate) { tags.append(candidate) }
+        }
+        return tags.prefix(6).joined(separator: ",")
     }
 
     /// The machine's engine's config entry for the browser tools: the helper, as a local MCP
