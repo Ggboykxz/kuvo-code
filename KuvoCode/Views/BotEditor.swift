@@ -132,7 +132,7 @@ struct BotEditor: View {
                                     Text(current?.name ?? "Choose a Model")
                                         .foregroundStyle(.primary)
                                     if let variant {
-                                        Text("· \(variant.capitalized)")
+                                        Text("· \(EffortLevel.title(variant))")
                                             .foregroundStyle(.secondary)
                                     }
                                     Spacer(minLength: 8)

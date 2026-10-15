@@ -145,8 +145,9 @@ struct WorkplaceChip: View {
     }
 }
 
-/// "GPT-6 Luna · High ⌄": the model, its effort, and the context it has. Elsewhere (a bot's
-/// default model) the same menu opens from a label of its own.
+/// "GPT-6 Luna · High ⌄": the model and its effort. It opens the model picker, which stays open
+/// while you choose both. Elsewhere (a bot's default model) the same picker opens from a label of
+/// its own.
 struct ModelChip<Label: View>: View {
     @Environment(Catalog.self) private var catalog
     let selection: ModelRef?
@@ -154,105 +155,37 @@ struct ModelChip<Label: View>: View {
     var opensBelow = false
     /// Drawn with the model in use and its effort.
     @ViewBuilder let label: (Model?, String?) -> Label
-    @AppStorage("recentModels") private var recentStorage = ""
+    @State private var isOpen = false
+    @State private var startsExpanded = false
 
     private var current: Model? { catalog.model(selection) ?? catalog.defaultModel }
     private var variant: String? { current.flatMap { model in selection?.sameModel(as: model.ref) == true ? selection?.variant : nil } }
 
     var body: some View {
-        NativeMenuButton(name: "model", opensBelow: opensBelow, menu: makeMenu) {
+        Button {
+            isOpen.toggle()
+        } label: {
             label(current, variant)
         }
+        .buttonStyle(.plain)
         .help("Model and effort")
+        .popover(isPresented: $isOpen, arrowEdge: opensBelow ? .bottom : .top) {
+            ModelPicker(catalog: catalog, selection: selection, onSelect: onSelect, close: { isOpen = false }, startsExpanded: startsExpanded)
+        }
         .onAppear { LogoImages.shared.prefetch(catalog.models.flatMap { [$0.makerLogoID, $0.providerID] }) }
-    }
-
-    private func makeMenu() -> NSMenu {
-        let menu = NSMenu()
-        let logos = LogoImages.shared
-
-        // Model › a short list, then everything by provider.
-        let models = NSMenu()
-        for model in shortList {
-            models.addItem(item(for: model, logos: logos))
-        }
-        let groups = catalog.modelsByProvider
-        if !groups.isEmpty {
-            models.addItem(.separator())
-            let more = NSMenu()
-            if groups.count == 1 {
-                for model in groups[0].models { more.addItem(item(for: model, logos: logos)) }
-            } else {
-                for group in groups {
-                    let providerMenu = NSMenu()
-                    for model in group.models { providerMenu.addItem(item(for: model, logos: logos)) }
-                    let providerID = group.models.first?.providerID ?? ""
-                    let row = NSMenuItem.chained(group.provider, value: "\(group.models.count)", image: logos.menuImage(providerID), submenu: providerMenu)
-                    more.addItem(row)
-                }
+        #if DEBUG
+        .task {
+            // KUVO_DEMO_MENU=model opens the picker after launch; =models, with every model shown.
+            guard let wanted = ProcessInfo.processInfo.environment["KUVO_DEMO_MENU"], wanted == "model" || wanted == "models" else { return }
+            try? await Task.sleep(for: .seconds(3))
+            startsExpanded = wanted == "models"
+            isOpen = true
+            // KUVO_DEMO_EFFORT=<level>: with it set, as if picked.
+            if let level = ProcessInfo.processInfo.environment["KUVO_DEMO_EFFORT"], let current {
+                onSelect(ModelRef(id: current.id, providerID: current.providerID, variant: level))
             }
-            models.addItem(.chained("More Models", value: nil, submenu: more))
         }
-        menu.addItem(.chained("Model", value: current?.name ?? "None", image: current.flatMap { logos.menuImage($0.makerLogoID) }, submenu: models))
-
-        // Effort ›, for models that have levels.
-        if let current, !current.variants.isEmpty {
-            let efforts = NSMenu()
-            efforts.addItem(ActionItem("Default", checked: variant == nil) {
-                onSelect(ModelRef(id: current.id, providerID: current.providerID))
-            })
-            for level in current.variants {
-                efforts.addItem(ActionItem(level.id.capitalized, checked: variant == level.id) {
-                    onSelect(ModelRef(id: current.id, providerID: current.providerID, variant: level.id))
-                })
-            }
-            menu.addItem(.chained("Effort", value: variant?.capitalized ?? "Default", image: NSImage(systemSymbolName: "gauge.with.dots.needle.50percent", accessibilityDescription: nil), submenu: efforts))
-        }
-
-        if let current {
-            menu.addItem(.separator())
-            menu.addItem(.info("Context Window", value: current.limit.context.compactTokens))
-        }
-        return menu
-    }
-
-    private func item(for model: Model, logos: LogoImages) -> NSMenuItem {
-        // "Free" only for OpenCode Zen's free models; a $0 subscription model isn't free.
-        let free = model.providerID == "opencode" && model.isFree
-        let detail = [catalog.providerName(model.providerID), free ? "Free" : nil].compactMap { $0 }.joined(separator: " · ")
-        return ActionItem(model.name, subtitle: detail.isEmpty ? nil : detail, image: logos.menuImage(model.makerLogoID), checked: model.ref.sameModel(as: current?.ref)) {
-            remember(model)
-            onSelect(model.ref)
-        }
-    }
-
-    /// The current model, then recently used ones, then the newest model of each
-    /// family (Claude Opus, GPT Sol, Gemini Flash, …) from each provider, accounts
-    /// you connected before the free OpenCode Zen models.
-    private var shortList: [Model] {
-        let enabled = catalog.models.filter(\.enabled)
-        let recent = recentStorage.split(separator: ",").compactMap { key in enabled.first { $0.key == key } }
-        var newestByFamily: [String: Model] = [:]
-        for model in enabled {
-            let family = model.providerID + "/" + (model.family ?? model.id)
-            if let existing = newestByFamily[family], existing.time.released >= model.time.released { continue }
-            newestByFamily[family] = model
-        }
-        let perProvider = Dictionary(grouping: newestByFamily.values, by: \.providerID)
-            .mapValues { Array($0.sorted { $0.time.released > $1.time.released }.prefix(4)) }
-        let providers = perProvider.keys.sorted { lhs, rhs in
-            // Free models last: someone who connected an account wants its models first.
-            (lhs == "opencode" ? 1 : 0, Catalog.featuredOrder[lhs] ?? 99, lhs) < (rhs == "opencode" ? 1 : 0, Catalog.featuredOrder[rhs] ?? 99, rhs)
-        }
-        var seen = Set<String>()
-        let candidates = [current].compactMap { $0 } + recent + providers.flatMap { perProvider[$0] ?? [] }
-        return candidates.filter { seen.insert($0.key).inserted }.prefix(10).map { $0 }
-    }
-
-    private func remember(_ model: Model) {
-        var keys = recentStorage.split(separator: ",").map(String.init).filter { $0 != model.key }
-        keys.insert(model.key, at: 0)
-        recentStorage = keys.prefix(4).joined(separator: ",")
+        #endif
     }
 }
 
@@ -275,7 +208,7 @@ struct ModelChipLabel: View {
             Text(model?.name ?? "Choose a Model")
                 .lineLimit(1)
             if let variant {
-                Text("· \(variant.capitalized)")
+                Text("· \(EffortLevel.title(variant))")
                     .foregroundStyle(.secondary)
             }
         }
