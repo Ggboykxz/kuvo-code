@@ -193,6 +193,28 @@ final class SessionModel {
     /// Sends a message with `files`, as `model` can take them (see `Attachments`). While the
     /// agent works, it gets the message at its next step, ahead of the queue. With `queue`, the
     /// message waits for the run, and everything queued before it, to finish.
+    /// The first message in a folder the engine has just opened can come before its tools (the
+    /// browser's) are connected, and the model would go without them: it waits for them, a few
+    /// seconds at most, once.
+    @ObservationIgnored private var toolsChecked = false
+
+    private func waitForTools() async {
+        guard !toolsChecked else { return }
+        toolsChecked = true
+        let deadline = ContinuousClock.now + .seconds(4)
+        var waited = false
+        while ContinuousClock.now < deadline {
+            guard let servers = try? await api.mcpServers(directory: session.location.directory) else { return }
+            if !servers.contains(where: { $0.status.status == "pending" }) {
+                // Connected only just now: the engine takes a moment more to hand its tools out.
+                if waited { try? await Task.sleep(for: .milliseconds(1500)) }
+                return
+            }
+            waited = true
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+    }
+
     func send(_ text: String, files: [URL] = [], for model: Model?, queue: Bool = false) {
         let comments = reviewComments
         let text = ReviewComments.text(text.trimmingCharacters(in: .whitespacesAndNewlines), adding: comments)
@@ -219,6 +241,7 @@ final class SessionModel {
                 // Converting a photo takes a moment; keep it off the main thread.
                 let prepared = await Task.detached { Attachments.prepare(files, for: model) }.value
                 let message = Attachments.text(text, adding: prepared.paths)
+                await waitForTools()
                 try await api.prompt(session: self.id, id: id, text: message, files: prepared.files, delivery: delivery)
             } catch {
                 transcript.removeLocal(id: id)
