@@ -750,9 +750,6 @@ private struct AccountsRow: View {
                 Text(label)
                     .font(.system(size: 14))
                 Spacer()
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 10)
             .frame(height: 38)
