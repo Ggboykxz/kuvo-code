@@ -36,6 +36,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - A step that brings back a picture, like the agent's screenshot of a page, shows it when you open the step; click it to look closer.
 - **See where the agent acts**: when it browses, a pointer glides to what it clicks, pulses as it clicks, and rings the field it types into, in your Mac's browser and in a machine's.
 - Agents can list, switch and close browser tabs, attach files to a page's upload, find what they download, accept a page's confirmation when it should go ahead, hover over menus, and wait for a text to show on a page.
+- A bot that wakes up, or a conversation's first message in a folder just opened, waits a moment for its tools, so the agent has its browser from the first step.
 - In Edit Bot, **Wake Up Now** sends a waiting wake-up right away, to see the bot's job run, and **Pause Wake-Ups** holds them all until you turn it off; the sidebar says Paused meanwhile.
 - When a session or a bot finishes while you're in another app, the notification shows the start of its reply, not just "Finished", and a bot's carries its name.
 - **Start a bot from a ready-made one**: New Bot offers bots to begin with, like a morning news digest, a page watcher, a price tracker, a researcher, a build keeper and a morning standup, each with a job, instructions and a look to change as you like. A new bot's conversation offers **Start Its Job**, which sets it going: it asks for what it needs and schedules its next run.

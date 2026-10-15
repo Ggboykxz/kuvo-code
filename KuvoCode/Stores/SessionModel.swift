@@ -201,18 +201,7 @@ final class SessionModel {
     private func waitForTools() async {
         guard !toolsChecked else { return }
         toolsChecked = true
-        let deadline = ContinuousClock.now + .seconds(4)
-        var waited = false
-        while ContinuousClock.now < deadline {
-            guard let servers = try? await api.mcpServers(directory: session.location.directory) else { return }
-            if !servers.contains(where: { $0.status.status == "pending" }) {
-                // Connected only just now: the engine takes a moment more to hand its tools out.
-                if waited { try? await Task.sleep(for: .milliseconds(1500)) }
-                return
-            }
-            waited = true
-            try? await Task.sleep(for: .milliseconds(250))
-        }
+        await api.waitForTools(in: session.location.directory)
     }
 
     func send(_ text: String, files: [URL] = [], for model: Model?, queue: Bool = false) {
@@ -649,6 +638,26 @@ final class SessionModel {
             try? await Task.sleep(for: .milliseconds(400))
             guard !Task.isCancelled, let diff = try? await api.diff(session: id) else { return }
             changes = diff
+        }
+    }
+}
+
+extension OpenCodeAPI {
+    /// Until the MCP servers of `directory` are connected (the engine connects them a moment
+    /// after it opens a folder), four seconds at most, and a moment more if they only just did:
+    /// a message sent sooner reaches a model without their tools.
+    func waitForTools(in directory: String) async {
+        let deadline = ContinuousClock.now + .seconds(4)
+        var waited = false
+        while ContinuousClock.now < deadline {
+            guard let servers = try? await mcpServers(directory: directory) else { return }
+            if !servers.contains(where: { $0.status.status == "pending" }) {
+                // Connected only just now: the engine takes a moment more to hand its tools out.
+                if waited { try? await Task.sleep(for: .milliseconds(1500)) }
+                return
+            }
+            waited = true
+            try? await Task.sleep(for: .milliseconds(250))
         }
     }
 }

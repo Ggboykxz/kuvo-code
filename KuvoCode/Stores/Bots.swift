@@ -292,6 +292,7 @@ final class Bots {
     /// or its machine, and takes it off the list.
     func wakeNow(_ wake: Wakes.Pending, of bot: Bot) async throws {
         guard let api = app?.workspace.api(forFolder: bot.directory) else { throw Failure.notConnected(bot.machine ?? "This Mac's engine") }
+        await api.waitForTools(in: bot.directory)
         try await api.prompt(session: bot.sessionID, id: Identifier.message(), text: Wakes.marker + wake.note, delivery: .queue)
         await cancelWake(wake, of: bot)
     }
@@ -320,6 +321,7 @@ final class Bots {
         guard let api = app?.api else { return }
         for bot in list where bot.machine == nil && !FileManager.default.fileExists(atPath: Self.pauseFile(of: bot)) {
             let pending = Self.localWakes(of: bot)
+            if pending.contains(where: { $0.due <= .now }) { await api.waitForTools(in: bot.directory) }
             for wake in pending where wake.due <= .now {
                 do {
                     try await api.prompt(session: bot.sessionID, id: Identifier.message(), text: Wakes.marker + wake.note, delivery: .queue)
@@ -357,11 +359,14 @@ final class Bots {
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: command.path)
     }
 
-    /// Writes the bot's session in its folder, where `kuvo-wake fire` reads it on a machine.
+    /// Writes the bot's session in its folder, and the folder it works in, where `kuvo-wake fire`
+    /// reads them on a machine (it waits for the folder's tools before it wakes the bot).
     private func writeSession(of bot: Bot) async throws {
         let file = (bot.folder as NSString).appendingPathComponent("session")
         if let machine = bot.machine {
-            let script = "printf '%s' \(SSHConnection.quoted(bot.sessionID)) >\(SSHConnection.quoted(file))"
+            let directory = (bot.folder as NSString).appendingPathComponent("directory")
+            let path = RemoteFolder.parse(bot.directory)?.path ?? bot.directory
+            let script = "printf '%s' \(SSHConnection.quoted(bot.sessionID)) >\(SSHConnection.quoted(file)) && printf '%s' \(SSHConnection.quoted(path)) >\(SSHConnection.quoted(directory))"
             guard await Task.detached(operation: { RemoteShell.run(script, on: machine) }).value != nil else { throw Failure.noFolder }
         } else {
             try Data(bot.sessionID.utf8).write(to: URL(filePath: file))
@@ -436,6 +441,7 @@ final class Bots {
             guard let api = app?.workspace.api(forFolder: bot.directory) else { continue }
             if (try? await api.setInstruction(session: bot.sessionID, key: Self.instructionKey, text: Self.instructions(for: bot))) != nil {
                 synced.insert(bot.id)
+                if bot.machine != nil { try? await writeSession(of: bot) }
             }
         }
     }

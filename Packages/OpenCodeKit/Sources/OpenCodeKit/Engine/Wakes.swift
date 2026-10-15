@@ -118,6 +118,7 @@ public enum Wakes {
       for bot in "$bots"/*/; do
         # Paused by you: its wake-ups wait.
         [ -e "${bot}paused" ] && continue
+        tools=
         session=$(cat "$bot/session" 2>/dev/null) || continue
         [ -n "$session" ] || continue
         for wake in "$bot"wakes/*; do
@@ -125,6 +126,17 @@ public enum Wakes {
           due=${wake##*/}; due=${due%%-*}
           case "$due" in ''|*[!0-9]*) continue;; esac
           [ "$due" -le "$now" ] || continue
+          # The bot's folder's tools (its browser) first: the engine connects them a moment
+          # after it opens the folder, and a wake-up sent sooner goes without them.
+          if [ -f "${bot}directory" ] && command -v curl >/dev/null 2>&1 && [ -z "$tools" ]; then
+            tools=1; waited=
+            folder=$(sed -e 's/%/%25/g' -e 's/ /%20/g' "${bot}directory")
+            for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do
+              curl -sf -m 5 -u "opencode:$password" -H "x-opencode-directory: $folder" "http://127.0.0.1:$port/api/mcp" | grep -q '"pending"' || break
+              waited=1; sleep 0.25
+            done
+            [ -n "$waited" ] && sleep 1.5
+          fi
           ms=$(date +%s%3N 2>/dev/null); case "$ms" in *[!0-9]*|'') ms=$((now * 1000));; esac
           id=msg_$(printf '%012x' $(((ms * 4096 + 1) & 0xFFFFFFFFFFFF)))$(random 14)
           body="{\"id\":\"$id\",\"text\":\"$(json "[Wake-up] $(cat "$wake")")\",\"delivery\":\"queue\"}"
