@@ -36,6 +36,10 @@ const SCRIPT = process.argv[1];
 // How long Chromium keeps running with nobody connected.
 const IDLE = Number(process.env.KUVO_BROWSER_IDLE || 10 * 60) * 1000;
 
+// Goes up when the keeper changes: a newer one replaces one that's running (its pages close, its
+// sign-ins stay), and an older one never replaces a newer.
+const KEEPER = 2;
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /// Calls `handle` with each line `stream` sends.
@@ -68,9 +72,51 @@ function reachable() {
   });
 }
 
-/// Starts the keeper if it isn't running, and waits for it: nil once it answers, else what's wrong.
+/// The running keeper's version, from its greeting (1 before keepers said).
+function runningKeeper() {
+  return new Promise((resolve) => {
+    const socket = net.createConnection(SOCKET);
+    let buffer = "";
+    const done = (value) => {
+      clearTimeout(timer);
+      socket.destroy();
+      resolve(value);
+    };
+    const timer = setTimeout(() => done(null), 2000);
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk) => {
+      buffer += chunk;
+      const end = buffer.indexOf("\n");
+      if (end < 0) return;
+      try {
+        done(JSON.parse(buffer.slice(0, end)).params?.keeper ?? 1);
+      } catch {
+        done(1);
+      }
+    });
+    socket.once("error", () => done(null));
+  });
+}
+
+/// Asks the running keeper to stop, and waits until it has.
+async function stopKeeper() {
+  await new Promise((resolve) => {
+    const socket = net.createConnection(SOCKET);
+    socket.once("connect", () => socket.end(JSON.stringify({ method: "Kuvo.stop" }) + "\n", resolve));
+    socket.once("error", resolve);
+  });
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline && (await reachable())) await sleep(200);
+}
+
+/// Starts the keeper if it isn't running (or an older one is), and waits for it: nil once it
+/// answers, else what's wrong.
 async function ensure() {
-  if (await reachable()) return null;
+  if (await reachable()) {
+    const running = await runningKeeper();
+    if (running === null || running >= KEEPER) return null;
+    await stopKeeper();
+  }
   if (!fs.existsSync(path.join(CURRENT, "chrome-headless-shell"))) {
     return { kind: "missing", message: "The browser isn't on this machine yet. Kuvo Code puts it there when it connects to the machine; try again in a minute." };
   }
@@ -393,7 +439,7 @@ async function host() {
       }
       if (!clients.size) idleSoon();
     });
-    send(client, { method: "Kuvo.hello", params: { targetId: active, status, version: CONFIG.version } });
+    send(client, { method: "Kuvo.hello", params: { targetId: active, status, version: CONFIG.version, keeper: KEEPER } });
     lines(socket, (text) => {
       let message;
       try {
