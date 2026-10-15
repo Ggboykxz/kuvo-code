@@ -25,6 +25,9 @@ const K = process.env.KUVO_HOME || path.join(os.homedir(), ".kuvo-code");
 const RUN = path.join(K, "run");
 const SOCKET = path.join(RUN, "browser.sock");
 const PIDFILE = path.join(RUN, "browser.pid");
+// The pages open when the keeper last stopped (for an update, or with nobody around), to open
+// again when it starts.
+const PAGESFILE = path.join(RUN, "pages.json");
 const ERRORFILE = path.join(RUN, "browser.error");
 const LOGFILE = path.join(RUN, "browser.log");
 const BROWSER = path.join(K, "browser");
@@ -44,7 +47,7 @@ const TAB_IDLE = Number(process.env.KUVO_BROWSER_TAB_IDLE || 12 * 3600) * 1000;
 
 // Goes up with every change to the keeper (host mode): a newer one replaces one that's running
 // (its pages close, its sign-ins stay), and an older one never replaces a newer.
-const KEEPER = 14;
+const KEEPER = 15;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -371,6 +374,13 @@ async function host() {
   // off); as root, or where Chromium says it can't be, without. Anything else gets a second try.
   const isRoot = process.getuid && process.getuid() === 0;
   let sandbox = !isRoot;
+  // The pages open last time, opened again once the browser's up (after the keeper's own
+  // watch on pages, so they load as the browser it says it is).
+  let reopen = [];
+  try {
+    reopen = JSON.parse(fs.readFileSync(PAGESFILE, "utf8")).filter((url) => typeof url === "string" && /^(https?|file):/.test(url)).slice(0, 8);
+  } catch {}
+  fs.rmSync(PAGESFILE, { force: true });
   let started = await launchChrome(sandbox);
   if (!started.chrome && sandbox && /No usable sandbox|SUID sandbox|user namespace/i.test(started.output)) sandbox = false;
   if (!started.chrome) started = await launchChrome(sandbox);
@@ -438,6 +448,9 @@ async function host() {
   // than taking over one in use; and when you last picked a page for a conversation.
   const claims = new Map();
   const picks = new Map();
+  // Each page's address, as the browser last said, and the page it started with.
+  const addresses = new Map();
+  let firstPage = null;
   // The page each client's session is attached to, to know which pages a Mac shows.
   const attachedTo = new Map();
   const shown = (targetId) => [...attachedTo].some(([sessionId, target]) => target === targetId && owners.get(sessionId)?.viewer);
@@ -455,6 +468,11 @@ async function host() {
   const stop = async () => {
     if (stopping) return;
     stopping = true;
+    // What's open, to open again next time.
+    const open = [...addresses.values()].filter((url) => /^(https?|file):/.test(url ?? ""));
+    try {
+      if (open.length) fs.writeFileSync(PAGESFILE, JSON.stringify(open.slice(-8)), { mode: 0o600 });
+    } catch {}
     try {
       toChrome({ id: next++, method: "Browser.close" });
     } catch {}
@@ -531,8 +549,13 @@ async function host() {
       }
     }
     if (message.method === "Target.targetCreated" && message.params.targetInfo.type === "page") targets.add(message.params.targetInfo.targetId);
+    if ((message.method === "Target.targetCreated" || message.method === "Target.targetInfoChanged") && message.params.targetInfo.type === "page") {
+      addresses.set(message.params.targetInfo.targetId, message.params.targetInfo.url);
+      firstPage ??= message.params.targetInfo.targetId;
+    }
     if (message.method === "Target.targetDestroyed") {
       targets.delete(message.params.targetId);
+      addresses.delete(message.params.targetId);
       own.delete(message.params.targetId);
       claims.delete(message.params.targetId);
       if (message.params.targetId === active) setActive(null, "browser");
@@ -651,6 +674,14 @@ async function host() {
   fs.mkdirSync(DOWNLOADS, { recursive: true, mode: 0o700 });
   clearOldDownloads();
   internal("Browser.setDownloadBehavior", { behavior: "allowAndName", downloadPath: DOWNLOADS, eventsEnabled: true });
+  if (reopen.length) {
+    for (const url of reopen) internal("Target.createTarget", { url });
+    // The blank page the browser starts with goes, once the others are there.
+    setTimeout(() => {
+      const url = addresses.get(firstPage);
+      if (firstPage && (!url || url === "about:blank") && targets.size > 1 && !shown(firstPage)) internal("Target.closeTarget", { targetId: firstPage });
+    }, 2000);
+  }
   const mask = process.umask(0o077);
   server.listen(SOCKET, () => {
     process.umask(mask);
