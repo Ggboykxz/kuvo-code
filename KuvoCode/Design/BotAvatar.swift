@@ -69,7 +69,7 @@ enum BotMood: Equatable {
 
 /// A bot's face on its shape, at any size: in the sidebar, on its tab, in its header and, large,
 /// where it's made. It moves with its mood; everything is worked out from the clock, so each
-/// frame is cheap, and it holds still while the app isn't active or Reduce Motion is on.
+/// frame is cheap, and it holds still with Reduce Motion on.
 struct BotAvatar: View {
     let look: BotLook
     var size: CGFloat = 26
@@ -83,20 +83,12 @@ struct BotAvatar: View {
         if reduceMotion {
             figure(BotPose.still(mood, noticed: noticed))
         } else {
-            TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !appearsActive && !Self.alwaysMoves)) { context in
+            // Smoothest while you're in the app; slower, but still alive, while it's beside another.
+            TimelineView(.animation(minimumInterval: appearsActive ? 1.0 / 30 : 1.0 / 15)) { context in
                 figure(BotPose(mood: mood, noticed: noticed, time: context.date.timeIntervalSinceReferenceDate + seed, seed: seed, small: size < 24))
             }
         }
     }
-
-    /// KUVO_DEMO_BOT_MOODS also keeps them moving in a demo copy in the background, for captures.
-    private static let alwaysMoves: Bool = {
-        #if DEBUG
-        ProcessInfo.processInfo.environment["KUVO_DEMO_BOT_MOODS"] != nil
-        #else
-        false
-        #endif
-    }()
 
     /// Keeps bots out of step with each other, and the same from one launch to the next.
     private var seed: Double {
