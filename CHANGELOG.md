@@ -6,6 +6,8 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- **Chats**: conversations of no project, for a question or an idea. Start one with **+** next to Chats or ⌥⌘N; when it turns into work, **Move to Project** carries it, conversation and all, into one of your projects.
+- Sidebar sections fold: click Bots, Chats, Projects or Recents to tuck it away.
 - With the tab bar hidden, the side panel's button stays at the top right of the window, so the panel is easy to find.
 - **Bots**: teammates with a name, a look of their own and one job. Make one with **+** next to Bots in the sidebar: pick its color, shape and face, say what it does, and have it live on this Mac or on one of your machines, in a folder of its own or one of your projects. A bot keeps one conversation, remembers what it learns in a memory file, and can schedule its own wake-ups to carry on later; on a machine, it wakes up and works while your Mac is off. Its steps show when it schedules a wake-up, and each wake-up shows in its conversation.
 - **Bots come alive**: a bot's avatar shows what it's up to. It bounces with sparks circling it while it works, hops and glows when it needs you, cheers when it has news, and sleeps with z's floating up until its next wake-up. Idle, it breathes, blinks, looks around and fidgets now and then, and it notices when you point at it. The sidebar counts down to its next wake-up and shows when it's waking up.

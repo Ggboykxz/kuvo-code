@@ -109,6 +109,9 @@ struct AppCommands: Commands {
             Button("New Project…") { actions?.newProject() }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
                 .disabled(actions == nil)
+            Button("New Chat") { actions?.newChat() }
+                .keyboardShortcut("n", modifiers: [.command, .option])
+                .disabled(actions == nil)
             Button("New Bot…") { actions?.newBot() }
                 .disabled(actions == nil)
             Button("New Group Chat…") { actions?.newGroup() }
@@ -226,6 +229,7 @@ struct SessionActions {
     var newProject: () -> Void
     var newBot: () -> Void
     var newGroup: () -> Void
+    var newChat: () -> Void
     var stop: () -> Void
     var selectAgent: (String) -> Void
     var togglePanel: () -> Void

@@ -120,6 +120,8 @@ without clicking, for trying a change or taking screenshots:
 | `KUVO_DEMO_VIEW_IMAGE` | Show these comma-separated pictures in the image viewer |
 | `KUVO_DEMO_SLOW` | Slow the app's animations down this many times, to look at one frame by frame |
 | `KUVO_DEMO_TOGGLE_PANEL` | Show and hide the side panel every this many seconds, a few times |
+| `KUVO_DEMO_CHAT` | Start a chat with this message |
+| `KUVO_DEMO_MOVE_CHAT` | Move the newest chat into the project at this folder |
 | `KUVO_DEMO_NAME` | A name to use instead of yours, for the initials on review comments |
 | `KUVO_DEMO_COMMENT` | Add a review comment to the session in view, as `<path in the project>:<line>:<text>` |
 | `KUVO_ANALYTICS_URL` | Send anonymous usage to this collector, e.g. `http://127.0.0.1:8787/kuvo/code`; debug builds send none otherwise |

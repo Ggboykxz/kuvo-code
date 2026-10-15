@@ -972,7 +972,7 @@ struct EmptyConversationView: View {
             Image(systemName: "bubble.left.and.text.bubble.right")
                 .font(.system(size: 34, weight: .light))
                 .foregroundStyle(.tertiary)
-            Text("What should we work on in \((directory as NSString).lastPathComponent)?")
+            Text(Workspace.isChat(directory) ? "What's on your mind?" : "What should we work on in \((directory as NSString).lastPathComponent)?")
                 .font(.title3.weight(.medium))
                 .foregroundStyle(.secondary)
         }

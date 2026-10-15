@@ -145,9 +145,46 @@ final class Workspace {
     /// waiting on has ended once its count goes up.
     @ObservationIgnored private(set) var endedRuns: [String: Int] = [:]
 
+    // MARK: Chats
+
+    /// Where chats run: conversations of no project, on this Mac, in a folder of their own.
+    static let chatsFolder: String = {
+        let url = AppInfo.supportDirectory.appending(path: "Chats")
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url.path
+    }()
+
+    static func isChat(_ directory: String) -> Bool {
+        directory == chatsFolder
+    }
+
+    /// Chats, newest first.
+    var chats: [Session] {
+        sessions.filter { Self.isChat($0.location.directory) && !Self.isArchived($0) && !botSessions.contains($0.id) }
+            .sorted { $0.time.updated > $1.time.updated }
+    }
+
+    /// Moves a chat into the project at `directory`: its conversation goes along, and from then on
+    /// it works in that project's folders. If it's working, the move comes at its next step.
+    func move(_ id: String, toProject directory: String) async throws {
+        guard let session = session(id), let api = api(forFolder: directory) else { return }
+        try await api.moveSession(id, to: directory)
+        let extra = settings[directory]?.folders ?? []
+        try? await api.setPermissions(session: id, rules: ProjectFolders.permissions(session.permissions ?? [], folders: extra))
+        if extra.isEmpty {
+            try? await api.removeInstruction(session: id, key: ProjectFolders.instructionKey)
+        } else {
+            try? await api.setInstruction(session: id, key: ProjectFolders.instructionKey, text: ProjectFolders.instructions(primary: directory, folders: extra))
+        }
+        await reload(id)
+        // Made again when it's next shown, with the project's folders.
+        if self.session(id)?.location.directory == directory { models[id] = nil }
+        Analytics.shared.track("chat_moved")
+    }
+
     /// Projects with their sessions, most recently active first.
     var projects: [Project] {
-        let grouped = Dictionary(grouping: sessions.filter { !Self.isArchived($0) && !botSessions.contains($0.id) }, by: projectDirectory(of:))
+        let grouped = Dictionary(grouping: sessions.filter { !Self.isArchived($0) && !botSessions.contains($0.id) && !Self.isChat($0.location.directory) }, by: projectDirectory(of:))
         let directories = Set(grouped.keys).union(folders).filter { RemoteFolder.machine(of: $0).map(machines.contains) ?? true }
         return directories.map { directory in
             Project(directory: directory, sessions: (grouped[directory] ?? []).sorted { $0.time.updated > $1.time.updated }, settings: settings[directory] ?? ProjectSettings())
@@ -285,7 +322,8 @@ final class Workspace {
     // MARK: Changes
 
     func addFolder(_ directory: String) {
-        guard !folders.contains(directory) else { return }
+        // Chats aren't a project.
+        guard !folders.contains(directory), !Self.isChat(directory) else { return }
         Analytics.shared.track("project_added", ["projects": folders.count + 1])
         folders.insert(directory, at: 0)
         UserDefaults.standard.set(folders, forKey: "projectFolders")
@@ -300,6 +338,7 @@ final class Workspace {
 
     /// The project's name: its own, or its primary folder's. A worktree has its project's.
     func projectName(_ directory: String) -> String {
+        if Self.isChat(directory) { return "Chats" }
         let directory = projectDirectory(directory)
         return settings[directory]?.name ?? (directory as NSString).lastPathComponent
     }

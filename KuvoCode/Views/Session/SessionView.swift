@@ -144,7 +144,7 @@ struct DraftSessionView: View {
     var body: some View {
         VStack(spacing: 0) {
             Spacer()
-            Text("What should we work on?")
+            Text(Workspace.isChat(directory) ? "What's on your mind?" : "What should we work on?")
                 .font(.system(size: 30, weight: .semibold))
                 .padding(.bottom, 28)
 

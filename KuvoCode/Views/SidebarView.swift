@@ -28,6 +28,8 @@ struct SidebarView: View {
 
     /// Folders the user closed, by path (newline-separated).
     @AppStorage("collapsedProjects") private var collapsedStorage = ""
+    /// Sections the user folded away: "pinned", "bots", "chats", "projects", "recents" (newline-separated).
+    @AppStorage("collapsedSections") private var foldedStorage = ""
     /// Projects showing all their sessions instead of the latest few.
     @State private var showsAll: Set<String> = []
     /// Where sessions were picked from. A session shows in its project and in Recents; only
@@ -42,7 +44,7 @@ struct SidebarView: View {
     /// The worktree of the session being archived or deleted has changes that aren't committed.
     @State private var worktreeIsDirty = false
 
-    private enum Place { case pinned, project, recents }
+    private enum Place { case pinned, project, chats, recents }
     @State private var newTitle = ""
     /// Sessions whose title or project has this, instead of the usual lists.
     @State private var search = ""
@@ -103,12 +105,14 @@ struct SidebarView: View {
                         }
                     } else {
                     if !pinned.isEmpty {
-                        SectionHeader(title: "Pinned") { EmptyView() }
-                        ForEach(pinned) { session in
-                            sessionRow(session, in: .pinned)
+                        SectionHeader(title: "Pinned", isFolded: folded("pinned")) { EmptyView() }
+                        if !isFolded("pinned") {
+                            ForEach(pinned) { session in
+                                sessionRow(session, in: .pinned)
+                            }
                         }
                     }
-                    SectionHeader(title: "Bots") {
+                    SectionHeader(title: "Bots", isFolded: folded("bots")) {
                         // With bots enough for one, a group chat is made from here too.
                         if bots.list.count >= 2 {
                             NativeMenuButton(opensBelow: true) {
@@ -132,6 +136,7 @@ struct SidebarView: View {
                             .help("New Bot…")
                         }
                     }
+                    if !isFolded("bots") {
                     if bots.list.isEmpty {
                         SidebarRow(isSelected: false, action: newBot) {
                             Image(systemName: "plus.circle")
@@ -161,7 +166,9 @@ struct SidebarView: View {
                             Button("Delete Group Chat…", role: .destructive) { deletingGroup = group }
                         }
                     }
-                    SectionHeader(title: "Projects") {
+                    }
+                    chatsSection
+                    SectionHeader(title: "Projects", isFolded: folded("projects")) {
                         Button(action: newProject) {
                             Image(systemName: "plus")
                                 .font(.system(size: 12, weight: .semibold))
@@ -169,21 +176,25 @@ struct SidebarView: View {
                         .buttonStyle(IconButtonStyle(width: 22, height: 22))
                         .help("New Project… (⇧⌘N)")
                     }
-                    if workspace.isLoaded && workspace.projects.isEmpty {
-                        Text("Open a folder for the agent to work in.")
-                            .font(.system(size: 13))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                    }
-                    ForEach(workspace.projects) { project in
-                        projectSection(project)
+                    if !isFolded("projects") {
+                        if workspace.isLoaded && workspace.projects.isEmpty {
+                            Text("Open a folder for the agent to work in.")
+                                .font(.system(size: 13))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                        }
+                        ForEach(workspace.projects) { project in
+                            projectSection(project)
+                        }
                     }
 
                     if !recents.isEmpty {
-                        SectionHeader(title: "Recents") { EmptyView() }
-                        ForEach(recents) { session in
-                            sessionRow(session, in: .recents)
+                        SectionHeader(title: "Recents", isFolded: folded("recents")) { EmptyView() }
+                        if !isFolded("recents") {
+                            ForEach(recents) { session in
+                                sessionRow(session, in: .recents)
+                            }
                         }
                     }
                     }
@@ -381,6 +392,68 @@ struct SidebarView: View {
         }
     }
 
+    /// Conversations of no project: a row for each, the newest few until you ask for the rest.
+    @ViewBuilder private var chatsSection: some View {
+        let chats = workspace.chats
+        let draft = Self.draftTag(Workspace.chatsFolder)
+        SectionHeader(title: "Chats", isFolded: folded("chats")) {
+            Button { newSession(Workspace.chatsFolder) } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .buttonStyle(IconButtonStyle(width: 22, height: 22))
+            .help("New Chat (⌥⌘N)")
+        }
+        if !isFolded("chats") {
+            if selection == draft {
+                SidebarRow(isSelected: true, action: {}) {
+                    EmptyView()
+                } title: {
+                    Text("New Chat")
+                }
+            } else if chats.isEmpty {
+                SidebarRow(isSelected: false, action: { newSession(Workspace.chatsFolder) }) {
+                    Image(systemName: "plus.circle")
+                } title: {
+                    Text("Start a Chat")
+                        .foregroundStyle(.secondary)
+                }
+                .help("A conversation of no project. You can move it into one later.")
+            }
+            let all = showsAll.contains(Workspace.chatsFolder)
+            ForEach(all ? chats : Array(chats.prefix(Self.sessionsPerProject))) { session in
+                sessionRow(session, in: .chats)
+            }
+            if chats.count > Self.sessionsPerProject {
+                SidebarRow(isSelected: false, action: {
+                    withAnimation(.ui) {
+                        if all { showsAll.remove(Workspace.chatsFolder) } else { showsAll.insert(Workspace.chatsFolder) }
+                    }
+                }) {
+                    EmptyView()
+                } title: {
+                    Text(all ? "Show Less" : "Show \(chats.count - Self.sessionsPerProject) More")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func isFolded(_ section: String) -> Bool {
+        foldedStorage.split(separator: "\n").contains { $0 == section }
+    }
+
+    /// Whether a section is folded away, to show and change from its heading.
+    private func folded(_ section: String) -> Binding<Bool> {
+        Binding {
+            isFolded(section)
+        } set: { fold in
+            var sections = Set(foldedStorage.split(separator: "\n").map(String.init))
+            if fold { sections.insert(section) } else { sections.remove(section) }
+            foldedStorage = sections.sorted().joined(separator: "\n")
+        }
+    }
+
     private var collapsed: Set<String> {
         Set(collapsedStorage.split(separator: "\n").map(String.init))
     }
@@ -405,22 +478,22 @@ struct SidebarView: View {
 
     /// Pinned ones are already at the top.
     private var recents: [Session] {
-        Array(workspace.projects.flatMap(\.sessions).filter { !Workspace.isPinned($0) }.sorted { $0.time.updated > $1.time.updated }.prefix(Self.recentCount))
+        Array((workspace.projects.flatMap(\.sessions) + workspace.chats).filter { !Workspace.isPinned($0) }.sorted { $0.time.updated > $1.time.updated }.prefix(Self.recentCount))
     }
 
     private var pinned: [Session] {
-        workspace.projects.flatMap(\.sessions).filter(Workspace.isPinned).sorted { $0.time.updated > $1.time.updated }
+        (workspace.projects.flatMap(\.sessions) + workspace.chats).filter(Workspace.isPinned).sorted { $0.time.updated > $1.time.updated }
     }
 
     /// Highlighted where it was picked; picked elsewhere (a tab, a new session), in its project.
-    private func isHighlighted(_ id: String, in place: Place) -> Bool {
-        guard selection == id else { return false }
-        if let picked = pickedIn[id] { return picked == place }
-        return place == .project
+    private func isHighlighted(_ session: Session, in place: Place) -> Bool {
+        guard selection == session.id else { return false }
+        if let picked = pickedIn[session.id] { return picked == place }
+        return place == (Workspace.isChat(session.location.directory) ? .chats : .project)
     }
 
     private func sessionRow(_ session: Session, in place: Place) -> some View {
-        SidebarRow(isSelected: isHighlighted(session.id, in: place), indented: place == .project, action: {
+        SidebarRow(isSelected: isHighlighted(session, in: place), indented: place == .project, action: {
             pickedIn[session.id] = place
             selection = session.id
         }) {
@@ -476,7 +549,9 @@ struct SidebarView: View {
             newTitle = session.title ?? ""
             renaming = session
         }
-        if !RemoteFolder.isRemote(session.location.directory) {
+        if Workspace.isChat(session.location.directory) {
+            MoveToProjectMenu(session: session)
+        } else if !RemoteFolder.isRemote(session.location.directory) {
             Button("Show in Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: session.location.directory) }
         }
         Divider()
@@ -873,13 +948,35 @@ private struct BotRow: View {
 /// "Projects", "Recents": a quiet heading, with room for a trailing button.
 private struct SectionHeader<Trailing: View>: View {
     let title: String
+    /// Folded away, its rows hidden: a click on the heading folds or unfolds it. Nil for one that
+    /// doesn't fold.
+    var isFolded: Binding<Bool>?
     @ViewBuilder var trailing: () -> Trailing
+    @State private var isHovering = false
 
     var body: some View {
-        HStack {
-            Text(title)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.secondary)
+        HStack(spacing: 0) {
+            if let isFolded {
+                Button {
+                    withAnimation(.ui) { isFolded.wrappedValue.toggle() }
+                } label: {
+                    HStack(spacing: 5) {
+                        label
+                        // A chevron under the pointer, and while folded, so it's clear it opens.
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.tertiary)
+                            .rotationEffect(.degrees(isFolded.wrappedValue ? -90 : 0))
+                            .opacity(isHovering || isFolded.wrappedValue ? 1 : 0)
+                    }
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .help(isFolded.wrappedValue ? "Show \(title)" : "Hide \(title)")
+                .accessibilityValue(isFolded.wrappedValue ? "Collapsed" : "Expanded")
+            } else {
+                label
+            }
             Spacer()
             trailing()
         }
@@ -888,6 +985,42 @@ private struct SectionHeader<Trailing: View>: View {
         .padding(.trailing, 4)
         .padding(.top, 16)
         .padding(.bottom, 4)
+        .onHover { isHovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovering)
+    }
+
+    private var label: some View {
+        Text(title)
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(.secondary)
+    }
+}
+
+/// "Move to Project ›": a chat's way into one of this Mac's projects.
+private struct MoveToProjectMenu: View {
+    let session: Session
+    @Environment(Workspace.self) private var workspace
+
+    var body: some View {
+        let projects = workspace.projects.filter { !RemoteFolder.isRemote($0.directory) }
+        Menu("Move to Project") {
+            ForEach(projects) { project in
+                Button(project.name) { move(to: project.directory) }
+            }
+            if projects.isEmpty {
+                Text("No projects on this Mac")
+            }
+        }
+    }
+
+    private func move(to directory: String) {
+        Task {
+            do {
+                try await workspace.move(session.id, toProject: directory)
+            } catch {
+                NSAlert(error: error).runModal()
+            }
+        }
     }
 }
 

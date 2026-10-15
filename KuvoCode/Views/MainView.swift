@@ -1,4 +1,5 @@
 import OpenCodeKit
+import os
 import SwiftUI
 
 /// The workspace, laid out like Rex: open sessions as tabs in the title bar, and
@@ -397,8 +398,8 @@ struct MainView: View {
 
     private var tabItems: [TabItem] {
         tabs.compactMap { key in
-            if SidebarView.draftDirectory(from: key) != nil {
-                return TabItem(id: key, title: "New Session", logo: nil, status: .idle)
+            if let directory = SidebarView.draftDirectory(from: key) {
+                return TabItem(id: key, title: Workspace.isChat(directory) ? "New Chat" : "New Session", logo: nil, status: .idle)
             }
             if workspace.waitingMachine(for: key) != nil {
                 return TabItem(id: key, title: workspace.remoteTitle(key) ?? "Session", logo: nil, status: .idle)
@@ -531,6 +532,9 @@ struct MainView: View {
                         Button("Edit Bot", systemImage: "slider.horizontal.3") { openBotEditor(bot: bot) }
                             .help("Edit Bot: its look, job, wake-ups and memory")
                     }
+                    if Workspace.isChat(directory) {
+                        MoveToProjectButton(sessionID: id)
+                    }
                     if !(machine?.isLive ?? app.isLive) {
                         Image(systemName: "bolt.horizontal.circle")
                             .foregroundStyle(.orange)
@@ -567,7 +571,8 @@ struct MainView: View {
                 .id(directory)
             } else if let directory = draftDirectory {
                 let catalog = catalog(for: directory)
-                Card(title: "New Session", detail: workspace.projectName(directory), isFocused: focus == .conversation) {
+                let isChat = Workspace.isChat(directory)
+                Card(title: isChat ? "New Chat" : "New Session", detail: isChat ? nil : workspace.projectName(directory), isFocused: focus == .conversation) {
                     Image(systemName: "square.and.pencil")
                 } actions: {
                     Button("Close Tab", systemImage: "xmark") { closeTab(SidebarView.draftTag(directory)) }
@@ -590,7 +595,7 @@ struct MainView: View {
                 Card(title: AppInfo.name, isFocused: focus == .conversation) {
                     AppLogo(size: 16)
                 } content: {
-                    WelcomeView(openFolder: openFolder, showProviders: { showsProviders = true })
+                    WelcomeView(openFolder: openFolder, newChat: { newSession(in: Workspace.chatsFolder) }, showProviders: { showsProviders = true })
                 }
             }
         }
@@ -791,6 +796,7 @@ struct MainView: View {
             newProject: { projectSheet = ProjectSheetRequest(project: nil) },
             newBot: { openBotEditor(bot: nil) },
             newGroup: { openGroupEditor(group: nil) },
+            newChat: { newSession(in: Workspace.chatsFolder) },
             stop: { model?.stop() },
             selectAgent: { model?.selectAgent($0) },
             togglePanel: { withAnimation(.ui) { showsPanel.toggle() } },
@@ -911,9 +917,10 @@ struct MainView: View {
     }
 
     /// Starts a draft in `directory`, or in the current project (a worktree's, for a session in one).
+    /// A new session in `directory`, or the project in view, or the latest one; with no project
+    /// at all, a chat.
     private func newSession(in directory: String?) {
-        let directory = directory ?? activeDirectory.map(workspace.projectDirectory) ?? workspace.projects.first?.directory
-        guard let directory else { return openFolder() }
+        let directory = directory ?? activeDirectory.map(workspace.projectDirectory) ?? workspace.projects.first?.directory ?? Workspace.chatsFolder
         openTab(SidebarView.draftTag(directory))
     }
 
@@ -1001,6 +1008,30 @@ struct MainView: View {
             default: continue
             }
             showsPanel = true
+        }
+        // KUVO_DEMO_CHAT=<message>: a new chat, with this message sent; KUVO_DEMO_MOVE_CHAT=<folder>
+        // then moves the newest chat into that project.
+        if let message = environment["KUVO_DEMO_CHAT"] {
+            Task {
+                while app.api == nil { try? await Task.sleep(for: .seconds(1)) }
+                guard let session = try? await workspace.createSession(in: Workspace.chatsFolder, model: nil, agent: nil) else { return }
+                openTab(session.id)
+                workspace.model(for: session.id)?.submit(message, files: [], for: nil, queue: false, commands: [])
+            }
+        }
+        if let folder = environment["KUVO_DEMO_MOVE_CHAT"] {
+            Task {
+                while !workspace.isLoaded { try? await Task.sleep(for: .seconds(1)) }
+                try? await Task.sleep(for: .seconds(3))
+                let log = Logger(subsystem: "run.kuvo.code", category: "demo")
+                guard let chat = workspace.chats.first else { return log.error("KUVO_DEMO_MOVE_CHAT: no chat") }
+                do {
+                    try await workspace.move(chat.id, toProject: folder)
+                    openTab(chat.id)
+                } catch {
+                    log.error("KUVO_DEMO_MOVE_CHAT failed: \(String(describing: error), privacy: .public)")
+                }
+            }
         }
         // KUVO_DEMO_TOGGLE_PANEL=<seconds>: shows and hides the panel every so often, a few times.
         if let every = environment["KUVO_DEMO_TOGGLE_PANEL"].flatMap(Double.init) {
@@ -1184,6 +1215,45 @@ private struct SlowEngineNotice: View {
 
 /// Which project sheet to show: New Project, or Edit Project for `project`.
 /// The bot editor: a new bot, or changing `bot`.
+/// A chat's way into one of this Mac's projects, in its header.
+private struct MoveToProjectButton: View {
+    let sessionID: String
+    @Environment(Workspace.self) private var workspace
+
+    var body: some View {
+        NativeMenuButton(opensBelow: true) {
+            let menu = NSMenu()
+            let projects = workspace.projects.filter { !RemoteFolder.isRemote($0.directory) }
+            menu.addItem(.sectionHeader(title: "Move to Project"))
+            for project in projects {
+                menu.addItem(ActionItem(project.name, image: NSImage(systemSymbolName: "folder", accessibilityDescription: nil)) { move(to: project.directory) })
+            }
+            if projects.isEmpty {
+                let none = NSMenuItem(title: "No projects on this Mac", action: nil, keyEquivalent: "")
+                none.isEnabled = false
+                menu.addItem(none)
+            }
+            return menu
+        } label: {
+            Image(systemName: "folder.badge.plus")
+                .font(.system(size: 13))
+                .frame(width: 26, height: 24)
+                .hoverHighlight(in: RoundedRectangle(cornerRadius: 6), mutesInk: true)
+        }
+        .help("Move to Project: carry this chat into one of your projects")
+    }
+
+    private func move(to directory: String) {
+        Task {
+            do {
+                try await workspace.move(sessionID, toProject: directory)
+            } catch {
+                NSAlert(error: error).runModal()
+            }
+        }
+    }
+}
+
 struct BotEditorRequest: Identifiable {
     let id = UUID()
     let bot: Bot?
@@ -1220,6 +1290,7 @@ struct AppLogo: View {
 struct WelcomeView: View {
     @Environment(Catalog.self) private var catalog
     let openFolder: () -> Void
+    let newChat: () -> Void
     let showProviders: () -> Void
 
     var body: some View {
@@ -1234,6 +1305,9 @@ struct WelcomeView: View {
             HStack(spacing: 12) {
                 Button("Open Folder…", systemImage: "folder", action: openFolder)
                     .buttonStyle(.glassProminent)
+                Button("Start a Chat", systemImage: "bubble.left", action: newChat)
+                    .buttonStyle(.glass)
+                    .help("A conversation of no project (⌥⌘N)")
                 Button(catalog.connectedProviders.isEmpty ? "Connect an Account…" : "Accounts…", systemImage: "person.crop.circle.badge.plus", action: showProviders)
                     .buttonStyle(.glass)
             }
