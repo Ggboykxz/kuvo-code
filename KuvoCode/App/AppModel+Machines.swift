@@ -12,7 +12,7 @@ extension AppModel {
         workspace.machines = Set(machines.list.map(\.id))
         // An agent on a machine browses with the machine's browser: the panel shows it, as it
         // shows its own browser for an agent here.
-        workspace.onMachineBrowsing = { [weak self] machine in self?.utilities.revealMachineBrowser(machine) }
+        workspace.onMachineBrowsing = { [weak self] machine, session in self?.utilities.revealMachineBrowser(machine, for: session) }
         // An agent asks you for something in its browser: who's asking, and on a machine, the
         // connection that brings the ask here.
         browserAsks.onChange = { [weak self] sessions in self?.workspace.askingInBrowser = sessions }
@@ -60,7 +60,8 @@ extension AppModel {
         let machine = engine.machine.id
         // Its pages are the panel's browser tabs while a session there is in view.
         engine.browser.onPages = { [weak self] pages in self?.utilities.syncMachinePages(machine, pages) }
-        engine.browser.onActive = { [weak self] page, byAgent in self?.utilities.machinePageActive(machine, page: page, byAgent: byAgent) }
+        engine.browser.onActive = { [weak self] page, byAgent, session in self?.utilities.machinePageActive(machine, page: page, byAgent: byAgent, session: session) }
+        engine.browser.sessionInView = { [weak self] in self?.utilities.sessionInView }
         // What its agents ask you for, answered in the window, filled in there.
         engine.browser.onAsk = { [weak self, weak browser = engine.browser] ask in
             self?.browserAsks.add(ask) { answer in browser?.answer(ask.id, answer) }

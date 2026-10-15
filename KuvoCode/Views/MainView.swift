@@ -294,6 +294,8 @@ struct MainView: View {
         .onChange(of: activeDirectory, initial: true) { _, directory in
             utilities.place = directory.flatMap(RemoteFolder.machine(of:))
         }
+        // Its agent's browsing brings pages forward; others' stay where they are.
+        .onChange(of: sessionID, initial: true) { _, id in utilities.sessionInView = id }
         .task(id: activeDirectory) {
             if let activeDirectory { await workspace.loadBranch(for: activeDirectory) }
         }

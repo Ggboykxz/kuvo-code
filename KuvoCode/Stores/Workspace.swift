@@ -594,7 +594,7 @@ final class Workspace {
     }
 
     /// An agent on a machine started using its browser.
-    @ObservationIgnored var onMachineBrowsing: ((String) -> Void)?
+    @ObservationIgnored var onMachineBrowsing: ((_ machine: String, _ session: String) -> Void)?
     /// A bot's name, by its session, for its notifications.
     @ObservationIgnored var botName: ((String) -> String?)?
 
@@ -629,7 +629,7 @@ final class Workspace {
         if let machine, let id = event.sessionID { sessionMachines[id] = machine }
         if event.type == "session.tool.input.started", let id = event.sessionID,
            let started = try? event.payload(as: EventPayload.ToolInputStarted.self), started.name.hasPrefix("kuvo-browser_") {
-            if let machine { onMachineBrowsing?(machine) }
+            if let machine { onMachineBrowsing?(machine, id) }
             if ["kuvo-browser_browser_sign_in", "kuvo-browser_browser_ask_code", "kuvo-browser_browser_ask_user"].contains(started.name) {
                 onBrowserAsk?(id, machine)
             }

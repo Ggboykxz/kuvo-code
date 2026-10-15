@@ -40,7 +40,7 @@ const IDLE = Number(process.env.KUVO_BROWSER_IDLE || 10 * 60) * 1000;
 
 // Goes up with every change to the keeper (host mode): a newer one replaces one that's running
 // (its pages close, its sign-ins stay), and an older one never replaces a newer.
-const KEEPER = 8;
+const KEEPER = 9;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -413,11 +413,15 @@ async function host() {
     pending.set(id, { internal: true });
     toChrome({ id, method, params });
   };
-  const setActive = (targetId, by) => {
+  const setActive = (targetId, by, session) => {
     if (active === targetId) return;
     active = targetId;
-    broadcast({ method: "Kuvo.activeChanged", params: { targetId, by } });
+    broadcast({ method: "Kuvo.activeChanged", params: { targetId, by, ...(session ? { session } : {}) } });
   };
+  // Which conversation works in each page lately, so another one gets a page of its own rather
+  // than taking over one in use; and when you last picked a page for a conversation.
+  const claims = new Map();
+  const picks = new Map();
 
   let stopping = false;
   const stop = async () => {
@@ -500,6 +504,7 @@ async function host() {
     if (message.method === "Target.targetDestroyed") {
       targets.delete(message.params.targetId);
       own.delete(message.params.targetId);
+      claims.delete(message.params.targetId);
       if (message.params.targetId === active) setActive(null, "browser");
     }
     const owner = message.sessionId ? owners.get(message.sessionId) : null;
@@ -542,7 +547,14 @@ async function host() {
         case "Kuvo.setActive": {
           // A page closed a moment ago isn't the one in use.
           const target = message.params?.targetId ?? null;
-          if (target === null || targets.has(target)) setActive(target, message.params?.by ?? "user");
+          if (target === null || targets.has(target)) {
+            setActive(target, message.params?.by ?? "user", message.params?.session);
+            // You picked it for that conversation: its agent goes on there.
+            if (target && message.params?.by !== "agent" && message.params?.session) {
+              picks.set(message.params.session, Date.now());
+              claims.set(target, { session: message.params.session, at: Date.now() });
+            }
+          }
           return message.id !== undefined && send(client, { id: message.id, result: {} });
         }
         case "Kuvo.setStatus":
@@ -567,6 +579,23 @@ async function host() {
         }
         case "Kuvo.cancelAsk":
           return closeAsk(message.params?.id);
+        case "Kuvo.mine": {
+          // The page a conversation worked in last, if it's still open, and whether you picked
+          // another for it since.
+          const session = message.params?.session;
+          let mine = null;
+          for (const [targetId, claim] of claims) if (claim.session === session && targets.has(targetId) && (!mine || claim.at > mine.at)) mine = { targetId, at: claim.at };
+          return send(client, { id: message.id, result: { ...(mine ?? {}), picked: picks.get(session) ?? 0 } });
+        }
+        case "Kuvo.claim": {
+          // A conversation's agent wants to work in a page: yes, unless another one has in the
+          // last minute and a half.
+          const { targetId, session } = message.params ?? {};
+          const claim = claims.get(targetId);
+          const ok = !claim || claim.session === session || Date.now() - claim.at > 90_000;
+          if (ok && targetId && session) claims.set(targetId, { session, at: Date.now() });
+          return message.id !== undefined && send(client, { id: message.id, result: { ok } });
+        }
         case "Kuvo.pointer":
           // Where the agent is about to act, for the pointer in every view of the page.
           return broadcast({ method: "Kuvo.pointer", params: message.params ?? {} });
@@ -772,12 +801,24 @@ async function pages() {
   return targetInfos.filter((target) => target.type === "page");
 }
 
-/// The page in use: the one you or the agent last used, else the newest, else a new one.
+/// The page in use: the one you or the agent last used, else the newest, else a new one. With
+/// several conversations browsing, each keeps to its own page (unless you picked another since),
+/// and one whose page in use is busy with another conversation gets a new one.
 async function page() {
   const c = await browser();
   const open = await pages();
-  let target = open.find((info) => info.targetId === active)?.targetId ?? open.at(-1)?.targetId;
-  if (!target) target = (await c.send("Target.createTarget", { url: "about:blank" })).targetId;
+  const isOpen = (target) => open.some((info) => info.targetId === target);
+  let target = null;
+  if (caller) {
+    const own = await c.send("Kuvo.mine", { session: caller });
+    if (own.targetId && isOpen(own.targetId) && own.picked <= own.at) target = own.targetId;
+  }
+  target ??= open.find((info) => info.targetId === active)?.targetId ?? open.at(-1)?.targetId;
+  if (target && caller && !(await c.send("Kuvo.claim", { targetId: target, session: caller })).ok) target = null;
+  if (!target) {
+    target = (await c.send("Target.createTarget", { url: "about:blank" })).targetId;
+    if (caller) await c.send("Kuvo.claim", { targetId: target, session: caller });
+  }
   return use(target);
 }
 
@@ -791,7 +832,7 @@ async function use(target) {
   }
   if (active !== target) {
     active = target;
-    c.notify("Kuvo.setActive", { targetId: target, by: "agent" });
+    c.notify("Kuvo.setActive", { targetId: target, by: "agent", ...(caller ? { session: caller } : {}) });
   }
   return { target, session };
 }
@@ -1074,9 +1115,12 @@ async function tool(name, args) {
   if (name === "browser_tabs") {
     const c = await browser();
     const open = await pages();
+    // The page this conversation works in, else the browser's page in use.
+    const own = caller ? (await c.send("Kuvo.mine", { session: caller })).targetId : null;
+    const inUse = own && open.some((t) => t.targetId === own) ? own : active;
     const list = (targets) =>
       targets.length
-        ? "Tabs:\n" + targets.map((t, i) => `[${i + 1}] ${isEmpty(t.url) ? "New tab" : t.title || "(untitled)"} — ${isEmpty(t.url) ? "empty" : t.url}${t.targetId === active ? " (in use)" : ""}`).join("\n")
+        ? "Tabs:\n" + targets.map((t, i) => `[${i + 1}] ${isEmpty(t.url) ? "New tab" : t.title || "(untitled)"} — ${isEmpty(t.url) ? "empty" : t.url}${t.targetId === inUse ? " (in use)" : ""}`).join("\n")
         : "No tabs are open.";
     const action = string("action") || "list";
     if (action === "list") return text(list(open));
@@ -1089,6 +1133,7 @@ async function tool(name, args) {
       if (active === chosen.targetId) active = null;
       return text(`Closed tab [${number}]. ` + list((await pages())));
     }
+    if (caller) await c.send("Kuvo.claim", { targetId: chosen.targetId, session: caller });
     return text(await snapshot(await use(chosen.targetId)));
   }
 
@@ -1096,6 +1141,7 @@ async function tool(name, args) {
     const c = await browser();
     const url = string("url");
     const { targetId } = await c.send("Target.createTarget", { url: "about:blank" });
+    if (caller) await c.send("Kuvo.claim", { targetId, session: caller });
     const p = await use(targetId);
     return text(url ? await navigate(p, url) : await snapshot(p));
   }

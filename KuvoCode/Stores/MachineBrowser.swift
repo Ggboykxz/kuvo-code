@@ -104,7 +104,9 @@ final class MachineBrowser {
 
     /// Told when pages open or close, and when the agent moves to another page (or you do).
     @ObservationIgnored var onPages: ([Page]) -> Void = { _ in }
-    @ObservationIgnored var onActive: (_ page: String, _ byAgent: Bool) -> Void = { _, _ in }
+    @ObservationIgnored var onActive: (_ page: String, _ byAgent: Bool, _ session: String?) -> Void = { _, _, _ in }
+    /// The conversation in view, whose agent a page you pick is for.
+    @ObservationIgnored var sessionInView: (() -> String?)?
     /// Told when the agent asks you for something (a sign-in, a code, a step only you can do),
     /// and when that ask ends without you (it stopped waiting, or another Mac answered).
     @ObservationIgnored var onAsk: (BrowserAsks.Ask) -> Void = { _ in }
@@ -231,7 +233,10 @@ final class MachineBrowser {
         shownPage = page
         if activeID != page {
             activeID = page
-            link?.fire("Kuvo.setActive", ["targetId": page, "by": "user"])
+            // Picked for the conversation in view: its agent goes on in this page.
+            var params: [String: Any] = ["targetId": page, "by": "user"]
+            if let session = sessionInView?() { params["session"] = session }
+            link?.fire("Kuvo.setActive", params)
         }
         wantsChanged()
         if state == .live { Task { await attach(page) } }
@@ -393,7 +398,7 @@ final class MachineBrowser {
             let byAgent = params["by"] as? String == "agent"
             guard id != activeID || byAgent else { return }
             activeID = id
-            onActive(id, byAgent)
+            onActive(id, byAgent, params["session"] as? String)
         case "Kuvo.status":
             isAgentBrowsing = params["working"] as? Bool ?? false
         case "Target.targetCreated", "Target.targetInfoChanged":

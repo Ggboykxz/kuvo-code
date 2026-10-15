@@ -51,6 +51,10 @@ final class Utilities {
         didSet { if place != oldValue { placeChanged(from: oldValue) } }
     }
 
+    /// The session in view; an agent elsewhere browsing doesn't bring its page forward. The window
+    /// sets it.
+    var sessionInView: String?
+
     /// The tab chosen in each place, to come back to.
     @ObservationIgnored private var chosen: [String: UUID] = [:]
 
@@ -210,8 +214,8 @@ final class Utilities {
 
     /// The agent on a machine went to another page (or opened one): its tab comes forward, as the
     /// panel's browser does for the agent here.
-    func machinePageActive(_ machine: String, page: String, byAgent: Bool) {
-        guard byAgent, let tab = tabs.first(where: { $0.kind == .machinePage(machine, page) }) else { return }
+    func machinePageActive(_ machine: String, page: String, byAgent: Bool, session: String? = nil) {
+        guard byAgent, session == nil || session == sessionInView, let tab = tabs.first(where: { $0.kind == .machinePage(machine, page) }) else { return }
         if place == machine {
             selection = tab.id
             if PanelSettings.isOn(PanelSettings.revealsForAgent) { revealRequest += 1 }
@@ -222,8 +226,8 @@ final class Utilities {
 
     /// An agent on a machine started browsing: with a session there in view, the panel shows the
     /// page it uses.
-    func revealMachineBrowser(_ machine: String) {
-        guard place == machine else { return }
+    func revealMachineBrowser(_ machine: String, for session: String? = nil) {
+        guard place == machine, session == nil || session == sessionInView else { return }
         let browser = machineBrowser?(machine)
         let tab = tabs.first { $0.kind == .machinePage(machine, browser?.activeID) }
             ?? tabs.last { if case .machinePage(machine, _) = $0.kind { true } else { false } }
