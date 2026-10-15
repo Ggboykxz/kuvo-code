@@ -182,6 +182,19 @@ struct ToolCallView: View {
         case "browser_forward": return "Went forward"
         case "browser_screenshot": return isActive ? "Taking a screenshot" : "Took a screenshot"
         case "browser_wait": return "Waited for the page"
+        case "browser_tabs":
+            let tab = input?["tab"]?.number.map { " [\(Int($0))]" } ?? ""
+            switch string("action") {
+            case "switch": return (isActive ? "Switching to tab" : "Switched to tab") + tab
+            case "close": return (isActive ? "Closing tab" : "Closed tab") + tab
+            default: return isActive ? "Looking at the tabs" : "Looked at the tabs"
+            }
+        case "browser_upload":
+            let count = input?["files"]?.array?.count ?? 1
+            return (isActive ? "Attaching " : "Attached ") + (count == 1 ? "a file" : "\(count) files") + " to \(index)"
+        case "browser_sign_in": return isActive ? "Waiting for your sign-in" : "Asked you to sign in"
+        case "browser_ask_code": return isActive ? "Waiting for your code" : "Asked you for a code"
+        case "browser_ask_user": return isActive ? "Waiting for you on the page" : "Asked you to step in"
         default: return "Used the browser"
         }
     }

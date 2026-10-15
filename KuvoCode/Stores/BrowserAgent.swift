@@ -67,6 +67,9 @@ final class BrowserAgent {
         return notes.isEmpty ? "" : notes.joined(separator: "\n") + "\n\n"
     }
 
+    /// The session whose tool call is under way, when the engine says.
+    var caller: String?
+
     static let unanswered = "The user didn't answer in time. Carry on with what you can without it, and say in your reply what you need; if you work on your own (a bot), schedule a wake-up to try again later."
 
     /// A browser tool is at work: dialogs pages show are answered at once.
@@ -213,7 +216,7 @@ final class BrowserAgent {
         guard let host = Self.site(of: browser.url) else { return "Open the sign-in page first." }
         guard username != nil || password != nil else { return "Name the username field, the password field, or both, by number." }
         if let problem = await checkFields(username: username, password: password, in: browser) { return problem }
-        switch await asks.ask(.signIn(username: username != nil, password: password != nil), host: host) {
+        switch await asks.ask(.signIn(username: username != nil, password: password != nil), host: host, session: caller) {
         case .signIn(let user, let secret):
             var filled: [String] = []
             if let username, let user, !user.isEmpty {
@@ -243,7 +246,7 @@ final class BrowserAgent {
         guard let host = Self.site(of: browser.url) else { return "Open the page that asks for the code first." }
         let kind = await run(Self.fieldKindScript, ["index": index], in: browser)
         guard kind == "text" || kind == "password" else { return kind == "missing" ? "There's no element [\(index)] on the page now. Take a fresh browser_snapshot." : "[\(index)] isn't a field to type a code into." }
-        switch await asks.ask(.code(prompt: prompt ?? ""), host: host) {
+        switch await asks.ask(.code(prompt: prompt ?? ""), host: host, session: caller) {
         case .code(let code):
             let outcome = await run(Self.fillScript, ["index": index, "value": code], in: browser)
             guard outcome == "ok" else { return outcome }
@@ -261,7 +264,7 @@ final class BrowserAgent {
     func askUser(_ instruction: String) async -> String {
         let browser = browser()
         let host = Self.site(of: browser.url) ?? "the page"
-        switch await asks.ask(.action(instruction: instruction), host: host) {
+        switch await asks.ask(.action(instruction: instruction), host: host, session: caller) {
         case .done:
             await settle(browser, expectNavigation: false)
             return "The user says it's done.\n\n" + (await snapshot())

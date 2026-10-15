@@ -49,6 +49,8 @@ final class BrowserAsks {
     @ObservationIgnored private var askers: [String: [(name: String, session: String, at: Date)]] = [:]
     /// Told when the asks change, with the sessions waiting for you.
     @ObservationIgnored var onChange: (Set<String>) -> Void = { _ in }
+    /// The name of who's asking from a session: a bot's, or the conversation's title.
+    @ObservationIgnored var askerName: (String) -> String? = { _ in nil }
     /// The tab that shows an ask, for its notification: its conversation, or a bot's group chat.
     @ObservationIgnored var tab: (Ask) -> String? = { $0.session }
 
@@ -83,10 +85,10 @@ final class BrowserAsks {
     }
 
     /// For this Mac's browser: waits for your answer (or the agent's patience to run out).
-    func ask(_ kind: Kind, host: String) async -> Answer {
+    func ask(_ kind: Kind, host: String, session: String? = nil) async -> Answer {
         let id = UUID().uuidString
         return await withCheckedContinuation { continuation in
-            add(Ask(id: id, kind: kind, host: host, machine: nil)) { continuation.resume(returning: $0) }
+            add(Ask(id: id, kind: kind, host: host, machine: nil, session: session)) { continuation.resume(returning: $0) }
             Task { [weak self] in
                 try? await Task.sleep(for: Self.patience)
                 self?.answer(id, .timedOut)
@@ -97,7 +99,11 @@ final class BrowserAsks {
     /// An ask from a machine's browser; `respond` sends the answer back there.
     func add(_ ask: Ask, respond: @escaping (Answer) -> Void) {
         var ask = ask
-        if let asker = nextAsker(on: ask.machine) {
+        if let session = ask.session {
+            // The engine said whose it is: that session's start of asking is accounted for.
+            askers[ask.machine ?? ""]?.removeAll { $0.session == session }
+            ask.asker = askerName(session)
+        } else if let asker = nextAsker(on: ask.machine) {
             ask.asker = asker.name
             ask.session = asker.session
         }

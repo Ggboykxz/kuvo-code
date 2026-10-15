@@ -701,6 +701,8 @@ const noteOnce = (note) => {
 let busy = false;
 // The tool at work said to accept confirmations and prompts, rather than decline them.
 let acceptDialogs = false;
+// The session whose tool call is under way, when the engine says.
+let caller = null;
 // Asks waiting for the user's answer, by ID.
 const waiting = new Map();
 // How many Macs show this browser now (who could answer an ask).
@@ -970,7 +972,7 @@ async function point(p, index, action) {
 /// whole while.
 function askUser(params) {
   const id = crypto.randomUUID();
-  link.notify("Kuvo.ask", { id, ...params });
+  link.notify("Kuvo.ask", { id, ...params, ...(caller ? { session: caller } : {}) });
   const started = Date.now();
   let alone = viewerCount ? null : started;
   return new Promise((resolve) => {
@@ -1270,6 +1272,8 @@ async function mcp() {
             await browser();
             busy = true;
             acceptDialogs = params.arguments?.accept_dialog === true;
+            // The engine names the session calling, so an ask goes to the right conversation.
+            caller = params._meta?.["ai.opencode/sessionID"] ?? null;
             status(true);
             reply(await tool(name, params.arguments || {}));
           } catch (error) {
@@ -1277,6 +1281,7 @@ async function mcp() {
           } finally {
             busy = false;
             acceptDialogs = false;
+            caller = null;
             notes.length = 0;
             status(false);
           }

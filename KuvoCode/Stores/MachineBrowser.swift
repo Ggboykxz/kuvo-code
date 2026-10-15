@@ -440,7 +440,7 @@ final class MachineBrowser {
         default: return
         }
         openAsks.insert(id)
-        onAsk(BrowserAsks.Ask(id: id, kind: kind, host: host, machine: machine.id))
+        onAsk(BrowserAsks.Ask(id: id, kind: kind, host: host, machine: machine.id, session: params["session"] as? String))
     }
 
     /// Your answer to an ask, back to the machine's browser, which fills it in.
