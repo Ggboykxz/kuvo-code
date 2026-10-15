@@ -4,7 +4,7 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
-## Unreleased
+## 0.4.0
 
 - **A new Settings**, in the main window in place of your sessions: ⌘, opens it, and the back arrow or Esc returns to where you were. Its pages are in groups in a sidebar, with a search field, each in a card under its title. New pages: Appearance, Notifications, Keyboard Shortcuts, Privacy, Storage, Git, Worktrees, Archived Sessions, Browser and Passwords.
 - **Appearance**: pick an accent color (macOS's own, one of its colors, or any color), a frosted or solid window, and the conversation's text size and typeface, with a live preview.
