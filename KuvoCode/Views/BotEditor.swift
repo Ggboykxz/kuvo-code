@@ -34,6 +34,8 @@ struct BotEditor: View {
     @State private var isWorking = false
     @State private var failure: String?
     @State private var confirmsDelete = false
+    /// The template a new bot started from.
+    @State private var template: String?
     @State private var isHoveringAvatar = false
     @FocusState private var focus: Field?
 
@@ -102,6 +104,12 @@ struct BotEditor: View {
 
     private var form: some View {
             VStack(alignment: .leading, spacing: 20) {
+                if isNew {
+                    section("Start From", note: "Fills in a name, job and look to change as you like; or start from nothing.") {
+                        TemplatePicker(selection: template) { use($0) }
+                    }
+                }
+
                 identity
 
                 section("Look") {
@@ -362,6 +370,18 @@ struct BotEditor: View {
         }
     }
 
+    /// Fills the form from a template.
+    private func use(_ template: BotTemplate) {
+        withAnimation(.ui) {
+            self.template = template.id
+            name = template.name
+            job = template.job
+            instructions = template.instructions.trimmingCharacters(in: .whitespacesAndNewlines)
+            look = template.look
+            personality = template.personality
+        }
+    }
+
     private func section(_ title: String, note: String? = nil, @ViewBuilder content: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
@@ -373,6 +393,57 @@ struct BotEditor: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+        }
+    }
+}
+
+/// Bots to start from: each with its look, name and job.
+private struct TemplatePicker: View {
+    let selection: String?
+    let pick: (BotTemplate) -> Void
+
+    var body: some View {
+        WellGroup {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 172), spacing: 6)], spacing: 6) {
+                ForEach(BotTemplate.all) { template in
+                    TemplateTile(template: template, isOn: selection == template.id) { pick(template) }
+                }
+            }
+            .padding(8)
+        }
+    }
+
+    private struct TemplateTile: View {
+        let template: BotTemplate
+        let isOn: Bool
+        let action: () -> Void
+        @State private var isHovering = false
+
+        var body: some View {
+            Button(action: action) {
+                HStack(alignment: .top, spacing: 10) {
+                    BotAvatar(look: template.look, size: 30, noticed: isHovering)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(template.name)
+                            .font(.system(size: 13, weight: .semibold))
+                        Text(template.job)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(isOn ? AnyShapeStyle(.tint.opacity(0.14)) : isHovering ? AnyShapeStyle(Color.primary.opacity(0.06)) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 10))
+                .contentShape(.rect(cornerRadius: 10))
+            }
+            .buttonStyle(.plain)
+            .onHover { isHovering = $0 }
+            .animation(.easeOut(duration: 0.12), value: isHovering)
+            .accessibilityAddTraits(isOn ? .isSelected : [])
+            .help(template.wantsProject ? "Works best in one of your projects" : "")
         }
     }
 }

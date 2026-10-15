@@ -1,0 +1,80 @@
+import Foundation
+
+/// Bots to start from when making one: a name, a job, instructions and a look that fit, all of
+/// which you can change before it's made.
+struct BotTemplate: Identifiable {
+    let id: String
+    let name: String
+    let job: String
+    let instructions: String
+    let look: BotLook
+    /// A preset's ID, from `Personalities.presets`.
+    let personality: String?
+    /// It works on a project's code, so it's best made in one.
+    var wantsProject = false
+
+    static let all: [BotTemplate] = [
+        BotTemplate(
+            id: "news",
+            name: "Herald",
+            job: "Sends you a morning news digest",
+            instructions: """
+            Every morning at 8, read the latest news on the topics in your memory (the first time, ask me which topics) in the browser, from sources worth trusting. Send me a short digest: the five things that matter most, a line each, with links. Leave out what you've already told me about, and keep the topics and what you've sent in your memory.
+            """,
+            look: BotLook(color: .sky, shape: .round, face: .happy),
+            personality: "preset.straight"
+        ),
+        BotTemplate(
+            id: "watcher",
+            name: "Lookout",
+            job: "Tells you when a page changes",
+            instructions: """
+            Watch the pages I give you. Check each one every hour in the browser and tell me briefly when something that matters changes (a new post, a price, a status, an opening), with a link. Keep what you last saw in your memory to compare against, and say nothing when nothing changed. If a page needs me to sign in, ask with the sign-in card.
+            """,
+            look: BotLook(color: .amber, shape: .gem, face: .curious),
+            personality: "preset.pragmatist"
+        ),
+        BotTemplate(
+            id: "prices",
+            name: "Bargain",
+            job: "Tells you when prices drop",
+            instructions: """
+            Track the products I give you (links or names). Check their prices twice a day in the browser, keep each one's price history in your memory, and tell me when one drops below the price I named, or by more than 10% if I didn't name one. Include the link and the old and new price.
+            """,
+            look: BotLook(color: .lime, shape: .pebble, face: .bright),
+            personality: "preset.straight"
+        ),
+        BotTemplate(
+            id: "research",
+            name: "Sage",
+            job: "Researches questions and writes them up",
+            instructions: """
+            When I ask a question, research it on the web: read several good sources, check their claims against each other, and write a short report in your folder with what you found, how sure you are and the sources. Answer me in a few lines and say where the report is. Ask before spending more than half an hour on one question.
+            """,
+            look: BotLook(color: .violet, shape: .bloom, face: .calm),
+            personality: "preset.skeptic"
+        ),
+        BotTemplate(
+            id: "ci",
+            name: "Keeper",
+            job: "Keeps the build green",
+            instructions: """
+            Every hour, build this project and run its tests (and, if it uses GitHub Actions and gh is signed in, look at its latest runs). When something fails, find out why, fix it on a branch of its own, and tell me what broke and what you changed. Never push to the main branch or merge without asking.
+            """,
+            look: BotLook(color: .mint, shape: .squircle, face: .calm),
+            personality: "preset.perfectionist",
+            wantsProject: true
+        ),
+        BotTemplate(
+            id: "standup",
+            name: "Tally",
+            job: "Sends a morning standup",
+            instructions: """
+            Every weekday at 9, look at what changed in this project since your last summary (commits, branches, open pull requests if gh is signed in) and send me a standup: what got done, what's in progress, and anything that looks stuck or risky. Keep it under ten lines.
+            """,
+            look: BotLook(color: .coral, shape: .round, face: .wink),
+            personality: "preset.cheerful",
+            wantsProject: true
+        ),
+    ]
+}
