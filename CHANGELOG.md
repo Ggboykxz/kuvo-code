@@ -34,6 +34,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - In a machine's browser, what a page downloads stays on the machine; **Save to Mac** copies it into your Downloads folder.
 - In a machine's browser, your pointer turns into a hand over links and a text cursor over fields, as the page says.
 - On a machine, agents browsing at the same time, like two bots waking at once, each keep to a page of their own instead of taking over each other's, and the panel follows only the agent of the conversation you're in. Pages only agents used close after half a day left alone.
+- In a machine's browser, the browsing badge shows only over the page an agent works in, and names the bot doing it, with its face.
 - A machine's browser asks sites for your Mac's languages, so pages come in the languages you read.
 - Right-click a machine's page for a menu: open a link or picture in a new tab, copy it or the selected text, paste, go back or forward, or reload. Pages with a menu of their own keep it.
 - Zoom a machine's page with ⌘+ and ⌘− or a pinch: zoomed out, it lays out as wide as on a desktop, still sharp; click the percentage to go back.

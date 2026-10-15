@@ -101,12 +101,23 @@ final class MachineBrowser {
     /// An agent is using the browser right now.
     /// An agent is at work in the page shown.
     var isAgentBrowsing: Bool { shownPage.map(workingPages.contains) ?? false }
-    /// The pages agents are at work in.
+    /// The session of the agent at work in the page shown, when it says.
+    var browsingSession: String? { shownPage.flatMap { workers[$0] } }
+    /// The pages agents are at work in, and whose sessions they are.
     private var workingPages: Set<String> = []
+    private var workers: [String: String] = [:]
 
     private static func workingPages(_ status: [String: Any]) -> Set<String> {
         guard status["working"] as? Bool == true else { return [] }
         return Set(status["pages"] as? [String] ?? [])
+    }
+
+    private func noteWorkers(_ status: [String: Any]) {
+        var found: [String: String] = [:]
+        for worker in status["workers"] as? [[String: Any]] ?? [] {
+            if let page = worker["targetId"] as? String, let session = worker["session"] as? String { found[page] = session }
+        }
+        if found != workers { workers = found }
     }
     private(set) var dialog: Dialog?
 
@@ -363,6 +374,7 @@ final class MachineBrowser {
             link?.fire("Kuvo.viewing")
             activeID = params["targetId"] as? String
             workingPages = (params["status"] as? [String: Any]).map(Self.workingPages) ?? []
+            noteWorkers(params["status"] as? [String: Any] ?? [:])
             for ask in params["asks"] as? [[String: Any]] ?? [] { asked(ask) }
             Task { await begin() }
         case "Kuvo.asked":
@@ -409,6 +421,7 @@ final class MachineBrowser {
             onActive(id, byAgent, params["session"] as? String)
         case "Kuvo.status":
             workingPages = Self.workingPages(params)
+            noteWorkers(params)
         case "Target.targetCreated", "Target.targetInfoChanged":
             if let info = params["targetInfo"] as? [String: Any] { note(info) }
         case "Target.targetDestroyed":

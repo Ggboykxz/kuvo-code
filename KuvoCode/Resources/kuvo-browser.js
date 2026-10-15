@@ -44,7 +44,7 @@ const TAB_IDLE = Number(process.env.KUVO_BROWSER_TAB_IDLE || 12 * 3600) * 1000;
 
 // Goes up with every change to the keeper (host mode): a newer one replaces one that's running
 // (its pages close, its sign-ins stay), and an older one never replaces a newer.
-const KEEPER = 13;
+const KEEPER = 14;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -411,7 +411,13 @@ async function host() {
   const viewers = () => [...clients].filter((client) => client.viewer && !client.closed).length;
   const everyStatus = () => {
     const working = [...clients].filter((client) => client.status?.working && !client.closed);
-    return { working: working.length > 0, tool: working[0]?.status.tool, pages: working.map((client) => client.status.targetId).filter(Boolean) };
+    return {
+      working: working.length > 0,
+      tool: working[0]?.status.tool,
+      pages: working.map((client) => client.status.targetId).filter(Boolean),
+      // Who works where, for the Mac to name them.
+      workers: working.filter((client) => client.status.targetId).map((client) => ({ targetId: client.status.targetId, session: client.status.session ?? null })),
+    };
   };
   const broadcast = (message) => {
     const text = typeof message === "string" ? message : JSON.stringify(message);
@@ -868,7 +874,7 @@ async function use(target) {
   // At work in this page: a Mac showing it says so.
   if (busy && workingIn !== target) {
     workingIn = target;
-    c.notify("Kuvo.setStatus", { working: true, tool: currentTool, targetId: target });
+    c.notify("Kuvo.setStatus", { working: true, tool: currentTool, targetId: target, ...(caller ? { session: caller } : {}) });
   }
   return { target, session };
 }

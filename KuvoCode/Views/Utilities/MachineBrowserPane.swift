@@ -77,7 +77,7 @@ struct MachineBrowserPane<NewTab: View>: View {
                 LivePage(browser: browser)
                     .overlay(alignment: .bottom) {
                         if browser.isAgentBrowsing {
-                            AgentBadge()
+                            AgentBadge(session: browser.browsingSession)
                                 .padding(.bottom, 12)
                                 .transition(.opacity)
                         }
@@ -244,10 +244,20 @@ private struct SetupCard: View {
 
 /// While an agent uses the browser.
 private struct AgentBadge: View {
+    /// The session browsing: a bot's is named, with its face.
+    let session: String?
+    @Environment(Bots.self) private var bots
+
     var body: some View {
+        let bot = session.flatMap { bots.bot(forSession: $0) }
         HStack(spacing: 7) {
-            Spinner(size: 11)
-            Text("Agent is browsing")
+            if let bot {
+                // Still: the bot moves where it works, in the sidebar and its conversation.
+                BotAvatar(look: bot.look, size: 16, animates: false)
+            } else {
+                Spinner(size: 11)
+            }
+            Text(bot.map { "\($0.name) is browsing" } ?? "Agent is browsing")
                 .font(.system(size: 12, weight: .medium))
         }
         .padding(.horizontal, 12)
