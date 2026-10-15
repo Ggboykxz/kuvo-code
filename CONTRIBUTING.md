@@ -66,7 +66,9 @@ cd Packages/UsageKit && swift test
 
 Recorded engine responses in `Tests/OpenCodeKitTests/Fixtures` drive most of
 OpenCodeKit's tests. `LiveServerTests` run against a real binary when
-`OPENCODE_TEST_BINARY` points to one.
+`OPENCODE_TEST_BINARY` points to one, and `LiveRemoteEngineTests` against a
+Linux machine when `KUVO_TEST_SSH_HOST` names one you reach with SSH (they
+install the engine in its `~/.kuvo-code`).
 
 ### Project layout
 

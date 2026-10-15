@@ -44,6 +44,9 @@ or start with free models that need no account.
 - **Browsing for the agent, with any model.** The agent opens pages in the
   panel's browser, reads them, clicks, types and scrolls, and you see every
   step.
+- **Sessions on your servers.** Open projects on a Linux machine you reach
+  with SSH, like a home server or a VPS, next to your Mac's. Their sessions,
+  changes, files and terminals run there.
 - **Attach anything.** Drop, paste or pick files of any kind.
 - **Plans and spend in the menu bar.** Limits with pace and reset times, and
   spend, for the accounts you connect: GitHub Copilot, ChatGPT (Codex),
@@ -79,6 +82,13 @@ side panel and the usage menu.
 - **Its data is kept apart** from any opencode you've installed. Sessions,
   accounts and settings live in
   `~/Library/Application Support/run.kuvo.code/opencode`.
+- **On a machine you add**, Kuvo Code reaches it with `ssh` and your keys. It
+  sends the same engine version's Linux build, downloaded and checked on the
+  Mac, to `~/.kuvo-code` there, runs it on the machine's localhost only, and
+  talks to it through an SSH tunnel. The engine outlives the connection, so a
+  task carries on while the Mac is off; it stops when the app quits with
+  nothing running, or after a day without the app. API keys reach it in
+  memory, never written to the machine's disk.
 - **The agent's browser tools** are served by the app on `127.0.0.1`, with a
   new port and token each launch. They read a page the way
   [browser-use](https://github.com/browser-use/browser-use) does, as numbered
