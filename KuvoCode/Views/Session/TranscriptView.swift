@@ -327,6 +327,7 @@ enum Row: Identifiable, Hashable {
 
 private struct RowView: View {
     let row: Row
+    @Environment(\.bot) private var bot
     let directory: String
     let folders: () -> [String]
     let cancel: (Transcript.Pending) -> Void
@@ -437,9 +438,16 @@ private struct RowView: View {
             .frame(maxWidth: .infinity)
             .help("Sending a message makes the undo final")
         case .working(let since):
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                ShimmerText(text: "Working…" + Self.elapsed(since: since, now: context.date))
-                    .font(.callout)
+            HStack(spacing: 8) {
+                // A bot shows itself at work.
+                if let bot {
+                    BotAvatar(look: bot.look, size: 18, mood: .working)
+                        .frame(width: 16)
+                }
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    ShimmerText(text: "Working…" + Self.elapsed(since: since, now: context.date))
+                        .font(.callout)
+                }
             }
         }
     }
@@ -931,7 +939,7 @@ struct EmptyConversationView: View {
         if let bot {
             // A bot, before its first task: who it is and what it's for.
             VStack(spacing: 12) {
-                BotAvatar(look: bot.look, size: 64)
+                BotAvatar(look: bot.look, size: 64, mood: .idle)
                 VStack(spacing: 4) {
                     Text(bot.name)
                         .font(.title2.weight(.semibold))

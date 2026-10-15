@@ -72,6 +72,33 @@ final class Bots {
 
     var sessionIDs: Set<String> { Set(list.map(\.sessionID)) }
 
+    /// What the bot is up to, for how its avatar moves: waiting for you comes first, then working,
+    /// then news you haven't seen, then asleep until a wake-up.
+    func mood(of bot: Bot, in workspace: Workspace) -> BotMood {
+        #if DEBUG
+        // KUVO_DEMO_BOT_MOODS=<name>=<mood>,…: bots shown in a mood, for screenshots and videos.
+        if let moods = ProcessInfo.processInfo.environment["KUVO_DEMO_BOT_MOODS"] {
+            for pair in moods.split(separator: ",") {
+                let parts = pair.split(separator: "=").map(String.init)
+                if parts.count == 2, parts[0] == bot.name {
+                    switch parts[1] {
+                    case "working": return .working
+                    case "waiting": return .waiting
+                    case "news": return .news
+                    case "sleeping": return .sleeping
+                    default: return .idle
+                    }
+                }
+            }
+        }
+        #endif
+        if workspace.needsAttention(bot.sessionID) { return .waiting }
+        if workspace.running.contains(bot.sessionID) { return .working }
+        if workspace.session(bot.sessionID)?.isUnread == true { return .news }
+        if wakes[bot.id]?.isEmpty == false { return .sleeping }
+        return .idle
+    }
+
     // MARK: Making, changing, deleting
 
     enum Failure: LocalizedError {

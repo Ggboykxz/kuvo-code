@@ -13,8 +13,9 @@ struct TabItem: Identifiable, Equatable {
     var title: String
     /// The model maker's logo (Anthropic, OpenAI, …) for the tab's front tile.
     var logo: String?
-    /// A bot's tab shows the bot.
+    /// A bot's tab shows the bot, moving with what it's up to.
     var bot: BotLook?
+    var botMood: BotMood = .idle
     var status: Status
 
     enum Status {
@@ -126,7 +127,7 @@ private struct TabButton: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            TabIcon(logo: tab.logo, symbol: SidebarView.draftDirectory(from: tab.id) == nil ? "bubble.left" : "square.and.pencil", bot: tab.bot, status: tab.status)
+            TabIcon(logo: tab.logo, symbol: SidebarView.draftDirectory(from: tab.id) == nil ? "bubble.left" : "square.and.pencil", bot: tab.bot, botMood: tab.botMood, status: tab.status)
             Text(tab.title)
                 .font(.system(size: 13, weight: isActive ? .medium : .regular))
                 .foregroundStyle(isActive ? .primary : .secondary)
@@ -176,6 +177,7 @@ struct TabIcon: View {
     var symbol = "bubble.left"
     /// A bot's tab shows the bot itself in place of the tile.
     var bot: BotLook?
+    var botMood: BotMood = .idle
     let status: TabItem.Status
 
     static let tileSize = CGSize(width: 25, height: 20)
@@ -183,7 +185,7 @@ struct TabIcon: View {
     var body: some View {
         Group {
             if let bot {
-                BotAvatar(look: bot, size: 21)
+                BotAvatar(look: bot, size: 21, mood: botMood)
                     .frame(width: Self.tileSize.width, height: Self.tileSize.height)
             } else {
                 FrontTile(logo: logo, symbol: symbol)

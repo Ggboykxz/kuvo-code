@@ -28,6 +28,7 @@ struct BotEditor: View {
     @State private var isWorking = false
     @State private var failure: String?
     @State private var confirmsDelete = false
+    @State private var isHoveringAvatar = false
     @FocusState private var focus: Field?
 
     private enum Field { case name, job, instructions }
@@ -173,8 +174,16 @@ struct BotEditor: View {
     private var identity: some View {
         HStack(alignment: .center, spacing: 18) {
             VStack(spacing: 8) {
-                BotAvatar(look: look, size: 76)
-                    .animation(.ui, value: look)
+                BotAvatar(look: look, size: 76, noticed: isHoveringAvatar)
+                    .onHover { isHoveringAvatar = $0 }
+                    // A little bounce at each new look.
+                    .keyframeAnimator(initialValue: 1.0, trigger: look) { content, scale in
+                        content.scaleEffect(scale, anchor: .bottom)
+                    } keyframes: { _ in
+                        SpringKeyframe(1.14, duration: 0.14)
+                        SpringKeyframe(0.95, duration: 0.14)
+                        SpringKeyframe(1.0, duration: 0.24)
+                    }
                 Button {
                     withAnimation(.ui) { look = .random() }
                 } label: {

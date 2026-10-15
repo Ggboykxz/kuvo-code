@@ -389,7 +389,7 @@ struct MainView: View {
             }
             guard let session = workspace.session(key) else { return nil }
             if let bot = bots.bot(forSession: key) {
-                return TabItem(id: key, title: bot.name, logo: nil, bot: bot.look, status: status(of: session))
+                return TabItem(id: key, title: bot.name, logo: nil, bot: bot.look, botMood: bots.mood(of: bot, in: workspace), status: status(of: session))
             }
             return TabItem(id: key, title: session.title ?? "New Session", logo: logo(for: session.model, in: session.location.directory), status: status(of: session))
         }
@@ -455,7 +455,7 @@ struct MainView: View {
                 let bot = bots.bot(forSession: id)
                 Card(title: bot?.name ?? model.session.title ?? "New Session", detail: bot.map(botDetail) ?? workspace.projectName(directory), isFocused: focus == .conversation) {
                     if let bot {
-                        BotAvatar(look: bot.look, size: 18)
+                        BotAvatar(look: bot.look, size: 18, mood: bots.mood(of: bot, in: workspace))
                     } else if let logo = logo(for: model.session.model, in: directory) { ProviderLogo(id: logo, size: 14) } else { Image(systemName: "bubble.left") }
                 } actions: {
                     if let bot {

@@ -53,28 +53,132 @@ struct BotLook: Codable, Hashable {
     }
 }
 
+/// What a bot is up to, which is how its avatar moves.
+enum BotMood: Equatable {
+    /// Nothing to do: it breathes, blinks, looks around and fidgets now and then.
+    case idle
+    /// Running: it hops, its eyes scan, sparks circle it.
+    case working
+    /// Waiting for you (a permission, a question): it wiggles, wide-eyed, with a soft glow.
+    case waiting
+    /// Done, with something you haven't seen yet: happy, hopping now and then.
+    case news
+    /// Idle with a wake-up scheduled: asleep, with z's floating up.
+    case sleeping
+}
+
 /// A bot's face on its shape, at any size: in the sidebar, on its tab, in its header and, large,
-/// where it's made.
+/// where it's made. It moves with its mood; everything is worked out from the clock, so each
+/// frame is cheap, and it holds still while the app isn't active or Reduce Motion is on.
 struct BotAvatar: View {
     let look: BotLook
     var size: CGFloat = 26
+    var mood: BotMood = .idle
+    /// The pointer is on it: an idle bot notices, happy, with a little bounce.
+    var noticed = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.appearsActive) private var appearsActive
 
     var body: some View {
-        let tint = look.color.color
-        BotShape(form: look.shape)
-            .fill(LinearGradient(colors: [tint.mix(with: .white, by: 0.14), tint.mix(with: .black, by: 0.06)], startPoint: .top, endPoint: .bottom))
-            // A lit top edge, like the window's other raised surfaces.
-            .overlay {
-                BotShape(form: look.shape)
-                    .stroke(LinearGradient(colors: [.white.opacity(0.55), .white.opacity(0)], startPoint: .top, endPoint: .center), lineWidth: max(0.5, size / 40))
+        if reduceMotion {
+            figure(BotPose.still(mood, noticed: noticed))
+        } else {
+            TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !appearsActive && !Self.alwaysMoves)) { context in
+                figure(BotPose(mood: mood, noticed: noticed, time: context.date.timeIntervalSinceReferenceDate + seed, seed: seed, small: size < 24))
             }
-            .overlay {
-                BotFace(face: look.face, deep: look.color.isDeep)
+        }
+    }
+
+    /// KUVO_DEMO_BOT_MOODS also keeps them moving in a demo copy in the background, for captures.
+    private static let alwaysMoves: Bool = {
+        #if DEBUG
+        ProcessInfo.processInfo.environment["KUVO_DEMO_BOT_MOODS"] != nil
+        #else
+        false
+        #endif
+    }()
+
+    /// Keeps bots out of step with each other, and the same from one launch to the next.
+    private var seed: Double {
+        let text = look.color.rawValue + look.shape.rawValue + look.face.rawValue
+        let number = text.unicodeScalars.reduce(UInt32(7)) { $0 &* 31 &+ $1.value }
+        return Double(number % 10_000) / 10_000 * 13
+    }
+
+    private func figure(_ pose: BotPose) -> some View {
+        let tint = look.color.color
+        let spins = look.shape == .bloom || look.shape == .gem
+        return ZStack {
+            // A soft pulse behind a bot that's waiting for you.
+            if pose.glow > 0 {
+                Circle()
+                    .fill(Color.orange.opacity(0.4 * (1 - pose.glow)))
+                    .frame(width: size, height: size)
+                    .scaleEffect(1 + 0.5 * pose.glow)
+            }
+            ZStack {
+                ForEach(Array(pose.sparks.enumerated()), id: \.offset) { _, angle in
+                    spark(at: angle, tint: tint)
+                }
+                BotShape(form: look.shape)
+                    .fill(LinearGradient(colors: [tint.mix(with: .white, by: 0.14), tint.mix(with: .black, by: 0.06)], startPoint: .top, endPoint: .bottom))
+                    // A lit top edge, like the window's other raised surfaces.
+                    .overlay {
+                        BotShape(form: look.shape)
+                            .stroke(LinearGradient(colors: [.white.opacity(0.55), .white.opacity(0)], startPoint: .top, endPoint: .center), lineWidth: max(0.5, size / 40))
+                    }
+                    .rotationEffect(.degrees(spins ? pose.spin : 0))
+                    .shadow(color: .black.opacity(size > 40 ? 0.12 : 0.08), radius: size / 24, y: size / 48)
+                    .zIndex(0)
+                BotFace(face: pose.face ?? look.face, deep: look.color.isDeep, glance: pose.glance, blink: pose.blink)
                     .frame(width: size * 0.5, height: size * 0.3)
                     .offset(x: size * 0.04, y: faceOffset)
+                    .zIndex(0.5)
             }
             .frame(width: size, height: size)
-            .shadow(color: .black.opacity(size > 40 ? 0.12 : 0.08), radius: size / 24, y: size / 48)
+            .scaleEffect(x: pose.scaleX, y: pose.scaleY, anchor: .bottom)
+            .rotationEffect(.degrees(pose.tilt), anchor: .bottom)
+            .offset(y: pose.lift * size)
+            // Z's drifting up from a sleeping bot, swaying as they go.
+            ForEach(Array(pose.zs.enumerated()), id: \.offset) { _, progress in
+                Text("z")
+                    .font(.system(size: max(7, size * 0.32), weight: .heavy, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .scaleEffect(0.45 + 0.8 * progress)
+                    .opacity(min(1, progress * 5) * (1 - pow(progress, 3)))
+                    .offset(x: size * (0.3 + 0.28 * progress + 0.06 * sin(progress * 2 * .pi)), y: -size * (0.26 + 0.56 * progress))
+            }
+            // A sparkle beside a bot with news.
+            if pose.twinkle > 0 {
+                Star()
+                    .fill(Color(red: 1, green: 0.76, blue: 0.2))
+                    .frame(width: size * 0.34, height: size * 0.34)
+                    .scaleEffect(pose.twinkle)
+                    .rotationEffect(.degrees(Double(pose.twinkle) * 45))
+                    .offset(x: size * 0.46, y: -size * 0.42)
+            }
+        }
+        .frame(width: size, height: size)
+    }
+
+    /// One spark on a tilted orbit around the bot's middle, with a fading trail, drawn in front
+    /// of the bot on the near side of the orbit and behind it on the far side.
+    private func spark(at angle: Double, tint: Color) -> some View {
+        let depth = (sin(angle) + 1) / 2
+        let dot = max(2.5, size * 0.13)
+        return ZStack {
+            ForEach(0..<5) { step in
+                let a = angle - Double(step) * 0.2
+                let fade = 1 - Double(step) / 5
+                Circle()
+                    .fill(step == 0 ? tint.mix(with: .white, by: 0.45) : tint)
+                    .frame(width: dot, height: dot)
+                    .scaleEffect((0.55 + 0.45 * depth) * (0.4 + 0.6 * fade))
+                    .opacity((0.45 + 0.55 * depth) * fade)
+                    .offset(x: cos(a) * size * 0.62, y: sin(a) * size * 0.24 + size * 0.04)
+            }
+        }
+        .zIndex(depth > 0.5 ? 1 : -1)
     }
 
     /// The pebble's face sits low, where it's widest.
@@ -83,6 +187,214 @@ struct BotAvatar: View {
         case .pebble: size * 0.12
         default: -size * 0.03
         }
+    }
+}
+
+/// A four-pointed sparkle.
+nonisolated private struct Star: Shape {
+    func path(in rect: CGRect) -> Path {
+        let c = CGPoint(x: rect.midX, y: rect.midY), r = min(rect.width, rect.height) / 2
+        let tips = [CGPoint(x: c.x, y: c.y - r), CGPoint(x: c.x + r, y: c.y), CGPoint(x: c.x, y: c.y + r), CGPoint(x: c.x - r, y: c.y)]
+        var path = Path()
+        path.move(to: tips[0])
+        for index in 1...4 {
+            path.addQuadCurve(to: tips[index % 4], control: c)
+        }
+        path.closeSubpath()
+        return path
+    }
+}
+
+/// Where everything about a bot's avatar is at one moment: worked out from the time, so the
+/// motion is smooth at any frame rate and two bots never move in step.
+private struct BotPose {
+    /// Up, as a share of the avatar's size (negative is up).
+    var lift: CGFloat = 0
+    var scaleX: CGFloat = 1
+    var scaleY: CGFloat = 1
+    /// The whole figure, in degrees, from its base.
+    var tilt: Double = 0
+    /// The shape alone (bloom and gem turn while they work, and twirl now and then).
+    var spin: Double = 0
+    /// Eyes left (negative) or right, as a share of the face's width.
+    var glance: CGFloat = 0
+    /// 0 open, 1 shut.
+    var blink: CGFloat = 0
+    var face: BotLook.Face?
+    /// A soft pulse behind it, 0 to 1, while it waits for you.
+    var glow: CGFloat = 0
+    /// Angles of the sparks circling it.
+    var sparks: [Double] = []
+    /// How far each z has drifted, 0 to 1.
+    var zs: [Double] = []
+    /// A sparkle beside it, 0 (gone) to 1 (fully out).
+    var twinkle: CGFloat = 0
+
+    /// A face for each mood, without motion (Reduce Motion).
+    static func still(_ mood: BotMood, noticed: Bool) -> BotPose {
+        var pose = BotPose()
+        switch mood {
+        case .waiting: pose.face = .bright
+        case .news: pose.face = .happy; pose.twinkle = 0.8
+        case .sleeping: pose.face = .sleepy; pose.zs = [0.5]
+        case .idle, .working: pose.face = noticed ? .happy : nil
+        }
+        return pose
+    }
+
+    init() {}
+
+    init(mood: BotMood, noticed: Bool, time t: Double, seed: Double, small: Bool) {
+        switch mood {
+        case .idle:
+            breathe(t, depth: 0.035, period: 3.8)
+            blinks(t, every: 3.4 + seed.truncatingRemainder(dividingBy: 1.6), seed: seed)
+            if noticed {
+                face = .happy
+                hop(t, height: 0.08, period: 0.5)
+            } else {
+                fidget(t, seed: seed)
+            }
+        case .working:
+            // Busy little bobs, and now and then a big jump with a twist.
+            let cycle = 2.8, jump = 0.62
+            let c = t.truncatingRemainder(dividingBy: cycle)
+            if c < jump {
+                hop(c, height: small ? 0.14 : 0.18, period: jump)
+                tilt = sin(c / jump * 2 * .pi) * 9
+            } else {
+                hop(c - jump, height: small ? 0.045 : 0.055, period: (cycle - jump) / 5)
+            }
+            // Eyes reading along a line, then back to its start.
+            let r = t.truncatingRemainder(dividingBy: 1.2) / 1.2
+            glance = CGFloat(r < 0.8 ? -0.13 + 0.26 * r / 0.8 : 0.13 - 0.26 * (r - 0.8) / 0.2)
+            spin = (t * 60).truncatingRemainder(dividingBy: 360)
+            sparks = [t * 2 * .pi / 1.3, t * 2 * .pi / 1.3 + .pi]
+            blinks(t, every: 2.9, seed: seed)
+        case .waiting:
+            // A hop to get your attention, then a wiggle, wide-eyed.
+            face = .bright
+            let c = t.truncatingRemainder(dividingBy: 2.4)
+            if c < 0.4 {
+                hop(c, height: 0.12, period: 0.4)
+            } else if c < 1.0 {
+                let p = (c - 0.4) / 0.6
+                tilt = sin(p * .pi * 4) * 11 * (1 - p)
+            }
+            glow = CGFloat(t.truncatingRemainder(dividingBy: 1.6) / 1.6)
+            blinks(t, every: 3.1, seed: seed)
+        case .news:
+            // Happy, with two hops and a sparkle every few seconds.
+            face = .happy
+            breathe(t, depth: 0.03, period: 2.6)
+            let c = t.truncatingRemainder(dividingBy: 3.6)
+            if c < 0.9 { hop(c, height: 0.12, period: 0.45) }
+            let w = (c - 0.15) / 1.5
+            if w > 0 && w < 1 { twinkle = CGFloat(sin(w * .pi)) }
+        case .sleeping:
+            // Deep, slow breaths and a slow nod, z's drifting up.
+            face = .sleepy
+            breathe(t, depth: 0.045, period: 3.6)
+            tilt = sin(t * 2 * .pi / 7.2) * 3
+            zs = (0..<3).map { index in (t / 4.2 + Double(index) / 3).truncatingRemainder(dividingBy: 1) }
+        }
+    }
+
+    /// Every few seconds an idle bot does something small, picked at random so it never feels
+    /// like a loop: looks around, hops, tilts its head, smiles, yawns, wiggles, twirls or rests.
+    private mutating func fidget(_ t: Double, seed: Double) {
+        let beat = 4.2
+        let index = (t / beat).rounded(.down)
+        let c = t - index * beat
+        let pick = Self.random(Int(index), seed)
+        switch pick {
+        case ..<0.18:
+            // Looks left, then right, then back.
+            if c < 2.4 { glance = CGFloat(0.14 * Self.keys(c / 2.4, [(0, 0), (0.12, -1), (0.42, -1), (0.56, 1), (0.84, 1), (1, 0)])) }
+        case ..<0.3:
+            // A little hop.
+            if c < 0.55 { hop(c, height: 0.13, period: 0.55) }
+        case ..<0.44:
+            // A curious tilt of the head.
+            if c < 1.7 {
+                let e = Self.keys(c / 1.7, [(0, 0), (0.22, 1), (0.78, 1), (1, 0)])
+                tilt = 11 * e * (Self.random(Int(index) + 7, seed) < 0.5 ? 1 : -1)
+                glance = CGFloat(0.06 * e)
+                if e > 0.4 { face = .curious }
+            }
+        case ..<0.56:
+            // A happy moment, with a bounce.
+            if c < 1.1 {
+                face = .happy
+                hop(c, height: 0.06, period: 0.55)
+            }
+        case ..<0.66:
+            // A yawn and a stretch, then a little settle.
+            if c < 2 {
+                let e = Self.keys(c / 2, [(0, 0), (0.3, 1), (0.65, 1), (0.85, -0.35), (1, 0)])
+                scaleY *= CGFloat(1 + 0.1 * e)
+                scaleX *= CGFloat(1 - 0.05 * e)
+                if e > 0.4 { face = .sleepy }
+            }
+        case ..<0.76:
+            // A wiggle.
+            if c < 0.8 {
+                let p = c / 0.8
+                tilt = sin(p * .pi * 4) * 8 * (1 - p)
+            }
+        case ..<0.86:
+            // A twirl (bloom and gem turn; the others hop).
+            if c < 0.9 {
+                spin = 360 * Self.keys(c / 0.9, [(0, 0), (1, 1)])
+                hop(c, height: 0.07, period: 0.9)
+            }
+        default:
+            break
+        }
+    }
+
+    /// A slow swell, taller and narrower, then back.
+    private mutating func breathe(_ t: Double, depth: Double, period: Double) {
+        let s = sin(t * 2 * .pi / period)
+        scaleY *= 1 + CGFloat(depth * s)
+        scaleX *= 1 - CGFloat(depth * 0.5 * s)
+    }
+
+    /// A hop: up and down, stretched in the air, squashed where it lands.
+    private mutating func hop(_ t: Double, height: Double, period: Double) {
+        let up = abs(sin(t * .pi / period))
+        lift = -CGFloat(height * up)
+        let land = pow(1 - up, 8)
+        scaleY *= CGFloat(1 + 0.06 * up - 0.09 * land)
+        scaleX *= CGFloat(1 - 0.03 * up + 0.08 * land)
+    }
+
+    /// Eyes shut for a moment every few seconds, sometimes twice.
+    private mutating func blinks(_ t: Double, every period: Double, seed: Double) {
+        let c = t.truncatingRemainder(dividingBy: period)
+        let twice = Self.random(Int(t / period), seed + 3) < 0.3
+        func shut(_ at: Double) -> CGFloat {
+            let d = abs(c - at)
+            return d < 0.09 ? CGFloat(1 - d / 0.09) : 0
+        }
+        blink = max(blink, shut(period - 0.12), twice ? shut(period - 0.42) : 0)
+    }
+
+    /// A number from 0 to 1 that looks random but is always the same for the same `n` and `seed`.
+    private static func random(_ n: Int, _ seed: Double) -> Double {
+        let x = sin(Double(n) * 12.9898 + seed * 78.233) * 43758.5453
+        return x - x.rounded(.down)
+    }
+
+    /// The value at `p` along keyframes of (time, value), eased between each.
+    private static func keys(_ p: Double, _ points: [(Double, Double)]) -> Double {
+        guard let last = points.last else { return 0 }
+        for (a, b) in zip(points, points.dropFirst()) where p <= b.0 {
+            let x = max(0, min(1, (p - a.0) / (b.0 - a.0)))
+            let eased = x * x * (3 - 2 * x)
+            return a.1 + (b.1 - a.1) * eased
+        }
+        return last.1
     }
 }
 
@@ -148,6 +460,10 @@ private struct BotFace: View {
     let face: BotLook.Face
     /// On a deep color: light eyes.
     let deep: Bool
+    /// Eyes moved left or right, as a share of the width.
+    var glance: CGFloat = 0
+    /// 0 open, 1 shut (open eyes only; closed-looking ones stay as they are).
+    var blink: CGFloat = 0
 
     private var ink: Color { deep ? Color.white.opacity(0.92) : Color(red: 0.09, green: 0.1, blue: 0.13).opacity(0.86) }
 
@@ -155,11 +471,13 @@ private struct BotFace: View {
         Canvas { context, size in
             let w = size.width, h = size.height
             let eye = CGSize(width: w * 0.17, height: h * 0.62)
-            let left = CGPoint(x: w * 0.27, y: h * 0.5), right = CGPoint(x: w * 0.73, y: h * 0.5)
+            let left = CGPoint(x: w * (0.27 + glance), y: h * 0.5), right = CGPoint(x: w * (0.73 + glance), y: h * 0.5)
+            let open = 1 - 0.88 * blink
             let line = max(1, w * 0.1)
 
             func oval(at center: CGPoint, scale: CGFloat = 1) {
-                let rect = CGRect(x: center.x - eye.width * scale / 2, y: center.y - eye.height * scale / 2, width: eye.width * scale, height: eye.height * scale)
+                let height = eye.height * scale * open
+                let rect = CGRect(x: center.x - eye.width * scale / 2, y: center.y - height / 2, width: eye.width * scale, height: height)
                 context.fill(Path(ellipseIn: rect), with: .color(ink))
             }
             func arc(at center: CGPoint, up: Bool) {
@@ -194,10 +512,11 @@ private struct BotFace: View {
                 oval(at: CGPoint(x: right.x + w * 0.05, y: right.y - h * 0.1), scale: 1.12)
             case .bright:
                 for center in [left, right] {
-                    let rect = CGRect(x: center.x - eye.width * 0.8, y: center.y - eye.width * 0.8, width: eye.width * 1.6, height: eye.width * 1.6)
+                    let height = eye.width * 1.6 * open
+                    let rect = CGRect(x: center.x - eye.width * 0.8, y: center.y - height / 2, width: eye.width * 1.6, height: height)
                     context.fill(Path(ellipseIn: rect), with: .color(ink))
                     let shine = CGRect(x: center.x - eye.width * 0.05, y: center.y - eye.width * 0.55, width: eye.width * 0.5, height: eye.width * 0.5)
-                    context.fill(Path(ellipseIn: shine), with: .color(deep ? .black.opacity(0.35) : .white.opacity(0.85)))
+                    if blink < 0.5 { context.fill(Path(ellipseIn: shine), with: .color(deep ? .black.opacity(0.35) : .white.opacity(0.85))) }
                 }
             }
         }

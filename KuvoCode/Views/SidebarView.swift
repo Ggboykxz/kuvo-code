@@ -713,13 +713,14 @@ private struct BotRow: View {
     @Environment(Workspace.self) private var workspace
     @Environment(Bots.self) private var bots
     @Environment(AppModel.self) private var app
+    @State private var isHovering = false
 
     private var session: Session? { workspace.session(bot.sessionID) }
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 10) {
-                BotAvatar(look: bot.look, size: 28)
+                BotAvatar(look: bot.look, size: 28, mood: bots.mood(of: bot, in: workspace), noticed: isHovering)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(bot.name)
                         .font(.system(size: 14))
@@ -739,6 +740,7 @@ private struct BotRow: View {
             .modifier(RowHighlight(isSelected: isSelected))
         }
         .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
         // Read again whenever it's done some work: it may have scheduled a wake-up.
         .task(id: session?.time.updated) { await bots.readWakes(bot) }
     }
