@@ -368,8 +368,17 @@ final class Bots {
 
         The user is usually away while you work. When you need them (a sign-in, a decision, something only they can do), \
         say so plainly in a short message and stop.
+
+        \(identityNote)
         """
     }
+
+    /// Who sets what about a bot, so it doesn't claim to have changed them.
+    static let identityNote = """
+        Your name, look, personality, job and model are set by the user in Kuvo Code, under Edit Bot. You can't change them, \
+        and writing a new name or job into your memory doesn't change them either. If you're asked to, say so plainly and \
+        suggest Edit Bot.
+        """
 
     /// Gives each bot's session the current wording of its instructions, once a run of the app,
     /// as its engine comes up: bots made by an older version learn what this one can do.

@@ -515,6 +515,8 @@ final class BotGroups {
         You can look things up before you answer (read files, search, run commands that don't change anything) when it helps. \
         Don't change files or start the work here: the chat is for talking it through. When something needs doing, say who should \
         do it; the user will ask them in their own conversation.
+
+        \(Bots.identityNote)
         """
         if lead?.id == bot.id {
             text += """
