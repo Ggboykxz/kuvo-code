@@ -44,6 +44,8 @@ final class Bots {
     private(set) var wakes: [String: [Wakes.Pending]] = [:]
     @ObservationIgnored weak var app: AppModel?
     @ObservationIgnored private var waking: Task<Void, Never>?
+    /// Bots whose session has this version's instructions.
+    @ObservationIgnored private var synced: Set<String> = []
     private let log = Logger(subsystem: "run.kuvo.code", category: "bots")
 
     /// The key under which a bot's job goes to its session.
@@ -205,6 +207,7 @@ final class Bots {
         }
         waking = Task { [weak self] in
             while !Task.isCancelled {
+                await self?.syncInstructions()
                 await self?.wakeDue()
                 try? await Task.sleep(for: .seconds(20))
             }
@@ -280,21 +283,39 @@ final class Bots {
         You are \(bot.name), one of the user's bots in Kuvo Code\(bot.job.isEmpty ? "" : ": \(bot.job)"). A bot is a teammate with one job, \
         who keeps working on it over time in this one conversation. You run on \(place).
         \(job.isEmpty ? "" : "\nYour job:\n\(job)\n")
-        Memory: the file "\(bot.memoryFile)" is yours. Read it when you start a piece of work. Keep in it what you'll need next time: \
-        lasting preferences, how things are set up, and where ongoing work stands. Keep it short and current; check facts at their \
-        source rather than trusting it.
+        You can work on a schedule. Kuvo Code wakes you up at the times you choose, even while the user is away, so you can do \
+        things later ("in 2 hours", "tomorrow at 9") or again and again ("every 5 minutes", "every morning"). Never say you can't \
+        run in the background, on a timer or on a schedule: schedule a wake-up instead.
 
-        Waking up later: to carry on at a later time (to check on something, or to do a recurring part of your job), schedule a \
-        wake-up and then stop:
+        To schedule a wake-up, run:
           kuvo-wake \(bot.id) add <when> "<note to yourself>"
-        <when> is +30m, +2h, +1d, or a time like 2026-10-16T09:00 on that computer's clock. At that time this conversation gets \
-        your note as a new message starting with "\(Wakes.marker.trimmingCharacters(in: .whitespaces))". \
-        `kuvo-wake \(bot.id) list` shows what's scheduled, and `kuvo-wake \(bot.id) cancel <id>` cancels one. Schedule only what \
-        the job needs; a recurring job schedules its next run each time it wakes. (If kuvo-wake isn't found, it's "\(full)".)
+        <when> is +5m, +2h, +1d, or a time like 2026-10-16T09:00 on that computer's clock, at least a minute from now. At that \
+        time this conversation gets your note as a new message starting with "\(Wakes.marker.trimmingCharacters(in: .whitespaces))", \
+        and you carry on. `kuvo-wake \(bot.id) list` shows what's scheduled; `kuvo-wake \(bot.id) cancel <id>` cancels one. \
+        (If kuvo-wake isn't found, it's "\(full)".)
+
+        For something that repeats: do it now, report briefly, and schedule the next run, with a note that says what to do and \
+        that it repeats. Each time you wake up, do the work, report briefly, and schedule the next run again, until the user says \
+        to stop or the job is done. Keep reports short; the user reads them later.
+
+        Memory: the file "\(bot.memoryFile)" is yours. Read it when you start a piece of work. Keep in it what you'll need next \
+        time: lasting preferences, how things are set up, where ongoing work stands, and any schedule you're keeping. Keep it short \
+        and current; check facts at their source rather than trusting it.
 
         The user is usually away while you work. When you need them (a sign-in, a decision, something only they can do), \
         say so plainly in a short message and stop.
         """
+    }
+
+    /// Gives each bot's session the current wording of its instructions, once a run of the app,
+    /// as its engine comes up: bots made by an older version learn what this one can do.
+    func syncInstructions() async {
+        for bot in list where !synced.contains(bot.id) {
+            guard let api = app?.workspace.api(forFolder: bot.directory) else { continue }
+            if (try? await api.setInstruction(session: bot.sessionID, key: Self.instructionKey, text: Self.instructions(for: bot))) != nil {
+                synced.insert(bot.id)
+            }
+        }
     }
 
     // MARK: Storage
