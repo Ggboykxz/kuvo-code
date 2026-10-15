@@ -709,6 +709,21 @@ private struct WakeList: View {
     var body: some View {
         let wakes = bots.wakes[bot.id] ?? []
         WellGroup {
+            WellRow {
+                Image(systemName: "pause.circle")
+            } content: {
+                Toggle(isOn: Binding(get: { bots.paused.contains(bot.id) }, set: { pause in Task { await bots.setPaused(pause, bot) } })) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Pause Wake-Ups")
+                        Text("They wait until you turn this off; the ones that came due meanwhile go then.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .toggleStyle(.switch)
+                .padding(.vertical, 8)
+            }
+            WellDivider()
             if wakes.isEmpty {
                 WellRow {
                     Image(systemName: "alarm")

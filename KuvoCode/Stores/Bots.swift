@@ -47,6 +47,8 @@ final class Bots {
     private(set) var list: [Bot] = []
     /// Each bot's waiting wake-ups, as last read.
     private(set) var wakes: [String: [Wakes.Pending]] = [:]
+    /// Bots whose wake-ups you paused: they wait until you resume them.
+    private(set) var paused: Set<String> = []
     @ObservationIgnored weak var app: AppModel?
     @ObservationIgnored private var waking: Task<Void, Never>?
     /// Bots whose session has this version's instructions.
@@ -228,14 +230,18 @@ final class Bots {
     func readWakes(_ bot: Bot) async {
         if bot.machine == nil {
             wakes[bot.id] = Self.localWakes(of: bot)
+            notePaused(bot, FileManager.default.fileExists(atPath: Self.pauseFile(of: bot)))
             return
         }
         guard let machine = bot.machine else { return }
         let folder = (bot.folder as NSString).appendingPathComponent("wakes")
-        // One line each: the file's name, a tab, the note on one line.
-        let script = "for f in \(SSHConnection.quoted(folder))/*; do [ -f \"$f\" ] && printf '%s\\t%s\\n' \"${f##*/}\" \"$(tr '\\n' ' ' <\"$f\" | head -c 400)\"; done; true"
+        // One line each: the file's name, a tab, the note on one line; "paused" first if it is.
+        let script = "[ -e \(SSHConnection.quoted(Self.pauseFile(of: bot))) ] && echo paused; for f in \(SSHConnection.quoted(folder))/*; do [ -f \"$f\" ] && printf '%s\\t%s\\n' \"${f##*/}\" \"$(tr '\\n' ' ' <\"$f\" | head -c 400)\"; done; true"
         let output = await Task.detached { RemoteShell.run(script, on: machine) }.value
-        let lines = output.map { String(decoding: $0, as: UTF8.self) }?.split(separator: "\n") ?? []
+        var lines = output.map { String(decoding: $0, as: UTF8.self) }?.split(separator: "\n") ?? []
+        guard output != nil else { return }
+        notePaused(bot, lines.first == "paused")
+        if lines.first == "paused" { lines.removeFirst() }
         wakes[bot.id] = lines.compactMap { line in
             let parts = line.split(separator: "\t", maxSplits: 1).map(String.init)
             return parts.first.flatMap { Wakes.Pending(id: $0, note: parts.count > 1 ? parts[1] : "") }
@@ -251,6 +257,33 @@ final class Bots {
             try? FileManager.default.removeItem(atPath: file)
         }
         wakes[bot.id]?.removeAll { $0.id == wake.id }
+    }
+
+    // MARK: Pausing
+
+    /// A file in the bot's folder that, while it's there, holds its wake-ups: on this Mac, and on
+    /// a machine, where the watchdog skips it.
+    static func pauseFile(of bot: Bot) -> String {
+        (bot.folder as NSString).appendingPathComponent("paused")
+    }
+
+    /// Holds a bot's wake-ups until you resume it; then those that came due meanwhile go.
+    func setPaused(_ pause: Bool, _ bot: Bot) async {
+        let file = Self.pauseFile(of: bot)
+        if let machine = bot.machine {
+            let script = pause ? ": > \(SSHConnection.quoted(file))" : "rm -f \(SSHConnection.quoted(file))"
+            guard await Task.detached(operation: { RemoteShell.run(script, on: machine) }).value != nil else { return }
+        } else if pause {
+            FileManager.default.createFile(atPath: file, contents: nil)
+        } else {
+            try? FileManager.default.removeItem(atPath: file)
+        }
+        notePaused(bot, pause)
+    }
+
+    private func notePaused(_ bot: Bot, _ isPaused: Bool) {
+        if isPaused, !paused.contains(bot.id) { paused.insert(bot.id) }
+        if !isPaused, paused.contains(bot.id) { paused.remove(bot.id) }
     }
 
     /// Sends a waiting wake-up now rather than at its time (to see the bot's job run), on this Mac
@@ -283,7 +316,7 @@ final class Bots {
 
     private func wakeDue() async {
         guard let api = app?.api else { return }
-        for bot in list where bot.machine == nil {
+        for bot in list where bot.machine == nil && !FileManager.default.fileExists(atPath: Self.pauseFile(of: bot)) {
             let pending = Self.localWakes(of: bot)
             for wake in pending where wake.due <= .now {
                 do {

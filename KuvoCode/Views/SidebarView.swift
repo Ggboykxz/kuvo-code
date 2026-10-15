@@ -933,6 +933,8 @@ private struct BotRow: View {
             ShimmerText(text: "Working…")
         } else if let machine = bot.machine, app.machines.engine(machine)?.isReady != true {
             Text("On \(machine), not connected")
+        } else if bots.paused.contains(bot.id) {
+            Text("Paused")
         } else if let wakes = bots.wakes[bot.id], !wakes.isEmpty {
             // Kept current: "in 2 minutes", then, once it's due and on its way, "Waking up…".
             TimelineView(.periodic(from: .now, by: 5)) { context in

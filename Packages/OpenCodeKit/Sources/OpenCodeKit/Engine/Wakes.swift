@@ -116,6 +116,8 @@ public enum Wakes {
       password=$(sed -n 's/.*"password":"\([^"]*\)".*/\1/p' "$record")
       [ -n "$port" ] && [ -n "$password" ] || exit 0
       for bot in "$bots"/*/; do
+        # Paused by you: its wake-ups wait.
+        [ -e "${bot}paused" ] && continue
         session=$(cat "$bot/session" 2>/dev/null) || continue
         [ -n "$session" ] || continue
         for wake in "$bot"wakes/*; do
