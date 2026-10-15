@@ -112,10 +112,13 @@ final class BrowserSession: NSObject {
     /// Goes to an address, or searches for anything that doesn't look like one.
     func load(_ input: String) {
         guard let url = Self.url(from: input) else { return }
+        // A question the page left open is turned down as you go elsewhere.
+        if dialog != nil { answerDialog(accept: false) }
         webView.load(URLRequest(url: url))
     }
 
     func close() {
+        if dialog != nil { answerDialog(accept: false) }
         webView.stopLoading()
         observations = []
     }
