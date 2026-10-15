@@ -35,11 +35,16 @@ struct MachineBrowserPane<NewTab: View>: View {
                 DialogBar(dialog: dialog, browser: browser)
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
+            if isShown, let download = browser.downloads.last {
+                MachineDownloadBar(download: download, browser: browser)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
             Divider()
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .animation(.ui, value: browser.dialog)
+        .animation(.ui, value: browser.downloads)
         .task(id: page) {
             // While this tab shows its page, that's the page in use, live.
             guard let page else { return }
@@ -250,6 +255,71 @@ private struct AgentBadge: View {
 }
 
 /// The page asks something (an alert, a confirmation, a question): answer it here.
+/// A page downloaded a file on the machine: where it is, and a copy for this Mac.
+private struct MachineDownloadBar: View {
+    let download: MachineBrowser.Download
+    let browser: MachineBrowser
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol)
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(download.name)
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text(detail)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            switch download.state {
+            case .onMachine, .failed:
+                Button("Save to Mac") { browser.saveToMac(download.id) }
+                    .help("Copy it into your Downloads folder")
+            case .saving:
+                Spinner(size: 14)
+            case .saved(let file):
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([file]) }
+            }
+            Button {
+                browser.dismissDownloads()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .frame(width: 18, height: 18)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Hide")
+        }
+        .controlSize(.small)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Surface.well(scheme), in: .rect(cornerRadius: 10))
+        .padding(.horizontal, 10)
+        .padding(.bottom, 8)
+    }
+
+    private var symbol: String {
+        if case .saved = download.state { return "checkmark.circle.fill" }
+        return "arrow.down.circle"
+    }
+
+    private var detail: String {
+        switch download.state {
+        case .onMachine: "Downloaded on \(browser.machine.name)"
+        case .saving: "Copying to this Mac…"
+        case .saved: "In your Downloads folder"
+        case .failed(let reason): reason
+        }
+    }
+}
+
 private struct DialogBar: View {
     let dialog: MachineBrowser.Dialog
     let browser: MachineBrowser

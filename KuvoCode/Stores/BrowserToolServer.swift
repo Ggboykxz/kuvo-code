@@ -165,6 +165,11 @@ enum BrowserTools {
              ["seconds": ["type": "number"]], required: ["seconds"]),
         tool("browser_new_tab", "Open a new browser tab in the panel, optionally at an address.",
              ["url": ["type": "string"]]),
+        tool("browser_upload", "Attach files to the page's file input with this number (or the upload button it belongs to), as choosing them in the file picker would. Give the files' full paths.",
+             ["index": ["type": "integer"], "files": ["type": "array", "items": ["type": "string"], "description": "Full paths of the files to attach."]], required: ["index", "files"]),
+        tool("browser_tabs", "List the browser's tabs (numbered like [1], with the one in use marked), switch to one to work in it, or close one.",
+             ["action": ["type": "string", "enum": ["list", "switch", "close"], "description": "Defaults to list."],
+              "tab": ["type": "integer", "description": "The tab's number from the list, to switch to or close."]]),
         tool("browser_sign_in", "Sign in on the page with the user's own username and password: they type them in Kuvo Code (or pick a saved one), and they go straight into the fields you name. You never see them. Use this for every sign-in, and never ask for a password in the chat. Whenever a page you open asks to sign in, call it right away, even if the user didn't mention signing in: its card is how you ask them, and they can say Not Now there. Don't ask in the chat whether to sign in. Name the fields the page has now (on a sign-in that asks for the username and the password on pages of their own, call it on each; the user answers once). Then submit the form yourself.",
              ["username": ["type": "integer", "description": "The number of the username or email field, if the page has one."],
               "password": ["type": "integer", "description": "The number of the password field, if the page has one."]]),
@@ -192,6 +197,17 @@ enum BrowserTools {
     }
 
     static func call(_ name: String, arguments: [String: Any], agent: BrowserAgent) async -> [String: Any] {
+        var result = await perform(name, arguments: arguments, agent: agent)
+        // Downloads that started or finished meanwhile, ahead of the tool's own result.
+        let notes = agent.takeNotes()
+        if !notes.isEmpty, var content = result["content"] as? [[String: Any]], content.first?["type"] as? String == "text" {
+            content[0]["text"] = notes + (content[0]["text"] as? String ?? "")
+            result["content"] = content
+        }
+        return result
+    }
+
+    private static func perform(_ name: String, arguments: [String: Any], agent: BrowserAgent) async -> [String: Any] {
         func text(_ value: String, error: Bool = false) -> [String: Any] {
             ["content": [["type": "text", "text": value]], "isError": error]
         }
@@ -233,6 +249,11 @@ enum BrowserTools {
             return text(await agent.wait((arguments["seconds"] as? NSNumber)?.doubleValue ?? 2))
         case "browser_new_tab":
             return text(await agent.newTab(string("url")))
+        case "browser_upload":
+            guard let index = int("index"), let files = arguments["files"] as? [String], !files.isEmpty else { return text("Missing index or files.", error: true) }
+            return text(await agent.upload(index, files: files))
+        case "browser_tabs":
+            return text(await agent.tabs(string("action") ?? "list", tab: int("tab")))
         case "browser_sign_in":
             return text(await agent.signIn(username: int("username"), password: int("password")))
         case "browser_ask_code":

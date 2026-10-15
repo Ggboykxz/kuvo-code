@@ -32,13 +32,15 @@ const BROWSER = path.join(K, "browser");
 const CURRENT = path.join(BROWSER, "current");
 // Website data: cookies and sign-ins stay between starts.
 const PROFILE = path.join(BROWSER, "profile");
+// What pages download, under their own names; gone after a week.
+const DOWNLOADS = path.join(BROWSER, "downloads");
 const SCRIPT = process.argv[1];
 // How long Chromium keeps running with nobody connected.
 const IDLE = Number(process.env.KUVO_BROWSER_IDLE || 10 * 60) * 1000;
 
 // Goes up with every change to the keeper (host mode): a newer one replaces one that's running
 // (its pages close, its sign-ins stay), and an older one never replaces a newer.
-const KEEPER = 5;
+const KEEPER = 6;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -224,6 +226,33 @@ function identity() {
   };
 }
 
+/// A finished download, from its temporary name to its own (numbered if that's taken). Its path,
+/// or null if it's gone.
+function finishDownload(guid, name) {
+  const safe = path.basename(String(name)).replace(/^\.+/, "").slice(0, 200) || "download";
+  const extension = path.extname(safe);
+  const stem = safe.slice(0, safe.length - extension.length);
+  let file = path.join(DOWNLOADS, safe);
+  for (let n = 2; fs.existsSync(file); n++) file = path.join(DOWNLOADS, `${stem} ${n}${extension}`);
+  try {
+    fs.renameSync(path.join(DOWNLOADS, guid), file);
+    return file;
+  } catch {
+    return null;
+  }
+}
+
+/// Downloads more than a week old.
+function clearOldDownloads() {
+  const cutoff = Date.now() - 7 * 24 * 3600 * 1000;
+  for (const entry of fs.readdirSync(DOWNLOADS, { withFileTypes: true })) {
+    const file = path.join(DOWNLOADS, entry.name);
+    try {
+      if (fs.statSync(file).mtimeMs < cutoff) fs.rmSync(file, { recursive: true, force: true });
+    } catch {}
+  }
+}
+
 /// Starts Chromium and waits until it answers on its pipe.
 async function launchChrome(sandbox) {
   const args = [
@@ -358,6 +387,8 @@ async function host() {
   // The keeper's own session with each page and worker, which says what the browser is before
   // it loads anything; the ones clients open come after it.
   const own = new Map();
+  // Downloads under way: their temporary names, and the names their sites gave them.
+  const downloads = new Map();
   const browserIdentity = identity();
   let status = { working: false };
   let idle = null;
@@ -450,6 +481,20 @@ async function host() {
       return;
     }
     if (message.method === "Target.detachedFromTarget" && [...own.values()].includes(message.params.sessionId)) return;
+    if (message.method === "Browser.downloadWillBegin" && !downloads.has(message.params.guid)) {
+      downloads.set(message.params.guid, message.params.suggestedFilename || "download");
+      broadcast({ method: "Kuvo.downloading", params: { name: downloads.get(message.params.guid) } });
+    }
+    if (message.method === "Browser.downloadProgress" && message.params.state !== "inProgress") {
+      const name = downloads.get(message.params.guid);
+      downloads.delete(message.params.guid);
+      if (message.params.state === "completed" && name) {
+        const file = finishDownload(message.params.guid, name);
+        if (file) broadcast({ method: "Kuvo.downloaded", params: { name: path.basename(file), path: file, size: message.params.totalBytes } });
+      } else if (name) {
+        broadcast({ method: "Kuvo.downloadFailed", params: { name } });
+      }
+    }
     if (message.method === "Target.targetCreated" && message.params.targetInfo.type === "page") targets.add(message.params.targetInfo.targetId);
     if (message.method === "Target.targetDestroyed") {
       targets.delete(message.params.targetId);
@@ -529,6 +574,10 @@ async function host() {
   // before it starts.
   internal("Target.setDiscoverTargets", { discover: true });
   internal("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: true, flatten: true });
+  // Downloads go into the browser's folder, each under a temporary name until it's done.
+  fs.mkdirSync(DOWNLOADS, { recursive: true, mode: 0o700 });
+  clearOldDownloads();
+  internal("Browser.setDownloadBehavior", { behavior: "allowAndName", downloadPath: DOWNLOADS, eventsEnabled: true });
   const mask = process.umask(0o077);
   server.listen(SOCKET, () => {
     process.umask(mask);
@@ -636,9 +685,14 @@ const sessions = new Map();
 // about the ones answered.
 const dialogs = new Map();
 const notes = [];
+const noteOnce = (note) => {
+  if (!notes.includes(note)) notes.push(note);
+};
 let busy = false;
 // Asks waiting for the user's answer, by ID.
 const waiting = new Map();
+// A file picker an upload is waiting for, by page session.
+const choosers = new Map();
 
 async function browser() {
   if (link && !link.closed) return link;
@@ -661,6 +715,19 @@ async function browser() {
         // During a tool, at once: the page (and the script that opened it) waits on the answer.
         if (busy) answer(message.sessionId, message.params);
         else dialogs.set(message.sessionId, message.params);
+        break;
+      case "Kuvo.downloading":
+        noteOnce(`The page started downloading ${message.params.name}.`);
+        break;
+      case "Kuvo.downloaded":
+        noteOnce(`Downloaded ${message.params.name} to ${message.params.path}.`);
+        break;
+      case "Kuvo.downloadFailed":
+        noteOnce(`Downloading ${message.params.name} failed.`);
+        break;
+      case "Page.fileChooserOpened":
+        choosers.get(message.sessionId)?.(message.params);
+        choosers.delete(message.sessionId);
         break;
       case "Page.javascriptDialogClosed":
         dialogs.delete(message.sessionId);
@@ -913,6 +980,71 @@ async function tool(name, args) {
   const integer = (key) => (Number.isFinite(Number(args[key])) && args[key] !== "" && args[key] !== null ? Math.trunc(Number(args[key])) : null);
   const string = (key) => (typeof args[key] === "string" ? args[key] : null);
   const scripts = CONFIG.scripts;
+
+  if (name === "browser_upload") {
+    const index = integer("index");
+    const files = Array.isArray(args.files) ? args.files.filter((f) => typeof f === "string" && f) : [];
+    if (index === null || !files.length) throw new ToolError("Missing index or files.");
+    const paths = files.map((f) => path.resolve(f.replace(/^~(?=$|\/)/, os.homedir())));
+    const unreadable = paths.find((f) => {
+      try {
+        return !fs.statSync(f).isFile();
+      } catch {
+        return true;
+      }
+    });
+    if (unreadable) return text(`Can't read ${unreadable} on this machine. Give its full path.`);
+    const p = await page();
+    // The file input the element stands for, as an object to hand the files to.
+    const found = await link.send("Runtime.evaluate", {
+      expression: `(function({index}) {\n${scripts.find}\n${scripts.fileInput}\n})(${JSON.stringify({ index })})`,
+      returnByValue: false,
+    }, p.session);
+    const value = found.result;
+    if (value?.type === "string" && value.value === "missing") return text(`There's no element [${index}] on the page now. Take a fresh browser_snapshot.`);
+    if (value?.objectId) {
+      await link.send("DOM.setFileInputFiles", { files: paths, objectId: value.objectId }, p.session);
+    } else {
+      // A button that opens the file picker itself: click it, and answer the picker.
+      await link.send("Page.setInterceptFileChooserDialog", { enabled: true }, p.session);
+      try {
+        const opened = new Promise((resolve) => {
+          choosers.set(p.session, resolve);
+          setTimeout(() => resolve(null), 4000);
+        });
+        await run(p, scripts.find + scripts.click, { index });
+        const chooser = await opened;
+        if (!chooser) return text(`[${index}] didn't open a file picker. Give the number of the upload button or its file input.`);
+        await link.send("DOM.setFileInputFiles", { files: paths, backendNodeId: chooser.backendNodeId }, p.session);
+      } finally {
+        choosers.delete(p.session);
+        await link.send("Page.setInterceptFileChooserDialog", { enabled: false }, p.session).catch(() => {});
+      }
+    }
+    await sleep(400);
+    return text(`Attached ${paths.length === 1 ? "the file" : `${paths.length} files`}.\n\n` + (await snapshot(p)));
+  }
+
+  if (name === "browser_tabs") {
+    const c = await browser();
+    const open = await pages();
+    const list = (targets) =>
+      targets.length
+        ? "Tabs:\n" + targets.map((t, i) => `[${i + 1}] ${isEmpty(t.url) ? "New tab" : t.title || "(untitled)"} — ${isEmpty(t.url) ? "empty" : t.url}${t.targetId === active ? " (in use)" : ""}`).join("\n")
+        : "No tabs are open.";
+    const action = string("action") || "list";
+    if (action === "list") return text(list(open));
+    const number = integer("tab");
+    const chosen = number === null ? null : open[number - 1];
+    if (!chosen) return text(`There's no tab [${number ?? 0}]. ` + list(open));
+    if (action === "close") {
+      await c.send("Target.closeTarget", { targetId: chosen.targetId });
+      sessions.delete(chosen.targetId);
+      if (active === chosen.targetId) active = null;
+      return text(`Closed tab [${number}]. ` + list((await pages())));
+    }
+    return text(await snapshot(await use(chosen.targetId)));
+  }
 
   if (name === "browser_new_tab") {
     const c = await browser();

@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 import WebKit
 
 /// Lets the agent use the panel's browser, the way browser-use does: it reads a page as
@@ -31,6 +32,64 @@ final class BrowserAgent {
         utilities.reveal()
         if address != nil { await settle(browser, expectNavigation: true) }
         return await snapshot()
+    }
+
+    /// Attaches files on this Mac to the page's file input [index] (or the one its button is for).
+    func upload(_ index: Int, files paths: [String]) async -> String {
+        let browser = browser()
+        var files: [[String: String]] = []
+        var total = 0
+        for path in paths {
+            let url = URL(filePath: (path as NSString).expandingTildeInPath)
+            guard let data = try? Data(contentsOf: url) else { return "Can't read \(path) on this Mac. Give its full path." }
+            total += data.count
+            guard total <= 25_000_000 else { return "That's too much to attach at once (25 MB at most)." }
+            let type = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
+            files.append(["name": url.lastPathComponent, "type": type, "data": data.base64EncodedString()])
+        }
+        let outcome = await run(Self.uploadScript, ["index": index, "files": files], in: browser)
+        switch outcome {
+        case "ok":
+            try? await Task.sleep(for: .milliseconds(400))
+            return "Attached \(paths.count == 1 ? "the file" : "\(paths.count) files").\n\n" + (await snapshot())
+        case "missing": return "There's no element [\(index)] on the page now. Take a fresh browser_snapshot."
+        case "none": return "[\(index)] isn't a file input, and the page doesn't have just one. Give the number of the upload button or its file input."
+        default: return outcome
+        }
+    }
+
+    /// What happened in the browser since the agent's last tool (a download), for its next result.
+    func takeNotes() -> String {
+        let notes = utilities.browsers.values.flatMap { browser in
+            defer { browser.agentNotes = [] }
+            return browser.agentNotes
+        }
+        return notes.isEmpty ? "" : notes.joined(separator: "\n") + "\n\n"
+    }
+
+    /// The panel's browser tabs, numbered from 1; or switches to one, or closes one.
+    func tabs(_ action: String, tab number: Int?) async -> String {
+        let open = utilities.tabs.compactMap { tab in utilities.browsers[tab.id].map { (id: tab.id, browser: $0) } }
+        if action != "list" {
+            guard let number, open.indices.contains(number - 1) else { return "There's no tab [\(number ?? 0)]. " + Self.list(open.map(\.browser), inUse: utilities.activeBrowser) }
+            let chosen = open[number - 1]
+            if action == "close" {
+                utilities.close(chosen.id)
+                let rest = utilities.tabs.compactMap { utilities.browsers[$0.id] }
+                return "Closed tab [\(number)]. " + Self.list(rest, inUse: utilities.activeBrowser)
+            }
+            utilities.reveal(chosen.browser)
+            return await snapshot()
+        }
+        return Self.list(open.map(\.browser), inUse: utilities.activeBrowser)
+    }
+
+    private static func list(_ browsers: [BrowserSession], inUse: BrowserSession?) -> String {
+        guard !browsers.isEmpty else { return "No tabs are open." }
+        return "Tabs:\n" + browsers.enumerated().map { index, browser in
+            let title = browser.title.isEmpty ? "(untitled)" : browser.title
+            return "[\(index + 1)] \(title) — \(browser.url?.absoluteString ?? "empty")" + (browser === inUse ? " (in use)" : "")
+        }.joined(separator: "\n")
     }
 
     /// The page as text: title, address, scroll position, and its numbered elements.
@@ -409,6 +468,45 @@ final class BrowserAgent {
     element.value = match.value;
     element.dispatchEvent(new Event('input', { bubbles: true }));
     element.dispatchEvent(new Event('change', { bubbles: true }));
+    return 'ok';
+    """
+
+    /// The file input [index] stands for: itself, one inside it or that its label is for, the
+    /// nearest one around it (an upload button beside its hidden input), or the page's only one;
+    /// else "missing" or "none".
+    static let fileInputScript = """
+    const element = find(index);
+    if (!element) return 'missing';
+    const isFile = (node) => node instanceof HTMLInputElement && node.type === 'file';
+    let input = isFile(element) ? element : element.querySelector && element.querySelector('input[type=file]');
+    const label = element.closest && element.closest('label');
+    if (!input && label && isFile(label.control)) input = label.control;
+    for (let around = element.parentElement, level = 0; !input && around && level < 3; around = around.parentElement, level++) {
+      const inside = around.querySelectorAll('input[type=file]');
+      if (inside.length === 1) input = inside[0];
+    }
+    if (!input) {
+      const all = [...document.querySelectorAll('input[type=file]')];
+      if (all.length === 1) input = all[0];
+    }
+    return input || 'none';
+    """
+
+    /// Puts `files` ({name, type, data in base64}) into the file input [index], as choosing them
+    /// in the file picker would.
+    static let uploadScript = """
+    const input = (() => {
+    \(fileInputScript)
+    })();
+    if (typeof input === 'string') return input;
+    const transfer = new DataTransfer();
+    for (const file of files) {
+      const bytes = Uint8Array.from(atob(file.data), (c) => c.charCodeAt(0));
+      transfer.items.add(new File([bytes], file.name, { type: file.type }));
+    }
+    input.files = transfer.files;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
     return 'ok';
     """
 

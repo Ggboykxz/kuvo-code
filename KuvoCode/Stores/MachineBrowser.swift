@@ -71,6 +71,18 @@ final class MachineBrowser {
         }
     }
     private(set) var hasPicture = false
+    /// Files its pages downloaded on the machine lately, the latest last, while the bar shows them.
+    private(set) var downloads: [Download] = []
+
+    /// A file a page downloaded into the browser's folder on the machine, and its copy on this Mac.
+    struct Download: Identifiable, Equatable {
+        let id = UUID()
+        var name: String
+        var path: String
+        var state: State = .onMachine
+
+        enum State: Equatable { case onMachine, saving, saved(URL), failed(String) }
+    }
     @ObservationIgnored weak var pictureView: PictureView? {
         didSet { pictureView?.show(picture) }
     }
@@ -338,6 +350,18 @@ final class MachineBrowser {
             Task { await begin() }
         case "Kuvo.asked":
             asked(params)
+        case "Kuvo.downloaded":
+            guard let name = params["name"] as? String, let path = params["path"] as? String else { return }
+            downloads = (downloads + [Download(name: name, path: path)]).suffix(3)
+            #if DEBUG
+            // KUVO_DEMO_SAVE_DOWNLOADS: each download is saved to this Mac, as Save to Mac does.
+            if ProcessInfo.processInfo.environment["KUVO_DEMO_SAVE_DOWNLOADS"] != nil, let id = downloads.last?.id {
+                Task {
+                    try? await Task.sleep(for: .seconds(3))
+                    saveToMac(id)
+                }
+            }
+            #endif
         case "Kuvo.askClosed":
             if let id = params["id"] as? String, openAsks.remove(id) != nil { onAskClosed(id) }
         case "Kuvo.error":
@@ -663,6 +687,44 @@ final class MachineBrowser {
         }
     }
     #endif
+
+    // MARK: Downloads
+
+    /// Copies a download from the machine into this Mac's Downloads folder, over SSH.
+    func saveToMac(_ id: UUID) {
+        guard let index = downloads.firstIndex(where: { $0.id == id }) else { return }
+        let download = downloads[index]
+        downloads[index].state = .saving
+        let destination = BrowserSession.free(BrowserSession.safeName(download.name), in: BrowserSession.downloadsFolder)
+        let connection = machine.connection
+        Task {
+            let outcome: Download.State = await Task.detached {
+                guard FileManager.default.createFile(atPath: destination.path, contents: nil), let handle = try? FileHandle(forWritingTo: destination) else {
+                    return .failed("Couldn't write to Downloads.")
+                }
+                let process = Process()
+                process.executableURL = URL(filePath: "/usr/bin/ssh")
+                process.arguments = connection.arguments(running: "cat -- '" + download.path.replacingOccurrences(of: "'", with: "'\\''") + "'")
+                process.standardOutput = handle
+                process.standardError = FileHandle.nullDevice
+                do {
+                    try process.run()
+                    process.waitUntilExit()
+                } catch {}
+                try? handle.close()
+                guard process.terminationStatus == 0 else {
+                    try? FileManager.default.removeItem(at: destination)
+                    return .failed("The file isn't on the machine any more.")
+                }
+                return .saved(destination)
+            }.value
+            if let index = downloads.firstIndex(where: { $0.id == id }) { downloads[index].state = outcome }
+        }
+    }
+
+    func dismissDownloads() {
+        downloads.removeAll { $0.state != .saving }
+    }
 
     // MARK: Input
 
