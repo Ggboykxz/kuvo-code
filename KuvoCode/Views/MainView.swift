@@ -895,7 +895,8 @@ struct MainView: View {
     }
 
     /// KUVO_DEMO_BOT=<name>|<job>|<instructions>[|<machine>] makes that bot unless one has the
-    /// name, and opens it; KUVO_DEMO_BOT_PROMPT then gives it a task.
+    /// name, and opens it; KUVO_DEMO_BOT_PROMPT then gives it a task, and KUVO_DEMO_EDIT_BOT
+    /// opens its Edit Bot sheet.
     private func runDemoBot(_ environment: [String: String]) async {
         guard let spec = environment["KUVO_DEMO_BOT"] else { return }
         let parts = spec.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
@@ -915,6 +916,8 @@ struct MainView: View {
         }
         guard let bot else { return }
         openTab(bot.sessionID)
+        // KUVO_DEMO_EDIT_BOT: its Edit Bot sheet, open.
+        if environment["KUVO_DEMO_EDIT_BOT"] != nil { botSheet = BotSheetRequest(bot: bot) }
         if let prompt = environment["KUVO_DEMO_BOT_PROMPT"], let model = workspace.model(for: bot.sessionID) {
             try? await Task.sleep(for: .seconds(1))
             model.submit(prompt, files: [], for: nil, queue: false, commands: [])
