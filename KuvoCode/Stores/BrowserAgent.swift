@@ -67,6 +67,8 @@ final class BrowserAgent {
         return notes.isEmpty ? "" : notes.joined(separator: "\n") + "\n\n"
     }
 
+    static let unanswered = "The user didn't answer in time. Carry on with what you can without it, and say in your reply what you need; if you work on your own (a bot), schedule a wake-up to try again later."
+
     /// A browser tool is at work: dialogs pages show are answered at once.
     static var isWorking = false
     /// And confirmations and prompts are accepted rather than declined.
@@ -228,7 +230,7 @@ final class BrowserAgent {
             try? await Task.sleep(for: .milliseconds(300))
             return "Filled \(filled.joined(separator: " and ")) for \(host) (you can't see them). Submit the form to sign in.\n\n" + (await snapshot())
         case .timedOut:
-            return "The user didn't answer in time. Ask them in the chat how to go on."
+            return Self.unanswered
         default:
             return "The user didn't sign in. Ask them in the chat how to go on."
         }
@@ -248,7 +250,7 @@ final class BrowserAgent {
             try? await Task.sleep(for: .milliseconds(300))
             return "Filled the code (you can't see it). Submit it if the page doesn't on its own.\n\n" + (await snapshot())
         case .timedOut:
-            return "The user didn't answer in time. Ask them in the chat how to go on."
+            return Self.unanswered
         default:
             return "The user didn't give a code. Ask them in the chat how to go on."
         }
@@ -264,7 +266,7 @@ final class BrowserAgent {
             await settle(browser, expectNavigation: false)
             return "The user says it's done.\n\n" + (await snapshot())
         case .timedOut:
-            return "The user didn't answer in time. Ask them in the chat how to go on."
+            return Self.unanswered
         default:
             return "The user couldn't do it. Ask them in the chat how to go on."
         }

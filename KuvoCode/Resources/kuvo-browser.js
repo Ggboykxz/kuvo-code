@@ -40,7 +40,7 @@ const IDLE = Number(process.env.KUVO_BROWSER_IDLE || 10 * 60) * 1000;
 
 // Goes up with every change to the keeper (host mode): a newer one replaces one that's running
 // (its pages close, its sign-ins stay), and an older one never replaces a newer.
-const KEEPER = 7;
+const KEEPER = 8;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -402,6 +402,7 @@ async function host() {
   const send = (client, message) => {
     if (!client.closed) client.socket.write((typeof message === "string" ? message : JSON.stringify(message)) + "\n");
   };
+  const viewers = () => [...clients].filter((client) => client.viewer && !client.closed).length;
   const broadcast = (message) => {
     const text = typeof message === "string" ? message : JSON.stringify(message);
     for (const client of clients) send(client, text);
@@ -519,9 +520,10 @@ async function host() {
         internal("Target.detachFromTarget", { sessionId });
       }
       for (const [id, ask] of asks) if (ask.client === client) closeAsk(id);
+      if (client.viewer) broadcast({ method: "Kuvo.viewers", params: { count: viewers() } });
       if (!clients.size) idleSoon();
     });
-    send(client, { method: "Kuvo.hello", params: { targetId: active, status, version: CONFIG.version, keeper: KEEPER, asks: [...asks.values()].map((ask) => ask.params) } });
+    send(client, { method: "Kuvo.hello", params: { targetId: active, status, version: CONFIG.version, keeper: KEEPER, asks: [...asks.values()].map((ask) => ask.params), viewers: viewers() } });
     lines(socket, (text) => {
       let message;
       try {
@@ -530,6 +532,11 @@ async function host() {
         return;
       }
       switch (message.method) {
+        case "Kuvo.viewing":
+          // A Mac showing the browser: someone who can answer asks.
+          client.viewer = true;
+          broadcast({ method: "Kuvo.viewers", params: { count: viewers() } });
+          return message.id !== undefined && send(client, { id: message.id, result: {} });
         case "Kuvo.getActive":
           return send(client, { id: message.id, result: { targetId: active } });
         case "Kuvo.setActive": {
@@ -696,6 +703,8 @@ let busy = false;
 let acceptDialogs = false;
 // Asks waiting for the user's answer, by ID.
 const waiting = new Map();
+// How many Macs show this browser now (who could answer an ask).
+let viewerCount = 1;
 // A file picker an upload is waiting for, by page session.
 const choosers = new Map();
 
@@ -709,6 +718,10 @@ async function browser() {
     switch (message.method) {
       case "Kuvo.hello":
         active = message.params.targetId;
+        viewerCount = message.params.viewers ?? 1;
+        break;
+      case "Kuvo.viewers":
+        viewerCount = message.params.count ?? 0;
         break;
       case "Kuvo.activeChanged":
         active = message.params.targetId;
@@ -953,16 +966,26 @@ async function point(p, index, action) {
 }
 
 /// Asks the user, in Kuvo Code, and waits for the answer (15 minutes at most).
+/// With no Mac connected, it waits a few minutes for one (Kuvo Code opening) rather than the
+/// whole while.
 function askUser(params) {
   const id = crypto.randomUUID();
   link.notify("Kuvo.ask", { id, ...params });
+  const started = Date.now();
+  let alone = viewerCount ? null : started;
   return new Promise((resolve) => {
     waiting.set(id, resolve);
-    setTimeout(() => {
-      if (!waiting.delete(id)) return;
+    const check = setInterval(() => {
+      if (!waiting.has(id)) return clearInterval(check);
+      if (viewerCount) alone = null;
+      else alone ??= Date.now();
+      const nobody = alone !== null && Date.now() - alone > 180_000;
+      if (!nobody && Date.now() - started < 900_000) return;
+      clearInterval(check);
+      waiting.delete(id);
       link?.notify("Kuvo.cancelAsk", { id });
-      resolve({ type: "timedOut" });
-    }, 900_000);
+      resolve({ type: nobody ? "nobody" : "timedOut" });
+    }, 5_000);
   });
 }
 
@@ -989,7 +1012,8 @@ async function checkField(p, index, wanted) {
 }
 
 const noAnswer = (answer, what) =>
-  answer.type === "timedOut" ? "The user didn't answer in time. Ask them in the chat how to go on."
+  answer.type === "nobody" ? "No one has Kuvo Code open to answer now. Carry on with what you can without it, and say in your reply what you need; if you work on your own (a bot), schedule a wake-up to try again later."
+    : answer.type === "timedOut" ? "The user didn't answer in time. Carry on with what you can without it, and say in your reply what you need; if you work on your own (a bot), schedule a wake-up to try again later."
     : answer.type === "lost" ? "The connection to the browser closed while the user was answering. Try again."
     : `The user didn't ${what}. Ask them in the chat how to go on.`;
 

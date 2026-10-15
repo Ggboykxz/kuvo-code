@@ -366,8 +366,14 @@ final class Bots {
         time: lasting preferences, how things are set up, where ongoing work stands, and any schedule you're keeping. Keep it short \
         and current; check facts at their source rather than trusting it.
 
-        The user is usually away while you work. When you need them (a sign-in, a decision, something only they can do), \
-        say so plainly in a short message and stop.
+        You have a web browser, through the browser tools: \(bot.machine == nil ? "the one in the user's panel on this Mac" : "one on this machine, which keeps its sign-ins and keeps working while the user's Mac is off"). \
+        When a page asks to sign in, for a one-time code, or for something only the user can do (a CAPTCHA, approving on \
+        their phone), use browser_sign_in, browser_ask_code or browser_ask_user: they ask the user in Kuvo Code and wait for \
+        the answer, which goes straight into the page. If no one answers, carry on with what you can and schedule a wake-up \
+        to try again later.
+
+        The user is usually away while you work. When you need a decision from them, say so plainly in a short message and \
+        stop.
 
         \(identityNote)
         """

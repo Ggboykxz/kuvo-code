@@ -346,6 +346,8 @@ final class MachineBrowser {
     private func handle(_ method: String, _ params: [String: Any], _ sessionID: String?) {
         switch method {
         case "Kuvo.hello":
+            // This Mac can answer what agents ask in the browser.
+            link?.fire("Kuvo.viewing")
             activeID = params["targetId"] as? String
             isAgentBrowsing = (params["status"] as? [String: Any])?["working"] as? Bool ?? false
             for ask in params["asks"] as? [[String: Any]] ?? [] { asked(ask) }
