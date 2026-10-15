@@ -16,8 +16,8 @@ public struct EngineRelease: Sendable, Equatable {
     /// The build this version of the app is written against.
     public static let pinned = EngineRelease(
         version: OpenCodeEngine.version,
-        tarball: URL(string: "https://registry.npmjs.org/@opencode/cli-darwin-arm64/-/cli-darwin-arm64-2.0.29.tgz")!,
-        integrity: "sha512-2tJOM20RpOjNeWsYcV3VfRFPDTeu1yMMbEqAQm1sEKmHX9087Sx/TxhwBlvtiudOGq6Kr3zyKmW1t7aFF6qCsQ==",
+        tarball: URL(string: "https://registry.npmjs.org/@opencode/cli-darwin-arm64/-/cli-darwin-arm64-2.0.30.tgz")!,
+        integrity: "sha512-pXiRPtYr8BERCcx4/dUzCUra3vxsQffTa/8l6rjODNBgWAoxLlWJaXxrGmQ907uRPaUY0OT7HQvTmUzRTnkj9g==",
         teamIdentifier: "5NZ4Q7NXJ4"
     )
 
@@ -28,15 +28,15 @@ public struct EngineRelease: Sendable, Equatable {
         case "x86_64", "amd64":
             EngineRelease(
                 version: OpenCodeEngine.version,
-                tarball: URL(string: "https://registry.npmjs.org/@opencode/cli-linux-x64/-/cli-linux-x64-2.0.29.tgz")!,
-                integrity: "sha512-pdG/T4uBxSC3hjUTOrTlx2pXlZl2VqABlb0AgDlZ8VO/q1pUUOYvooWmN5VeSi+EP8cKGVUsj0GUmMDeB2ympA==",
+                tarball: URL(string: "https://registry.npmjs.org/@opencode/cli-linux-x64/-/cli-linux-x64-2.0.30.tgz")!,
+                integrity: "sha512-oBw8dtg9BWiKkhyPOxA6GN+o78zmQfjgVi7Hz9de1pJZJVyGBMLlkYk1EwPeS+vWyOCSaty2FxCAsYH1bMdS2g==",
                 teamIdentifier: ""
             )
         case "aarch64", "arm64":
             EngineRelease(
                 version: OpenCodeEngine.version,
-                tarball: URL(string: "https://registry.npmjs.org/@opencode/cli-linux-arm64/-/cli-linux-arm64-2.0.29.tgz")!,
-                integrity: "sha512-EsCnvp5lMJNem0YoQJM9PkXY0KrkiugL55M9J2JlImQzKdQnZ4CKutrPAXOnsa889qHhY5tjRpAnD/ZYFzhkRA==",
+                tarball: URL(string: "https://registry.npmjs.org/@opencode/cli-linux-arm64/-/cli-linux-arm64-2.0.30.tgz")!,
+                integrity: "sha512-EQzVA40jWkbYMQGdqC3y7I7DOUnw5zYhPPwCa2vFb/MK/BuBkHZqPcsDABD82ECaNVGJo43kz8s0Ckodb8EA4w==",
                 teamIdentifier: ""
             )
         default:

@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Kuvo Code runs opencode 2.0.30, with fixes for MCP servers, configured instructions and long conversations.
 - **Chats**: conversations of no project, for a question or an idea. Start one with **+** next to Chats or ⌥⌘N; when it turns into work, **Move to Project** carries it, conversation and all, into one of your projects.
 - Sidebar sections fold: click Bots, Chats, Projects or Recents to tuck it away.
 - With the tab bar hidden, the side panel's button stays at the top right of the window, so the panel is easy to find.
