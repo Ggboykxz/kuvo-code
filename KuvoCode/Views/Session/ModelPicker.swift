@@ -219,7 +219,7 @@ struct ModelPicker: View {
     private var effortPage: some View {
         VStack(spacing: 14) {
             ZStack {
-                // The level and the model: all of it opens the model list.
+                // The level and the model, and only they, open the model list.
                 Button { go(.models) } label: {
                     VStack(spacing: 2) {
                         Text(variant.map(EffortLevel.title) ?? "Default")
@@ -234,17 +234,20 @@ struct ModelPicker: View {
                         .font(.system(size: 13))
                         .foregroundStyle(.secondary)
                     }
-                    .padding(.horizontal, 36)
+                    .padding(.horizontal, 10)
                     .padding(.vertical, 7)
-                    .frame(maxWidth: .infinity)
                     .hoverHighlight(in: RoundedRectangle(cornerRadius: 12))
+                    .contentShape(.rect(cornerRadius: 12))
                 }
                 .buttonStyle(.plain)
                 .help("Choose another model")
+                // Room for the logo and the reset button beside it, outside what opens the list.
+                .padding(.horizontal, 32)
                 // Beside it, without moving it: who made the model, and back to its default.
                 HStack {
                     if let current {
-                        ProviderLogo(id: current.makerLogoID, size: 16)
+                        ProviderLogo(id: current.makerLogoID, size: 24, colored: true)
+                            .frame(width: 30, height: 30)
                             .allowsHitTesting(false)
                     }
                     Spacer()
