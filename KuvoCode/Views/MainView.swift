@@ -1076,6 +1076,23 @@ struct MainView: View {
                 if let event = try? ServerEvent(json: Data(json.utf8)) { workspace.handle(event, machine: parts[0]) }
             }
         }
+        // KUVO_DEMO_ASKING[=<title>]: every few seconds, as if the agent of the session in view (the
+        // one with that title, once it shows) started asking in its browser; the ask itself comes
+        // from calling the browser's tools.
+        if let title = environment["KUVO_DEMO_ASKING"] {
+            Task { [workspace] in
+                var opened = false
+                while true {
+                    try? await Task.sleep(for: .seconds(5))
+                    if !opened, !["", "1"].contains(title), let session = workspace.sessions.first(where: { $0.title == title }) {
+                        openTab(session.id)
+                        opened = true
+                    }
+                    guard let id = sessionID, let session = workspace.session(id) else { continue }
+                    workspace.onBrowserAsk?(id, RemoteFolder.machine(of: session.location.directory))
+                }
+            }
+        }
         // KUVO_DEMO_CYCLE_TABS=<seconds>: goes to the next session tab every so often, a few times.
         if let wait = environment["KUVO_DEMO_CYCLE_TABS"].flatMap(Double.init) {
             Task {
