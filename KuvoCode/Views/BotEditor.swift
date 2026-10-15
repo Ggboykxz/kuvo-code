@@ -2,15 +2,17 @@ import AppKit
 import OpenCodeKit
 import SwiftUI
 
-/// Making a bot, or changing one: how it looks, its name and job, and, for a new one, where it
-/// lives and works. An existing bot also shows its waiting wake-ups and its memory.
-struct BotSheet: View {
+/// Making a bot, or changing one, in the window's main card: how it looks, its name and job,
+/// and, for a new one, where it lives and works. An existing bot also shows its waiting wake-ups
+/// and its memory.
+struct BotEditor: View {
     /// The bot being changed; nil for a new one.
     let bot: Bot?
+    /// Back to what was there before.
+    let close: () -> Void
     /// Called with the new bot, once it's made.
     var created: (Bot) -> Void = { _ in }
 
-    @Environment(\.dismiss) private var dismiss
     @Environment(AppModel.self) private var app
     @Environment(Bots.self) private var bots
     @Environment(Workspace.self) private var workspace
@@ -30,8 +32,9 @@ struct BotSheet: View {
 
     private enum Field { case name, job, instructions }
 
-    init(bot: Bot?, created: @escaping (Bot) -> Void = { _ in }) {
+    init(bot: Bot?, close: @escaping () -> Void, created: @escaping (Bot) -> Void = { _ in }) {
         self.bot = bot
+        self.close = close
         self.created = created
         _look = State(initialValue: bot?.look ?? .random())
         _name = State(initialValue: bot?.name ?? "")
@@ -48,18 +51,21 @@ struct BotSheet: View {
         VStack(spacing: 0) {
             ScrollView {
                 form
-                    .padding([.horizontal, .top], 28)
-                    .padding(.bottom, 4)
+                    .frame(maxWidth: 600)
+                    .padding(.horizontal, Metrics.gutter + 8)
+                    .padding(.top, 24)
+                    .padding(.bottom, 8)
+                    .frame(maxWidth: .infinity)
             }
             .scrollBounceBehavior(.basedOnSize)
-            .frame(maxHeight: 640)
-            .fixedSize(horizontal: false, vertical: true)
+            .scrollEdgeEffectStyle(.soft, for: .bottom)
             footer
-                .padding(.horizontal, 28)
-                .padding(.top, 16)
-                .padding(.bottom, 24)
+                .frame(maxWidth: 600)
+                .padding(.horizontal, Metrics.gutter + 8)
+                .padding(.top, 12)
+                .padding(.bottom, 20)
+                .frame(maxWidth: .infinity)
         }
-        .frame(width: 560)
         .onAppear { if isNew { focus = .name } }
         .sheet(isPresented: $showsAddMachine) {
             MachineSheet { machine = $0; project = nil }
@@ -67,7 +73,7 @@ struct BotSheet: View {
         .alert("Delete \(bot?.name ?? "This Bot")?", isPresented: $confirmsDelete) {
             Button("Delete", role: .destructive) {
                 guard let bot else { return }
-                dismiss()
+                close()
                 Task { await bots.delete(bot) }
             }
             Button("Cancel", role: .cancel) {}
@@ -78,9 +84,6 @@ struct BotSheet: View {
 
     private var form: some View {
             VStack(alignment: .leading, spacing: 20) {
-                Text(isNew ? "New Bot" : "Edit Bot")
-                    .font(.title2.weight(.bold))
-
                 identity
 
                 section("Look") {
@@ -113,7 +116,6 @@ struct BotSheet: View {
                         WellGroup {
                             Button {
                                 app.utilities.show(RemoteFolder.fileURL(bot.memoryFile, in: bot.directory))
-                                dismiss()
                             } label: {
                                 WellRow {
                                     Image(systemName: "brain")
@@ -156,7 +158,7 @@ struct BotSheet: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button("Cancel", role: .cancel) { dismiss() }
+            Button("Cancel", role: .cancel, action: close)
                 .keyboardShortcut(.cancelAction)
                 .buttonStyle(.glass)
             Button(isNew ? "Create Bot" : "Save", action: save)
@@ -274,7 +276,7 @@ struct BotSheet: View {
             bot.instructions = instructions
             bot.look = look
             Task { await bots.update(bot) }
-            dismiss()
+            close()
             return
         }
         isWorking = true
@@ -284,7 +286,6 @@ struct BotSheet: View {
             do {
                 let bot = try await bots.create(name: trimmedName, job: job, instructions: instructions, look: look, machine: machine, project: project)
                 created(bot)
-                dismiss()
             } catch {
                 failure = error.localizedDescription
             }
@@ -306,7 +307,9 @@ struct BotSheet: View {
     }
 }
 
-/// Color, shape and face, each a row of choices drawn as the bot would look with it.
+/// Color, shape and face, each a row of choices drawn as the bot would look with it. A picked
+/// color has a quiet ring, as in Settings › Appearance; a picked shape or face sits on accent
+/// glass, the app's mark for what's selected.
 private struct LookPicker: View {
     @Binding var look: BotLook
 
@@ -314,18 +317,29 @@ private struct LookPicker: View {
         WellGroup {
             row("Color") {
                 ForEach(BotLook.Tint.allCases) { tint in
-                    choice(isOn: look.color == tint, help: tint.title) { look.color = tint } label: {
+                    Button {
+                        withAnimation(.ui) { look.color = tint }
+                    } label: {
                         Circle()
                             .fill(tint.color)
                             .frame(width: 20, height: 20)
-                            .overlay { Circle().strokeBorder(.white.opacity(0.35), lineWidth: 1) }
+                            .overlay { Circle().strokeBorder(.black.opacity(0.12), lineWidth: 0.5) }
+                            .padding(3.5)
+                            .overlay {
+                                if look.color == tint { Circle().strokeBorder(.primary.opacity(0.55), lineWidth: 1.5) }
+                            }
+                            .contentShape(.circle)
                     }
+                    .buttonStyle(.plain)
+                    .help(tint.title)
+                    .accessibilityLabel(tint.title)
+                    .accessibilityAddTraits(look.color == tint ? .isSelected : [])
                 }
             }
             WellDivider()
             row("Shape") {
                 ForEach(BotLook.Form.allCases) { form in
-                    choice(isOn: look.shape == form, help: form.title) { look.shape = form } label: {
+                    Tile(isOn: look.shape == form, help: form.title) { look.shape = form } label: {
                         BotAvatar(look: BotLook(color: look.color, shape: form, face: look.face), size: 26)
                     }
                 }
@@ -333,7 +347,7 @@ private struct LookPicker: View {
             WellDivider()
             row("Face") {
                 ForEach(BotLook.Face.allCases) { face in
-                    choice(isOn: look.face == face, help: face.title) { look.face = face } label: {
+                    Tile(isOn: look.face == face, help: face.title) { look.face = face } label: {
                         BotAvatar(look: BotLook(color: look.color, shape: look.shape, face: face), size: 26)
                     }
                 }
@@ -347,29 +361,37 @@ private struct LookPicker: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 66, alignment: .leading)
                 .padding(.leading, 12)
-            HStack(spacing: 6) { choices() }
+            HStack(spacing: 4) { choices() }
             Spacer(minLength: 0)
         }
-        .frame(minHeight: 46)
+        .frame(minHeight: 48)
     }
 
-    /// One choice: a ring in the accent color when it's the one picked.
-    private func choice(isOn: Bool, help: String, action: @escaping () -> Void, @ViewBuilder label: () -> some View) -> some View {
-        Button {
-            withAnimation(.ui) { action() }
-        } label: {
-            label()
-                .padding(3)
-                .overlay {
-                    Circle()
-                        .strokeBorder(isOn ? AnyShapeStyle(.tint) : AnyShapeStyle(.clear), lineWidth: 2)
-                }
-                .contentShape(.circle)
+    /// A shape or face to pick: on accent glass when it's the one, a soft fill under the pointer.
+    private struct Tile<Label: View>: View {
+        let isOn: Bool
+        let help: String
+        let action: () -> Void
+        @ViewBuilder let label: Label
+        @State private var isHovering = false
+
+        var body: some View {
+            Button {
+                withAnimation(.ui) { action() }
+            } label: {
+                label
+                    .frame(width: 38, height: 38)
+                    .background(isHovering && !isOn ? Pressable.hoverFill : .clear, in: .rect(cornerRadius: 10))
+                    .accentGlass(RoundedRectangle(cornerRadius: 10), isOn: isOn)
+                    .contentShape(.rect(cornerRadius: 10))
+            }
+            .buttonStyle(.plain)
+            .onHover { isHovering = $0 }
+            .animation(.easeOut(duration: 0.12), value: isHovering)
+            .help(help)
+            .accessibilityLabel(help)
+            .accessibilityAddTraits(isOn ? .isSelected : [])
         }
-        .buttonStyle(.plain)
-        .help(help)
-        .accessibilityLabel(help)
-        .accessibilityAddTraits(isOn ? .isSelected : [])
     }
 }
 

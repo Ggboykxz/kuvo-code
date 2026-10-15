@@ -27,8 +27,8 @@ struct MainView: View {
     @AppStorage(Notifier.badgeKey) private var showsBadge = true
     /// The New Project or Edit Project sheet, while it's open.
     @State private var projectSheet: ProjectSheetRequest?
-    /// The New Bot or Edit Bot sheet, while it's open.
-    @State private var botSheet: BotSheetRequest?
+    /// Making or changing a bot, in the main card while it's open.
+    @State private var botEditor: BotEditorRequest?
     @State private var focus = Pane.conversation
     /// Tabs you closed, last one last, with where they were: ⇧⌘T opens them again.
     @State private var closedTabs: [ClosedTab] = []
@@ -250,9 +250,6 @@ struct MainView: View {
             }
             Button("Cancel", role: .cancel) {}
         }
-        .sheet(item: $botSheet) { request in
-            BotSheet(bot: request.bot) { openTab($0.sessionID) }
-        }
         .sheet(item: $projectSheet) { request in
             ProjectSheet(project: request.project, folders: request.folders, focusesRun: request.focusesRun) { primary, settings in
                 workspace.saveProject(primary, settings: settings)
@@ -422,8 +419,8 @@ struct MainView: View {
                 newProject: { projectSheet = ProjectSheetRequest(project: nil) },
                 editProject: { projectSheet = ProjectSheetRequest(project: $0) },
                 showProviders: { showsProviders = true },
-                newBot: { botSheet = BotSheetRequest(bot: nil) },
-                editBot: { botSheet = BotSheetRequest(bot: $0) }
+                newBot: { openBotEditor(bot: nil) },
+                editBot: { openBotEditor(bot: $0) }
             )
             // Room for the window's buttons above the first row, when they sit here.
             .padding(.top, showsTabBar ? 0 : Metrics.windowControlsHeight)
@@ -436,7 +433,21 @@ struct MainView: View {
 
     @ViewBuilder private var conversationCard: some View {
         Group {
-            if let id = sessionID, let model = workspace.model(for: id) {
+            if let request = botEditor {
+                Card(title: request.bot.map { "Edit \($0.name)" } ?? "New Bot", isFocused: focus == .conversation) {
+                    if let bot = request.bot { BotAvatar(look: bot.look, size: 18) } else { Image(systemName: "face.smiling") }
+                } actions: {
+                    Button("Close", systemImage: "xmark") { withAnimation(.ui) { botEditor = nil } }
+                        .help("Close")
+                } content: {
+                    BotEditor(bot: request.bot) {
+                        withAnimation(.ui) { botEditor = nil }
+                    } created: { bot in
+                        openTab(bot.sessionID)
+                    }
+                }
+                .id(request.id)
+            } else if let id = sessionID, let model = workspace.model(for: id) {
                 let directory = model.session.location.directory
                 let machine = machine(for: directory)
                 let bot = bots.bot(forSession: id)
@@ -446,7 +457,7 @@ struct MainView: View {
                     } else if let logo = logo(for: model.session.model, in: directory) { ProviderLogo(id: logo, size: 14) } else { Image(systemName: "bubble.left") }
                 } actions: {
                     if let bot {
-                        Button("Edit Bot", systemImage: "slider.horizontal.3") { botSheet = BotSheetRequest(bot: bot) }
+                        Button("Edit Bot", systemImage: "slider.horizontal.3") { openBotEditor(bot: bot) }
                             .help("Edit Bot: its look, job, wake-ups and memory")
                     }
                     if !(machine?.isLive ?? app.isLive) {
@@ -538,6 +549,16 @@ struct MainView: View {
         }
     }
 
+    /// Makes a bot, or changes `bot`, in the main card.
+    private func openBotEditor(bot: Bot?) {
+        withAnimation(.ui) {
+            panelExpanded = false
+            app.showsSettings = false
+            botEditor = BotEditorRequest(bot: bot)
+        }
+        focus = .conversation
+    }
+
     /// Back from Settings to the sessions, as they were.
     private func closeSettings() {
         withAnimation(.ui) { app.showsSettings = false }
@@ -557,6 +578,7 @@ struct MainView: View {
             selection = key
             focus = .conversation
             app.showsSettings = false
+            botEditor = nil
         }
     }
 
@@ -674,7 +696,7 @@ struct MainView: View {
             newSession: { newSession(in: nil) },
             openFolder: openFolder,
             newProject: { projectSheet = ProjectSheetRequest(project: nil) },
-            newBot: { botSheet = BotSheetRequest(bot: nil) },
+            newBot: { openBotEditor(bot: nil) },
             stop: { model?.stop() },
             selectAgent: { model?.selectAgent($0) },
             togglePanel: { withAnimation(.ui) { showsPanel.toggle() } },
@@ -750,7 +772,7 @@ struct MainView: View {
         add(showsSidebar ? "Hide Sessions" : "Show Sessions", "sidebar.left", "⌘0", actions.toggleSidebar)
         add(showsTabBar ? "Hide Tab Bar" : "Show Tab Bar", "rectangle.topthird.inset.filled", "⌥⌘T") { showsTabBar.toggle() }
         add("New Project…", "folder.badge.plus", "⇧⌘N", actions.newProject)
-        add("New Bot…", "face.smiling", nil) { botSheet = BotSheetRequest(bot: nil) }
+        add("New Bot…", "face.smiling", nil) { openBotEditor(bot: nil) }
         add("Open Folder…", "folder", "⌘O", actions.openFolder)
         if let directory = activeDirectory {
             let primary = workspace.projectDirectory(directory)
@@ -887,7 +909,7 @@ struct MainView: View {
             showsPanel = true
         }
         // KUVO_DEMO_NEW_BOT: the New Bot sheet.
-        if environment["KUVO_DEMO_NEW_BOT"] != nil { botSheet = BotSheetRequest(bot: nil) }
+        if environment["KUVO_DEMO_NEW_BOT"] != nil { openBotEditor(bot: nil) }
         // In a task of its own: SwiftUI cancels and restarts this view's task while the
         // window settles, which would cut the session's creation short.
         Task { await runDemoSession(environment) }
@@ -917,7 +939,7 @@ struct MainView: View {
         guard let bot else { return }
         openTab(bot.sessionID)
         // KUVO_DEMO_EDIT_BOT: its Edit Bot sheet, open.
-        if environment["KUVO_DEMO_EDIT_BOT"] != nil { botSheet = BotSheetRequest(bot: bot) }
+        if environment["KUVO_DEMO_EDIT_BOT"] != nil { openBotEditor(bot: bot) }
         if let prompt = environment["KUVO_DEMO_BOT_PROMPT"], let model = workspace.model(for: bot.sessionID) {
             try? await Task.sleep(for: .seconds(1))
             model.submit(prompt, files: [], for: nil, queue: false, commands: [])
@@ -1028,8 +1050,8 @@ private struct SlowEngineNotice: View {
 }
 
 /// Which project sheet to show: New Project, or Edit Project for `project`.
-/// The bot sheet: a new bot, or changing `bot`.
-struct BotSheetRequest: Identifiable {
+/// The bot editor: a new bot, or changing `bot`.
+struct BotEditorRequest: Identifiable {
     let id = UUID()
     let bot: Bot?
 }
