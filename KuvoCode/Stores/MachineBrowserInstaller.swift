@@ -224,7 +224,6 @@ nonisolated enum MachineBrowserInstaller {
         for name in (try? fm.contentsOfDirectory(atPath: root.appending(path: "usr/share/licenses").path)) ?? [] {
             try? fm.moveItem(at: root.appending(path: "usr/share/licenses/\(name)"), to: bundle.appending(path: "licenses/\(name)"))
         }
-        try Data(fontConfig.utf8).write(to: bundle.appending(path: "fonts.conf"))
         try Data((runtime.chromium.version + "\n").utf8).write(to: bundle.appending(path: "chromium-version"))
 
         let packed = staging.appending(path: "bundle.tar.gz")
@@ -239,22 +238,6 @@ nonisolated enum MachineBrowserInstaller {
         progress(1)
         return file
     }
-
-    /// The bundle's fonts, and the machine's own if it has any, for the browser's fontconfig.
-    static let fontConfig = """
-        <?xml version="1.0"?>
-        <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
-        <fontconfig>
-          <dir prefix="relative">fonts</dir>
-          <include ignore_missing="yes">/etc/fonts/fonts.conf</include>
-          <cachedir prefix="relative">fontcache</cachedir>
-          <alias><family>sans-serif</family><prefer><family>Liberation Sans</family><family>DejaVu Sans</family></prefer></alias>
-          <alias><family>serif</family><prefer><family>Liberation Serif</family><family>DejaVu Sans</family></prefer></alias>
-          <alias><family>monospace</family><prefer><family>Liberation Mono</family><family>DejaVu Sans</family></prefer></alias>
-          <alias><family>emoji</family><prefer><family>Noto Color Emoji</family></prefer></alias>
-        </fontconfig>
-
-        """
 
     /// Downloads a file, from the first address that has it, and checks it against its checksum.
     private static func download(_ name: String, from urls: [URL], sha256 expected: String, into folder: URL, report: @escaping @Sendable (String, Int) -> Void) async throws -> URL {
@@ -379,12 +362,14 @@ extension MachineBrowserInstaller {
     }
 
     /// The command that runs the helper on a machine, with the engine's own runtime: this
-    /// version's, or the one there (a newer one another Mac put there).
+    /// version's, or the one there (a newer one another Mac put there). It gets the engine's
+    /// folders in `~/.kuvo-code`, so the runtime's cache lands there, not in the user's home.
     static func command(_ mode: String) -> String {
         """
         K="$HOME/\(RemoteEngineInstaller.root)"; E="$K/engine/\(OpenCodeEngine.version)/opencode"; \
         [ -x "$E" ] || E=$(ls -d "$K"/engine/*/opencode 2>/dev/null | tail -n 1); \
-        KUVO_HOME="$K" BUN_BE_BUN=1 exec "$E" "\(helperPath)" \(mode)
+        XDG_DATA_HOME="$K/data" XDG_CONFIG_HOME="$K/config" XDG_STATE_HOME="$K/state" XDG_CACHE_HOME="$K/cache" \
+        BUN_INSTALL="$K/cache/bun" KUVO_HOME="$K" BUN_BE_BUN=1 exec "$E" "\(helperPath)" \(mode)
         """
     }
 

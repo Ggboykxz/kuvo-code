@@ -38,7 +38,7 @@ const IDLE = Number(process.env.KUVO_BROWSER_IDLE || 10 * 60) * 1000;
 
 // Goes up when the keeper changes: a newer one replaces one that's running (its pages close, its
 // sign-ins stay), and an older one never replaces a newer.
-const KEEPER = 2;
+const KEEPER = 3;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -123,7 +123,7 @@ async function ensure() {
   fs.mkdirSync(RUN, { recursive: true, mode: 0o700 });
   fs.rmSync(ERRORFILE, { force: true });
   // In a session of its own, so it outlives whoever started it.
-  const child = spawn(process.execPath, [SCRIPT, "host"], { detached: true, stdio: "ignore", env: { ...process.env, BUN_BE_BUN: "1" } });
+  const child = spawn(process.execPath, [SCRIPT, "host"], { detached: true, stdio: "ignore", env: { ...process.env, BUN_BE_BUN: "1" }, cwd: BROWSER });
   child.unref();
   const deadline = Date.now() + 45_000;
   while (Date.now() < deadline) {
@@ -243,18 +243,45 @@ async function launchChrome(sandbox) {
   // build a running browser uses, so the update leaves that one in place.
   const build = fs.realpathSync(CURRENT);
   const lib = path.join(build, "lib");
+  // A home of its own, inside Kuvo Code's folder: what Chromium keeps there (its certificate store,
+  // caches, downloads) never lands in the user's.
+  const home = path.join(BROWSER, "home");
+  fs.mkdirSync(home, { recursive: true, mode: 0o700 });
+  // The build's fonts, and the machine's own if it has any, with fontconfig's cache in that home
+  // (written with whole paths: a relative one lands wherever the browser happens to start).
+  const fontsConfig = path.join(home, "fonts.conf");
+  const xml = (text) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  fs.writeFileSync(fontsConfig, [
+    '<?xml version="1.0"?>',
+    '<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">',
+    "<fontconfig>",
+    `  <dir>${xml(path.join(build, "fonts"))}</dir>`,
+    '  <include ignore_missing="yes">/etc/fonts/fonts.conf</include>',
+    `  <cachedir>${xml(path.join(home, ".cache", "fontconfig"))}</cachedir>`,
+    "  <alias><family>sans-serif</family><prefer><family>Liberation Sans</family><family>DejaVu Sans</family></prefer></alias>",
+    "  <alias><family>serif</family><prefer><family>Liberation Serif</family><family>DejaVu Sans</family></prefer></alias>",
+    "  <alias><family>monospace</family><prefer><family>Liberation Mono</family><family>DejaVu Sans</family></prefer></alias>",
+    "  <alias><family>emoji</family><prefer><family>Noto Color Emoji</family></prefer></alias>",
+    "</fontconfig>",
+    "",
+  ].join("\n"));
   const env = {
     ...process.env,
+    HOME: home,
+    XDG_CONFIG_HOME: path.join(home, ".config"),
+    XDG_CACHE_HOME: path.join(home, ".cache"),
+    XDG_DATA_HOME: path.join(home, ".local", "share"),
+    XDG_STATE_HOME: path.join(home, ".local", "state"),
     // Its own libraries and fonts, never the machine's: nothing has to be installed there.
     LD_LIBRARY_PATH: [lib, process.env.LD_LIBRARY_PATH].filter(Boolean).join(":"),
-    FONTCONFIG_FILE: path.join(build, "fonts.conf"),
+    FONTCONFIG_FILE: fontsConfig,
     GIO_MODULE_DIR: path.join(lib, "gio-modules"),
     GSETTINGS_BACKEND: "memory",
   };
   delete env.BUN_BE_BUN;
   const log = fs.openSync(LOGFILE, "a", 0o600);
   fs.writeSync(log, `--- ${new Date().toISOString()} starting${sandbox ? "" : " without the sandbox"}\n`);
-  const chrome = spawn(path.join(build, "chrome-headless-shell"), args, { stdio: ["ignore", log, log, "pipe", "pipe"], env });
+  const chrome = spawn(path.join(build, "chrome-headless-shell"), args, { stdio: ["ignore", log, log, "pipe", "pipe"], env, cwd: home });
   fs.closeSync(log);
   let exited = null;
   chrome.on("exit", (code, signal) => (exited = { code, signal }));
