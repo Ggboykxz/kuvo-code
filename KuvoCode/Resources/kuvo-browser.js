@@ -37,10 +37,12 @@ const DOWNLOADS = path.join(BROWSER, "downloads");
 const SCRIPT = process.argv[1];
 // How long Chromium keeps running with nobody connected.
 const IDLE = Number(process.env.KUVO_BROWSER_IDLE || 10 * 60) * 1000;
+// How long a page only agents used stays open once they've left it.
+const TAB_IDLE = Number(process.env.KUVO_BROWSER_TAB_IDLE || 12 * 3600) * 1000;
 
 // Goes up with every change to the keeper (host mode): a newer one replaces one that's running
 // (its pages close, its sign-ins stay), and an older one never replaces a newer.
-const KEEPER = 9;
+const KEEPER = 10;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -422,6 +424,18 @@ async function host() {
   // than taking over one in use; and when you last picked a page for a conversation.
   const claims = new Map();
   const picks = new Map();
+  // The page each client's session is attached to, to know which pages a Mac shows.
+  const attachedTo = new Map();
+  const shown = (targetId) => [...attachedTo].some(([sessionId, target]) => target === targetId && owners.get(sessionId)?.viewer);
+  // Pages only agents used, left alone for half a day, close: bots that wake every hour don't
+  // pile up tabs. Never the page in use, one a Mac shows, or the last one.
+  setInterval(() => {
+    for (const [targetId, claim] of claims) {
+      if (Date.now() - claim.at < TAB_IDLE || targetId === active || shown(targetId) || targets.size <= 1) continue;
+      claims.delete(targetId);
+      internal("Target.closeTarget", { targetId });
+    }
+  }, Math.min(30 * 60_000, TAB_IDLE / 2)).unref();
 
   let stopping = false;
   const stop = async () => {
@@ -468,6 +482,7 @@ async function host() {
       if (request.method === "Target.attachToTarget" && message.result?.sessionId) {
         owners.set(message.result.sessionId, request.client);
         request.client.sessions.add(message.result.sessionId);
+        attachedTo.set(message.result.sessionId, request.targetId);
       }
       message.id = request.id;
       send(request.client, message);
@@ -477,6 +492,7 @@ async function host() {
       const owner = owners.get(message.params.sessionId);
       owner?.sessions.delete(message.params.sessionId);
       owners.delete(message.params.sessionId);
+      attachedTo.delete(message.params.sessionId);
     }
     if (message.method === "Target.attachedToTarget" && !message.sessionId && !own.has(message.params.targetInfo.targetId)) {
       const { sessionId, targetInfo, waitingForDebugger } = message.params;
@@ -602,7 +618,7 @@ async function host() {
       }
       if (message.id === undefined || typeof message.method !== "string") return;
       const id = next++;
-      pending.set(id, { client, id: message.id, method: message.method });
+      pending.set(id, { client, id: message.id, method: message.method, targetId: message.params?.targetId });
       const forward = { id, method: message.method, params: message.params ?? {} };
       if (message.sessionId) forward.sessionId = message.sessionId;
       toChrome(forward);
