@@ -941,12 +941,15 @@ private struct WakeRow: View {
 struct EmptyConversationView: View {
     let directory: String
     @Environment(\.bot) private var bot
+    @State private var isHoveringBot = false
 
     var body: some View {
         if let bot {
             // A bot, before its first task: who it is and what it's for.
             VStack(spacing: 12) {
-                BotAvatar(look: bot.look, size: 64, mood: .idle)
+                // Still: the bot moves in its sidebar row; pointed at, it notices.
+                BotAvatar(look: bot.look, size: 64, mood: .idle, noticed: isHoveringBot, animates: false)
+                    .onHover { isHoveringBot = $0 }
                 VStack(spacing: 4) {
                     Text(bot.name)
                         .font(.title2.weight(.semibold))

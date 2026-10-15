@@ -417,12 +417,13 @@ struct MainView: View {
         }
     }
 
-    /// Bots moving in the main card (their conversation, the one talking in a group chat, the one
-    /// being edited): their sidebar rows hold still, so each moves in one place at a time.
+    /// Bots moving in the main card (working in their conversation, talking in a group chat, being
+    /// edited): their sidebar rows hold still meanwhile, so each moves in one place at a time.
+    /// An idle bot whose conversation is open moves in the sidebar, as nothing in its conversation does.
     private var stagedBots: Set<String> {
         if let request = botEditor { return Set([request.bot?.id].compactMap(\.self)) }
         if groupEditor != nil { return [] }
-        if let id = sessionID, let bot = bots.bot(forSession: id) { return [bot.id] }
+        if let id = sessionID, let bot = bots.bot(forSession: id), workspace.running.contains(id) { return [bot.id] }
         if let id = groupID, let speaker = groups.speaking[id] { return [speaker] }
         return []
     }
