@@ -40,7 +40,7 @@ const IDLE = Number(process.env.KUVO_BROWSER_IDLE || 10 * 60) * 1000;
 
 // Goes up with every change to the keeper (host mode): a newer one replaces one that's running
 // (its pages close, its sign-ins stay), and an older one never replaces a newer.
-const KEEPER = 6;
+const KEEPER = 7;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -560,6 +560,9 @@ async function host() {
         }
         case "Kuvo.cancelAsk":
           return closeAsk(message.params?.id);
+        case "Kuvo.pointer":
+          // Where the agent is about to act, for the pointer in every view of the page.
+          return broadcast({ method: "Kuvo.pointer", params: message.params ?? {} });
       }
       if (message.id === undefined || typeof message.method !== "string") return;
       const id = next++;
@@ -936,6 +939,19 @@ function answer(sessionId, dialog) {
   notes.push(`The page showed ${what}: “${dialog.message}” (${accept ? "accepted" : "declined"}).` + (accept ? "" : " If it should go ahead, do it again with accept_dialog: true."));
 }
 
+/// Shows the pointer in the views of the page where the agent's about to act, and gives it a
+/// moment to get there.
+async function point(p, index, action) {
+  let rect = null;
+  try {
+    const value = await run(p, CONFIG.scripts.find + CONFIG.scripts.rect, { index });
+    rect = value && value !== "ok" ? JSON.parse(value) : null;
+  } catch {}
+  if (!rect) return;
+  link?.notify("Kuvo.pointer", { targetId: p.target, action, rect });
+  await sleep(150);
+}
+
 /// Asks the user, in Kuvo Code, and waits for the answer (15 minutes at most).
 function askUser(params) {
   const id = crypto.randomUUID();
@@ -1077,6 +1093,7 @@ async function tool(name, args) {
     case "browser_click": {
       const index = integer("index");
       if (index === null) return text("Missing index.", true);
+      await point(p, index, "click");
       const before = await address(p);
       const pagesBefore = new Set((await pages()).map((info) => info.targetId));
       const outcome = await run(p, scripts.find + scripts.click, { index });
@@ -1089,6 +1106,7 @@ async function tool(name, args) {
       const value = string("text");
       if (index === null || value === null) return text("Missing index or text.", true);
       const submit = args.submit === true;
+      await point(p, index, "type");
       const outcome = await run(p, scripts.find + scripts.type, { index, text: value, submit, clear: args.clear !== false });
       if (outcome !== "ok") return text(note() + outcome);
       await settle(p, submit);
@@ -1098,6 +1116,7 @@ async function tool(name, args) {
       const index = integer("index");
       const option = string("option");
       if (index === null || option === null) return text("Missing index or option.", true);
+      await point(p, index, "select");
       const outcome = await run(p, scripts.find + scripts.select, { index, option });
       if (outcome !== "ok") return text(note() + outcome);
       await settle(p, false);

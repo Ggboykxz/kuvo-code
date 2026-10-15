@@ -6,6 +6,8 @@ import os
 /// Where a machine's browser sends its page's pictures as they come.
 @MainActor protocol PictureView: AnyObject {
     func show(_ picture: MachineBrowser.Picture?)
+    /// The agent is about to act on the element at `rect` (CSS pixels in the window).
+    func point(_ action: AgentPointer.Action, at rect: CGRect)
 }
 
 /// A machine's browser: a Chromium kept running on the machine (`kuvo-browser.js`), which the
@@ -350,6 +352,11 @@ final class MachineBrowser {
             Task { await begin() }
         case "Kuvo.asked":
             asked(params)
+        case "Kuvo.pointer":
+            guard params["targetId"] as? String == shownPage, let rect = params["rect"] as? [String: Any],
+                  let x = (rect["x"] as? NSNumber)?.doubleValue, let y = (rect["y"] as? NSNumber)?.doubleValue,
+                  let width = (rect["width"] as? NSNumber)?.doubleValue, let height = (rect["height"] as? NSNumber)?.doubleValue else { return }
+            pictureView?.point(AgentPointer.Action(rawValue: params["action"] as? String ?? "") ?? .click, at: CGRect(x: x, y: y, width: width, height: height))
         case "Kuvo.downloaded":
             guard let name = params["name"] as? String, let path = params["path"] as? String else { return }
             downloads = (downloads + [Download(name: name, path: path)]).suffix(3)

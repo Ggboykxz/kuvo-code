@@ -120,6 +120,7 @@ final class BrowserAgent {
     func click(_ index: Int) async -> String {
         let browser = browser()
         let before = browser.url
+        await point(.click, at: index, in: browser)
         let outcome = await run(Self.clickScript, ["index": index], in: browser)
         guard outcome == "ok" else { return outcome }
         await settleAfterClick(browser, from: before)
@@ -128,6 +129,7 @@ final class BrowserAgent {
 
     func type(_ index: Int, text: String, submit: Bool, clear: Bool) async -> String {
         let browser = browser()
+        await point(.type, at: index, in: browser)
         let outcome = await run(Self.typeScript, ["index": index, "text": text, "submit": submit, "clear": clear], in: browser)
         guard outcome == "ok" else { return outcome }
         await settle(browser, expectNavigation: submit)
@@ -136,6 +138,7 @@ final class BrowserAgent {
 
     func select(_ index: Int, option: String) async -> String {
         let browser = browser()
+        await point(.select, at: index, in: browser)
         let outcome = await run(Self.selectScript, ["index": index, "option": option], in: browser)
         guard outcome == "ok" else { return outcome }
         await settle(browser, expectNavigation: false)
@@ -301,6 +304,15 @@ final class BrowserAgent {
         return browser
     }
 
+    /// Shows the pointer where the agent's about to act, and gives it a moment to get there.
+    private func point(_ action: AgentPointer.Action, at index: Int, in browser: BrowserSession) async {
+        guard let json = try? await browser.webView.callAsyncJavaScript(Self.findElement + Self.rectScript, arguments: ["index": index], contentWorld: .page) as? String,
+              let values = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Double],
+              let x = values["x"], let y = values["y"], let width = values["width"], let height = values["height"] else { return }
+        browser.showAgentStep(action, at: CGRect(x: x, y: y, width: width, height: height))
+        try? await Task.sleep(for: .milliseconds(150))
+    }
+
     /// Runs one of the element scripts with the index map from the last snapshot.
     private func run(_ body: String, _ arguments: [String: Any], in browser: BrowserSession) async -> String {
         do {
@@ -420,11 +432,21 @@ final class BrowserAgent {
 
     """
 
+    /// Brings [index] into view, as the actions do, and says where it is (JSON, CSS pixels from
+    /// the window's top left), for the pointer that shows what the agent's doing.
+    static let rectScript = """
+    const element = find(index);
+    if (!element) return '';
+    element.scrollIntoView({ block: 'center', inline: 'nearest' });
+    const r = element.getBoundingClientRect();
+    return JSON.stringify({ x: r.left, y: r.top, width: r.width, height: r.height });
+    """
+
     static let clickScript = """
     const element = find(index);
     if (!element) return missing(index);
     document.getElementById('playwright-highlight-container')?.remove();
-    element.scrollIntoView({ block: 'center', inline: 'center' });
+    element.scrollIntoView({ block: 'center', inline: 'nearest' });
     const rect = element.getBoundingClientRect();
     const options = { bubbles: true, cancelable: true, view: window, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2, button: 0 };
     for (const type of ['pointerover', 'pointerdown', 'mousedown', 'pointerup', 'mouseup']) {

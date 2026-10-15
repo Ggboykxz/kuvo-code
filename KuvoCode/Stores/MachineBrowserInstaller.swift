@@ -336,6 +336,7 @@ extension MachineBrowserInstaller {
                 "press": BrowserAgent.pressScript,
                 "fieldKind": BrowserAgent.fieldKindScript,
                 "fileInput": BrowserAgent.fileInputScript,
+                "rect": BrowserAgent.rectScript,
                 "fill": BrowserAgent.fillScript,
                 "mask": BrowserAgent.maskScript,
                 "unmask": BrowserAgent.unmaskScript,

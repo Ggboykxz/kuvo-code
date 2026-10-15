@@ -24,6 +24,22 @@ final class BrowserSession: NSObject {
     /// The saved logins for the page's site, and whether it has a field to fill them into.
     private(set) var savedLogins: [Passwords.Login] = []
     private(set) var hasLoginField = false
+    /// The agent's latest step on the page, for the pointer that shows it.
+    private(set) var agentStep: AgentStep?
+
+    struct AgentStep: Identifiable, Equatable {
+        let id = UUID()
+        var action: AgentPointer.Action
+        /// The element, in the web view's points.
+        var rect: CGRect
+    }
+
+    /// The agent is about to act on the element at `rect` (CSS pixels in the window).
+    func showAgentStep(_ action: AgentPointer.Action, at rect: CGRect) {
+        let scale = webView.magnification
+        agentStep = AgentStep(action: action, rect: CGRect(x: rect.minX * scale, y: rect.minY * scale, width: rect.width * scale, height: rect.height * scale))
+    }
+
     /// What the page asks you (an alert, a confirmation, a question), until you answer.
     private(set) var dialog: PageDialog?
     @ObservationIgnored private var dialogAnswer: ((Bool, String?) -> Void)?
@@ -411,6 +427,7 @@ struct BrowserPane<NewTab: View>: View {
                 newTab()
             } else {
                 WebViewHost(webView: session.webView)
+                    .overlay { AgentPointerOverlay(step: session.agentStep) }
             }
         }
         .onAppear {

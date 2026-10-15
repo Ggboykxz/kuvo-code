@@ -388,6 +388,7 @@ final class RemotePageView: NSView, @preconcurrency NSTextInputClient, PictureVi
     private var lastScroll = Date.distantPast
     private var aheadSince: Date?
     private var settle: Task<Void, Never>?
+    private lazy var pointer = AgentPointerLayers(in: layer!)
     private var tracking: NSTrackingArea?
     private var lastMove = Date.distantPast
     private var marked: String?
@@ -421,9 +422,17 @@ final class RemotePageView: NSView, @preconcurrency NSTextInputClient, PictureVi
             ahead = .zero
             pageScroll = nil
             pageScrolls = false
+            pointer.clear()
         }
         placeImage()
         CATransaction.commit()
+    }
+
+    func point(_ action: AgentPointer.Action, at rect: CGRect) {
+        let page = pageRect
+        let scale = pageSize.width > 0 ? page.width / pageSize.width : 1
+        let element = CGRect(x: page.minX + rect.minX * scale, y: page.maxY - rect.maxY * scale, width: rect.width * scale, height: rect.height * scale)
+        pointer.show(action, at: CGPoint(x: element.midX, y: element.midY), over: element)
     }
 
     /// A new picture, scrolled to `scroll`: what it shows of your scrolling needn't be shown ahead
