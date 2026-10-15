@@ -345,7 +345,8 @@ final class Workspace {
         let root = try await api.createWorktree(project: project.id)
         // The engine leaves it on no branch; one of its own makes the work easy to commit,
         // push and merge.
-        let branch = try await Task.detached { try Git.newBranch(named: "kuvo/" + (root as NSString).lastPathComponent, in: root) }.value
+        let prefix = GitPreferences.branchPrefix
+        let branch = try await Task.detached { try Git.newBranch(named: prefix + (root as NSString).lastPathComponent, in: root) }.value
         let folder = subpath.isEmpty ? root : (root as NSString).appendingPathComponent(subpath)
         worktrees[folder] = Worktree(project: directory, root: root, branch: branch, base: base)
         saveWorktrees()
@@ -357,11 +358,12 @@ final class Workspace {
     private func nameBranch(of session: Session) {
         let folder = session.location.directory
         guard let tree = worktrees[folder], let title = session.title, !title.isEmpty,
-              tree.branch == "kuvo/" + (tree.root as NSString).lastPathComponent else { return }
+              tree.branch == GitPreferences.branchPrefix + (tree.root as NSString).lastPathComponent else { return }
         let slug = Git.slug(title)
         guard !slug.isEmpty else { return }
         Task {
-            guard let renamed = await Task.detached(operation: { Git.renameBranch(tree.branch, to: "kuvo/" + slug, in: tree.root) }).value else { return }
+            let prefix = GitPreferences.branchPrefix
+            guard let renamed = await Task.detached(operation: { Git.renameBranch(tree.branch, to: prefix + slug, in: tree.root) }).value else { return }
             for (key, value) in worktrees where value.root == tree.root { worktrees[key]?.branch = renamed }
             saveWorktrees()
             if let tree = worktrees[folder] {

@@ -492,7 +492,7 @@ private struct MessageText: View {
     var body: some View {
         VStack(alignment: .trailing, spacing: 4) {
             Text(text)
-                .font(.transcript)
+                .transcriptFont()
                 .lineLimit(isExpanded ? nil : Self.lines)
                 .textSelection(.enabled)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { shownHeight = $0 }
@@ -500,7 +500,7 @@ private struct MessageText: View {
                     // The whole text, unseen, to tell whether the limit cuts anything.
                     if mayBeLong, !isExpanded {
                         Text(text)
-                            .font(.transcript)
+                            .transcriptFont()
                             .fixedSize(horizontal: false, vertical: true)
                             .hidden()
                             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fullHeight = $0 }
@@ -571,7 +571,7 @@ struct MarkdownText: View {
 
     var body: some View {
         StructuredText(text, parser: FileLinkingParser(folders: folders))
-            .font(.transcript)
+            .transcriptFont()
             // Closer to the text than the GitHub style, so it wins for code blocks.
             .textual.codeBlockStyle(CopyableCodeBlockStyle())
             .textual.highlighterTheme(CodeColors.theme)

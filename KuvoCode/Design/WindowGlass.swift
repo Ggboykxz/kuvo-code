@@ -18,17 +18,25 @@ extension View {
 
 private struct WindowGlass: ViewModifier {
     @Environment(\.colorScheme) private var scheme
+    @AppStorage(Look.windowKey) private var window = Look.Window.glass
 
     func body(content: Content) -> some View {
-        content
-            .containerBackground(.regularMaterial, for: .window)
-            .background {
-                ZStack {
-                    Surface.canvasTint(scheme)
-                    Surface.ambient(scheme)
+        if window == .solid {
+            // Settings › Appearance: the same light, without the desktop showing through.
+            content
+                .containerBackground(Surface.canvasSolid(scheme), for: .window)
+                .background(Surface.ambient(scheme).ignoresSafeArea())
+        } else {
+            content
+                .containerBackground(.regularMaterial, for: .window)
+                .background {
+                    ZStack {
+                        Surface.canvasTint(scheme)
+                        Surface.ambient(scheme)
+                    }
+                    .ignoresSafeArea()
                 }
-                .ignoresSafeArea()
-            }
+        }
     }
 }
 

@@ -157,7 +157,7 @@ private struct ContextDetails: View {
     /// A label, its detail and percentage, and a bar under them.
     private func row(_ label: String, detail: String?, fraction: Double) -> some View {
         let fraction = min(max(fraction, 0), 1)
-        let tint = fraction > 0.8 ? Color.orange : Color.accentColor
+        let tint = fraction > 0.8 ? AnyShapeStyle(.orange) : AnyShapeStyle(.tint)
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text(label)

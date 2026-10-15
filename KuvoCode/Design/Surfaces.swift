@@ -31,6 +31,11 @@ enum Surface {
             : Color(red: 0xF6 / 255, green: 0xF4 / 255, blue: 0xEE / 255).opacity(0.86)
     }
 
+    /// The canvas as one solid color, for a window that isn't glass.
+    static func canvasSolid(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? Color(red: 0.075, green: 0.078, blue: 0.09) : Color(red: 0xF2 / 255, green: 0xF0 / 255, blue: 0xEA / 255)
+    }
+
     /// The canvas's ambient light: warm from the top left, cool toward the bottom right, a few
     /// percent each, so the glass has some color to refract even over a gray desktop.
     static func ambient(_ scheme: ColorScheme) -> LinearGradient {
@@ -67,8 +72,8 @@ enum Surface {
     }
 
     /// The accent glass's fill: a soft wash of the accent color.
-    static func accentWash(_ scheme: ColorScheme) -> Color {
-        Color.accentColor.opacity(scheme == .dark ? 0.22 : 0.1)
+    static func accentWash(_ scheme: ColorScheme, accent: Color = .accentColor) -> Color {
+        accent.opacity(scheme == .dark ? 0.22 : 0.1)
     }
 
     /// The fill of a recessed well, like a code block, a step below the card.
@@ -144,11 +149,12 @@ private struct AccentGlass<S: InsettableShape>: ViewModifier {
     let shape: S
     let isOn: Bool
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accent) private var accent
 
     func body(content: Content) -> some View {
         content
             .background {
-                if isOn { shape.fill(Surface.accentWash(scheme)) }
+                if isOn { shape.fill(Surface.accentWash(scheme, accent: accent)) }
             }
             .overlay {
                 if isOn {
@@ -157,7 +163,7 @@ private struct AccentGlass<S: InsettableShape>: ViewModifier {
                             LinearGradient(
                                 colors: [
                                     .white.opacity(scheme == .dark ? 0.2 : 0.85),
-                                    Color.accentColor.opacity(scheme == .dark ? 0.4 : 0.25),
+                                    accent.opacity(scheme == .dark ? 0.4 : 0.25),
                                 ],
                                 startPoint: .top,
                                 endPoint: .bottom

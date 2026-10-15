@@ -22,11 +22,6 @@ extension Animation {
     static let ui = Animation.spring(response: 0.32, dampingFraction: 0.86)
 }
 
-extension Font {
-    static let transcript = Font.system(size: 14)
-    static let transcriptCode = Font.system(size: 12.5, design: .monospaced)
-}
-
 extension Color {
     static let additions = Color(nsColor: .systemGreen)
     static let deletions = Color(nsColor: .systemRed)

@@ -24,7 +24,7 @@ struct MainView: View {
     @AppStorage("sessionsWidth") private var sessionsWidth = 280.0
     @AppStorage("changesWidth") private var changesWidth = 420.0
     @State private var showsProviders = false
-    @AppStorage(Notifier.enabledKey) private var notificationsEnabled = true
+    @AppStorage(Notifier.badgeKey) private var showsBadge = true
     /// The New Project or Edit Project sheet, while it's open.
     @State private var projectSheet: ProjectSheetRequest?
     @State private var focus = Pane.conversation
@@ -269,7 +269,7 @@ struct MainView: View {
             }
         }
         .onChange(of: workspace.waitingCount, initial: true) { Notifier.shared.setBadge(workspace.waitingCount) }
-        .onChange(of: notificationsEnabled) { Notifier.shared.setBadge(workspace.waitingCount) }
+        .onChange(of: showsBadge) { Notifier.shared.setBadge(workspace.waitingCount) }
         #if DEBUG
         .task(id: workspace.isLoaded) { await runDemoIfAsked() }
         #endif
@@ -804,8 +804,8 @@ struct MainView: View {
         if workspace.isLoaded, let list = environment["KUVO_DEMO_NEW_PROJECT"] {
             projectSheet = ProjectSheetRequest(project: nil, folders: list.split(separator: ",").map(String.init))
         }
-        // KUVO_DEMO_SETTINGS=<tab> opens Settings on that tab: general, accounts, agents, permissions,
-        // mcp, skills, commands, machines, panel, usage, engine.
+        // KUVO_DEMO_SETTINGS=<page> opens Settings on that page, by its SettingsPage name: general,
+        // appearance, storage, accounts, agents, mcp, git, browser, passwords and so on.
         if workspace.isLoaded, let tab = environment["KUVO_DEMO_SETTINGS"] {
             UserDefaults.standard.set(tab, forKey: "settings.tab")
             openSettings()

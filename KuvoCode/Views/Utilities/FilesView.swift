@@ -327,7 +327,7 @@ private struct FileViewer: View {
                 case .text(let text) where isMarkdown && !showsSource:
                     ScrollView {
                         StructuredText(markdown: text)
-                            .font(.transcript)
+                            .transcriptFont()
                             .textual.codeBlockStyle(CopyableCodeBlockStyle())
                             .textual.highlighterTheme(CodeColors.theme)
                             .textual.structuredTextStyle(.gitHub)
@@ -438,9 +438,9 @@ private struct OpenMenu: View {
 
     var body: some View {
         let workspace = NSWorkspace.shared
-        let defaultApp = workspace.urlForApplication(toOpen: url)
+        let defaultApp = OpenWith.defaultApp(for: url)
         HStack(spacing: 0) {
-            Button { workspace.open(url) } label: {
+            Button { OpenWith.open(url) } label: {
                 HStack(spacing: 6) {
                     if let defaultApp {
                         Image(nsImage: workspace.icon(forFile: defaultApp.path))
@@ -476,9 +476,51 @@ private struct OpenMenu: View {
 /// The apps that open a file, as menu items with their icons: its default first, then the others
 /// macOS knows for it, five in all, and Other… for any app.
 enum OpenWith {
+    /// Settings › General: the app code and text files open in, by bundle identifier; empty for
+    /// each file's own default.
+    static let editorKey = "openFiles.editor"
+
+    /// Editors people use for code, by bundle identifier, as Settings offers them when installed.
+    static let knownEditors = [
+        "com.microsoft.VSCode", "com.todesktop.230313mzl4w4u92", "com.exafunction.windsurf", "dev.zed.Zed",
+        "com.apple.dt.Xcode", "com.sublimetext.4", "com.panic.Nova", "com.barebones.bbedit",
+        "com.jetbrains.intellij", "com.jetbrains.WebStorm", "com.jetbrains.pycharm", "com.vscodium", "com.apple.TextEdit",
+    ]
+
+    /// The editors in `knownEditors` that are on this Mac, with where they are.
+    static var installedEditors: [(id: String, url: URL)] {
+        knownEditors.compactMap { id in NSWorkspace.shared.urlForApplication(withBundleIdentifier: id).map { (id, $0) } }
+    }
+
+    /// The editor chosen in Settings, when it's still installed.
+    static var preferredEditor: URL? {
+        guard let id = UserDefaults.standard.string(forKey: editorKey), !id.isEmpty else { return nil }
+        return NSWorkspace.shared.urlForApplication(withBundleIdentifier: id)
+    }
+
+    /// The app Open uses: the chosen editor for code and text, else the file's own default.
+    static func defaultApp(for url: URL) -> URL? {
+        if let editor = preferredEditor, isText(url) { return editor }
+        return NSWorkspace.shared.urlForApplication(toOpen: url)
+    }
+
+    static func open(_ url: URL) {
+        if let editor = preferredEditor, isText(url) {
+            NSWorkspace.shared.open([url], withApplicationAt: editor, configuration: NSWorkspace.OpenConfiguration())
+        } else {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    /// Code and text (and files with no known type, like Makefile): what an editor is for.
+    private static func isText(_ url: URL) -> Bool {
+        guard let type = UTType(filenameExtension: url.pathExtension), !url.pathExtension.isEmpty else { return true }
+        return type.conforms(to: .text) || type.conforms(to: .sourceCode) || type.conforms(to: .data) && !type.conforms(to: .image) && !type.conforms(to: .audiovisualContent) && !type.conforms(to: .pdf) && !type.conforms(to: .archive)
+    }
+
     static func items(for url: URL) -> [NSMenuItem] {
         let workspace = NSWorkspace.shared
-        let defaultApp = workspace.urlForApplication(toOpen: url)
+        let defaultApp = defaultApp(for: url)
         var items: [NSMenuItem] = apps(for: url).map { app in
             ActionItem(app == defaultApp ? "\(name(of: app)) (Default)" : name(of: app), image: icon(of: app)) {
                 workspace.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
@@ -491,7 +533,7 @@ enum OpenWith {
     static func apps(for url: URL) -> [URL] {
         let workspace = NSWorkspace.shared
         var apps = workspace.urlsForApplications(toOpen: url)
-        if let defaultApp = workspace.urlForApplication(toOpen: url) {
+        if let defaultApp = defaultApp(for: url) {
             apps.removeAll { $0 == defaultApp }
             apps.insert(defaultApp, at: 0)
         }

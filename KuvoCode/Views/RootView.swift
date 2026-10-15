@@ -22,6 +22,7 @@ struct RootView: View {
         .frame(minWidth: 620, minHeight: 520)
         // The window itself is frosted glass, tinted by what's behind it; cards float on it.
         .windowGlass()
+        .appLook()
         .onChange(of: appearance, initial: true) { appearance.apply() }
         // The usage menu's "Open Kuvo Code" brings this window back, even after it's closed.
         .onAppear { app.openMainWindow = { [openWindow] in openWindow(id: "main") } }

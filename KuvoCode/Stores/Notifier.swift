@@ -7,11 +7,22 @@ import UserNotifications
 /// permission the first time there's something to tell.
 final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     static let shared = Notifier()
-    /// Settings › General: notifications and the Dock badge, on unless turned off.
+    /// Settings › Notifications: notifications, their sound and the Dock badge, each on unless
+    /// turned off.
     static let enabledKey = "notifications.enabled"
+    static let soundKey = "notifications.sound"
+    static let badgeKey = "notifications.badge"
 
     static var isEnabled: Bool {
         UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? true
+    }
+
+    static var playsSound: Bool {
+        UserDefaults.standard.object(forKey: soundKey) as? Bool ?? true
+    }
+
+    static var showsBadge: Bool {
+        UserDefaults.standard.object(forKey: badgeKey) as? Bool ?? true
     }
 
     /// Shows a session in the window, for a clicked notification.
@@ -56,7 +67,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
             content.title = title
             if let subtitle { content.subtitle = subtitle }
             content.body = body
-            content.sound = .default
+            if Self.playsSound { content.sound = .default }
             content.threadIdentifier = session
             content.userInfo = ["session": session]
             if let permission {
@@ -91,7 +102,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     /// The number on the Dock icon: sessions that finished while you were elsewhere, or
     /// wait for your answer.
     func setBadge(_ count: Int) {
-        NSApp.dockTile.badgeLabel = Self.isEnabled && count > 0 ? "\(count)" : nil
+        NSApp.dockTile.badgeLabel = Self.showsBadge && count > 0 ? "\(count)" : nil
     }
 
     private func authorize() async -> Bool {

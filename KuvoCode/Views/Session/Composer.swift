@@ -44,6 +44,7 @@ struct Composer: View {
     @Environment(Catalog.self) private var catalog
     @Environment(\.colorScheme) private var scheme
     @Environment(\.cardIsFocused) private var cardIsFocused
+    @Environment(\.messageFont) private var messageFont
     @FocusState private var isFocused: Bool
     @Namespace private var glass
     @State private var isTargeted = false
@@ -109,7 +110,7 @@ struct Composer: View {
 
             TextField(placeholder, text: $text, axis: .vertical)
                 .textFieldStyle(.plain)
-                .font(isShell ? .system(size: 13.5, design: .monospaced) : .system(size: 14))
+                .font(isShell ? .system(size: messageFont.size - 0.5, design: .monospaced) : messageFont.body)
                 .lineLimit(1...12)
                 .focused($isFocused)
                 .onKeyPress(.return, phases: .down) { press in
@@ -430,14 +431,14 @@ private struct ActionButtonStyle: ButtonStyle {
                 .animation(.easeOut(duration: 0.12), value: isHovering)
         }
 
-        private var fill: Color {
-            guard isEnabled else { return .clear }
+        private var fill: AnyShapeStyle {
+            guard isEnabled else { return AnyShapeStyle(.clear) }
             if !isAccent {
-                if configuration.isPressed { return Pressable.pressedFill }
-                return isHovering ? Pressable.hoverFill : .clear
+                if configuration.isPressed { return AnyShapeStyle(Pressable.pressedFill) }
+                return AnyShapeStyle(isHovering ? Pressable.hoverFill : .clear)
             }
-            if configuration.isPressed { return Color.accentColor.opacity(0.13) }
-            return isHovering ? Color.accentColor.opacity(0.08) : .clear
+            if configuration.isPressed { return AnyShapeStyle(.tint.opacity(0.13)) }
+            return isHovering ? AnyShapeStyle(.tint.opacity(0.08)) : AnyShapeStyle(.clear)
         }
     }
 }

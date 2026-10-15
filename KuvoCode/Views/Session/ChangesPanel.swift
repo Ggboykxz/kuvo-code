@@ -331,11 +331,11 @@ private struct CommitForm: View {
         Task {
             defer { isSuggesting = false }
             let diff = await changes.commitDiff()
-            let prompt = """
+            let prompt = GitPreferences.prompt("""
             Write a git commit message for the changes below. A summary line in the imperative mood, under 72 characters; then, only if it helps, a blank line and a few short lines on what changed and why. Reply with the message alone: no quotes, no code fences.
 
             \(diff)
-            """
+            """, instructionsKey: GitPreferences.commitInstructionsKey)
             do {
                 // Through the session where there is one: free models only answer there.
                 let text = if let session { try await api.generate(prompt, session: session) } else { try await api.generate(prompt, model: model) }
@@ -515,11 +515,11 @@ private struct BranchMenu: View {
         guard let session = model?.id, let api = workspace.api(forSession: session) else { return page }
         let base = tree.base, directory = directory
         let summary = await Task.detached { Git.pullRequestSummary(against: base, in: directory) }.value
-        let prompt = """
+        let prompt = GitPreferences.prompt("""
         Write a pull request for the changes below. The first line is its title: under 72 characters, in the imperative mood. Then a blank line and a short description in Markdown: what changed and why, in a few bullet points, and anything a reviewer should check. Reply with the pull request alone: no preamble, no code fences.
 
         \(summary)
-        """
+        """, instructionsKey: GitPreferences.pullRequestInstructionsKey)
         guard let text = try? await api.generate(prompt, session: session), let pull = Git.parsePullRequest(text) else { return page }
         return Git.pullRequestPage(page, title: pull.title, body: pull.body)
     }
@@ -567,7 +567,7 @@ private struct FileHeader: View {
             // A machine's files open nowhere on this Mac.
             if file.url.isFileURL {
                 Button {
-                    NSWorkspace.shared.open(file.url)
+                    OpenWith.open(file.url)
                 } label: {
                     Image(systemName: "arrow.up.forward.square")
                 }
@@ -633,7 +633,7 @@ private struct FileHeader: View {
         menu.autoenablesItems = false
         let exists = file.status != .deleted
         if file.url.isFileURL {
-            let open = ActionItem("Open in Editor") { NSWorkspace.shared.open(file.url) }
+            let open = ActionItem("Open in Editor") { OpenWith.open(file.url) }
             open.isEnabled = exists
             menu.addItem(open)
             let openWith = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
@@ -916,7 +916,7 @@ struct DiffLineRow: View {
                                 .font(.system(size: 9, weight: .bold))
                                 .foregroundStyle(.white)
                                 .frame(width: 16, height: 16)
-                                .background(Color.accentColor, in: .rect(cornerRadius: 4))
+                                .background(.tint, in: .rect(cornerRadius: 4))
                         }
                         .buttonStyle(AccentBadgeButtonStyle())
                         .offset(x: 2)
@@ -1066,7 +1066,7 @@ struct CommentReference: View {
                     }
             }
             Text(comment.text)
-                .font(.transcript)
+                .transcriptFont()
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         }

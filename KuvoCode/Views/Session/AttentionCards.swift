@@ -29,7 +29,7 @@ struct PermissionCard: View {
                 DiffView(diff: diff, title: relative(diff.file), maxLines: 14)
             } else if !request.resources.isEmpty {
                 Text(request.resources.map(relative).joined(separator: "\n"))
-                    .font(.transcriptCode)
+                    .transcriptCodeFont()
                     .textSelection(.enabled)
                     .lineLimit(6)
                     .padding(10)

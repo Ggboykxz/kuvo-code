@@ -164,3 +164,24 @@ struct GitFailure: LocalizedError {
     var message: String
     var errorDescription: String? { message }
 }
+
+/// Settings › Git: how branches are named, and what you'd like commit messages and pull requests
+/// written like.
+nonisolated enum GitPreferences {
+    static let branchPrefixKey = "git.branchPrefix"
+    static let commitInstructionsKey = "git.commitInstructions"
+    static let pullRequestInstructionsKey = "git.pullRequestInstructions"
+    static let defaultBranchPrefix = "kuvo/"
+
+    /// What a session's own branch starts with ("kuvo/").
+    static var branchPrefix: String {
+        UserDefaults.standard.string(forKey: branchPrefixKey) ?? defaultBranchPrefix
+    }
+
+    /// A prompt for a commit message or pull request, with your instructions for it added.
+    static func prompt(_ prompt: String, instructionsKey: String) -> String {
+        let instructions = (UserDefaults.standard.string(forKey: instructionsKey) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !instructions.isEmpty else { return prompt }
+        return prompt + "\n\nAlso follow these instructions from the user:\n" + instructions
+    }
+}

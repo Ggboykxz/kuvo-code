@@ -263,7 +263,7 @@ struct OutputBlock: View {
     var body: some View {
         ScrollView(.horizontal) {
             Text(text.trimmingCharacters(in: .whitespacesAndNewlines))
-                .font(.transcriptCode)
+                .transcriptCodeFont()
                 .textSelection(.enabled)
                 .fixedSize(horizontal: true, vertical: false)
                 .padding(12)
