@@ -593,10 +593,30 @@ final class MachineBrowser {
         }
     }
 
+    // MARK: Zoom
+
+    /// How large pages show: below 1 they lay out wider than the panel (as on a desktop) and
+    /// shrink to fit; above 1 they grow. Still at the screen's full sharpness either way.
+    private(set) var zoom: CGFloat = 1
+    static let zooms: [CGFloat] = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5]
+
+    func zoom(in bigger: Bool) {
+        let next = bigger ? Self.zooms.first { $0 > zoom + 0.001 } : Self.zooms.last { $0 < zoom - 0.001 }
+        guard let next else { return }
+        zoom = next
+        Task { await applyViewport() }
+    }
+
+    func resetZoom() {
+        guard zoom != 1 else { return }
+        zoom = 1
+        Task { await applyViewport() }
+    }
+
     private func applyViewport() async {
         guard let link, let session else { return }
         let (size, scale) = viewport
-        _ = try? await link.send("Emulation.setDeviceMetricsOverride", ["width": Int(size.width), "height": Int(size.height), "deviceScaleFactor": scale, "mobile": false], session: session)
+        _ = try? await link.send("Emulation.setDeviceMetricsOverride", ["width": Int((size.width / zoom).rounded()), "height": Int((size.height / zoom).rounded()), "deviceScaleFactor": scale * zoom, "mobile": false], session: session)
         _ = try? await link.send("Page.startScreencast", ["format": "jpeg", "quality": 75, "maxWidth": Int(size.width * scale), "maxHeight": Int(size.height * scale)], session: session)
     }
 

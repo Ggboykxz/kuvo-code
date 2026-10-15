@@ -158,6 +158,9 @@ struct MachineBrowserPane<NewTab: View>: View {
 
     private var actions: some View {
         HStack(spacing: 0) {
+            if browser.zoom != 1 {
+                ZoomChip(zoom: browser.zoom) { browser.resetZoom() }
+            }
             Button {
                 if let file = browser.screenshotFile() { attach([file]) }
             } label: {
@@ -251,6 +254,29 @@ private struct AgentBadge: View {
         .padding(.vertical, 6)
         .glassEffect(.regular, in: .capsule)
         .allowsHitTesting(false)
+    }
+}
+
+/// The page's zoom, when it isn't actual size; a click goes back to it.
+private struct ZoomChip: View {
+    let zoom: CGFloat
+    let reset: () -> Void
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: reset) {
+            Text("\(Int((zoom * 100).rounded()))%")
+                .font(.system(size: 12, weight: .medium).monospacedDigit())
+                .foregroundStyle(isHovering ? .primary : .secondary)
+                .fixedSize()
+                .padding(.horizontal, 8)
+                .frame(height: 28)
+                .background(isHovering ? Color.primary.opacity(0.08) : .clear, in: .capsule)
+                .contentShape(.capsule)
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .help("Back to actual size (zoom with ⌘+ and ⌘−, or pinch)")
     }
 }
 
@@ -648,6 +674,34 @@ final class RemotePageView: NSView, @preconcurrency NSTextInputClient, PictureVi
         115: ("Home", "Home", 36), 119: ("End", "End", 35), 116: ("PageUp", "PageUp", 33), 121: ("PageDown", "PageDown", 34),
     ]
 
+    /// ⌘+ and ⌘− zoom the page, before the menus see them.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard window?.firstResponder === self else { return super.performKeyEquivalent(with: event) }
+        let flags = event.modifierFlags.intersection([.command, .option, .control])
+        guard flags == .command, let character = event.charactersIgnoringModifiers else { return super.performKeyEquivalent(with: event) }
+        switch character {
+        case "=", "+": browser.zoom(in: true)
+        case "-", "_": browser.zoom(in: false)
+        default: return super.performKeyEquivalent(with: event)
+        }
+        return true
+    }
+
+    /// A pinch zooms the page, a step at a time.
+    private var pinch: CGFloat = 0
+
+    override func magnify(with event: NSEvent) {
+        if event.phase == .began { pinch = 0 }
+        pinch += event.magnification
+        if pinch > 0.18 {
+            browser.zoom(in: true)
+            pinch = 0
+        } else if pinch < -0.18 {
+            browser.zoom(in: false)
+            pinch = 0
+        }
+    }
+
     override func keyDown(with event: NSEvent) {
         if let special = keyEvent(for: event) {
             browser.key(special.text == nil ? "rawKeyDown" : "keyDown", key: special.key, code: special.code, keyCode: special.keyCode, text: special.text, modifiers: special.modifiers)
@@ -800,7 +854,8 @@ final class RemotePageView: NSView, @preconcurrency NSTextInputClient, PictureVi
     #if DEBUG
     // KUVO_DEMO_PAGE_INPUT: what you'd do on the page, steps separated by `;`, through the same
     // handlers as real events: `wait:<s>`, `click:<x>,<y>` (points from the page's top left),
-    // `type:<text>`, `key:<code>` (a Mac key code), `scroll:<x>,<y>,<dy>`, `selectAll`, `copy`, `paste`.
+    // `type:<text>`, `key:<code>` (a Mac key code), `scroll:<x>,<y>,<dy>`, `selectAll`, `copy`, `paste`,
+    // `zoom:in`, `zoom:out`.
     private static var demoStarted = false
 
     override func viewDidMoveToWindow() {
@@ -822,6 +877,7 @@ final class RemotePageView: NSView, @preconcurrency NSTextInputClient, PictureVi
                 case "selectAll": selectAll(nil)
                 case "copy": copy(nil)
                 case "paste": paste(nil)
+                case "zoom": browser.zoom(in: value == "in")
                 default: break
                 }
                 try? await Task.sleep(for: .milliseconds(150))

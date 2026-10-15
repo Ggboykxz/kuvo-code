@@ -32,6 +32,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - The panel's browser handles files: a page's upload button opens the file picker, and downloads go to your Downloads folder, with a bar that shows their progress and **Show in Finder**.
 - In a machine's browser, what a page downloads stays on the machine; **Save to Mac** copies it into your Downloads folder.
 - In a machine's browser, your pointer turns into a hand over links and a text cursor over fields, as the page says.
+- Zoom a machine's page with ⌘+ and ⌘− or a pinch: zoomed out, it lays out as wide as on a desktop, still sharp; click the percentage to go back.
 - The panel's browser shows a page's alerts, confirmations and questions in a bar over it. Before, they were skipped, and a confirmation always answered no.
 - A step that brings back a picture, like the agent's screenshot of a page, shows it when you open the step; click it to look closer.
 - **See where the agent acts**: when it browses, a pointer glides to what it clicks, pulses as it clicks, and rings the field it types into, in your Mac's browser and in a machine's.
