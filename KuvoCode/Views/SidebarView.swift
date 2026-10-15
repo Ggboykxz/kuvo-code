@@ -543,7 +543,7 @@ private enum SidebarMetrics {
 /// A row's highlight: accent glass under the open session, so it stands apart from the
 /// chrome around it, and a soft neutral fill under the pointer on the others. Neither
 /// moves or resizes the row.
-private struct RowHighlight: ViewModifier {
+struct RowHighlight: ViewModifier {
     let isSelected: Bool
     @State private var isHovering = false
 

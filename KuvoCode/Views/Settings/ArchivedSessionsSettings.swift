@@ -1,0 +1,78 @@
+import OpenCodeKit
+import SwiftUI
+
+/// Archived sessions: out of the sidebar, still searchable; brought back or deleted here.
+struct ArchivedSessionsSettings: View {
+    @Environment(Workspace.self) private var workspace
+    @State private var search = ""
+    @State private var deleting: [String]?
+
+    private var archived: [Session] {
+        workspace.sessions
+            .filter { Workspace.isArchived($0) && $0.parentID == nil }
+            .filter { search.isEmpty || ($0.title ?? "").localizedCaseInsensitiveContains(search) || workspace.projectName($0.location.directory).localizedCaseInsensitiveContains(search) }
+            .sorted { $0.time.updated > $1.time.updated }
+    }
+
+    /// By project, the most recently used first.
+    private var byProject: [(name: String, sessions: [Session])] {
+        let groups = Dictionary(grouping: archived) { workspace.projectName($0.location.directory) }
+        return groups.map { ($0.key, $0.value) }.sorted { ($0.sessions.first?.time.updated ?? 0) > ($1.sessions.first?.time.updated ?? 0) }
+    }
+
+    var body: some View {
+        ScrollingSettingsForm {
+            Section {
+                SettingsSearchRow(text: $search, prompt: "Search archived sessions")
+            } header: {
+                HStack {
+                    Spacer()
+                    Button("Delete All…", role: .destructive) { deleting = archived.map(\.id) }
+                        .disabled(archived.isEmpty)
+                }
+            }
+            if archived.isEmpty {
+                Section {
+                    Text(search.isEmpty ? "None yet. Right-click a session in the sidebar and choose Archive to put it away." : "No archived session matches “\(search)”.")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            ForEach(byProject, id: \.name) { group in
+                Section {
+                    ForEach(group.sessions) { session in
+                        LabeledContent {
+                            HStack(spacing: 6) {
+                                Button("Unarchive") { Task { await workspace.setArchived(session.id, false) } }
+                                Button {
+                                    deleting = [session.id]
+                                } label: {
+                                    Image(systemName: "trash")
+                                }
+                                .buttonStyle(IconButtonStyle(width: 28, height: 24))
+                                .help("Delete")
+                            }
+                        } label: {
+                            Text(session.title ?? "New Session")
+                            Text(Date(timeIntervalSince1970: session.time.updated / 1000), format: .dateTime.day().month(.abbreviated).year().hour().minute())
+                        }
+                    }
+                } header: {
+                    HStack {
+                        Label(group.name, systemImage: "folder")
+                        Spacer()
+                        Text("\(group.sessions.count) \(group.sessions.count == 1 ? "session" : "sessions")")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .confirmationDialog(deleting?.count == 1 ? "Delete this session?" : "Delete \(deleting?.count ?? 0) sessions?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
+            Button("Delete", role: .destructive) {
+                let ids = deleting ?? []
+                Task { for id in ids { await workspace.delete(id) } }
+            }
+        } message: {
+            Text("Their messages and undo snapshots go too. This can’t be undone.")
+        }
+    }
+}

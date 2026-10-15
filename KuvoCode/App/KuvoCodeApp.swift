@@ -25,6 +25,8 @@ struct KuvoCodeApp: App {
                 .environment(delegate.model.workspace)
                 .environment(delegate.updates)
         }
+        .defaultSize(width: 1040, height: 760)
+        .windowResizability(.contentMinSize)
     }
 }
 

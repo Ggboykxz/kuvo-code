@@ -19,15 +19,22 @@ final class BrowserSession: NSObject {
     @ObservationIgnored var openWindow: ((WKWebViewConfiguration) -> WKWebView?)?
     /// The page closed its own window (a sign-in popup that's done).
     @ObservationIgnored var onClose: (() -> Void)?
+    /// A sign-in you just sent, which the toolbar offers to save.
+    var pendingLogin: PendingLogin?
+    /// The saved logins for the page's site, and whether it has a field to fill them into.
+    private(set) var savedLogins: [Passwords.Login] = []
+    private(set) var hasLoginField = false
 
     /// A new tab, or, with the configuration WebKit passes for a window a page opens, that window:
     /// it stays connected to the page that opened it, which sign-in popups need to report back.
     init(configuration: WKWebViewConfiguration? = nil) {
         let configuration = configuration ?? Self.makeConfiguration()
+        PasswordCapture.install(in: configuration)
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.allowsBackForwardNavigationGestures = true
         webView.allowsMagnification = true
         super.init()
+        PasswordCapture.shared.register(self)
         webView.uiDelegate = self
         webView.navigationDelegate = self
         observations = [
@@ -65,6 +72,50 @@ final class BrowserSession: NSObject {
         observations = []
     }
 
+    // MARK: Passwords
+
+    func offerToSave(_ login: PendingLogin) {
+        pendingLogin = login
+    }
+
+    func savePendingLogin() {
+        guard let login = pendingLogin else { return }
+        Passwords.save(host: login.host, account: login.account, password: login.password)
+        Analytics.shared.track("password_saved")
+        pendingLogin = nil
+        refreshLogins()
+    }
+
+    func dismissPendingLogin(never: Bool) {
+        if never, let host = pendingLogin?.host { Passwords.setNever(host, true) }
+        pendingLogin = nil
+    }
+
+    /// Fills the page's sign-in fields with a saved login: only when you ask, from the toolbar.
+    func fill(_ login: Passwords.Login) {
+        guard let password = Passwords.password(for: login) else { return }
+        Task {
+            _ = try? await webView.callAsyncJavaScript(Passwords.fillScript, arguments: ["username": login.account, "secret": password], contentWorld: Passwords.world)
+        }
+    }
+
+    /// What the toolbar's key offers for the page in view.
+    func refreshLogins() {
+        guard let host = webView.url?.host() else {
+            savedLogins = []
+            hasLoginField = false
+            return
+        }
+        savedLogins = Passwords.logins(for: host)
+        guard !savedLogins.isEmpty else {
+            hasLoginField = false
+            return
+        }
+        Task {
+            hasLoginField = (try? await webView.callAsyncJavaScript(Passwords.hasLoginFieldScript, contentWorld: Passwords.world) as? Bool) ?? false
+        }
+    }
+
     static func url(from input: String) -> URL? {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return nil }
@@ -98,6 +149,9 @@ extension BrowserSession: WKUIDelegate {
 
 extension BrowserSession: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        // A login offered on another site doesn't follow you around.
+        if let pending = pendingLogin, pending.host != webView.url?.host() { pendingLogin = nil }
+        refreshLogins()
         guard let url = webView.url, let onVisit else { return }
         let title = webView.title ?? ""
         // The page's own icon, the largest it names; the site's /favicon.ico otherwise.
@@ -137,6 +191,10 @@ struct BrowserPane<NewTab: View>: View {
             }
             .padding(.horizontal, 10)
             .padding(.bottom, 8)
+            if let login = session.pendingLogin {
+                SaveLoginBar(login: login, session: session)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
             Divider()
             if session.url == nil && !session.isLoading {
                 newTab()
@@ -207,6 +265,27 @@ struct BrowserPane<NewTab: View>: View {
 
     private var actions: some View {
         HStack(spacing: 0) {
+            if session.hasLoginField, !session.savedLogins.isEmpty {
+                // Filling is yours to ask for: never on its own, never the agent's.
+                Menu {
+                    ForEach(session.savedLogins) { login in
+                        Button(login.account.isEmpty ? "No username" : login.account) { session.fill(login) }
+                    }
+                    Divider()
+                    Button("Passwords…") {
+                        UserDefaults.standard.set(SettingsPage.passwords.rawValue, forKey: "settings.tab")
+                        openSettings()
+                    }
+                } label: {
+                    Label("Fill Password", systemImage: "key.fill")
+                } primaryAction: {
+                    if let login = session.savedLogins.first { session.fill(login) }
+                }
+                .menuStyle(.button)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help(session.savedLogins.count == 1 ? "Fill in the saved password for \(session.savedLogins[0].account)" : "Fill in a saved password")
+            }
             Button(action: addScreenshot) {
                 Label("Add Screenshot to Message", systemImage: "camera.viewfinder")
             }
@@ -231,8 +310,8 @@ struct BrowserPane<NewTab: View>: View {
                 Button("Zoom In") { session.webView.magnification = min(session.webView.magnification + 0.1, 3) }
                 Button("Zoom Out") { session.webView.magnification = max(session.webView.magnification - 0.1, 0.5) }
                 Divider()
-                Button("Panel Settings…") {
-                    UserDefaults.standard.set("panel", forKey: "settings.tab")
+                Button("Browser Settings…") {
+                    UserDefaults.standard.set(SettingsPage.browser.rawValue, forKey: "settings.tab")
                     openSettings()
                 }
             } label: {
@@ -267,6 +346,44 @@ struct BrowserPane<NewTab: View>: View {
         guard let url = session.url else { return "" }
         if editing { return url.absoluteString }
         return url.host()?.replacingOccurrences(of: "www.", with: "") ?? url.absoluteString
+    }
+}
+
+/// Under the toolbar after you sign in somewhere: save the password, or don't.
+private struct SaveLoginBar: View {
+    let login: PendingLogin
+    let session: BrowserSession
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "key.fill")
+                .foregroundStyle(.tint)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(login.isUpdate ? "Update the saved password?" : "Save this password?")
+                    .font(.system(size: 13, weight: .semibold))
+                Text(login.account.isEmpty ? login.host : "\(login.account) on \(login.host)")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: 8)
+            Menu("Not Now") {
+                Button("Never for This Site") { withAnimation(.ui) { session.dismissPendingLogin(never: true) } }
+            } primaryAction: {
+                withAnimation(.ui) { session.dismissPendingLogin(never: false) }
+            }
+            .fixedSize()
+            Button(login.isUpdate ? "Update" : "Save") { withAnimation(.ui) { session.savePendingLogin() } }
+                .buttonStyle(.borderedProminent)
+        }
+        .controlSize(.small)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Surface.well(scheme), in: .rect(cornerRadius: 10))
+        .padding(.horizontal, 10)
+        .padding(.bottom, 8)
     }
 }
 

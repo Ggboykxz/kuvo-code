@@ -68,10 +68,13 @@ struct ProvidersView: View {
                             .keyboardShortcut(.defaultAction)
                     }
                 }
-                Text("Sign in with a subscription you already have, or add an API key. Credentials stay on this Mac.")
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .padding(.top, context == .sheet ? -18 : 0)
+                // In Settings, the page's own subtitle says it.
+                if context == .sheet {
+                    Text("Sign in with a subscription you already have, or add an API key. Credentials stay on this Mac.")
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                        .padding(.top, -18)
+                }
 
                 SearchField(text: $search, prompt: "Search \(catalog.providers.count) providers")
 
@@ -127,7 +130,9 @@ struct ProvidersView: View {
                     }
                 }
             }
-            .padding(28)
+            // In Settings, lined up with the page's title above it.
+            .padding(.horizontal, context == .settings ? SettingsMetrics.inset : 28)
+            .padding(.vertical, context == .settings ? 16 : 28)
         }
     }
 

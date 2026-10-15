@@ -143,13 +143,6 @@ struct EngineSettings: View {
             }
 
             Section {
-                ConfigTextField(title: "Worktrees folder", path: ["worktree", "directory"], prompt: "Default")
-            } footer: {
-                Text("Where new git worktrees go. A relative path starts at the project's folder.")
-                    .foregroundStyle(.secondary)
-            }
-
-            Section {
                 ConfigStringList(path: ["plugins"], prompt: "An npm package, like opencode-wakatime")
                 ForEach(plugins.filter { $0.source.type != "builtin" && $0.state.status == "failed" }) { plugin in
                     Label("\(plugin.id): \(plugin.state.error ?? "didn't load")", systemImage: "exclamationmark.triangle.fill")

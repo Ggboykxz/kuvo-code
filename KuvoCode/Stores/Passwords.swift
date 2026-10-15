@@ -1,0 +1,190 @@
+import Foundation
+import LocalAuthentication
+import Security
+import WebKit
+
+/// Sign-ins the panel's browser saved: in the login keychain as internet passwords, marked as Kuvo
+/// Code's own (so other apps' items, like git's GitHub token, are never read), by site and
+/// username. Filled in only when you click the key in the browser's toolbar, never on their own,
+/// and never handed to the agent.
+nonisolated enum Passwords {
+    struct Login: Identifiable, Hashable, Sendable {
+        var host: String
+        var account: String
+        var modified: Date?
+        var id: String { host + "\n" + account }
+    }
+
+    /// Settings › Passwords: whether the browser offers to save a password you sign in with.
+    static let offersKey = "passwords.offersToSave"
+    /// Sites you chose Never for.
+    static let neverKey = "passwords.never"
+
+    static var offersToSave: Bool { UserDefaults.standard.object(forKey: offersKey) as? Bool ?? true }
+
+    static var neverSites: [String] { UserDefaults.standard.stringArray(forKey: neverKey) ?? [] }
+
+    static func setNever(_ host: String, _ never: Bool) {
+        var sites = neverSites.filter { $0 != host }
+        if never { sites.append(host) }
+        UserDefaults.standard.set(sites.sorted(), forKey: neverKey)
+    }
+
+    /// 'KUVO', the creator code on every item this saves.
+    private static let creator: OSType = 0x4B55_564F
+
+    private static var base: [String: Any] {
+        [kSecClass as String: kSecClassInternetPassword, kSecAttrCreator as String: creator]
+    }
+
+    /// Saved logins, every site's or one's, newest first.
+    static func logins(for host: String? = nil) -> [Login] {
+        var query = base
+        query[kSecMatchLimit as String] = kSecMatchLimitAll
+        query[kSecReturnAttributes as String] = true
+        if let host { query[kSecAttrServer as String] = host }
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let items = result as? [[String: Any]] else { return [] }
+        return items.compactMap { item in
+            guard let host = item[kSecAttrServer as String] as? String else { return nil }
+            return Login(host: host, account: item[kSecAttrAccount as String] as? String ?? "", modified: item[kSecAttrModificationDate as String] as? Date)
+        }
+        .sorted { ($0.modified ?? .distantPast) > ($1.modified ?? .distantPast) }
+    }
+
+    static func password(for login: Login) -> String? {
+        var query = base
+        query[kSecAttrServer as String] = login.host
+        query[kSecAttrAccount as String] = login.account
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let data = result as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// Saves a login, or updates its password.
+    @discardableResult
+    static func save(host: String, account: String, password: String) -> Bool {
+        var query = base
+        query[kSecAttrServer as String] = host
+        query[kSecAttrAccount as String] = account
+        let data = Data(password.utf8)
+        if SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary) == errSecSuccess { return true }
+        query[kSecValueData as String] = data
+        query[kSecAttrProtocol as String] = kSecAttrProtocolHTTPS
+        query[kSecAttrLabel as String] = host
+        query[kSecAttrDescription as String] = "Kuvo Code browser password"
+        return SecItemAdd(query as CFDictionary, nil) == errSecSuccess
+    }
+
+    static func delete(_ login: Login) {
+        var query = base
+        query[kSecAttrServer as String] = login.host
+        query[kSecAttrAccount as String] = login.account
+        SecItemDelete(query as CFDictionary)
+    }
+
+    /// Asks for Touch ID or your Mac's password before showing or copying a password.
+    static func authenticate(reason: String) async -> Bool {
+        let context = LAContext()
+        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: nil) else { return true }
+        return (try? await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason)) ?? false
+    }
+
+    /// The world the browser's password scripts run in, apart from the page's own scripts.
+    @MainActor static var world: WKContentWorld { .world(name: "kuvo-passwords") }
+    static let messageName = "kuvoLogin"
+
+    /// Spots a sign-in being sent (a form submitted, a button clicked, Return pressed with a password
+    /// filled in) and tells the app the username and password, for it to offer saving them.
+    static let captureScript = """
+    (() => {
+      const report = (scope) => {
+        const fields = [...(scope || document).querySelectorAll('input')];
+        const password = fields.find((field) => field.type === 'password' && field.value);
+        if (!password) return;
+        const before = fields.slice(0, fields.indexOf(password)).reverse();
+        const user = before.find((field) => ['text', 'email', 'tel'].includes(field.type) && field.value)
+          || fields.find((field) => (field.autocomplete || '').includes('username') && field.value);
+        window.webkit.messageHandlers.\(messageName).postMessage({ username: user ? user.value : '', password: password.value });
+      };
+      document.addEventListener('submit', (event) => report(event.target), true);
+      document.addEventListener('click', (event) => {
+        const button = event.target.closest && event.target.closest('button, input[type=submit], [role=button]');
+        if (button) report(button.closest('form') || document);
+      }, true);
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' && event.target.matches && event.target.matches('input')) report(event.target.closest('form') || document);
+      }, true);
+    })();
+    """
+
+    /// Fills the page's sign-in fields: the password field, and the username field before it (or,
+    /// on a page that asks for the username first, the first one there is).
+    static let fillScript = """
+    const fields = [...document.querySelectorAll('input')].filter((field) => !field.disabled && field.type !== 'hidden');
+    const set = (field, value) => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      setter.call(field, value);
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+      field.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    const password = fields.find((field) => field.type === 'password');
+    if (password) set(password, secret);
+    const candidates = password ? fields.slice(0, fields.indexOf(password)).reverse() : fields;
+    const user = candidates.find((field) => ['text', 'email', 'tel'].includes(field.type));
+    if (user && username) set(user, username);
+    return Boolean(password || user);
+    """
+
+    /// Whether the page has a field for a password or a username.
+    static let hasLoginFieldScript = """
+    return Boolean(document.querySelector('input[type=password], input[autocomplete~=username], input[type=email]'));
+    """
+}
+
+/// A sign-in the browser saw, waiting for you to save it or not.
+struct PendingLogin: Equatable {
+    var host: String
+    var account: String
+    var password: String
+    /// A saved login for the same site and username, with another password.
+    var isUpdate: Bool
+}
+
+/// Takes the sign-in scripts' messages from every tab's page, and hands each to its tab.
+final class PasswordCapture: NSObject, WKScriptMessageHandler {
+    static let shared = PasswordCapture()
+    /// The open tabs, by their web views.
+    private let sessions = NSHashTable<BrowserSession>.weakObjects()
+
+    func register(_ session: BrowserSession) {
+        sessions.add(session)
+    }
+
+    /// Adds the script and its message handler to a configuration (once; windows a page opens
+    /// share their opener's).
+    static func install(in configuration: WKWebViewConfiguration) {
+        let controller = configuration.userContentController
+        guard !controller.userScripts.contains(where: { $0.source == Passwords.captureScript }) else { return }
+        controller.addUserScript(WKUserScript(source: Passwords.captureScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: Passwords.world))
+        controller.add(shared, contentWorld: Passwords.world, name: Passwords.messageName)
+    }
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard Passwords.offersToSave, message.frameInfo.isMainFrame,
+              let body = message.body as? [String: Any], let password = body["password"] as? String, !password.isEmpty,
+              let webView = message.webView,
+              let session = sessions.allObjects.first(where: { $0.webView === webView }) else { return }
+        let origin = message.frameInfo.securityOrigin
+        // Secure pages only, and your own development servers.
+        guard origin.protocol == "https" || ["localhost", "127.0.0.1"].contains(origin.host) else { return }
+        let host = origin.host
+        guard !Passwords.neverSites.contains(host) else { return }
+        let account = (body["username"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let saved = Passwords.logins(for: host).first { $0.account == account }
+        if let saved, Passwords.password(for: saved) == password { return }
+        session.offerToSave(PendingLogin(host: host, account: account, password: password, isUpdate: saved != nil))
+    }
+}

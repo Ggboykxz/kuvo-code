@@ -327,10 +327,9 @@ struct ConfigProblem: View {
     }
 }
 
-/// A tab of settings too long for the window: a grouped form that scrolls, and opens at its
-/// top, with the same room above its first section as a tab that doesn't scroll. (Shown, a
-/// form can land elsewhere, under the toolbar or at its end, so it's taken to its top edge
-/// once it's laid out; that edge keeps the room a section's own top would lose.)
+/// A page of settings: a grouped form on the page's card, lined up with its title, that
+/// opens at its top. (Shown, a form can land elsewhere, under the toolbar or at its end, so it's
+/// taken to its top edge once it's laid out.)
 struct ScrollingSettingsForm<Content: View>: View {
     @ViewBuilder var content: Content
     @State private var position = ScrollPosition(edge: .top)
@@ -338,7 +337,8 @@ struct ScrollingSettingsForm<Content: View>: View {
     var body: some View {
         Form { content }
             .formStyle(.grouped)
-            .frame(width: SettingsView.width, height: 620)
+            .scrollContentBackground(.hidden)
+            .contentMargins(.horizontal, 0, for: .scrollContent)
             .scrollPosition($position)
             .onAppear {
                 Task {
@@ -366,4 +366,30 @@ struct ConnectSheet: View {
 /// An integration, by its ID, for a sheet.
 struct IntegrationRef: Identifiable {
     let id: String
+}
+
+/// A search field as a row of a settings group: a magnifying glass, the text, and a clear button.
+struct SettingsSearchRow: View {
+    @Binding var text: String
+    let prompt: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+            TextField(prompt, text: $text, prompt: Text(prompt))
+                .textFieldStyle(.plain)
+                .labelsHidden()
+                .multilineTextAlignment(.leading)
+            if !text.isEmpty {
+                Button {
+                    text = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .buttonStyle(ClearFieldButtonStyle())
+                .help("Clear")
+            }
+        }
+    }
 }

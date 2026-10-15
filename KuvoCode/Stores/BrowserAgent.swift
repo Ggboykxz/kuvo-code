@@ -217,6 +217,8 @@ final class BrowserAgent {
         index[node.highlightIndex] = node.xpath;
         const attributes = ATTRIBUTES
           .filter((name) => node.attributes && node.attributes[name])
+          // A password field's value never goes to the model.
+          .filter((name) => !(name === 'value' && String(node.attributes.type).toLowerCase() === 'password'))
           .map((name) => `${name}="${String(node.attributes[name]).slice(0, 100)}"`)
           .join(' ');
         const tag = node.tagName || 'element';
