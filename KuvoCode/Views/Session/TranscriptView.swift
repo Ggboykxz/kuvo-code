@@ -455,6 +455,8 @@ private struct RowView: View {
 
 struct UserBubble: View {
     let text: String
+    /// The words with styling of their own (a group chat's mentions), in place of plain `text`.
+    var styled: AttributedString?
     var attachments: [AttachmentItem] = []
     var comments: [ReviewComment] = []
     var status: String?
@@ -469,7 +471,7 @@ struct UserBubble: View {
                 CommentReference(comment: comment)
             }
             if !text.isEmpty {
-                MessageText(text: text)
+                MessageText(text: text, styled: styled)
             }
             if let status {
                 Text(status)
@@ -487,6 +489,7 @@ struct UserBubble: View {
 /// fading out, until you ask for the rest.
 private struct MessageText: View {
     let text: String
+    var styled: AttributedString?
     @State private var isExpanded = false
     @State private var shownHeight: CGFloat = 0
     @State private var fullHeight: CGFloat = 0
@@ -501,7 +504,7 @@ private struct MessageText: View {
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 4) {
-            Text(text)
+            Text(styled ?? AttributedString(text))
                 .transcriptFont()
                 .lineLimit(isExpanded ? nil : Self.lines)
                 .textSelection(.enabled)
@@ -509,7 +512,7 @@ private struct MessageText: View {
                 .background(alignment: .top) {
                     // The whole text, unseen, to tell whether the limit cuts anything.
                     if mayBeLong, !isExpanded {
-                        Text(text)
+                        Text(styled ?? AttributedString(text))
                             .transcriptFont()
                             .fixedSize(horizontal: false, vertical: true)
                             .hidden()
@@ -577,10 +580,12 @@ struct MarkdownText: View {
     let text: String
     /// The project's folders: file names written as code in them become links.
     var folders: () -> [String] = { [] }
+    /// In a group chat, its bots, for their mentions.
+    var mentions: [Bot] = []
     @Environment(AppModel.self) private var app
 
     var body: some View {
-        StructuredText(text, parser: FileLinkingParser(folders: folders))
+        StructuredText(text, parser: FileLinkingParser(folders: folders, mentions: mentions))
             .transcriptFont()
             // Closer to the text than the GitHub style, so it wins for code blocks.
             .textual.codeBlockStyle(CopyableCodeBlockStyle())

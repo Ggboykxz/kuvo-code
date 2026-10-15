@@ -20,7 +20,7 @@ struct GroupChatView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 18) {
                 ForEach(messages) { message in
-                    GroupMessageRow(message: message, author: message.author.flatMap { bots.bot($0) })
+                    GroupMessageRow(message: message, author: message.author.flatMap { bots.bot($0) }, members: members)
                         .id(message.id)
                         .transition(.opacity.combined(with: .offset(y: 8)))
                 }
@@ -94,6 +94,8 @@ struct GroupChatView: View {
 private struct GroupMessageRow: View {
     let message: GroupMessage
     let author: Bot?
+    /// The chat's bots, for their mentions.
+    let members: [Bot]
     @State private var isHovering = false
 
     var body: some View {
@@ -104,7 +106,7 @@ private struct GroupMessageRow: View {
                 .frame(maxWidth: .infinity)
                 .multilineTextAlignment(.center)
         } else if message.author == nil {
-            UserBubble(text: message.text)
+            UserBubble(text: message.text, styled: GroupMentions.styled(message.text, bots: members))
         } else {
             HStack(alignment: .top, spacing: 10) {
                 if let author {
@@ -132,7 +134,7 @@ private struct GroupMessageRow: View {
                             .font(.caption)
                             .foregroundStyle(.tertiary)
                     }
-                    MarkdownText(text: message.text)
+                    MarkdownText(text: message.text, mentions: members)
                 }
             }
             .onHover { isHovering = $0 }

@@ -65,9 +65,12 @@ struct FileLinkingParser: MarkupParser {
     /// Asked when parsing rather than while the view updates, so replies don't redraw each
     /// time the project's settings change.
     let folders: () -> [String]
+    /// In a group chat, its bots: "@Name" shows their face and color.
+    var mentions: [Bot] = []
 
     func attributedString(for input: String) throws -> AttributedString {
         var text = try AttributedStringMarkdownParser.markdown().attributedString(for: input)
+        if !mentions.isEmpty { GroupMentions.apply(to: &text, bots: mentions, faces: true) }
         guard text.runs.contains(where: { $0.inlinePresentationIntent?.contains(.code) == true }) else { return text }
         let folders = folders()
         var links: [(Range<AttributedString.Index>, URL)] = []

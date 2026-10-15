@@ -6,7 +6,7 @@ extension EnvironmentValues {
 }
 
 /// How a bot looks: a color, a shape and a face, picked when it's made and changed any time.
-struct BotLook: Codable, Hashable {
+nonisolated struct BotLook: Codable, Hashable {
     var color: Tint
     var shape: Form
     var face: Face
