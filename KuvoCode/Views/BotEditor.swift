@@ -21,6 +21,8 @@ struct BotEditor: View {
     @State private var look: BotLook
     /// Its default model.
     @State private var model: ModelRef?
+    /// How it talks.
+    @State private var personality: String?
     @State private var name: String
     @State private var job: String
     @State private var instructions: String
@@ -48,6 +50,7 @@ struct BotEditor: View {
         _machine = State(initialValue: bot?.machine)
         _project = State(initialValue: bot?.project)
         _model = State(initialValue: bot?.model)
+        _personality = State(initialValue: bot?.personality)
     }
 
     /// The models of the engine where it lives.
@@ -103,6 +106,10 @@ struct BotEditor: View {
 
                 section("Look") {
                     LookPicker(look: $look)
+                }
+
+                section("Personality", note: "How it talks, in its own conversation and in group chats.") {
+                    PersonalityPicker(selection: $personality)
                 }
 
                 section("Job", note: "Bots act on this every time they work. Say what to watch, what to make, and what never to do without asking.") {
@@ -321,6 +328,7 @@ struct BotEditor: View {
             bot.instructions = instructions
             bot.look = look
             bot.model = model
+            bot.personality = personality
             Task { await bots.update(bot) }
             close()
             return
@@ -330,7 +338,7 @@ struct BotEditor: View {
         Task {
             defer { isWorking = false }
             do {
-                let bot = try await bots.create(name: trimmedName, job: job, instructions: instructions, look: look, model: model, machine: machine, project: project)
+                let bot = try await bots.create(name: trimmedName, job: job, instructions: instructions, look: look, personality: personality, model: model, machine: machine, project: project)
                 created(bot)
             } catch {
                 failure = error.localizedDescription
@@ -436,6 +444,171 @@ private struct LookPicker: View {
             .animation(.easeOut(duration: 0.12), value: isHovering)
             .help(help)
             .accessibilityLabel(help)
+            .accessibilityAddTraits(isOn ? .isSelected : [])
+        }
+    }
+}
+
+/// Its personality: Kuvo Code's, yours, or none, as tiles; the one picked described below; and
+/// your own made or changed right here.
+private struct PersonalityPicker: View {
+    @Binding var selection: String?
+    @Environment(Bots.self) private var bots
+    /// A personality of yours being made (no ID yet) or changed.
+    @State private var draft: Draft?
+    @FocusState private var draftFocus: DraftField?
+
+    private struct Draft {
+        var id: String?
+        var name = ""
+        var description = ""
+    }
+
+    private enum DraftField { case name, description }
+
+    private var store: Personalities { .shared }
+    private var picked: Personality? { store.personality(selection) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            WellGroup {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 156), spacing: 6)], spacing: 6) {
+                    Tile(symbol: "circle.dashed", name: "None", isOn: selection == nil) { selection = nil }
+                    ForEach(store.all) { personality in
+                        Tile(symbol: personality.symbol, name: personality.name, isOn: selection == personality.id) {
+                            selection = personality.id
+                        }
+                        .contextMenu {
+                            if personality.isCustom {
+                                Button("Edit…") { edit(personality) }
+                                Button("Delete", role: .destructive) { delete(personality) }
+                            }
+                        }
+                    }
+                    Tile(symbol: "plus", name: "New…", isOn: false, isQuiet: true) {
+                        draft = Draft()
+                        draftFocus = .name
+                    }
+                    .help("Write a personality of your own")
+                }
+                .padding(8)
+                WellDivider()
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text(picked?.description ?? "No personality of its own: it talks the way its model does.")
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    if let picked, picked.isCustom {
+                        Button("Edit") { edit(picked) }
+                            .buttonStyle(TextButtonStyle())
+                        Button("Delete") { delete(picked) }
+                            .buttonStyle(TextButtonStyle())
+                    }
+                }
+                .font(.callout)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .animation(.ui, value: selection)
+            }
+            if draft != nil { form }
+        }
+        .animation(.ui, value: draft == nil)
+    }
+
+    /// Making or changing one of yours: its name, and how it talks.
+    private var form: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            WellGroup(isActive: draftFocus != nil) {
+                WellRow(isActive: draftFocus == .name) {
+                    Image(systemName: "person.crop.circle")
+                } content: {
+                    TextField("Name", text: Binding(get: { draft?.name ?? "" }, set: { draft?.name = $0 }), prompt: Text("Name, like Night Owl"))
+                        .textFieldStyle(.plain)
+                        .focused($draftFocus, equals: .name)
+                }
+                WellDivider()
+                TextField("How it talks", text: Binding(get: { draft?.description ?? "" }, set: { draft?.description = $0 }),
+                          prompt: Text("How it talks, like Quiet and precise. Explains with examples, and asks before assuming."), axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .lineLimit(2...6)
+                    .focused($draftFocus, equals: .description)
+                    .padding(12)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") { draft = nil }
+                    .buttonStyle(.glass)
+                Button(draft?.id == nil ? "Add Personality" : "Save Personality", action: saveDraft)
+                    .buttonStyle(.glassProminent)
+                    .disabled(!canSave)
+            }
+        }
+        .transition(.opacity.combined(with: .offset(y: -6)))
+    }
+
+    private var canSave: Bool {
+        guard let draft else { return false }
+        return !draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !draft.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func edit(_ personality: Personality) {
+        draft = Draft(id: personality.id, name: personality.name, description: personality.description)
+        draftFocus = .description
+    }
+
+    private func delete(_ personality: Personality) {
+        store.delete(personality)
+        if selection == personality.id { selection = nil }
+        Task { await bots.personalityChanged(personality.id) }
+    }
+
+    private func saveDraft() {
+        guard canSave, let draft else { return }
+        let name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let description = draft.description.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let id = draft.id, var personality = store.personality(id) {
+            personality.name = name
+            personality.description = description
+            store.update(personality)
+            Task { await bots.personalityChanged(id) }
+        } else {
+            selection = store.add(name: name, description: description).id
+        }
+        self.draft = nil
+    }
+
+    /// A personality to pick: on accent glass when it's the one, a soft fill under the pointer.
+    private struct Tile: View {
+        let symbol: String
+        let name: String
+        let isOn: Bool
+        var isQuiet = false
+        let action: () -> Void
+        @State private var isHovering = false
+
+        var body: some View {
+            Button {
+                withAnimation(.ui) { action() }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: symbol)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(isOn ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                        .frame(width: 18)
+                    Text(name)
+                        .lineLimit(1)
+                        .foregroundStyle(isQuiet ? .secondary : .primary)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 10)
+                .frame(height: 34)
+                .background(isHovering && !isOn ? Pressable.hoverFill : .clear, in: .rect(cornerRadius: 8))
+                .accentGlass(RoundedRectangle(cornerRadius: 8), isOn: isOn)
+                .contentShape(.rect(cornerRadius: 8))
+            }
+            .buttonStyle(.plain)
+            .onHover { isHovering = $0 }
+            .animation(.easeOut(duration: 0.12), value: isHovering)
             .accessibilityAddTraits(isOn ? .isSelected : [])
         }
     }

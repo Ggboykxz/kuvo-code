@@ -499,7 +499,7 @@ final class BotGroups {
         let lead = group.lead.flatMap { app?.bots.bot($0) }
         let job = bot.instructions.trimmingCharacters(in: .whitespacesAndNewlines)
         var text = """
-        You are \(bot.name), one of the user's bots in Kuvo Code\(bot.job.isEmpty ? "" : ": \(bot.job)").\(job.isEmpty ? "" : "\nYour job:\n\(job)\n")
+        You are \(bot.name), one of the user's bots in Kuvo Code\(bot.job.isEmpty ? "" : ": \(bot.job)").\(Personalities.shared.personality(bot.personality).map { " \($0.instruction)" } ?? "")\(job.isEmpty ? "" : "\nYour job:\n\(job)\n")
         Your memory file is "\(bot.memoryFile)": read it for context on your work.
 
         This conversation is your seat in "\(group.name)", a group chat between the user and these bots: \(who.isEmpty ? "just you" : who), and you. \

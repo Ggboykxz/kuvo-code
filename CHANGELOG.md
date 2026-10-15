@@ -11,6 +11,10 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - **Bots come alive**: a bot's avatar shows what it's up to. It bounces with sparks circling it while it works, hops and glows when it needs you, cheers when it has news, and sleeps with z's floating up until its next wake-up. Idle, it breathes, blinks, looks around and fidgets now and then, and it notices when you point at it. The sidebar counts down to its next wake-up and shows when it's waking up.
 - **Group chats for bots**: with two bots or more, start one from **+** next to Bots. Write to the group and its bots talk it through, one at a time, answering each other; the lead goes first and sums up at the end, @name asks someone directly, and a bot with nothing to add stays quiet. Write while they talk and the one talking reads it at once; long discussions pause until you say Keep Going. Afterwards, each bot remembers the chat, so you can ask it about one in its own conversation.
 - **Each bot has a model**, picked when you make it or in Edit Bot. Group chats use it; in a bot's own conversation you can still pick another.
+- **Personalities for bots**: pick how a bot talks, like Straight Shooter, Skeptic or Mentor, or write your own. It shows in its own conversation and in group chats.
+- **Pictures open in the window**: click one you sent to look closer, right away, instead of waiting for Preview. Pinch or double-click to zoom; the arrow keys go to the message's other pictures.
+- **Kuvo Code's own loader**: the prompt mark draws itself in quiet dashes wherever something's loading or working.
+- A bot moves in one place at a time: where it's working in the conversation in view, otherwise in the sidebar.
 
 ## 0.4.0
 

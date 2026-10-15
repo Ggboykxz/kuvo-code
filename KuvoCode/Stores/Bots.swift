@@ -25,6 +25,8 @@ struct Bot: Codable, Identifiable, Hashable {
     /// The model it uses unless you pick another in its conversation: in group chats, and for
     /// its conversation when it's made. Nil for one made before bots had one.
     var model: ModelRef?
+    /// How it talks (a `Personality`'s ID); nil for the model's own way.
+    var personality: String?
 
     /// Where its session runs, the app's way of writing it.
     var directory: String {
@@ -117,7 +119,7 @@ final class Bots {
 
     /// Makes a bot: its folder where it lives, its session there with its job, and its place in
     /// the list.
-    func create(name: String, job: String, instructions: String, look: BotLook, model: ModelRef?, machine: String?, project: String?) async throws -> Bot {
+    func create(name: String, job: String, instructions: String, look: BotLook, personality: String? = nil, model: ModelRef?, machine: String?, project: String?) async throws -> Bot {
         guard let app else { throw CancellationError() }
         let id = "bot_" + String((0..<10).map { _ in "abcdefghijklmnopqrstuvwxyz0123456789".randomElement()! })
         let folder: String
@@ -142,6 +144,7 @@ final class Bots {
         }
 
         var bot = Bot(id: id, name: name, job: job, instructions: instructions, look: look, machine: machine, project: project, folder: folder, sessionID: "", created: .now)
+        bot.personality = personality
         guard let api = app.workspace.api(forFolder: bot.directory) else { throw Failure.notConnected(machine ?? AppInfo.name) }
         let approval = UserDefaults.standard.string(forKey: ToolApproval.key).flatMap(ToolApproval.init) ?? .approveAll
         // Its own folder is its to read and write, wherever it works, and its wake-ups never ask.
@@ -176,7 +179,7 @@ final class Bots {
         list[index] = bot
         save()
         guard let api = app?.workspace.api(forFolder: bot.directory) else { return }
-        if old.name != bot.name || old.job != bot.job || old.instructions != bot.instructions {
+        if old.name != bot.name || old.job != bot.job || old.instructions != bot.instructions || old.personality != bot.personality {
             try? await api.setInstruction(session: bot.sessionID, key: Self.instructionKey, text: Self.instructions(for: bot))
             if old.name != bot.name { try? await api.renameSession(bot.sessionID, title: bot.name) }
             await app?.groups.botChanged(bot)
@@ -203,6 +206,20 @@ final class Bots {
             try? FileManager.default.removeItem(atPath: bot.folder)
         }
         Analytics.shared.track("bot_deleted")
+    }
+
+    /// A personality you changed or deleted: the bots with it hear the new words, or go back to
+    /// their own way.
+    func personalityChanged(_ id: String) async {
+        for var bot in list where bot.personality == id {
+            if Personalities.shared.personality(id) == nil { bot.personality = nil }
+            // Saved even when unchanged, so its session hears the new wording.
+            if let index = list.firstIndex(where: { $0.id == bot.id }) { list[index] = bot }
+            save()
+            guard let api = app?.workspace.api(forFolder: bot.directory) else { continue }
+            try? await api.setInstruction(session: bot.sessionID, key: Self.instructionKey, text: Self.instructions(for: bot))
+            await app?.groups.botChanged(bot)
+        }
     }
 
     // MARK: Wake-ups
@@ -329,7 +346,7 @@ final class Bots {
         return """
         You are \(bot.name), one of the user's bots in Kuvo Code\(bot.job.isEmpty ? "" : ": \(bot.job)"). A bot is a teammate with one job, \
         who keeps working on it over time in this one conversation. You run on \(place).
-        \(job.isEmpty ? "" : "\nYour job:\n\(job)\n")
+        \(Personalities.shared.personality(bot.personality).map { "\n\($0.instruction)\n" } ?? "")\(job.isEmpty ? "" : "\nYour job:\n\(job)\n")
         You can work on a schedule. Kuvo Code wakes you up at the times you choose, even while the user is away, so you can do \
         things later ("in 2 hours", "tomorrow at 9") or again and again ("every 5 minutes", "every morning"). Never say you can't \
         run in the background, on a timer or on a schedule: schedule a wake-up instead.
