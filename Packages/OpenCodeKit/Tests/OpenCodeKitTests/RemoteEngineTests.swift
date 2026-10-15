@@ -57,12 +57,17 @@ struct RemoteEngineTests {
 }
 
 /// Against a real machine over SSH. Skipped unless KUVO_TEST_SSH_HOST names one this Mac can reach
-/// with its keys (it installs the engine in that machine's ~/.kuvo-code):
+/// with its keys (it installs the engine in that machine's ~/.kuvo-code-test, apart from the app's):
 ///
 ///     KUVO_TEST_SSH_HOST=my-server swift test --filter LiveRemoteEngineTests
 @Suite(.enabled(if: ProcessInfo.processInfo.environment["KUVO_TEST_SSH_HOST"] != nil), .serialized)
 struct LiveRemoteEngineTests {
     let connection = SSHConnection(destination: ProcessInfo.processInfo.environment["KUVO_TEST_SSH_HOST"] ?? "")
+
+    init() {
+        // A folder of its own, so the tests never stop an engine the app runs there.
+        RemoteEngineInstaller.root = ".kuvo-code-test"
+    }
 
     @Test func runsOnItsOwnAndIsFoundAgain() async throws {
         let cache = FileManager.default.temporaryDirectory.appending(path: "opencodekit-remote-cache")

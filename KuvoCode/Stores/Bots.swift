@@ -61,7 +61,7 @@ final class Bots {
     /// The wake-up command on this Mac.
     static var command: URL { AppInfo.supportDirectory.appending(path: "bin/kuvo-wake") }
     /// The wake-up command on a machine.
-    static let machineCommand = "$HOME/\(RemoteEngineInstaller.root)/bin/kuvo-wake"
+    static var machineCommand: String { "$HOME/\(RemoteEngineInstaller.root)/bin/kuvo-wake" }
 
     init() {
         list = Self.load()

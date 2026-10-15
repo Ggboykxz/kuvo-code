@@ -109,8 +109,9 @@ public struct RemoteEngineInstaller: Sendable {
         self.cache = cache
     }
 
-    /// The folder in the machine's home with everything Kuvo Code keeps there.
-    public static let root = ".kuvo-code"
+    /// The folder in the machine's home with everything Kuvo Code keeps there. A copy of the app
+    /// for testing can take another, so its engine there is its own; set before connecting.
+    nonisolated(unsafe) public static var root = ".kuvo-code"
 
     var remoteExecutable: String { "$HOME/\(Self.root)/engine/\(OpenCodeEngine.version)/opencode" }
 
@@ -184,8 +185,8 @@ public struct RemoteEngineInstaller: Sendable {
 ///
 /// The engine runs there on its own, apart from any connection, so a task carries on while this
 /// Mac sleeps, shuts down or loses the network; the app finds it again next time. It listens on
-/// the machine's localhost only, behind a password, and this Mac reaches it through an SSH tunnel
-/// (with, for the browser tools, a port on the machine back to this Mac). Its settings and secrets
+/// the machine's localhost only, behind a password, and this Mac reaches it through an SSH tunnel.
+/// Its settings and secrets
 /// (the password, accounts) go over the session's input rather than a command line, so other users
 /// of the machine can't read them in its process list, and the accounts are never written to its
 /// disk. What's needed to find it again (its process, port and password) is kept in
@@ -205,16 +206,13 @@ public final class RemoteServer: @unchecked Sendable {
     public let engine: Engine
     public let endpoint: ServerEndpoint
     public let connection: SSHConnection
-    /// Whether the tunnel brings a port on the machine back to this Mac.
-    public let hasReverse: Bool
     private let tunnel: Process
     private let log: LogTail
 
-    private init(engine: Engine, endpoint: ServerEndpoint, connection: SSHConnection, hasReverse: Bool, tunnel: Process, log: LogTail) {
+    private init(engine: Engine, endpoint: ServerEndpoint, connection: SSHConnection, tunnel: Process, log: LogTail) {
         self.engine = engine
         self.endpoint = endpoint
         self.connection = connection
-        self.hasReverse = hasReverse
         self.tunnel = tunnel
         self.log = log
     }
@@ -224,18 +222,7 @@ public final class RemoteServer: @unchecked Sendable {
     /// The last lines ssh wrote, for error reports.
     public var recentOutput: String { log.text }
 
-    /// A port on the machine that reaches a port on this Mac.
-    public struct ReverseForward: Sendable {
-        public var remotePort: Int
-        public var localPort: Int
-
-        public init(remotePort: Int, localPort: Int) {
-            self.remotePort = remotePort
-            self.localPort = localPort
-        }
-    }
-
-    static let run = "$HOME/\(RemoteEngineInstaller.root)/run"
+    static var run: String { "$HOME/\(RemoteEngineInstaller.root)/run" }
 
     /// The engine already running on the machine, if there is one. Finding it counts as the app
     /// being around, for the engine's watchdog.
@@ -325,23 +312,11 @@ public final class RemoteServer: @unchecked Sendable {
     public static func attach(
         to engine: Engine,
         on connection: SSHConnection,
-        reverse: [ReverseForward] = [],
         timeout: Duration = .seconds(90),
         onExit: @escaping @Sendable (Int32) -> Void = { _ in }
     ) async throws -> RemoteServer {
-        do {
-            return try await tunnel(to: engine, on: connection, reverse: reverse, timeout: timeout, onExit: onExit)
-        } catch RemoteEngineError.exited(_, let output) where !reverse.isEmpty && output.localizedCaseInsensitiveContains("remote port forwarding failed") {
-            // The port back to this Mac is still held by a connection the machine hasn't noticed
-            // is gone: connect without it for now.
-            return try await tunnel(to: engine, on: connection, reverse: [], timeout: timeout, onExit: onExit)
-        }
-    }
-
-    private static func tunnel(to engine: Engine, on connection: SSHConnection, reverse: [ReverseForward], timeout: Duration, onExit: @escaping @Sendable (Int32) -> Void) async throws -> RemoteServer {
         let localPort = try freeLocalPort()
-        var forwards = ["-N", "-o", "ExitOnForwardFailure=yes", "-L", "\(localPort):127.0.0.1:\(engine.port)"]
-        for forward in reverse { forwards += ["-R", "\(forward.remotePort):127.0.0.1:\(forward.localPort)"] }
+        let forwards = ["-N", "-o", "ExitOnForwardFailure=yes", "-L", "\(localPort):127.0.0.1:\(engine.port)"]
 
         let process = Process()
         process.executableURL = URL(filePath: "/usr/bin/ssh")
@@ -379,7 +354,7 @@ public final class RemoteServer: @unchecked Sendable {
             }
             try await Task.sleep(for: .milliseconds(150))
         }
-        return RemoteServer(engine: engine, endpoint: endpoint, connection: connection, hasReverse: !reverse.isEmpty, tunnel: process, log: log)
+        return RemoteServer(engine: engine, endpoint: endpoint, connection: connection, tunnel: process, log: log)
     }
 
     /// Closes the tunnel. The engine keeps running on the machine.
