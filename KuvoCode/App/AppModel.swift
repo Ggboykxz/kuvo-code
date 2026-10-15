@@ -30,6 +30,8 @@ final class AppModel {
     /// Other computers whose engines run over SSH, next to this Mac's.
     let machines = Machines()
     let usage = UsageAccounts()
+    /// Bots: named agents with one job each, on this Mac or a machine.
+    let bots = Bots()
     /// The engine's settings file, for Settings.
     @ObservationIgnored private(set) lazy var engineConfig = EngineConfig(file: engineFolders.configFile)
     /// Skills added in Settings, beside the settings file: the engine reads them for every project.
@@ -130,6 +132,9 @@ final class AppModel {
             stage = "launch"
             var shell = await environment
             shellEnvironment = shell
+            // Bots' wake-up command, by name, and where their folders are.
+            shell["PATH"] = Bots.command.deletingLastPathComponent().path + ":" + (shell["PATH"] ?? "/usr/bin:/bin")
+            shell["KUVO_BOTS"] = Bots.root.path
             // The browser tools, for the engine to connect to. Without them the agent
             // still works, just without the browser.
             do {
@@ -152,6 +157,8 @@ final class AppModel {
             catalog.api = api
             workspace.api = api
             workspace.machineAPI = { [weak self] machine in self?.machines.engine(machine)?.api }
+            bots.app = self
+            workspace.botSessions = bots.sessionIDs
             usage.api = api
             engine = .ready
             Analytics.shared.trackOnce("engine_ready", ["seconds": Int(Date.now.timeIntervalSince(began)), "downloaded": downloaded])
@@ -165,6 +172,7 @@ final class AppModel {
             // without waiting on its catalog.
             await workspaceLoaded
             startMachines()
+            bots.startWaking()
             await catalogLoaded
         } catch {
             log.error("Engine failed to start: \(error.localizedDescription, privacy: .public)")

@@ -15,6 +15,9 @@ struct SidebarView: View {
     let newProject: () -> Void
     let editProject: (Workspace.Project) -> Void
     let showProviders: () -> Void
+    let newBot: () -> Void
+    let editBot: (Bot) -> Void
+    @Environment(Bots.self) private var bots
 
     /// Folders the user closed, by path (newline-separated).
     @AppStorage("collapsedProjects") private var collapsedStorage = ""
@@ -96,6 +99,31 @@ struct SidebarView: View {
                         SectionHeader(title: "Pinned") { EmptyView() }
                         ForEach(pinned) { session in
                             sessionRow(session, in: .pinned)
+                        }
+                    }
+                    SectionHeader(title: "Bots") {
+                        Button(action: newBot) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 12, weight: .semibold))
+                        }
+                        .buttonStyle(IconButtonStyle(width: 22, height: 22))
+                        .help("New Bot…")
+                    }
+                    if bots.list.isEmpty {
+                        SidebarRow(isSelected: false, action: newBot) {
+                            Image(systemName: "plus.circle")
+                        } title: {
+                            Text("Make a Bot")
+                                .foregroundStyle(.secondary)
+                        }
+                        .help("A teammate with one job, that keeps working while you're away")
+                    }
+                    ForEach(bots.list) { bot in
+                        BotRow(bot: bot, isSelected: selection == bot.sessionID) {
+                            selection = bot.sessionID
+                        }
+                        .contextMenu {
+                            Button("Edit Bot…") { editBot(bot) }
                         }
                     }
                     SectionHeader(title: "Projects") {
@@ -674,6 +702,56 @@ private struct MachineLabel: View {
         .font(.system(size: 11, weight: .medium))
         .foregroundStyle(.secondary)
         .help(engine.statusText)
+    }
+}
+
+/// A bot: its face, its name, and what it's doing or waiting for.
+private struct BotRow: View {
+    let bot: Bot
+    let isSelected: Bool
+    let action: () -> Void
+    @Environment(Workspace.self) private var workspace
+    @Environment(Bots.self) private var bots
+    @Environment(AppModel.self) private var app
+
+    private var session: Session? { workspace.session(bot.sessionID) }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                BotAvatar(look: bot.look, size: 28)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(bot.name)
+                        .font(.system(size: 14))
+                        .fontWeight(session?.isUnread == true ? .semibold : .regular)
+                    Text(status)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                .lineLimit(1)
+                Spacer(minLength: 6)
+                if let session {
+                    SessionStatus(session: session)
+                }
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 46)
+            .modifier(RowHighlight(isSelected: isSelected))
+        }
+        .buttonStyle(.plain)
+        // Read again whenever it's done some work: it may have scheduled a wake-up.
+        .task(id: session?.time.updated) { await bots.readWakes(bot) }
+    }
+
+    /// What it's up to: working, waiting for you, when it wakes next, or its job.
+    private var status: String {
+        if workspace.needsAttention(bot.sessionID) { return "Needs you" }
+        if workspace.running.contains(bot.sessionID) { return "Working…" }
+        if let machine = bot.machine, app.machines.engine(machine)?.isReady != true { return "On \(machine), not connected" }
+        if let next = bots.wakes[bot.id]?.first {
+            return "Wakes " + next.due.formatted(Date.RelativeFormatStyle(presentation: .named, unitsStyle: .wide))
+        }
+        return bot.job.isEmpty ? (bot.machine.map { "On \($0)" } ?? "On this Mac") : bot.job
     }
 }
 

@@ -140,6 +140,7 @@ struct ToolCallView: View {
             let files = diffs.map { relative($0.file) ?? $0.file }
             return (isActive ? "Editing " : "Edited ") + (files.count == 1 ? files[0] : files.isEmpty ? "files" : "\(files.count) files")
         case "shell":
+            if let wake = wake { return Self.summary(of: wake, isActive: isActive) + exitSuffix }
             return (isActive ? "Running " : "Ran ") + (string("command").map { "`\($0)`" } ?? "a command") + exitSuffix
         case "grep": return "Searched for “\(string("pattern") ?? "")”" + (path.map { " in \($0)" } ?? "")
         case "glob": return "Found files matching \(string("pattern") ?? "")"
@@ -181,6 +182,41 @@ struct ToolCallView: View {
         }
     }
 
+    /// A bot's own wake-up command, read back.
+    private var wake: Wakes.Command? {
+        call.name == "shell" ? string("command").flatMap(Wakes.command(in:)) : nil
+    }
+
+    /// "Scheduled a wake-up in 2 hr: check whether CI passed".
+    static func summary(of wake: Wakes.Command, isActive: Bool) -> String {
+        switch wake.verb {
+        case .list: return isActive ? "Checking its wake-ups" : "Checked its wake-ups"
+        case .cancel: return isActive ? "Canceling a wake-up" : "Canceled a wake-up"
+        case .add:
+            let when = wake.when.map(Self.when) ?? ""
+            return (isActive ? "Scheduling a wake-up" : "Scheduled a wake-up") + (when.isEmpty ? "" : " " + when) + (wake.note.map { ": \($0)" } ?? "")
+        }
+    }
+
+    /// +2h as "in 2 hr", a date and time as "for Fri 9:00 AM".
+    private static func when(_ text: String) -> String {
+        if text.hasPrefix("+"), let unit = text.last, let count = Int(text.dropFirst().dropLast()) {
+            let duration: Duration = switch unit {
+            case "m": .seconds(count * 60)
+            case "h": .seconds(count * 3600)
+            default: .seconds(count * 86_400)
+            }
+            return "in " + duration.formatted(.units(allowed: [.days, .hours, .minutes], width: .abbreviated, maximumUnitCount: 2))
+        }
+        let parser = DateFormatter()
+        parser.locale = Locale(identifier: "en_US_POSIX")
+        for format in ["yyyy-MM-dd'T'HH:mm", "yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd HH:mm"] {
+            parser.dateFormat = format
+            if let date = parser.date(from: text) { return "for " + date.formatted(.dateTime.weekday(.abbreviated).hour().minute()) }
+        }
+        return "for \(text)"
+    }
+
     private var exitSuffix: String {
         guard case .completed(_, _, let metadata) = call.state, let exit = metadata?["exit"]?.number, exit != 0 else { return "" }
         return " (exit \(Int(exit)))"
@@ -191,7 +227,7 @@ struct ToolCallView: View {
         case "read": "doc.text"
         case "write": "doc.badge.plus"
         case "edit", "patch": "pencil"
-        case "shell": "terminal"
+        case "shell": wake == nil ? "terminal" : "alarm"
         case "grep", "glob": "magnifyingglass"
         case "webfetch", "websearch": "globe"
         case "question": "questionmark.bubble"

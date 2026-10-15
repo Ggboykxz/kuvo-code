@@ -7,6 +7,7 @@ struct MainView: View {
     @Environment(AppModel.self) private var app
     @Environment(Catalog.self) private var catalog
     @Environment(Workspace.self) private var workspace
+    @Environment(Bots.self) private var bots
 
     /// Open tabs, in order: session IDs, or `draft:<folder>` for a new session
     /// that doesn't exist on the server until its first message.
@@ -26,6 +27,8 @@ struct MainView: View {
     @AppStorage(Notifier.badgeKey) private var showsBadge = true
     /// The New Project or Edit Project sheet, while it's open.
     @State private var projectSheet: ProjectSheetRequest?
+    /// The New Bot or Edit Bot sheet, while it's open.
+    @State private var botSheet: BotSheetRequest?
     @State private var focus = Pane.conversation
     /// Tabs you closed, last one last, with where they were: ⇧⌘T opens them again.
     @State private var closedTabs: [ClosedTab] = []
@@ -74,6 +77,11 @@ struct MainView: View {
     /// The active tab's project folder.
     private var activeDirectory: String? {
         activeModel?.session.location.directory ?? draftDirectory
+    }
+
+    /// Under a bot's name in its card: its job, and where it lives if not here.
+    private func botDetail(_ bot: Bot) -> String {
+        [bot.job.isEmpty ? nil : bot.job, bot.machine.map { "on \($0)" }].compactMap(\.self).joined(separator: " · ")
     }
 
     /// The machine a folder is on, for a project there; nil for this Mac's.
@@ -242,6 +250,9 @@ struct MainView: View {
             }
             Button("Cancel", role: .cancel) {}
         }
+        .sheet(item: $botSheet) { request in
+            BotSheet(bot: request.bot) { openTab($0.sessionID) }
+        }
         .sheet(item: $projectSheet) { request in
             ProjectSheet(project: request.project, folders: request.folders, focusesRun: request.focusesRun) { primary, settings in
                 workspace.saveProject(primary, settings: settings)
@@ -378,6 +389,9 @@ struct MainView: View {
                 return TabItem(id: key, title: workspace.remoteTitle(key) ?? "Session", logo: nil, status: .idle)
             }
             guard let session = workspace.session(key) else { return nil }
+            if let bot = bots.bot(forSession: key) {
+                return TabItem(id: key, title: bot.name, logo: nil, bot: bot.look, status: status(of: session))
+            }
             return TabItem(id: key, title: session.title ?? "New Session", logo: logo(for: session.model, in: session.location.directory), status: status(of: session))
         }
     }
@@ -407,7 +421,9 @@ struct MainView: View {
                 newSession: newSession,
                 newProject: { projectSheet = ProjectSheetRequest(project: nil) },
                 editProject: { projectSheet = ProjectSheetRequest(project: $0) },
-                showProviders: { showsProviders = true }
+                showProviders: { showsProviders = true },
+                newBot: { botSheet = BotSheetRequest(bot: nil) },
+                editBot: { botSheet = BotSheetRequest(bot: $0) }
             )
             // Room for the window's buttons above the first row, when they sit here.
             .padding(.top, showsTabBar ? 0 : Metrics.windowControlsHeight)
@@ -423,9 +439,16 @@ struct MainView: View {
             if let id = sessionID, let model = workspace.model(for: id) {
                 let directory = model.session.location.directory
                 let machine = machine(for: directory)
-                Card(title: model.session.title ?? "New Session", detail: workspace.projectName(directory), isFocused: focus == .conversation) {
-                    if let logo = logo(for: model.session.model, in: directory) { ProviderLogo(id: logo, size: 14) } else { Image(systemName: "bubble.left") }
+                let bot = bots.bot(forSession: id)
+                Card(title: bot?.name ?? model.session.title ?? "New Session", detail: bot.map(botDetail) ?? workspace.projectName(directory), isFocused: focus == .conversation) {
+                    if let bot {
+                        BotAvatar(look: bot.look, size: 18)
+                    } else if let logo = logo(for: model.session.model, in: directory) { ProviderLogo(id: logo, size: 14) } else { Image(systemName: "bubble.left") }
                 } actions: {
+                    if let bot {
+                        Button("Edit Bot", systemImage: "slider.horizontal.3") { botSheet = BotSheetRequest(bot: bot) }
+                            .help("Edit Bot: its look, job, wake-ups and memory")
+                    }
                     if !(machine?.isLive ?? app.isLive) {
                         Image(systemName: "bolt.horizontal.circle")
                             .foregroundStyle(.orange)
@@ -436,6 +459,7 @@ struct MainView: View {
                         .help("Close Tab")
                 } content: {
                     SessionView(model: model)
+                        .environment(\.bot, bot)
                 }
                 .environment(catalog(for: directory))
                 .id(id)
@@ -650,6 +674,7 @@ struct MainView: View {
             newSession: { newSession(in: nil) },
             openFolder: openFolder,
             newProject: { projectSheet = ProjectSheetRequest(project: nil) },
+            newBot: { botSheet = BotSheetRequest(bot: nil) },
             stop: { model?.stop() },
             selectAgent: { model?.selectAgent($0) },
             togglePanel: { withAnimation(.ui) { showsPanel.toggle() } },
@@ -725,6 +750,7 @@ struct MainView: View {
         add(showsSidebar ? "Hide Sessions" : "Show Sessions", "sidebar.left", "⌘0", actions.toggleSidebar)
         add(showsTabBar ? "Hide Tab Bar" : "Show Tab Bar", "rectangle.topthird.inset.filled", "⌥⌘T") { showsTabBar.toggle() }
         add("New Project…", "folder.badge.plus", "⇧⌘N", actions.newProject)
+        add("New Bot…", "face.smiling", nil) { botSheet = BotSheetRequest(bot: nil) }
         add("Open Folder…", "folder", "⌘O", actions.openFolder)
         if let directory = activeDirectory {
             let primary = workspace.projectDirectory(directory)
@@ -860,9 +886,39 @@ struct MainView: View {
             }
             showsPanel = true
         }
+        // KUVO_DEMO_NEW_BOT: the New Bot sheet.
+        if environment["KUVO_DEMO_NEW_BOT"] != nil { botSheet = BotSheetRequest(bot: nil) }
         // In a task of its own: SwiftUI cancels and restarts this view's task while the
         // window settles, which would cut the session's creation short.
         Task { await runDemoSession(environment) }
+        Task { await runDemoBot(environment) }
+    }
+
+    /// KUVO_DEMO_BOT=<name>|<job>|<instructions>[|<machine>] makes that bot unless one has the
+    /// name, and opens it; KUVO_DEMO_BOT_PROMPT then gives it a task.
+    private func runDemoBot(_ environment: [String: String]) async {
+        guard let spec = environment["KUVO_DEMO_BOT"] else { return }
+        let parts = spec.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
+        guard let name = parts.first, !name.isEmpty else { return }
+        var bot = bots.list.first { $0.name == name }
+        if bot == nil {
+            if parts.count > 3, let engine = app.machines.engine(parts[3]) {
+                while !engine.isReady { try? await Task.sleep(for: .seconds(1)) }
+            }
+            do {
+                bot = try await bots.create(name: name, job: parts.count > 1 ? parts[1] : "", instructions: parts.count > 2 ? parts[2] : "",
+                                            look: .random(), machine: parts.count > 3 ? parts[3] : nil, project: nil)
+            } catch {
+                print("KUVO_DEMO_BOT failed: \(error.localizedDescription)")
+                return
+            }
+        }
+        guard let bot else { return }
+        openTab(bot.sessionID)
+        if let prompt = environment["KUVO_DEMO_BOT_PROMPT"], let model = workspace.model(for: bot.sessionID) {
+            try? await Task.sleep(for: .seconds(1))
+            model.submit(prompt, files: [], for: nil, queue: false, commands: [])
+        }
     }
 
     private func runDemoSession(_ environment: [String: String]) async {
@@ -969,6 +1025,12 @@ private struct SlowEngineNotice: View {
 }
 
 /// Which project sheet to show: New Project, or Edit Project for `project`.
+/// The bot sheet: a new bot, or changing `bot`.
+struct BotSheetRequest: Identifiable {
+    let id = UUID()
+    let bot: Bot?
+}
+
 struct ProjectSheetRequest: Identifiable {
     let id = UUID()
     let project: Workspace.Project?

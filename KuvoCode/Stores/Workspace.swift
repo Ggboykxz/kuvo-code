@@ -125,9 +125,12 @@ final class Workspace {
         settings[projectDirectory(directory)]?.folders ?? []
     }
 
+    /// Bots' sessions: each bot's conversation, shown with the bot rather than in its project.
+    var botSessions: Set<String> = []
+
     /// Projects with their sessions, most recently active first.
     var projects: [Project] {
-        let grouped = Dictionary(grouping: sessions.filter { !Self.isArchived($0) }, by: projectDirectory(of:))
+        let grouped = Dictionary(grouping: sessions.filter { !Self.isArchived($0) && !botSessions.contains($0.id) }, by: projectDirectory(of:))
         let directories = Set(grouped.keys).union(folders).filter { RemoteFolder.machine(of: $0).map(machines.contains) ?? true }
         return directories.map { directory in
             Project(directory: directory, sessions: (grouped[directory] ?? []).sorted { $0.time.updated > $1.time.updated }, settings: settings[directory] ?? ProjectSettings())
@@ -681,6 +684,11 @@ final class Workspace {
         guard let session = try? await api(forSession: id)?.session(id) else { return }
         // Only root sessions get a row; subagent sessions show inside their parent.
         guard session.parentID == nil else { return }
+        upsert(session)
+    }
+
+    /// A session made elsewhere (a bot's), so it can be opened right away.
+    func add(_ session: Session) {
         upsert(session)
     }
 

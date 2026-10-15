@@ -425,7 +425,7 @@ struct WellRowButtonStyle: ButtonStyle {
 }
 
 /// The Location row: where the project's folders are, and, for a machine, whether it's connected.
-private struct LocationRow: View {
+struct LocationRow: View {
     let machine: MachineEngine?
     @State private var isHovering = false
 

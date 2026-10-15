@@ -67,8 +67,10 @@ final class MachineEngine {
         var acceptBrowserToken: (String) -> Void
 
         /// Changes when the accounts or settings do, so an engine started with older ones is known.
+        /// The watchdog's version counts too: an engine whose watchdog can't send bots' wake-ups is
+        /// started over the next time it's idle.
         var fingerprint: String {
-            let text = environment.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "\n")
+            let text = environment.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "\n") + "\nwatchdog=wakes"
             return SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
         }
     }

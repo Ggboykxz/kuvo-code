@@ -13,6 +13,8 @@ struct TabItem: Identifiable, Equatable {
     var title: String
     /// The model maker's logo (Anthropic, OpenAI, …) for the tab's front tile.
     var logo: String?
+    /// A bot's tab shows the bot.
+    var bot: BotLook?
     var status: Status
 
     enum Status {
@@ -124,7 +126,7 @@ private struct TabButton: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            TabIcon(logo: tab.logo, symbol: SidebarView.draftDirectory(from: tab.id) == nil ? "bubble.left" : "square.and.pencil", status: tab.status)
+            TabIcon(logo: tab.logo, symbol: SidebarView.draftDirectory(from: tab.id) == nil ? "bubble.left" : "square.and.pencil", bot: tab.bot, status: tab.status)
             Text(tab.title)
                 .font(.system(size: 13, weight: isActive ? .medium : .regular))
                 .foregroundStyle(isActive ? .primary : .secondary)
@@ -172,12 +174,21 @@ struct TabIcon: View {
     let logo: String?
     /// Shown when there's no logo: a pencil for a draft, a bubble for a session.
     var symbol = "bubble.left"
+    /// A bot's tab shows the bot itself in place of the tile.
+    var bot: BotLook?
     let status: TabItem.Status
 
     static let tileSize = CGSize(width: 25, height: 20)
 
     var body: some View {
-        FrontTile(logo: logo, symbol: symbol)
+        Group {
+            if let bot {
+                BotAvatar(look: bot, size: 21)
+                    .frame(width: Self.tileSize.width, height: Self.tileSize.height)
+            } else {
+                FrontTile(logo: logo, symbol: symbol)
+            }
+        }
             .overlay(alignment: .bottomTrailing) {
                 if status != .idle {
                     StatusBadge(status: status)

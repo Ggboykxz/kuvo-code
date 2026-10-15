@@ -75,12 +75,12 @@ extension AppModel {
     }
 
     /// When the app quits: each machine's engine stops, unless a session there is still working,
-    /// which carries on there while this Mac is off.
+    /// which carries on there while this Mac is off, or a bot there has a wake-up waiting.
     func stopMachines() {
         for engine in machines.engines.values where engine.isReady {
             let busy = workspace.isRunning(on: engine.machine.id)
             engine.disconnect()
-            if !busy { RemoteServer.stopNow(on: engine.machine.connection) }
+            if !busy { RemoteServer.stopNow(on: engine.machine.connection, unlessWaking: true) }
         }
     }
 

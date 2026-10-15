@@ -359,6 +359,8 @@ private struct RowView: View {
 
     var body: some View {
         switch row {
+        case .user(let message) where CommandMessages.shared.text(of: message).hasPrefix(Wakes.marker):
+            WakeRow(note: String(CommandMessages.shared.text(of: message).dropFirst(Wakes.marker.count)), at: message.time.created)
         case .user(let message):
             let (withComments, paths) = Attachments.split(CommandMessages.shared.text(of: message))
             let (text, comments) = ReviewComments.split(withComments)
@@ -894,11 +896,63 @@ struct ErrorCard: View {
     }
 }
 
+/// A bot woke itself up, as it planned: its note to itself, in place of a message from you.
+private struct WakeRow: View {
+    let note: String
+    let at: Milliseconds
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "alarm")
+                .foregroundStyle(.tint)
+                .frame(width: 16)
+            (Text("Woke up").fontWeight(.semibold).foregroundStyle(.primary) + Text("  ") + Text(note).foregroundStyle(.secondary))
+                .lineLimit(3)
+                .textSelection(.enabled)
+            Spacer(minLength: 8)
+            Text(Date(timeIntervalSince1970: at / 1000), format: .dateTime.hour().minute())
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .font(.callout)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .recessedWell(RoundedRectangle(cornerRadius: 10))
+        .help("A wake-up the bot scheduled for itself")
+    }
+}
+
 /// A session with nothing in it yet.
 struct EmptyConversationView: View {
     let directory: String
+    @Environment(\.bot) private var bot
 
     var body: some View {
+        if let bot {
+            // A bot, before its first task: who it is and what it's for.
+            VStack(spacing: 12) {
+                BotAvatar(look: bot.look, size: 64)
+                VStack(spacing: 4) {
+                    Text(bot.name)
+                        .font(.title2.weight(.semibold))
+                    if !bot.job.isEmpty {
+                        Text(bot.job)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Text("Give \(bot.name) its first task. It keeps this conversation, remembers what it learns, and can wake itself up later to carry on.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 340)
+            }
+            .padding(.bottom, 120)
+        } else {
+            plain
+        }
+    }
+
+    private var plain: some View {
         VStack(spacing: 10) {
             Image(systemName: "bubble.left.and.text.bubble.right")
                 .font(.system(size: 34, weight: .light))

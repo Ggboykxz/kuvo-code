@@ -12,6 +12,7 @@ struct KuvoCodeApp: App {
                 .environment(delegate.model)
                 .environment(delegate.model.catalog)
                 .environment(delegate.model.workspace)
+                .environment(delegate.model.bots)
                 .environment(delegate.updates)
                 .task { await delegate.model.start() }
         }
@@ -106,6 +107,8 @@ struct AppCommands: Commands {
                 .disabled(actions == nil)
             Button("New Project…") { actions?.newProject() }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
+                .disabled(actions == nil)
+            Button("New Bot…") { actions?.newBot() }
                 .disabled(actions == nil)
             Button("Open Folder…") { actions?.openFolder() }
                 .keyboardShortcut("o")
@@ -218,6 +221,7 @@ struct SessionActions {
     var newSession: () -> Void
     var openFolder: () -> Void
     var newProject: () -> Void
+    var newBot: () -> Void
     var stop: () -> Void
     var selectAgent: (String) -> Void
     var togglePanel: () -> Void

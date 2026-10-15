@@ -45,6 +45,7 @@ struct Composer: View {
     @Environment(\.colorScheme) private var scheme
     @Environment(\.cardIsFocused) private var cardIsFocused
     @Environment(\.messageFont) private var messageFont
+    @Environment(\.bot) private var bot
     @FocusState private var isFocused: Bool
     @Namespace private var glass
     @State private var isTargeted = false
@@ -278,7 +279,9 @@ struct Composer: View {
     }
 
     private var placeholder: String {
-        isRunning ? "Add to the task, or ⌘↩ to queue a follow-up…" : agent == "plan" ? "Ask the agent to plan something…" : "Ask the agent to build, fix or explain something…"
+        if isRunning { return "Add to the task, or ⌘↩ to queue a follow-up…" }
+        if let bot { return "Message \(bot.name)…" }
+        return agent == "plan" ? "Ask the agent to plan something…" : "Ask the agent to build, fix or explain something…"
     }
 
     @ViewBuilder private var actionButton: some View {
