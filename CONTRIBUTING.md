@@ -80,6 +80,22 @@ install the engine in its `~/.kuvo-code`).
 | `Config/App.xcconfig` | The app's name and bundle ID, and signing defaults |
 | `Licenses/` | License texts for code copied into this repository |
 
+### The browser on a machine
+
+A machine's browser is Chrome for Testing's headless shell, with its libraries and fonts, in
+`~/.kuvo-code/browser` there (`scripts/browser-runtime.py` lists what it brings). One script,
+`KuvoCode/Resources/kuvo-browser.js`, runs with the engine's own runtime in three ways:
+
+- **host**, the keeper: it starts Chromium, holds it over a pipe, and serves the DevTools
+  protocol to everyone else on a Unix socket in `~/.kuvo-code/run`, with a few messages of its
+  own (`Kuvo.*`): the page in use, who's browsing where, what agents ask you for, and which
+  page each conversation works in. Only one runs at a time.
+- **mcp**, the agent's browser tools for the machine's engine, talking to the keeper.
+- **connect**, the Mac's live view of the pages, over SSH, also through the keeper.
+
+`KEEPER` at its top goes up with every change to the host side, so a newer copy replaces one
+that's running; `BrowserAgent`'s page scripts are shared with this Mac's browser tools.
+
 ### Debug launch variables
 
 Debug builds read these environment variables to open the app in a given state
