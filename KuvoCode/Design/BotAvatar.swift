@@ -185,7 +185,8 @@ struct BotAvatar: View {
     }
 }
 
-/// A group chat's picture: its first bots, close together, each moving with what it's up to.
+/// A group chat's picture: its bots together, like a group photo. Two stand side by side; three
+/// stand two at the back and the lead in front; more show as "+N" beside the first three.
 struct GroupAvatar: View {
     struct Face: Equatable {
         var look: BotLook
@@ -198,25 +199,33 @@ struct GroupAvatar: View {
 
     var body: some View {
         let shown = Array(faces.prefix(3))
-        let each = size * (shown.count >= 3 ? 0.58 : shown.count == 2 ? 0.68 : 1)
+        let more = faces.count - shown.count
         ZStack {
-            ForEach(Array(shown.enumerated()), id: \.offset) { index, face in
+            // The lead (first) is drawn last, in front.
+            ForEach(Array(shown.enumerated()).reversed(), id: \.offset) { index, face in
+                let spot = place(index, of: shown.count)
                 // Still: its bots move in their own rows.
-                BotAvatar(look: face.look, size: each, mood: face.mood, animates: false)
-                    .offset(place(index, of: shown.count))
-                    // The lead in front.
-                    .zIndex(Double(shown.count - index))
+                BotAvatar(look: face.look, size: size * spot.scale, mood: face.mood, animates: false)
+                    .offset(x: size * spot.x, y: size * spot.y)
+            }
+            if more > 0 {
+                Text("+\(more)")
+                    .font(.system(size: max(7, size * 0.2), weight: .bold, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, size * 0.06)
+                    .background(.background, in: Capsule())
+                    .offset(x: size * 0.38, y: size * 0.36)
             }
         }
         .frame(width: size, height: size)
     }
 
-    /// Two side by side, one a little higher; three in a triangle, the lead on top.
-    private func place(_ index: Int, of count: Int) -> CGSize {
+    /// Where each stands, as shares of the square, and how large.
+    private func place(_ index: Int, of count: Int) -> (x: CGFloat, y: CGFloat, scale: CGFloat) {
         switch count {
-        case 2: index == 0 ? CGSize(width: -size * 0.17, height: -size * 0.1) : CGSize(width: size * 0.17, height: size * 0.12)
-        case 3: [CGSize(width: 0, height: -size * 0.2), CGSize(width: -size * 0.22, height: size * 0.18), CGSize(width: size * 0.22, height: size * 0.18)][index]
-        default: .zero
+        case 2: [(-0.2, 0.04, 0.6), (0.2, -0.04, 0.6)][index]
+        case 3: [(0, 0.15, 0.56), (-0.24, -0.12, 0.48), (0.24, -0.12, 0.48)][index]
+        default: (0, 0, 1)
         }
     }
 }

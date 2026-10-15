@@ -167,7 +167,7 @@ private struct GroupIntro: View {
             VStack(spacing: 4) {
                 Text(group.name)
                     .font(.title2.weight(.semibold))
-                Text(ListFormatter.localizedString(byJoining: members.map(\.name)))
+                Text(group.purpose.flatMap { $0.isEmpty ? nil : $0 } ?? ListFormatter.localizedString(byJoining: members.map(\.name)))
                     .foregroundStyle(.secondary)
             }
             Text("Bring them something to talk through. \(lead.map { "\($0.name) goes first, the" } ?? "The") others weigh in and answer each other, and \(lead.map { "\($0.name) sums up" } ?? "it's summed up") at the end. Write @ and a name to ask someone directly.")

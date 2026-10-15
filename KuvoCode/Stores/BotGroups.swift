@@ -8,6 +8,8 @@ import os
 struct BotGroup: Codable, Identifiable, Hashable {
     var id: String
     var name: String
+    /// What it's for, in a few words: "Plan each week's release". Nil or empty for nothing in particular.
+    var purpose: String?
     /// Its bots, in order; the first leads.
     var members: [String]
     /// Each member's seat: its session for this chat, made at its first turn.
@@ -115,9 +117,9 @@ final class BotGroups {
 
     // MARK: Making, changing, deleting
 
-    func create(name: String, members: [String]) -> BotGroup {
+    func create(name: String, purpose: String? = nil, members: [String]) -> BotGroup {
         let id = "grp_" + String((0..<10).map { _ in "abcdefghijklmnopqrstuvwxyz0123456789".randomElement()! })
-        let group = BotGroup(id: id, name: name, members: members, created: .now, viewed: .now)
+        let group = BotGroup(id: id, name: name, purpose: purpose, members: members, created: .now, viewed: .now)
         list.append(group)
         logs[id] = []
         save()
@@ -503,7 +505,7 @@ final class BotGroups {
         Your memory file is "\(bot.memoryFile)": read it for context on your work.
 
         This conversation is your seat in "\(group.name)", a group chat between the user and these bots: \(who.isEmpty ? "just you" : who), and you. \
-        \(lead.map { $0.id == bot.id ? "You lead it." : "\($0.name) leads it." } ?? "")
+        \(lead.map { $0.id == bot.id ? "You lead it." : "\($0.name) leads it." } ?? "")\(group.purpose.map { $0.isEmpty ? "" : " The chat is for: \($0)" } ?? "")
 
         Each message you get here holds what was said in the chat since you last spoke, and means it's your turn. Your reply is posted \
         to the chat as your message, so write it to the group: a few sentences, plain and to the point, like a colleague in a team \

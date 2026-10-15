@@ -16,10 +16,13 @@ struct GroupEditor: View {
     @Environment(Bots.self) private var bots
     @Environment(BotGroups.self) private var groups
     @State private var name: String
+    @State private var purpose: String
     /// Its bots, in order: the first leads.
     @State private var members: [String]
     @State private var confirmsDelete = false
-    @FocusState private var nameIsFocused: Bool
+    @FocusState private var focus: Field?
+
+    private enum Field { case name, purpose }
 
     init(group: BotGroup?, newBot: @escaping () -> Void, close: @escaping () -> Void, created: @escaping (BotGroup) -> Void = { _ in }) {
         self.group = group
@@ -27,6 +30,7 @@ struct GroupEditor: View {
         self.close = close
         self.created = created
         _name = State(initialValue: group?.name ?? "")
+        _purpose = State(initialValue: group?.purpose ?? "")
         _members = State(initialValue: group?.members ?? [])
     }
 
@@ -54,7 +58,7 @@ struct GroupEditor: View {
                 .padding(.bottom, 20)
                 .frame(maxWidth: .infinity)
         }
-        .onAppear { if isNew { nameIsFocused = true } }
+        .onAppear { if isNew { focus = .name } }
         .alert("Delete \(group?.name ?? "This Group Chat")?", isPresented: $confirmsDelete) {
             Button("Delete", role: .destructive) {
                 guard let group else { return }
@@ -69,20 +73,47 @@ struct GroupEditor: View {
 
     private var form: some View {
         VStack(alignment: .leading, spacing: 20) {
+            // Its picture and who's in it, beside its name and what it's for, as a bot's editor has
+            // its face beside its name and job.
             HStack(alignment: .center, spacing: 18) {
-                GroupAvatar(faces: picked.map { GroupAvatar.Face(look: $0.look) }, size: 76)
-                    .frame(width: 92)
-                    .animation(.ui, value: members)
-                WellGroup(isActive: nameIsFocused) {
-                    WellRow(isActive: nameIsFocused) {
-                        Image(systemName: "person.2")
+                VStack(spacing: 8) {
+                    Group {
+                        if picked.isEmpty {
+                            Image(systemName: "person.2")
+                                .font(.system(size: 30, weight: .light))
+                                .foregroundStyle(.tertiary)
+                        } else {
+                            GroupAvatar(faces: picked.map { GroupAvatar.Face(look: $0.look) }, size: 76)
+                        }
+                    }
+                    .frame(width: 76, height: 76)
+                    Text(picked.isEmpty ? "No bots yet" : picked.count == 1 ? "1 bot" : "\(picked.count) bots")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .contentTransition(.numericText())
+                }
+                .frame(width: 92)
+                .animation(.ui, value: members)
+                WellGroup(isActive: focus != nil) {
+                    WellRow(isActive: focus == .name) {
+                        Image(systemName: "bubble.left.and.bubble.right")
                     } content: {
                         TextField("Name", text: $name, prompt: Text("Name, like Release Planning"))
                             .textFieldStyle(.plain)
                             .font(.system(size: 15, weight: .medium))
-                            .focused($nameIsFocused)
+                            .focused($focus, equals: .name)
+                    }
+                    WellDivider()
+                    WellRow(isActive: focus == .purpose) {
+                        Image(systemName: "target")
+                    } content: {
+                        TextField("Purpose", text: $purpose, prompt: Text("What it's for, like Plan each week's release"))
+                            .textFieldStyle(.plain)
+                            .focused($focus, equals: .purpose)
                     }
                 }
+                // The rows keep their height; the picture beside them is taller.
+                .fixedSize(horizontal: false, vertical: true)
             }
 
             section("Bots", note: "Pick two or more. They answer one at a time, and each remembers the chat in its own conversation.") {
@@ -169,13 +200,15 @@ struct GroupEditor: View {
     private func save() {
         guard canSave else { return }
         let members = picked.map(\.id)
+        let purpose = purpose.trimmingCharacters(in: .whitespacesAndNewlines)
         if var group {
             group.name = trimmedName
+            group.purpose = purpose.isEmpty ? nil : purpose
             group.members = members
             Task { await groups.update(group) }
             close()
         } else {
-            created(groups.create(name: trimmedName, members: members))
+            created(groups.create(name: trimmedName, purpose: purpose.isEmpty ? nil : purpose, members: members))
         }
     }
 
