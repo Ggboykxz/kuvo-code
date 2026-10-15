@@ -44,7 +44,7 @@ const TAB_IDLE = Number(process.env.KUVO_BROWSER_TAB_IDLE || 12 * 3600) * 1000;
 
 // Goes up with every change to the keeper (host mode): a newer one replaces one that's running
 // (its pages close, its sign-ins stay), and an older one never replaces a newer.
-const KEEPER = 12;
+const KEEPER = 13;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -616,10 +616,11 @@ async function host() {
         }
         case "Kuvo.claim": {
           // A conversation's agent wants to work in a page: yes, unless another one has in the
-          // last minute and a half.
+          // last minute and a half, or has it on a Mac's screen.
           const { targetId, session } = message.params ?? {};
+          // A page a Mac shows stays with its conversation however long ago it was last used.
           const claim = claims.get(targetId);
-          const ok = !claim || claim.session === session || Date.now() - claim.at > 90_000;
+          const ok = !claim || claim.session === session || (Date.now() - claim.at > 90_000 && !shown(targetId));
           if (ok && targetId && session) claims.set(targetId, { session, at: Date.now() });
           return message.id !== undefined && send(client, { id: message.id, result: { ok } });
         }
