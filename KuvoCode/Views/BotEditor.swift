@@ -733,6 +733,11 @@ private struct WakeList: View {
                         }
                         .padding(.vertical, 8)
                         Spacer(minLength: 8)
+                        Button("Wake Up Now") {
+                            Task { try? await bots.wakeNow(wake, of: bot) }
+                        }
+                        .buttonStyle(TextButtonStyle())
+                        .help("Send this wake-up now, to see the job run")
                         Button("Cancel Wake-Up", systemImage: "minus.circle.fill") {
                             Task { await bots.cancelWake(wake, of: bot) }
                         }

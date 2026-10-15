@@ -253,6 +253,14 @@ final class Bots {
         wakes[bot.id]?.removeAll { $0.id == wake.id }
     }
 
+    /// Sends a waiting wake-up now rather than at its time (to see the bot's job run), on this Mac
+    /// or its machine, and takes it off the list.
+    func wakeNow(_ wake: Wakes.Pending, of bot: Bot) async throws {
+        guard let api = app?.workspace.api(forFolder: bot.directory) else { throw Failure.notConnected(bot.machine ?? "This Mac's engine") }
+        try await api.prompt(session: bot.sessionID, id: Identifier.message(), text: Wakes.marker + wake.note, delivery: .queue)
+        await cancelWake(wake, of: bot)
+    }
+
     /// Sends this Mac's bots' wake-ups as they come due, while the app runs; ones missed while it
     /// wasn't running go as soon as it is. (A machine's engine sends its bots' own.)
     func startWaking() {
