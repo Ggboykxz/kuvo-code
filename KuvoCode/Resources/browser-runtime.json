@@ -1,0 +1,909 @@
+{
+ "chromium": {
+  "version": "155.0.8059.79",
+  "x86_64": {
+   "url": "https://storage.googleapis.com/chrome-for-testing-public/155.0.8059.79/linux64/chrome-headless-shell-linux64.zip",
+   "sha256": "4cea4c32b501aa43cc2b81eb45734af991a6a82feded48380d6dfaf96642a1c1",
+   "size": 124406717
+  },
+  "aarch64": {
+   "url": "https://storage.googleapis.com/chrome-for-testing-public/155.0.8059.79/linux-arm64/chrome-headless-shell-linux-arm64.zip",
+   "sha256": "72d938cabad9674610939c72ef2d3faf20214a4418c3b4e94c1cebca683e767b",
+   "size": 124715442
+  }
+ },
+ "packages": {
+  "x86_64": [
+   {
+    "name": "alsa-lib",
+    "version": "1.2.10-2.el8",
+    "repo": "AppStream",
+    "path": "Packages/a/alsa-lib-1.2.10-2.el8.x86_64.rpm",
+    "sha256": "e2533af17c8f83c4d9c71b968ec4121b08a035bdbf770497c65f4853be93574f",
+    "size": 512192
+   },
+   {
+    "name": "at-spi2-atk",
+    "version": "2.26.2-1.el8",
+    "repo": "AppStream",
+    "path": "Packages/a/at-spi2-atk-2.26.2-1.el8.x86_64.rpm",
+    "sha256": "8cf63781b34314ecd9931ac8cfcbd3ffdc526d720bae948a27e868d9beff08e3",
+    "size": 90200
+   },
+   {
+    "name": "at-spi2-core",
+    "version": "2.28.0-1.el8",
+    "repo": "AppStream",
+    "path": "Packages/a/at-spi2-core-2.28.0-1.el8.x86_64.rpm",
+    "sha256": "c9bba632f64d56e6a45b23dc9f79fc6868f292d2a21f638ead6bd48116184a8c",
+    "size": 172052
+   },
+   {
+    "name": "atk",
+    "version": "2.28.1-1.el8",
+    "repo": "AppStream",
+    "path": "Packages/a/atk-2.28.1-1.el8.x86_64.rpm",
+    "sha256": "01abcea12bbada68012f4933c190f269a5053da4e0c6372eea534f04be099530",
+    "size": 276748
+   },
+   {
+    "name": "dbus-libs",
+    "version": "1.12.8-28.el8_10",
+    "repo": "BaseOS",
+    "path": "Packages/d/dbus-libs-1.12.8-28.el8_10.x86_64.rpm",
+    "sha256": "977bb6e46172b5db9e121a1406b9b30910e37141b77288b7e24490f159df6592",
+    "size": 188660
+   },
+   {
+    "name": "dejavu-sans-fonts",
+    "version": "2.35-7.el8",
+    "repo": "BaseOS",
+    "path": "Packages/d/dejavu-sans-fonts-2.35-7.el8.noarch.rpm",
+    "sha256": "e6d02d1a8c0df5e81a27f3ce6990dd15eaf7fc9d28d754d6d59c58db6983245e",
+    "size": 1557304
+   },
+   {
+    "name": "expat",
+    "version": "2.5.0-4.el8_10",
+    "repo": "BaseOS",
+    "path": "Packages/e/expat-2.5.0-4.el8_10.x86_64.rpm",
+    "sha256": "ccbc060aebcd0ed4bccf1787dbcbd705991e00973eb34a13c5be4115d11c108a",
+    "size": 136016
+   },
+   {
+    "name": "glib2",
+    "version": "2.56.4-178.el8_10",
+    "repo": "BaseOS",
+    "path": "Packages/g/glib2-2.56.4-178.el8_10.x86_64.rpm",
+    "sha256": "4de61005339df7500199c8a1b7f3201665363bdd7879a378783a7b78849baf7b",
+    "size": 2616576
+   },
+   {
+    "name": "gmp",
+    "version": "6.1.2-12.el8",
+    "repo": "BaseOS",
+    "path": "Packages/g/gmp-6.1.2-12.el8.x86_64.rpm",
+    "sha256": "df8ebe29fce2c3e431bcb5fb169ff8d72cb952aabb945a8ddd0cfb1a7900078f",
+    "size": 324704
+   },
+   {
+    "name": "gnutls",
+    "version": "3.6.16-8.el8_10.6",
+    "repo": "BaseOS",
+    "path": "Packages/g/gnutls-3.6.16-8.el8_10.6.x86_64.rpm",
+    "sha256": "767884dba7c0de979a7e896e068f4d6189db75f0f70a43a9e5d5eb2477500c4e",
+    "size": 1045768
+   },
+   {
+    "name": "google-noto-emoji-color-fonts",
+    "version": "20200916-2.el8",
+    "repo": "AppStream",
+    "path": "Packages/g/google-noto-emoji-color-fonts-20200916-2.el8.noarch.rpm",
+    "sha256": "1361deafeac4dd12c648898ddb7d3ecf58becbe687b6da95e3bf1899d1c1c944",
+    "size": 9638932
+   },
+   {
+    "name": "hwdata",
+    "version": "0.314-8.22.el8",
+    "repo": "BaseOS",
+    "path": "Packages/h/hwdata-0.314-8.22.el8.noarch.rpm",
+    "sha256": "08f63531506cc8b97fc047cdd99a378d7ac8e10ebf594dbd7c4dcdb81b2dde69",
+    "size": 1928200
+   },
+   {
+    "name": "libX11",
+    "version": "1.6.8-9.el8_10",
+    "repo": "AppStream",
+    "path": "Packages/l/libX11-1.6.8-9.el8_10.x86_64.rpm",
+    "sha256": "205140d4ec8722eeb29fd45461633b41f44a66865ef1636e179f27e12dabe7bd",
+    "size": 625708
+   },
+   {
+    "name": "libXau",
+    "version": "1.0.9-3.el8",
+    "repo": "AppStream",
+    "path": "Packages/l/libXau-1.0.9-3.el8.x86_64.rpm",
+    "sha256": "028141ae18fb41c9ee406307953e600eba388282b0d581c7132db5ff22ace362",
+    "size": 37200
+   },
+   {
+    "name": "libXcomposite",
+    "version": "0.4.4-14.el8",
+    "repo": "AppStream",
+    "path": "Packages/l/libXcomposite-0.4.4-14.el8.x86_64.rpm",
+    "sha256": "3d0681577ee2961431bcd2cd646f08ad99bf7f19d52b12483e71ebb14fee7ab8",
+    "size": 28092
+   },
+   {
+    "name": "libXdamage",
+    "version": "1.1.4-14.el8",
+    "repo": "AppStream",
+    "path": "Packages/l/libXdamage-1.1.4-14.el8.x86_64.rpm",
+    "sha256": "b0fa6e96826a5adf55337191c4c9f3b6a31a4eb1ed81981102058cb4b506e5ef",
+    "size": 26224
+   },
+   {
+    "name": "libXext",
+    "version": "1.3.4-1.el8",
+    "repo": "AppStream",
+    "path": "Packages/l/libXext-1.3.4-1.el8.x86_64.rpm",
+    "sha256": "d4b037882da8eb6c588eee822f3227e7caf6ed2e9352ed490f0cd3577ed78470",
+    "size": 45408
+   },
+   {
+    "name": "libXfixes",
+    "version": "5.0.3-7.el8",
+    "repo": "AppStream",
+    "path": "Packages/l/libXfixes-5.0.3-7.el8.x86_64.rpm",
+    "sha256": "be03c4d9a5ea3b1b1fb80f301f932ff0488fd80fb7acd9126153956f27cedb13",
+    "size": 24384
+   },
+   {
+    "name": "libXi",
+    "version": "1.7.10-1.el8",
+    "repo": "AppStream",
+    "path": "Packages/l/libXi-1.7.10-1.el8.x86_64.rpm",
+    "sha256": "50085caa63b1a131251449903e9918d847702e5a9b64ed33bd2b72b1ff657343",
+    "size": 48768
+   },
+   {
+    "name": "libXrandr",
+    "version": "1.5.2-1.el8",
+    "repo": "AppStream",
+    "path": "Packages/l/libXrandr-1.5.2-1.el8.x86_64.rpm",
+    "sha256": "6e162f68d0459598f596ee0698a504c795d6c992a807dec0e718efdc8a1e225e",
+    "size": 33316
+   },
+   {
+    "name": "libXrender",
+    "version": "0.9.10-7.el8",
+    "repo": "AppStream",
+    "path": "Packages/l/libXrender-0.9.10-7.el8.x86_64.rpm",
+    "sha256": "686856648531848c72434a295d276394d4dee6dab1336c6b745b9daab0613292",
+    "size": 32344
+   },
+   {
+    "name": "libXtst",
+    "version": "1.2.3-7.el8",
+    "repo": "AppStream",
+    "path": "Packages/l/libXtst-1.2.3-7.el8.x86_64.rpm",
+    "sha256": "2f095a882b0593cc3d19fae7d84859e8216a2c009fd5906c862daf84b6caa249",
+    "size": 21108
+   },
+   {
+    "name": "libblkid",
+    "version": "2.32.1-48.el8_10",
+    "repo": "BaseOS",
+    "path": "Packages/l/libblkid-2.32.1-48.el8_10.x86_64.rpm",
+    "sha256": "20cb24aecca504c9581e245ace7380e1b51a88e732305b43a4c1bebea9a76935",
+    "size": 225436
+   },
+   {
+    "name": "libcap",
+    "version": "2.48-6.el8_10.1",
+    "repo": "BaseOS",
+    "path": "Packages/l/libcap-2.48-6.el8_10.1.x86_64.rpm",
+    "sha256": "ad1acfa784efcf98d72f8eb268849805fe74d135d79d02384478421a87ffd024",
+    "size": 75496
+   },
+   {
+    "name": "libdrm",
+    "version": "2.4.115-2.el8",
+    "repo": "BaseOS",
+    "path": "Packages/l/libdrm-2.4.115-2.el8.x86_64.rpm",
+    "sha256": "86becbf4c7dd367cb2e5a1dd286690f64bd3d3b63f1cbcb36493ecc07d74810e",
+    "size": 167392
+   },
+   {
+    "name": "liberation-mono-fonts",
+    "version": "2.00.3-7.el8",
+    "repo": "BaseOS",
+    "path": "Packages/l/liberation-mono-fonts-2.00.3-7.el8.noarch.rpm",
+    "sha256": "5455e6eddd7c2d5c109775a8bdd39cc35fb2bf1f4790df9b530358d57926bd56",
+    "size": 516364
+   },
+   {
+    "name": "liberation-sans-fonts",
+    "version": "2.00.3-7.el8",
+    "repo": "BaseOS",
+    "path": "Packages/l/liberation-sans-fonts-2.00.3-7.el8.noarch.rpm",
+    "sha256": "3721a1315298f5fe4c3a635d7c3b7048428f711b6a6f90638dcb44aab624537d",
+    "size": 623552
+   },
+   {
+    "name": "liberation-serif-fonts",
+    "version": "2.00.3-7.el8",
+    "repo": "BaseOS",
+    "path": "Packages/l/liberation-serif-fonts-2.00.3-7.el8.noarch.rpm",
+    "sha256": "41ebbfca4b7fc586cd22ff6ece89461aa61cd346fda9b4f98d2817c83ef630ff",
+    "size": 622248
+   },
+   {
+    "name": "libffi",
+    "version": "3.1-24.el8",
+    "repo": "BaseOS",
+    "path": "Packages/l/libffi-3.1-24.el8.x86_64.rpm",
+    "sha256": "c643193dce9c134921489992a7befefba82bb2596d34b7166947c12b278f5f40",
+    "size": 37456
+   },
+   {
+    "name": "libgcrypt",
+    "version": "1.8.5-8.el8_10",
+    "repo": "BaseOS",
+    "path": "Packages/l/libgcrypt-1.8.5-8.el8_10.x86_64.rpm",
+    "sha256": "bd8bd915ab9e806a0d5b7af4ccef84b660b645bb56b1e4188ffc8596b1893df1",
+    "size": 472988
+   },
+   {
+    "name": "libgpg-error",
+    "version": "1.31-1.el8",
+    "repo": "BaseOS",
+    "path": "Packages/l/libgpg-error-1.31-1.el8.x86_64.rpm",
+    "sha256": "2bde4100ef033c41c0eaedfe4c33560bda625b838f2ad2c073d4420039399bdf",
+    "size": 246192
+   },
+   {
+    "name": "libidn2",
+    "version": "2.2.0-1.el8",
+    "repo": "BaseOS",
+    "path": "Packages/l/libidn2-2.2.0-1.el8.x86_64.rpm",
+    "sha256": "ea3af5771feed5c6e8372db9ab809acb23b7851dfb4936cf9b0ac1cddd9eb6c2",
+    "size": 94544
+   },
+   {
+    "name": "libmount",
+    "version": "2.32.1-48.el8_10",
+    "repo": "BaseOS",
+    "path": "Packages/l/libmount-2.32.1-48.el8_10.x86_64.rpm",
+    "sha256": "b19ccc46a0d6e35ef50ae4613e3ab890b91fdd5b3c935a8e55273f3b77389bab",
+    "size": 241936
+   },
+   {
+    "name": "libpciaccess",
+    "version": "0.14-1.el8",
+    "repo": "BaseOS",
+    "path": "Packages/l/libpciaccess-0.14-1.el8.x86_64.rpm",
+    "sha256": "ffa55e88d93b88b63f6bd254d324d220f261d99384caefcf861defdd367da064",
+    "size": 32072
+   },
+   {
+    "name": "libselinux",
+    "version": "2.9-11.el8_10",
+    "repo": "BaseOS",
+    "path": "Packages/l/libselinux-2.9-11.el8_10.x86_64.rpm",
+    "sha256": "34356ec2bc643df7a2c0c1767db9207bce553bee694539cd60fc987ab3f65b8c",
+    "size": 169120
+   },
+   {
+    "name": "libsepol",
+    "version": "2.9-3.el8",
+    "repo": "BaseOS",
+    "path": "Packages/l/libsepol-2.9-3.el8.x86_64.rpm",
+    "sha256": "cc017c27e60d9f6d83db9d6828cad89b804d9f50476d88b23e0cd7a69b58f107",
+    "size": 346936
+   },
+   {
+    "name": "libtasn1",
+    "version": "4.13-6.el8_10",
+    "repo": "BaseOS",
+    "path": "Packages/l/libtasn1-4.13-6.el8_10.x86_64.rpm",
+    "sha256": "4297cd64caf0652ce9403dd0383c8167a2410d31e1bd0f8f15556c2554490e28",
+    "size": 77552
+   },
+   {
+    "name": "libunistring",
+    "version": "0.9.9-3.el8",
+    "repo": "BaseOS",
+    "path": "Packages/l/libunistring-0.9.9-3.el8.x86_64.rpm",
+    "sha256": "89202bab5d105ed5c917959f84fda4c8a4d8ee9bd027099f716034e1ed30a103",
+    "size": 428996
+   },
+   {
+    "name": "libuuid",
+    "version": "2.32.1-48.el8_10",
+    "repo": "BaseOS",
+    "path": "Packages/l/libuuid-2.32.1-48.el8_10.x86_64.rpm",
+    "sha256": "f1748e5d96d72bf941a19932ad90388fc733b38393e3bed8181715041bc42dae",
+    "size": 100980
+   },
+   {
+    "name": "libwayland-server",
+    "version": "1.21.0-1.el8",
+    "repo": "AppStream",
+    "path": "Packages/l/libwayland-server-1.21.0-1.el8.x86_64.rpm",
+    "sha256": "b84ffce6fee146d551c08c36b2e80e42bfdee0ec0e9d331361230a1f02b71c31",
+    "size": 48592
+   },
+   {
+    "name": "libxcb",
+    "version": "1.13.1-1.el8",
+    "repo": "AppStream",
+    "path": "Packages/l/libxcb-1.13.1-1.el8.x86_64.rpm",
+    "sha256": "f879eab6ae5acfddf7c6aa6cb7192fec725940babca04b33388fb1f0b5aadb5b",
+    "size": 233644
+   },
+   {
+    "name": "libxkbcommon",
+    "version": "0.9.1-1.el8",
+    "repo": "AppStream",
+    "path": "Packages/l/libxkbcommon-0.9.1-1.el8.x86_64.rpm",
+    "sha256": "51f79ea9268dae9826ece0bc98c135dd5ca62b08581694ae5401971690fd3766",
+    "size": 117432
+   },
+   {
+    "name": "lz4-libs",
+    "version": "1.8.3-5.el8_10",
+    "repo": "BaseOS",
+    "path": "Packages/l/lz4-libs-1.8.3-5.el8_10.x86_64.rpm",
+    "sha256": "d093c42b6784901b035d84394ef2bcab2ffd9c1b51ad5ee8cb62c2a14c0234ed",
+    "size": 66780
+   },
+   {
+    "name": "mesa-libgbm",
+    "version": "23.1.4-4.el8_10",
+    "repo": "AppStream",
+    "path": "Packages/m/mesa-libgbm-23.1.4-4.el8_10.x86_64.rpm",
+    "sha256": "f3d8a910f6898d1b44e1d7a96e25f691beafdd2c99735f2afc904aa3ab63f5f5",
+    "size": 61136
+   },
+   {
+    "name": "nettle",
+    "version": "3.4.1-7.el8",
+    "repo": "BaseOS",
+    "path": "Packages/n/nettle-3.4.1-7.el8.x86_64.rpm",
+    "sha256": "1c462fc46745eb337edf14bc05b508d7cc5cf109c15d8ec0981ba29b3fba779e",
+    "size": 307132
+   },
+   {
+    "name": "nspr",
+    "version": "4.39.0-3.el8_10",
+    "repo": "AppStream",
+    "path": "Packages/n/nspr-4.39.0-3.el8_10.x86_64.rpm",
+    "sha256": "3d6863c8c56363bd21dbe4b413a903d5af273f8e6f0d019cca96bb909b119ddb",
+    "size": 146000
+   },
+   {
+    "name": "nss",
+    "version": "3.124.0-5.el8_10",
+    "repo": "AppStream",
+    "path": "Packages/n/nss-3.124.0-5.el8_10.x86_64.rpm",
+    "sha256": "6aa8eb2babc54dc416ebea43c7d7c561fb09fe1ef84eb8f03a38207338c63ade",
+    "size": 793352
+   },
+   {
+    "name": "nss-softokn",
+    "version": "3.124.0-5.el8_10",
+    "repo": "AppStream",
+    "path": "Packages/n/nss-softokn-3.124.0-5.el8_10.x86_64.rpm",
+    "sha256": "66a3cfd2d5e60dcbbd8e95506f8a94ce76dff52de52f67ace9656d0bccdf8325",
+    "size": 570756
+   },
+   {
+    "name": "nss-softokn-freebl",
+    "version": "3.124.0-5.el8_10",
+    "repo": "AppStream",
+    "path": "Packages/n/nss-softokn-freebl-3.124.0-5.el8_10.x86_64.rpm",
+    "sha256": "cea3f12a61283773caba7baa5a29218ab2727c46de673b517584a0d4708be873",
+    "size": 469600
+   },
+   {
+    "name": "nss-util",
+    "version": "3.124.0-5.el8_10",
+    "repo": "AppStream",
+    "path": "Packages/n/nss-util-3.124.0-5.el8_10.x86_64.rpm",
+    "sha256": "1a8f27bced01b8fc31bb9e381544c2645236b18020ce9146b622a2d42ca8e900",
+    "size": 146916
+   },
+   {
+    "name": "p11-kit",
+    "version": "0.23.22-2.el8",
+    "repo": "BaseOS",
+    "path": "Packages/p/p11-kit-0.23.22-2.el8.x86_64.rpm",
+    "sha256": "4dffa72079b4babbc6c7dec13408ce75da08bb18239e5e37c0861c39f48f33cd",
+    "size": 333700
+   },
+   {
+    "name": "pcre",
+    "version": "8.42-6.el8",
+    "repo": "BaseOS",
+    "path": "Packages/p/pcre-8.42-6.el8.x86_64.rpm",
+    "sha256": "0c64dc4099b1af3af95760d573660c792e6df7a68eb5f45f7fdd5b1f5d2879fa",
+    "size": 214540
+   },
+   {
+    "name": "pcre2",
+    "version": "10.32-4.el8_10",
+    "repo": "BaseOS",
+    "path": "Packages/p/pcre2-10.32-4.el8_10.x86_64.rpm",
+    "sha256": "656c826a7067aeadcc1e24b5b89859cf3e1355b9ea57da9bcc16d18dc0691262",
+    "size": 251956
+   },
+   {
+    "name": "sqlite-libs",
+    "version": "3.26.0-21.el8_10",
+    "repo": "BaseOS",
+    "path": "Packages/s/sqlite-libs-3.26.0-21.el8_10.x86_64.rpm",
+    "sha256": "db896e48ef74a6d7518be06f9c34fb6d39f1f1e81c8a4dd2390900c67e55db0a",
+    "size": 594244
+   },
+   {
+    "name": "systemd-libs",
+    "version": "239-82.el8_10.19",
+    "repo": "BaseOS",
+    "path": "Packages/s/systemd-libs-239-82.el8_10.19.x86_64.rpm",
+    "sha256": "4471691ef6ac446f602084bfd20bcdd7b3b60255b8146c6e7cfc220bfc50d11c",
+    "size": 1201656
+   },
+   {
+    "name": "xz-libs",
+    "version": "5.2.4-4.el8_6",
+    "repo": "BaseOS",
+    "path": "Packages/x/xz-libs-5.2.4-4.el8_6.x86_64.rpm",
+    "sha256": "283e7ac93ffee0cb93f33a991a9ab9f06a272caf88a6c56d17696ab1b2e83499",
+    "size": 95016
+   },
+   {
+    "name": "zlib",
+    "version": "1.2.11-26.el8",
+    "repo": "BaseOS",
+    "path": "Packages/z/zlib-1.2.11-26.el8.x86_64.rpm",
+    "sha256": "84465251ea8790b3d8a1c30bdfc8f11711ffe9060becb7335e1b50f4277c5162",
+    "size": 104888
+   }
+  ],
+  "aarch64": [
+   {
+    "name": "alsa-lib",
+    "version": "1.2.10-2.el8",
+    "repo": "AppStream",
+    "path": "Packages/a/alsa-lib-1.2.10-2.el8.aarch64.rpm",
+    "sha256": "6f47e9f77b98c7cabb54573689a2b42004b814f401ac4c723fe3fe7e18bd43c8",
+    "size": 480012
+   },
+   {
+    "name": "at-spi2-core",
+    "version": "2.28.0-1.el8",
+    "repo": "AppStream",
+    "path": "Packages/a/at-spi2-core-2.28.0-1.el8.aarch64.rpm",
+    "sha256": "ce49ea87477cbb515d99d553d6008c4938e483495915a1ac2157971a2c843603",
+    "size": 167688
+   },
+   {
+    "name": "atk",
+    "version": "2.28.1-1.el8",
+    "repo": "AppStream",
+    "path": "Packages/a/atk-2.28.1-1.el8.aarch64.rpm",
+    "sha256": "f4c86e7c30b7c32b74cde902e6e3c62b2bc94a8dfd90b2f84ff91f36a888cb3f",
+    "size": 275232
+   },
+   {
+    "name": "dbus-libs",
+    "version": "1.12.8-28.el8_10",
+    "repo": "BaseOS",
+    "path": "Packages/d/dbus-libs-1.12.8-28.el8_10.aarch64.rpm",
+    "sha256": "15c9ac45196c7d0e7f2bacb6ba01d8e15b45971ada1803aece475fd6e4ba33b6",
+    "size": 180232
+   },
+   {
+    "name": "dejavu-sans-fonts",
+    "version": "2.35-7.el8",
+    "repo": "BaseOS",
+    "path": "Packages/d/dejavu-sans-fonts-2.35-7.el8.noarch.rpm",
+    "sha256": "e6d02d1a8c0df5e81a27f3ce6990dd15eaf7fc9d28d754d6d59c58db6983245e",
+    "size": 1557304
+   },
+   {
+    "name": "expat",
+    "version": "2.5.0-4.el8_10",
+    "repo": "BaseOS",
+    "path": "Packages/e/expat-2.5.0-4.el8_10.aarch64.rpm",
+    "sha256": "59b267c05f2e53f16f04adbe464699ab74ff717032e9ac6512ec8cb5c40e7a76",
+    "size": 125812
+   },
+   {
+    "name": "glib2",
+    "version": "2.56.4-178.el8_10",
+    "repo": "BaseOS",
+    "path": "Packages/g/glib2-2.56.4-178.el8_10.aarch64.rpm",
+    "sha256": "d78a489948d2eb3a901ffd66f18510c9c63f8e0eb6f0a3413852705b364481e6",
+    "size": 2555864
+   },
+   {
+    "name": "gmp",
+    "version": "6.1.2-12.el8",
+    "repo": "BaseOS",
+    "path": "Packages/g/gmp-6.1.2-12.el8.aarch64.rpm",
+    "sha256": "e8e0dc01c5ee987bc3a2cbc918ad8df68d140c2b3b796bd9c874c449682580f6",
+    "size": 268824
+   },
+   {
+    "name": "gnutls",
+    "version": "3.6.16-8.el8_10.6",
+    "repo": "BaseOS",
+    "path": "Packages/g/gnutls-3.6.16-8.el8_10.6.aarch64.rpm",
+    "sha256": "7ed1ba74a22e6580d42f886c4f2b06d5856b06f9b0cafd3d5698aa1ecd431f7c",
+    "size": 966360
+   },
+   {
+    "name": "google-noto-emoji-color-fonts",
+    "version": "20200916-2.el8",
+    "repo": "AppStream",
+    "path": "Packages/g/google-noto-emoji-color-fonts-20200916-2.el8.noarch.rpm",
+    "sha256": "1361deafeac4dd12c648898ddb7d3ecf58becbe687b6da95e3bf1899d1c1c944",
+    "size": 9638932
+   },
+   {
+    "name": "libX11",
+    "version": "1.6.8-9.el8_10",
+    "repo": "AppStream",
+    "path": "Packages/l/libX11-1.6.8-9.el8_10.aarch64.rpm",
+    "sha256": "355ba1be15738c2f0ffa19683488ac5f25194c18011dd524c92e4f78c3f325f0",
+    "size": 602524
+   },
+   {
+    "name": "libXau",
+    "version": "1.0.9-3.el8",
+    "repo": "AppStream",
+    "path": "Packages/l/libXau-1.0.9-3.el8.aarch64.rpm",
+    "sha256": "65137a5358789d01fbf2d44b86470c3c07b5256843a2decb4c1bafd5437e03be",
+    "size": 37196
+   },
+   {
+    "name": "libXcomposite",
+    "version": "0.4.4-14.el8",
+    "repo": "AppStream",
+    "path": "Packages/l/libXcomposite-0.4.4-14.el8.aarch64.rpm",
+    "sha256": "84317213c36de5f00f1e794d0d3c18925ea726511855e43dd79a90988f4c292e",
+    "size": 28148
+   },
+   {
+    "name": "libXdamage",
+    "version": "1.1.4-14.el8",
+    "repo": "AppStream",
+    "path": "Packages/l/libXdamage-1.1.4-14.el8.aarch64.rpm",
+    "sha256": "f766446d5270c5cf7326bb6987c6779a705261cf0dca38bdbfa4df0a78cee3fd",
+    "size": 26292
+   },
+   {
+    "name": "libXext",
+    "version": "1.3.4-1.el8",
+    "repo": "AppStream",
+    "path": "Packages/l/libXext-1.3.4-1.el8.aarch64.rpm",
+    "sha256": "04014cbecef59b96e53390b57eb6b2d99d4b5aac01967c70906d9f5fc65545df",
+    "size": 43860
+   },
+   {
+    "name": "libXfixes",
+    "version": "5.0.3-7.el8",
+    "repo": "AppStream",
+    "path": "Packages/l/libXfixes-5.0.3-7.el8.aarch64.rpm",
+    "sha256": "bfcf73a30f6dc9a35ea463d532af25450267763654afd600dc50912c01318b0a",
+    "size": 24156
+   },
+   {
+    "name": "libXi",
+    "version": "1.7.10-1.el8",
+    "repo": "AppStream",
+    "path": "Packages/l/libXi-1.7.10-1.el8.aarch64.rpm",
+    "sha256": "16912b941e95518c407e230c8ae0f1cdb7b96a0e8ad4ac5ac401a2f696db442c",
+    "size": 46264
+   },
+   {
+    "name": "libXrandr",
+    "version": "1.5.2-1.el8",
+    "repo": "AppStream",
+    "path": "Packages/l/libXrandr-1.5.2-1.el8.aarch64.rpm",
+    "sha256": "8652123d8c1cd8afd548e758086467d652217219dfc8c6e22e921d7dc1bedc72",
+    "size": 32356
+   },
+   {
+    "name": "libXrender",
+    "version": "0.9.10-7.el8",
+    "repo": "AppStream",
+    "path": "Packages/l/libXrender-0.9.10-7.el8.aarch64.rpm",
+    "sha256": "6f7fec3924c0efeb10b3f694d1b41a7252aa9662e7dd93614ceaa86bfd5421e2",
+    "size": 30984
+   },
+   {
+    "name": "libXtst",
+    "version": "1.2.3-7.el8",
+    "repo": "AppStream",
+    "path": "Packages/l/libXtst-1.2.3-7.el8.aarch64.rpm",
+    "sha256": "9dac5c40c9b64d23ac84962353dad4988487542e36772f82fcb751f42915d81f",
+    "size": 20972
+   },
+   {
+    "name": "libblkid",
+    "version": "2.32.1-48.el8_10",
+    "repo": "BaseOS",
+    "path": "Packages/l/libblkid-2.32.1-48.el8_10.aarch64.rpm",
+    "sha256": "d3f610520255252288711f4e2b6cb962adde23a472f2c1f99f374aa0a889fc65",
+    "size": 219040
+   },
+   {
+    "name": "libcap",
+    "version": "2.48-6.el8_10.1",
+    "repo": "BaseOS",
+    "path": "Packages/l/libcap-2.48-6.el8_10.1.aarch64.rpm",
+    "sha256": "50bb67dd5e35184330ad3a31141a73d9ed7aaa3ea83cd357ad76a243cb728d6c",
+    "size": 74612
+   },
+   {
+    "name": "libdrm",
+    "version": "2.4.115-2.el8",
+    "repo": "BaseOS",
+    "path": "Packages/l/libdrm-2.4.115-2.el8.aarch64.rpm",
+    "sha256": "0617d33dae9769fbe5e42a96d85f898963829f7f63657b732ae0aca099ee06cc",
+    "size": 139608
+   },
+   {
+    "name": "liberation-mono-fonts",
+    "version": "2.00.3-7.el8",
+    "repo": "BaseOS",
+    "path": "Packages/l/liberation-mono-fonts-2.00.3-7.el8.noarch.rpm",
+    "sha256": "5455e6eddd7c2d5c109775a8bdd39cc35fb2bf1f4790df9b530358d57926bd56",
+    "size": 516364
+   },
+   {
+    "name": "liberation-sans-fonts",
+    "version": "2.00.3-7.el8",
+    "repo": "BaseOS",
+    "path": "Packages/l/liberation-sans-fonts-2.00.3-7.el8.noarch.rpm",
+    "sha256": "3721a1315298f5fe4c3a635d7c3b7048428f711b6a6f90638dcb44aab624537d",
+    "size": 623552
+   },
+   {
+    "name": "liberation-serif-fonts",
+    "version": "2.00.3-7.el8",
+    "repo": "BaseOS",
+    "path": "Packages/l/liberation-serif-fonts-2.00.3-7.el8.noarch.rpm",
+    "sha256": "41ebbfca4b7fc586cd22ff6ece89461aa61cd346fda9b4f98d2817c83ef630ff",
+    "size": 622248
+   },
+   {
+    "name": "libffi",
+    "version": "3.1-24.el8",
+    "repo": "BaseOS",
+    "path": "Packages/l/libffi-3.1-24.el8.aarch64.rpm",
+    "sha256": "fad785b129f8a1892cf759a08ccdb879e6ec846a65ffa977409124e67e744266",
+    "size": 36432
+   },
+   {
+    "name": "libgcrypt",
+    "version": "1.8.5-8.el8_10",
+    "repo": "BaseOS",
+    "path": "Packages/l/libgcrypt-1.8.5-8.el8_10.aarch64.rpm",
+    "sha256": "ead3e8122e50e74bc8bb4c4ed8240dd2c9ce93f6e93a21bfd6d8e39b35e7fbf1",
+    "size": 399616
+   },
+   {
+    "name": "libgpg-error",
+    "version": "1.31-1.el8",
+    "repo": "BaseOS",
+    "path": "Packages/l/libgpg-error-1.31-1.el8.aarch64.rpm",
+    "sha256": "5f50acbe7ca1061b08621b3e9e72360811ceafaa34626cb13aa153b9fcef5dd4",
+    "size": 243864
+   },
+   {
+    "name": "libidn2",
+    "version": "2.2.0-1.el8",
+    "repo": "BaseOS",
+    "path": "Packages/l/libidn2-2.2.0-1.el8.aarch64.rpm",
+    "sha256": "aa0cb5360ef9778dcc983ec8bb5e007829fd6345b855506ce807c760cef9b394",
+    "size": 93916
+   },
+   {
+    "name": "libmount",
+    "version": "2.32.1-48.el8_10",
+    "repo": "BaseOS",
+    "path": "Packages/l/libmount-2.32.1-48.el8_10.aarch64.rpm",
+    "sha256": "22b0a67000bba9c24670bc10e30963bb0b48c3da90e134f3aed7e1d46c3106e3",
+    "size": 234608
+   },
+   {
+    "name": "libselinux",
+    "version": "2.9-11.el8_10",
+    "repo": "BaseOS",
+    "path": "Packages/l/libselinux-2.9-11.el8_10.aarch64.rpm",
+    "sha256": "d2a988504e6da4e9e49cddf631341005dfc5da71679649ea0466ae15e00e41a2",
+    "size": 165632
+   },
+   {
+    "name": "libsepol",
+    "version": "2.9-3.el8",
+    "repo": "BaseOS",
+    "path": "Packages/l/libsepol-2.9-3.el8.aarch64.rpm",
+    "sha256": "e2c55fc5738b9129c59a4fb29fd81be32ee242380398dc007f88ef19429cb747",
+    "size": 327420
+   },
+   {
+    "name": "libtasn1",
+    "version": "4.13-6.el8_10",
+    "repo": "BaseOS",
+    "path": "Packages/l/libtasn1-4.13-6.el8_10.aarch64.rpm",
+    "sha256": "dce6d632e2e4c0023b654fe20b42eb4026eae5c1f965354053efad8bf9eb6fbd",
+    "size": 76180
+   },
+   {
+    "name": "libunistring",
+    "version": "0.9.9-3.el8",
+    "repo": "BaseOS",
+    "path": "Packages/l/libunistring-0.9.9-3.el8.aarch64.rpm",
+    "sha256": "d301863174a399aa70dbab12b92a6a8d709c5bb8001ae4a1501ebf19ef3e8a01",
+    "size": 417572
+   },
+   {
+    "name": "libuuid",
+    "version": "2.32.1-48.el8_10",
+    "repo": "BaseOS",
+    "path": "Packages/l/libuuid-2.32.1-48.el8_10.aarch64.rpm",
+    "sha256": "b1d139a5519ba83e6f333ea70a09bdc71cff588443f735b81e743d4c2fb09ad4",
+    "size": 100228
+   },
+   {
+    "name": "libwayland-server",
+    "version": "1.21.0-1.el8",
+    "repo": "AppStream",
+    "path": "Packages/l/libwayland-server-1.21.0-1.el8.aarch64.rpm",
+    "sha256": "4c9138f140d7f2e90ab33630f1347be3a4c564272ff0c5bdb59087fb0478d31a",
+    "size": 47280
+   },
+   {
+    "name": "libxcb",
+    "version": "1.13.1-1.el8",
+    "repo": "AppStream",
+    "path": "Packages/l/libxcb-1.13.1-1.el8.aarch64.rpm",
+    "sha256": "22cd6b4ee21ed95199ad537921c8d2169c5ba039ab1e024b0da86b79a4e7c4c0",
+    "size": 226828
+   },
+   {
+    "name": "libxkbcommon",
+    "version": "0.9.1-1.el8",
+    "repo": "AppStream",
+    "path": "Packages/l/libxkbcommon-0.9.1-1.el8.aarch64.rpm",
+    "sha256": "a0d5180639b9b1d89545bfd2f3490b05cd0f091a318cc320ba66e483e164a2cc",
+    "size": 113120
+   },
+   {
+    "name": "lz4-libs",
+    "version": "1.8.3-5.el8_10",
+    "repo": "BaseOS",
+    "path": "Packages/l/lz4-libs-1.8.3-5.el8_10.aarch64.rpm",
+    "sha256": "d5241a1d2801500e949b2fdd6b5092be78dcda8da354ed0c9fd900bd39f6d369",
+    "size": 63968
+   },
+   {
+    "name": "mesa-libgbm",
+    "version": "23.1.4-4.el8_10",
+    "repo": "AppStream",
+    "path": "Packages/m/mesa-libgbm-23.1.4-4.el8_10.aarch64.rpm",
+    "sha256": "5ed31c0909d0ddff3cb3911c01e0f8911d00efa74c1a447d20db525c9136f06f",
+    "size": 60212
+   },
+   {
+    "name": "nettle",
+    "version": "3.4.1-7.el8",
+    "repo": "BaseOS",
+    "path": "Packages/n/nettle-3.4.1-7.el8.aarch64.rpm",
+    "sha256": "51eabb0ae5bf19165967d8926043b01302dd36590a0333126ca88b43c480afe8",
+    "size": 313588
+   },
+   {
+    "name": "nspr",
+    "version": "4.39.0-3.el8_10",
+    "repo": "AppStream",
+    "path": "Packages/n/nspr-4.39.0-3.el8_10.aarch64.rpm",
+    "sha256": "fe2321fcefbcac636254dedbf74251c3fb5a0f663486b2dd842508d75b8470f4",
+    "size": 138704
+   },
+   {
+    "name": "nss",
+    "version": "3.124.0-5.el8_10",
+    "repo": "AppStream",
+    "path": "Packages/n/nss-3.124.0-5.el8_10.aarch64.rpm",
+    "sha256": "10c342c757f3ece83a9af1dc328bcbcc50313e12cc0d6036709ebb1cd199836a",
+    "size": 748828
+   },
+   {
+    "name": "nss-softokn",
+    "version": "3.124.0-5.el8_10",
+    "repo": "AppStream",
+    "path": "Packages/n/nss-softokn-3.124.0-5.el8_10.aarch64.rpm",
+    "sha256": "486be6037a02aaeef68b5c164b0d97cd20851260bd63c9685669a686f80c9b47",
+    "size": 550972
+   },
+   {
+    "name": "nss-softokn-freebl",
+    "version": "3.124.0-5.el8_10",
+    "repo": "AppStream",
+    "path": "Packages/n/nss-softokn-freebl-3.124.0-5.el8_10.aarch64.rpm",
+    "sha256": "34c4d3c6293c900d7275c8420341f7cd201a7902b24dbd275b609896af924d43",
+    "size": 438396
+   },
+   {
+    "name": "nss-util",
+    "version": "3.124.0-5.el8_10",
+    "repo": "AppStream",
+    "path": "Packages/n/nss-util-3.124.0-5.el8_10.aarch64.rpm",
+    "sha256": "f5600fd7d1164dc82786389c7dffeeb4a55247d005340f2ca511fdc0c4ea76b8",
+    "size": 143560
+   },
+   {
+    "name": "p11-kit",
+    "version": "0.23.22-2.el8",
+    "repo": "BaseOS",
+    "path": "Packages/p/p11-kit-0.23.22-2.el8.aarch64.rpm",
+    "sha256": "b8e63efa3d10d30a54454885d7ade63eca35edcaf0c15eee78f1d64fd87dad66",
+    "size": 315408
+   },
+   {
+    "name": "pcre",
+    "version": "8.42-6.el8",
+    "repo": "BaseOS",
+    "path": "Packages/p/pcre-8.42-6.el8.aarch64.rpm",
+    "sha256": "d2233f6aebbb5ac9f90a6d374650c445794fe5ecf857236228a4cc006206b068",
+    "size": 190420
+   },
+   {
+    "name": "pcre2",
+    "version": "10.32-4.el8_10",
+    "repo": "BaseOS",
+    "path": "Packages/p/pcre2-10.32-4.el8_10.aarch64.rpm",
+    "sha256": "309cb53677fdde882f3141ab40bb221d4b6f1030bbd865d71752adb404da7289",
+    "size": 223568
+   },
+   {
+    "name": "sqlite-libs",
+    "version": "3.26.0-21.el8_10",
+    "repo": "BaseOS",
+    "path": "Packages/s/sqlite-libs-3.26.0-21.el8_10.aarch64.rpm",
+    "sha256": "94884e7e803aed8f7860deb561139a6390efa239c5e031cc3e63839d55116385",
+    "size": 562908
+   },
+   {
+    "name": "systemd-libs",
+    "version": "239-82.el8_10.19",
+    "repo": "BaseOS",
+    "path": "Packages/s/systemd-libs-239-82.el8_10.19.aarch64.rpm",
+    "sha256": "7053d937a6c2d568cb8f99edbf0319bc2088781e21be40656515afc0567aa58f",
+    "size": 1101084
+   },
+   {
+    "name": "xz-libs",
+    "version": "5.2.4-4.el8_6",
+    "repo": "BaseOS",
+    "path": "Packages/x/xz-libs-5.2.4-4.el8_6.aarch64.rpm",
+    "sha256": "5813ddb231f6b96c4de61e76b8b393b9506d39e490e0b51e54000412b41474f5",
+    "size": 91624
+   },
+   {
+    "name": "zlib",
+    "version": "1.2.11-26.el8",
+    "repo": "BaseOS",
+    "path": "Packages/z/zlib-1.2.11-26.el8.aarch64.rpm",
+    "sha256": "cd82f7d2a702787c02cdda00adee2c53117155c63b08ce0e33f87ad064579db6",
+    "size": 102728
+   }
+  ]
+ }
+}

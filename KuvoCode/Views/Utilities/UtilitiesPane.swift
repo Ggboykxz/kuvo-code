@@ -15,6 +15,7 @@ struct UtilitiesPane: View {
     var isFocused = true
     @Environment(\.windowControlsInset) private var windowControlsInset
     @Environment(\.windowControlsTrailingInset) private var windowControlsTrailingInset
+    @Environment(AppModel.self) private var app
     @State private var tabsOverflow = TabsOverflow()
 
     var body: some View {
@@ -132,6 +133,8 @@ struct UtilitiesPane: View {
         case .file(let url): url?.lastPathComponent ?? "Files"
         case .terminal: utilities.terminals[tab.id]?.title ?? "Terminal"
         case .browser: utilities.browsers[tab.id]?.displayTitle ?? "New Tab"
+        case .machineBrowser(let machine):
+            app.machines.engine(machine)?.browser.active.flatMap { $0.url == "about:blank" ? nil : $0.name } ?? machine
         }
     }
 
@@ -147,6 +150,7 @@ struct UtilitiesPane: View {
             } else {
                 .symbol("globe")
             }
+        case .machineBrowser: .symbol("server.rack")
         }
     }
 
@@ -184,6 +188,13 @@ struct UtilitiesPane: View {
                     .id(tab.id)
                 } else {
                     placeholder("Page Closed", symbol: "globe", detail: "Close this tab, or open a new one.")
+                }
+            case .machineBrowser(let machine):
+                if let browser = app.machines.engine(machine)?.browser {
+                    MachineBrowserPane(browser: browser, attach: { utilities.attachToMessage?($0) })
+                        .id(tab.id)
+                } else {
+                    placeholder("Machine Removed", symbol: "server.rack", detail: "\(machine) isn’t one of your machines anymore. Close this tab.")
                 }
             }
         }

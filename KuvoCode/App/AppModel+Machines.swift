@@ -1,11 +1,30 @@
-import Foundation
+import AppKit
 import OpenCodeKit
 
 extension AppModel {
     /// Connects every machine you've added, each in the background on its own.
     func startMachines() {
+        #if DEBUG
+        // KUVO_DEMO_MACHINE_ROOT: a folder of its own on machines (like .kuvo-code-demo), so a demo
+        // copy's engine and browser there never touch the ones your own copy of the app runs.
+        if let root = ProcessInfo.processInfo.environment["KUVO_DEMO_MACHINE_ROOT"], !root.isEmpty { RemoteEngineInstaller.root = root }
+        #endif
         workspace.machines = Set(machines.list.map(\.id))
+        // An agent on a machine browses with the machine's browser: the panel shows it, as it
+        // shows its own browser for an agent here.
+        workspace.onMachineBrowsing = { [weak self] machine in self?.utilities.showMachineBrowser(machine, byAgent: true) }
+        // A machine whose connection dropped while the Mac slept, and that gave up trying, gets
+        // another go once it's awake and the network is back.
+        NotificationCenter.default.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.wakeMachines() }
+        }
         for engine in machines.engines.values { connect(engine) }
+    }
+
+    private func wakeMachines() {
+        for engine in machines.engines.values where !engine.isRetrying {
+            if case .failed = engine.state { Task { await reconnect(engine) } }
+        }
     }
 
     /// Adds a machine (a host from `~/.ssh/config`, or `user@host`) and connects to it.
@@ -47,13 +66,10 @@ extension AppModel {
     private func start(_ engine: MachineEngine) async {
         // It takes this Mac's accounts and settings, so this Mac's engine comes first.
         for _ in 0..<240 where api == nil { try? await Task.sleep(for: .milliseconds(250)) }
-        let browserTools = browserTools
-        let launch = MachineEngine.Launch(
-            environment: await machineEnvironment().environment,
-            browserConfig: { browserTools.engineConfig(throughPort: $0, token: $1) },
-            browserPort: browserTools.port,
-            acceptBrowserToken: { browserTools.accept($0) }
-        )
+        var environment = await machineEnvironment().environment
+        // The browser tools, with the machine's own browser.
+        environment["OPENCODE_CONFIG_CONTENT"] = AppModel.merged(MachineBrowserInstaller.engineConfig, into: environment["OPENCODE_CONFIG_CONTENT"])
+        let launch = MachineEngine.Launch(environment: environment, helper: MachineBrowserInstaller.helper)
         await engine.start(launch, cache: AppInfo.supportDirectory.appending(path: "engine-linux"))
         if engine.isReady { await workspace.refresh(engine) }
     }
@@ -61,6 +77,7 @@ extension AppModel {
     /// Closes the connection to a machine. Its engine stops too, unless a session there is still
     /// working: then it carries on, and its work is there when you connect again.
     func disconnect(_ engine: MachineEngine) {
+        engine.browser.reset()
         let busy = workspace.isRunning(on: engine.machine.id)
         if busy { engine.disconnect() } else { Task { await engine.stopEngine() } }
         workspace.forget(engine.machine.id)
@@ -69,6 +86,8 @@ extension AppModel {
     /// Stops a machine's engine and forgets the machine, and its sessions' tabs with it. Its
     /// sessions stay on the machine, for when it's added again.
     func removeMachine(_ id: String) {
+        machines.engine(id)?.browser.reset()
+        utilities.closeMachineBrowser(id)
         machines.remove(id)
         workspace.machines = Set(machines.list.map(\.id))
         workspace.forget(id, forGood: true)

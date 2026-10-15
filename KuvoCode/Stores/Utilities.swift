@@ -12,6 +12,8 @@ final class Utilities {
         case file(URL?)
         case terminal
         case browser
+        /// A machine's browser, which runs there (agents on the machine browse with it).
+        case machineBrowser(String)
     }
 
     struct Tab: Identifiable, Hashable {
@@ -110,6 +112,23 @@ final class Utilities {
         if let address { browser.load(address) }
         add(tab, at: opener.flatMap { id in tabs.firstIndex { $0.id == id }.map { $0 + 1 } })
         return browser
+    }
+
+    /// A machine's browser, in its tab (one per machine). `byAgent`: an agent there started
+    /// browsing, and the panel comes into view if Settings › Panel says so.
+    func showMachineBrowser(_ machine: String, byAgent: Bool = false) {
+        if !byAgent { Analytics.shared.track("panel_opened", ["tool": "machine_browser"]) }
+        if let tab = tabs.first(where: { $0.kind == .machineBrowser(machine) }) {
+            selection = tab.id
+        } else {
+            add(Tab(kind: .machineBrowser(machine)))
+        }
+        if !byAgent || PanelSettings.isOn(PanelSettings.revealsForAgent) { revealRequest += 1 }
+    }
+
+    /// Closes a machine's browser tab: the machine was removed.
+    func closeMachineBrowser(_ machine: String) {
+        for tab in tabs where tab.kind == .machineBrowser(machine) { close(tab.id) }
     }
 
     /// The file tree, in a tab of its own.

@@ -1,0 +1,737 @@
+import AppKit
+import ImageIO
+import OpenCodeKit
+import os
+
+/// A machine's browser: a Chromium kept running on the machine (`kuvo-browser.js`), which the
+/// agents there browse with, so it carries on while this Mac is off. Kuvo Code sets it up when it
+/// connects to the machine, and the panel shows it live while its tab is in view: you see what
+/// the agent does, and can click and type in it yourself.
+@Observable
+final class MachineBrowser {
+    enum Setup: Equatable {
+        case unknown
+        /// Downloading, by the fraction done; nil while it's being sent to the machine.
+        case installing(Double?)
+        case ready
+        case failed(String)
+    }
+
+    enum State: Equatable {
+        case idle
+        case connecting
+        case live
+        case failed(String)
+    }
+
+    struct Page: Identifiable, Equatable {
+        let id: String
+        var title: String
+        var url: String
+
+        /// Its title, else its address, for menus.
+        var name: String {
+            if !title.isEmpty, title != url { return title }
+            if url.isEmpty || url == "about:blank" { return "New Page" }
+            return URL(string: url)?.host() ?? url
+        }
+    }
+
+    /// An alert, confirmation or question the page is waiting on.
+    struct Dialog: Equatable {
+        var type: String
+        var message: String
+        var defaultPrompt: String
+    }
+
+    let machine: Machine
+    private(set) var setup = Setup.unknown
+    private(set) var state = State.idle
+    private(set) var pages: [Page] = []
+    private(set) var activeID: String?
+    /// The latest picture of the page in view, and the page's size in CSS pixels.
+    private(set) var frame: CGImage?
+    private(set) var frameSize = CGSize(width: 1280, height: 800)
+    private(set) var isLoading = false
+    private(set) var canGoBack = false
+    private(set) var canGoForward = false
+    /// An agent is using the browser right now.
+    private(set) var isAgentBrowsing = false
+    private(set) var dialog: Dialog?
+
+    @ObservationIgnored private var link: MachineBrowserLink?
+    @ObservationIgnored private var session: String?
+    /// Goes up with each page shown, so a slower earlier switch can't win.
+    @ObservationIgnored private var generation = 0
+    @ObservationIgnored private var viewers = 0
+    @ObservationIgnored private var hideTask: Task<Void, Never>?
+    @ObservationIgnored private var viewport = (size: CGSize(width: 800, height: 600), scale: CGFloat(2))
+    @ObservationIgnored private var viewportTask: Task<Void, Never>?
+    @ObservationIgnored private var history: [Int] = []
+    @ObservationIgnored private var historyIndex = 0
+    @ObservationIgnored private var preparing: Task<Void, Never>?
+    @ObservationIgnored private var reconnects = 0
+    private let log = Logger(subsystem: "run.kuvo.code", category: "machine-browser")
+
+    init(machine: Machine) {
+        self.machine = machine
+        // After the Mac sleeps, the connection is gone, though SSH takes a while to notice: start
+        // a fresh one right away.
+        NotificationCenter.default.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main, using: { [weak self] _ in
+            MainActor.assumeIsolated { self?.wake() }
+        })
+    }
+
+    private func wake() {
+        guard link != nil || state != .idle else { return }
+        disconnect()
+        resume()
+    }
+
+    /// Where this Mac keeps the browser for machines, put together, so the next needs no download.
+    static var cache: URL { AppInfo.supportDirectory.appending(path: "browser-linux") }
+
+    var active: Page? { pages.first { $0.id == activeID } }
+
+    /// The page's address, unless it's empty.
+    var url: URL? {
+        guard let address = active?.url, address != "about:blank", !address.isEmpty else { return nil }
+        return URL(string: address)
+    }
+
+    // MARK: Setting it up
+
+    /// Makes sure the machine has the browser, installing it if not. Once at a time.
+    func prepare() async {
+        if setup == .ready { return }
+        if let preparing { return await preparing.value }
+        let task = Task { await install() }
+        preparing = task
+        await task.value
+        preparing = nil
+        if setup == .ready, viewers > 0, link == nil { connect() }
+    }
+
+    private func install() async {
+        guard let runtime = BrowserRuntime.pinned else {
+            setup = .failed(MachineBrowserError.notPinned.localizedDescription)
+            return
+        }
+        let connection = machine.connection
+        do {
+            if try await MachineBrowserInstaller.isInstalled(runtime, on: connection) {
+                setup = .ready
+                return
+            }
+            setup = .installing(0)
+            let architecture = try await MachineBrowserInstaller.architecture(on: connection)
+            let bundle = try await MachineBrowserInstaller.bundle(for: architecture, runtime: runtime, cache: Self.cache) { fraction in
+                Task { @MainActor in
+                    if case .installing(let done?) = self.setup, fraction > done { self.setup = .installing(fraction) }
+                }
+            }
+            setup = .installing(nil)
+            try await MachineBrowserInstaller.send(bundle, runtime, to: connection)
+            setup = .ready
+            log.notice("\(self.machine.destination, privacy: .public) has the browser \(runtime.id, privacy: .public)")
+        } catch {
+            log.error("\(self.machine.destination, privacy: .public) couldn't get the browser: \(error.localizedDescription, privacy: .public)")
+            setup = .failed(error.localizedDescription)
+        }
+    }
+
+    /// The machine was removed, or you disconnected it: the live view ends with it.
+    func reset() {
+        disconnect()
+        state = .idle
+        if case .failed = setup { setup = .unknown }
+    }
+
+    /// The machine is connected (again, maybe after the Mac slept): a browser tab in view comes
+    /// back live.
+    func resume() {
+        reconnects = 0
+        guard viewers > 0 else { return }
+        if setup != .ready {
+            Task { await prepare() }
+        } else if link == nil {
+            connect()
+        }
+    }
+
+    // MARK: The live view
+
+    /// A view shows the browser: connects to it, if it isn't already.
+    func show() {
+        viewers += 1
+        hideTask?.cancel()
+        if setup != .ready {
+            Task { await prepare() }
+        } else if link == nil {
+            connect()
+        }
+    }
+
+    /// A view stopped showing it: a few seconds later, with nothing else showing it, the live view
+    /// ends (the browser keeps running on the machine).
+    func hide() {
+        viewers = max(0, viewers - 1)
+        guard viewers == 0 else { return }
+        hideTask?.cancel()
+        hideTask = Task {
+            try? await Task.sleep(for: .seconds(5))
+            guard !Task.isCancelled, viewers == 0 else { return }
+            disconnect()
+        }
+    }
+
+    /// Connects again after it stopped.
+    func retry() {
+        reconnects = 0
+        if setup != .ready {
+            setup = .unknown
+            Task { await prepare() }
+        } else {
+            disconnect()
+            connect()
+        }
+    }
+
+    private func connect() {
+        guard link == nil else { return }
+        state = .connecting
+        let link = MachineBrowserLink(connection: machine.connection, command: MachineBrowserInstaller.command("connect"))
+        link.onEvent = { [weak self] method, params, session in self?.handle(method, params, session) }
+        link.onFrame = { [weak self] image, size, session in
+            guard let self, session == self.session else { return }
+            frame = image
+            frameSize = size
+            // Back at the browser's own size: another viewer (another Mac) that set its size left.
+            if size == Self.windowSize, viewport.size != Self.windowSize { reapplyViewport() }
+        }
+        link.onClose = { [weak self, weak link] reason in
+            guard let self, let link, self.link === link else { return }
+            closed(reason)
+        }
+        self.link = link
+        do {
+            try link.start()
+        } catch {
+            self.link = nil
+            state = .failed(error.localizedDescription)
+        }
+    }
+
+    private func disconnect() {
+        link?.stop()
+        link = nil
+        session = nil
+        isAgentBrowsing = false
+        dialog = nil
+        if case .live = state { state = .idle }
+        if case .connecting = state { state = .idle }
+    }
+
+    private func closed(_ reason: String) {
+        let wasLive = state == .live
+        link = nil
+        session = nil
+        isAgentBrowsing = false
+        if case .failed = state { return }
+        // It stopped (the machine restarted, the browser quit): back by itself if it can.
+        if viewers > 0, reconnects < 3 {
+            reconnects += 1
+            state = .connecting
+            Task {
+                try? await Task.sleep(for: .seconds(wasLive ? 1 : 3))
+                guard viewers > 0, link == nil else { return }
+                connect()
+            }
+        } else {
+            state = viewers > 0 ? .failed(reason.isEmpty ? "The connection to the browser on \(machine.name) closed." : reason) : .idle
+        }
+    }
+
+    private func handle(_ method: String, _ params: [String: Any], _ sessionID: String?) {
+        switch method {
+        case "Kuvo.hello":
+            activeID = params["targetId"] as? String
+            isAgentBrowsing = (params["status"] as? [String: Any])?["working"] as? Bool ?? false
+            Task { await begin() }
+        case "Kuvo.error":
+            let message = params["message"] as? String ?? "The browser couldn't start."
+            link?.stop()
+            link = nil
+            if params["kind"] as? String == "missing" {
+                // Set up again: the machine lost it, or never had it.
+                state = .idle
+                setup = .unknown
+                Task { await prepare() }
+            } else {
+                state = .failed(message)
+            }
+        case "Kuvo.activeChanged":
+            let id = params["targetId"] as? String
+            guard id != activeID || id == nil else { return }
+            activeID = id
+            Task { await attach() }
+        case "Kuvo.status":
+            isAgentBrowsing = params["working"] as? Bool ?? false
+        case "Target.targetCreated", "Target.targetInfoChanged":
+            if let info = params["targetInfo"] as? [String: Any] { note(info) }
+        case "Target.targetDestroyed":
+            pages.removeAll { $0.id == params["targetId"] as? String }
+        case "Target.detachedFromTarget":
+            if params["sessionId"] as? String == session { session = nil }
+        default:
+            guard sessionID != nil, sessionID == session else { return }
+            switch method {
+            case "Page.frameStartedLoading":
+                if params["frameId"] as? String == activeID { isLoading = true }
+            case "Page.frameStoppedLoading":
+                if params["frameId"] as? String == activeID { isLoading = false }
+            case "Page.frameNavigated":
+                if (params["frame"] as? [String: Any])?["parentId"] == nil { Task { await refreshHistory() } }
+            case "Page.navigatedWithinDocument":
+                Task { await refreshHistory() }
+                Task { await refreshPages() }
+            case "Page.domContentEventFired", "Page.loadEventFired":
+                Task { await refreshPages() }
+            case "Page.javascriptDialogOpening":
+                dialog = Dialog(type: params["type"] as? String ?? "alert", message: params["message"] as? String ?? "", defaultPrompt: params["defaultPrompt"] as? String ?? "")
+            case "Page.javascriptDialogClosed":
+                dialog = nil
+            default:
+                break
+            }
+        }
+    }
+
+    private func note(_ info: [String: Any]) {
+        guard info["type"] as? String == "page", let id = info["targetId"] as? String else { return }
+        let page = Page(id: id, title: info["title"] as? String ?? "", url: info["url"] as? String ?? "")
+        if let index = pages.firstIndex(where: { $0.id == id }) {
+            if pages[index] != page { pages[index] = page }
+        } else {
+            pages.append(page)
+        }
+    }
+
+    /// Once connected: the pages, and the one in use, live.
+    private func begin() async {
+        guard let link else { return }
+        do {
+            _ = try await link.send("Target.setDiscoverTargets", ["discover": true])
+            let infos = try await link.send("Target.getTargets")["targetInfos"] as? [[String: Any]] ?? []
+            pages = []
+            for info in infos { note(info) }
+            state = .live
+            reconnects = 0
+            await attach()
+            keepTitles(link)
+        } catch {
+            state = .failed(error.localizedDescription)
+        }
+    }
+
+    /// Pages' titles: Chromium says when a page's address changes, not when its title does.
+    private func refreshPages() async {
+        guard let link, let infos = try? await link.send("Target.getTargets")["targetInfos"] as? [[String: Any]], self.link === link else { return }
+        let open = Set(infos.compactMap { $0["type"] as? String == "page" ? $0["targetId"] as? String : nil })
+        pages.removeAll { !open.contains($0.id) }
+        for info in infos { note(info) }
+    }
+
+    /// Every few seconds while live, for pages that change their title as you use them.
+    private func keepTitles(_ link: MachineBrowserLink) {
+        Task { [weak self] in
+            while true {
+                try? await Task.sleep(for: .seconds(4))
+                guard let self, self.link === link, state == .live else { return }
+                await refreshPages()
+            }
+        }
+    }
+
+    /// Shows the page in use: the one the agent or you last used, else the newest, else a new one.
+    /// A page that closed as it was picked is passed over for another.
+    private func attach(retries: Int = 2) async {
+        guard let link else { return }
+        generation += 1
+        let current = generation
+        var target = activeID.flatMap { id in pages.contains { $0.id == id } ? id : nil }
+        if target == nil {
+            target = pages.last?.id
+            if target == nil { target = try? await link.send("Target.createTarget", ["url": "about:blank"])["targetId"] as? String }
+            guard generation == current, let target else { return }
+            activeID = target
+            link.fire("Kuvo.setActive", ["targetId": target, "by": "user"])
+        }
+        guard let target else { return }
+        if let old = session {
+            session = nil
+            link.fire("Target.detachFromTarget", ["sessionId": old])
+        }
+        frame = nil
+        isLoading = false
+        dialog = nil
+        do {
+            let attached = try await link.send("Target.attachToTarget", ["targetId": target, "flatten": true])
+            guard let id = attached["sessionId"] as? String else { return }
+            guard generation == current, self.link === link else {
+                link.fire("Target.detachFromTarget", ["sessionId": id])
+                return
+            }
+            session = id
+            _ = try await link.send("Page.enable", session: id)
+            // As the page in front: it gets focus, and shows its caret.
+            link.fire("Emulation.setFocusEmulationEnabled", ["enabled": true], session: id)
+            await applyViewport()
+            await refreshHistory()
+        } catch {
+            log.error("Couldn't show a page: \(error.localizedDescription, privacy: .public)")
+            guard generation == current, self.link === link, retries > 0 else { return }
+            await refreshPages()
+            pages.removeAll { $0.id == target }
+            if activeID == target { activeID = nil }
+            await attach(retries: retries - 1)
+        }
+    }
+
+    /// The view's size: the page takes it, at the screen's scale, so it lays out for the room the
+    /// panel has, as the panel's own browser does.
+    /// The browser's window size on the machine (`--window-size`), which pages have when nobody
+    /// watching has set their own.
+    static let windowSize = CGSize(width: 1280, height: 800)
+
+    @ObservationIgnored private var lastReapplied = Date.distantPast
+
+    private func reapplyViewport() {
+        guard Date.now.timeIntervalSince(lastReapplied) > 2 else { return }
+        lastReapplied = .now
+        Task { await applyViewport() }
+    }
+
+    func resize(to size: CGSize, scale: CGFloat) {
+        let size = CGSize(width: max(200, size.width.rounded()), height: max(150, size.height.rounded()))
+        guard size != viewport.size || scale != viewport.scale else { return }
+        viewport = (size, scale)
+        viewportTask?.cancel()
+        viewportTask = Task {
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled else { return }
+            await applyViewport()
+        }
+    }
+
+    private func applyViewport() async {
+        guard let link, let session else { return }
+        let (size, scale) = viewport
+        _ = try? await link.send("Emulation.setDeviceMetricsOverride", ["width": Int(size.width), "height": Int(size.height), "deviceScaleFactor": scale, "mobile": false], session: session)
+        _ = try? await link.send("Page.startScreencast", ["format": "jpeg", "quality": 80, "maxWidth": Int(size.width * scale), "maxHeight": Int(size.height * scale)], session: session)
+    }
+
+    private func refreshHistory() async {
+        guard let link, let session else { return }
+        guard let result = try? await link.send("Page.getNavigationHistory", session: session), session == self.session else { return }
+        let entries = result["entries"] as? [[String: Any]] ?? []
+        history = entries.compactMap { $0["id"] as? Int }
+        historyIndex = result["currentIndex"] as? Int ?? 0
+        canGoBack = historyIndex > 0
+        canGoForward = historyIndex < history.count - 1
+    }
+
+    // MARK: What you do
+
+    func load(_ input: String) {
+        guard let url = BrowserSession.url(from: input) else { return }
+        fire("Page.navigate", ["url": url.absoluteString])
+    }
+
+    func goBack() { step(-1) }
+    func goForward() { step(1) }
+
+    private func step(_ by: Int) {
+        guard history.indices.contains(historyIndex + by) else { return }
+        fire("Page.navigateToHistoryEntry", ["entryId": history[historyIndex + by]])
+    }
+
+    func reload() { fire("Page.reload") }
+    func stopLoading() { fire("Page.stopLoading") }
+
+    /// A new page, in front.
+    func newPage() {
+        guard let link else { return }
+        Task {
+            guard let id = try? await link.send("Target.createTarget", ["url": "about:blank"])["targetId"] as? String else { return }
+            select(id)
+        }
+    }
+
+    func select(_ id: String) {
+        guard let link, id != activeID else { return }
+        activeID = id
+        link.fire("Kuvo.setActive", ["targetId": id, "by": "user"])
+        Task { await attach() }
+    }
+
+    func close(_ id: String) {
+        link?.fire("Target.closeTarget", ["targetId": id])
+    }
+
+    func answer(_ dialog: Dialog, accept: Bool, text: String? = nil) {
+        var params: [String: Any] = ["accept": accept]
+        if let text { params["promptText"] = text }
+        fire("Page.handleJavaScriptDialog", params)
+        self.dialog = nil
+    }
+
+    // MARK: Input
+
+    /// CDP's modifier bits: Alt 1, Control 2, Meta 4, Shift 8.
+    static func modifiers(_ flags: NSEvent.ModifierFlags) -> Int {
+        (flags.contains(.option) ? 1 : 0) | (flags.contains(.control) ? 2 : 0) | (flags.contains(.command) ? 4 : 0) | (flags.contains(.shift) ? 8 : 0)
+    }
+
+    func mouse(_ type: String, at point: CGPoint, button: String = "none", buttons: Int = 0, clicks: Int = 0, modifiers: Int = 0) {
+        fire("Input.dispatchMouseEvent", ["type": type, "x": point.x, "y": point.y, "button": button, "buttons": buttons, "clickCount": clicks, "modifiers": modifiers])
+    }
+
+    func wheel(at point: CGPoint, dx: CGFloat, dy: CGFloat, modifiers: Int) {
+        fire("Input.dispatchMouseEvent", ["type": "mouseWheel", "x": point.x, "y": point.y, "deltaX": dx, "deltaY": dy, "modifiers": modifiers])
+    }
+
+    func key(_ type: String, key: String, code: String, keyCode: Int, text: String? = nil, modifiers: Int = 0, commands: [String] = []) {
+        var params: [String: Any] = ["type": type, "key": key, "code": code, "windowsVirtualKeyCode": keyCode, "nativeVirtualKeyCode": keyCode, "modifiers": modifiers]
+        if let text {
+            params["text"] = text
+            params["unmodifiedText"] = text
+        }
+        if !commands.isEmpty { params["commands"] = commands }
+        fire("Input.dispatchKeyEvent", params)
+    }
+
+    func insertText(_ text: String) {
+        fire("Input.insertText", ["text": text])
+    }
+
+    func compose(_ text: String, selection: NSRange) {
+        fire("Input.imeSetComposition", ["text": text, "selectionStart": selection.location, "selectionEnd": selection.location + selection.length])
+    }
+
+    /// What's selected on the page, for Copy.
+    func selectedText() async -> String? {
+        guard let link, let session else { return nil }
+        let expression = """
+            (() => {
+              const element = document.activeElement;
+              if (element && typeof element.selectionStart === 'number' && typeof element.value === 'string') {
+                return element.value.slice(element.selectionStart, element.selectionEnd);
+              }
+              return String(getSelection());
+            })()
+            """
+        let result = try? await link.send("Runtime.evaluate", ["expression": expression, "returnByValue": true], session: session)
+        return (result?["result"] as? [String: Any])?["value"] as? String
+    }
+
+    /// The page in view as a PNG file in Attachments, for Add Screenshot to Message.
+    func screenshotFile() -> URL? {
+        guard let frame else { return nil }
+        let host = url?.host()?.replacingOccurrences(of: "www.", with: "") ?? "page"
+        guard let png = NSBitmapImageRep(cgImage: frame).representation(using: .png, properties: [:]) else { return nil }
+        return Attachments.write(png, named: "Screenshot of \(host)", extension: "png")
+    }
+
+    private func fire(_ method: String, _ params: [String: Any] = [:]) {
+        guard let link, let session else { return }
+        link.fire(method, params, session: session)
+    }
+}
+
+// MARK: - The connection
+
+/// One live connection to a machine's browser: `kuvo-browser.js connect` over SSH, speaking
+/// Chrome's DevTools protocol, a message per line. Pictures of the page are read and decoded off
+/// the main thread, and acknowledged right away, so the next one comes as soon as it's ready.
+final class MachineBrowserLink {
+    private let process = Process()
+    private let reader: Reader
+    private var next = 1
+    private var waiting: [Int: CheckedContinuation<Message, Error>] = [:]
+    private var stopped = false
+    var onEvent: (String, [String: Any], String?) -> Void = { _, _, _ in }
+    var onFrame: (CGImage, CGSize, String?) -> Void = { _, _, _ in }
+    var onClose: (String) -> Void = { _ in }
+
+    /// A message as it crosses from the reading thread.
+    nonisolated struct Message: @unchecked Sendable {
+        var value: [String: Any]
+    }
+
+    init(connection: SSHConnection, command: String) {
+        process.executableURL = URL(filePath: "/usr/bin/ssh")
+        process.arguments = connection.arguments(running: command, shared: false)
+        reader = Reader()
+    }
+
+    func start() throws {
+        let input = Pipe()
+        let output = Pipe()
+        let errors = Pipe()
+        process.standardInput = input
+        process.standardOutput = output
+        process.standardError = errors
+        reader.writer = input.fileHandleForWriting
+        reader.deliver = { [weak self] message in
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.receive(message) } }
+        }
+        reader.deliverFrame = { [weak self] frame in
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.onFrame(frame.image, frame.size, frame.session) } }
+        }
+        output.fileHandleForReading.readabilityHandler = { [reader] handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                handle.readabilityHandler = nil
+            } else {
+                reader.read(data)
+            }
+        }
+        errors.fileHandleForReading.readabilityHandler = { [reader] handle in
+            let data = handle.availableData
+            if data.isEmpty { handle.readabilityHandler = nil } else { reader.noteError(data) }
+        }
+        process.terminationHandler = { [weak self, reader] _ in
+            let text = reader.errors.trimmingCharacters(in: .whitespacesAndNewlines)
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.ended(text) } }
+        }
+        try process.run()
+    }
+
+    func stop() {
+        guard !stopped else { return }
+        stopped = true
+        process.terminationHandler = nil
+        if process.isRunning { process.terminate() }
+        fail("The browser connection closed.")
+    }
+
+    /// Sends a request and waits for its answer (30 s at most).
+    func send(_ method: String, _ params: [String: Any] = [:], session: String? = nil) async throws -> [String: Any] {
+        guard !stopped else { throw MachineBrowserError.browser("The browser connection closed.") }
+        let id = next
+        next += 1
+        let message = try await withCheckedThrowingContinuation { continuation in
+            waiting[id] = continuation
+            write(id: id, method, params, session: session)
+            Task {
+                try? await Task.sleep(for: .seconds(30))
+                waiting.removeValue(forKey: id)?.resume(throwing: MachineBrowserError.browser("The browser didn't answer (\(method))."))
+            }
+        }
+        return message.value
+    }
+
+    /// Sends a request without waiting for its answer, for input and actions.
+    func fire(_ method: String, _ params: [String: Any] = [:], session: String? = nil) {
+        guard !stopped else { return }
+        let id = next
+        next += 1
+        write(id: id, method, params, session: session)
+    }
+
+    private func write(id: Int, _ method: String, _ params: [String: Any], session: String?) {
+        var message: [String: Any] = ["id": id, "method": method, "params": params]
+        if let session { message["sessionId"] = session }
+        guard let data = try? JSONSerialization.data(withJSONObject: message) else { return }
+        reader.write(data + Data("\n".utf8))
+    }
+
+    private func receive(_ message: Message) {
+        let value = message.value
+        if let id = value["id"] as? Int {
+            guard let continuation = waiting.removeValue(forKey: id) else { return }
+            if let error = value["error"] as? [String: Any] {
+                continuation.resume(throwing: MachineBrowserError.browser(error["message"] as? String ?? "The browser refused that."))
+            } else {
+                continuation.resume(returning: Message(value: value["result"] as? [String: Any] ?? [:]))
+            }
+        } else if let method = value["method"] as? String {
+            onEvent(method, value["params"] as? [String: Any] ?? [:], value["sessionId"] as? String)
+        }
+    }
+
+    private func ended(_ output: String) {
+        guard !stopped else { return }
+        stopped = true
+        fail(output)
+        onClose(output)
+    }
+
+    private func fail(_ reason: String) {
+        let pending = waiting
+        waiting = [:]
+        for continuation in pending.values { continuation.resume(throwing: MachineBrowserError.browser(reason.isEmpty ? "The browser connection closed." : reason)) }
+    }
+
+    /// Reads lines off the connection, and writes to it, on threads of its own.
+    nonisolated final class Reader: @unchecked Sendable {
+        struct Frame: @unchecked Sendable {
+            var image: CGImage
+            var size: CGSize
+            var session: String?
+        }
+
+        var writer: FileHandle?
+        var deliver: @Sendable (Message) -> Void = { _ in }
+        var deliverFrame: @Sendable (Frame) -> Void = { _ in }
+        private var buffer = Data()
+        private let writing = DispatchQueue(label: "run.kuvo.code.machine-browser.write")
+        private let lock = NSLock()
+        private var errorOutput = Data()
+
+        /// The last of what SSH wrote to stderr, for when it stops.
+        var errors: String { lock.withLock { String(decoding: errorOutput, as: UTF8.self) } }
+
+        func noteError(_ data: Data) {
+            lock.withLock {
+                errorOutput.append(data)
+                if errorOutput.count > 8192 { errorOutput.removeFirst(errorOutput.count - 8192) }
+            }
+        }
+
+        func write(_ data: Data) {
+            writing.async { [writer] in try? writer?.write(contentsOf: data) }
+        }
+
+        func read(_ data: Data) {
+            buffer.append(data)
+            while let end = buffer.firstIndex(of: 0x0A) {
+                let line = buffer[buffer.startIndex..<end]
+                buffer.removeSubrange(buffer.startIndex...end)
+                guard !line.isEmpty, let value = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] else { continue }
+                if value["method"] as? String == "Page.screencastFrame", let params = value["params"] as? [String: Any] {
+                    frame(params, session: value["sessionId"] as? String)
+                } else {
+                    deliver(Message(value: value))
+                }
+            }
+        }
+
+        /// A picture of the page: acknowledged at once, so the next comes, and decoded here.
+        private func frame(_ params: [String: Any], session: String?) {
+            if let id = params["sessionId"] {
+                var ack: [String: Any] = ["id": -1, "method": "Page.screencastFrameAck", "params": ["sessionId": id]]
+                if let session { ack["sessionId"] = session }
+                if let data = try? JSONSerialization.data(withJSONObject: ack) { write(data + Data("\n".utf8)) }
+            }
+            guard let base64 = params["data"] as? String, let data = Data(base64Encoded: base64),
+                  let source = CGImageSourceCreateWithData(data as CFData, nil),
+                  let image = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary) else { return }
+            let metadata = params["metadata"] as? [String: Any] ?? [:]
+            let width = (metadata["deviceWidth"] as? NSNumber)?.doubleValue ?? Double(image.width)
+            let height = (metadata["deviceHeight"] as? NSNumber)?.doubleValue ?? Double(image.height)
+            deliverFrame(Frame(image: image, size: CGSize(width: width, height: height), session: session))
+        }
+    }
+}

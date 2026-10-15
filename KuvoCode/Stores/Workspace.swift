@@ -590,6 +590,9 @@ final class Workspace {
         }
     }
 
+    /// An agent on a machine started using its browser.
+    @ObservationIgnored var onMachineBrowsing: ((String) -> Void)?
+
     /// An event from this Mac's engine, or from `machine`'s.
     func handle(_ event: ServerEvent, machine: String? = nil) {
         #if DEBUG
@@ -599,6 +602,10 @@ final class Workspace {
         }
         #endif
         if let machine, let id = event.sessionID { sessionMachines[id] = machine }
+        if let machine, event.type == "session.tool.input.started",
+           let started = try? event.payload(as: EventPayload.ToolInputStarted.self), started.name.hasPrefix("kuvo-browser_") {
+            onMachineBrowsing?(machine)
+        }
         if event.type == "vcs.branch.updated", let directory = event.location?.directory {
             struct Branch: Decodable { var branch: String? }
             let folder = machine.map { RemoteFolder.folder(directory, on: $0) } ?? directory

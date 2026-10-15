@@ -31,6 +31,12 @@ struct NewTabPage: View {
                             ToolCard(title: "Files", symbol: "folder", shortcut: "⌥⌘F") {
                                 replace { utilities.showFiles() }
                             }
+                            if let machine = directory.flatMap(RemoteFolder.machine(of:)) {
+                                // The browser the project's agents use, on its machine.
+                                ToolCard(title: "Browser on \(machine)", symbol: "server.rack", shortcut: nil) {
+                                    replace { utilities.showMachineBrowser(machine) }
+                                }
+                            }
                             ToolCard(title: "Customize…", symbol: "slider.horizontal.3", shortcut: nil) {
                                 app.openSettings(.panel)
                             }

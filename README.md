@@ -46,7 +46,8 @@ or start with free models that need no account.
   step.
 - **Sessions on your servers.** Open projects on a Linux machine you reach
   with SSH, like a home server or a VPS, next to your Mac's. Their sessions,
-  changes, files and terminals run there.
+  changes, files, terminals and the agent's browser run there, and the panel
+  shows that browser live.
 - **Attach anything.** Drop, paste or pick files of any kind.
 - **Plans and spend in the menu bar.** Limits with pace and reset times, and
   spend, for the accounts you connect: GitHub Copilot, ChatGPT (Codex),
@@ -94,6 +95,13 @@ side panel and the usage menu.
   new port and token each launch. They read a page the way
   [browser-use](https://github.com/browser-use/browser-use) does, as numbered
   interactive elements, and every step happens in the browser you see.
+- **On a machine, the browser** is Chrome for Testing's headless Chromium,
+  sent from the Mac to `~/.kuvo-code/browser` with every library and font it
+  needs (Enterprise Linux 8 builds, pinned with their checksums by
+  `scripts/browser-runtime.py`), so nothing is installed on the system. A
+  helper the engine's own runtime runs (`kuvo-browser.js`) keeps it going,
+  drives it over a pipe rather than a port, gives the engine the same tools,
+  and streams the page to the panel over SSH.
 - **Updates** come through [Sparkle](https://sparkle-project.org), signed,
   from this repository's releases. Releases are signed with a Developer ID and
   notarized by Apple.

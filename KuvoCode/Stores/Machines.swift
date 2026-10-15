@@ -26,6 +26,8 @@ final class MachineEngine {
     /// Waiting to try again by itself, after the connection dropped.
     var isRetrying = false
     let catalog = Catalog()
+    /// Its browser, which its agents browse with, shown live in the panel.
+    let browser: MachineBrowser
 
     @ObservationIgnored private var server: RemoteServer?
     @ObservationIgnored private var eventTask: Task<Void, Never>?
@@ -41,6 +43,7 @@ final class MachineEngine {
 
     init(machine: Machine) {
         self.machine = machine
+        browser = MachineBrowser(machine: machine)
     }
 
     var isReady: Bool { state == .ready }
@@ -58,26 +61,41 @@ final class MachineEngine {
 
     /// What a new engine on the machine gets from this Mac.
     struct Launch {
-        /// Accounts and settings, as environment variables.
+        /// Accounts and settings (the browser tools' among them), as environment variables.
         var environment: [String: String]
-        /// The panel's browser tools, through a port on the machine: their config for a port and
-        /// token, this Mac's port, and letting a token in.
-        var browserConfig: (_ port: Int, _ token: String) -> [String: Any]?
-        var browserPort: Int?
-        var acceptBrowserToken: (String) -> Void
+        /// The browser helper the engine runs for the browser tools (`kuvo-browser.js`).
+        var helper: (text: String, hash: String)
 
         /// Changes when the accounts or settings do, so an engine started with older ones is known.
-        /// The watchdog's version counts too: an engine whose watchdog can't send bots' wake-ups is
-        /// started over the next time it's idle.
+        /// The watchdog's and the browser helper's versions count too: an engine running older ones
+        /// is started over the next time it's idle.
         var fingerprint: String {
-            let text = environment.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "\n") + "\nwatchdog=wakes"
+            let text = environment.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "\n") + "\nwatchdog=wakes\nbrowser=\(helper.hash)"
             return SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
         }
     }
 
+    /// This Mac, as the engines it starts on machines note it.
+    static let macID: String = {
+        let key = "machineClientID"
+        if let id = UserDefaults.standard.string(forKey: key) { return id }
+        let id = UUID().uuidString
+        UserDefaults.standard.set(id, forKey: key)
+        return id
+    }()
+
+    /// Whether another Mac started this engine (engines from before Macs were noted count as
+    /// this one's).
+    private func isAnotherMacs(_ engine: RemoteServer.Engine) -> Bool {
+        engine.notes["mac"].map { $0 != Self.macID } ?? false
+    }
+
     /// Connects to the machine's engine: the one already running there (from an earlier launch,
-    /// maybe still working on something), or a new one, installed first if needed. One that runs
-    /// an older version, or older accounts and settings while nothing is running, is replaced.
+    /// maybe still working on something), or a new one, installed first if needed. One this Mac
+    /// started with an older version, or older accounts and settings while nothing is running, is
+    /// replaced. One another Mac started is used as it is, unless it's an older version: two Macs
+    /// with different settings would otherwise take turns starting it over, each dropping the
+    /// other's connection, and an older app would put back an older engine.
     func start(_ launch: Launch, cache: URL) async {
         // Once at a time.
         switch state {
@@ -89,7 +107,8 @@ final class MachineEngine {
         do {
             state = .starting
             var engine = try await RemoteServer.running(on: connection)
-            if engine?.version != OpenCodeEngine.version {
+            let isNewer = engine.map { $0.version.compare(OpenCodeEngine.version, options: .numeric) == .orderedDescending } ?? false
+            if engine?.version != OpenCodeEngine.version, !(isNewer && engine.map(isAnotherMacs) == true) {
                 state = .downloading(progress: 0)
                 try await RemoteEngineInstaller(connection: connection, cache: cache).install { progress in
                     Task { @MainActor in
@@ -100,11 +119,13 @@ final class MachineEngine {
                 if engine != nil { try await RemoteServer.stop(on: connection) }
                 engine = nil
             }
+            // The browser tools' helper, which an engine starts with.
+            try await MachineBrowserInstaller.installHelper(launch.helper, on: connection)
             let running: RemoteServer.Engine
             if let engine { running = engine } else { running = try await launchEngine(launch) }
             var server = try await attach(running, launch)
             let api = OpenCodeAPI(endpoint: server.endpoint, folderPrefix: RemoteFolder.prefix(for: machine.id))
-            if server.engine.notes["settings"] != launch.fingerprint, (try? await api.activeSessions())?.isEmpty == true {
+            if server.engine.notes["settings"] != launch.fingerprint, !isAnotherMacs(server.engine), (try? await api.activeSessions())?.isEmpty == true {
                 // Started with older accounts or settings, and nothing to interrupt: start it over.
                 server.disconnect()
                 try await RemoteServer.stop(on: connection)
@@ -117,6 +138,10 @@ final class MachineEngine {
             state = .ready
             listen(to: current)
             keepAlive()
+            // The browser, in the background: the first time, a download and an upload. A browser
+            // tab in view comes back live.
+            Task { await browser.prepare() }
+            browser.resume()
             await catalog.refresh()
         } catch {
             log.error("\(self.machine.destination, privacy: .public) didn't start: \(error.localizedDescription, privacy: .public)")
@@ -127,26 +152,11 @@ final class MachineEngine {
     }
 
     private func launchEngine(_ launch: Launch) async throws -> RemoteServer.Engine {
-        var environment = launch.environment
-        var notes = ["settings": launch.fingerprint]
-        // The panel's browser, through a port on the machine that leads back here.
-        let port = Int.random(in: 20_000..<60_000)
-        let token = UUID().uuidString + UUID().uuidString
-        if launch.browserPort != nil, let config = launch.browserConfig(port, token) {
-            environment["OPENCODE_CONFIG_CONTENT"] = AppModel.merged(config, into: environment["OPENCODE_CONFIG_CONTENT"])
-            notes["browserPort"] = String(port)
-            notes["browserToken"] = token
-        }
-        return try await RemoteServer.launch(on: machine.connection, environment: environment, notes: notes)
+        try await RemoteServer.launch(on: machine.connection, environment: launch.environment, notes: ["settings": launch.fingerprint, "mac": Self.macID])
     }
 
     private func attach(_ engine: RemoteServer.Engine, _ launch: Launch) async throws -> RemoteServer {
-        var reverse: [RemoteServer.ReverseForward] = []
-        if let local = launch.browserPort, let port = engine.notes["browserPort"].flatMap(Int.init), let token = engine.notes["browserToken"] {
-            launch.acceptBrowserToken(token)
-            reverse.append(.init(remotePort: port, localPort: local))
-        }
-        return try await RemoteServer.attach(to: engine, on: machine.connection, reverse: reverse) { status in
+        try await RemoteServer.attach(to: engine, on: machine.connection) { status in
             Task { @MainActor in self.exited(status: status) }
         }
     }

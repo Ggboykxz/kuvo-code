@@ -998,12 +998,14 @@ struct MainView: View {
         // The folder's new session first, so the panel's tools open in it.
         if let folder = environment["KUVO_DEMO_FOLDER"], environment["KUVO_DEMO_PROMPT"] == nil { newSession(in: folder) }
         // KUVO_DEMO_PANEL: tools to open in the panel, comma-separated: terminal,
-        // browser=<address>, files, file=<path>, changes, run (the project's run command), expand.
+        // browser=<address>, machine=<machine> (its browser), files, file=<path>, changes, run (the
+        // project's run command), expand.
         for item in (environment["KUVO_DEMO_PANEL"] ?? "").split(separator: ",").map(String.init) {
             let parts = item.split(separator: "=", maxSplits: 1).map(String.init)
             switch parts.first {
             case "terminal": utilities.newTerminal(in: activeDirectory, environment: app.shellEnvironment)
             case "browser": utilities.newBrowser(parts.count > 1 ? parts[1] : nil)
+            case "machine" where parts.count > 1: utilities.showMachineBrowser(parts[1])
             case "files": utilities.showFiles()
             case "file" where parts.count > 1: utilities.open(RemoteFolder.url(parts[1]))
             case "changes": utilities.showChanges()
@@ -1051,6 +1053,16 @@ struct MainView: View {
                 model.submit(model.draftText, files: model.draftFiles, for: nil, queue: false, commands: [])
                 model.draftText = ""
                 model.draftFiles = []
+            }
+        }
+        // KUVO_DEMO_MACHINE_BROWSING=<machine>|<seconds>: as if an agent on that machine started
+        // using its browser that long after launch, through the same event the engine sends.
+        if let value = environment["KUVO_DEMO_MACHINE_BROWSING"] {
+            let parts = value.split(separator: "|").map(String.init)
+            Task { [workspace] in
+                try? await Task.sleep(for: .seconds(parts.count > 1 ? Double(parts[1]) ?? 3 : 3))
+                let json = #"{"id":"evt_demo","type":"session.tool.input.started","data":{"sessionID":"ses_demo","assistantMessageID":"msg_demo","id":"call_demo","name":"kuvo-browser_browser_navigate"}}"#
+                if let event = try? ServerEvent(json: Data(json.utf8)) { workspace.handle(event, machine: parts[0]) }
             }
         }
         // KUVO_DEMO_REOPEN_WINDOW=<seconds>: closes the window after that long, and opens it again.

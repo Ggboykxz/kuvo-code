@@ -382,7 +382,7 @@ private struct SaveLoginBar: View {
 }
 
 /// The buttons inside the toolbar's capsules.
-private struct ToolbarGroupStyle: ButtonStyle {
+struct ToolbarGroupStyle: ButtonStyle {
     @State private var isHovering = false
     @Environment(\.isEnabled) private var isEnabled
 

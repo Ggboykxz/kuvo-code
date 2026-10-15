@@ -10,8 +10,6 @@ final class BrowserToolServer {
     private var listener: NWListener?
     private var connections: [ObjectIdentifier: HTTPConnection] = [:]
     private let token = UUID().uuidString + UUID().uuidString
-    /// Machines' engines keep running between launches, with the token they were started with.
-    private var machineTokens: Set<String> = []
     private(set) var url: URL?
 
     init(agent: BrowserAgent) {
@@ -23,30 +21,11 @@ final class BrowserToolServer {
         url.map { engineConfig(at: $0) }
     }
 
-    /// The port on this Mac, for a machine's engine to reach through an SSH tunnel.
-    var port: Int? { url?.port }
-
-    /// The config entry for an engine on another machine, which reaches this server through a
-    /// tunnel at `port` on its own localhost, with a token of its own: that engine outlives this
-    /// launch, and is let in again with `accept(_:)`.
-    func engineConfig(throughPort port: Int, token: String) -> [String: Any]? {
-        guard var parts = url.flatMap({ URLComponents(url: $0, resolvingAgainstBaseURL: false) }) else { return nil }
-        parts.host = "127.0.0.1"
-        parts.port = port
-        machineTokens.insert(token)
-        return parts.url.map { engineConfig(at: $0, token: token) }
-    }
-
-    /// Lets in a machine's engine started (maybe by an earlier launch) with `token`.
-    func accept(_ token: String) {
-        machineTokens.insert(token)
-    }
-
-    private func engineConfig(at url: URL, token: String? = nil) -> [String: Any] {
+    private func engineConfig(at url: URL) -> [String: Any] {
         ["mcp": ["servers": ["kuvo-browser": [
             "type": "remote",
             "url": url.absoluteString,
-            "headers": ["Authorization": "Bearer \(token ?? self.token)"],
+            "headers": ["Authorization": "Bearer \(token)"],
             "oauth": false,
             // Plain tools, so every model calls them directly.
             "codemode": false,
@@ -102,7 +81,7 @@ final class BrowserToolServer {
     private func respond(to request: HTTPRequest) async -> HTTPResponse {
         guard request.path.hasPrefix("/mcp") else { return .init(status: 404) }
         guard let authorization = request.headers["authorization"], authorization.hasPrefix("Bearer "),
-              case let given = String(authorization.dropFirst(7)), given == token || machineTokens.contains(given) else { return .init(status: 401) }
+              String(authorization.dropFirst(7)) == token else { return .init(status: 401) }
         switch request.method {
         case "POST": break
         case "DELETE": return .init(status: 200)

@@ -100,7 +100,7 @@ without clicking, for trying a change or taking screenshots:
 | `KUVO_DEMO_PROVIDERS` | Open Accounts (on a provider's sign-in if it names one) |
 | `KUVO_DEMO_APPEARANCE` | `light` or `dark` |
 | `KUVO_DEMO_CHANGES` | Show the side panel |
-| `KUVO_DEMO_PANEL` | Open tools in the panel, comma-separated: `terminal`, `browser=<address>`, `files`, `file=<path>`, `changes`, `run`, `expand` |
+| `KUVO_DEMO_PANEL` | Open tools in the panel, comma-separated: `terminal`, `browser=<address>`, `machine=<machine>` (its browser), `files`, `file=<path>`, `changes`, `run`, `expand` |
 | `KUVO_DEMO_WINDOW` | Window size, as `WIDTHxHEIGHT` |
 | `KUVO_DEMO_SEARCH` | Type this in the sidebar's search field |
 | `KUVO_DEMO_PALETTE` | Open the command palette with this typed in it (empty for none) |
@@ -128,6 +128,9 @@ without clicking, for trying a change or taking screenshots:
 | `KUVO_DEMO_SHOW_HOVER` | Show group chat messages' buttons as if under the pointer |
 | `KUVO_DEMO_REOPEN_WINDOW` | Close the window after this many seconds, and open it again |
 | `KUVO_DEMO_NAME` | A name to use instead of yours, for the initials on review comments |
+| `KUVO_DEMO_MACHINE_BROWSING` | As if an agent on this machine started browsing, as `<machine>\|<seconds after launch>` |
+| `KUVO_DEMO_PAGE_INPUT` | In a machine's browser tab, what you'd do on the page, steps separated by `;`: `wait:<s>`, `click:<x>,<y>`, `type:<text>`, `key:<code>`, `scroll:<x>,<y>,<dy>`, `selectAll`, `copy`, `paste` |
+| `KUVO_DEMO_MACHINE_ROOT` | A folder of its own in machines' home folders (like `.kuvo-code-demo`), so the demo copy's engine and browser there never touch your own copy's |
 | `KUVO_DEMO_COMMENT` | Add a review comment to the session in view, as `<path in the project>:<line>:<text>` |
 | `KUVO_ANALYTICS_URL` | Send anonymous usage to this collector, e.g. `http://127.0.0.1:8787/kuvo/code`; debug builds send none otherwise |
 

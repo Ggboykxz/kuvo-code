@@ -175,7 +175,7 @@ final class BrowserAgent {
 
     // MARK: Scripts
 
-    private static let domTree: String = {
+    static let domTree: String = {
         guard let url = Bundle.main.url(forResource: "buildDomTree", withExtension: "js"),
               let source = try? String(contentsOf: url, encoding: .utf8) else { return "() => ({ rootId: null, map: {} })" }
         // The file is one arrow function ending in ";", which can't sit inside parentheses.
@@ -186,7 +186,7 @@ final class BrowserAgent {
 
     /// Runs buildDomTree, keeps index → XPath for the actions, and writes the elements out
     /// the way browser-use shows them to a model.
-    private static let snapshotScript = """
+    static let snapshotScript = """
     document.getElementById('playwright-highlight-container')?.remove();
     const result = (\(domTree))({ doHighlightElements: false, focusHighlightIndex: -1, viewportExpansion: 0, debugMode: false });
     const map = result.map || {};
@@ -238,7 +238,7 @@ final class BrowserAgent {
     };
     """
 
-    private static let findElement = """
+    static let findElement = """
     const find = (number) => {
       const xpath = (window.__kuvoIndex || {})[number];
       if (!xpath) return null;
@@ -249,7 +249,7 @@ final class BrowserAgent {
 
     """
 
-    private static let clickScript = """
+    static let clickScript = """
     const element = find(index);
     if (!element) return missing(index);
     document.getElementById('playwright-highlight-container')?.remove();
@@ -264,7 +264,7 @@ final class BrowserAgent {
     return 'ok';
     """
 
-    private static let typeScript = """
+    static let typeScript = """
     const element = find(index);
     if (!element) return missing(index);
     document.getElementById('playwright-highlight-container')?.remove();
@@ -292,7 +292,7 @@ final class BrowserAgent {
     return 'ok';
     """
 
-    private static let selectScript = """
+    static let selectScript = """
     const element = find(index);
     if (!element) return missing(index);
     if (!(element instanceof HTMLSelectElement)) return `[${index}] isn't a list to select from.`;
@@ -305,7 +305,7 @@ final class BrowserAgent {
     return 'ok';
     """
 
-    private static let pressScript = """
+    static let pressScript = """
     const target = document.activeElement || document.body;
     const codes = { Enter: 13, Escape: 27, Tab: 9, Backspace: 8, ArrowUp: 38, ArrowDown: 40, ArrowLeft: 37, ArrowRight: 39, ' ': 32 };
     const init = { key: key, code: key, keyCode: codes[key] || 0, which: codes[key] || 0, bubbles: true, cancelable: true };

@@ -101,8 +101,8 @@ struct StorageSettings: View {
                     Button("Delete…") { confirmingDownloads = true }
                         .disabled((report?.linuxEngine ?? 0) == 0)
                 } label: {
-                    Text("Engine download for machines")
-                    Text("The Linux engine, kept to set up another machine without downloading it again.")
+                    Text("Downloads for machines")
+                    Text("The Linux engine and browser, kept to set up another machine without downloading them again.")
                 }
             } header: {
                 Text("Files You Can Delete")
@@ -122,13 +122,14 @@ struct StorageSettings: View {
         } message: {
             Text("New ones start right away. Your sessions aren’t affected.")
         }
-        .confirmationDialog("Delete the engine download for machines?", isPresented: $confirmingDownloads) {
+        .confirmationDialog("Delete the downloads for machines?", isPresented: $confirmingDownloads) {
             Button("Delete", role: .destructive) {
                 try? FileManager.default.removeItem(at: StorageReport.linuxEngineFolder)
+                try? FileManager.default.removeItem(at: MachineBrowser.cache)
                 Task { await load() }
             }
         } message: {
-            Text("Machines you’ve added keep their engine. A new one downloads it again.")
+            Text("Machines you’ve added keep their engine and browser. A new one downloads them again.")
         }
     }
 
@@ -234,7 +235,7 @@ nonisolated struct StorageReport: Sendable {
             + size(of: support.appending(path: "opencode/config"))
         let snapshots = size(of: engineData.appending(path: "snapshot"))
         let logs = size(of: engineData.appending(path: "log")) + size(of: appLogs)
-        let linux = size(of: linuxEngineFolder)
+        let linux = size(of: linuxEngineFolder) + size(of: support.appending(path: "browser-linux"))
         let engine = size(of: support.appending(path: "engine")) + linux
         let trees = worktrees.reduce(Int64(0)) { $0 + size(of: URL(filePath: $1)) }
         let browser = size(of: home.appending(path: "WebKit/\(bundleID)")) + size(of: home.appending(path: "HTTPStorages/\(bundleID)"))
