@@ -80,6 +80,7 @@ final class Catalog {
         do { self.integrations = try await integrations } catch { log.error("integrations: \(String(describing: error), privacy: .public)") }
         do {
             self.models = try await models
+            ProviderCompatibility.learn(from: self.models)
             LogoImages.shared.prefetch(self.models.flatMap { [$0.makerLogoID, $0.providerID] })
         } catch { log.error("models: \(String(describing: error), privacy: .public)") }
         do { self.defaultModel = try await defaultModel } catch { log.error("default model: \(String(describing: error), privacy: .public)") }

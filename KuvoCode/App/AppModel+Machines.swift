@@ -128,6 +128,11 @@ extension AppModel {
                 environment["OPENCODE_CONFIG_CONTENT"] = String(decoding: json, as: UTF8.self)
             }
         }
+        // What some providers need until opencode handles it, as on this Mac.
+        let compatibility = ProviderCompatibility.config
+        if !compatibility.isEmpty {
+            environment["OPENCODE_CONFIG_CONTENT"] = AppModel.merged(compatibility, into: environment["OPENCODE_CONFIG_CONTENT"])
+        }
         return (environment, staysHere)
     }
 }

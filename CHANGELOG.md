@@ -22,6 +22,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - A bot moves in one place at a time: where it's working in the conversation in view, otherwise in the sidebar.
 - Showing or hiding the side panel or the sidebar no longer makes the conversation flicker and jump: it takes its new width at once while the panel slides.
 - Sending a message after an undo no longer makes the conversation flicker: the undone part goes and your message appears in one step. A message that starts the agent no longer flashes in the waiting list above the composer.
+- Claude models through GitHub Copilot work again: they failed with "thinking.adaptive.block_binding: Extra inputs are not permitted", on this Mac and on machines.
 
 ## 0.4.0
 

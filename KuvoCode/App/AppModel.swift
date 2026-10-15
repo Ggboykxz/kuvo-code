@@ -136,6 +136,9 @@ final class AppModel {
             // Bots' wake-up command, by name, and where their folders are.
             shell["PATH"] = Bots.command.deletingLastPathComponent().path + ":" + (shell["PATH"] ?? "/usr/bin:/bin")
             shell["KUVO_BOTS"] = Bots.root.path
+            // What some providers need until opencode handles it (see ProviderCompatibility).
+            let compatibility = ProviderCompatibility.config
+            if !compatibility.isEmpty { shell["OPENCODE_CONFIG_CONTENT"] = Self.merged(compatibility, into: shell["OPENCODE_CONFIG_CONTENT"]) }
             // The browser tools, for the engine to connect to. Without them the agent
             // still works, just without the browser.
             do {
