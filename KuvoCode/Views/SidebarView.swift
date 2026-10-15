@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 /// Rows are flat: a soft fill under the pointer, accent glass under the open session.
 struct SidebarView: View {
     @Environment(Workspace.self) private var workspace
+    @Environment(AppModel.self) private var app
 
     @Binding var selection: String?
     let newSession: (String?) -> Void
@@ -265,9 +266,16 @@ struct SidebarView: View {
         .contextMenu {
             Button("New Session") { newSession(project.directory) }
             Button("Edit Project…") { editProject(project) }
-            Divider()
-            OpenInMenu(folder: URL(filePath: project.directory))
-            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting(project.allFolders.map { URL(filePath: $0) }) }
+            if let engine = app.machines.engine(RemoteFolder.machine(of: project.directory)) {
+                if !engine.isReady {
+                    Divider()
+                    Button("Connect to \(engine.machine.name)") { app.connect(engine) }
+                }
+            } else {
+                Divider()
+                OpenInMenu(folder: URL(filePath: project.directory))
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting(project.allFolders.map { URL(filePath: $0) }) }
+            }
             if project.sessions.isEmpty {
                 Divider()
                 Button("Remove from Sidebar") { workspace.removeFolder(project.directory) }
@@ -395,7 +403,9 @@ struct SidebarView: View {
             newTitle = session.title ?? ""
             renaming = session
         }
-        Button("Show in Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: session.location.directory) }
+        if !RemoteFolder.isRemote(session.location.directory) {
+            Button("Show in Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: session.location.directory) }
+        }
         Divider()
         Button("Copy as Markdown") {
             Task {
@@ -598,6 +608,12 @@ private struct ProjectRow: View {
     let toggle: () -> Void
     let newSession: () -> Void
     @State private var isHovering = false
+    @Environment(AppModel.self) private var app
+
+    /// The machine the project is on, when it's not this Mac.
+    private var machine: MachineEngine? {
+        app.machines.engine(RemoteFolder.machine(of: project.directory))
+    }
 
     var body: some View {
         Button(action: toggle) {
@@ -608,6 +624,10 @@ private struct ProjectRow: View {
                 Text(project.name)
                     .font(.system(size: 14))
                     .lineLimit(1)
+                    .layoutPriority(1)
+                if let machine {
+                    MachineLabel(engine: machine)
+                }
                 Spacer(minLength: 6)
                 // Room for the compose button, so a long name never runs under it.
                 Color.clear.frame(width: 22, height: 1)
@@ -628,7 +648,31 @@ private struct ProjectRow: View {
             .help("New Session in \(project.name)")
         }
         .onHover { isHovering = $0 }
-        .help(project.allFolders.map { ($0 as NSString).abbreviatingWithTildeInPath }.joined(separator: "\n"))
+        .help(project.allFolders.map { folder in
+            RemoteFolder.parse(folder).map { "\($0.machine):\($0.path)" } ?? (folder as NSString).abbreviatingWithTildeInPath
+        }.joined(separator: "\n"))
+    }
+}
+
+/// Which machine a project is on, small after its name, with a dot when it isn't connected.
+private struct MachineLabel: View {
+    let engine: MachineEngine
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "server.rack")
+                .font(.system(size: 9, weight: .semibold))
+            Text(engine.machine.name)
+                .lineLimit(1)
+            if case .failed = engine.state, !engine.isRetrying {
+                Circle().fill(.orange).frame(width: 6, height: 6)
+            } else if !engine.isReady || !engine.isLive {
+                ProgressView().controlSize(.mini).scaleEffect(0.7).frame(width: 10, height: 10)
+            }
+        }
+        .font(.system(size: 11, weight: .medium))
+        .foregroundStyle(.secondary)
+        .help(engine.statusText)
     }
 }
 

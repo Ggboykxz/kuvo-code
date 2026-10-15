@@ -7,7 +7,50 @@ private let log = Logger(subsystem: "run.kuvo.code", category: "workspace")
 /// Projects and their sessions, kept live from engine events.
 @Observable
 final class Workspace {
+    /// This Mac's engine.
     var api: OpenCodeAPI?
+    /// A machine's engine, by its name, for projects on it (folders written `ssh://machine/path`).
+    @ObservationIgnored var machineAPI: (String) -> OpenCodeAPI? = { _ in nil }
+    /// The machine each session's events came from, for sessions without a row (a subagent's).
+    @ObservationIgnored private var sessionMachines: [String: String] = [:]
+    /// Machines' sessions as last seen, kept across launches so their tabs wait for the machine
+    /// to connect instead of closing.
+    @ObservationIgnored private var remoteSessions: [String: RemoteSession] = Workspace.loadRemoteSessions()
+    /// The machines whose sessions are in the lists.
+    private(set) var connectedMachines: Set<String> = []
+    /// The machines you've added. A removed machine's projects leave the sidebar but keep their
+    /// settings, for when it's added again.
+    var machines: Set<String> = []
+
+    struct RemoteSession: Codable {
+        var machine: String
+        var title: String?
+    }
+
+    /// The machine a session is on, while that machine isn't connected; nil once it is (or
+    /// for this Mac's sessions).
+    func waitingMachine(for id: String) -> String? {
+        guard session(id) == nil, let machine = remoteSessions[id]?.machine, !connectedMachines.contains(machine) else { return nil }
+        return machine
+    }
+
+    /// A waiting session's title, as last seen.
+    func remoteTitle(_ id: String) -> String? {
+        remoteSessions[id]?.title
+    }
+
+    /// The engine a folder's sessions run on: its machine's, or this Mac's.
+    func api(forFolder folder: String) -> OpenCodeAPI? {
+        if let machine = RemoteFolder.machine(of: folder) { return machineAPI(machine) }
+        return api
+    }
+
+    /// The engine a session runs on.
+    func api(forSession id: String) -> OpenCodeAPI? {
+        if let session = session(id) { return api(forFolder: session.location.directory) }
+        if let machine = sessionMachines[id] { return machineAPI(machine) }
+        return api
+    }
 
     private(set) var sessions: [Session] = []
     private(set) var running: Set<String> = []
@@ -85,7 +128,7 @@ final class Workspace {
     /// Projects with their sessions, most recently active first.
     var projects: [Project] {
         let grouped = Dictionary(grouping: sessions.filter { !Self.isArchived($0) }, by: projectDirectory(of:))
-        let directories = Set(grouped.keys).union(folders)
+        let directories = Set(grouped.keys).union(folders).filter { RemoteFolder.machine(of: $0).map(machines.contains) ?? true }
         return directories.map { directory in
             Project(directory: directory, sessions: (grouped[directory] ?? []).sorted { $0.time.updated > $1.time.updated }, settings: settings[directory] ?? ProjectSettings())
         }
@@ -123,7 +166,7 @@ final class Workspace {
     }
 
     private func setFlag(_ key: String, _ value: Bool, of id: String) async {
-        guard let api, let index = sessions.firstIndex(where: { $0.id == id }) else { return }
+        guard let index = sessions.firstIndex(where: { $0.id == id }), let api = api(forFolder: sessions[index].location.directory) else { return }
         var metadata = sessions[index].metadata?.object ?? [:]
         // Written either way: the engine may merge metadata rather than replace it.
         metadata[key] = .bool(value)
@@ -138,9 +181,9 @@ final class Workspace {
 
     /// A subagent's session, to show its work inside the step that started it. It has no row
     /// or tab of its own; its model gets its events like any other.
-    func subagentModel(for id: String) async -> SessionModel? {
+    func subagentModel(for id: String, in folder: String) async -> SessionModel? {
         if let model = models[id] { return model }
-        guard let api, let session = try? await api.session(id) else { return nil }
+        guard let api = api(forFolder: folder), let session = try? await api.session(id) else { return nil }
         if let model = models[id] { return model }
         let model = SessionModel(session: session, api: api)
         models[id] = model
@@ -153,13 +196,14 @@ final class Workspace {
     /// Sessions whose conversation has `query` (archived ones too), the latest first, with the
     /// words around its first mention. Reads the conversations it hasn't yet, a few at a time.
     func searchConversations(_ query: String, limit: Int = 20) async -> [(session: Session, snippet: String)] {
-        guard let api else { return [] }
         let candidates = sessions.sorted { $0.time.updated > $1.time.updated }
+        // Each with its engine; a machine that isn't connected is skipped until it is.
         let missing = candidates.filter { conversationTexts[$0.id]?.updated != $0.time.updated }
+            .compactMap { session in api(forFolder: session.location.directory).map { (session, $0) } }
         await withTaskGroup(of: (Session, [Message])?.self) { group in
             var queue = missing.makeIterator()
             func next() {
-                guard let session = queue.next() else { return }
+                guard let (session, api) = queue.next() else { return }
                 group.addTask { (try? await ConversationExport.messages(of: session, api: api)).map { (session, $0) } }
             }
             for _ in 0..<4 { next() }
@@ -191,7 +235,7 @@ final class Workspace {
 
     /// A session's conversation as Markdown, to share.
     func markdown(of id: String) async throws -> String? {
-        guard let api, let session = session(id) else { return nil }
+        guard let session = session(id), let api = api(forFolder: session.location.directory) else { return nil }
         let messages = try await ConversationExport.messages(of: session, api: api)
         return ConversationExport.markdown(title: session.title ?? "New Session", messages: messages, directory: session.location.directory)
     }
@@ -200,7 +244,7 @@ final class Workspace {
     /// switching back is instant.
     func model(for id: String) -> SessionModel? {
         if let model = models[id] { return model }
-        guard let api, let session = session(id) else { return nil }
+        guard let session = session(id), let api = api(forFolder: session.location.directory) else { return nil }
         let directory = session.location.directory
         let model = SessionModel(session: session, api: api) { [weak self] in self?.extraFolders(directory) ?? [] }
         models[id] = model
@@ -208,7 +252,7 @@ final class Workspace {
     }
 
     func loadBranch(for directory: String) async {
-        guard let api, let info = try? await api.vcs(directory: directory) else { return }
+        guard let api = api(forFolder: directory), let info = try? await api.vcs(directory: directory) else { return }
         branches[directory] = info.branch?.current
         defaultBranches[directory] = info.branch?.default
     }
@@ -259,7 +303,7 @@ final class Workspace {
 
     /// A new session in the project at `directory`, or with `worktree`, in a new worktree of it.
     func createSession(in directory: String, model: ModelRef?, agent: String?, approval: ToolApproval = .approveAll, worktree: Bool = false) async throws -> Session {
-        guard let api else { throw CancellationError() }
+        guard let api = api(forFolder: directory) else { throw CancellationError() }
         addFolder(directory)
         let folder = worktree ? try await makeWorktree(of: directory) : directory
         let extra = settings[directory]?.folders ?? []
@@ -295,7 +339,7 @@ final class Workspace {
     /// A new worktree of the project's repository on a branch of its own, set up by the
     /// project's setup command. Returns the folder for the session to run in.
     private func makeWorktree(of directory: String) async throws -> String {
-        guard let api else { throw CancellationError() }
+        guard let api = api(forFolder: directory) else { throw CancellationError() }
         let project = try await api.location(directory: directory).project
         let (base, subpath) = await Task.detached { (Git.currentBranch(in: directory), Git.pathInRepository(of: directory)) }.value
         let root = try await api.createWorktree(project: project.id)
@@ -321,7 +365,7 @@ final class Workspace {
             for (key, value) in worktrees where value.root == tree.root { worktrees[key]?.branch = renamed }
             saveWorktrees()
             if let tree = worktrees[folder] {
-                try? await api?.setInstruction(session: session.id, key: Self.worktreeInstructionKey, text: Self.instructions(for: tree))
+                try? await api(forFolder: session.location.directory)?.setInstruction(session: session.id, key: Self.worktreeInstructionKey, text: Self.instructions(for: tree))
             }
             await loadBranch(for: folder)
         }
@@ -336,7 +380,7 @@ final class Workspace {
     /// Removes a worktree's folder, changes that aren't committed too. Its branch stays with its
     /// commits, unless it's merged already.
     func removeWorktree(_ directory: String) async throws {
-        guard let api, let tree = worktrees[directory] else { return }
+        guard let api = api(forFolder: directory), let tree = worktrees[directory] else { return }
         let project = try await api.location(directory: tree.project).project
         try await api.removeWorktree(project: project.id, directory: tree.root, force: true)
         // Git deletes only a branch that's merged.
@@ -371,7 +415,7 @@ final class Workspace {
     /// message in its composer, ready to try another way.
     func fork(_ id: String, from message: Message.User) async throws {
         Analytics.shared.track("session_branched")
-        guard let api else { return }
+        guard let api = api(forSession: id) else { return }
         let session = try await api.forkSession(id, before: message.id)
         upsert(session)
         let (withComments, paths) = Attachments.split(CommandMessages.shared.text(of: message))
@@ -384,6 +428,7 @@ final class Workspace {
     }
 
     func delete(_ id: String) async {
+        let api = api(forSession: id)
         sessions.removeAll { $0.id == id }
         models[id] = nil
         Drafts.shared.remove(id)
@@ -393,16 +438,76 @@ final class Workspace {
     func rename(_ id: String, to title: String) async {
         guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
         sessions[index].title = title
-        try? await api?.renameSession(id, title: title)
+        try? await api(forSession: id)?.renameSession(id, title: title)
     }
 
     // MARK: Sync
 
     func refresh() async {
         guard let api else { return }
-        do { sessions = try await api.sessions().data } catch { log.error("sessions: \(String(describing: error), privacy: .public)") }
-        do { running = try await api.activeSessions() } catch { log.error("active sessions: \(String(describing: error), privacy: .public)") }
+        do {
+            let local = try await api.sessions().data
+            sessions = local + sessions.filter { RemoteFolder.isRemote($0.location.directory) }
+        } catch { log.error("sessions: \(String(describing: error), privacy: .public)") }
+        do {
+            let active = try await api.activeSessions()
+            running = active.union(running.filter { id in session(id).map { RemoteFolder.isRemote($0.location.directory) } ?? false })
+        } catch { log.error("active sessions: \(String(describing: error), privacy: .public)") }
         isLoaded = true
+    }
+
+    /// Whether a session on the machine is working (or waiting for an answer).
+    func isRunning(on machine: String) -> Bool {
+        running.contains { id in
+            (session(id).map { RemoteFolder.machine(of: $0.location.directory) } ?? sessionMachines[id]) == machine
+        } || asking.values.contains { RemoteFolder.machine(of: session($0)?.location.directory ?? "") == machine }
+    }
+
+    /// A machine's sessions, when it connects (or reconnects after a gap), in place of what was
+    /// known of them.
+    func refresh(_ engine: MachineEngine) async {
+        guard let api = engine.api else { return }
+        let machine = engine.machine.id
+        do {
+            let theirs = try await api.sessions().data
+            sessions = sessions.filter { RemoteFolder.machine(of: $0.location.directory) != machine } + theirs
+            for session in theirs { sessionMachines[session.id] = machine }
+            remoteSessions = remoteSessions.filter { $0.value.machine != machine }
+            for session in theirs { remoteSessions[session.id] = RemoteSession(machine: machine, title: session.title) }
+            Self.saveRemoteSessions(remoteSessions)
+            connectedMachines.insert(machine)
+            let active = try await api.activeSessions()
+            running = running.filter { id in session(id).map { RemoteFolder.machine(of: $0.location.directory) != machine } ?? true }.union(active)
+            for model in models.values where RemoteFolder.machine(of: model.session.location.directory) == machine {
+                await model.load()
+            }
+        } catch {
+            log.error("\(machine, privacy: .public) sessions: \(String(describing: error), privacy: .public)")
+        }
+    }
+
+    /// A machine disconnected: its sessions leave the lists until it's back (their tabs wait).
+    /// Removed for good, they're forgotten too.
+    func forget(_ machine: String, forGood: Bool = false) {
+        let gone = Set(sessions.filter { RemoteFolder.machine(of: $0.location.directory) == machine }.map(\.id))
+        sessions.removeAll { gone.contains($0.id) }
+        running.subtract(gone)
+        for id in gone { models[id] = nil }
+        connectedMachines.remove(machine)
+        if forGood {
+            remoteSessions = remoteSessions.filter { $0.value.machine != machine }
+            Self.saveRemoteSessions(remoteSessions)
+            sessionMachines = sessionMachines.filter { $0.value != machine }
+        }
+    }
+
+    private static func loadRemoteSessions() -> [String: RemoteSession] {
+        guard let data = UserDefaults.standard.data(forKey: "remoteSessions") else { return [:] }
+        return (try? JSONDecoder().decode([String: RemoteSession].self, from: data)) ?? [:]
+    }
+
+    private static func saveRemoteSessions(_ sessions: [String: RemoteSession]) {
+        UserDefaults.standard.set(try? JSONEncoder().encode(sessions), forKey: "remoteSessions")
     }
 
     /// After a reconnect: re-read the list and every open session. Requests asked while
@@ -417,10 +522,13 @@ final class Workspace {
         }
     }
 
-    func handle(_ event: ServerEvent) {
+    /// An event from this Mac's engine, or from `machine`'s.
+    func handle(_ event: ServerEvent, machine: String? = nil) {
+        if let machine, let id = event.sessionID { sessionMachines[id] = machine }
         if event.type == "vcs.branch.updated", let directory = event.location?.directory {
             struct Branch: Decodable { var branch: String? }
-            branches[directory] = (try? event.payload(as: Branch.self))?.branch
+            let folder = machine.map { RemoteFolder.folder(directory, on: $0) } ?? directory
+            branches[folder] = (try? event.payload(as: Branch.self))?.branch
         }
         if let id = event.sessionID ?? Self.formSessionID(event), let model = models[id] {
             model.apply(event)
@@ -433,6 +541,7 @@ final class Workspace {
             Task { await reload(id) }
         case "session.deleted":
             sessions.removeAll { $0.id == id }
+            if remoteSessions.removeValue(forKey: id) != nil { Self.saveRemoteSessions(remoteSessions) }
             models[id] = nil
             asking = asking.filter { $0.value != id }
         case "session.execution.started":
@@ -526,6 +635,7 @@ final class Workspace {
             // A subagent's session has no row or tab of its own; its request shows in the
             // session that started it.
             var session = session(id)
+            let api = api(forSession: id)
             var parent = session == nil ? (try? await api?.session(id))?.parentID : nil
             for _ in 0..<5 where session == nil {
                 guard let next = parent else { break }
@@ -555,18 +665,18 @@ final class Workspace {
     func answer(_ request: String, in session: String, with answer: Notifier.PermissionAnswer) {
         Analytics.shared.track("permission_answered", ["decision": answer.rawValue, "from": "notification"])
         guard let decision = PermissionRequest.Decision(rawValue: answer.rawValue) else { return }
-        Task { try? await api?.reply(session: session, permission: request, decision: decision) }
+        Task { try? await api(forSession: session)?.reply(session: session, permission: request, decision: decision) }
     }
 
     func markViewed(_ id: String) {
         Notifier.shared.clear(session: id)
         guard let index = sessions.firstIndex(where: { $0.id == id }), sessions[index].isUnread, let idle = sessions[index].time.idle else { return }
         sessions[index].time.viewed = idle
-        Task { try? await api?.markViewed(id, idle: idle) }
+        Task { try? await api(forSession: id)?.markViewed(id, idle: idle) }
     }
 
     private func reload(_ id: String) async {
-        guard let session = try? await api?.session(id) else { return }
+        guard let session = try? await api(forSession: id)?.session(id) else { return }
         // Only root sessions get a row; subagent sessions show inside their parent.
         guard session.parentID == nil else { return }
         upsert(session)
@@ -580,6 +690,11 @@ final class Workspace {
             sessions.insert(session, at: 0)
         }
         models[session.id]?.session = session
+        if let machine = RemoteFolder.machine(of: session.location.directory) {
+            sessionMachines[session.id] = machine
+            remoteSessions[session.id] = RemoteSession(machine: machine, title: session.title)
+            Self.saveRemoteSessions(remoteSessions)
+        }
     }
 
     private func touch(_ id: String) {

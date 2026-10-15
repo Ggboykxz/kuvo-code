@@ -38,14 +38,20 @@ struct SettingsView: View {
             Tab("Commands", systemImage: "command", value: "commands") {
                 CommandsSettings()
             }
-            Tab("Panel", systemImage: "sidebar.right", value: "panel") {
-                PanelSettingsView()
-            }
-            Tab("Usage", systemImage: "gauge.with.dots.needle.50percent", value: "usage") {
-                UsageSettings()
-            }
-            Tab("Engine", systemImage: "cpu", value: "engine") {
-                EngineSettings()
+            // (A builder takes ten at most.)
+            Group {
+                Tab("Machines", systemImage: "server.rack", value: "machines") {
+                    MachinesSettings()
+                }
+                Tab("Panel", systemImage: "sidebar.right", value: "panel") {
+                    PanelSettingsView()
+                }
+                Tab("Usage", systemImage: "gauge.with.dots.needle.50percent", value: "usage") {
+                    UsageSettings()
+                }
+                Tab("Engine", systemImage: "cpu", value: "engine") {
+                    EngineSettings()
+                }
             }
         }
         .onAppear { Analytics.shared.track("settings_opened", ["tab": tab]) }

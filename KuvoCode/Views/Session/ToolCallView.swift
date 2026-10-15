@@ -18,7 +18,7 @@ struct ToolCallView: View {
     /// The file a read, write or edit was about, where it is on disk.
     private var file: URL? {
         guard ["read", "write", "edit"].contains(call.name), let path = string("path") else { return nil }
-        return path.hasPrefix("/") ? URL(filePath: path) : URL(filePath: directory).appending(path: path)
+        return RemoteFolder.fileURL(path, in: directory)
     }
 
     var body: some View {
@@ -37,7 +37,9 @@ struct ToolCallView: View {
                 }
             }
             .contextMenu {
-                if let file, FileManager.default.fileExists(atPath: file.path) {
+                if let file, !file.isFileURL {
+                    Button("Open in Panel") { app.utilities.show(file) }
+                } else if let file, FileManager.default.fileExists(atPath: file.path) {
                     Button("Open in Panel") { app.utilities.show(file) }
                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([file]) }
                 }
@@ -336,7 +338,7 @@ private struct SubagentSteps: View {
             }
         }
         .task(id: id) {
-            let model = await workspace.subagentModel(for: id)
+            let model = await workspace.subagentModel(for: id, in: directory)
             if let model, !model.isLoaded { await model.load() }
             self.model = model
         }

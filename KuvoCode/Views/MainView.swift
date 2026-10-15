@@ -77,6 +77,16 @@ struct MainView: View {
         activeModel?.session.location.directory ?? draftDirectory
     }
 
+    /// The machine a folder is on, for a project there; nil for this Mac's.
+    private func machine(for folder: String?) -> MachineEngine? {
+        app.machines.engine(folder.flatMap(RemoteFolder.machine(of:)))
+    }
+
+    /// The agents, commands and models of the engine a folder's sessions run on.
+    private func catalog(for folder: String?) -> Catalog {
+        machine(for: folder)?.catalog ?? catalog
+    }
+
     var body: some View {
         // Cards are sized from the room the window actually has, so they never spill
         // past its edges. The gaps between them are drag handles for resizing.
@@ -340,14 +350,17 @@ struct MainView: View {
             if SidebarView.draftDirectory(from: key) != nil {
                 return TabItem(id: key, title: "New Session", logo: nil, status: .idle)
             }
+            if workspace.waitingMachine(for: key) != nil {
+                return TabItem(id: key, title: workspace.remoteTitle(key) ?? "Session", logo: nil, status: .idle)
+            }
             guard let session = workspace.session(key) else { return nil }
-            return TabItem(id: key, title: session.title ?? "New Session", logo: logo(for: session.model), status: status(of: session))
+            return TabItem(id: key, title: session.title ?? "New Session", logo: logo(for: session.model, in: session.location.directory), status: status(of: session))
         }
     }
 
-    private func logo(for ref: ModelRef?) -> String? {
+    private func logo(for ref: ModelRef?, in folder: String? = nil) -> String? {
         guard let ref else { return nil }
-        return catalog.model(ref)?.makerLogoID ?? ref.providerID
+        return catalog(for: folder).model(ref)?.makerLogoID ?? ref.providerID
     }
 
     private func status(of session: Session) -> TabItem.Status {
@@ -384,13 +397,15 @@ struct MainView: View {
     @ViewBuilder private var conversationCard: some View {
         Group {
             if let id = sessionID, let model = workspace.model(for: id) {
-                Card(title: model.session.title ?? "New Session", detail: workspace.projectName(model.session.location.directory), isFocused: focus == .conversation) {
-                    if let logo = logo(for: model.session.model) { ProviderLogo(id: logo, size: 14) } else { Image(systemName: "bubble.left") }
+                let directory = model.session.location.directory
+                let machine = machine(for: directory)
+                Card(title: model.session.title ?? "New Session", detail: workspace.projectName(directory), isFocused: focus == .conversation) {
+                    if let logo = logo(for: model.session.model, in: directory) { ProviderLogo(id: logo, size: 14) } else { Image(systemName: "bubble.left") }
                 } actions: {
-                    if !app.isLive {
+                    if !(machine?.isLive ?? app.isLive) {
                         Image(systemName: "bolt.horizontal.circle")
                             .foregroundStyle(.orange)
-                            .help("Reconnecting to the engine…")
+                            .help(machine.map { "Reconnecting to \($0.machine.name)…" } ?? "Reconnecting to the engine…")
                     }
                     ContextGauge(model: model)
                     Button("Close Tab", systemImage: "xmark") { closeTab(id) }
@@ -398,8 +413,30 @@ struct MainView: View {
                 } content: {
                     SessionView(model: model)
                 }
+                .environment(catalog(for: directory))
                 .id(id)
+            } else if let id = sessionID, let engine = app.machines.engine(workspace.waitingMachine(for: id)) {
+                Card(title: workspace.remoteTitle(id) ?? "Session", detail: engine.machine.name, isFocused: focus == .conversation) {
+                    Image(systemName: "server.rack")
+                } actions: {
+                    Button("Close Tab", systemImage: "xmark") { closeTab(id) }
+                        .help("Close Tab")
+                } content: {
+                    MachineWaitingView(engine: engine)
+                }
+                .id(id)
+            } else if let directory = draftDirectory, let engine = machine(for: directory), !engine.isReady {
+                Card(title: "New Session", detail: workspace.projectName(directory), isFocused: focus == .conversation) {
+                    Image(systemName: "square.and.pencil")
+                } actions: {
+                    Button("Close Tab", systemImage: "xmark") { closeTab(SidebarView.draftTag(directory)) }
+                        .help("Close Tab")
+                } content: {
+                    MachineWaitingView(engine: engine)
+                }
+                .id(directory)
             } else if let directory = draftDirectory {
+                let catalog = catalog(for: directory)
                 Card(title: "New Session", detail: workspace.projectName(directory), isFocused: focus == .conversation) {
                     Image(systemName: "square.and.pencil")
                 } actions: {
@@ -417,6 +454,7 @@ struct MainView: View {
                         workspace.model(for: session.id)?.submit(text, files: files, for: catalog.model(session.model), queue: false, commands: catalog.commands(in: directory))
                     }
                 }
+                .environment(catalog)
                 .id(directory)
             } else {
                 Card(title: AppInfo.name, isFocused: focus == .conversation) {
@@ -439,6 +477,7 @@ struct MainView: View {
             isExpanded: $panelExpanded,
             isFocused: focus == .changes
         )
+        .environment(catalog(for: activeDirectory))
         .simultaneousGesture(TapGesture().onEnded { focus = .changes })
     }
 
@@ -559,7 +598,8 @@ struct MainView: View {
     private func dropClosedSessions(_ ids: [String]) {
         guard workspace.isLoaded else { return }
         let known = Set(ids)
-        for key in tabs where SidebarView.draftDirectory(from: key) == nil && !known.contains(key) {
+        // A machine's sessions wait for it to connect.
+        for key in tabs where SidebarView.draftDirectory(from: key) == nil && !known.contains(key) && workspace.waitingMachine(for: key) == nil {
             closeTab(key, remember: false)
         }
         // A selection that isn't one of the tabs (its session went while the app was closed)
@@ -765,13 +805,15 @@ struct MainView: View {
             projectSheet = ProjectSheetRequest(project: nil, folders: list.split(separator: ",").map(String.init))
         }
         // KUVO_DEMO_SETTINGS=<tab> opens Settings on that tab: general, accounts, agents, permissions,
-        // mcp, skills, commands, panel, usage, engine.
+        // mcp, skills, commands, machines, panel, usage, engine.
         if workspace.isLoaded, let tab = environment["KUVO_DEMO_SETTINGS"] {
             UserDefaults.standard.set(tab, forKey: "settings.tab")
             openSettings()
         }
         guard workspace.isLoaded, !Self.ranDemo else { return }
         Self.ranDemo = true
+        // The folder's new session first, so the panel's tools open in it.
+        if let folder = environment["KUVO_DEMO_FOLDER"], environment["KUVO_DEMO_PROMPT"] == nil { newSession(in: folder) }
         // KUVO_DEMO_PANEL: tools to open in the panel, comma-separated: terminal,
         // browser=<address>, files, file=<path>, changes, run (the project's run command), expand.
         for item in (environment["KUVO_DEMO_PANEL"] ?? "").split(separator: ",").map(String.init) {
@@ -780,7 +822,7 @@ struct MainView: View {
             case "terminal": utilities.newTerminal(in: activeDirectory, environment: app.shellEnvironment)
             case "browser": utilities.newBrowser(parts.count > 1 ? parts[1] : nil)
             case "files": utilities.showFiles()
-            case "file" where parts.count > 1: utilities.open(URL(filePath: parts[1]))
+            case "file" where parts.count > 1: utilities.open(RemoteFolder.url(parts[1]))
             case "changes": utilities.showChanges()
             case "run": runProject()
             case "expand": panelExpanded = true
@@ -821,6 +863,11 @@ struct MainView: View {
         let model = parts.flatMap { $0.count == 2 ? ModelRef(id: $0[1], providerID: $0[0]) : nil }
         // Like a new session from the UI: the chosen model, or the default one. KUVO_DEMO_WORKTREE
         // gives it a worktree of its own.
+        // A folder on a machine: once the machine is connected and its models are known.
+        if let engine = machine(for: folder) {
+            for _ in 0..<240 where !engine.isReady || engine.catalog.defaultModel == nil { try? await Task.sleep(for: .milliseconds(250)) }
+        }
+        let catalog = catalog(for: folder)
         guard let session = try? await workspace.createSession(in: folder, model: model ?? catalog.defaultModel?.ref, agent: catalog.startingAgent(chosen: app.engineConfig.value(at: ["default_agent"])?.string), worktree: environment["KUVO_DEMO_WORKTREE"] != nil) else { return }
         openTab(session.id)
         // KUVO_DEMO_FILES: comma-separated paths to attach.

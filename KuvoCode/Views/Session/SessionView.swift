@@ -134,6 +134,13 @@ struct DraftSessionView: View {
     @State private var failure: String?
     @LastModel private var lastModel
 
+    /// The model picked last, when this engine has it (a machine may not have every account),
+    /// or its default.
+    private var startingModel: ModelRef? {
+        if let lastModel, catalog.model(lastModel) != nil { return lastModel }
+        return catalog.defaultModel?.ref
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             Spacer()
@@ -146,7 +153,7 @@ struct DraftSessionView: View {
                 files: Binding(get: { Drafts.shared[draftKey].files }, set: { Drafts.shared[draftKey].files = $0 }),
                 agent: agent,
                 approval: approval,
-                model: lastModel ?? catalog.defaultModel?.ref,
+                model: startingModel,
                 isRunning: isCreating,
                 folders: [directory] + workspace.extraFolders(directory),
                 commands: catalog.commands(in: directory),
@@ -195,7 +202,7 @@ struct DraftSessionView: View {
                 // One after another: each worktree's setup runs on its own.
                 var sessions: [Session] = []
                 for _ in 0..<count {
-                    sessions.append(try await workspace.createSession(in: directory, model: lastModel ?? catalog.defaultModel?.ref, agent: agent, approval: approval, worktree: inWorktrees))
+                    sessions.append(try await workspace.createSession(in: directory, model: startingModel, agent: agent, approval: approval, worktree: inWorktrees))
                 }
                 if count > 1 { Analytics.shared.track("attempts_started", ["count": count]) }
                 Drafts.shared.remove(draftKey)

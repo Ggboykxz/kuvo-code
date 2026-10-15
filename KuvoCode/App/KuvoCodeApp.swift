@@ -59,6 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         // Closing the engine's stdin shuts it down cleanly (it would also exit with us).
         model.stop()
+        model.stopMachines()
         Analytics.shared.flushBeforeQuit()
     }
 

@@ -1,6 +1,7 @@
 import AppKit
 import OpenCodeKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Creating a project, or changing one: its name and its folders. Sessions run in the primary
 /// folder, and the agent can work in the others too. An existing project keeps its primary
@@ -12,6 +13,7 @@ struct ProjectSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(AppModel.self) private var app
+    @Environment(Workspace.self) private var workspace
     @Environment(\.colorScheme) private var scheme
     @State private var name: String
     /// What runs in each new worktree; nil until it's known that the primary folder is in a
@@ -26,6 +28,14 @@ struct ProjectSheet: View {
     /// The primary folder first.
     @State private var folders: [String]
     @FocusState private var isNameFocused: Bool
+    /// The machine the project's folders are on; nil for this Mac.
+    @State private var machine: String?
+    @State private var showsAddMachine = false
+    /// A folder being typed, on a machine (there's no Finder there to choose one in).
+    @State private var typedFolder = ""
+    @State private var isCheckingFolder = false
+    @State private var folderFailure: String?
+    @FocusState private var isFolderFocused: Bool
 
     init(project: Workspace.Project?, folders: [String] = [], focusesRun: Bool = false, save: @escaping (String, Workspace.ProjectSettings) -> Void) {
         self.project = project
@@ -34,6 +44,7 @@ struct ProjectSheet: View {
         _name = State(initialValue: project?.settings.name ?? "")
         _run = State(initialValue: project?.settings.run ?? "")
         _folders = State(initialValue: project?.allFolders ?? folders)
+        _machine = State(initialValue: (project?.allFolders ?? folders).first.flatMap(RemoteFolder.machine(of:)))
     }
 
     private var isNew: Bool { project == nil }
@@ -45,7 +56,13 @@ struct ProjectSheet: View {
 
             nameField
 
-            section("Folders", note: "Sessions run in the primary folder; the agent can work in the others too.") {
+            if isNew {
+                section("Location") {
+                    WellGroup { locationMenu }
+                }
+            }
+
+            section("Folders", note: folderFailure ?? "Sessions run in the primary folder; the agent can work in the others too.", isFailure: folderFailure != nil) {
                 folderList
             }
 
@@ -102,6 +119,9 @@ struct ProjectSheet: View {
         .frame(width: 560)
         .onAppear { if focusesRun { isRunFocused = true } else { isNameFocused = true } }
         .task(id: folders.first) { await loadSetup() }
+        .sheet(isPresented: $showsAddMachine) {
+            MachineSheet { choose($0) }
+        }
     }
 
     // MARK: Worktree setup
@@ -109,7 +129,7 @@ struct ProjectSheet: View {
     /// The engine keeps the setup command with its project (the repository).
     private func loadSetup() async {
         setup = nil
-        guard let primary = folders.first, let api = app.api,
+        guard let primary = folders.first, let api = workspace.api(forFolder: primary),
               await Task.detached(operation: { Git.run(["rev-parse", "--git-dir"], in: primary) != nil }).value,
               let project = try? await api.location(directory: primary).project else { return }
         let command = (try? await api.projects())?.first { $0.id == project.id }?.commands?.start ?? ""
@@ -119,14 +139,14 @@ struct ProjectSheet: View {
     }
 
     private func saveSetup() {
-        guard let api = app.api, let engineProject, let setup, setup != savedSetup else { return }
+        guard let primary = folders.first, let api = workspace.api(forFolder: primary), let engineProject, let setup, setup != savedSetup else { return }
         let command = setup.trimmingCharacters(in: .whitespacesAndNewlines)
         Task { try? await api.setSetupCommand(project: engineProject, command.isEmpty ? nil : command) }
     }
 
     /// A titled part of the sheet, and a line under it when it needs one. (Run and worktree
     /// setup don't explain themselves here; the docs do.)
-    private func section(_ title: String, note: String? = nil, @ViewBuilder content: () -> some View) -> some View {
+    private func section(_ title: String, note: String? = nil, isFailure: Bool = false, @ViewBuilder content: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
                 .font(.headline)
@@ -134,7 +154,7 @@ struct ProjectSheet: View {
             if let note {
                 Text(note)
                     .font(.callout)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(isFailure ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -148,12 +168,42 @@ struct ProjectSheet: View {
                 Image(systemName: "folder")
             } content: {
                 // Left empty, the project takes its primary folder's name.
-                TextField("Project name", text: $name, prompt: Text(folders.first.map { ($0 as NSString).lastPathComponent } ?? "Project name"))
+                TextField("Project name", text: $name, prompt: Text(folders.first.map { ($0 as NSString).lastPathComponent }.flatMap { $0.isEmpty ? nil : $0 } ?? "Project name"))
                     .textFieldStyle(.plain)
                     .focused($isNameFocused)
             }
         }
         .font(.system(size: 15))
+    }
+
+    // MARK: Location
+
+    /// This Mac or one of your machines, as one row that opens a menu.
+    private var locationMenu: some View {
+        NativeMenuButton(name: "location", opensBelow: true) {
+            let menu = NSMenu()
+            menu.addItem(ActionItem("This Mac", image: NSImage(systemSymbolName: "laptopcomputer", accessibilityDescription: nil), checked: machine == nil) { choose(nil) })
+            for engine in app.machines.list.compactMap({ app.machines.engine($0.id) }) {
+                menu.addItem(ActionItem(engine.machine.name, subtitle: engine.statusText, image: NSImage(systemSymbolName: "server.rack", accessibilityDescription: nil), checked: machine == engine.machine.id) { choose(engine.machine.id) })
+            }
+            menu.addItem(.separator())
+            menu.addItem(ActionItem("Add Machine…") { showsAddMachine = true })
+            return menu
+        } label: {
+            LocationRow(machine: machine.flatMap { app.machines.engine($0) })
+        }
+    }
+
+    /// Folders are all on one machine: changing it starts the list over.
+    private func choose(_ machine: String?) {
+        guard machine != self.machine else { return }
+        withAnimation(.ui) {
+            self.machine = machine
+            folders = []
+            typedFolder = ""
+            folderFailure = nil
+        }
+        if let engine = app.machines.engine(machine), case .failed = engine.state { app.connect(engine) }
     }
 
     // MARK: Folders
@@ -172,16 +222,61 @@ struct ProjectSheet: View {
                 )
                 WellDivider()
             }
-            Button(action: addFolders) {
-                WellRow {
+            if let machine {
+                WellRow(isActive: isFolderFocused) {
                     Image(systemName: "plus")
                         .font(.system(size: 14, weight: .medium))
                 } content: {
-                    Text(folders.isEmpty ? "Add Folder…" : "Add Another Folder…")
+                    HStack(spacing: 10) {
+                        TextField("Folder on \(machine)", text: $typedFolder, prompt: Text(folders.isEmpty ? "Folder on \(machine), like ~/projects/app" : "Another folder on \(machine)"))
+                            .textFieldStyle(.plain)
+                            .autocorrectionDisabled()
+                            .focused($isFolderFocused)
+                            .onSubmit(addTypedFolder)
+                            .onChange(of: typedFolder) { folderFailure = nil }
+                        if isCheckingFolder {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else if !typedFolder.trimmingCharacters(in: .whitespaces).isEmpty {
+                            Button("Add", action: addTypedFolder)
+                                .font(.subheadline.weight(.medium))
+                                .buttonStyle(TextButtonStyle(outset: true))
+                        }
+                    }
                 }
-                .contentShape(.rect)
+            } else {
+                Button(action: addFolders) {
+                    WellRow {
+                        Image(systemName: "plus")
+                            .font(.system(size: 14, weight: .medium))
+                    } content: {
+                        Text(folders.isEmpty ? "Add Folder…" : "Add Another Folder…")
+                    }
+                    .contentShape(.rect)
+                }
+                .buttonStyle(WellRowButtonStyle())
             }
-            .buttonStyle(WellRowButtonStyle())
+        }
+    }
+
+    /// Checks a typed folder on the machine, and adds it as the full path it is there.
+    private func addTypedFolder() {
+        guard let machine, !isCheckingFolder else { return }
+        let typed = typedFolder.trimmingCharacters(in: .whitespaces)
+        guard !typed.isEmpty else { return }
+        isCheckingFolder = true
+        Task {
+            let path = await Task.detached { RemoteShell.resolve(typed, on: machine) }.value
+            isCheckingFolder = false
+            guard let path else {
+                folderFailure = "There’s no folder \(typed) on \(machine), or it can’t be reached."
+                return
+            }
+            let folder = RemoteFolder.folder(path, on: machine)
+            withAnimation(.ui) {
+                if !folders.contains(folder) { folders.append(folder) }
+                typedFolder = ""
+            }
         }
     }
 
@@ -208,9 +303,11 @@ private struct FolderRow: View {
     let makePrimary: () -> Void
     let remove: () -> Void
 
+    private var remote: (machine: String, path: String)? { RemoteFolder.parse(path) }
+
     var body: some View {
         WellRow {
-            Image(nsImage: NSWorkspace.shared.icon(forFile: path))
+            Image(nsImage: remote == nil ? NSWorkspace.shared.icon(forFile: path) : NSWorkspace.shared.icon(for: .folder))
                 .resizable()
                 .frame(width: 20, height: 20)
         } content: {
@@ -218,7 +315,7 @@ private struct FolderRow: View {
                 // Just the name; the full path shows on hover.
                 Text((path as NSString).lastPathComponent)
                     .lineLimit(1)
-                    .help((path as NSString).abbreviatingWithTildeInPath)
+                    .help(remote.map { "\($0.machine):\($0.path)" } ?? (path as NSString).abbreviatingWithTildeInPath)
                 Spacer(minLength: 8)
                 // A checkmark: a state, not a button like Make Primary.
                 if isPrimary {
@@ -247,7 +344,7 @@ private struct FolderRow: View {
 
 /// A group of rows drawn into the sheet like one field: sunken, with an edge of its own and no
 /// outline, a touch deeper while you type in it.
-private struct WellGroup<Content: View>: View {
+struct WellGroup<Content: View>: View {
     var isActive = false
     @ViewBuilder var content: Content
     @Environment(\.colorScheme) private var scheme
@@ -263,7 +360,7 @@ private struct WellGroup<Content: View>: View {
 
 /// One row of a well: an icon in its own column, a hairline, then the content. The icon takes
 /// the accent color while the row's field has the focus, in place of an outline.
-private struct WellRow<Icon: View, Content: View>: View {
+struct WellRow<Icon: View, Content: View>: View {
     var isActive = false
     var height: CGFloat = 44
     @ViewBuilder var icon: Icon
@@ -287,7 +384,7 @@ private struct WellRow<Icon: View, Content: View>: View {
 }
 
 /// The hairline between a well's rows.
-private struct WellDivider: View {
+struct WellDivider: View {
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
@@ -299,7 +396,7 @@ private struct WellDivider: View {
 
 /// A row of a well that's a button, like Add Folder…: secondary ink and a soft fill under
 /// the pointer, so it reads as a field to click.
-private struct WellRowButtonStyle: ButtonStyle {
+struct WellRowButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         WellRowButton(configuration: configuration)
     }
@@ -315,5 +412,31 @@ private struct WellRowButtonStyle: ButtonStyle {
                 .onHover { isHovering = $0 }
                 .animation(.easeOut(duration: 0.12), value: isHovering)
         }
+    }
+}
+
+/// The Location row: where the project's folders are, and, for a machine, whether it's connected.
+private struct LocationRow: View {
+    let machine: MachineEngine?
+    @State private var isHovering = false
+
+    var body: some View {
+        WellRow {
+            Image(systemName: machine == nil ? "laptopcomputer" : "server.rack")
+        } content: {
+            HStack(spacing: 8) {
+                Text(machine?.machine.name ?? "This Mac")
+                    .foregroundStyle(.primary)
+                if let machine {
+                    MachineStatus(engine: machine)
+                }
+                Spacer(minLength: 8)
+                MenuChevron()
+            }
+        }
+        .contentShape(.rect)
+        .background(isHovering ? Pressable.hoverFill : .clear)
+        .onHover { isHovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovering)
     }
 }

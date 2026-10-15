@@ -27,6 +27,8 @@ final class AppModel {
     /// The panel's browser as MCP tools for the agent.
     @ObservationIgnored private(set) lazy var browserTools = BrowserToolServer(agent: BrowserAgent(utilities: utilities))
     let workspace = Workspace()
+    /// Other computers whose engines run over SSH, next to this Mac's.
+    let machines = Machines()
     let usage = UsageAccounts()
     /// The engine's settings file, for Settings.
     @ObservationIgnored private(set) lazy var engineConfig = EngineConfig(file: engineFolders.configFile)
@@ -132,6 +134,7 @@ final class AppModel {
             self.api = api
             catalog.api = api
             workspace.api = api
+            workspace.machineAPI = { [weak self] machine in self?.machines.engine(machine)?.api }
             usage.api = api
             engine = .ready
             Analytics.shared.trackOnce("engine_ready", ["seconds": Int(Date.now.timeIntervalSince(began)), "downloaded": downloaded])
@@ -141,7 +144,11 @@ final class AppModel {
             // macOS permission prompt); sessions shouldn't wait with it.
             async let catalogLoaded: Void = catalog.refresh()
             async let workspaceLoaded: Void = workspace.refresh()
-            _ = await (catalogLoaded, workspaceLoaded)
+            // Machines start once this Mac's engine is up (they get its accounts and settings),
+            // without waiting on its catalog.
+            await workspaceLoaded
+            startMachines()
+            await catalogLoaded
         } catch {
             log.error("Engine failed to start: \(error.localizedDescription, privacy: .public)")
             Analytics.shared.track("engine_failed", ["reason": stage])
@@ -150,7 +157,7 @@ final class AppModel {
     }
 
     /// `config` merged over any inline config already in the environment.
-    private static func merged(_ config: [String: Any], into existing: String?) -> String {
+    static func merged(_ config: [String: Any], into existing: String?) -> String {
         var base = existing.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] } ?? [:]
         func merge(_ new: [String: Any], into old: inout [String: Any]) {
             for (key, value) in new {

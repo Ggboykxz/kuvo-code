@@ -515,7 +515,8 @@ final class SessionModel {
     /// Gives the agent the project's folders as they're set now, if it doesn't have them yet:
     /// allowed in its permissions, and named in its instructions.
     func syncFolders() async {
-        let folders = projectFolders()
+        // As the engine knows them: a machine's folders are plain paths there.
+        let folders = projectFolders().map(api.enginePath)
         let current = session.permissions ?? []
         let rules = ProjectFolders.permissions(current, folders: folders)
         guard rules != current else { return }
@@ -525,7 +526,7 @@ final class SessionModel {
             if folders.isEmpty {
                 try await api.removeInstruction(session: id, key: ProjectFolders.instructionKey)
             } else {
-                try await api.setInstruction(session: id, key: ProjectFolders.instructionKey, text: ProjectFolders.instructions(primary: session.location.directory, folders: folders))
+                try await api.setInstruction(session: id, key: ProjectFolders.instructionKey, text: ProjectFolders.instructions(primary: api.enginePath(session.location.directory), folders: folders))
             }
         } catch {
             failure = error.localizedDescription
