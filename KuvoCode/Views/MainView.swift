@@ -88,13 +88,6 @@ struct MainView: View {
         activeModel?.session.location.directory ?? draftDirectory
     }
 
-    /// Under a bot's name in its card: where it lives if not here, first so a long job never cuts
-    /// it off, then its job.
-    private func botDetail(_ bot: Bot) -> String? {
-        let parts = [bot.machine.map { "On \($0)" }, bot.job.isEmpty ? nil : bot.job].compactMap(\.self)
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
-    }
-
     /// The machine a folder is on, for a project there; nil for this Mac's.
     private func machine(for folder: String?) -> MachineEngine? {
         app.machines.engine(folder.flatMap(RemoteFolder.machine(of:)))
@@ -523,7 +516,8 @@ struct MainView: View {
                 let directory = model.session.location.directory
                 let machine = machine(for: directory)
                 let bot = bots.bot(forSession: id)
-                Card(title: bot?.name ?? model.session.title ?? "New Session", detail: bot.map(botDetail) ?? workspace.projectName(directory), isFocused: focus == .conversation) {
+                // A bot's card has its name only: its avatar shows where it lives.
+                Card(title: bot?.name ?? model.session.title ?? "New Session", detail: bot == nil ? workspace.projectName(directory) : nil, isFocused: focus == .conversation) {
                     if let bot {
                         // Still: in view, the bot moves in its conversation.
                         BotAvatar(look: bot.look, size: 18, mood: bots.mood(of: bot, in: workspace), animates: false)
