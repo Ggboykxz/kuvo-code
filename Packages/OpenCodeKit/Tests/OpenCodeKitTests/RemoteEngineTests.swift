@@ -13,16 +13,22 @@ struct RemoteEngineTests {
         let arguments = SSHConnection(destination: "box").arguments(running: "echo \"$HOME\"", extra: ["-L", "1:127.0.0.1:2"])
         #expect(arguments.contains("BatchMode=yes"))
         #expect(arguments.suffix(4) == ["-L", "1:127.0.0.1:2", "box", #"sh -c 'echo "$HOME"'"#])
+        #expect(arguments.contains("ControlMaster=auto"))
+        // The engine's connection never joins the shared one.
+        #expect(SSHConnection(destination: "box").arguments(running: "true", shared: false).contains("ControlPath=none"))
     }
 
-    @Test func theEngineGetsItsOwnFoldersAndTheMachinesLocalhost() {
-        let script = RemoteServer.script(remotePort: 43_210)
+    @Test func theEngineRunsOnItsOwnOnTheMachinesLocalhost() {
+        let script = RemoteServer.launchScript
         #expect(script.contains("read -r line"))
         #expect(script.contains("XDG_DATA_HOME=\"$K/data\""))
-        #expect(script.contains("--port 43210 --hostname 127.0.0.1"))
+        #expect(script.contains("setsid"))
+        #expect(script.contains("--hostname 127.0.0.1"))
         #expect(script.contains("engine/\(OpenCodeEngine.version)/opencode"))
         // Nothing secret on its command line: those come over the input.
         #expect(!script.contains("PASSWORD"))
+        // Only its user can read how to find it.
+        #expect(script.contains("umask 077"))
     }
 
     @Test func linuxBuildsAreThePinnedVersion() {
@@ -35,6 +41,15 @@ struct RemoteEngineTests {
         #expect(EngineRelease.linux(machine: "riscv64") == nil)
     }
 
+    @Test func aMachinesFoldersAreKeyedApartAndSentPlain() {
+        let api = OpenCodeAPI(endpoint: ServerEndpoint(url: URL(string: "http://127.0.0.1:1")!, password: nil), folderPrefix: "ssh://box")
+        #expect(api.enginePath("ssh://box/home/me/app") == "/home/me/app")
+        #expect(api.appFolder("/home/me/app") == "ssh://box/home/me/app")
+        // Already the app's, or another machine's: left as it is.
+        #expect(api.appFolder("ssh://box/home/me/app") == "ssh://box/home/me/app")
+        #expect(api.enginePath("/Users/me/app") == "/Users/me/app")
+    }
+
     @Test func findsAFreeLocalPort() throws {
         let port = try RemoteServer.freeLocalPort()
         #expect((1024...65535).contains(port))
@@ -44,32 +59,43 @@ struct RemoteEngineTests {
 /// Against a real machine over SSH. Skipped unless KUVO_TEST_SSH_HOST names one this Mac can reach
 /// with its keys (it installs the engine in that machine's ~/.kuvo-code):
 ///
-///     KUVO_TEST_SSH_HOST=lokum-local swift test --filter LiveRemoteEngineTests
+///     KUVO_TEST_SSH_HOST=my-server swift test --filter LiveRemoteEngineTests
 @Suite(.enabled(if: ProcessInfo.processInfo.environment["KUVO_TEST_SSH_HOST"] != nil), .serialized)
 struct LiveRemoteEngineTests {
     let connection = SSHConnection(destination: ProcessInfo.processInfo.environment["KUVO_TEST_SSH_HOST"] ?? "")
 
-    @Test func installsStartsAndStops() async throws {
+    @Test func runsOnItsOwnAndIsFoundAgain() async throws {
         let cache = FileManager.default.temporaryDirectory.appending(path: "opencodekit-remote-cache")
         try await RemoteEngineInstaller(connection: connection, cache: cache).install()
+        try await RemoteServer.stop(on: connection)
+        #expect(try await RemoteServer.running(on: connection) == nil)
 
-        let server = try await RemoteServer.start(connection: connection, environment: [:])
+        let engine = try await RemoteServer.launch(on: connection, environment: [:], notes: ["test": "yes"])
+        let server = try await RemoteServer.attach(to: engine, on: connection)
         let client = HTTPClient(endpoint: server.endpoint)
         struct Info: Decodable { var version: String }
-        var info: Info?
-        for _ in 0..<100 where info == nil {
-            info = try? await client.send(client.request("GET", "api/info"), as: Info.self)
-            if info == nil { try await Task.sleep(for: .milliseconds(150)) }
-        }
-        #expect(info?.version == OpenCodeEngine.version)
+        let info = try await client.send(client.request("GET", "api/info"), as: Info.self)
+        #expect(info.version == OpenCodeEngine.version)
 
         // Without the password, nothing.
         let anonymous = HTTPClient(endpoint: ServerEndpoint(url: server.endpoint.url, password: nil))
         await #expect(throws: (any Error).self) { try await anonymous.send(anonymous.request("GET", "api/info"), as: Info.self) }
 
-        server.stop()
-        try await Task.sleep(for: .seconds(3))
-        let left = try await connection.run("ps -eo args | grep -c '[o]pencode serve --stdio' || true")
-        #expect(left.trimmingCharacters(in: .whitespacesAndNewlines) == "0")
+        // The connection goes; the engine stays, and is found again.
+        server.disconnect()
+        try await Task.sleep(for: .seconds(1))
+        let found = try await RemoteServer.running(on: connection)
+        #expect(found == engine)
+        #expect(found?.notes["test"] == "yes")
+        let again = try await RemoteServer.attach(to: try #require(found), on: connection)
+        let reconnected = HTTPClient(endpoint: again.endpoint)
+        #expect((try? await reconnected.send(reconnected.request("GET", "api/info"), as: Info.self)) != nil)
+        again.disconnect()
+
+        try await RemoteServer.stop(on: connection)
+        try await Task.sleep(for: .seconds(2))
+        #expect(try await RemoteServer.running(on: connection) == nil)
+        let left = try await connection.run("ps -eo pid,args | grep '[o]pencode serve --port \(engine.port)' || true")
+        #expect(left.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 }

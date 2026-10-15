@@ -6,9 +6,25 @@ import Foundation
 /// `x-opencode-directory` header). Session calls are scoped by the session itself.
 public struct OpenCodeAPI: Sendable {
     public let client: HTTPClient
+    /// For an engine on another machine: how the app writes that machine's folders
+    /// (`ssh://host`), taken off before a folder goes to the engine, which knows only its paths.
+    public let folderPrefix: String?
 
-    public init(endpoint: ServerEndpoint, session: URLSession = .shared) {
+    public init(endpoint: ServerEndpoint, session: URLSession = .shared, folderPrefix: String? = nil) {
         client = HTTPClient(endpoint: endpoint, session: session)
+        self.folderPrefix = folderPrefix
+    }
+
+    /// A folder as the engine knows it.
+    public func enginePath(_ folder: String) -> String {
+        guard let folderPrefix, folder.hasPrefix(folderPrefix) else { return folder }
+        return String(folder.dropFirst(folderPrefix.count))
+    }
+
+    /// A folder the engine named, as the app writes it.
+    public func appFolder(_ path: String) -> String {
+        guard let folderPrefix, !path.hasPrefix(folderPrefix) else { return path }
+        return folderPrefix + path
     }
 
     public var events: EventStream { EventStream(client: client) }
@@ -113,7 +129,11 @@ public struct OpenCodeAPI: Sendable {
 
     /// What the engine makes of a folder: its project, and that project's main checkout.
     public func location(directory: String) async throws -> LocationInfo {
-        try await get("api/location", directory: directory)
+        var info: LocationInfo = try await get("api/location", directory: directory)
+        info.directory = appFolder(info.directory)
+        info.project.directory = appFolder(info.project.directory)
+        info.project.canonical = appFolder(info.project.canonical)
+        return info
     }
 
     public func projects() async throws -> [ProjectInfo] {
@@ -132,14 +152,14 @@ public struct OpenCodeAPI: Sendable {
     public func createWorktree(project id: String, name: String? = nil) async throws -> String {
         struct Body: Encodable { var projectID: String; var name: String? }
         struct Info: Decodable { var directory: String }
-        return try await send("POST", "api/worktree", body: Body(projectID: id, name: name), as: Info.self).directory
+        return appFolder(try await send("POST", "api/worktree", body: Body(projectID: id, name: name), as: Info.self).directory)
     }
 
     /// Removes a worktree the engine made. Without `force`, git refuses one with changes that
     /// aren't committed.
     public func removeWorktree(project id: String, directory: String, force: Bool) async throws {
         struct Body: Encodable { var projectID: String; var directory: String; var force: Bool }
-        try await send("DELETE", "api/worktree", body: Body(projectID: id, directory: directory, force: force))
+        try await send("DELETE", "api/worktree", body: Body(projectID: id, directory: enginePath(directory), force: force))
     }
 
     // MARK: Connecting providers
@@ -197,12 +217,22 @@ public struct OpenCodeAPI: Sendable {
     public func sessions(directory: String? = nil, roots: Bool = true, limit: Int = 100) async throws -> Page<Session> {
         var query: [String: String?] = ["limit": String(limit), "order": "desc"]
         if roots { query["parentID"] = "null" }
-        if let directory { query["directory"] = directory }
-        return try await get("api/session", query: query)
+        if let directory { query["directory"] = enginePath(directory) }
+        var page: Page<Session> = try await get("api/session", query: query)
+        page.data = page.data.map(appSession)
+        return page
     }
 
     public func session(_ id: String) async throws -> Session {
-        try await get("api/session/\(id.pathEscaped)", as: DataEnvelope<Session>.self).data
+        appSession(try await get("api/session/\(id.pathEscaped)", as: DataEnvelope<Session>.self).data)
+    }
+
+    /// A session as the app keeps it: its folder written the app's way.
+    func appSession(_ session: Session) -> Session {
+        guard folderPrefix != nil else { return session }
+        var session = session
+        session.location.directory = appFolder(session.location.directory)
+        return session
     }
 
     /// Sessions that are running right now.
@@ -213,8 +243,8 @@ public struct OpenCodeAPI: Sendable {
 
     public func createSession(directory: String, title: String? = nil, agent: String? = nil, model: ModelRef? = nil, permissions: [PermissionRule]? = nil) async throws -> Session {
         struct Body: Encodable { var title: String?; var agent: String?; var model: ModelRef?; var location: Location; var permissions: [PermissionRule]? }
-        let body = Body(title: title, agent: agent, model: model, location: Location(directory: directory), permissions: permissions)
-        return try await send("POST", "api/session", body: body, as: DataEnvelope<Session>.self).data
+        let body = Body(title: title, agent: agent, model: model, location: Location(directory: enginePath(directory)), permissions: permissions)
+        return appSession(try await send("POST", "api/session", body: body, as: DataEnvelope<Session>.self).data)
     }
 
     public func renameSession(_ id: String, title: String) async throws {
@@ -242,7 +272,7 @@ public struct OpenCodeAPI: Sendable {
     /// A new session with this one's conversation up to (not including) `before`.
     public func forkSession(_ id: String, before: String) async throws -> Session {
         struct Body: Encodable { var before: String }
-        return try await send("POST", "api/session/\(id.pathEscaped)/fork", body: Body(before: before), as: DataEnvelope<Session>.self).data
+        return appSession(try await send("POST", "api/session/\(id.pathEscaped)/fork", body: Body(before: before), as: DataEnvelope<Session>.self).data)
     }
 
     /// Replaces the session's metadata (a JSON object; keep what other clients put there).
@@ -395,7 +425,7 @@ public struct OpenCodeAPI: Sendable {
     private func request(_ method: String, _ path: String, query: [String: String?], directory: String?, body: (some Encodable)?) throws -> URLRequest {
         var request = try client.request(method, path, query: query, body: body)
         if let directory {
-            request.setValue(directory.addingPercentEncoding(withAllowedCharacters: .uriComponentAllowed), forHTTPHeaderField: "x-opencode-directory")
+            request.setValue(enginePath(directory).addingPercentEncoding(withAllowedCharacters: .uriComponentAllowed), forHTTPHeaderField: "x-opencode-directory")
         }
         return request
     }
