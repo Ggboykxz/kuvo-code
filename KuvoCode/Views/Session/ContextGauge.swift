@@ -92,6 +92,16 @@ extension ContextGauge {
     static func percent(_ fraction: Double) -> String {
         "\(Int((fraction * 100).rounded()).formatted())%"
     }
+
+    /// "Resets in 2 hr, 28 min" within a day, else "Resets Sat 1:00 AM".
+    static func resets(_ date: Date, now: Date = .now) -> String {
+        let seconds = date.timeIntervalSince(now)
+        if seconds >= 24 * 3600 {
+            return "Resets " + date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
+        }
+        let left = Duration.seconds(max(seconds, 60))
+        return "Resets in " + left.formatted(.units(allowed: [.hours, .minutes], width: .abbreviated, maximumUnitCount: 2))
+    }
 }
 
 private struct ContextDetails: View {
@@ -131,7 +141,7 @@ private struct ContextDetails: View {
                     TimelineView(.everyMinute) { context in
                         VStack(alignment: .leading, spacing: 12) {
                             ForEach(plan.limits) { limit in
-                                row(limit.label, detail: limit.resetsAt.map { resets($0, now: context.date) }, fraction: limit.fraction)
+                                row(limit.label, detail: limit.resetsAt.map { ContextGauge.resets($0, now: context.date) }, fraction: limit.fraction)
                             }
                         }
                     }
@@ -181,15 +191,5 @@ private struct ContextDetails: View {
                     }
                 }
         }
-    }
-
-    /// "Resets in 2 hr, 28 min" within a day, else "Resets Sat 1:00 AM".
-    private func resets(_ date: Date, now: Date) -> String {
-        let seconds = date.timeIntervalSince(now)
-        if seconds >= 24 * 3600 {
-            return "Resets " + date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
-        }
-        let left = Duration.seconds(max(seconds, 60))
-        return "Resets in " + left.formatted(.units(allowed: [.hours, .minutes], width: .abbreviated, maximumUnitCount: 2))
     }
 }

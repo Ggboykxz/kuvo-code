@@ -1,5 +1,6 @@
 import OpenCodeKit
 import SwiftUI
+import UsageKit
 import UniformTypeIdentifiers
 
 /// New Session on top, then projects (each a folder that opens to its sessions), then
@@ -150,7 +151,7 @@ struct SidebarView: View {
                 ))
                 .frame(height: 1)
             // Its bottom on the cards' bottom edge.
-            AccountsRow(action: showProviders)
+            AccountsRow(showProviders: showProviders)
                 .padding(.top, 6)
         }
         #if DEBUG
@@ -723,13 +724,17 @@ private struct SessionStatus: View {
     }
 }
 
-/// Which accounts are connected, at the bottom of the sidebar. A plain row, like the rest.
+/// Which accounts are connected, at the bottom of the sidebar. It opens a menu of what you reach
+/// for between sessions: your accounts, the usage your plans have left, your machines, Settings
+/// and help.
 private struct AccountsRow: View {
     @Environment(Catalog.self) private var catalog
-    let action: () -> Void
+    @Environment(AppModel.self) private var app
+    @Environment(Updates.self) private var updates
+    let showProviders: () -> Void
 
     var body: some View {
-        Button(action: action) {
+        NativeMenuButton(name: "account", menu: makeMenu) {
             HStack(spacing: 10) {
                 if catalog.connectedProviders.isEmpty {
                     Image(systemName: "person.crop.circle.badge.plus")
@@ -745,16 +750,108 @@ private struct AccountsRow: View {
                 Text(label)
                     .font(.system(size: 14))
                 Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.tertiary)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 10)
             .frame(height: 38)
+            .contentShape(.rect)
             .hoverHighlight(selected: false)
         }
-        .buttonStyle(.plain)
-        .help("Accounts (⇧⌘K)")
+        .help("Accounts, usage, Settings and help")
+    }
+
+    private func makeMenu() -> NSMenu {
+        let menu = NSMenu()
+        let providers = catalog.connectedProviders
+        let accounts = ActionItem(
+            providers.isEmpty ? "Connect an Account" : "Accounts",
+            subtitle: providers.isEmpty ? "Sign in with a subscription, or add an API key" : Self.list(providers.map(\.name)),
+            image: Self.symbol("person.crop.circle"),
+            handler: { showProviders() }
+        )
+        accounts.keyEquivalent = "k"
+        accounts.keyEquivalentModifierMask = NSEvent.ModifierFlags([.command, .shift])
+        // As the menu bar shows them, not moved to where the keys sit on this keyboard layout.
+        accounts.allowsAutomaticKeyEquivalentLocalization = false
+        menu.addItem(accounts)
+        menu.addItem(.separator())
+        menu.addItem(usageItem())
+        if !app.machines.list.isEmpty { menu.addItem(machinesItem()) }
+        let settings = ActionItem("Settings…", image: Self.symbol("gearshape")) { app.openSettings() }
+        settings.keyEquivalent = ","
+        settings.keyEquivalentModifierMask = NSEvent.ModifierFlags.command
+        settings.allowsAutomaticKeyEquivalentLocalization = false
+        menu.addItem(settings)
+        menu.addItem(.separator())
+        menu.addItem(helpItem())
+        return menu
+    }
+
+    /// What each plan the usage tracker follows has left, and how soon it resets.
+    private func usageItem() -> NSMenuItem {
+        let usage = UsageMenuBar.shared
+        let plans = usage.trackedProviderIDs.compactMap { usage.planLimits(for: $0) }
+        let submenu = NSMenu()
+        if plans.isEmpty {
+            let none = NSMenuItem(title: usage.isRunning ? "No plan limits to show yet" : "The usage tracker is off", action: nil, keyEquivalent: "")
+            none.isEnabled = false
+            submenu.addItem(none)
+        }
+        for (index, plan) in plans.enumerated() {
+            if index > 0 { submenu.addItem(.separator()) }
+            submenu.addItem(.sectionHeader(title: [plan.providerName, plan.plan].compactMap(\.self).joined(separator: " ")))
+            for limit in plan.limits {
+                let row = NSMenuItem.info(limit.label, value: ContextGauge.percent(1 - limit.fraction) + " left")
+                row.subtitle = limit.resetsAt.map { ContextGauge.resets($0) }
+                submenu.addItem(row)
+            }
+        }
+        submenu.addItem(.separator())
+        if usage.isRunning { submenu.addItem(ActionItem("Open Usage Panel") { usage.open(.dashboard) }) }
+        submenu.addItem(ActionItem("Usage Settings…") { app.openSettings(.usage) })
+        return .chained("Usage Remaining", value: nil, image: Self.symbol("gauge.with.dots.needle.50percent"), submenu: submenu)
+    }
+
+    /// Your machines and how each is doing; one that isn't connected connects when picked.
+    private func machinesItem() -> NSMenuItem {
+        let submenu = NSMenu()
+        for engine in app.machines.list.compactMap({ app.machines.engine($0.id) }) {
+            submenu.addItem(ActionItem(engine.machine.name, subtitle: engine.statusText, image: Self.symbol("server.rack")) {
+                switch engine.state {
+                case .preparing, .failed: app.connect(engine)
+                default: app.openSettings(.machines)
+                }
+            })
+        }
+        submenu.addItem(.separator())
+        submenu.addItem(ActionItem("Manage Machines…") { app.openSettings(.machines) })
+        return .chained("Machines", value: nil, image: Self.symbol("server.rack"), submenu: submenu)
+    }
+
+    private func helpItem() -> NSMenuItem {
+        let submenu = NSMenu()
+        submenu.addItem(ActionItem("Kuvo Code Help", image: Self.symbol("book")) { NSWorkspace.shared.open(AppInfo.docs) })
+        submenu.addItem(ActionItem("Keyboard Shortcuts", image: Self.symbol("command")) { app.openSettings(.shortcuts) })
+        submenu.addItem(ActionItem("What\u{2019}s New", image: Self.symbol("sparkles")) { NSWorkspace.shared.open(AppInfo.releases) })
+        submenu.addItem(ActionItem("Report an Issue…", image: Self.symbol("exclamationmark.bubble")) { NSWorkspace.shared.open(AppInfo.newIssue) })
+        if updates.isAvailable {
+            submenu.addItem(.separator())
+            let check = ActionItem("Check for Updates…") { updates.check() }
+            check.isEnabled = updates.canCheck
+            submenu.addItem(check)
+        }
+        return .chained("Help", value: nil, image: Self.symbol("questionmark.circle"), submenu: submenu)
+    }
+
+    private static func symbol(_ name: String) -> NSImage? {
+        NSImage(systemSymbolName: name, accessibilityDescription: nil)
+    }
+
+    /// "Anthropic, OpenAI and 2 more".
+    private static func list(_ names: [String]) -> String {
+        names.count <= 3 ? names.formatted(.list(type: .and)) : names.prefix(2).joined(separator: ", ") + " and \(names.count - 2) more"
     }
 
     private var label: String {

@@ -193,6 +193,11 @@ struct AppCommands: Commands {
             }
             Divider()
         }
+        CommandGroup(replacing: .help) {
+            Button("Kuvo Code Help") { NSWorkspace.shared.open(AppInfo.docs) }
+            Button("What\u{2019}s New") { NSWorkspace.shared.open(AppInfo.releases) }
+            Button("Report an Issue…") { NSWorkspace.shared.open(AppInfo.newIssue) }
+        }
         CommandGroup(replacing: .appSettings) {
             Button("Settings…") { model.openSettings() }
                 .keyboardShortcut(",")

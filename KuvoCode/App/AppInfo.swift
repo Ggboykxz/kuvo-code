@@ -25,6 +25,11 @@ nonisolated enum AppInfo {
     static var supportDirectory: URL {
         URL.applicationSupportDirectory.appending(path: Bundle.main.bundleIdentifier ?? "run.kuvo.code")
     }
+
+    /// Where Help points: the docs, what's new in each release, and reporting a problem.
+    static let docs = URL(string: "https://kuvo.run/code/docs/")!
+    static let releases = URL(string: "https://github.com/serhatandic/kuvo-code/releases")!
+    static let newIssue = URL(string: "https://github.com/serhatandic/kuvo-code/issues/new/choose")!
 }
 
 /// System, light or dark, for the whole app (AppKit menus and sheets included).
