@@ -458,7 +458,7 @@ struct MainView: View {
                 .id(directory)
             } else {
                 Card(title: AppInfo.name, isFocused: focus == .conversation) {
-                    Image(systemName: "sparkles")
+                    AppLogo(size: 16)
                 } content: {
                     WelcomeView(openFolder: openFolder, showProviders: { showsProviders = true })
                 }
@@ -812,6 +812,11 @@ struct MainView: View {
         }
         guard workspace.isLoaded, !Self.ranDemo else { return }
         Self.ranDemo = true
+        // KUVO_DEMO_WELCOME: no tabs, so the welcome card shows.
+        if environment["KUVO_DEMO_WELCOME"] != nil {
+            tabs = []
+            selection = nil
+        }
         // The folder's new session first, so the panel's tools open in it.
         if let folder = environment["KUVO_DEMO_FOLDER"], environment["KUVO_DEMO_PROMPT"] == nil { newSession(in: folder) }
         // KUVO_DEMO_PANEL: tools to open in the panel, comma-separated: terminal,
@@ -947,6 +952,19 @@ struct ProjectSheetRequest: Identifiable {
     var focusesRun = false
 }
 
+/// The app's icon, the `>_` mark, as the system renders it (glass and all).
+struct AppLogo: View {
+    let size: CGFloat
+
+    var body: some View {
+        Image(nsImage: NSApp.applicationIconImage)
+            .resizable()
+            .interpolation(.high)
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
+    }
+}
+
 /// Shown before there's any project.
 struct WelcomeView: View {
     @Environment(Catalog.self) private var catalog
@@ -955,9 +973,7 @@ struct WelcomeView: View {
 
     var body: some View {
         VStack(spacing: 18) {
-            Image(systemName: "sparkles")
-                .font(.system(size: 46, weight: .light))
-                .foregroundStyle(.tint)
+            AppLogo(size: 76)
             Text("Welcome to \(AppInfo.name)")
                 .font(.largeTitle.weight(.semibold))
             Text("Open a project folder and tell the agent what to build.\nIt can read, edit and run things there.")
