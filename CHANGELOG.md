@@ -24,6 +24,10 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Sending a message after an undo no longer makes the conversation flicker: the undone part goes and your message appears in one step. A message that starts the agent no longer flashes in the waiting list above the composer.
 - Claude models through GitHub Copilot work again: they failed with "thinking.adaptive.block_binding: Extra inputs are not permitted", on this Mac and on machines.
 - The side panel no longer shows a blank tab, its bar stuck in the middle, after the window is closed and opened again. Its terminals and pages also keep running while the engine restarts.
+- **A browser on your machines**: agents on a remote machine browse with a browser that runs there, so they keep going while your Mac is off, and `localhost` is the machine. The side panel shows it live in a tab of its own, which opens when an agent starts browsing (or pick **Browser on** the machine on a new tab): watch, or click and type in it yourself. Kuvo Code brings Chromium with everything it needs into `~/.kuvo-code` on the machine, so nothing is installed on the system.
+- A bot's conversation has just its name at the top; its avatar shows where it lives.
+- Two Macs on one machine no longer take turns restarting its engine: the second uses the one that's running.
+- After your Mac wakes, a machine that lost its connection while it slept connects again by itself.
 
 ## 0.4.0
 
