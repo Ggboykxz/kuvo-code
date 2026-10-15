@@ -57,12 +57,20 @@ struct EngineSetupView: View {
 
     var body: some View {
         VStack(spacing: 22) {
-            Image(systemName: symbol)
-                .font(.system(size: 44, weight: .light))
-                .foregroundStyle(.tint)
-                .symbolEffect(.pulse, isActive: isWorking)
-                .contentTransition(.symbolEffect(.replace))
-                .frame(height: 56)
+            // Kuvo Code's own icon, as on the welcome screen; the loader below says it's working.
+            AppLogo(size: 64)
+                .overlay(alignment: .bottomTrailing) {
+                    if case .failed = app.engine {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .font(.system(size: 22))
+                            .symbolRenderingMode(.palette)
+                            .foregroundStyle(.white, .orange)
+                            .background(Circle().fill(.background).padding(2))
+                            .offset(x: 6, y: 6)
+                            .transition(.scale.combined(with: .opacity))
+                    }
+                }
+                .animation(.ui, value: isFailed)
 
             VStack(spacing: 6) {
                 Text(title)
@@ -95,16 +103,8 @@ struct EngineSetupView: View {
         .iconOnlyToolbar()
     }
 
-    private var isWorking: Bool {
-        if case .failed = app.engine { false } else { true }
-    }
-
-    private var symbol: String {
-        switch app.engine {
-        case .failed: "exclamationmark.triangle"
-        case .downloading: "arrow.down.circle"
-        default: "sparkles"
-        }
+    private var isFailed: Bool {
+        if case .failed = app.engine { true } else { false }
     }
 
     private var title: String {

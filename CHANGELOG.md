@@ -18,7 +18,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - **Each bot has a model**, picked when you make it or in Edit Bot. Group chats use it; in a bot's own conversation you can still pick another.
 - **Personalities for bots**: pick how a bot talks, like Straight Shooter, Skeptic or Mentor, or write your own. It shows in its own conversation and in group chats.
 - **Pictures open in the window**: click one you sent to look closer, right away, instead of waiting for Preview. Pinch or double-click to zoom, the arrow keys go to the message's other pictures, and Copy (⌘C) puts it on the clipboard.
-- **Kuvo Code's own loader**: the prompt mark draws itself in quiet dashes wherever something's loading or working.
+- **Kuvo Code's own loader**: the prompt mark draws itself in quiet dashes wherever something's loading or working, and the starting screen shows Kuvo Code's icon.
 - A bot moves in one place at a time: where it's working in the conversation in view, otherwise in the sidebar.
 - Showing or hiding the side panel or the sidebar no longer makes the conversation flicker and jump: it takes its new width at once while the panel slides.
 - Sending a message after an undo no longer makes the conversation flicker: the undone part goes and your message appears in one step. A message that starts the agent no longer flashes in the waiting list above the composer.
