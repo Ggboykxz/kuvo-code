@@ -9,7 +9,8 @@ public struct ServerEvent: Sendable, Identifiable {
     public var location: Location?
     /// The `data` object's `sessionID`, for the many events that have one.
     public var sessionID: String?
-    let raw: Data
+    /// The event as it came, JSON.
+    public let raw: Data
 
     private struct Head: Decodable {
         var id: String

@@ -60,3 +60,31 @@ import Testing
     guard case .shell(let message) = stored else { Issue.record("not a shell message"); return }
     #expect(message.output?.output == "Linux\n")
 }
+
+/// Sending a message after an undo makes the undo final: the undone part goes, and the message just
+/// sent stays, though it's newer than where the conversation was taken back to. (The events in
+/// the order engine 2.0.29 sends them.)
+@Test func keepsTheMessageThatMakesAnUndoFinal() throws {
+    func event(_ json: String) throws -> ServerEvent { try ServerEvent(json: Data(json.utf8)) }
+    var transcript = Transcript(sessionID: "ses_1")
+    transcript.load(messages: [
+        .user(Message.User(id: "msg_1", time: Message.Time(created: 1), text: "first")),
+        .user(Message.User(id: "msg_2", time: Message.Time(created: 2), text: "undone")),
+    ], inbox: [], permissions: [], forms: [], isRunning: false)
+    transcript.addLocal(id: "msg_3", text: "again", delivery: .steer)
+
+    transcript.apply(try event(#"""
+    {"id":"evt_1","created":3,"type":"session.revert.committed","data":{"sessionID":"ses_1","to":"msg_2"}}
+    """#))
+    #expect(transcript.messages.map(\.id) == ["msg_1"])
+    #expect(transcript.pending.map(\.id) == ["msg_3"])
+
+    transcript.apply(try event(#"""
+    {"id":"evt_2","created":4,"type":"session.inbox.enqueued","data":{"sessionID":"ses_1","inboxID":"msg_3","item":{"type":"user","payload":{"text":"again"},"delivery":"steer"}}}
+    """#))
+    transcript.apply(try event(#"""
+    {"id":"evt_3","created":5,"type":"session.inbox.delivered","data":{"sessionID":"ses_1","inboxID":"msg_3"}}
+    """#))
+    #expect(transcript.messages.map(\.id) == ["msg_1", "msg_3"])
+    #expect(transcript.pending.isEmpty)
+}

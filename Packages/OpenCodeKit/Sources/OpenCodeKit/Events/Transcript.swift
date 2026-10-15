@@ -54,6 +54,12 @@ public struct Transcript: Sendable, Equatable {
         pending.append(Pending(id: id, text: text, delivery: delivery, isLocal: true, files: files))
     }
 
+    /// Makes an undo final: the conversation from `to` on goes. What's waiting to be sent stays,
+    /// newer as it is: sending a message is what makes an undo final, and that message is among it.
+    public mutating func commitRevert(to: String) {
+        messages.removeAll { $0.id >= to }
+    }
+
     public mutating func removeLocal(id: String) {
         pending.removeAll { $0.id == id && $0.isLocal }
     }
@@ -312,9 +318,7 @@ public struct Transcript: Sendable, Equatable {
 
         // History edits
         case "session.revert.committed":
-            let to = try event.payload(as: EventPayload.RevertCommitted.self).to
-            messages.removeAll { $0.id >= to }
-            pending.removeAll { $0.id >= to }
+            commitRevert(to: try event.payload(as: EventPayload.RevertCommitted.self).to)
 
         default:
             break
