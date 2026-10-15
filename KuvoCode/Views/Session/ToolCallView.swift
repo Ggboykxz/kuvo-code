@@ -115,6 +115,8 @@ struct ToolCallView: View {
 
     private func relative(_ path: String?) -> String? {
         guard let path else { return nil }
+        // A machine's engine names files as they are there, without the ssh:// prefix.
+        let directory = RemoteFolder.parse(directory)?.path ?? directory
         let base = directory.hasSuffix("/") ? directory : directory + "/"
         // The project folder itself goes by its name.
         if path == directory || path == base { return (directory as NSString).lastPathComponent }

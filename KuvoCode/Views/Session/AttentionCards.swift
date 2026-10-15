@@ -86,6 +86,7 @@ struct PermissionCard: View {
     }
 
     private func relative(_ path: String) -> String {
+        let directory = RemoteFolder.parse(directory)?.path ?? directory
         let base = directory.hasSuffix("/") ? directory : directory + "/"
         return path.hasPrefix(base) ? String(path.dropFirst(base.count)) : path
     }

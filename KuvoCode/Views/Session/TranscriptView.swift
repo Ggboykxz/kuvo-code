@@ -828,7 +828,9 @@ private struct TurnFiles: View {
     }
 
     private func relative(_ path: String) -> String {
-        path.hasPrefix(directory + "/") ? String(path.dropFirst(directory.count + 1)) : path
+        // A machine's engine names files as they are there, without the ssh:// prefix.
+        let directory = RemoteFolder.parse(directory)?.path ?? directory
+        return path.hasPrefix(directory + "/") ? String(path.dropFirst(directory.count + 1)) : path
     }
 }
 
