@@ -545,6 +545,9 @@ final class MachineBrowser {
             }
             session = id
             _ = try await link.send("Page.enable", session: id)
+            // What a right-click lands on, for the Mac's own menu where the page has none.
+            link.fire("Page.addScriptToEvaluateOnNewDocument", ["source": Self.menuRecorder], session: id)
+            link.fire("Runtime.evaluate", ["expression": Self.menuRecorder], session: id)
             // As the page in front: it gets focus, and shows its caret.
             link.fire("Emulation.setFocusEmulationEnabled", ["enabled": true], session: id)
             await applyViewport()
@@ -764,6 +767,50 @@ final class MachineBrowser {
 
     func mouse(_ type: String, at point: CGPoint, button: String = "none", buttons: Int = 0, clicks: Int = 0, modifiers: Int = 0) {
         fire("Input.dispatchMouseEvent", ["type": type, "x": point.x, "y": point.y, "button": button, "buttons": buttons, "clickCount": clicks, "modifiers": modifiers])
+    }
+
+    // MARK: Context menu
+
+    /// Notes, as a right-click reaches the page, whether the page took it (its own menu) and what
+    /// it landed on: a link, a picture, a selection, a field.
+    static let menuRecorder = """
+    if (!window.__kuvoMenuRecorder) {
+      window.__kuvoMenuRecorder = true;
+      window.addEventListener('contextmenu', (event) => {
+        const target = event.target instanceof Element ? event.target : event.target && event.target.parentElement;
+        const link = target && target.closest('a[href]');
+        const image = target && target.closest('img');
+        window.__kuvoMenu = {
+          prevented: event.defaultPrevented,
+          link: link ? link.href : null,
+          image: image ? (image.currentSrc || image.src) : null,
+          selection: String(getSelection() || '').slice(0, 20000),
+          editable: !!(target && target.closest('input, textarea, [contenteditable=""], [contenteditable="true"]')),
+          at: Date.now(),
+        };
+      });
+    }
+    """
+
+    /// What the last right-click landed on, if the page left it to us.
+    struct MenuTarget {
+        var link: URL?
+        var image: URL?
+        var selection: String
+        var editable: Bool
+    }
+
+    func menuTarget() async -> MenuTarget? {
+        guard let link, let session else { return nil }
+        let expression = "(() => { const m = window.__kuvoMenu; return m && Date.now() - m.at < 2000 && !m.prevented ? m : null })()"
+        guard let result = try? await link.send("Runtime.evaluate", ["expression": expression, "returnByValue": true], session: session),
+              let value = (result["result"] as? [String: Any])?["value"] as? [String: Any] else { return nil }
+        return MenuTarget(
+            link: (value["link"] as? String).flatMap(URL.init(string:)),
+            image: (value["image"] as? String).flatMap(URL.init(string:)),
+            selection: value["selection"] as? String ?? "",
+            editable: value["editable"] as? Bool ?? false
+        )
     }
 
     /// The CSS cursor over `point` in the page shown ("pointer" over a link, "text" over a field),

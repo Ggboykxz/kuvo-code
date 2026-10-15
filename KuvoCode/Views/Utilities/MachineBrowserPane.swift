@@ -615,6 +615,45 @@ final class RemotePageView: NSView, @preconcurrency NSTextInputClient, PictureVi
 
     override func rightMouseUp(with event: NSEvent) {
         browser.mouse("mouseReleased", at: pagePoint(event), button: "right", buttons: 0, clicks: 1, modifiers: MachineBrowser.modifiers(event.modifierFlags))
+        // Where the page has no menu of its own, this Mac's.
+        let location = convert(event.locationInWindow, from: nil)
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(60))
+            guard let self, let target = await browser.menuTarget() else { return }
+            menu(for: target).popUp(positioning: nil, at: location, in: self)
+        }
+    }
+
+    private func menu(for target: MachineBrowser.MenuTarget) -> NSMenu {
+        let menu = NSMenu()
+        func item(_ title: String, _ action: @escaping @MainActor () -> Void) {
+            menu.addItem(ActionItem(title, handler: action))
+        }
+        func copy(_ text: String) {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+        }
+        if let link = target.link {
+            item("Open Link in New Tab") { [browser] in Task { _ = await browser.newPage(link.absoluteString) } }
+            item("Copy Link") { copy(link.absoluteString) }
+            menu.addItem(.separator())
+        }
+        if let image = target.image {
+            item("Open Image in New Tab") { [browser] in Task { _ = await browser.newPage(image.absoluteString) } }
+            item("Copy Image Address") { copy(image.absoluteString) }
+            menu.addItem(.separator())
+        }
+        if !target.selection.isEmpty {
+            item("Copy") { copy(target.selection) }
+        }
+        if target.editable {
+            item("Paste") { [weak self] in self?.paste(nil) }
+        }
+        if !target.selection.isEmpty || target.editable { menu.addItem(.separator()) }
+        item("Back") { [browser] in browser.goBack() }
+        item("Forward") { [browser] in browser.goForward() }
+        item("Reload") { [browser] in browser.reload() }
+        return menu
     }
 
     override func otherMouseDown(with event: NSEvent) {
