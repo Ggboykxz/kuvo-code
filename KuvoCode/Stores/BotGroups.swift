@@ -33,6 +33,8 @@ struct GroupMessage: Codable, Identifiable, Hashable {
     var text: String
     var time: Date
     var kind: Kind = .message
+    /// What the bot did on its turn before it wrote this: its searches, reads and commands.
+    var steps: [Message.ToolCall]?
 
     enum Kind: String, Codable {
         /// Said in the chat.
@@ -375,7 +377,7 @@ final class BotGroups {
             }
             let sent = Date.now
             try await waitForRun(of: seat, after: ended, since: sent, api: api)
-            let (text, error) = try await reply(in: seat, after: promptID, since: sent, api: api)
+            let (text, error, steps) = try await reply(in: seat, after: promptID, since: sent, api: api)
             if text.isEmpty {
                 if let error {
                     note("\(bot.name) couldn’t answer: \(error)", in: id)
@@ -384,7 +386,8 @@ final class BotGroups {
                 return .passed
             }
             if !wrapUp, Self.isPass(text) { return .passed }
-            append(GroupMessage(id: Self.newID(), author: botID, text: text, time: .now, kind: wrapUp ? .wrapUp : .message), to: id)
+            append(GroupMessage(id: Self.newID(), author: botID, text: text, time: .now, kind: wrapUp ? .wrapUp : .message,
+                                steps: steps.isEmpty ? nil : steps.map(Self.trimmed)), to: id)
             return .said
         } catch is CancellationError {
             return .absent
@@ -443,13 +446,14 @@ final class BotGroups {
     /// was given (yours, steered in while it talked, start a new part), so nothing it said to
     /// the group is lost, and none of the asides between its steps go in. An error, if that's
     /// all it has.
-    private func reply(in seat: String, after promptID: String, since sent: Date, api: OpenCodeAPI) async throws -> (text: String, error: String?) {
+    private func reply(in seat: String, after promptID: String, since sent: Date, api: OpenCodeAPI) async throws -> (text: String, error: String?, steps: [Message.ToolCall]) {
         let messages = try await api.messages(session: seat, limit: 60).data
         let start = messages.firstIndex { $0.id == promptID }.map { $0 + 1 }
         let since = sent.timeIntervalSince1970 * 1000 - 2000
         var parts: [String] = []
         var part = ""
         var error: String?
+        var steps: [Message.ToolCall] = []
         for (index, message) in messages.enumerated() {
             guard start.map({ index >= $0 }) ?? (message.created >= since) else { continue }
             switch message {
@@ -457,6 +461,7 @@ final class BotGroups {
                 if !part.isEmpty { parts.append(part) }
                 part = ""
             case .assistant(let answer):
+                for case .tool(let call) in answer.content { steps.append(call) }
                 let words = answer.content.compactMap { block -> String? in
                     if case .text(let text) = block { text.text } else { nil }
                 }
@@ -471,7 +476,24 @@ final class BotGroups {
         if !part.isEmpty { parts.append(part) }
         // A part that's only a pass, beside one that says something, is left out.
         let said = parts.filter { !Self.isPass($0) }
-        return ((said.isEmpty ? parts.suffix(1) : said).joined(separator: "\n\n"), error)
+        return ((said.isEmpty ? parts.suffix(1) : said).joined(separator: "\n\n"), error, steps)
+    }
+
+    /// A step as it's kept with the chat: what it printed, cut short, so the log stays small.
+    private static func trimmed(_ call: Message.ToolCall) -> Message.ToolCall {
+        func cut(_ output: [Message.ToolOutput]) -> [Message.ToolOutput] {
+            output.map { item in
+                if case .text(let text) = item, text.count > 4000 { return .text(String(text.prefix(4000)) + "…") }
+                return item
+            }
+        }
+        var call = call
+        switch call.state {
+        case .completed(let input, let output, let metadata): call.state = .completed(input: input, output: cut(output), metadata: metadata)
+        case .failed(let input, let error, let output, let metadata): call.state = .failed(input: input, error: error, output: output.map(cut), metadata: metadata)
+        case .streaming, .running: break
+        }
+        return call
     }
 
     /// "PASS", "Pass.", "[pass] nothing to add": a bot with nothing to say.

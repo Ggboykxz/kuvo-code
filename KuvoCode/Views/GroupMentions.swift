@@ -31,8 +31,32 @@ nonisolated enum GroupMentions {
         })
     }
 
-    /// Styles the mentions in `text`; `faces` puts each bot's face in place of its @.
+    /// "@User" and "@you": you, named by a bot.
+    static func findYou(in text: String) -> [Range<String.Index>] {
+        var found: [Range<String.Index>] = []
+        for name in ["@User", "@you"] {
+            var start = text.startIndex
+            while let range = text.range(of: name, options: [.caseInsensitive], range: start..<text.endIndex) {
+                start = range.upperBound
+                if range.upperBound < text.endIndex, text[range.upperBound].isLetter || text[range.upperBound].isNumber { continue }
+                found.append(range)
+            }
+        }
+        return found.sorted { $0.lowerBound > $1.lowerBound }
+    }
+
+    /// Styles the mentions in `text`; `faces` puts each bot's face in place of its @. You, named
+    /// as "@User", show in your accent color.
     static func apply(to text: inout AttributedString, bots: [Bot], faces: Bool) {
+        let plain = String(text.characters)
+        for range in findYou(in: plain) {
+            let start = plain.distance(from: plain.startIndex, to: range.lowerBound)
+            let length = plain.distance(from: range.lowerBound, to: range.upperBound)
+            let lower = text.characters.index(text.startIndex, offsetBy: start)
+            let upper = text.characters.index(lower, offsetBy: length)
+            text[lower..<upper].swiftUI.foregroundColor = .accentColor
+            text[lower..<upper].inlinePresentationIntent = .stronglyEmphasized
+        }
         let characters = String(text.characters)
         for (range, bot) in find(in: characters, bots: bots) {
             let start = characters.distance(from: characters.startIndex, to: range.lowerBound)
