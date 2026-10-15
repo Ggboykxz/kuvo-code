@@ -511,7 +511,7 @@ final class RemotePageView: NSView, @preconcurrency NSTextInputClient, PictureVi
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let tracking { removeTrackingArea(tracking) }
-        let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .activeInKeyWindow, .inVisibleRect], owner: self)
+        let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .cursorUpdate, .activeInKeyWindow, .inVisibleRect], owner: self)
         addTrackingArea(area)
         tracking = area
     }
@@ -533,7 +533,53 @@ final class RemotePageView: NSView, @preconcurrency NSTextInputClient, PictureVi
         // Hovers at most 30 times a second: each is a message over the network.
         guard Date.now.timeIntervalSince(lastMove) > 1.0 / 30 else { return }
         lastMove = .now
-        browser.mouse("mouseMoved", at: pagePoint(event), modifiers: MachineBrowser.modifiers(event.modifierFlags))
+        let point = pagePoint(event)
+        browser.mouse("mouseMoved", at: point, modifiers: MachineBrowser.modifiers(event.modifierFlags))
+        updateCursor(at: point)
+    }
+
+    // MARK: Cursor
+
+    /// The page's cursor where the pointer is (a hand over a link, a text cursor over a field),
+    /// asked of the page a few times a second at most.
+    private var cursor = NSCursor.arrow
+    private var cursorQuery: Task<Void, Never>?
+    private var lastCursorQuery = Date.distantPast
+
+    override func cursorUpdate(with event: NSEvent) {
+        cursor.set()
+    }
+
+    private func updateCursor(at point: CGPoint) {
+        guard cursorQuery == nil else { return }
+        let wait = max(0, 0.12 - Date.now.timeIntervalSince(lastCursorQuery))
+        cursorQuery = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(wait))
+            guard let self else { return }
+            lastCursorQuery = .now
+            let name = await browser.cursor(at: point)
+            cursorQuery = nil
+            guard let name else { return }
+            cursor = Self.cursor(named: name)
+            if let window, window.isKeyWindow, bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil)) { cursor.set() }
+        }
+    }
+
+    private static func cursor(named name: String) -> NSCursor {
+        switch name {
+        case "pointer": .pointingHand
+        case "text", "vertical-text": .iBeam
+        case "grab": .openHand
+        case "grabbing", "move", "all-scroll": .closedHand
+        case "not-allowed", "no-drop": .operationNotAllowed
+        case "crosshair", "cell": .crosshair
+        case "col-resize", "ew-resize", "e-resize", "w-resize": .resizeLeftRight
+        case "row-resize", "ns-resize", "n-resize", "s-resize": .resizeUpDown
+        case "copy": .dragCopy
+        case "alias": .dragLink
+        case "context-menu": .contextualMenu
+        default: .arrow
+        }
     }
 
     override func rightMouseDown(with event: NSEvent) {

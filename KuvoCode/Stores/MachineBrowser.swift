@@ -746,6 +746,24 @@ final class MachineBrowser {
         fire("Input.dispatchMouseEvent", ["type": type, "x": point.x, "y": point.y, "button": button, "buttons": buttons, "clickCount": clicks, "modifiers": modifiers])
     }
 
+    /// The CSS cursor over `point` in the page shown ("pointer" over a link, "text" over a field),
+    /// for the Mac's own pointer.
+    func cursor(at point: CGPoint) async -> String? {
+        guard let link, let session else { return nil }
+        let expression = """
+        (() => {
+          const element = document.elementFromPoint(\(Int(point.x)), \(Int(point.y)));
+          if (!element) return 'default';
+          const cursor = getComputedStyle(element).cursor;
+          if (cursor && cursor !== 'auto') return cursor;
+          const field = element.closest('textarea, [contenteditable=""], [contenteditable="true"], input:not([type=button]):not([type=submit]):not([type=checkbox]):not([type=radio]):not([type=range]):not([type=color]):not([type=file])');
+          return field ? 'text' : 'default';
+        })()
+        """
+        let result = try? await link.send("Runtime.evaluate", ["expression": expression, "returnByValue": true], session: session)
+        return (result?["result"] as? [String: Any])?["value"] as? String
+    }
+
     func wheel(at point: CGPoint, dx: CGFloat, dy: CGFloat, modifiers: Int) {
         #if DEBUG
         meter.input()
