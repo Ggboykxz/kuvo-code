@@ -67,15 +67,14 @@ final class BrowserAgent {
         return notes.isEmpty ? "" : notes.joined(separator: "\n") + "\n\n"
     }
 
-    /// The session whose tool call is under way, when the engine says.
-    var caller: String?
-
     static let unanswered = "The user didn't answer in time. Carry on with what you can without it, and say in your reply what you need; if you work on your own (a bot), schedule a wake-up to try again later."
 
-    /// A browser tool is at work: dialogs pages show are answered at once.
-    static var isWorking = false
-    /// And confirmations and prompts are accepted rather than declined.
-    static var acceptsDialogs = false
+    /// Browser tools at work: while any is, dialogs pages show are answered at once.
+    static var working = 0
+    static var isWorking: Bool { working > 0 }
+    /// Of them, those that said to accept confirmations and prompts rather than decline them.
+    static var accepting = 0
+    static var acceptsDialogs: Bool { accepting > 0 }
 
     /// The panel's browser tabs, numbered from 1; or switches to one, or closes one.
     func tabs(_ action: String, tab number: Int?) async -> String {
@@ -211,7 +210,7 @@ final class BrowserAgent {
     /// Signs in with your username and password, which you type (or pick from your saved
     /// passwords) in Kuvo Code: they go straight into the fields named, and the agent never sees
     /// them. A password only goes into a password field.
-    func signIn(username: Int?, password: Int?) async -> String {
+    func signIn(username: Int?, password: Int?, for caller: String? = nil) async -> String {
         let browser = browser()
         guard let host = Self.site(of: browser.url) else { return "Open the sign-in page first." }
         guard username != nil || password != nil else { return "Name the username field, the password field, or both, by number." }
@@ -241,7 +240,7 @@ final class BrowserAgent {
 
     /// A one-time code (from a text, an email or an authenticator) that you type in Kuvo Code,
     /// filled into the field named.
-    func askCode(_ index: Int, prompt: String?) async -> String {
+    func askCode(_ index: Int, prompt: String?, for caller: String? = nil) async -> String {
         let browser = browser()
         guard let host = Self.site(of: browser.url) else { return "Open the page that asks for the code first." }
         let kind = await run(Self.fieldKindScript, ["index": index], in: browser)
@@ -261,7 +260,7 @@ final class BrowserAgent {
 
     /// Something only you can do on the page (a CAPTCHA, approving the sign-in on your phone):
     /// waits until you say you're done.
-    func askUser(_ instruction: String) async -> String {
+    func askUser(_ instruction: String, for caller: String? = nil) async -> String {
         let browser = browser()
         let host = Self.site(of: browser.url) ?? "the page"
         switch await asks.ask(.action(instruction: instruction), host: host, session: caller) {

@@ -130,9 +130,8 @@ final class BrowserToolServer {
             let name = params["name"] as? String ?? ""
             let arguments = params["arguments"] as? [String: Any] ?? [:]
             // The engine names the session calling, so an ask goes to the right conversation.
-            agent.caller = (params["_meta"] as? [String: Any])?["ai.opencode/sessionID"] as? String
-            defer { agent.caller = nil }
-            return reply(await BrowserTools.call(name, arguments: arguments, agent: agent))
+            let caller = (params["_meta"] as? [String: Any])?["ai.opencode/sessionID"] as? String
+            return reply(await BrowserTools.call(name, arguments: arguments, agent: agent, caller: caller))
         default:
             return ["jsonrpc": "2.0", "id": id, "error": ["code": -32601, "message": "Unknown method \(method)"]]
         }
@@ -201,16 +200,17 @@ enum BrowserTools {
         return ["name": name, "description": description, "inputSchema": schema]
     }
 
-    static func call(_ name: String, arguments: [String: Any], agent: BrowserAgent) async -> [String: Any] {
-        // While the tool works, a dialog the page shows is answered at once (it would hold the
+    static func call(_ name: String, arguments: [String: Any], agent: BrowserAgent, caller: String? = nil) async -> [String: Any] {
+        // While a tool works, a dialog the page shows is answered at once (it would hold the
         // page, and the tool, until someone did).
-        BrowserAgent.isWorking = true
-        BrowserAgent.acceptsDialogs = (arguments["accept_dialog"] as? NSNumber)?.boolValue ?? false
+        BrowserAgent.working += 1
+        let accepts = (arguments["accept_dialog"] as? NSNumber)?.boolValue ?? false
+        if accepts { BrowserAgent.accepting += 1 }
         defer {
-            BrowserAgent.isWorking = false
-            BrowserAgent.acceptsDialogs = false
+            BrowserAgent.working -= 1
+            if accepts { BrowserAgent.accepting -= 1 }
         }
-        var result = await perform(name, arguments: arguments, agent: agent)
+        var result = await perform(name, arguments: arguments, agent: agent, caller: caller)
         // Downloads that started or finished meanwhile, ahead of the tool's own result.
         let notes = agent.takeNotes()
         if !notes.isEmpty, var content = result["content"] as? [[String: Any]], content.first?["type"] as? String == "text" {
@@ -220,7 +220,7 @@ enum BrowserTools {
         return result
     }
 
-    private static func perform(_ name: String, arguments: [String: Any], agent: BrowserAgent) async -> [String: Any] {
+    private static func perform(_ name: String, arguments: [String: Any], agent: BrowserAgent, caller: String?) async -> [String: Any] {
         func text(_ value: String, error: Bool = false) -> [String: Any] {
             ["content": [["type": "text", "text": value]], "isError": error]
         }
@@ -272,13 +272,13 @@ enum BrowserTools {
         case "browser_tabs":
             return text(await agent.tabs(string("action") ?? "list", tab: int("tab")))
         case "browser_sign_in":
-            return text(await agent.signIn(username: int("username"), password: int("password")))
+            return text(await agent.signIn(username: int("username"), password: int("password"), for: caller))
         case "browser_ask_code":
             guard let index = int("index") else { return text("Missing index.", error: true) }
-            return text(await agent.askCode(index, prompt: string("prompt")))
+            return text(await agent.askCode(index, prompt: string("prompt"), for: caller))
         case "browser_ask_user":
             guard let instruction = string("instruction"), !instruction.isEmpty else { return text("Missing instruction.", error: true) }
-            return text(await agent.askUser(instruction))
+            return text(await agent.askUser(instruction, for: caller))
         default:
             return text("Unknown tool \(name).", error: true)
         }
