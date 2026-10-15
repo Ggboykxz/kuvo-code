@@ -134,6 +134,11 @@ struct MainView: View {
                     } else {
                         conversationCard
                             .frame(maxWidth: .infinity)
+                            // It takes its new room at once while the panel or sidebar slides, so its
+                            // text wraps once instead of at every step of the slide, which made
+                            // the conversation flicker and jump.
+                            .transaction(value: showsPanel) { $0.animation = nil }
+                            .transaction(value: showsSidebar) { $0.animation = nil }
                     }
                 }
                 .environment(\.windowControlsInset, controlsInset)
@@ -996,6 +1001,15 @@ struct MainView: View {
             default: continue
             }
             showsPanel = true
+        }
+        // KUVO_DEMO_TOGGLE_PANEL=<seconds>: shows and hides the panel every so often, a few times.
+        if let every = environment["KUVO_DEMO_TOGGLE_PANEL"].flatMap(Double.init) {
+            Task {
+                for _ in 0..<6 {
+                    try? await Task.sleep(for: .seconds(every))
+                    withAnimation(.ui) { showsPanel.toggle() }
+                }
+            }
         }
         // KUVO_DEMO_VIEW_IMAGE=<path>,…: those pictures in the image viewer.
         if let paths = environment["KUVO_DEMO_VIEW_IMAGE"] {

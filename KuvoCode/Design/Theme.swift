@@ -19,7 +19,15 @@ enum Metrics {
 
 extension Animation {
     /// The app's default motion: quick, with a little give.
-    static let ui = Animation.spring(response: 0.32, dampingFraction: 0.86)
+    static let ui: Animation = {
+        #if DEBUG
+        // KUVO_DEMO_SLOW=<times>: slower, to look at a transition frame by frame.
+        if let slow = ProcessInfo.processInfo.environment["KUVO_DEMO_SLOW"].flatMap(Double.init) {
+            return .spring(response: 0.32 * slow, dampingFraction: 0.86)
+        }
+        #endif
+        return .spring(response: 0.32, dampingFraction: 0.86)
+    }()
 }
 
 extension Color {
