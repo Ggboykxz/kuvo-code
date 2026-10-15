@@ -226,24 +226,7 @@ struct Composer: View {
         .padding(.horizontal, 16)
         .padding(.top, 10)
         .padding(.bottom, 7)
-        // Quiet, so the message draws the eye and not the box: a step off the card, opaque
-        // since messages scroll under it, a lit top edge, no outline, and only a tiny lift.
-        .background {
-            RoundedRectangle(cornerRadius: Metrics.composerRadius)
-                .fill(Surface.cardFill(scheme, focused: cardIsFocused))
-                .overlay(RoundedRectangle(cornerRadius: Metrics.composerRadius).fill(scheme == .dark ? Color.white.opacity(0.035) : Surface.slate.opacity(0.02)))
-                .shadow(color: scheme == .dark ? .black.opacity(0.25) : .black.opacity(0.07), radius: scheme == .dark ? 3 : 8, y: scheme == .dark ? 1 : 2)
-        }
-        .specularRim(RoundedRectangle(cornerRadius: Metrics.composerRadius))
-        // On a white card, a crisper edge than the rim's hairline, so it floats instead of
-        // reading as a flat gray patch.
-        .overlay {
-            if scheme == .light {
-                RoundedRectangle(cornerRadius: Metrics.composerRadius)
-                    .strokeBorder(.black.opacity(0.1), lineWidth: 1)
-                    .allowsHitTesting(false)
-            }
-        }
+        .modifier(ComposerSurface())
         .overlay {
             if isTargeted {
                 RoundedRectangle(cornerRadius: Metrics.composerRadius)
@@ -409,7 +392,35 @@ struct Composer: View {
 /// send, so the main action stands apart from the flat pills beside it; with nothing to send,
 /// plain glass and a faint arrow. Stop stays neutral. Under the pointer its fill deepens; it
 /// never grows or moves.
-private struct ActionButtonStyle: ButtonStyle {
+/// The composer's box. Quiet, so the message draws the eye and not the box: a step off the card,
+/// opaque since messages scroll under it, a lit top edge, no outline, and only a tiny lift.
+struct ComposerSurface: ViewModifier {
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.cardIsFocused) private var cardIsFocused
+
+    func body(content: Content) -> some View {
+        content
+            .background {
+                RoundedRectangle(cornerRadius: Metrics.composerRadius)
+                    .fill(Surface.cardFill(scheme, focused: cardIsFocused))
+                    .overlay(RoundedRectangle(cornerRadius: Metrics.composerRadius).fill(scheme == .dark ? Color.white.opacity(0.035) : Surface.slate.opacity(0.02)))
+                    .shadow(color: scheme == .dark ? .black.opacity(0.25) : .black.opacity(0.07), radius: scheme == .dark ? 3 : 8, y: scheme == .dark ? 1 : 2)
+            }
+            .specularRim(RoundedRectangle(cornerRadius: Metrics.composerRadius))
+            // On a white card, a crisper edge than the rim's hairline, so it floats instead of
+            // reading as a flat gray patch.
+            .overlay {
+                if scheme == .light {
+                    RoundedRectangle(cornerRadius: Metrics.composerRadius)
+                        .strokeBorder(.black.opacity(0.1), lineWidth: 1)
+                        .allowsHitTesting(false)
+                }
+            }
+    }
+}
+
+/// The round send (or stop) button.
+struct ActionButtonStyle: ButtonStyle {
     var isAccent = true
 
     func makeBody(configuration: Configuration) -> some View {

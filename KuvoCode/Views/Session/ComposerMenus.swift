@@ -145,33 +145,23 @@ struct WorkplaceChip: View {
     }
 }
 
-/// "GPT-6 Luna · High ⌄": the model, its effort, and the context it has.
-struct ModelChip: View {
+/// "GPT-6 Luna · High ⌄": the model, its effort, and the context it has. Elsewhere (a bot's
+/// default model) the same menu opens from a label of its own.
+struct ModelChip<Label: View>: View {
     @Environment(Catalog.self) private var catalog
     let selection: ModelRef?
     let onSelect: (ModelRef) -> Void
+    var opensBelow = false
+    /// Drawn with the model in use and its effort.
+    @ViewBuilder let label: (Model?, String?) -> Label
     @AppStorage("recentModels") private var recentStorage = ""
 
     private var current: Model? { catalog.model(selection) ?? catalog.defaultModel }
     private var variant: String? { current.flatMap { model in selection?.sameModel(as: model.ref) == true ? selection?.variant : nil } }
 
     var body: some View {
-        NativeMenuButton(name: "model", menu: makeMenu) {
-            HStack(spacing: 6) {
-                if let current {
-                    ProviderLogo(id: current.makerLogoID, size: 14)
-                }
-                Text(current?.name ?? "Choose a Model")
-                    .lineLimit(1)
-                if let variant {
-                    Text("· \(variant.capitalized)")
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .font(.callout)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .hoverHighlight(in: Capsule(), mutesInk: true)
+        NativeMenuButton(name: "model", opensBelow: opensBelow, menu: makeMenu) {
+            label(current, variant)
         }
         .help("Model and effort")
         .onAppear { LogoImages.shared.prefetch(catalog.models.flatMap { [$0.makerLogoID, $0.providerID] }) }
@@ -263,6 +253,36 @@ struct ModelChip: View {
         var keys = recentStorage.split(separator: ",").map(String.init).filter { $0 != model.key }
         keys.insert(model.key, at: 0)
         recentStorage = keys.prefix(4).joined(separator: ",")
+    }
+}
+
+extension ModelChip where Label == ModelChipLabel {
+    init(selection: ModelRef?, onSelect: @escaping (ModelRef) -> Void) {
+        self.init(selection: selection, onSelect: onSelect) { ModelChipLabel(model: $0, variant: $1) }
+    }
+}
+
+/// The composer's chip: the maker's logo, the model's name and its effort.
+struct ModelChipLabel: View {
+    let model: Model?
+    let variant: String?
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if let model {
+                ProviderLogo(id: model.makerLogoID, size: 14)
+            }
+            Text(model?.name ?? "Choose a Model")
+                .lineLimit(1)
+            if let variant {
+                Text("· \(variant.capitalized)")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .font(.callout)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .hoverHighlight(in: Capsule(), mutesInk: true)
     }
 }
 
