@@ -157,6 +157,7 @@ struct ModelChip<Label: View>: View {
     @ViewBuilder let label: (Model?, String?) -> Label
     @State private var isOpen = false
     @State private var startsExpanded = false
+    @State private var startsOnEffort = false
 
     private var current: Model? { catalog.model(selection) ?? catalog.defaultModel }
     private var variant: String? { current.flatMap { model in selection?.sameModel(as: model.ref) == true ? selection?.variant : nil } }
@@ -170,15 +171,17 @@ struct ModelChip<Label: View>: View {
         .buttonStyle(.plain)
         .help("Model and effort")
         .popover(isPresented: $isOpen, arrowEdge: opensBelow ? .bottom : .top) {
-            ModelPicker(catalog: catalog, selection: selection, onSelect: onSelect, close: { isOpen = false }, startsExpanded: startsExpanded)
+            ModelPicker(catalog: catalog, selection: selection, onSelect: onSelect, close: { isOpen = false }, startsExpanded: startsExpanded, startsOnEffort: startsOnEffort)
         }
         .onAppear { LogoImages.shared.prefetch(catalog.models.flatMap { [$0.makerLogoID, $0.providerID] }) }
         #if DEBUG
         .task {
-            // KUVO_DEMO_MENU=model opens the picker after launch; =models, with every model shown.
-            guard let wanted = ProcessInfo.processInfo.environment["KUVO_DEMO_MENU"], wanted == "model" || wanted == "models" else { return }
+            // KUVO_DEMO_MENU=model opens the picker after launch; =models, with every model shown;
+            // =effort, on the model's effort.
+            guard let wanted = ProcessInfo.processInfo.environment["KUVO_DEMO_MENU"], ["model", "models", "effort"].contains(wanted) else { return }
             try? await Task.sleep(for: .seconds(3))
             startsExpanded = wanted == "models"
+            startsOnEffort = wanted == "effort"
             isOpen = true
             // KUVO_DEMO_EFFORT=<level>: with it set, as if picked.
             if let level = ProcessInfo.processInfo.environment["KUVO_DEMO_EFFORT"], let current {
@@ -195,22 +198,22 @@ extension ModelChip where Label == ModelChipLabel {
     }
 }
 
-/// The composer's chip: the maker's logo, the model's name and its effort.
+/// The composer's chip: the model's name, its effort, and that it opens the picker.
 struct ModelChipLabel: View {
     let model: Model?
     let variant: String?
 
     var body: some View {
-        HStack(spacing: 6) {
-            if let model {
-                ProviderLogo(id: model.makerLogoID, size: 14)
-            }
+        HStack(spacing: 5) {
             Text(model?.name ?? "Choose a Model")
                 .lineLimit(1)
             if let variant {
-                Text("· \(EffortLevel.title(variant))")
+                Text(EffortLevel.title(variant))
                     .foregroundStyle(.secondary)
             }
+            Image(systemName: "chevron.down")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.tertiary)
         }
         .font(.callout)
         .padding(.horizontal, 8)
