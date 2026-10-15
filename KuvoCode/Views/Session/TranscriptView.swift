@@ -68,7 +68,9 @@ struct TranscriptView: View {
         .scrollEdgeEffectStyle(.soft, for: .all)
         .overlay {
             if model.isLoaded && rows.isEmpty {
-                EmptyConversationView(directory: model.session.location.directory)
+                EmptyConversationView(directory: model.session.location.directory) { text in
+                    model.submit(text, files: [], for: nil, queue: false, commands: [])
+                }
             }
         }
         .overlay(alignment: .bottom) {
@@ -945,6 +947,8 @@ private struct WakeRow: View {
 /// A session with nothing in it yet.
 struct EmptyConversationView: View {
     let directory: String
+    /// Sends a message, for a bot's first start.
+    var send: (String) -> Void = { _ in }
     @Environment(\.bot) private var bot
     @State private var isHoveringBot = false
 
@@ -963,17 +967,29 @@ struct EmptyConversationView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                Text("Give \(bot.name) its first task. It keeps this conversation, remembers what it learns, and can wake itself up later to carry on.")
+                Text(bot.instructions.isEmpty
+                    ? "Give \(bot.name) its first task. It keeps this conversation, remembers what it learns, and can wake itself up later to carry on."
+                    : "Start \(bot.name) on its job, or give it a task of your own. It keeps this conversation, remembers what it learns, and can wake itself up later to carry on.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 340)
+                if !bot.instructions.isEmpty {
+                    Button("Start Its Job") { send(Self.kickoff) }
+                        .buttonStyle(.glassProminent)
+                        .controlSize(.large)
+                        .padding(.top, 4)
+                        .help("\(bot.name) reads its job, asks you for anything it needs, and starts")
+                }
             }
             .padding(.bottom, 120)
         } else {
             plain
         }
     }
+
+    /// A bot's first message: start on the job it was given.
+    static let kickoff = "Start on your job now: read your instructions and your memory, ask me for anything you need to get going (like what to watch or which topics), do the first round, and if your job repeats, schedule your next wake-up."
 
     private var plain: some View {
         VStack(spacing: 10) {
