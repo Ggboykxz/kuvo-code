@@ -24,6 +24,26 @@ final class BrowserSession: NSObject {
     /// The saved logins for the page's site, and whether it has a field to fill them into.
     private(set) var savedLogins: [Passwords.Login] = []
     private(set) var hasLoginField = false
+    /// Files the page downloaded, the latest last, while the bar shows them.
+    private(set) var downloads: [Download] = []
+    /// What happened since the agent last looked (a download started or finished), for its next
+    /// tool result.
+    @ObservationIgnored var agentNotes: [String] = []
+
+    /// A file the page downloaded into your Downloads folder.
+    struct Download: Identifiable {
+        let id = UUID()
+        var name: String
+        var file: URL?
+        var state: State = .running
+        var progress = 0.0
+
+        enum State: Equatable { case running, done, failed(String) }
+    }
+
+    @ObservationIgnored private var running: [ObjectIdentifier: (download: WKDownload, id: UUID, progress: NSKeyValueObservation?)] = [:]
+    /// Where each download is written until it's done, in the app's temporary folder.
+    @ObservationIgnored private var writing: [UUID: URL] = [:]
 
     /// A new tab, or, with the configuration WebKit passes for a window a page opens, that window:
     /// it stays connected to the page that opened it, which sign-in popups need to report back.
@@ -132,6 +152,20 @@ final class BrowserSession: NSObject {
 }
 
 extension BrowserSession: WKUIDelegate {
+    /// The page's file picker: the Mac's open panel, over the window.
+    func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+        panel.canChooseDirectories = parameters.allowsDirectories
+        panel.canChooseFiles = true
+        panel.prompt = "Choose"
+        if let window = webView.window {
+            panel.beginSheetModal(for: window) { response in completionHandler(response == .OK ? panel.urls : nil) }
+        } else {
+            completionHandler(panel.runModal() == .OK ? panel.urls : nil)
+        }
+    }
+
     /// A window the page opens, a link or a script's, becomes a real window in a tab of its own, as
     /// in any browser. It stays connected to the page that opened it, which sign-in windows like
     /// "Sign in with Google" need to report back before they close.
@@ -148,6 +182,25 @@ extension BrowserSession: WKUIDelegate {
 }
 
 extension BrowserSession: WKNavigationDelegate {
+    /// What a link asks to download, or a page the browser can't show (a PDF it's told to save,
+    /// a zip), goes into your Downloads folder, as in any browser.
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, preferences: WKWebpagePreferences) async -> (WKNavigationActionPolicy, WKWebpagePreferences) {
+        (navigationAction.shouldPerformDownload ? .download : .allow, preferences)
+    }
+
+    func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse) async -> WKNavigationResponsePolicy {
+        let attachment = (navigationResponse.response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Disposition")?.lowercased().hasPrefix("attachment") == true
+        return navigationResponse.isForMainFrame && (attachment || !navigationResponse.canShowMIMEType) ? .download : .allow
+    }
+
+    func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
+        start(download)
+    }
+
+    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
+        start(download)
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         // A login offered on another site doesn't follow you around.
         if let pending = pendingLogin, pending.host != webView.url?.host() { pendingLogin = nil }
@@ -168,6 +221,107 @@ extension BrowserSession: WKNavigationDelegate {
         webView.evaluateJavaScript(script) { result, _ in
             MainActor.assumeIsolated { onVisit(url, title, (result as? String).flatMap(URL.init(string:))) }
         }
+    }
+}
+
+extension BrowserSession: WKDownloadDelegate {
+    fileprivate func start(_ download: WKDownload) {
+        download.delegate = self
+        let entry = Download(name: download.originalRequest?.url?.lastPathComponent ?? "Download")
+        let progress = download.progress.observe(\.fractionCompleted) { [weak self] progress, _ in
+            let fraction = progress.fractionCompleted
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.update(entry.id) { $0.progress = fraction } } }
+        }
+        running[ObjectIdentifier(download)] = (download, entry.id, progress)
+        withAnimation(.ui) { downloads = (downloads + [entry]).suffix(3) }
+    }
+
+    /// It downloads into the app's temporary folder first, then moves to your Downloads folder
+    /// when done: WebKit holds the whole app still while macOS asks whether it may use Downloads,
+    /// and a move off the main thread doesn't.
+    func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String) async -> URL? {
+        let name = Self.safeName(suggestedFilename)
+        let folder = FileManager.default.temporaryDirectory.appending(path: "Downloads/\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let file = folder.appending(path: name)
+        if let id = running[ObjectIdentifier(download)]?.id {
+            update(id) { $0.name = name }
+            writing[id] = file
+        }
+        agentNotes.append("The page started downloading \(name).")
+        return file
+    }
+
+    func downloadDidFinish(_ download: WKDownload) {
+        guard let entry = running.removeValue(forKey: ObjectIdentifier(download)), let source = writing.removeValue(forKey: entry.id) else { return }
+        let id = entry.id
+        Task {
+            let moved: Result<URL, Error> = await Task.detached {
+                defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+                let file = BrowserSession.free(source.lastPathComponent, in: BrowserSession.downloadsFolder)
+                do {
+                    try FileManager.default.moveItem(at: source, to: file)
+                    return .success(file)
+                } catch {
+                    return .failure(error)
+                }
+            }.value
+            switch moved {
+            case .success(let file):
+                update(id) {
+                    $0.state = .done
+                    $0.progress = 1
+                    $0.file = file
+                    $0.name = file.lastPathComponent
+                }
+                agentNotes.append("Downloaded \(file.lastPathComponent) to \(file.path).")
+            case .failure(let error):
+                update(id) { $0.state = .failed("Couldn't put it in Downloads: \(error.localizedDescription)") }
+                agentNotes.append("A download couldn't be saved: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Your Downloads folder (KUVO_DEMO_DOWNLOADS, in a debug build, names another).
+    nonisolated static var downloadsFolder: URL {
+        #if DEBUG
+        if let folder = ProcessInfo.processInfo.environment["KUVO_DEMO_DOWNLOADS"] { return URL(filePath: folder) }
+        #endif
+        return FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
+    }
+
+    /// A file name a site gave, safe to use: no folders, no leading dots.
+    nonisolated static func safeName(_ suggested: String) -> String {
+        let name = (suggested as NSString).lastPathComponent.trimmingCharacters(in: CharacterSet(charactersIn: ". "))
+        return name.isEmpty ? "Download" : String(name.prefix(200))
+    }
+
+    /// `name` in `folder`, numbered if that's taken.
+    nonisolated static func free(_ name: String, in folder: URL) -> URL {
+        var file = folder.appending(path: name)
+        let stem = file.deletingPathExtension().lastPathComponent, ext = file.pathExtension
+        var number = 2
+        while FileManager.default.fileExists(atPath: file.path) {
+            file = folder.appending(path: ext.isEmpty ? "\(stem) \(number)" : "\(stem) \(number).\(ext)")
+            number += 1
+        }
+        return file
+    }
+
+    func download(_ download: WKDownload, didFailWithError error: any Error, resumeData: Data?) {
+        guard let entry = running.removeValue(forKey: ObjectIdentifier(download)) else { return }
+        if let file = writing.removeValue(forKey: entry.id) { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        update(entry.id) { $0.state = .failed(error.localizedDescription) }
+        agentNotes.append("A download failed: \(error.localizedDescription)")
+    }
+
+    private func update(_ id: UUID, _ change: (inout Download) -> Void) {
+        guard let index = downloads.firstIndex(where: { $0.id == id }) else { return }
+        change(&downloads[index])
+    }
+
+    func dismissDownloads() {
+        withAnimation(.ui) { downloads.removeAll { $0.state != .running } }
     }
 }
 
@@ -193,6 +347,10 @@ struct BrowserPane<NewTab: View>: View {
             .padding(.bottom, 8)
             if let login = session.pendingLogin {
                 SaveLoginBar(login: login, session: session)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+            if let download = session.downloads.last {
+                DownloadBar(download: download, more: session.downloads.count - 1, session: session)
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
             Divider()
@@ -378,6 +536,80 @@ private struct SaveLoginBar: View {
         .background(Surface.well(scheme), in: .rect(cornerRadius: 10))
         .padding(.horizontal, 10)
         .padding(.bottom, 8)
+    }
+}
+
+/// The latest download: how far along it is, then where it went.
+private struct DownloadBar: View {
+    let download: BrowserSession.Download
+    let more: Int
+    let session: BrowserSession
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol)
+                .foregroundStyle(download.state == .running ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(download.name)
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                switch download.state {
+                case .running:
+                    Capsule()
+                        .fill(Color.primary.opacity(0.1))
+                        .frame(height: 4)
+                        .overlay(alignment: .leading) {
+                            GeometryReader { proxy in
+                                Capsule()
+                                    .fill(.tint)
+                                    .frame(width: max(4, proxy.size.width * download.progress))
+                                    .animation(.ui, value: download.progress)
+                            }
+                        }
+                case .done:
+                    Text(more > 0 ? "Downloaded, with \(more) more" : "Downloaded to Downloads")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                case .failed(let reason):
+                    Text(reason)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 8)
+            if download.state == .done, let file = download.file {
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([file]) }
+            }
+            Button {
+                session.dismissDownloads()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .frame(width: 18, height: 18)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .disabled(download.state == .running)
+            .help("Hide")
+        }
+        .controlSize(.small)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Surface.well(scheme), in: .rect(cornerRadius: 10))
+        .padding(.horizontal, 10)
+        .padding(.bottom, 8)
+    }
+
+    private var symbol: String {
+        switch download.state {
+        case .running: "arrow.down.circle"
+        case .done: "checkmark.circle.fill"
+        case .failed: "exclamationmark.circle"
+        }
     }
 }
 
