@@ -238,6 +238,9 @@ private struct MemberRow: View {
         Button(action: toggle) {
             HStack(spacing: 12) {
                 BotAvatar(look: bot.look, size: 26, noticed: isHovering, animates: false)
+                    .overlay(alignment: .bottomTrailing) {
+                        if let machine = bot.machine { MachineBadge(machine: machine, size: 12).offset(x: 3, y: 3) }
+                    }
                 VStack(alignment: .leading, spacing: 1) {
                     Text(bot.name)
                     if !bot.job.isEmpty {

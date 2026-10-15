@@ -185,6 +185,24 @@ struct BotAvatar: View {
     }
 }
 
+/// On the corner of a bot's face: it lives on one of your machines, not this Mac.
+struct MachineBadge: View {
+    let machine: String
+    var size: CGFloat = 14
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        Image(systemName: "server.rack")
+            .font(.system(size: size * 0.48, weight: .bold))
+            .foregroundStyle(.secondary)
+            .frame(width: size, height: size)
+            .background(Circle().fill(scheme == .dark ? Color(white: 0.2) : .white))
+            .shadow(color: .black.opacity(scheme == .dark ? 0.45 : 0.2), radius: 1, y: 0.5)
+            .help("On \(machine)")
+            .accessibilityLabel("On \(machine)")
+    }
+}
+
 /// A group chat's picture: its bots together, like a group photo. Two stand side by side; three
 /// stand two at the back and the lead in front; more show as "+N" beside the first three.
 struct GroupAvatar: View {

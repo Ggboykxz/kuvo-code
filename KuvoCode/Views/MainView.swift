@@ -88,9 +88,10 @@ struct MainView: View {
         activeModel?.session.location.directory ?? draftDirectory
     }
 
-    /// Under a bot's name in its card: its job, and where it lives if not here.
+    /// Under a bot's name in its card: where it lives if not here, first so a long job never cuts
+    /// it off, then its job.
     private func botDetail(_ bot: Bot) -> String? {
-        let parts = [bot.job.isEmpty ? nil : bot.job, bot.machine.map { "on \($0)" }].compactMap(\.self)
+        let parts = [bot.machine.map { "On \($0)" }, bot.job.isEmpty ? nil : bot.job].compactMap(\.self)
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
@@ -526,6 +527,9 @@ struct MainView: View {
                     if let bot {
                         // Still: in view, the bot moves in its conversation.
                         BotAvatar(look: bot.look, size: 18, mood: bots.mood(of: bot, in: workspace), animates: false)
+                            .overlay(alignment: .bottomTrailing) {
+                                if let machine = bot.machine { MachineBadge(machine: machine, size: 10).offset(x: 3, y: 3) }
+                            }
                     } else if let logo = logo(for: model.session.model, in: directory) { ProviderLogo(id: logo, size: 14) } else { Image(systemName: "bubble.left") }
                 } actions: {
                     if let bot {

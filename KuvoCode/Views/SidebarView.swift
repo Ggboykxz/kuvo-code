@@ -898,6 +898,9 @@ private struct BotRow: View {
         Button(action: action) {
             HStack(spacing: 10) {
                 BotAvatar(look: bot.look, size: 28, mood: bots.mood(of: bot, in: workspace), noticed: isHovering, animates: animates)
+                    .overlay(alignment: .bottomTrailing) {
+                        if let machine = bot.machine { MachineBadge(machine: machine).offset(x: 4, y: 3) }
+                    }
                 VStack(alignment: .leading, spacing: 1) {
                     Text(bot.name)
                         .font(.system(size: 14))

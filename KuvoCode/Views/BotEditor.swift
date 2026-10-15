@@ -154,6 +154,22 @@ struct BotEditor: View {
                         }
                     }
                 } else if let bot {
+                    // Where it lives stays where it was made.
+                    section("Lives On") {
+                        WellGroup {
+                            WellRow {
+                                Image(systemName: bot.machine == nil ? "laptopcomputer" : "server.rack")
+                            } content: {
+                                HStack(spacing: 8) {
+                                    Text(bot.machine.map { app.machines.engine($0)?.machine.name ?? $0 } ?? "This Mac")
+                                    if let engine = bot.machine.flatMap({ app.machines.engine($0) }) {
+                                        MachineStatus(engine: engine)
+                                    }
+                                    Spacer(minLength: 0)
+                                }
+                            }
+                        }
+                    }
                     section("Wake-Ups", note: "The bot schedules these itself, to carry on later.") {
                         WakeList(bot: bot)
                     }
