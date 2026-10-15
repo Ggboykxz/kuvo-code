@@ -104,9 +104,11 @@ without clicking, for trying a change or taking screenshots:
 | `KUVO_DEMO_WINDOW` | Window size, as `WIDTHxHEIGHT` |
 | `KUVO_DEMO_SEARCH` | Type this in the sidebar's search field |
 | `KUVO_DEMO_PALETTE` | Open the command palette with this typed in it (empty for none) |
-| `KUVO_DEMO_MENU` | Open the `mode` or `model` menu (`models` for its first submenu) |
+| `KUVO_DEMO_MENU` | Open the `mode` or `model` menu (`models` for its first submenu), or `location` in the New Project sheet |
 | `KUVO_DEMO_USAGE` | Open the menu bar's usage panel on `dashboard`, `customize` or `settings`, or `off` to leave the usage tracker out |
-| `KUVO_DEMO_SETTINGS` | Open Settings on a tab: `general`, `accounts`, `agents`, `permissions`, `mcp`, `skills`, `commands`, `panel`, `usage` or `engine` |
+| `KUVO_DEMO_SETTINGS` | Open Settings on a page, by its `SettingsPage` name: `general`, `appearance`, `storage`, `accounts`, `agents`, `mcp`, `git`, `browser`, `passwords` and so on |
+| `KUVO_DEMO_ADD_MACHINE` | The Add Machine sheet, open, with `KUVO_DEMO_SETTINGS=machines` or over `KUVO_DEMO_NEW_PROJECT` |
+| `KUVO_DEMO_WELCOME` | No tabs, so the welcome card shows |
 | `KUVO_DEMO_NAME` | A name to use instead of yours, for the initials on review comments |
 | `KUVO_DEMO_COMMENT` | Add a review comment to the session in view, as `<path in the project>:<line>:<text>` |
 | `KUVO_ANALYTICS_URL` | Send anonymous usage to this collector, e.g. `http://127.0.0.1:8787/kuvo/code`; debug builds send none otherwise |

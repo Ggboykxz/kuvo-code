@@ -38,6 +38,15 @@ struct MachinesSettings: View {
             }
         }
         .sheet(isPresented: $showsAdd) { MachineSheet() }
+        #if DEBUG
+        // KUVO_DEMO_ADD_MACHINE: the Add Machine sheet, open.
+        .task {
+            if ProcessInfo.processInfo.environment["KUVO_DEMO_ADD_MACHINE"] != nil {
+                try? await Task.sleep(for: .seconds(1))
+                showsAdd = true
+            }
+        }
+        #endif
         .confirmationDialog("Remove \(removing?.name ?? "")?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), presenting: removing) { machine in
             Button("Remove", role: .destructive) { app.removeMachine(machine.id) }
         } message: { _ in

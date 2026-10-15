@@ -122,6 +122,15 @@ struct ProjectSheet: View {
         .sheet(isPresented: $showsAddMachine) {
             MachineSheet { choose($0) }
         }
+        #if DEBUG
+        // KUVO_DEMO_ADD_MACHINE: the Add Machine sheet, open over it.
+        .task {
+            if isNew, ProcessInfo.processInfo.environment["KUVO_DEMO_ADD_MACHINE"] != nil {
+                try? await Task.sleep(for: .seconds(1))
+                showsAddMachine = true
+            }
+        }
+        #endif
     }
 
     // MARK: Worktree setup
