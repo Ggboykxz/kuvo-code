@@ -757,7 +757,7 @@ private struct ImageDiff: View {
                         .foregroundStyle(.secondary)
                 }
             } else {
-                ProgressView().controlSize(.small)
+                Spinner(size: 16)
             }
             Spacer(minLength: 0)
         }

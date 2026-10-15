@@ -190,7 +190,7 @@ private struct FileTreeView: View {
                             MatchRow(path: match.path, isSelected: match.url == selected) { open(match.url) }
                         }
                         if tree.allFiles == nil {
-                            ProgressView().controlSize(.small).padding()
+                            Spinner(size: 16).padding()
                         } else if tree.matches.isEmpty {
                             Text("No matching files")
                                 .font(.callout)
@@ -353,7 +353,7 @@ private struct FileViewer: View {
                 case .preview:
                     QuickLookView(url: url)
                 case nil:
-                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                    Spinner(size: 24).frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

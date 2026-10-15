@@ -239,7 +239,7 @@ private struct AttachmentPicture: View {
                 RoundedRectangle(cornerRadius: 12)
                     .fill(.fill.tertiary)
                     .frame(width: height * 1.4, height: height)
-                    .overlay(ProgressView().controlSize(.small))
+                    .overlay(Spinner(size: 16))
             }
         }
         .clipShape(.rect(cornerRadius: 12))

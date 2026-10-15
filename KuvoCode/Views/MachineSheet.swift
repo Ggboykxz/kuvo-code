@@ -67,8 +67,7 @@ struct MachineSheet: View {
 
             HStack(spacing: 10) {
                 if isChecking {
-                    ProgressView()
-                        .controlSize(.small)
+                    Spinner(size: 16)
                     Text("Connecting…")
                         .foregroundStyle(.secondary)
                 }

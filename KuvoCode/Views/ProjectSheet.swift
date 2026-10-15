@@ -244,8 +244,7 @@ struct ProjectSheet: View {
                             .onSubmit(addTypedFolder)
                             .onChange(of: typedFolder) { folderFailure = nil }
                         if isCheckingFolder {
-                            ProgressView()
-                                .controlSize(.small)
+                            Spinner(size: 16)
                         } else if !typedFolder.trimmingCharacters(in: .whitespaces).isEmpty {
                             Button("Add", action: addTypedFolder)
                                 .font(.subheadline.weight(.medium))

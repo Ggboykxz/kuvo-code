@@ -15,7 +15,7 @@ struct MachineStatus: View {
             case .preparing:
                 Circle().fill(.secondary).frame(width: 7, height: 7)
             default:
-                ProgressView().controlSize(.mini)
+                Spinner(size: 11)
             }
             Text(engine.statusText)
                 .font(.subheadline)
@@ -49,11 +49,9 @@ struct MachineWaitingView: View {
                 ProgressView(value: progress)
                     .frame(width: 220)
             case .starting:
-                ProgressView()
-                    .controlSize(.small)
+                Spinner(size: 16)
             case .failed where engine.isRetrying:
-                ProgressView()
-                    .controlSize(.small)
+                Spinner(size: 16)
             case .failed(let reason):
                 Text(reason)
                     .foregroundStyle(.secondary)
@@ -68,8 +66,7 @@ struct MachineWaitingView: View {
                     .buttonStyle(.glass)
                     .controlSize(.large)
             case .ready:
-                ProgressView()
-                    .controlSize(.small)
+                Spinner(size: 16)
             }
             Spacer()
             Spacer()

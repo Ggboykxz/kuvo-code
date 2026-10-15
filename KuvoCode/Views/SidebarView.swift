@@ -738,7 +738,7 @@ private struct MachineLabel: View {
             if case .failed = engine.state, !engine.isRetrying {
                 Circle().fill(.orange).frame(width: 6, height: 6)
             } else if !engine.isReady || !engine.isLive {
-                ProgressView().controlSize(.mini).scaleEffect(0.7).frame(width: 10, height: 10)
+                Spinner(size: 10)
             }
         }
         .font(.system(size: 11, weight: .medium))

@@ -24,8 +24,7 @@ struct SkillsSettings: View {
         ScrollingSettingsForm {
             Section {
                 if skills == nil {
-                    ProgressView()
-                        .controlSize(.small)
+                    Spinner(size: 16)
                         .frame(maxWidth: .infinity)
                 } else if skills?.isEmpty == true {
                     Text("None yet.")
@@ -101,7 +100,7 @@ struct SkillsSettings: View {
                         .labelsHidden()
                         .onSubmit(openRepository)
                     if isOpening {
-                        ProgressView().controlSize(.small)
+                        Spinner(size: 16)
                     }
                     Button("Open", action: openRepository)
                         .disabled(isOpening || repositoryName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -417,7 +416,7 @@ private struct RepositorySkills: View {
                 if let failure {
                     ContentUnavailableView("Couldn't Load the Skills", systemImage: "exclamationmark.triangle", description: Text(failure))
                 } else if skills == nil {
-                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                    Spinner(size: 24).frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if shown.isEmpty {
                     if search.isEmpty {
                         ContentUnavailableView("No Skills", systemImage: "graduationcap", description: Text("This repository doesn't have any skills."))
@@ -530,7 +529,7 @@ private struct RemoteSkillRow: View {
             }
             Spacer()
             if isWorking {
-                ProgressView().controlSize(.small)
+                Spinner(size: 16)
             } else if let installed {
                 if installed.repository == skill.repository.id, installed.path == skill.path {
                     Button("Remove", action: remove)

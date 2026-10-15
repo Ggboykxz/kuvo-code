@@ -218,7 +218,7 @@ struct ConnectView: View {
                 }
             } else {
                 HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
+                    Spinner(size: 16)
                     Text("Waiting for you to finish…")
                         .foregroundStyle(.secondary)
                 }

@@ -50,7 +50,7 @@ struct StorageSettings: View {
                     .padding(.vertical, 6)
                 } else {
                     HStack(spacing: 8) {
-                        ProgressView().controlSize(.small)
+                        Spinner(size: 16)
                         Text("Adding it up…").foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity)

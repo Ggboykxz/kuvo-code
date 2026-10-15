@@ -1135,7 +1135,7 @@ struct PaneLayout {
 private struct SlowEngineNotice: View {
     var body: some View {
         HStack(spacing: 10) {
-            ProgressView().controlSize(.small)
+            Spinner(size: 16)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Still loading your accounts and models…")
                     .font(.callout.weight(.medium))

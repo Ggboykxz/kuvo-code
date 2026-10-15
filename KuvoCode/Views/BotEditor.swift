@@ -190,8 +190,7 @@ struct BotEditor: View {
                     .buttonStyle(.glass)
             }
             if isWorking {
-                ProgressView()
-                    .controlSize(.small)
+                Spinner(size: 16)
                 Text(isNew ? "Setting it up…" : "Saving…")
                     .foregroundStyle(.secondary)
             }

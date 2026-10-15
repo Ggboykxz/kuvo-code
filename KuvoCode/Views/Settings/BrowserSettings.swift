@@ -86,7 +86,7 @@ struct BrowserSettings: View {
                         }
                     }
                 } else {
-                    ProgressView().controlSize(.small).frame(maxWidth: .infinity)
+                    Spinner(size: 16).frame(maxWidth: .infinity)
                 }
             } header: {
                 HStack {
