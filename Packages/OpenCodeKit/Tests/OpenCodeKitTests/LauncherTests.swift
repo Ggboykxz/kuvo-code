@@ -37,6 +37,10 @@ struct LauncherTests {
 
         // Its own key stays; the other integrations' go.
         #expect(try run(launcher, ["some-mcp@1.0.0", "--stdio"], path: "/bin:/usr/bin") == "engine BUN_BE_BUN=1 x some-mcp@1.0.0 --stdio mine")
+        // A package's `node` is the engine's Bun, found beside it, so Bun makes none in /tmp
+        // (run here as kuvo-npx would, but with the keys it would have taken away).
+        let bunNode = bin.appending(path: Launcher.runtime).appending(path: "node")
+        #expect(try run(bunNode, ["server.js"], path: "/bin:/usr/bin") == "engine BUN_BE_BUN=1 server.js secretmine")
         try fake(node.appending(path: "npx"), says: "npx")
         #expect(try run(launcher, ["some-mcp@1.0.0"], path: node.path + ":/bin:/usr/bin") == "npx BUN_BE_BUN= -y some-mcp@1.0.0 mine")
     }
