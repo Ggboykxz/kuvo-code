@@ -26,6 +26,48 @@ final class BrowserSession: NSObject {
     private(set) var hasLoginField = false
     /// The agent's latest step on the page, for the pointer that shows it.
     private(set) var agentStep: AgentStep?
+    /// An agent is at work in the page, or was a moment ago (it thinks between its steps), and
+    /// its session.
+    private(set) var isAgentBrowsing = false
+    private(set) var agentSession: String?
+    @ObservationIgnored private var resting: Task<Void, Never>?
+    /// You took the page over from the agent: its browser steps wait until you hand it back.
+    var isHeld = false {
+        didSet { if isHeld, !oldValue { Analytics.shared.track("browser_taken_over", ["machine": false]) } }
+    }
+
+    /// An agent's step in the page begins.
+    func agentWorks(_ session: String?) {
+        resting?.cancel()
+        if agentSession != session { agentSession = session }
+        if !isAgentBrowsing { isAgentBrowsing = true }
+        #if DEBUG
+        // KUVO_DEMO_TAKE_OVER=<seconds>: you take the page over once an agent starts, and hand it
+        // back that long after.
+        if let seconds = ProcessInfo.processInfo.environment["KUVO_DEMO_TAKE_OVER"].flatMap(Double.init), !Self.tookOver {
+            Self.tookOver = true
+            Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(300))
+                self?.isHeld = true
+                try? await Task.sleep(for: .seconds(seconds))
+                self?.isHeld = false
+            }
+        }
+        #endif
+    }
+    #if DEBUG
+    private static var tookOver = false
+    #endif
+
+    /// Its step ended: the badge stays a few seconds, for its next one.
+    func agentRests() {
+        resting?.cancel()
+        resting = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled else { return }
+            self?.isAgentBrowsing = false
+        }
+    }
 
     struct AgentStep: Identifiable, Equatable {
         let id = UUID()
@@ -433,6 +475,14 @@ struct BrowserPane<NewTab: View>: View {
             } else {
                 WebViewHost(webView: session.webView)
                     .overlay { AgentPointerOverlay(step: session.agentStep) }
+                    .overlay(alignment: .bottom) {
+                        if session.isAgentBrowsing || session.isHeld {
+                            AgentBadge(session: session.agentSession, isHeld: session.isHeld) { session.isHeld = $0 }
+                                .padding(.bottom, 12)
+                                .transition(.opacity)
+                        }
+                    }
+                    .animation(.ui, value: session.isAgentBrowsing || session.isHeld)
             }
         }
         .onAppear {

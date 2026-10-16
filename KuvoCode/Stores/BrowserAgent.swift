@@ -13,11 +13,14 @@ final class BrowserAgent {
     /// The bot on this Mac this agent is, which browses in tabs of its own; nil for an agent in
     /// your sessions, which uses yours.
     let owner: String?
+    /// The session whose tool call this agent serves, when the engine says.
+    let caller: String?
 
-    init(utilities: Utilities, asks: BrowserAsks, owner: String? = nil) {
+    init(utilities: Utilities, asks: BrowserAsks, owner: String? = nil, caller: String? = nil) {
         self.utilities = utilities
         self.asks = asks
         self.owner = owner
+        self.caller = caller
     }
 
     /// Which bot on this Mac a session is, if it is one.
@@ -25,9 +28,35 @@ final class BrowserAgent {
 
     /// The agent for one tool call: a bot's browses in its own tabs.
     func serving(_ caller: String?) -> BrowserAgent {
-        let owner = caller.flatMap(Self.botOwner)
-        return owner == self.owner ? self : BrowserAgent(utilities: utilities, asks: asks, owner: owner)
+        BrowserAgent(utilities: utilities, asks: asks, owner: caller.flatMap(Self.botOwner), caller: caller)
     }
+
+    static let stillHeld = "The user took over the browser and still has it. Carry on without it for now, or try again later; if you work on your own (a bot), schedule a wake-up to come back to it."
+    static let handedBack = "The user took over the browser while you worked, and has handed it back. The page may have changed: this is where it is now. Go on from here.\n\n"
+
+    /// While you have the page this agent would use, it waits, up to ten minutes; once you hand
+    /// it back, it says so, with the page as it is now, rather than doing its step. Nil when the
+    /// page is the agent's to use.
+    func waitForControl() async -> String? {
+        let page = owner.map { owner in use ?? utilities.botBrowser(owner) } ?? utilities.activeBrowser
+        guard let page, page.isHeld else { return nil }
+        page.agentWorks(caller)
+        touched = page
+        let started = ContinuousClock.now
+        while page.isHeld, ContinuousClock.now - started < .seconds(600) {
+            try? await Task.sleep(for: .milliseconds(300))
+        }
+        guard !page.isHeld else { return Self.stillHeld }
+        return Self.handedBack + (await snapshot())
+    }
+
+    /// The tool call ended: the page's badge stays a moment, for the next.
+    func finished() {
+        touched?.agentRests()
+    }
+
+    /// The page this call worked in.
+    private weak var touched: BrowserSession?
 
     // MARK: Actions
 
@@ -347,6 +376,8 @@ final class BrowserAgent {
         }
         Analytics.shared.trackOnce("agent_used_browser")
         utilities.reveal(browser)
+        browser.agentWorks(caller)
+        touched = browser
         return browser
     }
 

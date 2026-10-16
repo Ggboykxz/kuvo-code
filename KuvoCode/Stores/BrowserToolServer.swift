@@ -209,6 +209,11 @@ enum BrowserTools {
         defer {
             BrowserAgent.working -= 1
             if accepts { BrowserAgent.accepting -= 1 }
+            agent.finished()
+        }
+        // You have the page: the step waits until you hand it back.
+        if let handedBack = await agent.waitForControl() {
+            return ["content": [["type": "text", "text": handedBack]], "isError": false]
         }
         var result = await perform(name, arguments: arguments, agent: agent, caller: caller)
         // Downloads that started or finished meanwhile, ahead of the tool's own result.

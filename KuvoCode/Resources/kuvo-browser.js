@@ -47,7 +47,7 @@ const TAB_IDLE = Number(process.env.KUVO_BROWSER_TAB_IDLE || 12 * 3600) * 1000;
 
 // Goes up with every change to the keeper (host mode): a newer one replaces one that's running
 // (its pages close, its sign-ins stay), and an older one never replaces a newer.
-const KEEPER = 15;
+const KEEPER = 16;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -448,6 +448,10 @@ async function host() {
   // than taking over one in use; and when you last picked a page for a conversation.
   const claims = new Map();
   const picks = new Map();
+  // Pages a Mac took over from the agents, and which client it is: their tools wait until it
+  // hands them back, or goes.
+  const held = new Map();
+  const announceHeld = () => broadcast({ method: "Kuvo.held", params: { pages: [...held.keys()] } });
   // Each page's address, as the browser last said, and the page it started with.
   const addresses = new Map();
   let firstPage = null;
@@ -558,6 +562,7 @@ async function host() {
       addresses.delete(message.params.targetId);
       own.delete(message.params.targetId);
       claims.delete(message.params.targetId);
+      if (held.delete(message.params.targetId)) announceHeld();
       if (message.params.targetId === active) setActive(null, "browser");
     }
     const owner = message.sessionId ? owners.get(message.sessionId) : null;
@@ -578,11 +583,14 @@ async function host() {
         internal("Target.detachFromTarget", { sessionId });
       }
       for (const [id, ask] of asks) if (ask.client === client) closeAsk(id);
+      let released = false;
+      for (const [targetId, holder] of held) if (holder === client) released = held.delete(targetId);
+      if (released) announceHeld();
       if (client.status?.working) broadcast({ method: "Kuvo.status", params: (status = everyStatus()) });
       if (client.viewer) broadcast({ method: "Kuvo.viewers", params: { count: viewers() } });
       if (!clients.size) idleSoon();
     });
-    send(client, { method: "Kuvo.hello", params: { targetId: active, status, version: CONFIG.version, keeper: KEEPER, asks: [...asks.values()].map((ask) => ask.params), viewers: viewers() } });
+    send(client, { method: "Kuvo.hello", params: { targetId: active, status, version: CONFIG.version, keeper: KEEPER, asks: [...asks.values()].map((ask) => ask.params), viewers: viewers(), held: [...held.keys()] } });
     lines(socket, (text) => {
       let message;
       try {
@@ -656,6 +664,14 @@ async function host() {
         case "Kuvo.pointer":
           // Where the agent is about to act, for the pointer in every view of the page.
           return broadcast({ method: "Kuvo.pointer", params: message.params ?? {} });
+        case "Kuvo.hold": {
+          // You took a page over from the agent, or handed it back.
+          const { targetId, on } = message.params ?? {};
+          if (targetId && on && targets.has(targetId)) held.set(targetId, client);
+          else if (targetId) held.delete(targetId);
+          announceHeld();
+          return message.id !== undefined && send(client, { id: message.id, result: {} });
+        }
       }
       if (message.id === undefined || typeof message.method !== "string") return;
       const id = next++;
@@ -806,6 +822,9 @@ const waiting = new Map();
 let viewerCount = 1;
 // A file picker an upload is waiting for, by page session.
 const choosers = new Map();
+// Pages you took over in Kuvo Code: a tool for one waits until you hand it back.
+let held = new Set();
+let heldChanged = () => {};
 
 async function browser() {
   if (link && !link.closed) return link;
@@ -818,6 +837,11 @@ async function browser() {
       case "Kuvo.hello":
         active = message.params.targetId;
         viewerCount = message.params.viewers ?? 1;
+        held = new Set(message.params.held ?? []);
+        break;
+      case "Kuvo.held":
+        held = new Set(message.params.pages ?? []);
+        heldChanged();
         break;
       case "Kuvo.viewers":
         viewerCount = message.params.count ?? 0;
@@ -1136,7 +1160,30 @@ const noAnswer = (answer, what) =>
 
 const text = (value, isError = false) => ({ content: [{ type: "text", text: value }], isError });
 
+/// While you have the page this conversation works in, its tools wait, up to ten minutes; once
+/// you hand it back, the tool says so, with the page as it is now, rather than doing its step.
+async function waitForControl() {
+  const c = await browser();
+  const open = await pages();
+  let target = caller ? (await c.send("Kuvo.mine", { session: caller })).targetId : null;
+  if (!target || !open.some((info) => info.targetId === target)) target = active;
+  if (!target || !held.has(target)) return null;
+  const p = await use(target);
+  const started = Date.now();
+  while (held.has(target) && Date.now() - started < 600_000) {
+    await new Promise((resolve) => {
+      heldChanged = resolve;
+      setTimeout(resolve, 5_000);
+    });
+  }
+  heldChanged = () => {};
+  if (held.has(target)) return "The user took over the browser and still has it. Carry on without it for now, or try again later; if you work on your own (a bot), schedule a wake-up to come back to it.";
+  return "The user took over the browser while you worked, and has handed it back. The page may have changed: this is where it is now. Go on from here.\n\n" + (await snapshot(p));
+}
+
 async function tool(name, args) {
+  const handedBack = await waitForControl();
+  if (handedBack) return text(handedBack);
   const integer = (key) => (Number.isFinite(Number(args[key])) && args[key] !== "" && args[key] !== null ? Math.trunc(Number(args[key])) : null);
   const string = (key) => (typeof args[key] === "string" ? args[key] : null);
   const scripts = CONFIG.scripts;

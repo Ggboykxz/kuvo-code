@@ -76,13 +76,13 @@ struct MachineBrowserPane<NewTab: View>: View {
             } else if isLive {
                 LivePage(browser: browser)
                     .overlay(alignment: .bottom) {
-                        if browser.isAgentBrowsing {
-                            AgentBadge(session: browser.browsingSession)
+                        if browser.isAgentBrowsing || browser.isHeld {
+                            AgentBadge(session: browser.browsingSession, isHeld: browser.isHeld) { browser.takeOver($0) }
                                 .padding(.bottom, 12)
                                 .transition(.opacity)
                         }
                     }
-                    .animation(.ui, value: browser.isAgentBrowsing)
+                    .animation(.ui, value: browser.isAgentBrowsing || browser.isHeld)
             } else {
                 ZStack {
                     LivePage(browser: browser)
@@ -239,31 +239,6 @@ private struct SetupCard: View {
             }
         }
         .padding(24)
-    }
-}
-
-/// While an agent uses the browser.
-private struct AgentBadge: View {
-    /// The session browsing: a bot's is named, with its face.
-    let session: String?
-    @Environment(Bots.self) private var bots
-
-    var body: some View {
-        let bot = session.flatMap { bots.bot(forSession: $0) }
-        HStack(spacing: 7) {
-            if let bot {
-                // Still: the bot moves where it works, in the sidebar and its conversation.
-                BotAvatar(look: bot.look, size: 16, animates: false)
-            } else {
-                Spinner(size: 11)
-            }
-            Text(bot.map { "\($0.name) is browsing" } ?? "Agent is browsing")
-                .font(.system(size: 12, weight: .medium))
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .glassEffect(.regular, in: .capsule)
-        .allowsHitTesting(false)
     }
 }
 

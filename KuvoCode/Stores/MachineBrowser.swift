@@ -98,18 +98,43 @@ final class MachineBrowser {
     private(set) var isLoading = false
     private(set) var canGoBack = false
     private(set) var canGoForward = false
-    /// An agent is using the browser right now.
-    /// An agent is at work in the page shown.
-    var isAgentBrowsing: Bool { shownPage.map(workingPages.contains) ?? false }
+    /// An agent is at work in the page shown, or was a moment ago (it thinks between its steps).
+    var isAgentBrowsing: Bool { shownPage.map { workingPages.contains($0) || restingPages.contains($0) } ?? false }
     /// The session of the agent at work in the page shown, when it says.
     var browsingSession: String? { shownPage.flatMap { workers[$0] } }
+    /// You took the page shown over from the agent: its tools wait until you hand it back.
+    var isHeld: Bool { shownPage.map(heldPages.contains) ?? false }
     /// The pages agents are at work in, and whose sessions they are.
-    private var workingPages: Set<String> = []
+    private var workingPages: Set<String> = [] {
+        didSet { rest(oldValue.subtracting(workingPages)) }
+    }
     private var workers: [String: String] = [:]
+    /// Pages an agent finished a step in a moment ago, and pages taken over (by any Mac).
+    private var restingPages: Set<String> = []
+    private var heldPages: Set<String> = []
 
     private static func workingPages(_ status: [String: Any]) -> Set<String> {
         guard status["working"] as? Bool == true else { return [] }
         return Set(status["pages"] as? [String] ?? [])
+    }
+
+    /// Pages an agent just stopped in stay "browsing" a few seconds, so the badge (and its Take
+    /// Over) doesn't flicker between its steps.
+    private func rest(_ pages: Set<String>) {
+        guard !pages.isEmpty else { return }
+        restingPages.formUnion(pages)
+        Task {
+            try? await Task.sleep(for: .seconds(4))
+            restingPages.subtract(pages.subtracting(workingPages))
+        }
+    }
+
+    /// Takes the page shown over from the agent, or hands it back.
+    func takeOver(_ on: Bool) {
+        guard let page = shownPage else { return }
+        if on { heldPages.insert(page) } else { heldPages.remove(page) }
+        link?.fire("Kuvo.hold", ["targetId": page, "on": on])
+        if on { Analytics.shared.track("browser_taken_over", ["machine": true]) }
     }
 
     private func noteWorkers(_ status: [String: Any]) {
@@ -375,6 +400,7 @@ final class MachineBrowser {
             activeID = params["targetId"] as? String
             workingPages = (params["status"] as? [String: Any]).map(Self.workingPages) ?? []
             noteWorkers(params["status"] as? [String: Any] ?? [:])
+            heldPages = Set(params["held"] as? [String] ?? [])
             for ask in params["asks"] as? [[String: Any]] ?? [] { asked(ask) }
             Task { await begin() }
         case "Kuvo.asked":
@@ -422,6 +448,8 @@ final class MachineBrowser {
         case "Kuvo.status":
             workingPages = Self.workingPages(params)
             noteWorkers(params)
+        case "Kuvo.held":
+            heldPages = Set(params["pages"] as? [String] ?? [])
         case "Target.targetCreated", "Target.targetInfoChanged":
             if let info = params["targetInfo"] as? [String: Any] { note(info) }
         case "Target.targetDestroyed":
