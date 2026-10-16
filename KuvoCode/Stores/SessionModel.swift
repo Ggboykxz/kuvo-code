@@ -57,6 +57,14 @@ final class SessionModel {
     }
 
     func focusComposer() { composerFocus += 1 }
+
+    /// Replies to a message: the part of it you selected (else all of `text`) goes into the
+    /// composer as a quote, and the composer takes the keyboard.
+    func reply(to text: String) {
+        draftText = Quoting.quoted(Quoting.selection() ?? text, into: draftText)
+        focusComposer()
+        Analytics.shared.track("message_replied")
+    }
     /// Queued messages wait for Resume: after Stop, a failed run, or when the app finds them
     /// waiting at launch.
     private(set) var isQueuePaused = false

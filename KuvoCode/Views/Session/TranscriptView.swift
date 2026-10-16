@@ -24,7 +24,7 @@ struct TranscriptView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                    RowView(row: row, directory: model.session.location.directory, folders: model.folders, cancel: model.cancelPending, undo: model.undo(from:), redo: model.redo, fork: fork, retry: model.retry(_:), buildPlan: model.agent == "plan" ? { model.buildPlan() } as () -> Void : nil)
+                    RowView(row: row, directory: model.session.location.directory, folders: model.folders, cancel: model.cancelPending, undo: model.undo(from:), redo: model.redo, fork: fork, retry: model.retry(_:), buildPlan: model.agent == "plan" ? { model.buildPlan() } as () -> Void : nil, reply: model.reply(to:))
                         .background {
                             if matches.contains(row.id) {
                                 RoundedRectangle(cornerRadius: 8)
@@ -339,6 +339,8 @@ private struct RowView: View {
     let retry: (Message.User) -> Void
     /// While the session is in Plan mode: build what the last answer planned.
     let buildPlan: (() -> Void)?
+    /// Quotes a reply (or the part of it you selected) in the composer.
+    let reply: (String) -> Void
     @State private var confirmsUndo = false
     /// Under the pointer: a message shows its buttons.
     @State private var isHovering = false
@@ -409,7 +411,7 @@ private struct RowView: View {
             AssistantStepView(message: message, directory: directory, folders: folders, showsError: showsError)
         case .turnEnd(let idle, let stats, let isLast):
             TurnEndView(idle: idle, stats: stats, directory: directory, retry: isLast ? stats.message.map { message in { retry(message) } } : nil,
-                        build: isLast && stats.agent == "plan" ? buildPlan : nil)
+                        build: isLast && stats.agent == "plan" ? buildPlan : nil, reply: reply)
         case .shell(let shell):
             ShellRow(shell: shell)
         case .notice(_, let symbol, let text):
@@ -661,6 +663,7 @@ private struct TurnEndView: View {
     var retry: (() -> Void)?
     /// Builds what a plan described; offered under Plan mode's last answer.
     var build: (() -> Void)?
+    var reply: ((String) -> Void)?
 
     var body: some View {
         switch idle.outcome {
@@ -701,6 +704,11 @@ private struct TurnEndView: View {
                 }
                 if !stats.text.isEmpty {
                     CopyButton(text: stats.text.joined(separator: "\n\n"), help: "Copy the Reply")
+                    if let reply {
+                        MessageActionButton(symbol: "arrowshape.turn.up.left", help: "Reply: quotes the part you selected (or the whole reply) in the composer") {
+                            reply(stats.text.joined(separator: "\n\n"))
+                        }
+                    }
                 }
                 if let build {
                     Button("Build It", systemImage: "hammer", action: build)

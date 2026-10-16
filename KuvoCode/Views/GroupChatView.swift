@@ -9,6 +9,8 @@ struct GroupChatView: View {
     @Environment(Bots.self) private var bots
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var followsEnd = true
+    /// Goes up to have the composer take the keyboard.
+    @State private var composerFocus = 0
     @State private var isScrolling = false
 
     private var members: [Bot] { group.members.compactMap { bots.bot($0) } }
@@ -20,7 +22,8 @@ struct GroupChatView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 18) {
                 ForEach(messages) { message in
-                    GroupMessageRow(message: message, author: message.author.flatMap { bots.bot($0) }, members: members) {
+                    GroupMessageRow(message: message, author: message.author.flatMap { bots.bot($0) }, members: members,
+                                    reply: { reply(to: message) }) {
                         undo(from: message)
                     }
                         .id(message.id)
@@ -68,6 +71,7 @@ struct GroupChatView: View {
                     placeholder: "Message \(group.name)…",
                     members: members,
                     isTalking: groups.discussing.contains(group.id),
+                    focusRequest: composerFocus,
                     send: send,
                     stop: { groups.stop(group.id) }
                 )
@@ -79,6 +83,15 @@ struct GroupChatView: View {
         }
         .onAppear { groups.markViewed(group.id) }
         .onChange(of: messages.count) { groups.markViewed(group.id) }
+    }
+
+    /// Replies to a bot's message: the part you selected (else all of it) quoted in the composer,
+    /// naming the bot so it's the one to answer.
+    private func reply(to message: GroupMessage) {
+        let quoted = Quoting.quoted(Quoting.selection() ?? message.text, into: Drafts.shared[draftKey].text)
+        Drafts.shared[draftKey].text = quoted + (message.author.flatMap { bots.bot($0)?.name }.map { "@\($0) " } ?? "")
+        composerFocus += 1
+        Analytics.shared.track("message_replied", ["group": true])
     }
 
     /// Takes the chat back to before your message, which comes back to the composer, ahead of
@@ -132,6 +145,8 @@ private struct GroupMessageRow: View {
     let author: Bot?
     /// The chat's bots, for their mentions.
     let members: [Bot]
+    /// Quotes this bot's message (or the part you selected) in the composer.
+    var reply: (() -> Void)?
     /// Takes the chat back to before this message of yours.
     let undo: () -> Void
     @State private var hovering = false
@@ -209,9 +224,14 @@ private struct GroupMessageRow: View {
                             .font(.caption)
                             .foregroundStyle(.tertiary)
                         // Shown under the pointer, always laid out.
-                        CopyButton(text: message.text, help: "Copy")
-                            .opacity(isHovering ? 1 : 0)
-                            .animation(.easeOut(duration: 0.12), value: isHovering)
+                        HStack(spacing: 0) {
+                            CopyButton(text: message.text, help: "Copy")
+                            if let reply {
+                                MessageActionButton(symbol: "arrowshape.turn.up.left", help: "Reply: quotes the part you selected (or the whole message), naming \(author?.name ?? "the bot")", action: reply)
+                            }
+                        }
+                        .opacity(isHovering ? 1 : 0)
+                        .animation(.easeOut(duration: 0.12), value: isHovering)
                     }
                     .frame(height: 20)
                     if let steps = message.steps, !steps.isEmpty {
@@ -224,6 +244,7 @@ private struct GroupMessageRow: View {
             .onHover { hovering = $0 }
             .contextMenu {
                 Button("Copy") { copy() }
+                if let reply { Button("Reply", action: reply) }
             }
         }
     }
@@ -375,6 +396,8 @@ private struct GroupComposer: View {
     let placeholder: String
     let members: [Bot]
     let isTalking: Bool
+    /// Goes up when the composer should take the keyboard (a reply put a quote in it).
+    var focusRequest = 0
     let send: () -> Void
     let stop: () -> Void
     @Environment(\.messageFont) private var messageFont
@@ -389,6 +412,7 @@ private struct GroupComposer: View {
                 .font(messageFont.body)
                 .lineLimit(1...10)
                 .focused($isFocused)
+                .onChange(of: focusRequest) { isFocused = true }
                 .onKeyPress(.return, phases: .down) { press in
                     // Return sends; Shift-Return starts a new line.
                     if press.modifiers.contains(.shift) || press.modifiers.contains(.option) {
