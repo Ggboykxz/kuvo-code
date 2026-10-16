@@ -69,6 +69,10 @@ struct FileLinkingParser: MarkupParser {
     var mentions: [Bot] = []
 
     func attributedString(for input: String) throws -> AttributedString {
+        #if DEBUG
+        let began = ContinuousClock.now
+        defer { ParseClock.add(ContinuousClock.now - began) }
+        #endif
         var text = try AttributedStringMarkdownParser.markdown().attributedString(for: input)
         if !mentions.isEmpty { GroupMentions.apply(to: &text, bots: mentions, faces: true) }
         guard text.runs.contains(where: { $0.inlinePresentationIntent?.contains(.code) == true }) else { return text }
@@ -128,3 +132,15 @@ struct FileIconAttachment: Attachment {
         FontScaled<CGSize>.fontScaled(width: 0.78, height: 0.92).resolve(in: environment)
     }
 }
+
+#if DEBUG
+/// How long parsing replies takes, for the scrolling test.
+nonisolated enum ParseClock {
+    nonisolated(unsafe) static var total = Duration.zero
+    nonisolated(unsafe) static var count = 0
+    static func add(_ time: Duration) {
+        total += time
+        count += 1
+    }
+}
+#endif

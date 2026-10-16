@@ -5,7 +5,12 @@ import OpenCodeKit
 @Observable
 final class SessionModel {
     var session: Session
-    private(set) var transcript: Transcript
+    private(set) var transcript: Transcript {
+        didSet { transcriptVersion &+= 1 }
+    }
+    /// Goes up with each change to the transcript, so what's made from it (the conversation's
+    /// rows) is made again only then.
+    private(set) var transcriptVersion = 0
     private(set) var isLoaded = false
     /// Your answers to the agent's questions so far, by form: kept while you look elsewhere.
     var questionProgress: [String: QuestionProgress] = [:]

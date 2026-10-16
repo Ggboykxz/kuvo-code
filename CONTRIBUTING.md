@@ -108,6 +108,7 @@ without clicking, for trying a change or taking screenshots:
 | `KUVO_DEMO_WORKTREE` | Start that session in a worktree of its own |
 | `KUVO_DEMO_DRAFT` | With `KUVO_DEMO_FOLDER` and no prompt: a message typed, not sent, in the new session's composer |
 | `KUVO_DEMO_SHOW_IN_PANEL` | `<path>\|folder` or `<path>\|file`: as if the agent of the session in view showed that in the panel |
+| `KUVO_DEMO_SCROLL` | Seconds after the conversation in view opens: it scrolls up through it in steps and writes how long that took to `KUVO_PERF_LOG` (a file); `KUVO_PERF_NO_GLASS`, `KUVO_PERF_PLAIN`, `KUVO_PERF_NO_EDGE` and `KUVO_PERF_NO_ANIM` turn parts of the transcript off to compare. A window behind others draws less often, so compare runs alike |
 | `KUVO_DEMO_TABS` | Open the project's sessions as tabs |
 | `KUVO_DEMO_SESSION` | Open the session with this ID in a tab (one on a machine shows its conversation as last seen until the machine connects) |
 | `KUVO_DEMO_QUEUE` | Messages to queue once that session's agent is working, separated by `\|` |

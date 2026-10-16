@@ -6,6 +6,15 @@ import Textual
 /// The conversation. Sticks to the bottom while the agent writes, unless you
 /// scroll up to read.
 struct TranscriptView: View {
+    #if DEBUG
+    private static let edgeStyle: ScrollEdgeEffectStyle? = Perf.noEdge ? nil : .soft
+    private static let rowTransition: AnyTransition = Perf.noAnimation ? .identity : .opacity.combined(with: .offset(y: 8))
+    private static let rowAnimation: Animation? = Perf.noAnimation ? nil : .ui
+    #else
+    private static let edgeStyle: ScrollEdgeEffectStyle? = .soft
+    private static let rowTransition: AnyTransition = .opacity.combined(with: .offset(y: 8))
+    private static let rowAnimation: Animation? = .ui
+    #endif
     let model: SessionModel
     @Environment(Workspace.self) private var workspace
     @Environment(\.isOffline) private var isOffline
@@ -14,7 +23,13 @@ struct TranscriptView: View {
     /// Whether to keep the newest text in view: true until you scroll up, true again
     /// once you scroll back to the end.
     @State private var followsEnd = true
-    @State private var isScrolling = false
+    /// Scrolling now: a plain flag, so starting and stopping don't redraw the conversation.
+    @State private var scrolling = ScrollingFlag()
+    @State private var rowCache = RowCache()
+    #if DEBUG
+    /// How tall the conversation is, for the scrolling test (KUVO_DEMO_SCROLL).
+    @State private var demoHeight: CGFloat = 0
+    #endif
     /// Find in the conversation (⌘F): what's looked for, and which match is in view.
     @State private var isFinding = false
     @State private var query = ""
@@ -36,7 +51,7 @@ struct TranscriptView: View {
                         }
                         .id(row.id)
                         .padding(.top, index == 0 ? 0 : row.spacing(after: rows[index - 1]))
-                        .transition(.opacity.combined(with: .offset(y: 8)))
+                        .transition(Self.rowTransition)
                 }
             }
             .padding(.horizontal, Metrics.gutter)
@@ -45,7 +60,7 @@ struct TranscriptView: View {
             // Room under the last reply, so it doesn't sit on the composer.
             .padding(.bottom, 32)
             .readableColumn()
-            .animation(.ui, value: rows.map(\.id))
+            .animation(rowCache.isBulk ? nil : Self.rowAnimation, value: RowCache.Change(count: rows.count, last: rows.last?.id))
         }
         .scrollPosition($position)
         // What you select, to reply to or copy.
@@ -54,22 +69,25 @@ struct TranscriptView: View {
         // stack re-measures rows during a bounce, so the end kept moving and the bounce
         // crawled, then snapped back. Following the end is done below, only while idle.
         .defaultScrollAnchor(.bottom, for: .initialOffset)
-        .onScrollPhaseChange { _, phase in isScrolling = phase != .idle }
+        .onScrollPhaseChange { _, phase in scrolling.isOn = phase != .idle }
         .onScrollGeometryChange(for: Bool.self) { geometry in
             geometry.visibleRect.maxY >= geometry.contentSize.height - 40
         } action: { _, atEnd in
             // Your scrolling decides; growth below the fold doesn't.
-            if isScrolling { followsEnd = atEnd }
+            if scrolling.isOn { followsEnd = atEnd }
         }
         .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { old, new in
+            #if DEBUG
+            demoHeight = new
+            #endif
             // Shrinking too: the lazy stack's first guess at the height can be too big, and a
             // session would then open part of the way up.
-            guard followsEnd, !isScrolling, new != old else { return }
+            guard followsEnd, !scrolling.isOn, new != old else { return }
             position.scrollTo(edge: .bottom)
         }
         // Messages scroll on under the card's header and the composer, blurring away there
         // instead of being cut at an edge.
-        .scrollEdgeEffectStyle(.soft, for: .all)
+        .scrollEdgeEffectStyle(Self.edgeStyle, for: .all)
         .overlay {
             if model.isLoaded && rows.isEmpty {
                 EmptyConversationView(directory: model.session.location.directory) { text in
@@ -113,6 +131,38 @@ struct TranscriptView: View {
             matchIndex = 0
             if let first = Self.matches(of: query, in: self.rows).first { reveal(first) }
         }
+        #if DEBUG
+        // KUVO_DEMO_SCROLL=<seconds>: that long after it opens, goes up through the conversation a
+        // row at a time (as scrolling makes rows appear), to measure it.
+        .task {
+            guard let wait = ProcessInfo.processInfo.environment["KUVO_DEMO_SCROLL"].flatMap(Double.init) else { return }
+            try? await Task.sleep(for: .seconds(wait))
+            let start = ContinuousClock.now
+            var last = start
+            var worst = Duration.zero
+            var late = 0
+            ParseClock.total = .zero
+            ParseClock.count = 0
+            // As you scrolling up does: no following the end.
+            followsEnd = false
+            var y = demoHeight
+            let height = demoHeight
+            for _ in 0..<150 where y > 0 {
+                y -= 200
+                position.scrollTo(y: max(y, 0))
+                try? await Task.sleep(for: .milliseconds(16))
+                let now = ContinuousClock.now
+                let step = now - last
+                worst = max(worst, step)
+                if step > .milliseconds(34) { late += 1 }
+                last = now
+            }
+            let line = "scroll up from \(Int(height)) pt by 200 a step: \(ContinuousClock.now - start) for 150 steps (2.4 s at best), worst step \(worst), \(late) late (over 34 ms); parsing \(ParseClock.count) replies took \(ParseClock.total)\n"
+            if let path = ProcessInfo.processInfo.environment["KUVO_PERF_LOG"] {
+                if let handle = FileHandle(forWritingAtPath: path) { handle.seekToEndOfFile(); handle.write(Data(line.utf8)); try? handle.close() } else { FileManager.default.createFile(atPath: path, contents: Data(line.utf8)) }
+            }
+        }
+        #endif
         .onChange(of: model.findRequest, initial: true) {
             guard model.findRequest > 0 else { return }
             if let preset = model.findPreset {
@@ -137,7 +187,19 @@ struct TranscriptView: View {
 
     /// Messages, turned into what's drawn: notices are condensed, each finished
     /// turn gets a summary line, and queued messages come last.
+    /// The rows, made again only when what they're made from changes (not as you scroll).
     private var rows: [Row] {
+        let key = RowCache.Key(version: model.transcriptVersion, detail: stepsDetail, revert: model.session.revert?.messageID, waiting: model.waiting.map(\.id))
+        if rowCache.key == key { return rowCache.rows }
+        let rows = buildRows()
+        // A whole history arriving at once (opening, loading more) comes without its rows fading in.
+        rowCache.isBulk = abs(rows.count - rowCache.rows.count) > 3
+        rowCache.key = key
+        rowCache.rows = rows
+        return rows
+    }
+
+    private func buildRows() -> [Row] {
         var rows: [Row] = []
         var turn = TurnStats()
         // An undo waiting to be kept ends the conversation at its message: by where it is, as a
@@ -577,7 +639,7 @@ private struct MessageText: View {
                 .transcriptFont()
                 .lineLimit(isExpanded ? nil : Self.lines)
                 .textSelection(.enabled)
-                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { shownHeight = $0 }
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { if mayBeLong { shownHeight = $0 } }
                 .background(alignment: .top) {
                     // The whole text, unseen, to tell whether the limit cuts anything.
                     if mayBeLong, !isExpanded {
@@ -588,17 +650,12 @@ private struct MessageText: View {
                             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fullHeight = $0 }
                     }
                 }
-                .mask {
-                    if isCut && !isExpanded {
-                        LinearGradient(stops: [.init(color: .black, location: 0.7), .init(color: .black.opacity(0.15), location: 1)], startPoint: .top, endPoint: .bottom)
-                    } else {
-                        Color.black
-                    }
-                }
+                // Faded at the cut; a mask only then (each is drawn off screen first).
+                .modifier(CutFade(isOn: isCut && !isExpanded))
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
                 // Your words in accent glass, apart from the agent's on the card.
-                .accentGlass(RoundedRectangle(cornerRadius: Metrics.bubbleRadius))
+                .modifier(BubbleSurface())
             if mayBeLong, isCut {
                 Button(isExpanded ? "Show Less" : "Show More") {
                     withAnimation(.ui) { isExpanded.toggle() }
@@ -654,6 +711,14 @@ struct MarkdownText: View {
     @Environment(AppModel.self) private var app
 
     var body: some View {
+        #if DEBUG
+        if Perf.plain { Text(text).transcriptFont().textSelection(.enabled) } else { structured }
+        #else
+        structured
+        #endif
+    }
+
+    private var structured: some View {
         StructuredText(text, parser: FileLinkingParser(folders: folders, mentions: mentions))
             .transcriptFont()
             // Closer to the text than the GitHub style, so it wins for code blocks.
@@ -1079,5 +1144,71 @@ struct EmptyConversationView: View {
                 .foregroundStyle(.secondary)
         }
         .padding(.bottom, 120)
+    }
+}
+
+/// Your words' bubble: accent glass.
+private struct BubbleSurface: ViewModifier {
+    func body(content: Content) -> some View {
+        #if DEBUG
+        if Perf.noGlass {
+            content.background(Color.accentColor.opacity(0.18), in: RoundedRectangle(cornerRadius: Metrics.bubbleRadius))
+        } else {
+            content.accentGlass(RoundedRectangle(cornerRadius: Metrics.bubbleRadius))
+        }
+        #else
+        content.accentGlass(RoundedRectangle(cornerRadius: Metrics.bubbleRadius))
+        #endif
+    }
+}
+
+#if DEBUG
+/// KUVO_PERF_*: parts of the transcript turned off, to measure what scrolling costs.
+enum Perf {
+    static let plain = ProcessInfo.processInfo.environment["KUVO_PERF_PLAIN"] != nil
+    static let noGlass = ProcessInfo.processInfo.environment["KUVO_PERF_NO_GLASS"] != nil
+    static let noEdge = ProcessInfo.processInfo.environment["KUVO_PERF_NO_EDGE"] != nil
+    static let noAnimation = ProcessInfo.processInfo.environment["KUVO_PERF_NO_ANIM"] != nil
+}
+#endif
+
+/// The conversation's rows as last made, and what they were made from.
+final class RowCache {
+    struct Key: Equatable {
+        var version: Int
+        var detail: StepsDetail
+        var revert: String?
+        var waiting: [String]
+    }
+
+    /// What changing animates: rows added or taken away at the end.
+    struct Change: Equatable {
+        var count: Int
+        var last: String?
+    }
+
+    var key: Key?
+    var rows: [Row] = []
+    /// The last change came all at once.
+    var isBulk = true
+}
+
+/// Set while you scroll, read by the handlers only.
+final class ScrollingFlag {
+    var isOn = false
+}
+
+/// The end of a message that's cut short, fading out.
+private struct CutFade: ViewModifier {
+    let isOn: Bool
+
+    func body(content: Content) -> some View {
+        if isOn {
+            content.mask {
+                LinearGradient(stops: [.init(color: .black, location: 0.7), .init(color: .black.opacity(0.15), location: 1)], startPoint: .top, endPoint: .bottom)
+            }
+        } else {
+            content
+        }
     }
 }
