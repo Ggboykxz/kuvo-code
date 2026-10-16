@@ -27,7 +27,6 @@ struct MainView: View {
     @State private var mainAreaWidth: CGFloat = 0
     @AppStorage("sessionsWidth") private var sessionsWidth = 280.0
     @AppStorage("changesWidth") private var changesWidth = 420.0
-    @State private var showsProviders = false
     @AppStorage(Notifier.badgeKey) private var showsBadge = true
     /// The New Project or Edit Project sheet, while it's open.
     @State private var projectSheet: ProjectSheetRequest?
@@ -286,10 +285,6 @@ struct MainView: View {
             }
         }
         .animation(.ui, value: showsPalette)
-        .sheet(isPresented: $showsProviders) {
-            ProvidersView()
-                .frame(width: 720, height: 620)
-        }
         .alert("Rename Session", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Title", text: $newTitle)
             Button("Rename") {
@@ -494,7 +489,7 @@ struct MainView: View {
                 newSession: newSession,
                 newProject: { projectSheet = ProjectSheetRequest(project: nil) },
                 editProject: { projectSheet = ProjectSheetRequest(project: $0) },
-                showProviders: { showsProviders = true },
+                showProviders: { app.openSettings(.accounts) },
                 newBot: { openBotEditor(bot: nil) },
                 editBot: { openBotEditor(bot: $0) },
                 newGroup: { openGroupEditor(group: nil) },
@@ -634,7 +629,7 @@ struct MainView: View {
                 Card(title: AppInfo.name, isFocused: focus == .conversation) {
                     AppLogo(size: 16)
                 } content: {
-                    WelcomeView(openFolder: openFolder, newChat: { newSession(in: Workspace.chatsFolder) }, showProviders: { showsProviders = true })
+                    WelcomeView(openFolder: openFolder, newChat: { newSession(in: Workspace.chatsFolder) }, showProviders: { app.openSettings(.accounts) })
                 }
             }
         }
@@ -861,7 +856,7 @@ struct MainView: View {
                 let index = number == 9 ? tabs.count - 1 : number - 1
                 if tabs.indices.contains(index) { openTab(tabs[index]) }
             },
-            showProviders: { showsProviders = true },
+            showProviders: { app.openSettings(.accounts) },
             openQuickly: {
                 showsPalette = false
                 showsOpenQuickly = true
@@ -1024,7 +1019,7 @@ struct MainView: View {
             try? await Task.sleep(for: .seconds(1))
             window.setFrame(frame, display: true, animate: false)
         }
-        if workspace.isLoaded, environment["KUVO_DEMO_PROVIDERS"] != nil { showsProviders = true }
+        if workspace.isLoaded, environment["KUVO_DEMO_PROVIDERS"] != nil { app.openSettings(.accounts) }
         // KUVO_DEMO_NEW_PROJECT=<folder>,<folder>: the New Project sheet with these folders.
         if workspace.isLoaded, let list = environment["KUVO_DEMO_NEW_PROJECT"] {
             projectSheet = ProjectSheetRequest(project: nil, folders: list.split(separator: ",").map(String.init))

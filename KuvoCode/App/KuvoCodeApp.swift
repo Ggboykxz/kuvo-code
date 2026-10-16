@@ -226,9 +226,8 @@ struct AppCommands: Commands {
         CommandGroup(replacing: .appSettings) {
             Button("Settings…") { model.openSettings() }
                 .keyboardShortcut(",")
-            Button("Connect Providers…") { actions?.showProviders() }
+            Button("Accounts…") { model.openSettings(.accounts) }
                 .keyboardShortcut("k", modifiers: [.command, .shift])
-                .disabled(actions == nil)
         }
     }
 }

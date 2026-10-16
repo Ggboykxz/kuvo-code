@@ -1,20 +1,12 @@
 import OpenCodeKit
 import SwiftUI
 
-/// Accounts: what's connected, the popular providers, and every other one the
-/// engine knows. The list comes from the engine, so it grows without app updates.
-///
-/// Shown as a sheet from the main window and as a tab in Settings. Everything it
-/// needs is inside the view (no toolbar items), so nothing leaks into the host's
-/// toolbar; signing in to a provider replaces the list, with a back button.
+/// Accounts, a page of Settings: what's connected, the popular providers, and every other one
+/// the engine knows. The list comes from the engine, so it grows without app updates. Signing
+/// in to a provider replaces the list, with a back button.
 struct ProvidersView: View {
-    enum Context { case sheet, settings }
-
-    var context = Context.sheet
-
     @Environment(Catalog.self) private var catalog
     @Environment(AppModel.self) private var app
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var scheme
     @State private var connecting: Integration?
     @State private var search = ""
@@ -56,26 +48,6 @@ struct ProvidersView: View {
     private var list: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 26) {
-                // Only in the sheet: in Settings the window's title says it.
-                if context == .sheet {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text("Accounts")
-                            .font(.largeTitle.weight(.bold))
-                        Spacer()
-                        Button("Done") { dismiss() }
-                            .buttonStyle(.glassProminent)
-                            .controlSize(.large)
-                            .keyboardShortcut(.defaultAction)
-                    }
-                }
-                // In Settings, the page's own subtitle says it.
-                if context == .sheet {
-                    Text("Sign in with a subscription you already have, or add an API key. Credentials stay on this Mac.")
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                        .padding(.top, -18)
-                }
-
                 SearchField(text: $search, prompt: "Search \(catalog.providers.count) providers")
 
                 if search.isEmpty, !catalog.connectedProviders.isEmpty {
@@ -130,9 +102,9 @@ struct ProvidersView: View {
                     }
                 }
             }
-            // In Settings, lined up with the page's title above it.
-            .padding(.horizontal, context == .settings ? SettingsMetrics.inset : 28)
-            .padding(.vertical, context == .settings ? 16 : 28)
+            // Lined up with the page's title above it.
+            .padding(.horizontal, SettingsMetrics.inset)
+            .padding(.vertical, 16)
         }
     }
 

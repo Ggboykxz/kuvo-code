@@ -225,7 +225,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .shortcuts: ShortcutsSettings()
         case .privacy: PrivacySettings()
         case .storage: StorageSettings()
-        case .accounts: ProvidersView(context: .settings)
+        case .accounts: ProvidersView()
         case .usage: UsageSettings()
         case .agents: AgentsSettings()
         case .permissions: PermissionsSettings()
