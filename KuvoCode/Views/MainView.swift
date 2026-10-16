@@ -23,6 +23,8 @@ struct MainView: View {
     @SceneStorage("showsPanel") private var showsPanel = false
     /// The panel over the conversation, for room.
     @State private var panelExpanded = false
+    /// The room the conversation and the panel share: what the panel takes, expanded.
+    @State private var mainAreaWidth: CGFloat = 0
     @AppStorage("sessionsWidth") private var sessionsWidth = 280.0
     @AppStorage("changesWidth") private var changesWidth = 420.0
     @State private var showsProviders = false
@@ -108,11 +110,14 @@ struct MainView: View {
         // Cards are sized from the room the window actually has, so they never spill
         // past its edges. The gaps between them are drag handles for resizing.
         GeometryReader { proxy in
+            // Expanded, the panel grows over the conversation, which keeps its room (and its
+            // layout) underneath for when it comes back.
             let layout = PaneLayout(
                 available: proxy.size.width,
                 sessions: showsSidebar ? sessionsWidth : nil,
-                changes: showsPanel && !panelExpanded ? changesWidth : nil
+                changes: showsPanel ? changesWidth : nil
             )
+            let expands = showsPanel && panelExpanded
             HStack(spacing: 0) {
                 if let width = layout.sessions {
                     sessionsCard
@@ -127,12 +132,8 @@ struct MainView: View {
                 // With the tab bar hidden and no sidebar, the window's buttons and the sidebar
                 // button sit over this card's header.
                 let controlsInset: CGFloat = !showsTabBar && layout.sessions == nil ? 124 : 0
-                Group {
-                    if showsPanel && panelExpanded {
-                        utilitiesPane
-                            .frame(maxWidth: .infinity)
-                            .transition(.opacity)
-                    } else {
+                ZStack(alignment: .trailing) {
+                    HStack(spacing: 0) {
                         conversationCard
                             .frame(maxWidth: .infinity)
                             // It takes its new room at once while the panel or sidebar slides, so its
@@ -140,22 +141,33 @@ struct MainView: View {
                             // the conversation flicker and jump.
                             .transaction(value: showsPanel) { $0.animation = nil }
                             .transaction(value: showsSidebar) { $0.animation = nil }
+                            .environment(\.windowControlsInset, controlsInset)
+                            // With the tab bar hidden, the panel button sits over the rightmost card.
+                            .environment(\.windowControlsTrailingInset, !showsTabBar && layout.changes == nil ? 36 : 0)
+                            .onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .global).minX }) { mainPaneX = $0 }
+                            // Under the expanded panel: out of reach until it's back.
+                            .allowsHitTesting(!expands)
+                            .accessibilityHidden(expands)
+                        if let width = layout.changes {
+                            PaneResizer(
+                                width: Binding(get: { width }, set: { changesWidth = $0 }),
+                                range: PaneLayout.changesRange.lowerBound...max(PaneLayout.changesRange.lowerBound, layout.changesMax),
+                                side: .trailing
+                            )
+                            .allowsHitTesting(!expands)
+                            // The panel's room; the panel itself is over it, so expanding only
+                            // makes it wider, the one card it is.
+                            Color.clear.frame(width: width)
+                        }
                     }
-                }
-                .environment(\.windowControlsInset, controlsInset)
-                // With the tab bar hidden, the panel button sits over the rightmost card.
-                .environment(\.windowControlsTrailingInset, !showsTabBar && layout.changes == nil ? 36 : 0)
-                .onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .global).minX }) { mainPaneX = $0 }
-                if let width = layout.changes {
-                    PaneResizer(
-                        width: Binding(get: { width }, set: { changesWidth = $0 }),
-                        range: PaneLayout.changesRange.lowerBound...max(PaneLayout.changesRange.lowerBound, layout.changesMax),
-                        side: .trailing
-                    )
-                    utilitiesPane
-                        .frame(width: width)
-                        .environment(\.windowControlsTrailingInset, showsTabBar ? 0 : 36)
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                    .onGeometryChange(for: CGFloat.self, of: \.size.width) { mainAreaWidth = $0 }
+                    if showsPanel, layout.changes != nil || expands {
+                        utilitiesPane
+                            .frame(width: expands ? mainAreaWidth : layout.changes ?? mainAreaWidth)
+                            .environment(\.windowControlsInset, expands ? controlsInset : 0)
+                            .environment(\.windowControlsTrailingInset, showsTabBar ? 0 : 36)
+                            .transition(.move(edge: .trailing).combined(with: .opacity))
+                    }
                 }
             }
             // Settings take the window's place. The sessions stay underneath, hidden and out of
@@ -199,6 +211,10 @@ struct MainView: View {
         // Typing mustn't go on into a composer or terminal that Settings now hide.
         .onChange(of: app.showsSettings) { _, shows in
             if shows { NSApp.mainWindow?.makeFirstResponder(nil) }
+        }
+        // Nor into the conversation the expanded panel covers.
+        .onChange(of: panelExpanded) { _, expanded in
+            if expanded { NSApp.mainWindow?.makeFirstResponder(nil) }
         }
         // The agent started browsing: show it.
         .onChange(of: utilities.revealRequest) { withAnimation(.ui) { showsPanel = true } }
@@ -1043,6 +1059,15 @@ struct MainView: View {
             case "changes": utilities.showChanges()
             case "run": runProject()
             case "expand": panelExpanded = true
+            // toggle=<seconds>: expands and collapses it a few times, that far apart.
+            case "toggle" where parts.count > 1:
+                let wait = Double(parts[1]) ?? 3
+                Task {
+                    for _ in 0..<4 {
+                        try? await Task.sleep(for: .seconds(wait))
+                        withAnimation(.ui) { panelExpanded.toggle() }
+                    }
+                }
             default: continue
             }
             showsPanel = true
