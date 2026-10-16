@@ -22,7 +22,18 @@ struct WidgetCard: View {
     let call: Message.ToolCall
     /// Sends what the page wrote back, as your message.
     let send: (String) -> Void
-    @State private var height: CGFloat = 0
+    @State private var height: CGFloat
+
+    /// Each page's height when last drawn, by call. The conversation makes a row again when you
+    /// scroll back to it, and a page coming back short, then growing, would push everything
+    /// under it down as you scroll.
+    private static var heights: [String: CGFloat] = [:]
+
+    init(call: Message.ToolCall, send: @escaping (String) -> Void) {
+        self.call = call
+        self.send = send
+        _height = State(initialValue: Self.heights[call.id] ?? 0)
+    }
     /// Shown larger, over the window.
     @State private var isLarge = false
     @Environment(\.colorScheme) private var scheme
@@ -122,6 +133,7 @@ struct WidgetCard: View {
             Divider()
             WidgetPage(html: html, accent: NSColor.controlAccentColor, height: $height, isDraft: draft != nil, send: send)
                 .frame(height: max(height, 60))
+                .onChange(of: height) { if height > 0 { Self.heights[call.id] = height } }
         }
         .background(Surface.cardFill(scheme, focused: cardIsFocused), in: Self.shape)
         .clipShape(Self.shape)
@@ -266,6 +278,11 @@ private struct WidgetPage: NSViewRepresentable {
         private(set) var isDraft = false
         private var lastDraft = Date.distantPast
         private var waitingDraft: Task<Void, Never>?
+        /// Loading again with a height already (scrolled back to, or finished after its draft),
+        /// it keeps that height for a moment and only grows: a page draws in steps, and
+        /// coming in short would move the conversation under it.
+        private var keepsHeightUntil = Date.distantPast
+        private var measured: CGFloat?
 
         /// Loads `page`: the finished one at once, a draft at most twice a second (the last
         /// one coming once it's had its turn).
@@ -288,7 +305,15 @@ private struct WidgetPage: NSViewRepresentable {
             isDraft = draft
             if draft { lastDraft = .now }
             loaded = page
+            measured = nil
             view?.loadHTMLString(page, baseURL: nil)
+            guard (height?.wrappedValue ?? 0) > 0 else { return }
+            keepsHeightUntil = .now.addingTimeInterval(1.5)
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(1.6))
+                guard let self, let measured, let height, abs(height.wrappedValue - measured) > 0.5 else { return }
+                height.wrappedValue = measured
+            }
         }
 
         func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -299,7 +324,10 @@ private struct WidgetPage: NSViewRepresentable {
                 let fits = CGFloat(value) <= WidgetPage.tallest
                 view?.fits = fits && !scrollsInside
                 let new = min(CGFloat(value), WidgetPage.tallest)
-                if abs((height?.wrappedValue ?? 0) - new) > 0.5 { height?.wrappedValue = new }
+                measured = new
+                let current = height?.wrappedValue ?? 0
+                if keepsHeightUntil > .now, new < current { return }
+                if abs(current - new) > 0.5 { height?.wrappedValue = new }
             case "send":
                 guard let text = body["text"] as? String, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
                 send(String(text.prefix(4000)))
