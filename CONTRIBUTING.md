@@ -130,6 +130,7 @@ without clicking, for trying a change or taking screenshots:
 | `KUVO_DEMO_BOT`, `KUVO_DEMO_BOT_PROMPT` | Make the bot `<name>\|<job>\|<instructions>[\|<machine>]` unless one has that name, open it, and give it this task |
 | `KUVO_DEMO_OPEN_STEPS` | Every step in the conversation shows its details, opened |
 | `KUVO_DEMO_EDIT_BOT` | With `KUVO_DEMO_BOT`: that bot's editor, open (`bottom`: scrolled to its wake-ups and memory) |
+| `KUVO_DEMO_ADD_WAKE` | With `KUVO_DEMO_EDIT_BOT`: adding a wake-up, every day, with this note (`KUVO_DEMO_ADD_WAKE_NOW`: and adds it) |
 | `KUVO_DEMO_NEW_GROUP` | The New Group Chat editor, open |
 | `KUVO_DEMO_GROUP` | Make the group chat `<name>\|<bot>,<bot>,…` unless one has that name, open it, and send it `\|<message>` if one follows |
 | `KUVO_DEMO_GROUP_LATER` | With a message in `KUVO_DEMO_GROUP`: another one, sent while they talk, as `<seconds>\|<message>` |

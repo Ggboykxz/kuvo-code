@@ -182,7 +182,7 @@ struct BotEditor: View {
                             }
                         }
                     }
-                    section("Wake-Ups", note: "The bot schedules these itself, to carry on later.") {
+                    section("Wake-Ups", note: "The bot schedules these itself, to carry on later. Add one, and at its time what it says to do arrives in the bot’s conversation.") {
                         WakeList(bot: bot)
                     }
                     section("Memory") {
@@ -705,14 +705,54 @@ private struct PersonalityPicker: View {
     }
 }
 
-/// A bot's waiting wake-ups, each with a way to cancel it.
+/// A bot's waiting wake-ups, each with a way to cancel it, and one of yours to add.
 private struct WakeList: View {
     let bot: Bot
     @Environment(Bots.self) private var bots
+    /// The wake-up you're adding, while you are.
+    @State private var draft: Draft?
+    @State private var failure: String?
+    @FocusState private var noteFocused: Bool
+
+    private struct Draft {
+        var due = Draft.nextHour
+        var every: Wakes.Repeat?
+        var note = ""
+
+        /// The next hour on the hour, at least a quarter of an hour away.
+        static var nextHour: Date {
+            let hour = Calendar.current.dateInterval(of: .hour, for: .now)?.end ?? .now.addingTimeInterval(3600)
+            return hour.timeIntervalSinceNow < 15 * 60 ? hour.addingTimeInterval(3600) : hour
+        }
+    }
+
+    /// The repeats to pick from.
+    private static let repeats: [Wakes.Repeat?] = [nil, .hours(1), .days(1), .weekdays, .weeks(1)]
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            list
+            if draft != nil { form }
+        }
+        .animation(.ui, value: draft == nil)
+        #if DEBUG
+        // KUVO_DEMO_ADD_WAKE=<note>: opens adding a wake-up, every day, with that note;
+        // KUVO_DEMO_ADD_WAKE_NOW adds it too.
+        .task {
+            let environment = ProcessInfo.processInfo.environment
+            guard let note = environment["KUVO_DEMO_ADD_WAKE"] else { return }
+            draft = Draft(every: .days(1), note: note)
+            if environment["KUVO_DEMO_ADD_WAKE_NOW"] != nil {
+                try? await Task.sleep(for: .seconds(1))
+                add()
+            }
+        }
+        #endif
+    }
+
+    private var list: some View {
         let wakes = bots.wakes[bot.id] ?? []
-        WellGroup {
+        return WellGroup {
             WellRow {
                 Image(systemName: "pause.circle")
             } content: {
@@ -767,7 +807,82 @@ private struct WakeList: View {
                     }
                 }
             }
+            if draft == nil {
+                WellDivider()
+                HStack {
+                    Button {
+                        draft = Draft()
+                        failure = nil
+                        noteFocused = true
+                    } label: {
+                        Label("Add Wake-Up…", systemImage: "plus")
+                    }
+                    .buttonStyle(TextButtonStyle(outset: true))
+                    .help("Schedule a wake-up yourself: what the bot does, and when")
+                    Spacer()
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            }
         }
         .task { await bots.readWakes(bot) }
+    }
+
+    /// When, how often, and what the bot does then.
+    private var form: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            WellGroup(isActive: noteFocused) {
+                WellRow {
+                    Image(systemName: "clock")
+                } content: {
+                    HStack(spacing: 10) {
+                        PlainDatePicker(date: Binding(get: { draft?.due ?? .now }, set: { draft?.due = $0 }), from: .now)
+                            .accessibilityLabel("When")
+                        Spacer(minLength: 8)
+                        Picker("Repeats", selection: Binding(get: { draft?.every }, set: { draft?.every = $0 })) {
+                            ForEach(Self.repeats, id: \.self) { every in
+                                Text(every.map { $0.words.prefix(1).uppercased() + $0.words.dropFirst() } ?? "Once").tag(every)
+                            }
+                        }
+                        .labelsHidden()
+                        .fixedSize()
+                    }
+                    .padding(.vertical, 6)
+                }
+                WellDivider()
+                TextField("What to do", text: Binding(get: { draft?.note ?? "" }, set: { draft?.note = $0 }),
+                          prompt: Text("What \(bot.name) does then, like Send me the morning digest"), axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .lineLimit(2...5)
+                    .focused($noteFocused)
+                    .padding(12)
+            }
+            HStack {
+                if let failure {
+                    Text(failure)
+                        .font(.callout)
+                        .foregroundStyle(.red)
+                }
+                Spacer()
+                Button("Cancel") { draft = nil }
+                    .buttonStyle(.glass)
+                Button("Add Wake-Up", action: add)
+                    .buttonStyle(.glassProminent)
+                    .disabled(draft?.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+            }
+        }
+        .transition(.opacity.combined(with: .offset(y: -6)))
+    }
+
+    private func add() {
+        guard let draft else { return }
+        Task {
+            do {
+                try await bots.addWake(to: bot, at: draft.due, every: draft.every, note: draft.note)
+                self.draft = nil
+            } catch {
+                failure = error.localizedDescription
+            }
+        }
     }
 }

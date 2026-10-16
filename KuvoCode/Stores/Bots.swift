@@ -113,10 +113,16 @@ final class Bots {
     enum Failure: LocalizedError {
         case notConnected(String)
         case noFolder
+        case tooSoon
+        case tooMany
+        case noWake
         var errorDescription: String? {
             switch self {
             case .notConnected(let machine): "\(machine) isn’t connected. Connect to it, then try again."
             case .noFolder: "Couldn’t make the bot’s folder."
+            case .tooSoon: "Pick a time at least a minute from now."
+            case .tooMany: "This bot has \(Wakes.limit) wake-ups waiting. Cancel some first."
+            case .noWake: "Couldn’t add the wake-up. Check that the machine is connected, then try again."
             }
         }
     }
@@ -250,6 +256,31 @@ final class Bots {
             return parts.first.flatMap { Wakes.Pending(id: $0, note: parts.count > 1 ? parts[1] : "") }
         }
         .sorted { $0.due < $1.due }
+    }
+
+    /// A wake-up you add: at `due`, `note` arrives in the bot's conversation, and again at each
+    /// repeat. One on weekdays starts on a weekday.
+    func addWake(to bot: Bot, at due: Date, every: Wakes.Repeat?, note: String) async throws {
+        let note = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard due > .now.addingTimeInterval(60) else { throw Failure.tooSoon }
+        guard (wakes[bot.id]?.count ?? 0) < Wakes.limit else { throw Failure.tooMany }
+        let folder = (bot.folder as NSString).appendingPathComponent("wakes")
+        if let machine = bot.machine {
+            // Its own kuvo-wake, which knows the machine's clock and its weekends.
+            let repeating = every.map { "--every \($0.text) " } ?? ""
+            let script = "\"\(Self.machineCommand)\" \(SSHConnection.quoted(bot.folder)) add \(Int(due.timeIntervalSince1970)) \(repeating)\(SSHConnection.quoted(note))"
+            guard await Task.detached(operation: { RemoteShell.run(script, on: machine) }).value != nil else { throw Failure.noWake }
+            await readWakes(bot)
+            return
+        }
+        var due = due
+        let calendar = Calendar.current
+        while every == .weekdays, calendar.isDateInWeekend(due), let next = calendar.date(byAdding: .day, value: 1, to: due) { due = next }
+        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        let file = (folder as NSString).appendingPathComponent(Wakes.name(due: due, every: every))
+        guard FileManager.default.createFile(atPath: file, contents: Data(note.utf8)) else { throw Failure.noWake }
+        wakes[bot.id] = Self.localWakes(of: bot)
+        Analytics.shared.track("bot_wake_added", ["repeats": every != nil])
     }
 
     func cancelWake(_ wake: Wakes.Pending, of bot: Bot) async {

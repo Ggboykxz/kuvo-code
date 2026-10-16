@@ -90,7 +90,7 @@ public enum Wakes {
     }
 
     /// A wake-up's file name: its time, a few random letters, and its repeat if it has one.
-    static func name(due: Date, every: Repeat?) -> String {
+    public static func name(due: Date, every: Repeat?) -> String {
         let letters = String((0..<6).map { _ in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789".randomElement()! })
         return "\(Int(due.timeIntervalSince1970))-\(letters)" + (every.map { "-\($0.text)" } ?? "")
     }
