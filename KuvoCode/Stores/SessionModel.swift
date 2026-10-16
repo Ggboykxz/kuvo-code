@@ -377,8 +377,10 @@ final class SessionModel {
         sending = Task {
             await previous?.value
             do {
-                // Converting a photo takes a moment; keep it off the main thread.
-                let prepared = await Task.detached { Attachments.prepare(files, for: model) }.value
+                // Converting a photo takes a moment; keep it off the main thread. A machine's engine
+                // can't read this Mac's files: they go to it inline, or copied there.
+                let machine = RemoteFolder.machine(of: session.location.directory)
+                let prepared = await Task.detached { machine.map { Attachments.prepare(files, for: model, machine: $0) } ?? Attachments.prepare(files, for: model) }.value
                 let message = Attachments.text(text, adding: prepared.paths)
                 await waitForTools()
                 try await api.prompt(session: self.id, id: id, text: message, files: prepared.files, delivery: delivery)
@@ -441,7 +443,8 @@ final class SessionModel {
         sending = Task {
             await previous?.value
             do {
-                let prepared = await Task.detached { Attachments.prepare(files, for: model) }.value
+                let machine = RemoteFolder.machine(of: session.location.directory)
+                let prepared = await Task.detached { machine.map { Attachments.prepare(files, for: model, machine: $0) } ?? Attachments.prepare(files, for: model) }.value
                 try await api.runCommand(session: id, name: name, arguments: Attachments.text(arguments, adding: prepared.paths), files: prepared.files, delivery: delivery)
             } catch {
                 runningCommands.removeAll { $0.id == running.id }

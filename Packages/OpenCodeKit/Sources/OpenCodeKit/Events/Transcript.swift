@@ -42,7 +42,13 @@ public struct Transcript: Sendable, Equatable {
     public mutating func load(messages: [Message], inbox: [InboxItem], permissions: [PermissionRequest], forms: [FormRequest], isRunning: Bool) {
         self.messages = messages
         let local = pending.filter { item in item.isLocal && !inbox.contains { $0.id == item.id } && !messages.contains { $0.id == item.id } }
-        pending = inbox.filter { $0.type == "user" }.map { Pending(id: $0.id, text: $0.text ?? "", delivery: $0.delivery, isLocal: false, files: $0.files) } + local
+        // A copy shown before knows the files as they were picked: the server's names only files
+        // on this Mac (not one sent inline, to a machine), and none before any conversion.
+        let picked = Dictionary(pending.map { ($0.id, $0.files) }, uniquingKeysWith: { first, _ in first })
+        pending = inbox.filter { $0.type == "user" }.map { item in
+            let files = picked[item.id].flatMap { $0.isEmpty ? nil : $0 } ?? item.files
+            return Pending(id: item.id, text: item.text ?? "", delivery: item.delivery, isLocal: false, files: files)
+        } + local
         self.permissions = permissions
         self.forms = forms
         self.isRunning = isRunning

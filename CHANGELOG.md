@@ -4,6 +4,10 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
+## Unreleased
+
+- Pictures and files you attach in a session on a machine reach its agent: they used to fail with "Unable to read attachment". What the model can read goes with the message; anything else is copied to the machine for the agent to open.
+
 ## 0.5.0
 
 - Settings has tabs, like your sessions: each page you open gets a tab of its own beside the others (⌘-click opens one more, even when it's open), and so does a site you sign in to for the agent; ⌃Tab, ⌘1 to ⌘9 and ⌘W work there too, and your tabs are there the next time. Pages line up under their titles.

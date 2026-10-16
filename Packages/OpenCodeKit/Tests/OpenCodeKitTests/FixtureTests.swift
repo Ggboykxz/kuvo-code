@@ -160,8 +160,14 @@ struct TranscriptTests {
         {"text":"Look","files":[{"uri":"\(converted)"},{"uri":"data:image/png;base64,AAAA"}]}
         """.utf8))
         let item = InboxItem(id: "msg_1", sessionID: Self.session, type: "user", payload: payload, delivery: .queue)
+        var restarted = Transcript(sessionID: Self.session)
+        restarted.load(messages: [], inbox: [item], permissions: [], forms: [], isRunning: false)
+        #expect(restarted.pending.first?.files == [URL(string: converted)!])
+
+        // Read again while it's still shown: the files as they were picked stay (one sent inline,
+        // to a machine, has no file the server could name).
         transcript.load(messages: [], inbox: [item], permissions: [], forms: [], isRunning: false)
-        #expect(transcript.pending.first?.files == [URL(string: converted)!])
+        #expect(transcript.pending.first?.files == [picked])
     }
 
     /// What a person would see: message kind, text, tools and their outcome.

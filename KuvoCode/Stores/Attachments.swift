@@ -86,6 +86,46 @@ nonisolated enum Attachments {
         return prepared
     }
 
+    /// The same, for an engine on `machine`, which can't read this Mac's files: what the model
+    /// takes goes inline, as data (a folder as its listing, as the engine lists one); anything
+    /// else is copied to the machine, into Kuvo Code's folder there, for the agent to open with
+    /// its tools. A file that can't be copied goes as a note that it's on the user's Mac.
+    static func prepare(_ urls: [URL], for model: Model?, machine: String) -> Prepared {
+        let here = prepare(urls, for: model)
+        var prepared = Prepared()
+        for file in here.files {
+            guard let url = URL(string: file.uri), url.isFileURL else { continue }
+            if let inline = inlined(url) {
+                prepared.files.append(.init(uri: inline, name: file.name))
+            } else {
+                prepared.paths.append(url.path)
+            }
+        }
+        let batch = String(UUID().uuidString.prefix(8)).lowercased()
+        for path in here.paths {
+            prepared.paths.append(RemoteShell.upload(URL(filePath: path), into: "\(RemoteEngineInstaller.root)/attachments/\(batch)", on: machine)
+                ?? "\(path) (on the user's Mac: it couldn't be copied to this machine)")
+        }
+        return prepared
+    }
+
+    /// A file as a data URI, or a folder as the engine lists one; nil when it can't be read.
+    private static func inlined(_ url: URL) -> String? {
+        if kind(of: url) == .folder {
+            guard let names = try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey]) else { return nil }
+            let entries = names.map { entry in
+                let isFolder = (try? entry.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+                return (name: entry.lastPathComponent + (isFolder ? "/" : ""), isFolder: isFolder)
+            }
+            .sorted { $0.isFolder != $1.isFolder ? $0.isFolder : $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            return "data:text/plain;base64," + Data(entries.map(\.name).joined(separator: "\n").utf8).base64EncodedString()
+        }
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        let type = UTType(filenameExtension: url.pathExtension)
+        let mime = kind(of: url) == .text ? "text/plain" : (type?.preferredMIMEType ?? "application/octet-stream")
+        return "data:\(mime);base64," + data.base64EncodedString()
+    }
+
     /// The image as a format and size the engine takes, converting it if needed.
     private static func engineImage(from url: URL, size: Int) -> OpenCodeAPI.PromptFile? {
         let type = UTType(filenameExtension: url.pathExtension)
