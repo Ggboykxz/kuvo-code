@@ -292,12 +292,19 @@ struct Composer: View {
     }
 
     /// Once the field holding `text` has the keyboard, its cursor after the text rather than all
-    /// of it selected (which typing would replace). For every composer.
+    /// of it selected (which typing would replace). For every composer. The field can take a
+    /// while to get the keyboard (at launch, or in a window that isn't in front), so it looks
+    /// again for up to a second.
     static func cursorToEnd(of text: String) {
         Task {
-            try? await Task.sleep(for: .milliseconds(50))
-            let editor = NSApp.windows.lazy.compactMap { $0.firstResponder as? NSTextView }.first { $0.isFieldEditor && $0.string == text }
-            if let editor { editor.setSelectedRange(NSRange(location: (editor.string as NSString).length, length: 0)) }
+            for _ in 0..<20 {
+                try? await Task.sleep(for: .milliseconds(50))
+                let editor = NSApp.windows.lazy.compactMap { $0.firstResponder as? NSTextView }.first { $0.isFieldEditor && $0.string == text }
+                if let editor {
+                    editor.setSelectedRange(NSRange(location: (editor.string as NSString).length, length: 0))
+                    return
+                }
+            }
         }
     }
 

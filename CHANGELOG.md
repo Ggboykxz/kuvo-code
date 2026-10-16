@@ -4,6 +4,10 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
+## Unreleased
+
+- A draft waiting in the composer opens with the cursor after it, instead of all selected, when the window takes a moment to come forward.
+
 ## 0.5.1
 
 - Messages waiting for the agent sit in a card tucked behind the composer, with a picture's thumbnail when one is attached. Steer gives a queued message to the agent at its next step without waiting for the run to end, the trash removes it, and ⋯ has Send Now and Edit; double-click a message to edit it.
