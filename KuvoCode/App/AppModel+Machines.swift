@@ -136,11 +136,13 @@ extension AppModel {
         engine.signInSync?.cancel()
         if engine.isReady {
             await syncSignIns(with: engine)
+            await syncSignInFiles(with: engine)
             engine.signInSync = Task { [weak self, weak engine] in
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(600))
                     guard let engine, engine.isReady, !Task.isCancelled else { return }
                     await self?.syncSignIns(with: engine)
+                    await self?.syncSignInFiles(with: engine)
                 }
             }
         }

@@ -103,6 +103,12 @@ nonisolated enum Integrations {
 
     static func service(_ id: String) -> Service? { all.first { $0.id == id } }
 
+    /// Integrations whose servers keep their sign-in in files of their own, in their folder (see
+    /// `AppModel.syncSignInFiles`), by the files' names.
+    static let signInFiles: [String: [String]] = [
+        "microsoft-365": ["token-cache.json", "selected-account.json"],
+    ]
+
     // Checked 2026-10-16: the official servers with their makers' docs; the open-source ones on
     // npm, pinned. Keep them current with the other upstreams.
     static let all: [Service] = [
