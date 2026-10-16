@@ -341,6 +341,18 @@ final class Utilities {
         revealRequest += 1
     }
 
+    /// Where the file tree should open down to (and show): what an agent showed you.
+    private(set) var treeReveal: (url: URL, count: Int)?
+
+    /// An agent showing you a file or folder, in its conversation (the one in view): a folder in
+    /// the Files tab, open down to it; a file in a file tab, with the tree open to it too.
+    func showInPanel(_ url: URL, isFolder: Bool, for session: String) {
+        guard sessionInView == session else { return }
+        if isFolder { showFiles() } else { open(url) }
+        treeReveal = (url, (treeReveal?.count ?? 0) + 1)
+        revealRequest += 1
+    }
+
     /// Opens `url` in a file tab and brings the panel into view: you asked to see it.
     func show(_ url: URL) {
         open(url)

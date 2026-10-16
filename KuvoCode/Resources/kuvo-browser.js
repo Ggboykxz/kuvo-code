@@ -1246,6 +1246,22 @@ async function tool(name, args) {
   const string = (key) => (typeof args[key] === "string" ? args[key] : null);
   const scripts = CONFIG.scripts;
 
+  // Not the browser's: Kuvo Code shows it in its panel when this says it goes ahead (it sees
+  // the call), so it's only checked here.
+  if (name === "show_in_panel") {
+    const raw = string("path");
+    if (!raw) throw new ToolError("Missing path.");
+    const full = path.resolve(raw.replace(/^~(?=$|\/)/, os.homedir()));
+    if (full !== raw) return text(`Give the full path: ${full}`, true);
+    let isFolder;
+    try {
+      isFolder = fs.statSync(full).isDirectory();
+    } catch {
+      return text(`There's nothing at ${full}.`, true);
+    }
+    return text(`Showing the ${isFolder ? "folder" : "file"} ${full} in Kuvo Code's side panel.`);
+  }
+
   if (name === "browser_upload") {
     const index = integer("index");
     const files = Array.isArray(args.files) ? args.files.filter((f) => typeof f === "string" && f) : [];
@@ -1511,6 +1527,11 @@ async function mcp() {
       case "tools/list":
         return reply({ tools: CONFIG.tools });
       case "tools/call": {
+        // Showing something in Kuvo Code's panel needs no browser, nor a turn in the line.
+        if (params.name === "show_in_panel") {
+          tool(params.name, params.arguments || {}).then(reply, (error) => reply(text(error instanceof ToolError ? error.message : String(error), true)));
+          return;
+        }
         // You have its page: it waits for you first, and only then joins the line of calls, so it
         // holds up no one else's; taken over while it waited in line, it leaves the line to wait.
         const run = () => waitForControl(params._meta?.["ai.opencode/sessionID"] ?? null, params.name).catch(() => null).then((wait) => (queue = queue.then(async () => {

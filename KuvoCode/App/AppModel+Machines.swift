@@ -13,6 +13,11 @@ extension AppModel {
         // An agent on a machine browses with the machine's browser: the panel shows it, as it
         // shows its own browser for an agent here.
         workspace.onMachineBrowsing = { [weak self] machine, session in self?.utilities.revealMachineBrowser(machine, for: session) }
+        // An agent showing you a file or folder: in the panel, beside its conversation.
+        workspace.onShowInPanel = { [weak self] session, machine, path, isFolder in
+            let url = machine.map { RemoteFolder.url(RemoteFolder.folder(path, on: $0)) } ?? URL(filePath: path, directoryHint: isFolder ? .isDirectory : .notDirectory)
+            self?.utilities.showInPanel(url, isFolder: isFolder, for: session)
+        }
         // An agent asks you for something in its browser: who's asking, and on a machine, the
         // connection that brings the ask here.
         browserAsks.onChange = { [weak self] sessions in self?.workspace.askingInBrowser = sessions }

@@ -11,14 +11,17 @@ struct FilesView: View {
     let roots: [String]
     let file: URL?
     @Binding var showsTree: Bool
+    /// Where the tree should open down to, each time it's asked anew.
+    var reveal: (url: URL, count: Int)?
     let open: (URL) -> Void
     @State private var tree: FileTree
     @State private var width: CGFloat = 600
 
-    init(roots: [String], file: URL?, showsTree: Binding<Bool>, open: @escaping (URL) -> Void) {
+    init(roots: [String], file: URL?, showsTree: Binding<Bool>, reveal: (url: URL, count: Int)? = nil, open: @escaping (URL) -> Void) {
         self.roots = roots
         self.file = file
         _showsTree = showsTree
+        self.reveal = reveal
         self.open = open
         _tree = State(initialValue: FileTree(roots: roots.map(RemoteFolder.url)))
     }
@@ -52,6 +55,11 @@ struct FilesView: View {
             }
         }
         .onGeometryChange(for: CGFloat.self, of: \.size.width) { width = $0 }
+        .task(id: reveal?.count) {
+            guard let reveal else { return }
+            if file != nil { showsTree = true }
+            await tree.reveal(reveal.url)
+        }
     }
 
     /// Beside a file, the tree takes up to 260 points, less in a narrow panel, so the file
@@ -138,6 +146,27 @@ final class FileTree {
             .sorted { ($0.isDirectory ? 0 : 1, $0.name.lowercased()) < ($1.isDirectory ? 0 : 1, $1.name.lowercased()) }
         children[directory] = entries
         return entries
+    }
+
+    /// Opens the tree down to `target` (and it too, a folder), reading it afresh: an agent just
+    /// made it, maybe. A machine's folders are read in the background, so each level waits for
+    /// its listing.
+    func reveal(_ target: URL) async {
+        guard let root = roots.first(where: { $0.scheme == target.scheme && $0.host() == target.host() && (target.path == $0.path || target.path.hasPrefix($0.path + "/")) }) else { return }
+        filter = ""
+        reload()
+        if roots.count > 1 { expanded.insert(root) }
+        var directory = root
+        for part in target.path.dropFirst(root.path.count).split(separator: "/").map(String.init) {
+            var entry = entries(in: directory).first { $0.name == part }
+            for _ in 0..<50 where entry == nil && !directory.isFileURL {
+                try? await Task.sleep(for: .milliseconds(150))
+                entry = entries(in: directory).first { $0.name == part }
+            }
+            guard let entry, entry.isDirectory else { return }
+            expanded.insert(entry.url)
+            directory = entry.url
+        }
     }
 
     /// Forgets what's been read, so the tree shows files created since.

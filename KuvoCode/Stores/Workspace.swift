@@ -720,6 +720,37 @@ final class Workspace {
 
     /// An agent on a machine started using its browser.
     @ObservationIgnored var onMachineBrowsing: ((_ machine: String, _ session: String) -> Void)?
+
+    /// An agent showed you a file or folder (its show_in_panel tool), at a path on its machine
+    /// (nil: this Mac): the window opens it in the panel.
+    @ObservationIgnored var onShowInPanel: ((_ session: String, _ machine: String?, _ path: String, _ isFolder: Bool) -> Void)?
+    /// Those calls under way, by ID, with their paths once they're known.
+    @ObservationIgnored private var panelCalls: [String: String] = [:]
+
+    /// Follows show_in_panel's calls: what they're for when they're made, and once the tool says
+    /// the path is there, it's shown.
+    private func noteShowInPanel(_ event: ServerEvent, machine: String?) {
+        guard let session = event.sessionID else { return }
+        switch event.type {
+        case "session.tool.input.started":
+            if let started = try? event.payload(as: EventPayload.ToolInputStarted.self), started.name == "kuvo-browser_" + BrowserTools.showInPanel {
+                panelCalls[started.id] = ""
+            }
+        case "session.tool.called":
+            if let called = try? event.payload(as: EventPayload.ToolCalled.self), panelCalls[called.id] != nil {
+                panelCalls[called.id] = called.input["path"]?.string ?? ""
+            }
+        case "session.tool.success":
+            guard let done = try? event.payload(as: EventPayload.ToolSucceeded.self), let path = panelCalls.removeValue(forKey: done.id), !path.isEmpty else { return }
+            let said = done.content.compactMap { if case .text(let text) = $0 { text } else { nil } }.joined()
+            guard said.hasPrefix("Showing the ") else { return }
+            onShowInPanel?(session, machine, path, said.hasPrefix("Showing the folder "))
+        case "session.tool.failed":
+            if let failed = try? event.payload(as: EventPayload.ToolFailed.self) { panelCalls[failed.id] = nil }
+        default:
+            break
+        }
+    }
     /// A bot's name, by its session, for its notifications.
     @ObservationIgnored var botName: ((String) -> String?)?
 
@@ -762,8 +793,9 @@ final class Workspace {
         }
         #endif
         if let machine, let id = event.sessionID { sessionMachines[id] = machine }
+        noteShowInPanel(event, machine: machine)
         if event.type == "session.tool.input.started", let id = event.sessionID,
-           let started = try? event.payload(as: EventPayload.ToolInputStarted.self), started.name.hasPrefix("kuvo-browser_") {
+           let started = try? event.payload(as: EventPayload.ToolInputStarted.self), started.name.hasPrefix("kuvo-browser_browser_") {
             if let machine { onMachineBrowsing?(machine, id) }
             if ["kuvo-browser_browser_sign_in", "kuvo-browser_browser_ask_code", "kuvo-browser_browser_ask_user"].contains(started.name) {
                 onBrowserAsk?(id, machine)

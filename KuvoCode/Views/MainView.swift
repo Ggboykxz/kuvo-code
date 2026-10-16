@@ -1250,6 +1250,25 @@ struct MainView: View {
     }
 
     private func runDemoSession(_ environment: [String: String]) async {
+        // KUVO_DEMO_SHOW_IN_PANEL=<path>|<folder or file>: as if the agent of the session in view
+        // showed that in the panel (its show_in_panel tool), once it's been connected a while.
+        if let spec = environment["KUVO_DEMO_SHOW_IN_PANEL"] {
+            let parts = spec.split(separator: "|").map(String.init)
+            Task { [workspace] in
+                try? await Task.sleep(for: .seconds(18))
+                guard let id = sessionID, let session = workspace.session(id), parts.count == 2 else { return }
+                let machine = RemoteFolder.machine(of: session.location.directory)
+                let said = BrowserTools.shown(parts[0], isFolder: parts[1] == "folder")
+                for (type, data) in [
+                    ("session.tool.input.started", #""name":"kuvo-browser_show_in_panel""#),
+                    ("session.tool.called", #""input":{"path":\#(String(decoding: try! JSONEncoder().encode(parts[0]), as: UTF8.self))}"#),
+                    ("session.tool.success", #""content":[{"type":"text","text":\#(String(decoding: try! JSONEncoder().encode(said), as: UTF8.self))}]"#),
+                ] {
+                    let json = #"{"id":"evt_demo","type":"\#(type)","data":{"sessionID":"\#(id)","assistantMessageID":"msg_demo","id":"call_show",\#(data)}}"#
+                    if let event = try? ServerEvent(json: Data(json.utf8)) { workspace.handle(event, machine: machine) }
+                }
+            }
+        }
         // KUVO_DEMO_SESSION=<id>: that session's tab, in view (one on a machine waits for it).
         if let id = environment["KUVO_DEMO_SESSION"] { openTab(id) }
         // KUVO_DEMO_TABS: the project's sessions as tabs, the one in view staying in view.

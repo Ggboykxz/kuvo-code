@@ -131,6 +131,8 @@ final class BrowserToolServer {
             let arguments = params["arguments"] as? [String: Any] ?? [:]
             // The engine names the session calling, so an ask goes to the right conversation.
             let caller = (params["_meta"] as? [String: Any])?["ai.opencode/sessionID"] as? String
+            // Not the browser's: no page to serve it.
+            if name == BrowserTools.showInPanel { return reply(BrowserTools.showInPanelCall(arguments)) }
             return reply(await BrowserTools.call(name, arguments: arguments, agent: agent.serving(caller), caller: caller))
         default:
             return ["jsonrpc": "2.0", "id": id, "error": ["code": -32601, "message": "Unknown method \(method)"]]
@@ -181,7 +183,29 @@ enum BrowserTools {
              ["index": ["type": "integer"], "prompt": ["type": "string", "description": "What to tell the user, like \"Enter the 6-digit code texted to your phone\"."]], required: ["index"]),
         tool("browser_ask_user", "Ask the user to do something on the page themselves: a CAPTCHA, approving the sign-in on their phone, or anything else you can't do. Waits until they say it's done (up to 15 minutes), then reads the page again.",
              ["instruction": ["type": "string", "description": "What they should do, in a sentence."]], required: ["instruction"]),
+        tool(showInPanel, "Show the user a file or folder in Kuvo Code's side panel, beside this conversation: a folder opens in the Files tab, open down to it; a file in a tab of its own (code, Markdown, pictures and PDFs show as they are). Use it whenever the user asks to see, open or find something, and to point them to what you made or found. Give its full path.",
+             ["path": ["type": "string", "description": "The file's or folder's full path."]], required: ["path"]),
     ]
+
+    /// The tool that shows a file or folder in the panel; the window does it when the call
+    /// succeeds (see `Workspace.onShowInPanel`), for a session here or on a machine alike.
+    nonisolated static let showInPanel = "show_in_panel"
+
+    /// What its call says when it goes ahead, which also tells a folder from a file.
+    nonisolated static func shown(_ path: String, isFolder: Bool) -> String {
+        "Showing the \(isFolder ? "folder" : "file") \(path) in Kuvo Code's side panel."
+    }
+
+    /// Checks the path, here, and says it's shown.
+    static func showInPanelCall(_ arguments: [String: Any]) -> [String: Any] {
+        func text(_ value: String, error: Bool = false) -> [String: Any] { ["content": [["type": "text", "text": value]], "isError": error] }
+        guard let raw = arguments["path"] as? String, !raw.isEmpty else { return text("Missing path.", error: true) }
+        let full = URL(filePath: (raw as NSString).expandingTildeInPath).standardizedFileURL.path
+        guard full == raw else { return text("Give the full path: \(full)", error: true) }
+        var isFolder: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: full, isDirectory: &isFolder) else { return text("There's nothing at \(full).", error: true) }
+        return text(shown(full, isFolder: isFolder.boolValue))
+    }
 
     /// How long the engine lets a tool run: longer than the agent waits for the user.
     static let executionTimeout = 960_000
@@ -189,7 +213,7 @@ enum BrowserTools {
     /// What the engine tells the model about the tools.
     /// Where Kuvo Code's own docs are, for when you ask the agent how to do something in the app.
     /// Every session has these tools, so it hears it wherever it works.
-    nonisolated static let docs = "You're working inside Kuvo Code, the Mac app the user talks to you in: sessions in projects, a side panel with changes, files, terminals and a browser, bots, group chats and remote machines. When the user asks how to do something in Kuvo Code itself (where a setting is, what a button does, how bots, wake-ups or machines work, a shortcut), read its documentation with webfetch rather than guessing: start at https://www.kuvo.run/code/docs/, whose pages include sessions, changes, panel, browsing, machines, bots, integrations, customize, settings, usage, shortcuts, privacy and troubleshooting (each at https://www.kuvo.run/code/docs/<page>/). Answer from what it says, briefly, and say where in the app to find it. For a service you have no tools for (the user's mail, chats or social accounts, say), use the browser: the user is signed in to sites there, or can sign in when you ask."
+    nonisolated static let docs = "You're working inside Kuvo Code, the Mac app the user talks to you in: sessions in projects, a side panel with changes, files, terminals and a browser, bots, group chats and remote machines. When the user asks how to do something in Kuvo Code itself (where a setting is, what a button does, how bots, wake-ups or machines work, a shortcut), read its documentation with webfetch rather than guessing: start at https://www.kuvo.run/code/docs/, whose pages include sessions, changes, panel, browsing, machines, bots, integrations, customize, settings, usage, shortcuts, privacy and troubleshooting (each at https://www.kuvo.run/code/docs/<page>/). Answer from what it says, briefly, and say where in the app to find it. For a service you have no tools for (the user's mail, chats or social accounts, say), use the browser: the user is signed in to sites there, or can sign in when you ask. To show the user a file or folder (one they ask to see or open, or what you made), use show_in_panel: it opens in Kuvo Code's side panel, beside this conversation."
 
     nonisolated static func instructions(machine: Bool) -> String {
         let place = machine
