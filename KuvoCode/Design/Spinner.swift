@@ -16,7 +16,7 @@ struct Spinner: View {
             if reduceMotion {
                 mark(chevron: 1, cursor: 1, opacity: 0.8)
             } else {
-                TimelineView(.animation(minimumInterval: appearsActive ? 1.0 / 30 : 1.0 / 15)) { context in
+                TimelineView(.animation(minimumInterval: appearsActive ? 1.0 / 30 : 1.0 / 15, paused: !WindowVisibility.shared.isVisible)) { context in
                     let p = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: Self.cycle) / Self.cycle
                     // The chevron draws, then the cursor; both hold a moment, then fade.
                     mark(chevron: eased((p - 0.0) / 0.4), cursor: eased((p - 0.32) / 0.28), opacity: p < 0.78 ? 1 : 1 - (p - 0.78) / 0.22)
