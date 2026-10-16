@@ -45,7 +45,6 @@ struct MainView: View {
     @State private var showsPalette = false
     /// A tab's session being renamed, and the title being typed.
     @State private var renaming: Session?
-    @State private var newTitle = ""
     /// The window's content width; the title bar is sized from it.
     @State private var contentWidth: CGFloat = 1200
     /// Where the middle card starts and where the title bar's items start, in the window: the
@@ -285,13 +284,7 @@ struct MainView: View {
             }
         }
         .animation(.ui, value: showsPalette)
-        .alert("Rename Session", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
-            TextField("Title", text: $newTitle)
-            Button("Rename") {
-                if let session = renaming { Task { await workspace.rename(session.id, to: newTitle) } }
-            }
-            Button("Cancel", role: .cancel) {}
-        }
+        .modifier(RenameSession(session: $renaming))
         .sheet(item: $projectSheet) { request in
             ProjectSheet(project: request.project, folders: request.folders, focusesRun: request.focusesRun) { primary, settings in
                 workspace.saveProject(primary, settings: settings)
@@ -386,7 +379,6 @@ struct MainView: View {
                 if !tabItems.isEmpty {
                     TabStrip(tabs: tabItems, selection: $selection, close: { closeTab($0) }, closeAll: closeTabs(except:)) { id in
                         guard let session = workspace.session(id) else { return }
-                        newTitle = session.title ?? ""
                         renaming = session
                     }
                 }
@@ -920,7 +912,6 @@ struct MainView: View {
             add("Plan Mode", "list.bullet.clipboard", "⌥⌘2") { actions.selectAgent("plan") }
             add("Find in Conversation…", "magnifyingglass", "⌘F", actions.find)
             add("Rename Session…", "pencil") {
-                newTitle = model.session.title ?? ""
                 renaming = model.session
             }
         }

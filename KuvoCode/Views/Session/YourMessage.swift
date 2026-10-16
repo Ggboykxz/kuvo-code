@@ -1,3 +1,4 @@
+import OpenCodeKit
 import AppKit
 import SwiftUI
 
@@ -72,5 +73,25 @@ struct YourMessage: View {
         } message: {
             Text(undoNote)
         }
+    }
+}
+
+/// Rename Session, with its title to change, wherever a session can be renamed (its row, its tab,
+/// the command palette).
+struct RenameSession: ViewModifier {
+    @Binding var session: Session?
+    @Environment(Workspace.self) private var workspace
+    @State private var title = ""
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: session?.id) { title = session?.title ?? "" }
+            .alert("Rename Session", isPresented: Binding(get: { session != nil }, set: { if !$0 { session = nil } })) {
+                TextField("Title", text: $title)
+                Button("Rename") {
+                    if let session { Task { await workspace.rename(session.id, to: title) } }
+                }
+                Button("Cancel", role: .cancel) {}
+            }
     }
 }

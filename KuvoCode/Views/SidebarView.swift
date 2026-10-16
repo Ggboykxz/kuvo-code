@@ -45,7 +45,6 @@ struct SidebarView: View {
     @State private var worktreeIsDirty = false
 
     private enum Place { case pinned, project, chats, recents }
-    @State private var newTitle = ""
     /// Sessions whose title or project has this, instead of the usual lists.
     @State private var search = ""
     /// Sessions whose conversations have the search, with the words around it.
@@ -260,13 +259,7 @@ struct SidebarView: View {
         } message: {
             Text("Its messages are deleted, and its bots stop remembering it. This can’t be undone.")
         }
-        .alert("Rename Session", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
-            TextField("Title", text: $newTitle)
-            Button("Rename") {
-                if let session = renaming { Task { await workspace.rename(session.id, to: newTitle) } }
-            }
-            Button("Cancel", role: .cancel) {}
-        }
+        .modifier(RenameSession(session: $renaming))
         .alert(
             deleting.flatMap(\.title).map { "Delete “\($0)”?" } ?? "Delete This Session?",
             isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })
@@ -559,7 +552,6 @@ struct SidebarView: View {
             }
         }
         Button("Rename…") {
-            newTitle = session.title ?? ""
             renaming = session
         }
         if Workspace.isChat(session.location.directory) {
