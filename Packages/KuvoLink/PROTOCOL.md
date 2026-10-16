@@ -134,7 +134,8 @@ itself. A host serves:
 - `api/…`: passed to its engine, if the path is on the host's list (sessions, messages,
   prompts, permissions, questions, events, providers, agents, commands, a project's files,
   terminals). Never accounts or keys.
-- `kuvo/info`: what the host is and runs.
+- `kuvo/info`: what the host is and runs; a Mac also names its folder of chats (conversations of
+  no project).
 - On a Mac, `kuvo/hosts`: the machines this phone may reach directly, with their addresses
   and static keys, so pairing once with the Mac reaches them all.
 - On a Mac, `kuvo/bots`: your bots by their session, wherever they live, with their name,

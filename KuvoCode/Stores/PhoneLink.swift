@@ -266,7 +266,8 @@ final class PhoneLink {
 
     /// Kuvo's own routes, beside the engine's.
     private func answer(_ request: LinkRequest) -> (Int, Data) {
-        struct Info: Encodable { var kind = "mac"; var name: String; var app: String; var engine: String }
+        /// `chats`: the folder of conversations of no project, which the phone lists as Chats.
+        struct Info: Encodable { var kind = "mac"; var name: String; var app: String; var engine: String; var chats: String }
         struct Hosts: Encodable {
             struct Host: Encodable { var kind = "machine"; var name: String; var address: String; var key: String; var relay: String }
             var hosts: [Host]
@@ -274,7 +275,7 @@ final class PhoneLink {
         let encoder = JSONEncoder()
         switch request.path {
         case "kuvo/info":
-            return (200, (try? encoder.encode(Info(name: Self.computerName, app: AppInfo.version, engine: OpenCodeEngine.version))) ?? Data())
+            return (200, (try? encoder.encode(Info(name: Self.computerName, app: AppInfo.version, engine: OpenCodeEngine.version, chats: Workspace.chatsFolder))) ?? Data())
         case "kuvo/bots":
             // Each bot by its session (here or on a machine): its name, look and job, and what
             // the Mac knows of it that its session doesn't say: paused, when it next wakes (in
