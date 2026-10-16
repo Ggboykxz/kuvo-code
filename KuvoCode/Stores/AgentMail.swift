@@ -73,14 +73,20 @@ final class AgentMail {
         return opening + name + " · " + session + "] (\(answer))\n\n" + text
     }
 
-    /// A message from another agent: who sent it, and what it says.
+    /// A message from another agent: who sent it, and what it says. Its first line is
+    /// "[Message from <name> · <session>] (…)", read from the end, as a name can hold anything.
     static func parse(_ message: String) -> (name: String, session: String, text: String)? {
-        guard message.hasPrefix(opening), let close = message.range(of: "] ") ?? message.range(of: "]\n") else { return nil }
-        let head = message[message.index(message.startIndex, offsetBy: opening.count)..<close.lowerBound]
-        guard let dot = head.range(of: " · ", options: .backwards) else { return nil }
-        let rest = message[close.upperBound...]
-        let text = rest.range(of: "\n\n").map { String(rest[$0.upperBound...]) } ?? String(rest)
-        return (String(head[..<dot.lowerBound]), String(head[dot.upperBound...]), text)
+        guard message.hasPrefix(opening) else { return nil }
+        let first = message.prefix { $0 != "\n" }
+        guard let dot = first.range(of: " · ", options: .backwards) else { return nil }
+        let after = first[dot.upperBound...]
+        guard let close = after.firstIndex(of: "]") else { return nil }
+        let session = after[..<close]
+        guard session.hasPrefix("ses_") || session == "unknown", !session.contains(" ") else { return nil }
+        let name = first[first.index(first.startIndex, offsetBy: opening.count)..<dot.lowerBound]
+        let rest = message[first.endIndex...]
+        let text = rest.range(of: "\n\n").map { String(rest[$0.upperBound...]) } ?? String(rest.drop { $0 == "\n" })
+        return (String(name), String(session), text)
     }
 
     // MARK: Who there is
