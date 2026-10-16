@@ -4,13 +4,12 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
-## Unreleased
+## 0.5.0
 
-- Settings has tabs, like your sessions: each page you open gets a tab of its own beside the others (⌘-click opens one more, even when it's open); ⌃Tab, ⌘1 to ⌘9 and ⌘W work there too, and your tabs are there the next time. Pages line up under their titles.
-- Settings has tabs: signing in to a site for the agent opens it in a tab of its own in the title bar, beside the page you were on, filling the window, and stays open while you go back and forth.
+- Settings has tabs, like your sessions: each page you open gets a tab of its own beside the others (⌘-click opens one more, even when it's open), and so does a site you sign in to for the agent; ⌃Tab, ⌘1 to ⌘9 and ⌘W work there too, and your tabs are there the next time. Pages line up under their titles.
 - Signing in to X, LinkedIn or Reddit for the agent happens right in Settings › Integrations, which shows whether you're signed in on this Mac and on each machine, live as you sign in.
 - X opens on your machines: a page opened there at an address used to stay blank on sites that turn headless browsers away.
-- Settings › Integrations shows how each one is doing on this Mac and on each machine ("Connected on this Mac and my-server"), with one button when something needs you and the rest in a ⋯ menu. **Sign In…** for a service the agent uses on its site opens the site right there, over Settings, for this Mac or one of your machines, instead of a tab in the panel that didn't show.
+- Settings › Integrations shows how each one is doing on this Mac and on each machine ("Connected on this Mac and my-server"), with one button when something needs you and the rest in a ⋯ menu. **Sign In…** for a service the agent uses on its site opens it right in Settings, for this Mac or one of your machines, instead of a panel tab that didn't show.
 - Settings › Integrations shows Sign In… for Gmail and Google Calendar until you've signed in (they used to say Connected), and says when Outlook hasn't been signed in yet.
 - A key you save for an integration reaches the engine and your machines' engines on its own, once whatever's working there is done; there's no Restart Engine button to remember.
 - **Integrations work the way you'd expect**: once you connect one, the agent uses its tools directly, on this Mac and on your machines, instead of opening the service's website. Integrations you added before are switched over when Kuvo Code starts.
