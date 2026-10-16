@@ -24,7 +24,7 @@ nonisolated enum IntegrationKeys {
         return String(data: data, encoding: .utf8)
     }
 
-    /// Saves a key (or removes it, for nil or empty).
+    /// Saves a key, in place of the one before (or removes it, for nil or empty).
     @discardableResult
     static func set(_ value: String?, for variable: String) -> Bool {
         let base: [String: Any] = [
@@ -32,32 +32,34 @@ nonisolated enum IntegrationKeys {
             kSecAttrService as String: service,
             kSecAttrAccount as String: variable,
         ]
-        SecItemDelete(base as CFDictionary)
-        guard let value, !value.isEmpty else { return true }
+        guard let value, !value.isEmpty else {
+            let status = SecItemDelete(base as CFDictionary)
+            return status == errSecSuccess || status == errSecItemNotFound
+        }
+        let data = Data(value.utf8)
+        let updated = SecItemUpdate(base as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if updated != errSecItemNotFound { return updated == errSecSuccess }
         var item = base
-        item[kSecValueData as String] = Data(value.utf8)
+        item[kSecValueData as String] = data
         item[kSecAttrLabel as String] = "Kuvo Code integration key"
         item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
         return SecItemAdd(item as CFDictionary, nil) == errSecSuccess
     }
 
-    /// Every key you saved, as the environment the engines run with.
+    /// Every key you saved, as the environment the engines run with. (The keychain lists them
+    /// without their values, so each is read on its own.)
     static var environment: [String: String] {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecReturnAttributes as String: true,
-            kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitAll,
         ]
         var result: CFTypeRef?
         guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let items = result as? [[String: Any]] else { return [:] }
         var found: [String: String] = [:]
-        for item in items {
-            if let name = item[kSecAttrAccount as String] as? String, let data = item[kSecValueData as String] as? Data,
-               let value = String(data: data, encoding: .utf8) {
-                found[name] = value
-            }
+        for case let name as String in items.map({ $0[kSecAttrAccount as String] }) {
+            if let value = value(name) { found[name] = value }
         }
         return found
     }

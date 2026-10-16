@@ -3,7 +3,8 @@ import Foundation
 /// `kuvo-npx`, in the `bin` folder beside `kuvo-wake`: runs an npm package's command for an MCP
 /// server (an integration's), with Node's npx when the computer has it, else the engine's own Bun
 /// (`bun x`), so such a server needs nothing installed. What either downloads stays in the
-/// engine's cache (`npm_config_cache`, `BUN_INSTALL`).
+/// engine's cache (`npm_config_cache`, `BUN_INSTALL`). The server gets its own keys under their
+/// own names (its settings say which); every integration's `KUVO_KEY_…` is taken away first.
 public enum Launcher {
     public static let name = "kuvo-npx"
 
@@ -13,6 +14,7 @@ public enum Launcher {
         """
         #!/bin/sh
         # Kuvo Code: runs an npm package's command for an MCP server.
+        for v in $(env | sed 's/=.*//' | grep '^KUVO_KEY_'); do unset "$v" 2>/dev/null; done
         if command -v npx >/dev/null 2>&1; then exec npx -y "$@"; fi
         BUN_BE_BUN=1 exec \(engine) x "$@"
         """

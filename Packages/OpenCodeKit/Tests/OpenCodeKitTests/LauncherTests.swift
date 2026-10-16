@@ -9,7 +9,7 @@ struct LauncherTests {
         let process = Process()
         process.executableURL = launcher
         process.arguments = arguments
-        process.environment = ["PATH": path]
+        process.environment = ["PATH": path, "KUVO_KEY_OTHER_TOKEN": "secret", "FIGMA_API_KEY": "mine"]
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
@@ -21,7 +21,7 @@ struct LauncherTests {
 
     /// A command at `file` that prints how it was run.
     private func fake(_ file: URL, says word: String) throws {
-        try "#!/bin/sh\necho \(word) \"BUN_BE_BUN=$BUN_BE_BUN\" \"$@\"\n".write(to: file, atomically: true, encoding: .utf8)
+        try "#!/bin/sh\necho \(word) \"BUN_BE_BUN=$BUN_BE_BUN\" \"$@\" \"$KUVO_KEY_OTHER_TOKEN$FIGMA_API_KEY\"\n".write(to: file, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
     }
 
@@ -35,8 +35,9 @@ struct LauncherTests {
         try Launcher.install(in: bin, engine: engine)
         let launcher = bin.appending(path: Launcher.name)
 
-        #expect(try run(launcher, ["some-mcp@1.0.0", "--stdio"], path: "/bin") == "engine BUN_BE_BUN=1 x some-mcp@1.0.0 --stdio")
+        // Its own key stays; the other integrations' go.
+        #expect(try run(launcher, ["some-mcp@1.0.0", "--stdio"], path: "/bin:/usr/bin") == "engine BUN_BE_BUN=1 x some-mcp@1.0.0 --stdio mine")
         try fake(node.appending(path: "npx"), says: "npx")
-        #expect(try run(launcher, ["some-mcp@1.0.0"], path: node.path + ":/bin") == "npx BUN_BE_BUN= -y some-mcp@1.0.0")
+        #expect(try run(launcher, ["some-mcp@1.0.0"], path: node.path + ":/bin:/usr/bin") == "npx BUN_BE_BUN= -y some-mcp@1.0.0 mine")
     }
 }

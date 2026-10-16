@@ -92,11 +92,15 @@ nonisolated enum Integrations {
         }
     }
 
-    /// Integrations that only work on this Mac (they use its apps): left out of machines' settings.
+    /// Integrations that only work on this Mac, left out of machines' settings: those that use
+    /// its apps, and those you sign in to (the sign-in is this Mac's engine's; a machine's engine
+    /// has no way to ask for one).
     static var macOnly: [String] {
         all.compactMap { service in
-            if case .package(_, _, _, _, _, true) = service.way { return service.id }
-            return nil
+            switch service.way {
+            case .package(_, _, _, _, _, true), .official, .officialApp: service.id
+            default: nil
+            }
         }
     }
 
@@ -109,7 +113,13 @@ nonisolated enum Integrations {
         Service(id: "apple-calendar", title: "Apple Calendar and Reminders", summary: "Events and reminders in your Mac's Calendar and Reminders, with every account you have there", kind: .mail, symbol: "calendar", site: "https://www.icloud.com/calendar",
                 way: .package(command: ["mcp-server-apple-events@1.6.0"], keys: [], help: nil, by: "FradSer's mcp-server-apple-events", macOnly: true)),
         Service(id: "microsoft-365", title: "Outlook and Microsoft 365", summary: "Mail, calendar, contacts and files; you sign in with a code the first time", kind: .mail, symbol: "envelope", site: "https://outlook.live.com",
-                way: .package(command: ["@softeria/ms-365-mcp-server@0.168.0"], keys: [], help: nil, by: "Softeria's ms-365-mcp-server", environment: ["MS365_MCP_TOKEN_CACHE_PATH": "{env:KUVO_INTEGRATIONS}/microsoft-365.json"])),
+                way: .package(command: ["@softeria/ms-365-mcp-server@0.168.0"], keys: [], help: nil, by: "Softeria's ms-365-mcp-server", environment: [
+                    // Its sign-in, chosen account and logs in a folder of its own, not the home folder or the keychain.
+                    "MS365_MCP_TOKEN_CACHE_PATH": "{env:KUVO_INTEGRATIONS}/microsoft-365/token-cache.json",
+                    "MS365_MCP_SELECTED_ACCOUNT_PATH": "{env:KUVO_INTEGRATIONS}/microsoft-365/selected-account.json",
+                    "MS365_MCP_LOG_DIR": "{env:KUVO_INTEGRATIONS}/microsoft-365/logs",
+                    "MS365_MCP_USE_KEYTAR": "0",
+                ])),
         Service(id: "fastmail", title: "Fastmail", summary: "Mail, contacts and calendars", kind: .mail, symbol: "envelope.badge", site: "https://app.fastmail.com",
                 way: .official(url: "https://api.fastmail.com/mcp")),
         Service(id: "caldav", title: "Other Calendars", summary: "iCloud, Nextcloud and other CalDAV calendars", kind: .mail, symbol: "calendar.badge.clock", site: "https://www.icloud.com/calendar",

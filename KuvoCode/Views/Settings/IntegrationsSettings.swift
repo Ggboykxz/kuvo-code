@@ -37,7 +37,7 @@ struct IntegrationsSettings: View {
             }
             Section {
             } footer: {
-                Text("Each works the best way it has: through its maker's own server, where you sign in once; with a key you bring, kept in your Keychain; or on its site, in the panel's browser, signed in as you. The agent and your bots use them on this Mac and your machines.")
+                Text("Each works the best way it has: through its maker's own server, where you sign in once; with a key you bring, kept in your Keychain; or on its site, in the panel's browser, signed in as you. The agent and your bots use them on this Mac, and those with a key on your machines too.")
                     .foregroundStyle(.secondary)
             }
         }
@@ -166,9 +166,14 @@ struct IntegrationsSettings: View {
         Analytics.shared.track("integration_added", ["integration": service.id])
     }
 
+    /// Out of the engine's settings, with its keys, its sign-in and what its server kept.
     private func remove(_ service: Integrations.Service) {
+        let signIn = live.first { $0.name == service.id }?.integrationID
         config.set(nil, at: MCPSettings.path + [service.id])
         for key in Integrations.keys(of: service.way) { IntegrationKeys.set(nil, for: IntegrationKeys.variable(service.id, key.name)) }
+        // What its server kept here: its own folder (and the file it once kept).
+        for name in [service.id, "\(service.id).json"] { try? FileManager.default.removeItem(at: AppInfo.supportDirectory.appending(path: "integrations/\(name)")) }
+        if let signIn, let api = app.api { Task { try? await api.removeCredential(signIn) } }
     }
 
     /// The site in the panel's browser, for you to sign in there; the agent then uses it as you.
@@ -194,6 +199,7 @@ private struct KeySheet: View {
     let service: Integrations.Service
     let done: (Bool) -> Void
     @State private var values: [String: String] = [:]
+    @State private var failed = false
 
     private var keys: [Integrations.Key] { Integrations.keys(of: service.way) }
 
@@ -234,6 +240,10 @@ private struct KeySheet: View {
                     Text("Connect \(service.title)")
                 } footer: {
                     VStack(alignment: .leading, spacing: 6) {
+                        if failed {
+                            Text("Couldn’t save it in your Keychain. Try again, or check Keychain Access.")
+                                .foregroundStyle(.red)
+                        }
                         Text(explanation)
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
@@ -261,8 +271,12 @@ private struct KeySheet: View {
     }
 
     private func save() {
-        for key in keys {
+        let saved = keys.allSatisfy { key in
             IntegrationKeys.set(values[key.name]?.trimmingCharacters(in: .whitespacesAndNewlines), for: IntegrationKeys.variable(service.id, key.name))
+        }
+        guard saved else {
+            failed = true
+            return
         }
         done(true)
     }

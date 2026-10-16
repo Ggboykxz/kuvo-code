@@ -144,7 +144,16 @@ final class AppModel {
             shell["KUVO_BOTS"] = Bots.root.path
             // Keys you brought for integrations, which their settings name with {env:…}, and a
             // folder for what their servers keep (a sign-in).
-            shell.merge(IntegrationKeys.environment) { _, key in key }
+            #if DEBUG
+            // KUVO_DEMO_INTEGRATION_KEY=<id>|<NAME>|<value>: saves that key as Add Key… does
+            // (no value removes it).
+            if let spec = ProcessInfo.processInfo.environment["KUVO_DEMO_INTEGRATION_KEY"] {
+                let parts = spec.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
+                if parts.count == 3 { IntegrationKeys.set(parts[2], for: IntegrationKeys.variable(parts[0], parts[1])) }
+            }
+            #endif
+            // Read off the main thread: the keychain can wait on you (a prompt to allow it).
+            shell.merge(await Task.detached { IntegrationKeys.environment }.value) { _, key in key }
             let integrations = AppInfo.supportDirectory.appending(path: "integrations")
             try? FileManager.default.createDirectory(at: integrations, withIntermediateDirectories: true)
             shell["KUVO_INTEGRATIONS"] = integrations.path
