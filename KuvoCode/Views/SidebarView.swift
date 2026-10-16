@@ -873,7 +873,7 @@ private struct GroupRow: View {
     /// "Mira: Let's ship on Friday", or who's in it before anything's been said.
     private var lastLine: String {
         if let last = groups.messages(in: group.id).last(where: { $0.kind != .note }) {
-            let who = last.author.map { bots.bot($0)?.name ?? "A bot" } ?? "You"
+            let who = last.kind == .meeting ? "Meeting" : last.author.map { bots.bot($0)?.name ?? "A bot" } ?? "You"
             // Plain words: no Markdown marks, all on one line.
             return who + ": " + last.text.filter { !"*`#>".contains($0) }.split(whereSeparator: \.isNewline).joined(separator: " ")
         }

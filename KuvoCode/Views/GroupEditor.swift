@@ -1,4 +1,5 @@
 import AppKit
+import OpenCodeKit
 import SwiftUI
 
 /// Making a group chat, or changing one, in the window's main card: its name, its bots, and
@@ -20,9 +21,17 @@ struct GroupEditor: View {
     /// Its bots, in order: the first leads.
     @State private var members: [String]
     @State private var confirmsDelete = false
+    /// Its meeting: whether it has one, when it's next, how often, and what about.
+    @State private var meets: Bool
+    @State private var meetsAt: Date
+    @State private var meetsEvery: Wakes.Repeat?
+    @State private var topic: String
     @FocusState private var focus: Field?
 
-    private enum Field { case name, purpose }
+    private enum Field { case name, purpose, topic }
+
+    /// The repeats to pick from.
+    private static let repeats: [Wakes.Repeat?] = [nil, .days(1), .weekdays, .weeks(1)]
 
     init(group: BotGroup?, newBot: @escaping () -> Void, close: @escaping () -> Void, created: @escaping (BotGroup) -> Void = { _ in }) {
         self.group = group
@@ -32,12 +41,36 @@ struct GroupEditor: View {
         _name = State(initialValue: group?.name ?? "")
         _purpose = State(initialValue: group?.purpose ?? "")
         _members = State(initialValue: group?.members ?? [])
+        let meeting = group?.meeting
+        _meets = State(initialValue: meeting != nil)
+        _meetsAt = State(initialValue: meeting?.next ?? Self.tomorrowAtNine)
+        _meetsEvery = State(initialValue: meeting.map { $0.repeats } ?? .weekdays)
+        _topic = State(initialValue: meeting?.topic ?? "")
+    }
+
+    /// A first meeting's time: nine tomorrow morning.
+    private static var tomorrowAtNine: Date {
+        let calendar = Calendar.current
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: .now) ?? .now
+        return calendar.date(bySettingHour: 9, minute: 0, second: 0, of: tomorrow) ?? tomorrow
+    }
+
+    /// The meeting to save: its next time after now (a repeating one's next round, if the one
+    /// picked has passed; on weekdays, a weekday).
+    private var meeting: BotGroup.Meeting? {
+        guard meets else { return nil }
+        var next = meetsAt
+        let calendar = Calendar.current
+        if next <= .now, let every = meetsEvery { next = every.next(after: next, now: .now) }
+        while meetsEvery == .weekdays, calendar.isDateInWeekend(next), let day = calendar.date(byAdding: .day, value: 1, to: next) { next = day }
+        let topic = topic.trimmingCharacters(in: .whitespacesAndNewlines)
+        return BotGroup.Meeting(next: next, every: meetsEvery?.text, topic: topic.isEmpty ? "Our regular meeting: where things stand, and what's next." : topic)
     }
 
     private var isNew: Bool { group == nil }
     private var trimmedName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var picked: [Bot] { members.compactMap { bots.bot($0) } }
-    private var canSave: Bool { !trimmedName.isEmpty && picked.count >= 2 }
+    private var canSave: Bool { !trimmedName.isEmpty && picked.count >= 2 && (meeting.map { $0.next > .now } ?? true) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -149,6 +182,52 @@ struct GroupEditor: View {
                     }
                 }
             }
+
+            section("Meets", note: meets ? "At its time, the topic goes to the chat and the bots talk it through; if you’re away, you get the lead’s sum-up. It meets while Kuvo Code is open." : nil) {
+                meetingRows
+            }
+        }
+    }
+
+    /// When the chat meets on its own, like a standup every weekday at 9.
+    private var meetingRows: some View {
+        WellGroup(isActive: focus == .topic) {
+            WellRow {
+                Image(systemName: "calendar")
+            } content: {
+                Toggle(isOn: $meets.animation(.ui)) {
+                    Text("Meets on a Schedule")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .toggleStyle(.switch)
+                .padding(.vertical, 8)
+            }
+            if meets {
+                WellDivider()
+                WellRow {
+                    Image(systemName: "clock")
+                } content: {
+                    HStack(spacing: 10) {
+                        PlainDatePicker(date: $meetsAt, from: nil)
+                            .accessibilityLabel("Next meeting")
+                        Spacer(minLength: 8)
+                        Picker("Repeats", selection: $meetsEvery) {
+                            ForEach(Self.repeats, id: \.self) { every in
+                                Text(every.map { $0.words.prefix(1).uppercased() + $0.words.dropFirst() } ?? "Once").tag(every)
+                            }
+                        }
+                        .labelsHidden()
+                        .fixedSize()
+                    }
+                    .padding(.vertical, 6)
+                }
+                WellDivider()
+                TextField("Topic", text: $topic, prompt: Text("What to go over, like What changed since yesterday, and what’s in the way"), axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .lineLimit(1...4)
+                    .focused($focus, equals: .topic)
+                    .padding(12)
+            }
         }
     }
 
@@ -205,10 +284,11 @@ struct GroupEditor: View {
             group.name = trimmedName
             group.purpose = purpose.isEmpty ? nil : purpose
             group.members = members
+            group.meeting = meeting
             Task { await groups.update(group) }
             close()
         } else {
-            created(groups.create(name: trimmedName, purpose: purpose.isEmpty ? nil : purpose, members: members))
+            created(groups.create(name: trimmedName, purpose: purpose.isEmpty ? nil : purpose, members: members, meeting: meeting))
         }
     }
 

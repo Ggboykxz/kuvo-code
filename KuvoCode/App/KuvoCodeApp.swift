@@ -31,7 +31,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         Notifier.shared.start()
         Notifier.shared.answer = { [model] session, request, answer in model.workspace.answer(request, in: session, with: answer) }
-        Notifier.shared.reply = { [model] session, text in Task { await model.workspace.send(text, to: session) } }
+        Notifier.shared.reply = { [model] session, text in
+            // A group chat's (its meeting's): to the chat.
+            if let group = BotGroups.groupID(fromTab: session) { model.groups.send(text, to: group) } else { Task { await model.workspace.send(text, to: session) } }
+        }
         Notifier.shared.answerQuestion = { [model] session, form, field, answer in model.workspace.answerQuestion(form, in: session, field: field, with: answer) }
         Analytics.shared.start()
         UsageMenuBar.shared.onPanelShown = { Analytics.shared.track("usage_panel_opened") }

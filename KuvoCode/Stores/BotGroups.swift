@@ -22,8 +22,21 @@ struct BotGroup: Codable, Identifiable, Hashable {
     /// Bots that heard messages you since took back, with the start of the first of them: they're
     /// told to set it aside at their next turn.
     var retracted: [String: String]?
+    /// When it meets on its own, like a standup every weekday at 9; nil for a chat that only
+    /// talks when you write.
+    var meeting: Meeting?
 
     var lead: String? { members.first }
+
+    /// A meeting you scheduled: at `next`, its topic goes to the chat and the bots talk it through.
+    struct Meeting: Codable, Hashable {
+        var next: Date
+        /// How often it comes back, as kuvo-wake writes it (1d, weekdays…); nil for once.
+        var every: String?
+        var topic: String
+
+        var repeats: Wakes.Repeat? { every.flatMap(Wakes.Repeat.init) }
+    }
 }
 
 struct GroupMessage: Codable, Identifiable, Hashable {
@@ -43,6 +56,8 @@ struct GroupMessage: Codable, Identifiable, Hashable {
         case wrapUp
         /// From Kuvo Code: a bot that couldn't take part.
         case note
+        /// A meeting you scheduled, come due: its topic.
+        case meeting
     }
 }
 
@@ -73,6 +88,9 @@ final class BotGroups {
     @ObservationIgnored private var runs: [String: UUID] = [:]
     /// Goes up with each message of yours, so a discussion under way starts its count again.
     @ObservationIgnored private var asked: [String: Int] = [:]
+    /// Chats talking over a meeting that came due: you hear how it went when it ends.
+    @ObservationIgnored private var meetingsUnderWay: Set<String> = []
+    @ObservationIgnored private var meeting: Task<Void, Never>?
     /// Requests from seats already turned down.
     @ObservationIgnored private var declined: Set<String> = []
     @ObservationIgnored private var syncs: [String: Task<Void, Never>] = [:]
@@ -112,6 +130,8 @@ final class BotGroups {
     }
 
     func markViewed(_ id: String) {
+        // Its meeting's notification, once you're in it.
+        Notifier.shared.clear(session: Self.tabKey(id))
         guard let index = list.firstIndex(where: { $0.id == id }), isUnread(list[index]) else { return }
         list[index].viewed = .now
         save()
@@ -127,9 +147,9 @@ final class BotGroups {
 
     // MARK: Making, changing, deleting
 
-    func create(name: String, purpose: String? = nil, members: [String]) -> BotGroup {
+    func create(name: String, purpose: String? = nil, members: [String], meeting: BotGroup.Meeting? = nil) -> BotGroup {
         let id = "grp_" + String((0..<10).map { _ in "abcdefghijklmnopqrstuvwxyz0123456789".randomElement()! })
-        let group = BotGroup(id: id, name: name, purpose: purpose, members: members, created: .now, viewed: .now)
+        let group = BotGroup(id: id, name: name, purpose: purpose, members: members, created: .now, viewed: .now, meeting: meeting)
         list.append(group)
         logs[id] = []
         save()
@@ -207,6 +227,65 @@ final class BotGroups {
         if discussions[id] == nil { start(id) }
     }
 
+    // MARK: Meetings
+
+    /// Holds this Mac's chats' meetings as they come due, while the app runs; one missed while it
+    /// wasn't running goes as soon as it is, once.
+    func startMeetings() {
+        guard meeting == nil else { return }
+        meeting = Task { [weak self] in
+            // Machines' bots connect a moment after launch: one missed meanwhile waits for them.
+            try? await Task.sleep(for: .seconds(10))
+            while !Task.isCancelled {
+                self?.meetDue()
+                let next = self?.list.compactMap { $0.meeting?.next }.min().map { $0.timeIntervalSinceNow } ?? 20
+                try? await Task.sleep(for: .seconds(min(20, max(0.5, next))))
+            }
+        }
+    }
+
+    private func meetDue() {
+        for group in list {
+            guard var meeting = group.meeting, meeting.next <= .now, let index = list.firstIndex(where: { $0.id == group.id }) else { continue }
+            meet(group.id, about: meeting.topic)
+            if let every = meeting.repeats {
+                meeting.next = every.next(after: meeting.next, now: .now)
+                list[index].meeting = meeting
+            } else {
+                list[index].meeting = nil
+            }
+            save()
+        }
+    }
+
+    /// A meeting come due: its topic to the chat, and the bots talk it through.
+    func meet(_ id: String, about topic: String) {
+        guard group(id) != nil else { return }
+        let message = append(GroupMessage(id: Self.newID(), author: nil, text: topic, time: .now, kind: .meeting), to: id)
+        asked[id, default: 0] += 1
+        paused.remove(id)
+        meetingsUnderWay.insert(id)
+        Analytics.shared.track("group_met")
+        if let speaker = speaking[id] {
+            Task { await steer(speaker, in: id, with: message) }
+        }
+        if discussions[id] == nil { start(id) }
+    }
+
+    /// A meeting's talk ended: how it went (the lead's sum-up, or the last word), in a notification
+    /// while you're elsewhere, which you can answer from.
+    private func meetingEnded(_ id: String) {
+        guard meetingsUnderWay.remove(id) != nil, let group = group(id),
+              let last = messages(in: id).last(where: { $0.author != nil && $0.kind != .note }) else { return }
+        let who = app?.bots.bot(last.author)?.name
+        let plain = last.text
+            .replacingOccurrences(of: #"[*_`#>]+"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces)
+        Notifier.shared.notify(session: Self.tabKey(id), title: group.name, subtitle: who.map { last.kind == .wrapUp ? "\($0)’s wrap-up" : $0 },
+                               body: plain.count > 220 ? String(plain.prefix(219)) + "…" : plain, replies: true)
+    }
+
     /// Takes the chat back to before one of your messages: it and everything said after it leave
     /// the chat, the discussion stops, and bots that heard any of it are told at their next turn
     /// to set it aside. Returns the message's words, for the composer.
@@ -269,6 +348,7 @@ final class BotGroups {
             self.discussions[id] = nil
             self.discussing.remove(id)
             self.speaking[id] = nil
+            self.meetingEnded(id)
         }
     }
 
@@ -318,8 +398,9 @@ final class BotGroups {
                 absent.insert(speaker)
             }
         }
-        // The lead sums up a discussion that went back and forth, unless you've written since.
-        guard !Task.isCancelled, said >= 3, asked[id, default: 0] == epoch, let group = group(id), group.members.count >= 2,
+        // The lead sums up a discussion that went back and forth, or a meeting where more than one
+        // spoke, unless you've written since.
+        guard !Task.isCancelled, said >= (meetingsUnderWay.contains(id) ? 2 : 3), asked[id, default: 0] == epoch, let group = group(id), group.members.count >= 2,
               let lead = group.lead, app?.bots.bot(lead) != nil else { return epoch }
         _ = await turn(of: lead, in: id, wrapUp: true)
         return epoch
@@ -518,7 +599,7 @@ final class BotGroups {
             text = "New in \"\(group.name)\" since you last spoke:\n"
             if unheard.count > 40 { text += "\n(Earlier messages left out.)\n" }
             for message in unheard.suffix(40) {
-                text += "\n\(name(of: message.author))\(message.kind == .wrapUp ? " (wrap-up)" : ""): \(message.text)\n"
+                text += "\n\(label(of: message)): \(message.text)\n"
             }
         }
         if wrapUp {
@@ -531,6 +612,15 @@ final class BotGroups {
 
     private func name(of author: String?) -> String {
         author.map { app?.bots.bot($0)?.name ?? "A bot that left" } ?? "User"
+    }
+
+    /// Who said it, as the bots read it: a bot's wrap-up says so, and a meeting is the user's.
+    private func label(of message: GroupMessage) -> String {
+        switch message.kind {
+        case .wrapUp: name(of: message.author) + " (wrap-up)"
+        case .meeting: "Meeting the user scheduled, now"
+        case .message, .note: name(of: message.author)
+        }
     }
 
     // MARK: Seats
@@ -660,7 +750,7 @@ final class BotGroups {
             return (asked + shown).map { message in
                 let words = message.text.count > 500 ? message.text.prefix(500) + "…" : Substring(message.text)
                 let when = message.time.formatted(date: .abbreviated, time: .shortened)
-                return "\(name(of: message.author))\(message.kind == .wrapUp ? " (wrap-up)" : "") · \(when): \(words)"
+                return "\(label(of: message)) · \(when): \(words)"
             }
         }
         return lines.joined(separator: "\n")
@@ -674,7 +764,7 @@ final class BotGroups {
             let when = message.time.formatted(date: .abbreviated, time: .shortened)
             switch message.kind {
             case .note: text += "\n_\(message.text)_\n"
-            case .message, .wrapUp: text += "\n**\(name(of: message.author))**\(message.kind == .wrapUp ? " (wrap-up)" : "") · \(when)\n\n\(message.text)\n"
+            case .message, .wrapUp, .meeting: text += "\n**\(label(of: message))** · \(when)\n\n\(message.text)\n"
             }
         }
         return text

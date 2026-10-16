@@ -99,6 +99,32 @@ struct GroupChatView: View {
     }
 }
 
+/// A meeting you scheduled, come due: its topic, which the bots then talk through.
+private struct MeetingRow: View {
+    let topic: String
+    let at: Date
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "calendar")
+                .foregroundStyle(.tint)
+                .frame(width: 16)
+            (Text("Meeting").fontWeight(.semibold).foregroundStyle(.primary) + Text("  ") + Text(topic).foregroundStyle(.secondary))
+                .lineLimit(3)
+                .textSelection(.enabled)
+            Spacer(minLength: 8)
+            Text(at, format: .dateTime.hour().minute())
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .font(.callout)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .recessedWell(RoundedRectangle(cornerRadius: 10))
+        .help("A meeting you scheduled for this chat")
+    }
+}
+
 /// One message: yours in a bubble on the right, a bot's beside its face, Kuvo Code's own
 /// quietly in the middle.
 private struct GroupMessageRow: View {
@@ -120,7 +146,9 @@ private struct GroupMessageRow: View {
     }
 
     var body: some View {
-        if message.kind == .note {
+        if message.kind == .meeting {
+            MeetingRow(topic: message.text, at: message.time)
+        } else if message.kind == .note {
             Label(message.text, systemImage: "info.circle")
                 .font(.callout)
                 .foregroundStyle(.secondary)
