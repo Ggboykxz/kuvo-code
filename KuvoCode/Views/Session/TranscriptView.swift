@@ -420,45 +420,10 @@ private struct RowView: View, Equatable {
             let (withComments, paths) = Attachments.split(CommandMessages.shared.text(of: message))
             let (text, comments) = ReviewComments.split(withComments)
             let stored = (message.files ?? []).enumerated().map { AttachmentItem.stored($1, id: "\(message.id)#\($0)") }
-            VStack(alignment: .trailing, spacing: 2) {
-                UserBubble(text: text, attachments: stored + paths.map(AttachmentItem.path), comments: comments)
-                // Always laid out, shown under the pointer: nothing moves when they appear.
-                HStack(spacing: 0) {
-                    Text(Self.sentAt(message.time.created))
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .padding(.trailing, 6)
-                    if !text.isEmpty {
-                        CopyButton(text: text, help: "Copy")
-                    }
-                    MessageActionButton(symbol: "arrow.triangle.branch", help: "New Session From Here") { fork(message) }
-                        .disabled(isOffline)
-                    MessageActionButton(symbol: "arrow.uturn.backward", help: "Undo From Here…") { confirmsUndo = true }
-                        .disabled(isOffline)
-                }
-                .opacity(isHovering ? 1 : 0)
-                .animation(.easeOut(duration: 0.12), value: isHovering)
-            }
-            .contentShape(.rect)
-            .onHover { isHovering = $0 }
-                .contextMenu {
-                    Button("Copy") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(text, forType: .string)
-                    }
-                    .disabled(text.isEmpty)
-                    Divider()
-                    Button("New Session From Here") { fork(message) }
-                        .disabled(isOffline)
-                    Button("Undo From Here…") { confirmsUndo = true }
-                        .disabled(isOffline)
-                }
-                .alert("Undo from this message?", isPresented: $confirmsUndo) {
-                    Button("Undo") { undo(message) }
-                    Button("Cancel", role: .cancel) {}
-                } message: {
-                    Text("The conversation goes back to before this message, and so do the files the agent changed since. The message comes back to the composer. You can redo it all until you send something.")
-                }
+            YourMessage(text: text, attachments: stored + paths.map(AttachmentItem.path), comments: comments, sent: Date(timeIntervalSince1970: message.time.created / 1000),
+                        fork: { fork(message) }, undo: { undo(message) },
+                        undoNote: "The conversation goes back to before this message, and so do the files the agent changed since. The message comes back to the composer. You can redo it all until you send something.",
+                        isOffline: isOffline)
         case .pending(let item):
             let (withComments, paths) = Attachments.split(item.text)
             let (text, comments) = ReviewComments.split(withComments)

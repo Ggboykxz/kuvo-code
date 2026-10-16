@@ -176,33 +176,8 @@ private struct GroupMessageRow: View, Equatable {
                 .frame(maxWidth: .infinity)
                 .multilineTextAlignment(.center)
         } else if message.author == nil {
-            VStack(alignment: .trailing, spacing: 2) {
-                UserBubble(text: message.text, style: { GroupMentions.styled($0, bots: members) })
-                // Always laid out, shown under the pointer: nothing moves when they appear.
-                HStack(spacing: 0) {
-                    Text(MessageTime.sentAt(message.time))
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .padding(.trailing, 6)
-                    CopyButton(text: message.text, help: "Copy")
-                    MessageActionButton(symbol: "arrow.uturn.backward", help: "Undo From Here…") { confirmsUndo = true }
-                }
-                .opacity(isHovering ? 1 : 0)
-                .animation(.easeOut(duration: 0.12), value: isHovering)
-            }
-            .contentShape(.rect)
-            .onHover { hovering = $0 }
-            .contextMenu {
-                Button("Copy") { copy() }
-                Divider()
-                Button("Undo From Here…") { confirmsUndo = true }
-            }
-            .alert("Undo from this message?", isPresented: $confirmsUndo) {
-                Button("Undo", action: undo)
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("The chat goes back to before this message, and the message comes back to the composer. The bots are told to set aside what was taken back.")
-            }
+            YourMessage(text: message.text, style: { GroupMentions.styled($0, bots: members) }, sent: message.time, undo: undo,
+                        undoNote: "The chat goes back to before this message, and the message comes back to the composer. The bots are told to set aside what was taken back.")
         } else {
             HStack(alignment: .top, spacing: 10) {
                 if let author {
