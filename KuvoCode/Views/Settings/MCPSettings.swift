@@ -171,10 +171,7 @@ struct MCPSettings: View {
     }
 
     private func add(_ server: MCPCatalog.Server) {
-        // Plain tools, as integrations' are (the engine has no Code Mode here).
-        var settings = server.settings
-        if case .object(var object) = settings { object["codemode"] = .bool(false); settings = .object(object) }
-        config.set(settings, at: Self.path + [server.id])
+        config.set(server.settings, at: Self.path + [server.id])
         Analytics.shared.track("mcp_server_added", ["catalog": server.id])
     }
 
@@ -376,7 +373,7 @@ private struct ServerEditor: View {
     private func add() {
         guard !newID.isEmpty, problem == nil else { return }
         // Off until it has a command or URL, so the engine doesn't try to start an empty one.
-        config.set(.object(["type": .string("local"), "command": .array([]), "disabled": .bool(true), "codemode": .bool(false)]), at: MCPSettings.path + [newID])
+        config.set(.object(["type": .string("local"), "command": .array([]), "disabled": .bool(true)]), at: MCPSettings.path + [newID])
         Analytics.shared.track("mcp_server_added")
         name = newID
     }

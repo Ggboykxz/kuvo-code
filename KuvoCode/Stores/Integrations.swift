@@ -72,19 +72,14 @@ nonisolated enum Integrations {
         return .object(settings)
     }
 
-    /// MCP servers added before their tools were plain tools (integrations, and servers of your
-    /// own): made so, once, before the engine starts.
+    /// Integrations added before their tools were plain tools: made so, once, before the
+    /// engine starts.
     @MainActor static func upgrade(_ config: EngineConfig) {
         guard case .object(let servers) = config.value(at: MCPSettings.path) else { return }
-        for (id, server) in servers where server["codemode"] == nil && server.object != nil {
+        for (id, server) in servers where service(id) != nil && server["codemode"] == nil && server.object != nil {
             config.set(.bool(false), at: MCPSettings.path + [id, "codemode"])
         }
     }
-
-    /// The engine without Code Mode's `execute`, for this Mac's engine and machines': every MCP
-    /// server's tools are plain tools, and what's left behind `execute` (the engine's own few)
-    /// drew models in, to look there for an integration's tools, find none and give up.
-    static var noCodeMode: [[String: Any]] { [["action": "execute", "resource": "*", "effect": "deny"]] }
 
     private static func server(for service: Service) -> JSONValue? {
         let env = { (name: String) in JSONValue.string("{env:\(IntegrationKeys.variable(service.id, name))}") }
