@@ -45,6 +45,11 @@ final class PhoneLink {
     /// Your bots, for `kuvo/bots`: the phone draws and describes each as the Mac does; set by
     /// AppModel.
     @ObservationIgnored weak var bots: Bots?
+    /// What agents ask you for while they browse, for `kuvo/asks`: a phone answers them as the
+    /// cards in the window do; set by AppModel.
+    @ObservationIgnored weak var browserAsks: BrowserAsks?
+    /// A machine's name, by its id, for where an ask's browser runs; set by AppModel.
+    @ObservationIgnored var machineName: (String) -> String? = { _ in nil }
 
     struct MachineHost: Codable, Hashable {
         var name: String
@@ -235,6 +240,7 @@ final class PhoneLink {
             await self?.authorize(key, hello) ?? false
         } handle: { [weak self] request, _ in
             guard request.path.hasPrefix("kuvo/") else { return EngineRoutes.forward(request, to: base, password: password) }
+            if request.path == "kuvo/asks/events" { return Self.following { self?.asksJSON() } }
             return AsyncThrowingStream { continuation in
                 Task { @MainActor in
                     let (status, body) = self?.answer(request) ?? (503, Data())
@@ -298,8 +304,143 @@ final class PhoneLink {
         case "kuvo/hosts":
             let hosts = machineHosts.values.sorted { $0.name < $1.name }.map { Hosts.Host(name: $0.name, address: $0.address, key: $0.key, relay: relay.absoluteString) }
             return (200, (try? encoder.encode(Hosts(hosts: hosts))) ?? Data())
+        case "kuvo/asks":
+            return (200, asksJSON())
+        case let path where path.hasPrefix("kuvo/asks/") && request.method == "POST":
+            return answerAsk(String(path.dropFirst("kuvo/asks/".count)), with: request.body)
         default:
             return (404, Data())
+        }
+    }
+
+    // MARK: Asks
+
+    /// What agents ask you for while they browse, waiting now: a sign-in (with the fields the
+    /// page has, and the accounts Passwords keeps for the site, never their passwords), a code,
+    /// or a step only you can do.
+    private func asksJSON() -> Data {
+        struct Listed: Encodable {
+            struct Ask: Encodable {
+                var id: String
+                var kind: String
+                /// The page's own site.
+                var host: String
+                /// The machine whose browser it is, by name; none for this Mac's.
+                var machine: String?
+                var session: String?
+                var asker: String?
+                var username: Bool?
+                var password: Bool?
+                var saved: [String]?
+                /// Whether what's typed is kept in Passwords unless you say otherwise.
+                var offersToSave: Bool?
+                var prompt: String?
+                var instruction: String?
+            }
+            var asks: [Ask]
+        }
+        let asks = (browserAsks?.asks ?? []).map { ask in
+            var listed = Listed.Ask(id: ask.id, kind: "", host: ask.host, machine: ask.machine.map { machineName($0) ?? $0 }, session: ask.session, asker: ask.asker)
+            switch ask.kind {
+            case .signIn(let username, let password):
+                listed.kind = "signIn"
+                listed.username = username
+                listed.password = password
+                let saved = Passwords.logins(for: ask.host).map(\.account)
+                listed.saved = saved
+                listed.offersToSave = saved.isEmpty && Passwords.offersToSave && !Passwords.neverSites.contains(ask.host)
+            case .code(let prompt):
+                listed.kind = "code"
+                listed.prompt = prompt
+            case .action(let instruction):
+                listed.kind = "action"
+                listed.instruction = instruction
+            }
+            return listed
+        }
+        return (try? JSONEncoder().encode(Listed(asks: asks))) ?? Data()
+    }
+
+    /// A phone's answer, as the card's: a sign-in typed there (kept in Passwords if asked) or one
+    /// of the site's saved ones, which this Mac fills in itself; a code; done; or no.
+    private func answerAsk(_ id: String, with body: Data) -> (Int, Data) {
+        struct Given: Decodable {
+            var answer: String
+            var username: String?
+            var password: String?
+            /// An account Passwords keeps for the site: its password, from here.
+            var saved: String?
+            var save: Bool?
+            var code: String?
+        }
+        guard let asks = browserAsks, let ask = asks.asks.first(where: { $0.id == id }) else { return (404, Data()) }
+        guard let given = try? JSONDecoder().decode(Given.self, from: body) else { return (400, Data()) }
+        switch (given.answer, ask.kind) {
+        case ("signIn", .signIn):
+            if let account = given.saved {
+                guard let login = Passwords.logins(for: ask.host).first(where: { $0.account == account }),
+                      let password = Passwords.password(for: login) else { return (404, Data()) }
+                asks.answer(id, .signIn(username: account.isEmpty ? nil : account, password: password))
+            } else {
+                let username = given.username.flatMap { $0.isEmpty ? nil : $0 }
+                let password = given.password.flatMap { $0.isEmpty ? nil : $0 }
+                guard username != nil || password != nil else { return (400, Data()) }
+                if given.save == true, let password { _ = Passwords.save(host: ask.host, account: username ?? "", password: password) }
+                asks.answer(id, .signIn(username: username, password: password))
+            }
+        case ("code", .code):
+            guard let code = given.code?.trimmingCharacters(in: .whitespaces), !code.isEmpty else { return (400, Data()) }
+            asks.answer(id, .code(code))
+        case ("done", .action):
+            asks.answer(id, .done)
+        case ("declined", _):
+            asks.answer(id, .declined)
+        default:
+            return (400, Data())
+        }
+        return (200, Data("{}".utf8))
+    }
+
+    /// A response that doesn't end: `current()` now, as a line of JSON, and again each time it
+    /// changes, until the phone stops reading.
+    nonisolated private static func following(_ current: @escaping @MainActor () -> Data?) -> AsyncThrowingStream<LinkResponsePart, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task { @MainActor in
+                continuation.yield(.head(status: 200, headers: ["content-type": "application/x-ndjson"]))
+                var last: Data?
+                while !Task.isCancelled {
+                    guard let now = current() else { break }
+                    if now != last {
+                        continuation.yield(.body(now + Data("\n".utf8)))
+                        last = now
+                    }
+                    await changed(current)
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    /// Returns once what `current` reads changes, or after half a minute.
+    private static func changed(_ current: @escaping @MainActor () -> Data?) async {
+        final class Once: @unchecked Sendable {
+            var continuation: CheckedContinuation<Void, Never>?
+            func resume() {
+                continuation?.resume()
+                continuation = nil
+            }
+        }
+        let once = Once()
+        await withCheckedContinuation { continuation in
+            once.continuation = continuation
+            withObservationTracking { _ = current() } onChange: {
+                Task { @MainActor in once.resume() }
+            }
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(30))
+                once.resume()
+            }
         }
     }
 

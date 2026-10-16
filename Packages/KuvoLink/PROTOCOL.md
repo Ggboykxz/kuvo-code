@@ -141,6 +141,14 @@ itself. A host serves:
 - On a Mac, `kuvo/bots`: your bots by their session, wherever they live, with their name,
   look and job, and what only the Mac knows: paused, the next wake-up, how many things each
   watches.
+- On a Mac, `kuvo/asks`: what agents ask you for while they browse, on the Mac or a machine: a
+  sign-in (the fields the page has, and the accounts Passwords keeps for the site, never
+  their passwords), a one-time code, or a step only you can do. `kuvo/asks/events` is the same
+  list as a response that doesn't end: a line of JSON now, and another each time it changes.
+  `POST kuvo/asks/<id>` answers one: `{"answer": "signIn", "username", "password", "save"}`
+  (or `"saved": "<account>"`, which the Mac fills in from Passwords itself), `{"answer":
+  "code", "code"}`, `{"answer": "done"}` or `{"answer": "declined"}`. What's typed goes into
+  the page, never to the agent.
 
 ### Sockets
 
