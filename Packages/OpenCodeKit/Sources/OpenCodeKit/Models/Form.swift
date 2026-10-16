@@ -11,6 +11,24 @@ public struct FormRequest: Codable, Sendable, Hashable, Identifiable {
 
     /// Set when the agent's question tool asked it.
     public var isQuestion: Bool { metadata?["kind"]?.string == "question" }
+
+    /// What the agent's question asks, when it asks one thing with an answer in words or one of
+    /// its choices (a notification can take that); nil for anything more.
+    public var single: Single? {
+        guard isQuestion else { return nil }
+        let fields = fields.filter { !$0.isHidden && $0.isActive(given: [:]) }
+        guard fields.count == 1, let field = fields.first, case .string(let options, let allowsCustom, _, _, _, _) = field.kind else { return nil }
+        let choices = options ?? []
+        // The question tool puts its header in the title and the question in the description.
+        return Single(key: field.key, text: field.description ?? field.title ?? title, choices: choices, allowsText: allowsCustom || choices.isEmpty)
+    }
+
+    public struct Single: Sendable, Hashable {
+        public let key: String
+        public let text: String
+        public let choices: [FormField.Option]
+        public let allowsText: Bool
+    }
 }
 
 public struct FormField: Codable, Sendable, Hashable, Identifiable {

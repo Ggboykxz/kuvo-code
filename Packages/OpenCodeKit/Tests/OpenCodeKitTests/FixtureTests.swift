@@ -111,6 +111,13 @@ struct TranscriptTests {
         }
         #expect(options?.map(\.label) == ["Red", "Blue"])
         #expect(custom)
+
+        // As a notification asks it: the question, not its header, with its choices.
+        let single = try #require(form.single)
+        #expect(single.key == "q0")
+        #expect(single.text == "Which color do you prefer?")
+        #expect(single.choices.map(\.value) == ["Red", "Blue"])
+        #expect(single.allowsText)
     }
 
     @Test func keepsLocalMessagesUntilTheServerHasThem() throws {

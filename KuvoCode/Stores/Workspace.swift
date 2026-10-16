@@ -735,12 +735,31 @@ final class Workspace {
         case "form.created":
             guard let form = try? event.payload(as: EventPayload.FormCreated.self).form else { return }
             asking[form.id] = form.sessionID
-            notifyAsk(form.sessionID, body: form.isQuestion ? "Has a question for you." : "Needs your answer.")
+            let question = Self.question(in: form)
+            notifyAsk(form.sessionID, body: question?.text ?? (form.isQuestion ? "Has a question for you." : "Needs your answer."), question: question)
         case "form.replied", "form.cancelled":
-            if let settled = try? event.payload(as: EventPayload.FormSettled.self) { asking[settled.id] = nil }
+            if let settled = try? event.payload(as: EventPayload.FormSettled.self) {
+                asking[settled.id] = nil
+                Notifier.shared.clear(request: settled.id)
+            }
         default:
             break
         }
+    }
+
+    /// The agent's question as its notification asks it, with its choices; nil for anything
+    /// more (the notification opens the conversation).
+    private static func question(in form: FormRequest) -> Notifier.Question? {
+        form.single.map { single in
+            Notifier.Question(session: form.sessionID, form: form.id, key: single.key, text: single.text,
+                              choices: single.choices.map { (value: $0.value, label: $0.label) }, allowsText: single.allowsText)
+        }
+    }
+
+    /// Answers a question from its notification.
+    func answerQuestion(_ form: String, in session: String, field: String, with answer: String) {
+        Analytics.shared.track("question_answered", ["kind": "question", "from": "notification"])
+        Task { try? await api(forSession: session)?.reply(session: session, form: form, answer: [field: .string(answer)]) }
     }
 
     /// Sends a message to a session from outside its conversation (a notification's Reply), with
@@ -765,7 +784,7 @@ final class Workspace {
     }
 
     /// `permission` is the request, for a notification whose buttons answer it.
-    private func notifyAsk(_ id: String, body: String, permission: String? = nil) {
+    private func notifyAsk(_ id: String, body: String, permission: String? = nil, question: Notifier.Question? = nil) {
         // A seat's requests are answered by its group chat.
         guard !seats.contains(id) else { return }
         Task {
@@ -779,8 +798,9 @@ final class Workspace {
                 session = self.session(next)
                 parent = session == nil ? (try? await api?.session(next))?.parentID : nil
             }
-            Notifier.shared.notify(session: session?.id ?? id, title: session?.title ?? AppInfo.name, subtitle: session.map { projectName($0.location.directory) }, body: body,
-                                   permission: permission.map { (session: id, request: $0) })
+            Notifier.shared.notify(session: session?.id ?? id, title: session.flatMap { botName?($0.id) } ?? session?.title ?? AppInfo.name,
+                                   subtitle: session.flatMap { botName?($0.id) == nil ? projectName($0.location.directory) : nil }, body: body,
+                                   permission: permission.map { (session: id, request: $0) }, question: question)
         }
     }
 
