@@ -647,10 +647,9 @@ private struct FileHeader: View {
             menu.addItem(finder)
             menu.addItem(.separator())
         }
-        menu.addItem(ActionItem("Copy Path") {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(file.path, forType: .string)
-        })
+        // As everywhere, the whole path; and from the project, as git names it.
+        menu.addItem(ActionItem("Copy Path") { Clipboard.copy(file.url.path) })
+        menu.addItem(ActionItem("Copy Relative Path") { Clipboard.copy(file.path) })
         if let scope {
             menu.addItem(.separator())
             if scope == .staged {

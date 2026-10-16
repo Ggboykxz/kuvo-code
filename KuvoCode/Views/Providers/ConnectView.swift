@@ -487,8 +487,7 @@ struct ConnectView: View {
 
     /// Copies the code, and says so for a moment.
     private func copy(_ code: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(code, forType: .string)
+        Clipboard.copy(code)
         withAnimation(.ui) { copied = true }
         copyReset?.cancel()
         copyReset = Task {

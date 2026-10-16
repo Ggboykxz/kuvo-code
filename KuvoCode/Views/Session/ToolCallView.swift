@@ -43,6 +43,9 @@ struct ToolCallView: View {
                     Button("Open in Panel") { app.utilities.show(file) }
                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([file]) }
                 }
+                if let file {
+                    Button("Copy Path") { Clipboard.copy(file.path) }
+                }
             }
 
             if isExpanded, hasDetails {

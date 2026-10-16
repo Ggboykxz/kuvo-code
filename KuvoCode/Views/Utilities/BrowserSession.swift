@@ -604,8 +604,7 @@ struct BrowserPane<NewTab: View>: View {
             Menu {
                 Button("Copy Address") {
                     guard let url = session.url else { return }
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(url.absoluteString, forType: .string)
+                    Clipboard.copy(url.absoluteString)
                 }
                 .disabled(session.url == nil)
                 Button("Reload Page") { session.webView.reload() }

@@ -55,8 +55,7 @@ struct YourMessage: View {
         .onHover { hovering = $0 }
         .contextMenu {
             Button("Copy") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(text, forType: .string)
+                Clipboard.copy(text)
             }
             .disabled(text.isEmpty)
             Divider()

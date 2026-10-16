@@ -233,8 +233,7 @@ private struct GroupMessageRow: View, Equatable {
     }
 
     private func copy() {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(message.text, forType: .string)
+        Clipboard.copy(message.text)
     }
 }
 

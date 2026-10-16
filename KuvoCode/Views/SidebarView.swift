@@ -572,8 +572,7 @@ struct SidebarView: View {
             Task {
                 do {
                     guard let text = try await workspace.markdown(of: session.id) else { return }
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(text, forType: .string)
+                    Clipboard.copy(text)
                     Analytics.shared.track("session_exported", ["how": "copy"])
                 } catch {
                     NSAlert(error: error).runModal()

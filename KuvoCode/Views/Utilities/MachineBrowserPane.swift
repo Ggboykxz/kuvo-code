@@ -171,8 +171,7 @@ struct MachineBrowserPane<NewTab: View>: View {
             Menu {
                 Button("Copy Address") {
                     guard let url else { return }
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(url.absoluteString, forType: .string)
+                    Clipboard.copy(url.absoluteString)
                 }
                 .disabled(url == nil)
                 Button("Reload Page") { browser.reload() }
@@ -615,8 +614,7 @@ final class RemotePageView: NSView, @preconcurrency NSTextInputClient, PictureVi
             menu.addItem(ActionItem(title, handler: action))
         }
         func copy(_ text: String) {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(text, forType: .string)
+            Clipboard.copy(text)
         }
         if let link = target.link {
             item("Open Link in New Tab") { [browser] in Task { _ = await browser.newPage(link.absoluteString) } }
@@ -783,16 +781,14 @@ final class RemotePageView: NSView, @preconcurrency NSTextInputClient, PictureVi
     @objc func copy(_ sender: Any?) {
         Task {
             guard let text = await browser.selectedText(), !text.isEmpty else { return }
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(text, forType: .string)
+            Clipboard.copy(text)
         }
     }
 
     @objc func cut(_ sender: Any?) {
         Task {
             if let text = await browser.selectedText(), !text.isEmpty {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(text, forType: .string)
+                Clipboard.copy(text)
             }
             browser.key("rawKeyDown", key: "Delete", code: "Delete", keyCode: 46)
             browser.key("keyUp", key: "Delete", code: "Delete", keyCode: 46)

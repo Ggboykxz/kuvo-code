@@ -327,8 +327,7 @@ extension NSWorkspace {
 }
 
 private func copyPath(_ url: URL) {
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString(url.path, forType: .string)
+    Clipboard.copy(url.path)
 }
 
 // MARK: - Viewer

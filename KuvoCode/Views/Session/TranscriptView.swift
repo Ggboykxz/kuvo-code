@@ -934,8 +934,7 @@ struct CopyButton: View {
 
     var body: some View {
         Button {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(text, forType: .string)
+            Clipboard.copy(text)
             withAnimation(.ui) { copied = true }
             Task {
                 try? await Task.sleep(for: .seconds(1.5))
