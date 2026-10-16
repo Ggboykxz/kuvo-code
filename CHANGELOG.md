@@ -38,7 +38,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Agents can list, switch and close browser tabs, attach files to a page's upload, find what they download, accept a page's confirmation when it should go ahead, hover over menus, and wait for a text to show on a page.
 - A bot that wakes up, or a conversation's first message in a folder just opened, waits a moment for its tools, so the agent has its browser from the first step.
 - In Edit Bot, **Wake Up Now** sends a waiting wake-up right away, to see the bot's job run, and **Pause Wake-Ups** holds them all until you turn it off; the sidebar says Paused meanwhile.
-- A bot on this Mac browses in tabs of its own, so one waking up never takes over the page you're on. Its tabs show in the side panel next to yours while you're in its conversation.
+- A bot on this Mac browses in tabs of its own, so one waking up never takes over the page you're on. Its tabs show in the side panel next to yours while you're in its conversation, or a group chat it's in.
 - **Wake-ups that repeat**: a bot schedules a recurring job once, like every morning at 9, every 2 hours or on weekdays, and it keeps coming back at the same time of day, across daylight saving changes too, until it's canceled. Before, a bot rescheduled itself after every run, and a run that failed ended the job. Edit Bot shows how often each one repeats.
 - In Edit Bot, **Add Wake-Up…** schedules one yourself: pick when, how often it repeats and what the bot does then, without asking it in its conversation.
 - **Reply from a notification**: when a session or a bot finishes while you're in another app, its notification's **Reply** sends your answer straight to the conversation, like a chat app, without switching to Kuvo Code.

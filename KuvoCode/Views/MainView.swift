@@ -75,6 +75,12 @@ struct MainView: View {
         selection.flatMap(BotGroups.groupID(fromTab:))
     }
 
+    /// The browser tabs of the bots on this Mac in view, a bot's or a group chat's, beside yours.
+    private func showBotTabs() {
+        let inView = groupID.flatMap { groups.group($0)?.members.compactMap { bots.bot($0) } } ?? [bots.bot(forSession: sessionID)].compactMap { $0 }
+        utilities.botsInView = Set(inView.filter { $0.machine == nil }.map(\.id))
+    }
+
     private var draftDirectory: String? {
         selection.flatMap(SidebarView.draftDirectory(from:))
     }
@@ -297,9 +303,9 @@ struct MainView: View {
         // Its agent's browsing brings pages forward; others' stay where they are.
         .onChange(of: sessionID, initial: true) { _, id in
             utilities.sessionInView = id
-            // A bot on this Mac: its own browser tabs show beside yours.
-            utilities.botInView = bots.bot(forSession: id).flatMap { $0.machine == nil ? $0.id : nil }
+            showBotTabs()
         }
+        .onChange(of: groupID) { showBotTabs() }
         .task(id: activeDirectory) {
             if let activeDirectory { await workspace.loadBranch(for: activeDirectory) }
         }

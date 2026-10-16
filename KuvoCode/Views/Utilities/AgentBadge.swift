@@ -10,7 +10,7 @@ struct AgentBadge: View {
     @Environment(Bots.self) private var bots
 
     var body: some View {
-        let bot = session.flatMap { bots.bot(forSession: $0) }
+        let bot = bots.bot(actingAs: session)
         HStack(spacing: 7) {
             if isHeld {
                 Image(systemName: "hand.raised.fill")

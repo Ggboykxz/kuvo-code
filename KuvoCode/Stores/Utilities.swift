@@ -57,11 +57,11 @@ final class Utilities {
     /// The session in view; an agent elsewhere browsing doesn't bring its page forward. The window
     /// sets it.
     var sessionInView: String?
-    /// The bot on this Mac whose conversation is in view: its tabs show beside yours. The window
-    /// sets it.
-    var botInView: String? {
+    /// The bots on this Mac whose conversation is in view (one, or a group chat's): their tabs
+    /// show beside yours. The window sets it.
+    var botsInView: Set<String> = [] {
         didSet {
-            guard botInView != oldValue else { return }
+            guard botsInView != oldValue else { return }
             // A tab of the bot left behind goes out of view: the one beside it takes its place.
             if let selected = tabs.first(where: { $0.id == selection }), !isVisible(selected) {
                 selection = visibleTabs.last { $0.kind == .browser }?.id ?? visibleTabs.first?.id
@@ -79,7 +79,7 @@ final class Utilities {
 
     func isVisible(_ tab: Tab) -> Bool {
         switch tab.kind {
-        case .browser: place == nil && (tab.owner == nil || tab.owner == botInView)
+        case .browser: place == nil && (tab.owner.map(botsInView.contains) ?? true)
         case .machinePage(let machine, _): place == machine
         default: true
         }
@@ -258,7 +258,7 @@ final class Utilities {
             let tab = tabs.first { $0.kind == .machinePage(place, machineBrowser?(place)?.activeID) }
                 ?? tabs.last { if case .machinePage(place, _) = $0.kind { true } else { false } }
             if let tab { selection = tab.id }
-        } else if let browser = botInView.flatMap(botBrowser) ?? activeBrowser, let id = browsers.first(where: { $0.value === browser })?.key {
+        } else if let browser = botsInView.lazy.compactMap(botBrowser).first ?? activeBrowser, let id = browsers.first(where: { $0.value === browser })?.key {
             selection = id
         }
         revealRequest += 1
