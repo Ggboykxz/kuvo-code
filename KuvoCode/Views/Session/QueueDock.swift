@@ -1,37 +1,44 @@
 import OpenCodeKit
 import SwiftUI
 
-/// Messages waiting for the agent, on the composer: those for its next step, then the queue,
-/// in the order it gets them. Each can go now, come back to the composer for editing, or be
-/// removed. A long queue scrolls.
+/// Messages waiting for the agent, in a card tucked behind the composer's top edge: those for its
+/// next step, then the queue, in the order it gets them. Each can steer in now, go in at once,
+/// come back to the composer for editing, or be removed. A long queue scrolls.
 struct QueueDock: View {
     let model: SessionModel
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.cardIsFocused) private var cardIsFocused
 
-    private static let rowHeight: CGFloat = 30
+    private static let rowHeight: CGFloat = 34
     private static let visibleRows = 5
+    /// How far the composer comes over the card's foot.
+    static let overlap: CGFloat = 14
+    private static let shape = UnevenRoundedRectangle(topLeadingRadius: Metrics.composerRadius, topTrailingRadius: Metrics.composerRadius)
 
     var body: some View {
         let items = model.waiting
         let isPaused = model.isQueuePaused && !model.isRunning
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Text("\(items.count) waiting" + (isPaused ? " · Paused" : ""))
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: 8)
-                if isPaused {
+        VStack(alignment: .leading, spacing: 0) {
+            if isPaused {
+                HStack(spacing: 6) {
+                    Image(systemName: "pause.circle")
+                        .foregroundStyle(.secondary)
+                    Text("Paused")
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 8)
                     Button("Resume", systemImage: "play.fill", action: model.resumeQueue)
-                        .font(.system(size: 12, weight: .medium))
-                        .buttonStyle(.borderless)
+                        .buttonStyle(TextButtonStyle())
                         .help("Send the waiting messages, one after another")
                 }
+                .font(.system(size: 12, weight: .medium))
+                .padding(.leading, 12)
+                .padding(.trailing, 6)
+                .frame(height: 28)
             }
-            .frame(height: 22)
-
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                        QueueRow(item: item, position: position(of: item, at: index, in: items), isRunning: model.isRunning, model: model)
+                    ForEach(items) { item in
+                        QueueRow(item: item, isRunning: model.isRunning, model: model)
                             .frame(height: Self.rowHeight)
                     }
                 }
@@ -40,66 +47,83 @@ struct QueueDock: View {
             .scrollBounceBehavior(.basedOnSize)
             .animation(.ui, value: items.map(\.id))
         }
-        .padding(.leading, 16)
-        .padding(.trailing, 10)
-        .padding(.top, 8)
-        .padding(.bottom, 6)
-    }
-
-    /// Where a queued message stands in the queue: 1 goes first.
-    private func position(of item: Transcript.Pending, at index: Int, in items: [Transcript.Pending]) -> Int? {
-        guard item.delivery == .queue else { return nil }
-        return items[...index].filter { $0.delivery == .queue }.count
+        .padding(.horizontal, 6)
+        .padding(.top, 4)
+        .padding(.bottom, Self.overlap + 2)
+        .background(Surface.cardFill(scheme, focused: cardIsFocused), in: Self.shape)
+        .overlay(Self.shape.fill(scheme == .dark ? Color.white.opacity(0.02) : Surface.slate.opacity(0.025)).allowsHitTesting(false))
+        .specularRim(Self.shape)
+        // A step in from the composer's sides, so it reads as behind it.
+        .padding(.horizontal, 16)
     }
 }
 
 private struct QueueRow: View {
     let item: Transcript.Pending
-    /// In the queue; nil for a message going in at the next step.
-    let position: Int?
     let isRunning: Bool
     let model: SessionModel
 
-    var body: some View {
-        HStack(spacing: 8) {
-            Group {
-                if let position {
-                    Text("\(position)")
-                        .font(.system(size: 11, weight: .medium).monospacedDigit())
-                } else {
-                    Image(systemName: "arrow.turn.down.right")
-                        .font(.system(size: 11, weight: .medium))
-                }
-            }
-            .foregroundStyle(.tertiary)
-            .frame(width: 18)
-            .help(position == nil ? "The agent gets this at its next step" : "Sent after the current run, in this order")
+    private var isQueued: Bool { item.delivery == .queue }
 
-            Text(summary)
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: isQueued ? "text.line.last.and.arrowtriangle.forward" : "arrow.turn.down.right")
                 .font(.system(size: 13))
+                .foregroundStyle(.tertiary)
+                .frame(width: 18)
+                .help(isQueued ? "Sent after the current run, in this order" : "The agent gets this at its next step")
+            if let picture = item.files.first(where: { AttachmentItem.local($0).isImage }) {
+                QueuePicture(url: picture)
+            }
+            Text(summary)
+                .font(.system(size: 13.5))
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             if item.isLocal {
                 Spinner(size: 10)
-                    .frame(width: 26 * 3, alignment: .trailing)
+                    .padding(.trailing, 8)
                     .help("Sending…")
             } else {
-                Button("Send Now", systemImage: "arrow.up") { model.sendNow(item) }
-                    .buttonStyle(CardActionStyle())
-                    .help(isRunning ? "Send Now: the agent stops its current step and takes this message" : "Send Now")
-                Button("Edit", systemImage: "pencil") { model.edit(item) }
-                    .buttonStyle(CardActionStyle())
-                    .help("Edit: back to the message field (↑ edits the last one)")
-                Button("Remove", systemImage: "xmark") { model.cancelPending(item) }
+                if isQueued {
+                    Button {
+                        isRunning ? model.steer(item) : model.sendNow(item)
+                    } label: {
+                        Label(isRunning ? "Steer" : "Send", systemImage: isRunning ? "arrow.turn.down.right" : "arrow.up")
+                    }
+                    .buttonStyle(TextButtonStyle())
+                    .font(.system(size: 13))
+                    .help(isRunning ? "Steer: the agent takes this at its next step, without waiting for the run to end" : "Send it now")
+                }
+                Button("Remove", systemImage: "trash") { model.cancelPending(item) }
                     .buttonStyle(CardActionStyle())
                     .help("Remove")
+                Menu {
+                    if isRunning {
+                        Button("Send Now") { model.sendNow(item) }
+                    }
+                    Button("Edit") { model.edit(item) }
+                    Divider()
+                    Button("Remove", role: .destructive) { model.cancelPending(item) }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 13))
+                        .frame(width: 26, height: 24)
+                        .hoverHighlight(in: RoundedRectangle(cornerRadius: 6), mutesInk: true)
+                }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help(isRunning ? "Send Now (stops the current step), Edit, Remove" : "Edit, Remove")
             }
         }
+        .padding(.leading, 6)
         .contentShape(.rect)
         .onTapGesture(count: 2) { model.edit(item) }
         .contextMenu {
+            if isQueued, isRunning { Button("Steer") { model.steer(item) } }
             Button("Send Now") { model.sendNow(item) }
             Button("Edit") { model.edit(item) }
             Divider()
@@ -110,13 +134,34 @@ private struct QueueRow: View {
 
     /// The message's first line, or what's attached when there's no text.
     private var summary: String {
-        let (withComments, paths) = Attachments.split(item.text)
-        let (text, comments) = ReviewComments.split(withComments)
+        let (text, comments, paths) = UserBubble.split(item.text)
         if let line = text.split(separator: "\n").first(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) {
             return String(line)
         }
         let names = item.files.map(\.lastPathComponent) + paths.map { ($0 as NSString).lastPathComponent }
         if !names.isEmpty { return names.joined(separator: ", ") }
         return comments.isEmpty ? "" : comments.count.counting("comment")
+    }
+}
+
+/// A picture attached to a waiting message, small, before its words.
+private struct QueuePicture: View {
+    let url: URL
+    @State private var image: NSImage?
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 5)
+            .fill(Color.primary.opacity(0.06))
+            .overlay {
+                if let image {
+                    Image(nsImage: image)
+                        .resizable()
+                        .scaledToFill()
+                }
+            }
+            .frame(width: 24, height: 24)
+            .clipShape(.rect(cornerRadius: 5))
+            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5))
+            .task(id: url) { image = await AttachmentItem.local(url).loadImage() }
     }
 }

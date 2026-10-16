@@ -119,10 +119,11 @@ private struct BottomStack: View {
                         .glassEffectID("offline", in: glass)
                         .transition(.opacity)
                 }
+                // What's waiting, tucked behind the composer's top edge.
+                VStack(spacing: -QueueDock.overlap) {
                 if !model.waiting.isEmpty {
                     QueueDock(model: model)
-                        .glassEffect(.regular, in: .rect(cornerRadius: Metrics.composerRadius))
-                        .glassEffectID("waiting", in: glass)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
                 Composer(
                     text: $model.draftText,
@@ -157,6 +158,7 @@ private struct BottomStack: View {
                     onStop: model.stop
                 )
                 .glassEffectID("composer", in: glass)
+                }
             }
             .animation(.ui, value: model.transcript.permissions.map(\.id))
             .animation(.ui, value: model.transcript.forms.map(\.id))

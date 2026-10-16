@@ -126,6 +126,7 @@ without clicking, for trying a change or taking screenshots:
 | `KUVO_DEMO_TABS` | Open the project's sessions as tabs |
 | `KUVO_DEMO_SESSION` | Open the session with this ID in a tab (one on a machine shows its conversation as last seen until the machine connects) |
 | `KUVO_DEMO_QUEUE` | Messages to queue once that session's agent is working, separated by `\|` |
+| `KUVO_DEMO_WAITING` | With `KUVO_DEMO_SESSION`: these messages shown waiting in its queue, separated by `\|`, without sending them; `<words>@<picture path>` attaches a picture |
 | `KUVO_DEMO_NEW_PROJECT` | Open the New Project sheet with these comma-separated folders |
 | `KUVO_DEMO_BACKGROUND` | Don't bring the window forward, so it doesn't take the keyboard while you work elsewhere |
 | `KUVO_DEMO_FILES` | Comma-separated paths to attach to that prompt |

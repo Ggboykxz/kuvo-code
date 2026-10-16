@@ -64,6 +64,14 @@ struct TranscriptView: View {
                           searchEarlier: earlierSearch, folders: model.folders, rows: findRows)
         // What you send shows at the end, wherever you'd scrolled to.
         .onChange(of: model.sent) { scroller.toEnd() }
+        // The queue over the composer grows or shrinks: the end stays in view above it.
+        .onChange(of: model.waiting.count) {
+            guard scroller.followsEnd else { return }
+            Task {
+                try? await Task.sleep(for: .milliseconds(120))
+                scroller.toEnd()
+            }
+        }
         #if DEBUG
         // KUVO_DEMO_SCROLL=<seconds>: that long after it opens, goes up through the conversation a
         // row at a time (as scrolling makes rows appear), to measure it.

@@ -496,6 +496,27 @@ final class SessionModel {
         Task { try? await api.cancelInbox(session: id, item: item.id) }
     }
 
+    #if DEBUG
+    /// KUVO_DEMO_WAITING: messages shown waiting, without sending them.
+    func showWaiting(_ items: [Transcript.Pending]) {
+        transcript.pending = items
+    }
+    #endif
+
+    /// Steers a queued message in: the agent takes it at its next step, without waiting for the
+    /// run to end (and without stopping the step it's on).
+    func steer(_ item: Transcript.Pending) {
+        guard canReach, !item.isLocal, item.delivery == .queue else { return }
+        Analytics.shared.track("message_steered")
+        Task {
+            do {
+                try await api.setDelivery(session: id, item: item.id, delivery: .steer)
+            } catch {
+                failure = error.localizedDescription
+            }
+        }
+    }
+
     /// Gives a waiting message to the agent right away: its current step stops, and it carries
     /// on from there with this message.
     func sendNow(_ item: Transcript.Pending) {

@@ -1357,6 +1357,23 @@ struct MainView: View {
                     }
                 }
             }
+            // KUVO_DEMO_WAITING=<text>|<text>…: those as messages waiting in its queue (not sent);
+            // a text of "<words>@<picture path>" has that picture attached.
+            if let waiting = environment["KUVO_DEMO_WAITING"] {
+                Task { [workspace] in
+                    for _ in 0..<60 {
+                        if let model = workspace.model(for: id), model.isLoaded {
+                            model.showWaiting(waiting.split(separator: "|").enumerated().map { index, entry in
+                                let parts = entry.split(separator: "@", maxSplits: 1).map(String.init)
+                                return Transcript.Pending(id: "msg_demo_waiting_\(index)", text: parts[0], delivery: .queue, isLocal: false,
+                                                          files: parts.count > 1 ? [URL(filePath: parts[1])] : [])
+                            })
+                            return
+                        }
+                        try? await Task.sleep(for: .milliseconds(500))
+                    }
+                }
+            }
             // KUVO_DEMO_QUOTES=<n>: that many quotes to answer in its composer.
             if let count = Int(environment["KUVO_DEMO_QUOTES"] ?? "") {
                 Drafts.shared[id].quotes = []

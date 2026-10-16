@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Messages waiting for the agent sit in a card tucked behind the composer, with a picture's thumbnail when one is attached. Steer gives a queued message to the agent at its next step without waiting for the run to end, the trash removes it, and ⋯ has Send Now and Edit; double-click a message to edit it.
 - Pictures and files you attach in a session on a machine reach its agent: they used to fail with "Unable to read attachment". What the model can read goes with the message; anything else is copied to the machine for the agent to open.
 
 ## 0.5.0
