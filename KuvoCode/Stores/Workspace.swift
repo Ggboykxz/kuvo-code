@@ -772,7 +772,16 @@ final class Workspace {
     /// Answers a question from its notification.
     func answerQuestion(_ form: String, in session: String, field: String, with answer: String) {
         Analytics.shared.track("question_answered", ["kind": "question", "from": "notification"])
-        Task { try? await api(forSession: session)?.reply(session: session, form: form, answer: [field: .string(answer)]) }
+        Task {
+            do {
+                guard let api = api(forSession: session) else { throw CancellationError() }
+                try await api.reply(session: session, form: form, answer: [field: .string(answer)])
+            } catch {
+                // The agent still waits: say so, rather than lose the answer.
+                Notifier.shared.notify(session: session, title: botName?(session) ?? self.session(session)?.title ?? AppInfo.name,
+                                       body: "Your answer didn’t go. Open the conversation to answer there.")
+            }
+        }
     }
 
     /// Sends a message to a session from outside its conversation (a notification's Reply), with
@@ -840,6 +849,8 @@ final class Workspace {
 
     func markViewed(_ id: String) {
         Notifier.shared.clear(session: id)
+        // Read: its next news is read afresh.
+        if replyPreviews[id] != nil { replyPreviews[id] = nil }
         guard let index = sessions.firstIndex(where: { $0.id == id }), sessions[index].isUnread, let idle = sessions[index].time.idle else { return }
         sessions[index].time.viewed = idle
         Task { try? await api(forSession: id)?.markViewed(id, idle: idle) }

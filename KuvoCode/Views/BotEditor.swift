@@ -712,6 +712,7 @@ private struct WakeList: View {
     /// The wake-up you're adding, while you are.
     @State private var draft: Draft?
     @State private var failure: String?
+    @State private var isAdding = false
     @FocusState private var noteFocused: Bool
 
     private struct Draft {
@@ -868,15 +869,17 @@ private struct WakeList: View {
                     .buttonStyle(.glass)
                 Button("Add Wake-Up", action: add)
                     .buttonStyle(.glassProminent)
-                    .disabled(draft?.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+                    .disabled(isAdding || (draft?.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true))
             }
         }
         .transition(.opacity.combined(with: .offset(y: -6)))
     }
 
     private func add() {
-        guard let draft else { return }
+        guard let draft, !isAdding else { return }
+        isAdding = true
         Task {
+            defer { isAdding = false }
             do {
                 try await bots.addWake(to: bot, at: draft.due, every: draft.every, note: draft.note)
                 self.draft = nil
