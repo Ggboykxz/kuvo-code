@@ -75,6 +75,10 @@ struct BotEditor: View {
             }
             .scrollBounceBehavior(.basedOnSize)
             .scrollEdgeEffectStyle(.soft, for: .bottom)
+            #if DEBUG
+            // KUVO_DEMO_EDIT_BOT=bottom: opens scrolled to its wake-ups and memory.
+            .defaultScrollAnchor(ProcessInfo.processInfo.environment["KUVO_DEMO_EDIT_BOT"] == "bottom" ? .bottom : nil)
+            #endif
             footer
                 .frame(maxWidth: 600)
                 .padding(.horizontal, Metrics.gutter + 8)
