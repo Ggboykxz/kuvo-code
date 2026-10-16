@@ -12,7 +12,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/screenshot-dark.webp">
-  <img src="docs/images/screenshot-light.webp" alt="Kuvo Code showing a finished session beside the changes it made, with a review comment on one of the lines" width="100%">
+  <img src="docs/images/screenshot-light.webp" alt="Kuvo Code with bots, a group chat, chats and a project in the sidebar, and a finished session beside the changes it made, with a review comment on one of the lines" width="100%">
 </picture>
 
 Kuvo Code is a native macOS harness for coding agents that works with any
