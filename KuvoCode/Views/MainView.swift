@@ -1028,7 +1028,11 @@ struct MainView: View {
             case "browser": utilities.newBrowser(parts.count > 1 ? parts[1] : nil)
             case "machine" where parts.count > 1:
                 let rest = parts[1].split(separator: "=", maxSplits: 1).map(String.init)
-                utilities.newMachinePage(rest[0], address: rest.count > 1 ? rest[1] : nil)
+                // Once a session there is in view, so the tab shows.
+                Task {
+                    for _ in 0..<60 where utilities.place != rest[0] { try? await Task.sleep(for: .milliseconds(500)) }
+                    utilities.newMachinePage(rest[0], address: rest.count > 1 ? rest[1] : nil)
+                }
             case "files": utilities.showFiles()
             case "file" where parts.count > 1: utilities.open(RemoteFolder.url(parts[1]))
             case "changes": utilities.showChanges()

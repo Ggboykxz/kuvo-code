@@ -783,8 +783,43 @@ async function connect() {
   }
   const socket = net.createConnection(SOCKET);
   socket.on("connect", () => {
-    process.stdin.pipe(socket);
-    socket.pipe(process.stdout);
+    // Pictures of a page come one at a time, each once the last is acknowledged. Here, a couple
+    // ahead of the Mac: the next is made while the last is on its way, so over a slow link the
+    // round trip doesn't set the frame rate, and no more than that many are ever under way.
+    const ahead = 2;
+    const pacing = new Map();
+    const pace = (session) => pacing.get(session) ?? pacing.set(session, { underWay: 0, owed: [] }).get(session);
+    const acknowledge = (session, frame) => socket.write(JSON.stringify({ id: -2, method: "Page.screencastFrameAck", params: { sessionId: frame }, sessionId: session }) + "\n");
+    lines(process.stdin, (line) => {
+      if (line.includes('"Page.screencastFrameAck"') || line.includes('"Page.startScreencast"') || line.includes('"Page.stopScreencast"')) {
+        const message = JSON.parse(line);
+        if (message.method === "Page.screencastFrameAck") {
+          // The Mac has it: one fewer under way, and the picture held back can come.
+          const p = pace(message.sessionId);
+          p.underWay = Math.max(0, p.underWay - 1);
+          const frame = p.owed.shift();
+          if (frame !== undefined) acknowledge(message.sessionId, frame);
+          return;
+        }
+        // Starting or stopping over: nothing under way.
+        pacing.delete(message.sessionId);
+      }
+      socket.write(line + "\n");
+    });
+    lines(socket, (line) => {
+      // The answers to the acknowledgments made here.
+      if (line.startsWith('{"id":-2,')) return;
+      if (line.startsWith('{"method":"Page.screencastFrame"')) {
+        // Its numbers are at the end; the picture before them is long.
+        const ids = line.slice(-160).match(/"sessionId":(\d+)\}\s*,\s*"sessionId":"([^"]+)"\}\s*$/);
+        const [frame, session] = ids ? [Number(ids[1]), ids[2]] : (({ params, sessionId }) => [params.sessionId, sessionId])(JSON.parse(line));
+        const p = pace(session);
+        p.underWay += 1;
+        if (p.underWay <= ahead) acknowledge(session, frame);
+        else p.owed.push(frame);
+      }
+      process.stdout.write(line + "\n");
+    });
   });
   socket.on("close", () => process.exit(0));
   socket.on("error", (error) => {
