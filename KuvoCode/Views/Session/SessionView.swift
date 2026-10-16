@@ -24,11 +24,6 @@ struct SessionView: View {
             // A conversation as last seen is read once its machine is back.
             .task { if !model.isLoaded, !model.isCopy { await model.load() } }
             .task(id: model.session.location.directory) { await catalog.loadCommands(in: model.session.location.directory) }
-            .alert("Something went wrong", isPresented: Binding(get: { model.failure != nil }, set: { if !$0 { model.failure = nil } })) {
-                Button("OK") {}
-            } message: {
-                Text(model.failure ?? "")
-            }
     }
 
     /// The machine a session runs on, while it can't be reached (connecting again), or its
@@ -36,6 +31,35 @@ struct SessionView: View {
     static func offlineMachine(of model: SessionModel, in app: AppModel) -> MachineEngine? {
         guard let id = RemoteFolder.machine(of: model.session.location.directory), let engine = app.machines.engine(id) else { return nil }
         return engine.isReady && engine.isLive && app.workspace.isConnected(id) && !model.isCopy ? nil : engine
+    }
+}
+
+/// Something that didn't work (a message that didn't go, an undo), over the composer until you
+/// dismiss it or send again.
+private struct FailureBar: View {
+    let text: String
+    let dismiss: () -> Void
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Something went wrong")
+                    .font(.system(size: 13, weight: .medium))
+                Text(text)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+                    .textSelection(.enabled)
+            }
+            Spacer(minLength: 8)
+            Button(action: dismiss) { Image(systemName: "xmark") }
+                .buttonStyle(IconButtonStyle())
+                .help("Dismiss")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
     }
 }
 
@@ -80,6 +104,13 @@ private struct BottomStack: View {
                     BrowserAskCard(ask: ask)
                         .glassEffect(.regular, in: .rect(cornerRadius: Metrics.composerRadius))
                         .glassEffectID(ask.id, in: glass)
+                }
+                // What went wrong, over the composer rather than in an alert you must click away.
+                if let failure = model.failure, offlineMachine == nil {
+                    FailureBar(text: failure) { model.failure = nil }
+                        .glassEffect(.regular, in: .rect(cornerRadius: Metrics.composerRadius))
+                        .glassEffectID("failure", in: glass)
+                        .transition(.opacity)
                 }
                 if let engine = offlineMachine {
                     MachineOfflineBar(engine: engine)
@@ -128,6 +159,7 @@ private struct BottomStack: View {
             .animation(.ui, value: model.transcript.forms.map(\.id))
             .animation(.ui, value: model.waiting.isEmpty)
             .animation(.ui, value: offlineMachine == nil)
+            .animation(.ui, value: model.failure)
             .animation(.ui, value: app.browserAsks.asks(for: model.session.id).map(\.id))
         }
         .padding(.horizontal, Metrics.gutter)
@@ -135,7 +167,11 @@ private struct BottomStack: View {
         .readableColumn()
         #if DEBUG
         // KUVO_DEMO_QUOTE=<text>: replying to that, over the composer.
-        .onAppear { if let quote = ProcessInfo.processInfo.environment["KUVO_DEMO_QUOTE"] { model.draftQuote = quote } }
+        .onAppear {
+            if let quote = ProcessInfo.processInfo.environment["KUVO_DEMO_QUOTE"] { model.draftQuote = quote }
+            // KUVO_DEMO_FAILURE=<text>: as if something just failed.
+            if let failure = ProcessInfo.processInfo.environment["KUVO_DEMO_FAILURE"] { model.failure = failure }
+        }
         #endif
     }
 
@@ -163,6 +199,7 @@ private struct BottomStack: View {
 
     private func send(queue: Bool) {
         guard offlineMachine == nil else { return }
+        model.failure = nil
         let commands = catalog.commands(in: model.session.location.directory)
         // A "!" or "/" command runs as typed; what you were replying to waits for a message.
         let isCommand = SessionModel.shellCommand(in: model.draftText) != nil || SlashCommands.parse(model.draftText, commands: commands) != nil
