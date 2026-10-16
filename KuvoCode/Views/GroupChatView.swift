@@ -240,8 +240,10 @@ private struct GroupMessageRow: View, Equatable {
                         .animation(.easeOut(duration: 0.12), value: isHovering)
                     }
                     .frame(height: 20)
+                    // As a session shows them, at the detail you chose for steps.
                     if let steps = message.steps, !steps.isEmpty {
-                        GroupSteps(steps: steps, directory: author?.directory ?? "")
+                        StepsRow(blocks: steps.map(Message.Content.tool), isLive: false, directory: author?.directory ?? "")
+                            .padding(.bottom, 2)
                     }
                     MarkdownText(text: message.text, mentions: members)
                 }
@@ -258,47 +260,6 @@ private struct GroupMessageRow: View, Equatable {
     private func copy() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(message.text, forType: .string)
-    }
-}
-
-/// What a bot did on its turn, in a line ("Searched the web 4 times, fetched a page"), opening to
-/// each step as a session shows it.
-private struct GroupSteps: View {
-    let steps: [Message.ToolCall]
-    let directory: String
-    @State private var isExpanded = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Button {
-                withAnimation(.ui) { isExpanded.toggle() }
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "wrench.and.screwdriver")
-                        .frame(width: 16)
-                    Text(Self.summary(of: steps))
-                    Image(systemName: "chevron.right")
-                        .font(.caption2.weight(.semibold))
-                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                }
-                .font(.callout)
-            }
-            .buttonStyle(TextButtonStyle(outset: true))
-            .help(isExpanded ? "Hide the steps" : "Show each step")
-            if isExpanded {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(steps) { call in
-                        ToolCallView(call: call, directory: directory)
-                    }
-                }
-                .transition(.opacity)
-            }
-        }
-        .padding(.bottom, 2)
-    }
-
-    static func summary(of steps: [Message.ToolCall]) -> String {
-        StepsSummary.summary(of: steps)
     }
 }
 
