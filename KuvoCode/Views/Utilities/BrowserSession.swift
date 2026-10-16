@@ -519,60 +519,20 @@ struct BrowserPane<NewTab: View>: View {
     }
 
     private var navigation: some View {
-        HStack(spacing: 0) {
-            Button { session.webView.goBack() } label: { Label("Back", systemImage: "arrow.left") }
-                .disabled(!session.canGoBack)
-                .help("Back")
-            Button { session.webView.goForward() } label: { Label("Forward", systemImage: "arrow.right") }
-                .disabled(!session.canGoForward)
-                .help("Forward")
-            Divider().frame(height: 16).padding(.horizontal, 2)
-            Button {
-                if session.isLoading { session.webView.stopLoading() } else { session.webView.reload() }
-            } label: {
-                Label(session.isLoading ? "Stop" : "Reload", systemImage: session.isLoading ? "xmark" : "arrow.clockwise")
-            }
-            .disabled(session.url == nil)
-            .help(session.isLoading ? "Stop" : "Reload")
-        }
-        .buttonStyle(ToolbarGroupStyle())
-        .padding(.horizontal, 3)
-        .frame(height: 34)
-        .background(Color.primary.opacity(0.06), in: .capsule)
+        BrowserNavigation(canGoBack: session.canGoBack, canGoForward: session.canGoForward, isLoading: session.isLoading, canReload: session.url != nil,
+                          back: { session.webView.goBack() }, forward: { session.webView.goForward() },
+                          reloadOrStop: { if session.isLoading { session.webView.stopLoading() } else { session.webView.reload() } })
     }
 
     private var addressField: some View {
-        HStack(spacing: 7) {
-            Image(systemName: session.url?.scheme == "https" && !editing ? "lock.fill" : "magnifyingglass")
-                .font(.system(size: 11))
-                .foregroundStyle(.tertiary)
-            TextField("Search or enter a URL", text: $address)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .focused($editing)
-                .onSubmit {
-                    session.load(address)
-                    editing = false
-                }
+        BrowserAddressField(address: $address, editing: $editing, isSecure: session.url?.scheme == "https", isLoading: session.isLoading, progress: session.progress) {
+            session.load(address)
+            editing = false
         }
-        .padding(.horizontal, 14)
-        .frame(height: 34)
-        .background(Color.primary.opacity(0.06), in: .capsule)
-        .overlay(alignment: .bottom) {
-            if session.isLoading {
-                GeometryReader { proxy in
-                    Capsule().fill(.tint).frame(width: proxy.size.width * session.progress, height: 2)
-                }
-                .frame(height: 2)
-                .padding(.horizontal, 16)
-            }
-        }
-        .contentShape(.capsule)
-        .onTapGesture { editing = true }
     }
 
     private var actions: some View {
-        HStack(spacing: 0) {
+        BrowserToolbarGroup {
             if session.hasLoginField, !session.savedLogins.isEmpty {
                 // Filling is yours to ask for: never on its own, never the agent's.
                 Menu {
@@ -601,32 +561,11 @@ struct BrowserPane<NewTab: View>: View {
             } label: { Label("Open in Your Browser", systemImage: "arrow.up.forward.app") }
                 .disabled(session.url == nil)
                 .help("Open in Your Browser")
-            Menu {
-                Button("Copy Address") {
-                    guard let url = session.url else { return }
-                    Clipboard.copy(url.absoluteString)
-                }
-                .disabled(session.url == nil)
-                Button("Reload Page") { session.webView.reload() }
-                    .disabled(session.url == nil)
-                Divider()
-                Button("Actual Size") { session.webView.magnification = 1 }
-                Button("Zoom In") { session.webView.magnification = min(session.webView.magnification + 0.1, 3) }
-                Button("Zoom Out") { session.webView.magnification = max(session.webView.magnification - 0.1, 0.5) }
-                Divider()
-                Button("Browser Settings…") { app.openSettings(.browser) }
-            } label: {
-                Label("More", systemImage: "ellipsis")
+            BrowserMoreMenu(url: session.url, canReload: session.url != nil, reload: { session.webView.reload() }) { step in
+                let view = session.webView
+                view.magnification = step == 0 ? 1 : min(max(view.magnification + 0.1 * CGFloat(step), 0.5), 3)
             }
-            .menuStyle(.button)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("More")
         }
-        .buttonStyle(ToolbarGroupStyle())
-        .padding(.horizontal, 3)
-        .frame(height: 34)
-        .background(Color.primary.opacity(0.06), in: .capsule)
     }
 
     /// What's in view of the page, as a picture attached to the message being written.
@@ -642,49 +581,39 @@ struct BrowserPane<NewTab: View>: View {
         }
     }
 
-    /// The host while browsing ("google.com"), the full address while editing.
-    private var displayAddress: String {
-        guard let url = session.url else { return "" }
-        if editing { return url.absoluteString }
-        return url.host()?.replacingOccurrences(of: "www.", with: "") ?? url.absoluteString
-    }
+    private var displayAddress: String { BrowserAddressField.display(session.url, editing: editing) }
 }
 
 /// Under the toolbar after you sign in somewhere: save the password, or don't.
 private struct SaveLoginBar: View {
     let login: PendingLogin
     let session: BrowserSession
-    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "key.fill")
-                .foregroundStyle(.tint)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(login.isUpdate ? "Update the saved password?" : "Save this password?")
-                    .font(.system(size: 13, weight: .semibold))
-                Text(login.account.isEmpty ? login.host : "\(login.account) on \(login.host)")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+        BrowserBar {
+            HStack(spacing: 10) {
+                Image(systemName: "key.fill")
+                    .foregroundStyle(.tint)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(login.isUpdate ? "Update the saved password?" : "Save this password?")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text(login.account.isEmpty ? login.host : "\(login.account) on \(login.host)")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer(minLength: 8)
+                Menu("Not Now") {
+                    Button("Never for This Site") { withAnimation(.ui) { session.dismissPendingLogin(never: true) } }
+                } primaryAction: {
+                    withAnimation(.ui) { session.dismissPendingLogin(never: false) }
+                }
+                .fixedSize()
+                Button(login.isUpdate ? "Update" : "Save") { withAnimation(.ui) { session.savePendingLogin() } }
+                    .buttonStyle(.borderedProminent)
             }
-            Spacer(minLength: 8)
-            Menu("Not Now") {
-                Button("Never for This Site") { withAnimation(.ui) { session.dismissPendingLogin(never: true) } }
-            } primaryAction: {
-                withAnimation(.ui) { session.dismissPendingLogin(never: false) }
-            }
-            .fixedSize()
-            Button(login.isUpdate ? "Update" : "Save") { withAnimation(.ui) { session.savePendingLogin() } }
-                .buttonStyle(.borderedProminent)
         }
-        .controlSize(.small)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Surface.well(scheme), in: .rect(cornerRadius: 10))
-        .padding(.horizontal, 10)
-        .padding(.bottom, 8)
     }
 }
 
@@ -692,36 +621,11 @@ private struct SaveLoginBar: View {
 private struct PageDialogBar: View {
     let dialog: BrowserSession.PageDialog
     let session: BrowserSession
-    @State private var text = ""
-    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(dialog.message.isEmpty ? "The page asks to continue." : dialog.message)
-                .font(.system(size: 13))
-                .textSelection(.enabled)
-                .lineLimit(6)
-            if dialog.kind == .prompt {
-                TextField("", text: $text)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { session.answerDialog(accept: true, text: text) }
-            }
-            HStack {
-                Spacer()
-                if dialog.kind != .alert {
-                    Button("Cancel") { session.answerDialog(accept: false) }
-                        .keyboardShortcut(.cancelAction)
-                }
-                Button("OK") { session.answerDialog(accept: true, text: text) }
-                    .keyboardShortcut(.defaultAction)
-            }
+        BrowserDialogBar(message: dialog.message, asks: dialog.kind == .prompt, isAlert: dialog.kind == .alert, defaultText: dialog.defaultText) { accept, text in
+            session.answerDialog(accept: accept, text: text ?? "")
         }
-        .controlSize(.small)
-        .padding(12)
-        .background(Surface.well(scheme), in: .rect(cornerRadius: 10))
-        .padding(.horizontal, 10)
-        .padding(.bottom, 8)
-        .onAppear { text = dialog.defaultText }
     }
 }
 
@@ -730,64 +634,32 @@ private struct DownloadBar: View {
     let download: BrowserSession.Download
     let more: Int
     let session: BrowserSession
-    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: symbol)
-                .foregroundStyle(download.state == .running ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
-            VStack(alignment: .leading, spacing: 3) {
-                Text(download.name)
-                    .font(.system(size: 13, weight: .semibold))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                switch download.state {
-                case .running:
-                    Capsule()
-                        .fill(Color.primary.opacity(0.1))
-                        .frame(height: 4)
-                        .overlay(alignment: .leading) {
-                            GeometryReader { proxy in
-                                Capsule()
-                                    .fill(.tint)
-                                    .frame(width: max(4, proxy.size.width * download.progress))
-                                    .animation(.ui, value: download.progress)
-                            }
+        BrowserDownloadBar(name: download.name, symbol: symbol, isRunning: download.state == .running, canHide: download.state != .running, hide: session.dismissDownloads) {
+            switch download.state {
+            case .running:
+                Capsule()
+                    .fill(Color.primary.opacity(0.1))
+                    .frame(height: 4)
+                    .overlay(alignment: .leading) {
+                        GeometryReader { proxy in
+                            Capsule()
+                                .fill(.tint)
+                                .frame(width: max(4, proxy.size.width * download.progress))
+                                .animation(.ui, value: download.progress)
                         }
-                case .done:
-                    Text(more > 0 ? "Downloaded, with \(more) more" : "Downloaded to Downloads")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                case .failed(let reason):
-                    Text(reason)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
+                    }
+            case .done:
+                Text(more > 0 ? "Downloaded, with \(more) more" : "Downloaded to Downloads")
+            case .failed(let reason):
+                Text(reason)
             }
-            Spacer(minLength: 8)
+        } actions: {
             if download.state == .done, let file = download.file {
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([file]) }
             }
-            Button {
-                session.dismissDownloads()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .bold))
-                    .frame(width: 18, height: 18)
-                    .contentShape(.rect)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .disabled(download.state == .running)
-            .help("Hide")
         }
-        .controlSize(.small)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Surface.well(scheme), in: .rect(cornerRadius: 10))
-        .padding(.horizontal, 10)
-        .padding(.bottom, 8)
     }
 
     private var symbol: String {

@@ -105,61 +105,23 @@ struct MachineBrowserPane<NewTab: View>: View {
     }
 
     private var navigation: some View {
-        HStack(spacing: 0) {
-            Button { browser.goBack() } label: { Label("Back", systemImage: "arrow.left") }
-                .disabled(!isLive || !browser.canGoBack)
-                .help("Back")
-            Button { browser.goForward() } label: { Label("Forward", systemImage: "arrow.right") }
-                .disabled(!isLive || !browser.canGoForward)
-                .help("Forward")
-            Divider().frame(height: 16).padding(.horizontal, 2)
-            Button {
-                if browser.isLoading { browser.stopLoading() } else { browser.reload() }
-            } label: {
-                Label(isLive && browser.isLoading ? "Stop" : "Reload", systemImage: isLive && browser.isLoading ? "xmark" : "arrow.clockwise")
-            }
-            .disabled(!isLive || url == nil)
-            .help(isLive && browser.isLoading ? "Stop" : "Reload")
-        }
-        .buttonStyle(ToolbarGroupStyle())
-        .padding(.horizontal, 3)
-        .frame(height: 34)
-        .background(Color.primary.opacity(0.06), in: .capsule)
+        BrowserNavigation(canGoBack: isLive && browser.canGoBack, canGoForward: isLive && browser.canGoForward, isLoading: isLive && browser.isLoading,
+                          canReload: isLive && url != nil, back: browser.goBack, forward: browser.goForward,
+                          reloadOrStop: { if browser.isLoading { browser.stopLoading() } else { browser.reload() } })
     }
 
     private var addressField: some View {
-        HStack(spacing: 7) {
-            Image(systemName: url?.scheme == "https" && !editing ? "lock.fill" : "magnifyingglass")
-                .font(.system(size: 11))
-                .foregroundStyle(.tertiary)
-            TextField("Search or enter a URL", text: $address)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .focused($editing)
-                .onSubmit {
-                    if page == nil { onSubmit(address) } else { browser.load(address) }
-                    editing = false
-                }
+        BrowserAddressField(address: $address, editing: $editing, isSecure: url?.scheme == "https", isLoading: isLive && browser.isLoading,
+                            help: "Pages open on \(browser.machine.name), so localhost is that machine") {
+            if page == nil { onSubmit(address) } else { browser.load(address) }
+            editing = false
         }
-        .padding(.horizontal, 14)
-        .frame(height: 34)
-        .background(Color.primary.opacity(0.06), in: .capsule)
-        .overlay(alignment: .bottom) {
-            if isLive, browser.isLoading {
-                Capsule().fill(.tint).frame(height: 2)
-                    .padding(.horizontal, 16)
-                    .opacity(0.6)
-            }
-        }
-        .contentShape(.capsule)
-        .onTapGesture { editing = true }
-        .help("Pages open on \(browser.machine.name), so localhost is that machine")
     }
 
     private var actions: some View {
-        HStack(spacing: 0) {
+        BrowserToolbarGroup {
             if browser.zoom != 1 {
-                ZoomChip(zoom: browser.zoom) { browser.resetZoom() }
+                BrowserZoomChip(zoom: browser.zoom) { browser.resetZoom() }
             }
             Button {
                 if let file = browser.screenshotFile() { attach([file]) }
@@ -168,34 +130,13 @@ struct MachineBrowserPane<NewTab: View>: View {
             }
             .disabled(!isLive || !browser.hasPicture || url == nil)
             .help("Add a screenshot of the page to your message, so the agent sees what you see")
-            Menu {
-                Button("Copy Address") {
-                    guard let url else { return }
-                    Clipboard.copy(url.absoluteString)
-                }
-                .disabled(url == nil)
-                Button("Reload Page") { browser.reload() }
-                    .disabled(!isLive || url == nil)
-            } label: {
-                Label("More", systemImage: "ellipsis")
+            BrowserMoreMenu(url: url, canReload: isLive && url != nil, reload: browser.reload) { step in
+                if step == 0 { browser.resetZoom() } else { browser.zoom(in: step > 0) }
             }
-            .menuStyle(.button)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("More")
         }
-        .buttonStyle(ToolbarGroupStyle())
-        .padding(.horizontal, 3)
-        .frame(height: 34)
-        .background(Color.primary.opacity(0.06), in: .capsule)
     }
 
-    /// The host while browsing, the full address while editing.
-    private var displayAddress: String {
-        guard let url else { return "" }
-        if editing { return url.absoluteString }
-        return url.host()?.replacingOccurrences(of: "www.", with: "") ?? url.absoluteString
-    }
+    private var displayAddress: String { BrowserAddressField.display(url, editing: editing) }
 }
 
 /// The page, live. Its pictures go straight to the view, not through SwiftUI.
@@ -242,49 +183,15 @@ private struct SetupCard: View {
 }
 
 /// The page's zoom, when it isn't actual size; a click goes back to it.
-private struct ZoomChip: View {
-    let zoom: CGFloat
-    let reset: () -> Void
-    @State private var isHovering = false
-
-    var body: some View {
-        Button(action: reset) {
-            Text("\(Int((zoom * 100).rounded()))%")
-                .font(.system(size: 12, weight: .medium).monospacedDigit())
-                .foregroundStyle(isHovering ? .primary : .secondary)
-                .fixedSize()
-                .padding(.horizontal, 8)
-                .frame(height: 28)
-                .background(isHovering ? Color.primary.opacity(0.08) : .clear, in: .capsule)
-                .contentShape(.capsule)
-        }
-        .buttonStyle(.plain)
-        .onHover { isHovering = $0 }
-        .help("Back to actual size (zoom with ⌘+ and ⌘−, or pinch)")
-    }
-}
-
 /// A page downloaded a file on the machine: where it is, and a copy for this Mac.
 private struct MachineDownloadBar: View {
     let download: MachineBrowser.Download
     let browser: MachineBrowser
-    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: symbol)
-                .foregroundStyle(.secondary)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(download.name)
-                    .font(.system(size: 13, weight: .semibold))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Text(detail)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 8)
+        BrowserDownloadBar(name: download.name, symbol: symbol, hide: browser.dismissDownloads) {
+            Text(detail)
+        } actions: {
             switch download.state {
             case .onMachine, .failed:
                 Button("Save to Mac") { browser.saveToMac(download.id) }
@@ -294,24 +201,7 @@ private struct MachineDownloadBar: View {
             case .saved(let file):
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([file]) }
             }
-            Button {
-                browser.dismissDownloads()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .bold))
-                    .frame(width: 18, height: 18)
-                    .contentShape(.rect)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .help("Hide")
         }
-        .controlSize(.small)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Surface.well(scheme), in: .rect(cornerRadius: 10))
-        .padding(.horizontal, 10)
-        .padding(.bottom, 8)
     }
 
     private var symbol: String {
@@ -329,40 +219,17 @@ private struct MachineDownloadBar: View {
     }
 }
 
-/// The page asks something (an alert, a confirmation, a question): answer it here.
+/// The page asks something (an alert, a confirmation, a question, whether to leave it): answer
+/// it here.
 private struct DialogBar: View {
     let dialog: MachineBrowser.Dialog
     let browser: MachineBrowser
-    @State private var text = ""
-    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(dialog.message.isEmpty ? "The page asks to continue." : dialog.message)
-                .font(.system(size: 13))
-                .textSelection(.enabled)
-                .lineLimit(6)
-            if dialog.type == "prompt" {
-                TextField("", text: $text)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { browser.answer(dialog, accept: true, text: text) }
-            }
-            HStack {
-                Spacer()
-                if dialog.type != "alert" {
-                    Button("Cancel") { browser.answer(dialog, accept: false) }
-                        .keyboardShortcut(.cancelAction)
-                }
-                Button(dialog.type == "beforeunload" ? "Leave" : "OK") { browser.answer(dialog, accept: true, text: dialog.type == "prompt" ? text : nil) }
-                    .keyboardShortcut(.defaultAction)
-            }
+        BrowserDialogBar(message: dialog.message, asks: dialog.type == "prompt", isAlert: dialog.type == "alert",
+                         okTitle: dialog.type == "beforeunload" ? "Leave" : "OK", defaultText: dialog.defaultPrompt) { accept, text in
+            browser.answer(dialog, accept: accept, text: text)
         }
-        .controlSize(.small)
-        .padding(12)
-        .background(Surface.well(scheme), in: .rect(cornerRadius: 10))
-        .padding(.horizontal, 10)
-        .padding(.bottom, 8)
-        .onAppear { text = dialog.defaultPrompt }
     }
 }
 
