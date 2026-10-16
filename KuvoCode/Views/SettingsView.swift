@@ -26,8 +26,10 @@ struct SettingsView: View {
 
     var body: some View {
         HStack(spacing: Metrics.paneGap) {
-            SettingsSidebar(selection: Binding(get: { tabs.page }, set: { tabs.show($0) }), search: $search) { page in
+            SettingsSidebar(selection: Binding(get: { tabs.page }, set: { page in withAnimation(.ui) { tabs.show(page) } }), search: $search) { page in
                 withAnimation(.ui) { tabs.show(page, inNewTab: true) }
+            } preview: { page in
+                withAnimation(.ui) { tabs.preview(page) }
             }
                 .padding(.top, topInset)
                 .frame(width: sidebarWidth)
@@ -285,8 +287,10 @@ enum SettingsPage: String, CaseIterable, Identifiable {
 private struct SettingsSidebar: View {
     @Binding var selection: SettingsPage
     @Binding var search: String
-    /// ⌘-click, or Open in New Tab: the page in a tab of its own.
+    /// ⌘-click, or Open in New Tab: the page in one more tab, even with one open already.
     let openInNewTab: (SettingsPage) -> Void
+    /// What searching finds first, in the tab searching keeps for it.
+    let preview: (SettingsPage) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
@@ -347,7 +351,7 @@ private struct SettingsSidebar: View {
             // Searching opens the first page it finds.
             .onChange(of: search) {
                 let pages = SettingsPage.shown.filter { $0.matches(search) }
-                if !search.isEmpty, !pages.contains(selection), let first = pages.first { selection = first }
+                if !search.isEmpty, !pages.contains(selection), let first = pages.first { preview(first) }
             }
         }
         .padding(.top, 10)

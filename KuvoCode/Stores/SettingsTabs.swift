@@ -1,8 +1,9 @@
 import Foundation
 
 /// Settings' tabs, in the title bar, as the sessions have theirs: each a page of Settings, or a
-/// site you're signing in to for the agent (Settings › Integrations). Picking a page in the
-/// sidebar shows it in the tab in view; ⌘-click, or Open in New Tab, gives it a tab of its own.
+/// site you're signing in to for the agent (Settings › Integrations). Each page you open gets a
+/// tab of its own (or its tab comes forward, if it's open); ⌘-click, or Open in New Tab, opens one
+/// more even then.
 /// The pages' tabs are kept for the next time; the sites' close when you leave Settings.
 @MainActor
 @Observable
@@ -48,6 +49,9 @@ final class SettingsTabs {
     var contentX: CGFloat = 0
     /// The page tab you were on last, for the sidebar while a site's tab is in view.
     private var lastPageTab = ""
+    /// The tab searching opened, which the next search changes to its first page instead of
+    /// opening another; it stays once you open a page yourself.
+    private var previewTab: String?
 
     private static let tabsKey = "settings.tabs"
 
@@ -83,20 +87,30 @@ final class SettingsTabs {
         save()
     }
 
-    /// Shows `page`: in the page tab in view (or the one you were on), or in a new tab.
+    /// Shows `page` in a tab of its own, beside the one in view: its tab, if it's open (unless
+    /// `inNewTab` asks for one more), else a new one. A tab never changes to another page.
     func show(_ page: SettingsPage, inNewTab: Bool = false) {
-        if inNewTab {
-            insert(Tab(id: UUID().uuidString, kind: .page(page)))
-        } else if let open = tabs.first(where: { $0.page == page }) {
-            // Open in a tab already: that one.
+        previewTab = nil
+        if !inNewTab, let open = tabs.first(where: { $0.page == page }) {
             select(open.id)
-        } else if let index = tabs.firstIndex(where: { $0.id == (selected?.page != nil ? selectedID : lastPageTab) && $0.page != nil }) {
-            tabs[index].kind = .page(page)
-            select(tabs[index].id)
         } else {
             insert(Tab(id: UUID().uuidString, kind: .page(page)))
         }
         Analytics.shared.track("settings_opened", ["tab": page.rawValue])
+    }
+
+    /// What searching finds first: its tab, if it's open; else the tab searching opened, now on
+    /// this page; else a new one, which the next search changes in turn.
+    func preview(_ page: SettingsPage) {
+        if let open = tabs.first(where: { $0.page == page }) {
+            select(open.id)
+        } else if let id = previewTab, let index = tabs.firstIndex(where: { $0.id == id && $0.page != nil }) {
+            tabs[index].kind = .page(page)
+            select(id)
+        } else {
+            insert(Tab(id: UUID().uuidString, kind: .page(page)))
+            previewTab = selectedID
+        }
     }
 
     /// Signs in to `service` in a tab of its own (the one there is, if it's open).
