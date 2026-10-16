@@ -405,8 +405,7 @@ private struct RowView: View, Equatable {
         guard let since else { return "" }
         let seconds = Int(now.timeIntervalSince1970 - since / 1000)
         guard seconds >= 2 else { return "" }
-        let time = seconds < 60 ? "\(seconds)s" : "\(seconds / 60)m \(seconds % 60)s"
-        return " \(time) · Esc to stop"
+        return " \(MessageTime.duration(seconds)) · Esc to stop"
     }
 
     var body: some View {
@@ -687,8 +686,7 @@ struct ReasoningView: View {
 
     private var duration: String? {
         guard let start = block.time?.created, let end = block.time?.completed else { return nil }
-        let seconds = max(1, Int((end - start) / 1000))
-        return seconds < 60 ? "\(seconds)s" : "\(seconds / 60)m \(seconds % 60)s"
+        return MessageTime.duration(max(1, Int((end - start) / 1000)))
     }
 }
 
@@ -764,7 +762,7 @@ private struct TurnEndView: View {
         var parts: [String] = []
         if let started = stats.started {
             let seconds = Int((idle.time.created - started) / 1000)
-            if seconds >= 1 { parts.append(seconds < 60 ? "Worked for \(seconds)s" : "Worked for \(seconds / 60)m \(seconds % 60)s") }
+            if seconds >= 1 { parts.append("Worked for " + MessageTime.duration(seconds)) }
         }
         if stats.outputTokens > 0 { parts.append("\(stats.outputTokens.compactTokens) tokens") }
         if let cost = stats.cost.formattedCost { parts.append(cost) }
@@ -897,6 +895,15 @@ private struct TurnFiles: View {
 /// One of the small buttons under a message, like the copy icon beside it.
 /// When a message was sent: the time today, the day and time before that.
 enum MessageTime {
+    /// How long something took, short: "12s", "1m 5s", "2h 3m".
+    static func duration(_ seconds: Int) -> String {
+        switch seconds {
+        case ..<60: "\(seconds)s"
+        case ..<3600: "\(seconds / 60)m \(seconds % 60)s"
+        default: "\(seconds / 3600)h \(seconds % 3600 / 60)m"
+        }
+    }
+
     static func sentAt(_ date: Date) -> String {
         if Calendar.current.isDateInToday(date) { return date.formatted(date: .omitted, time: .shortened) }
         if Calendar.current.isDateInYesterday(date) { return "Yesterday " + date.formatted(date: .omitted, time: .shortened) }

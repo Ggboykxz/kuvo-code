@@ -82,8 +82,7 @@ struct StepsRow: View {
         }
         var parts: [String] = []
         if blocks.contains(where: { if case .reasoning = $0 { true } else { false } }) {
-            let seconds = max(1, Int(thought))
-            parts.append(seconds < 60 ? "thought for \(seconds)s" : "thought for \(seconds / 60)m \(seconds % 60)s")
+            parts.append("thought for " + MessageTime.duration(max(1, Int(thought))))
         }
         if !calls.isEmpty { parts.append(StepsSummary.summary(of: calls, capitalized: false)) }
         let failed = calls.count { if case .failed = $0.state { true } else { false } }
