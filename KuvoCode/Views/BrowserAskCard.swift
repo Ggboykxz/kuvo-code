@@ -130,7 +130,7 @@ struct BrowserAskCard: View {
                 .wellField()
                 .focused($focus, equals: .password)
                 .onSubmit(send)
-            HStack {
+            HStack(alignment: .top) {
                 if !saved.isEmpty {
                     Menu {
                         ForEach(saved) { login in
@@ -144,16 +144,16 @@ struct BrowserAskCard: View {
                     .controlSize(.small)
                 }
                 Spacer()
-                Toggle("Save in Passwords", isOn: $saves)
-                    .toggleStyle(.checkbox)
-                    .controlSize(.small)
-                    .disabled(!saved.isEmpty && saved.contains { $0.account == username })
-            }
-            if saves || saved.contains(where: { $0.account == username }) {
-                Toggle("Let agents sign in here on their own next time", isOn: $allowsAgents)
-                    .toggleStyle(.checkbox)
-                    .controlSize(.small)
-                    .help("With its saved password, without asking you; it still goes straight into the page. Settings › Passwords lists these sites.")
+                VStack(alignment: .leading, spacing: 6) {
+                    Toggle("Save in Passwords", isOn: $saves)
+                        .disabled(!saved.isEmpty && saved.contains { $0.account == username })
+                    if saves || saved.contains(where: { $0.account == username }) {
+                        Toggle("Let agents sign in here on their own", isOn: $allowsAgents)
+                            .help("Next time, with its saved password, without asking you; it still goes straight into the page. Settings › Passwords lists these sites.")
+                    }
+                }
+                .toggleStyle(.checkbox)
+                .controlSize(.small)
             }
         }
     }
