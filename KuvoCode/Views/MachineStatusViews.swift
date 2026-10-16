@@ -87,28 +87,71 @@ struct MachineWaitingView: View {
     }
 }
 
-/// Over the composer while a session's machine can't be reached: that it's connecting again,
-/// that what you write waits, and a way to connect now.
+/// Over the composer while a session's machine can't be reached: what's happening, that the
+/// conversation above is as last seen and what you write waits, and a way to connect now.
 struct MachineOfflineBar: View {
     let engine: MachineEngine
     @Environment(AppModel.self) private var app
 
     var body: some View {
         HStack(spacing: 10) {
-            Spinner(size: 13)
+            if isWorking {
+                Spinner(size: 13)
+            } else {
+                Image(systemName: "bolt.horizontal.circle")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.orange)
+            }
             VStack(alignment: .leading, spacing: 1) {
-                Text("Reconnecting to \(engine.machine.name)…")
+                Text(title)
                     .font(.system(size: 13, weight: .medium))
-                Text("You can write meanwhile; it sends once the connection is back.")
+                Text("This is the conversation as last seen. You can write meanwhile, and send once it’s back.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
+            .help(failure ?? title)
             Spacer(minLength: 8)
-            Button("Connect Now") { app.reconnectNow(engine) }
-                .buttonStyle(.glass)
-                .help("Drop this connection and connect to \(engine.machine.name) again")
+            // Not while it's trying already.
+            if !isAttempting {
+                Button(isWorking ? "Connect Now" : engine.state == .preparing ? "Connect" : "Try Again") { app.reconnectNow(engine) }
+                    .buttonStyle(.glass)
+                    .help("Connect to \(engine.machine.name) again")
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+
+    /// Connecting by itself: no need to do anything.
+    private var isWorking: Bool {
+        switch engine.state {
+        case .preparing: false
+        case .failed: engine.isRetrying
+        default: true
+        }
+    }
+
+    /// Connecting this moment (not waiting to try again).
+    private var isAttempting: Bool {
+        switch engine.state {
+        case .starting, .downloading: true
+        default: false
+        }
+    }
+
+    private var title: String {
+        let name = engine.machine.name
+        return switch engine.state {
+        case .downloading: "Installing the engine on \(name)…"
+        case .preparing: "\(name) isn’t connected"
+        case .failed where !engine.isRetrying: "Couldn’t connect to \(name)"
+        case .starting where !engine.isRetrying: "Connecting to \(name)…"
+        default: "Reconnecting to \(name)…"
+        }
+    }
+
+    private var failure: String? {
+        if case .failed(let reason) = engine.state { return reason }
+        return nil
     }
 }

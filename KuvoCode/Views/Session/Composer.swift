@@ -217,8 +217,11 @@ struct Composer: View {
                         }
                         .buttonStyle(.plain)
                         .help("Attach Files… You can also drop files here, or paste them.")
+                        // Set on the engine: not while it's out of reach.
                         ModeChip(agent: agent, approval: approval, onSelectAgent: onSelectAgent, onSelectApproval: onSelectApproval)
+                            .disabled(isOffline)
                         ModelChip(selection: model, onSelect: onSelectModel)
+                            .disabled(isOffline)
                         if let worktree {
                             WorkplaceChip(worktree: worktree, attempts: attempts, onSelect: onSelectWorktree, onSelectAttempts: onSelectAttempts)
                         }
@@ -298,7 +301,7 @@ struct Composer: View {
                 .glassEffect(.regular, in: .circle)
                 .disabled(!canSend)
                 .glassEffectID("action", in: glass)
-                .help(isOffline ? "Sends once the connection is back" : isShell ? "Run the Command (Return)" : isRunning ? "Send: the agent reads it at its next step (Return). ⌘Return queues it for after this run." : "Send (Return)")
+                .help(isOffline ? "Send once the connection is back" : isShell ? "Run the Command (Return)" : isRunning ? "Send: the agent reads it at its next step (Return). ⌘Return queues it for after this run." : "Send (Return)")
                 .contextMenu {
                     Button("Send", action: send)
                     Button("Queue for After This Run", action: queue)

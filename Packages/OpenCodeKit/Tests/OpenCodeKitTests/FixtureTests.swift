@@ -96,6 +96,13 @@ struct TranscriptTests {
         #expect(transcript.messages.map(Self.summary) == stored.map(Self.summary))
     }
 
+    /// A conversation saved and read back (the app's copy of a machine's) is the same one.
+    @Test func messagesSurviveBeingSaved() throws {
+        let stored = try Fixture.decode("messages.json", as: Page<Message>.self).data
+        let again = try JSONDecoder().decode([Message].self, from: JSONEncoder().encode(stored))
+        #expect(again == stored)
+    }
+
     @Test func showsTheQuestionWhileItsOpen() throws {
         var transcript = Transcript(sessionID: Self.session)
         for event in try Fixture.events() {

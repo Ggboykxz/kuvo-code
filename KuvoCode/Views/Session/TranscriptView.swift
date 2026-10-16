@@ -8,6 +8,7 @@ import Textual
 struct TranscriptView: View {
     let model: SessionModel
     @Environment(Workspace.self) private var workspace
+    @Environment(\.isOffline) private var isOffline
     @State private var position = ScrollPosition(edge: .bottom)
     /// Whether to keep the newest text in view: true until you scroll up, true again
     /// once you scroll back to the end.
@@ -24,7 +25,7 @@ struct TranscriptView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                    RowView(row: row, directory: model.session.location.directory, folders: model.folders, cancel: model.cancelPending, undo: model.undo(from:), redo: model.redo, fork: fork, retry: model.retry(_:), buildPlan: model.agent == "plan" ? { model.buildPlan() } as () -> Void : nil, reply: model.reply(to:))
+                    RowView(row: row, directory: model.session.location.directory, folders: model.folders, cancel: model.cancelPending, undo: model.undo(from:), redo: model.redo, fork: fork, retry: model.retry(_:), buildPlan: model.agent == "plan" && !isOffline ? { model.buildPlan() } as () -> Void : nil, reply: model.reply(to:))
                         .background {
                             if matches.contains(row.id) {
                                 RoundedRectangle(cornerRadius: 8)
@@ -341,6 +342,7 @@ private struct RowView: View {
     let buildPlan: (() -> Void)?
     /// Quotes a reply (or the part of it you selected) in the composer.
     let reply: (String) -> Void
+    @Environment(\.isOffline) private var isOffline
     @State private var confirmsUndo = false
     /// Under the pointer: a message shows its buttons.
     @State private var isHovering = false
@@ -378,7 +380,9 @@ private struct RowView: View {
                         CopyButton(text: text, help: "Copy")
                     }
                     MessageActionButton(symbol: "arrow.triangle.branch", help: "New Session From Here") { fork(message) }
+                        .disabled(isOffline)
                     MessageActionButton(symbol: "arrow.uturn.backward", help: "Undo From Here…") { confirmsUndo = true }
+                        .disabled(isOffline)
                 }
                 .opacity(isHovering ? 1 : 0)
                 .animation(.easeOut(duration: 0.12), value: isHovering)
@@ -393,7 +397,9 @@ private struct RowView: View {
                     .disabled(text.isEmpty)
                     Divider()
                     Button("New Session From Here") { fork(message) }
+                        .disabled(isOffline)
                     Button("Undo From Here…") { confirmsUndo = true }
+                        .disabled(isOffline)
                 }
                 .alert("Undo from this message?", isPresented: $confirmsUndo) {
                     Button("Undo") { undo(message) }
@@ -406,11 +412,11 @@ private struct RowView: View {
             let (text, comments) = ReviewComments.split(withComments)
             UserBubble(text: text, attachments: item.files.map(AttachmentItem.local) + paths.map(AttachmentItem.path), comments: comments,
                        status: item.isLocal ? "Sending" : item.delivery == .queue ? "Queued" : "Sending")
-                .contextMenu { Button("Cancel", role: .destructive) { cancel(item) } }
+                .contextMenu { Button("Cancel", role: .destructive) { cancel(item) }.disabled(isOffline) }
         case .assistant(let message, let showsError):
             AssistantStepView(message: message, directory: directory, folders: folders, showsError: showsError)
         case .turnEnd(let idle, let stats, let isLast):
-            TurnEndView(idle: idle, stats: stats, directory: directory, retry: isLast ? stats.message.map { message in { retry(message) } } : nil,
+            TurnEndView(idle: idle, stats: stats, directory: directory, retry: isLast && !isOffline ? stats.message.map { message in { retry(message) } } : nil,
                         build: isLast && stats.agent == "plan" ? buildPlan : nil, reply: reply)
         case .shell(let shell):
             ShellRow(shell: shell)
@@ -428,6 +434,7 @@ private struct RowView: View {
                 Label(count == 1 ? "Undid 1 message" : "Undid \(count) messages", systemImage: "arrow.uturn.backward")
                 Button("Redo", action: redo)
                     .buttonStyle(.borderless)
+                    .disabled(isOffline)
                     .fontWeight(.semibold)
             }
             .font(.caption)

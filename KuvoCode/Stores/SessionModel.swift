@@ -7,6 +7,10 @@ final class SessionModel {
     var session: Session
     private(set) var transcript: Transcript
     private(set) var isLoaded = false
+    /// Showing the conversation as last seen (its machine is connecting), not the engine's.
+    private(set) var isCopy = false
+    /// Made from a copy: no engine to read from until its machine is back.
+    private var waitsForEngine = false
     private(set) var changes: [FileDiff] = []
     /// Comments on lines of the changes, sent with the next message.
     var reviewComments: [ReviewComment] = []
@@ -76,7 +80,8 @@ final class SessionModel {
     private(set) var isQueuePaused = false
     var failure: String?
 
-    private let api: OpenCodeAPI
+    /// Its engine: a machine's changes with each connection to it.
+    private var api: OpenCodeAPI
     private var reloadTask: Task<Void, Never>?
     private var changesTask: Task<Void, Never>?
     private var drainTask: Task<Void, Never>?
@@ -136,7 +141,28 @@ final class SessionModel {
     private var settledEdits: [String: Bool] = [:]
     private var isRetrying = false
 
+    /// Shows the conversation as last seen, until `load` reads the engine's.
+    func show(_ copy: [Message]) {
+        transcript.load(messages: copy, inbox: [], permissions: [], forms: [], isRunning: false)
+        isCopy = true
+        waitsForEngine = true
+    }
+
+    /// A machine's session keeps its conversation as last seen, to show while the machine is
+    /// out of reach (see `SessionCopies`).
+    private func keepCopy() {
+        guard api.folderPrefix != nil, !isSubagent, !transcript.messages.isEmpty else { return }
+        SessionCopies.save(.init(session: session, messages: transcript.messages))
+    }
+
+    /// Its machine connected again, through `api`.
+    func reconnect(_ api: OpenCodeAPI) {
+        self.api = api
+        waitsForEngine = false
+    }
+
     func load() async {
+        guard !waitsForEngine else { return }
         async let messages = api.messages(session: id, limit: 200)
         async let inbox = api.inbox(session: id)
         async let permissions = api.permissions(session: id)
@@ -160,6 +186,8 @@ final class SessionModel {
             // A subagent's session is the engine's to set up; it only gets shown.
             if !isLoaded, !isSubagent { await syncFolders() }
             isLoaded = true
+            isCopy = false
+            keepCopy()
         } catch {
             failure = error.localizedDescription
         }
@@ -181,9 +209,11 @@ final class SessionModel {
             drainTask?.cancel()
         case "session.execution.succeeded", "session.execution.interrupted":
             scheduleDrain()
+            keepCopy()
         case "session.execution.failed":
             // Don't run the rest of the queue into the same error.
             if hasQueue { isQueuePaused = true }
+            keepCopy()
         case "session.inbox.enqueued":
             // Queued while nothing runs: the engine waits for a run to end, so nudge it.
             if !transcript.isRunning, !isQueuePaused, hasQueue { scheduleDrain() }

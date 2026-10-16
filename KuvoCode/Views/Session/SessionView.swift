@@ -14,8 +14,11 @@ struct SessionView: View {
             .safeAreaBar(edge: .bottom, spacing: 0) {
                 BottomStack(model: model, lastModel: $lastModel)
             }
+            // Its machine out of reach: the conversation to read, without what needs the engine.
+            .environment(\.isOffline, Self.offlineMachine(of: model, in: app) != nil)
             .navigationTitle(model.session.title ?? "New Session")
-            .task { if !model.isLoaded { await model.load() } }
+            // A conversation as last seen is read once its machine is back.
+            .task { if !model.isLoaded, !model.isCopy { await model.load() } }
             .task(id: model.session.location.directory) { await catalog.loadCommands(in: model.session.location.directory) }
             .alert("Something went wrong", isPresented: Binding(get: { model.failure != nil }, set: { if !$0 { model.failure = nil } })) {
                 Button("OK") {}
@@ -23,6 +26,17 @@ struct SessionView: View {
                 Text(model.failure ?? "")
             }
     }
+
+    /// The machine a session runs on, while it can't be reached (connecting again).
+    static func offlineMachine(of model: SessionModel, in app: AppModel) -> MachineEngine? {
+        guard let id = RemoteFolder.machine(of: model.session.location.directory), let engine = app.machines.engine(id) else { return nil }
+        return engine.isReady && engine.isLive ? nil : engine
+    }
+}
+
+extension EnvironmentValues {
+    /// The conversation's machine is out of reach: what needs its engine (undo, try again) waits.
+    @Entry var isOffline = false
 }
 
 /// Questions and permission requests, stacked on the composer in one glass
@@ -43,6 +57,7 @@ private struct BottomStack: View {
                     PermissionCard(request: request, directory: model.session.location.directory) { decision in
                         model.reply(to: request, decision)
                     }
+                    .disabled(offlineMachine != nil)
                     .glassEffect(.regular, in: .rect(cornerRadius: Metrics.composerRadius))
                     .glassEffectID(request.id, in: glass)
                 }
@@ -52,6 +67,7 @@ private struct BottomStack: View {
                     } dismiss: {
                         model.dismiss(form)
                     }
+                    .disabled(offlineMachine != nil)
                     .glassEffect(.regular, in: .rect(cornerRadius: Metrics.composerRadius))
                     .glassEffectID(form.id, in: glass)
                 }
@@ -118,11 +134,7 @@ private struct BottomStack: View {
         #endif
     }
 
-    /// The machine this session runs on, while it can't be reached (connecting again).
-    private var offlineMachine: MachineEngine? {
-        guard let id = RemoteFolder.machine(of: model.session.location.directory), let engine = app.machines.engine(id) else { return nil }
-        return engine.isReady && engine.isLive ? nil : engine
-    }
+    private var offlineMachine: MachineEngine? { SessionView.offlineMachine(of: model, in: app) }
 
     private func send(queue: Bool) {
         guard offlineMachine == nil else { return }

@@ -559,6 +559,7 @@ struct MainView: View {
                             .help(machine.map { "Reconnecting to \($0.machine.name)…" } ?? "Reconnecting to the engine…")
                     }
                     ContextGauge(model: model)
+                        .disabled(machine.map { !$0.isReady || !$0.isLive } ?? false)
                     Button("Close Tab", systemImage: "xmark") { closeTab(id) }
                         .help("Close Tab")
                 } content: {
@@ -1224,6 +1225,8 @@ struct MainView: View {
     }
 
     private func runDemoSession(_ environment: [String: String]) async {
+        // KUVO_DEMO_SESSION=<id>: that session's tab, in view (one on a machine waits for it).
+        if let id = environment["KUVO_DEMO_SESSION"] { openTab(id) }
         // KUVO_DEMO_TABS: the project's sessions as tabs, the one in view staying in view.
         if environment["KUVO_DEMO_TABS"] != nil,
            let project = workspace.projects.first(where: { $0.directory == activeDirectory }) ?? workspace.projects.first {

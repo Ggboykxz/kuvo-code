@@ -15,7 +15,12 @@ final class Workspace {
     @ObservationIgnored private var sessionMachines: [String: String] = [:]
     /// Machines' sessions as last seen, kept across launches so their tabs wait for the machine
     /// to connect instead of closing.
-    @ObservationIgnored private var remoteSessions: [String: RemoteSession] = Workspace.loadRemoteSessions()
+    @ObservationIgnored private var remoteSessions: [String: RemoteSession] = {
+        let sessions = Workspace.loadRemoteSessions()
+        // Their conversations as last seen, for those tabs meanwhile; the rest are gone.
+        SessionCopies.keep(Set(sessions.keys))
+        return sessions
+    }()
     /// The machines whose sessions are in the lists.
     private(set) var connectedMachines: Set<String> = []
     /// The machines you've added. A removed machine's projects leave the sidebar but keep their
@@ -309,13 +314,29 @@ final class Workspace {
     /// switching back is instant.
     func model(for id: String) -> SessionModel? {
         if let model = models[id] { return model }
-        guard let session = session(id), let api = api(forFolder: session.location.directory) else { return nil }
+        guard let session = session(id), let api = api(forFolder: session.location.directory) else { return copyModel(for: id) }
         let directory = session.location.directory
         // The project's folders where the session is now: a chat moved into a project gets its folders.
         let model = SessionModel(session: session, api: api) { [weak self] in
             guard let self else { return [] }
             return self.extraFolders(self.session(id)?.location.directory ?? directory)
         }
+        models[id] = model
+        return model
+    }
+
+    /// A session on a machine that's connecting, from its conversation as last seen, to read
+    /// meanwhile. It takes the machine's engine once it's back (see `refresh`).
+    private func copyModel(for id: String) -> SessionModel? {
+        guard let machine = waitingMachine(for: id), let copy = SessionCopies.load(id) else { return nil }
+        // Nothing answers here; nothing's asked of it before the machine is back.
+        let offline = OpenCodeAPI(endpoint: ServerEndpoint(url: URL(string: "http://127.0.0.1:9")!, username: "", password: nil), folderPrefix: RemoteFolder.prefix(for: machine))
+        let directory = copy.session.location.directory
+        let model = SessionModel(session: copy.session, api: offline) { [weak self] in
+            guard let self else { return [] }
+            return self.extraFolders(self.session(id)?.location.directory ?? directory)
+        }
+        model.show(copy.messages)
         models[id] = model
         return model
     }
@@ -569,7 +590,8 @@ final class Workspace {
         guard let api = engine.api else { return }
         let machine = engine.machine.id
         do {
-            let theirs = try await api.sessions().data.filter { !isHidden($0) }
+            let listed = try await api.sessions().data
+            let theirs = listed.filter { !isHidden($0) }
             tellMissedNews(in: theirs, machine: machine)
             sessions = sessions.filter { RemoteFolder.machine(of: $0.location.directory) != machine } + theirs
             for session in theirs { sessionMachines[session.id] = machine }
@@ -579,7 +601,16 @@ final class Workspace {
             connectedMachines.insert(machine)
             let active = try await api.activeSessions()
             running = running.filter { id in session(id).map { RemoteFolder.machine(of: $0.location.directory) != machine } ?? true }.union(active)
-            for model in models.values where RemoteFolder.machine(of: model.session.location.directory) == machine {
+            // Its open conversations, kept while it was away, take this connection; one deleted
+            // there meanwhile goes.
+            let known = Set(listed.map(\.id))
+            for (id, model) in models where RemoteFolder.machine(of: model.session.location.directory) == machine {
+                if !model.isSubagent, !known.contains(id) {
+                    models[id] = nil
+                    continue
+                }
+                if let session = listed.first(where: { $0.id == id }) { model.session = session }
+                model.reconnect(api)
                 await model.load()
             }
         } catch {
@@ -587,15 +618,17 @@ final class Workspace {
         }
     }
 
-    /// A machine disconnected: its sessions leave the lists until it's back (their tabs wait).
-    /// Removed for good, they're forgotten too.
+    /// A machine disconnected: its sessions leave the lists until it's back (their tabs wait,
+    /// showing their conversations as last seen). Removed for good, they're forgotten too.
     func forget(_ machine: String, forGood: Bool = false) {
         let gone = Set(sessions.filter { RemoteFolder.machine(of: $0.location.directory) == machine }.map(\.id))
         sessions.removeAll { gone.contains($0.id) }
         running.subtract(gone)
-        for id in gone { models[id] = nil }
+        if forGood { for id in gone { models[id] = nil } }
         connectedMachines.remove(machine)
         if forGood {
+            for (id, session) in remoteSessions where session.machine == machine { SessionCopies.remove(id) }
+            models = models.filter { RemoteFolder.machine(of: $0.value.session.location.directory) != machine }
             remoteSessions = remoteSessions.filter { $0.value.machine != machine }
             Self.saveRemoteSessions(remoteSessions)
             sessionMachines = sessionMachines.filter { $0.value != machine }
@@ -617,7 +650,8 @@ final class Workspace {
         await refresh()
         asking = [:]
         for model in models.values {
-            await model.load()
+            // A machine's are read when it's connected (see `refresh(_ engine:)`).
+            if RemoteFolder.machine(of: model.session.location.directory).map(connectedMachines.contains) ?? true { await model.load() }
             for request in model.transcript.permissions { asking[request.id] = request.sessionID }
             for form in model.transcript.forms { asking[form.id] = form.sessionID }
         }
@@ -690,7 +724,10 @@ final class Workspace {
             Task { await reload(id) }
         case "session.deleted":
             sessions.removeAll { $0.id == id }
-            if remoteSessions.removeValue(forKey: id) != nil { Self.saveRemoteSessions(remoteSessions) }
+            if remoteSessions.removeValue(forKey: id) != nil {
+                Self.saveRemoteSessions(remoteSessions)
+                SessionCopies.remove(id)
+            }
             models[id] = nil
             asking = asking.filter { $0.value != id }
         case "session.execution.started":
