@@ -832,6 +832,8 @@ async function connect() {
 // MARK: - The agent's tools
 
 class ToolError extends Error {}
+// The page a call would work in is one you've taken over: it waits for you, out of the line.
+class HeldError extends Error {}
 
 let link = null;
 let active = null;
@@ -949,7 +951,11 @@ async function page() {
     const own = await c.send("Kuvo.mine", { session: caller });
     if (own.targetId && isOpen(own.targetId) && own.picked <= own.at) target = own.targetId;
   }
-  target ??= open.find((info) => info.targetId === active)?.targetId ?? open.at(-1)?.targetId;
+  // Its own page (or, with no conversation named, the one in use) you took over since: it waits.
+  if (target ? held.has(target) : !caller && held.has(active)) throw new HeldError();
+  // Any other page you took over isn't one to borrow: it gets a page of its own.
+  const fallback = open.find((info) => info.targetId === active)?.targetId ?? open.at(-1)?.targetId;
+  target ??= fallback && !held.has(fallback) ? fallback : null;
   if (target && caller && !(await c.send("Kuvo.claim", { targetId: target, session: caller })).ok) target = null;
   if (!target) {
     target = (await c.send("Target.createTarget", { url: "about:blank" })).targetId;
@@ -1211,8 +1217,13 @@ async function waitForControl(session, name) {
   // A new tab is a page of its own.
   if (!held.size || name === "browser_new_tab") return null;
   const c = await browser();
-  // The conversation's own page; one with none yet gets one of its own, never yours.
-  const target = session ? (await c.send("Kuvo.mine", { session })).targetId : active;
+  // The conversation's own page, as page() picks it; one with none yet gets one of its own,
+  // never one you took over.
+  let target = active;
+  if (session) {
+    const own = await c.send("Kuvo.mine", { session });
+    target = own.targetId && own.picked <= own.at ? own.targetId : null;
+  }
   if (!target || !held.has(target) || !(await pages()).some((info) => info.targetId === target)) return null;
   const started = Date.now();
   while (held.has(target) && Date.now() - started < 600_000) {
@@ -1294,6 +1305,7 @@ async function tool(name, args) {
     const number = integer("tab");
     const chosen = number === null ? null : open[number - 1];
     if (!chosen) return text(`There's no tab [${number ?? 0}]. ` + list(open));
+    if (held.has(chosen.targetId)) return text(`The user took tab [${number}] over and has it now. Pick another, or carry on without it.`);
     if (action === "close") {
       await c.send("Target.closeTarget", { targetId: chosen.targetId });
       sessions.delete(chosen.targetId);
@@ -1500,8 +1512,9 @@ async function mcp() {
         return reply({ tools: CONFIG.tools });
       case "tools/call": {
         // You have its page: it waits for you first, and only then joins the line of calls, so it
-        // holds up no one else's.
-        waitForControl(params._meta?.["ai.opencode/sessionID"] ?? null, params.name).catch(() => null).then((wait) => (queue = queue.then(async () => {
+        // holds up no one else's; taken over while it waited in line, it leaves the line to wait.
+        const run = () => waitForControl(params._meta?.["ai.opencode/sessionID"] ?? null, params.name).catch(() => null).then((wait) => (queue = queue.then(async () => {
+          let again = false;
           const name = params.name || "";
           const status = (working) => {
             currentTool = working ? name : null;
@@ -1517,15 +1530,18 @@ async function mcp() {
             status(true);
             reply(wait ? await afterControl(wait) : await tool(name, params.arguments || {}));
           } catch (error) {
-            reply(text(error instanceof ToolError ? error.message : "The browser ran into a problem: " + error.message, true));
+            if (error instanceof HeldError) again = true;
+            else reply(text(error instanceof ToolError ? error.message : "The browser ran into a problem: " + error.message, true));
           } finally {
             busy = false;
             acceptDialogs = false;
             caller = null;
             notes.length = 0;
             status(false);
+            if (again) setTimeout(run, 0);
           }
         })));
+        run();
         return;
       }
       default:
