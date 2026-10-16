@@ -93,14 +93,11 @@ nonisolated enum Integrations {
     }
 
     /// Integrations that only work on this Mac, left out of machines' settings: those that use
-    /// its apps, and those you sign in to (the sign-in is this Mac's engine's; a machine's engine
-    /// has no way to ask for one).
+    /// its apps. (Those you sign in to go too: the sign-in is copied, see `syncSignIns`.)
     static var macOnly: [String] {
         all.compactMap { service in
-            switch service.way {
-            case .package(_, _, _, _, _, true), .official, .officialApp: service.id
-            default: nil
-            }
+            if case .package(_, _, _, _, _, true) = service.way { return service.id }
+            return nil
         }
     }
 

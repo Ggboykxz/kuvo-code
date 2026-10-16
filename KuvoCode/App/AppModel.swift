@@ -275,6 +275,8 @@ final class AppModel {
                 case .event(let event):
                     // The file changed, here or elsewhere: show what it says now.
                     if event.type == "config.updated" { engineConfig.reload() }
+                    // A sign-in made or renewed here reaches the machines.
+                    if event.type == "credential.updated" { syncSignIns() }
                     catalog.handle(event)
                     workspace.handle(event)
                     usage.handle(event)

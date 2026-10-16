@@ -37,7 +37,7 @@ struct IntegrationsSettings: View {
             }
             Section {
             } footer: {
-                Text("Each works the best way it has: through its maker's own server, where you sign in once; with a key you bring, kept in your Keychain; or on its site, in the panel's browser, signed in as you. The agent and your bots use them on this Mac, and those with a key on your machines too.")
+                Text("Each works the best way it has: through its maker's own server, where you sign in once; with a key you bring, kept in your Keychain; or on its site, in the panel's browser, signed in as you. The agent and your bots use them here and on your machines.")
                     .foregroundStyle(.secondary)
             }
         }
@@ -47,6 +47,10 @@ struct IntegrationsSettings: View {
         .onAppear {
             if let id = ProcessInfo.processInfo.environment["KUVO_DEMO_ADD_INTEGRATION"], let service = Integrations.service(id),
                config.value(at: MCPSettings.path + [id]) == nil { add(service) }
+            // KUVO_DEMO_CONNECTED=<id>: its sign-in sheet, on its last step.
+            if let id = ProcessInfo.processInfo.environment["KUVO_DEMO_CONNECTED"], let service = Integrations.service(id) {
+                signingIn = IntegrationRef(id: "mcp_demo", service: service)
+            }
         }
         #endif
         .task {
@@ -56,11 +60,12 @@ struct IntegrationsSettings: View {
             }
         }
         .sheet(item: $signingIn) { ref in
-            ConnectSheet(integrationID: ref.id, note: "The agent can use it now.") {
+            ConnectSheet(integrationID: ref.id, name: ref.service?.title, symbol: ref.service?.symbol, note: ref.service == nil ? "The agent can use it now." : "", highlights: highlights(ref.service)) {
                 signingIn = nil
                 Task {
                     for server in live where server.integrationID == ref.id { try? await app.api?.connectMCP(server.name) }
                     await refresh()
+                    app.syncSignIns()
                 }
             }
         }
@@ -113,7 +118,7 @@ struct IntegrationsSettings: View {
                     } else {
                         status(server)
                         if let server, server.status.status == "needs_auth", let integrationID = server.integrationID {
-                            Button("Sign In…") { signingIn = IntegrationRef(id: integrationID) }
+                            Button("Sign In…") { signingIn = IntegrationRef(id: integrationID, service: service) }
                         } else if server?.status.status == "failed" {
                             Button("Try Again") {
                                 Task {
@@ -131,6 +136,16 @@ struct IntegrationsSettings: View {
                 }
             }
         }
+    }
+
+    /// What signing in to it gives you, for the sheet's last step.
+    private func highlights(_ service: Integrations.Service?) -> [ConnectView.Highlight] {
+        guard let service else { return [] }
+        var lines = [ConnectView.Highlight(symbol: "text.bubble", title: "Just ask", detail: "The agent and your bots use \(service.title)'s own tools when you mention it, not its website.")]
+        if !app.machines.list.isEmpty {
+            lines.append(.init(symbol: "server.rack", title: "On your machines too", detail: "Sessions and bots there use this sign-in, kept in step with this Mac."))
+        }
+        return lines
     }
 
     @ViewBuilder private func status(_ server: MCPServer?) -> some View {
@@ -190,7 +205,7 @@ struct IntegrationsSettings: View {
             let machine = engine.machine.id
             Task.detached { _ = RemoteShell.run("rm -rf \(kept)", on: machine) }
         }
-        if let signIn, let api = app.api { Task { try? await api.removeCredential(signIn) } }
+        if let signIn { app.forgetSignIn(signIn) }
         if !Integrations.macOnly.contains(service.id) { renewMachines() }
     }
 

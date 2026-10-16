@@ -99,11 +99,12 @@ struct MCPSettings: View {
             }
         }
         .sheet(item: $signingIn) { ref in
-            ConnectSheet(integrationID: ref.id, note: "The agent can use its tools now.") {
+            ConnectSheet(integrationID: ref.id, name: ref.service?.title, symbol: ref.service?.symbol, note: "The agent can use its tools now.") {
                 signingIn = nil
                 Task {
                     for server in live where server.integrationID == ref.id { try? await app.api?.connectMCP(server.name) }
                     await refresh()
+                    app.syncSignIns()
                 }
             }
         }
@@ -142,7 +143,7 @@ struct MCPSettings: View {
             HStack {
                 if isOn, let server = live.first(where: { $0.name == name }), server.status.status == "needs_auth", let integrationID = server.integrationID {
                     // Signing in goes through the server's sign-in, as an account does.
-                    Button("Sign In…") { signingIn = IntegrationRef(id: integrationID) }
+                    Button("Sign In…") { signingIn = IntegrationRef(id: integrationID, service: Integrations.service(name)) }
                 } else if isOn, status?.status == "failed" {
                     Button("Try Again") {
                         Task {

@@ -89,7 +89,11 @@ extension AppModel {
             self?.browserAsks.add(ask) { answer in browser?.answer(ask.id, answer) }
         }
         engine.browser.onAskClosed = { [weak self] id in self?.browserAsks.closed(id) }
-        engine.onEvent = { [weak self] event in self?.workspace.handle(event, machine: machine) }
+        engine.onEvent = { [weak self] event in
+            self?.workspace.handle(event, machine: machine)
+            // It signed in again, or a sign-in ran out and was renewed there: here too.
+            if event.type == "credential.updated" { self?.nudgeSignIns(engine) }
+        }
         engine.onReconnect = { [weak self] in _ = await self?.workspace.refresh(engine) }
         engine.onExit = { [weak self] in
             self?.workspace.forget(machine)
@@ -125,6 +129,18 @@ extension AppModel {
             try? await Task.sleep(for: .seconds(wait))
             guard engine.isReady else { break }
             if await workspace.refresh(engine) { break }
+        }
+        // What you signed in to here works there too, kept in step while it's connected.
+        engine.signInSync?.cancel()
+        if engine.isReady {
+            await syncSignIns(with: engine)
+            engine.signInSync = Task { [weak self, weak engine] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(600))
+                    guard let engine, engine.isReady, !Task.isCancelled else { return }
+                    await self?.syncSignIns(with: engine)
+                }
+            }
         }
     }
 

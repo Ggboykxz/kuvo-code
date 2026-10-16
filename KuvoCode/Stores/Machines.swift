@@ -33,6 +33,9 @@ final class MachineEngine {
     @ObservationIgnored private var eventTask: Task<Void, Never>?
     @ObservationIgnored private var heartbeatTask: Task<Void, Never>?
     @ObservationIgnored private var isStopping = false
+    /// Keeps its sign-ins in step with this Mac's while it's connected (`AppModel.syncSignIns`).
+    @ObservationIgnored var signInSync: Task<Void, Never>?
+    @ObservationIgnored var signInNudge: Task<Void, Never>?
     /// Events for the stores that span every machine (sessions); the catalog takes its own.
     @ObservationIgnored var onEvent: (ServerEvent) -> Void = { _ in }
     /// The feed came back after a gap: whatever it missed has to be read again.

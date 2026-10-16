@@ -7,8 +7,14 @@ import SwiftUI
 /// the person through it.
 struct ConnectView: View {
     let integrationID: String
+    /// What it's called and its mark, when the engine's name for it isn't the one you know
+    /// (an integration's server is named by its ID).
+    var name: String? = nil
+    var symbol: String? = nil
     /// What the last step says the connection gives you.
     var connectedNote = "Its models are now in the model picker."
+    /// What it gives you, as a few lines under the note on the last step.
+    var highlights: [Highlight] = []
     /// Back to the account list (after "Done").
     var onDone: () -> Void = {}
     /// Leaves without connecting. When set (in a sheet), every step but the last has a Cancel
@@ -38,30 +44,45 @@ struct ConnectView: View {
     @State private var copyReset: Task<Void, Never>?
     @State private var pollTask: Task<Void, Never>?
 
+    struct Highlight: Hashable {
+        let symbol: String
+        let title: String
+        let detail: String
+    }
+
     private var integration: Integration? {
         catalog.integrations.first { $0.id == integrationID }
     }
 
+    private var title: String { name ?? integration?.name ?? "" }
+
     var body: some View {
-        ScrollView {
-            VStack(spacing: 24) {
-                header
-                Group {
-                    switch step {
-                    case .choose: methods
-                    case .details(let method): details(method)
-                    case .key(let method): keyEntry(method)
-                    case .waiting(let attempt): waiting(attempt)
-                    case .connected: connected
-                    case .failed(let message): failed(message)
-                    }
-                }
-                .frame(maxWidth: 420)
-                .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 10)), removal: .opacity))
-            }
-            .padding(32)
-            .frame(maxWidth: .infinity)
+        // In a sheet it's as tall as its step; on a page it scrolls.
+        if onCancel != nil {
+            steps.padding(.top, 8)
+        } else {
+            ScrollView { steps }
         }
+    }
+
+    private var steps: some View {
+        VStack(spacing: 24) {
+            header
+            Group {
+                switch step {
+                case .choose: methods
+                case .details(let method): details(method)
+                case .key(let method): keyEntry(method)
+                case .waiting(let attempt): waiting(attempt)
+                case .connected: connected
+                case .failed(let message): failed(message)
+                }
+            }
+            .frame(maxWidth: 420)
+            .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 10)), removal: .opacity))
+        }
+        .padding(32)
+        .frame(maxWidth: .infinity)
         .animation(.ui, value: step)
         .onAppear(perform: chooseOnlyMethod)
         .onDisappear(perform: cancelAttempt)
@@ -70,21 +91,32 @@ struct ConnectView: View {
     // MARK: Steps
 
     private var header: some View {
-        VStack(spacing: 12) {
-            ProviderLogo(id: integrationID, size: 40)
-                .frame(width: 72, height: 72)
-                .glassEffect(.regular, in: .rect(cornerRadius: 20))
-                .overlay(alignment: .bottomTrailing) {
-                    if step == .connected {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.title2)
-                            .foregroundStyle(.white, .green)
-                            .offset(x: 6, y: 6)
-                            .transition(.scale.combined(with: .opacity))
-                    }
+        VStack(spacing: 14) {
+            Group {
+                if let symbol {
+                    Image(systemName: symbol)
+                        .font(.system(size: 28, weight: .medium))
+                        .foregroundStyle(.primary)
+                } else {
+                    ProviderLogo(id: integrationID, size: 40)
                 }
-            Text(step == .connected ? "Connected to \(integration?.name ?? "")" : "Connect \(integration?.name ?? "")")
+            }
+            .frame(width: 72, height: 72)
+            .glassEffect(.regular, in: .rect(cornerRadius: 20))
+            .overlay(alignment: .bottomTrailing) {
+                if step == .connected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 24))
+                        .foregroundStyle(.white, .green)
+                        .background(Circle().fill(.background).padding(2))
+                        .offset(x: 7, y: 7)
+                        .transition(.scale(scale: 0.4).combined(with: .opacity))
+                }
+            }
+            .animation(.spring(response: 0.4, dampingFraction: 0.6), value: step == .connected)
+            Text(step == .connected ? "\(title) is connected" : "Connect \(title)")
                 .font(.title2.weight(.semibold))
+                .contentTransition(.opacity)
         }
     }
 
@@ -243,10 +275,35 @@ struct ConnectView: View {
     }
 
     private var connected: some View {
-        VStack(spacing: 16) {
-            Text(connectedNote)
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
+        VStack(spacing: 20) {
+            if !connectedNote.isEmpty {
+                Text(connectedNote)
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.secondary)
+            }
+            if !highlights.isEmpty {
+                VStack(alignment: .leading, spacing: 14) {
+                    ForEach(highlights, id: \.self) { highlight in
+                        HStack(alignment: .firstTextBaseline, spacing: 12) {
+                            Image(systemName: highlight.symbol)
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(.tint)
+                                .frame(width: 20)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(highlight.title)
+                                    .fontWeight(.medium)
+                                Text(highlight.detail)
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                    }
+                }
+                .padding(16)
+                .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 14))
+            }
             Button("Done", action: onDone)
                 .buttonStyle(.glassProminent)
                 .controlSize(.extraLarge)
@@ -303,6 +360,13 @@ struct ConnectView: View {
     }
 
     private func chooseOnlyMethod() {
+        #if DEBUG
+        // KUVO_DEMO_CONNECTED: opens on the last step, as after signing in.
+        if ProcessInfo.processInfo.environment["KUVO_DEMO_CONNECTED"] != nil {
+            step = .connected
+            return
+        }
+        #endif
         if supportedMethods.count == 1, let method = supportedMethods.first { start(method) }
     }
 

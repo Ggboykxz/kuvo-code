@@ -353,19 +353,25 @@ struct ScrollingSettingsForm<Content: View>: View {
 /// steps as in Accounts, in a sheet, each with a Cancel beside its own buttons.
 struct ConnectSheet: View {
     let integrationID: String
+    var name: String? = nil
+    var symbol: String? = nil
     /// What the last step says the connection gives you.
     var note = "Its models are now in the model picker."
+    var highlights: [ConnectView.Highlight] = []
     let done: () -> Void
 
     var body: some View {
-        ConnectView(integrationID: integrationID, connectedNote: note, onDone: done, onCancel: done)
-            .frame(width: SettingsView.sheetWidth, height: 560)
+        // As tall as the step it's on.
+        ConnectView(integrationID: integrationID, name: name, symbol: symbol, connectedNote: note, highlights: highlights, onDone: done, onCancel: done)
+            .frame(width: SettingsView.sheetWidth)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 
-/// An integration, by its ID, for a sheet.
+/// An integration, by its ID, for a sheet; with what you know it as, when that's another name.
 struct IntegrationRef: Identifiable {
     let id: String
+    var service: Integrations.Service? = nil
 }
 
 /// A search field as a row of a settings group: a magnifying glass, the text, and a clear button.
