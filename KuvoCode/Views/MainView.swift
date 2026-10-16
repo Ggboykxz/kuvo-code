@@ -1075,11 +1075,15 @@ struct MainView: View {
         if environment["KUVO_DEMO_CHANGES"] != nil { showsPanel = true }
         // KUVO_DEMO_PALETTE=<text>: the command palette, with that typed in it.
         if workspace.isLoaded, environment["KUVO_DEMO_PALETTE"] != nil { showsPalette = true }
-        // KUVO_DEMO_WINDOW=WIDTHxHEIGHT resizes the window, for checking narrow layouts.
+        // KUVO_DEMO_WINDOW=WIDTHxHEIGHT resizes the window, for checking narrow layouts;
+        // KUVO_DEMO_OFFSCREEN puts it past the screen's edge, where the pointer can't hover over it.
         if let size = environment["KUVO_DEMO_WINDOW"]?.split(separator: "x").compactMap({ Double($0) }), size.count == 2,
            let window = NSApp.windows.first(where: \.isVisible) {
             var frame = window.frame
             frame.size = CGSize(width: size[0], height: size[1])
+            if environment["KUVO_DEMO_OFFSCREEN"] != nil, let screen = window.screen ?? NSScreen.main {
+                frame.origin = CGPoint(x: screen.frame.maxX + 40, y: screen.frame.minY)
+            }
             window.setFrame(frame, display: true, animate: false)
             // Again once window restoration has settled.
             try? await Task.sleep(for: .seconds(1))
