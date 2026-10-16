@@ -23,6 +23,9 @@ final class Utilities {
     struct Tab: Identifiable, Hashable {
         var id = UUID()
         var kind: Kind
+        /// A bot on this Mac whose tab it is: it browses there, out of sight, and the tab shows
+        /// only in its conversation. Nil for yours.
+        var owner: String? = nil
     }
 
     private(set) var tabs: [Tab] = [Tab(kind: .changes)]
@@ -54,6 +57,17 @@ final class Utilities {
     /// The session in view; an agent elsewhere browsing doesn't bring its page forward. The window
     /// sets it.
     var sessionInView: String?
+    /// The bot on this Mac whose conversation is in view: its tabs show beside yours. The window
+    /// sets it.
+    var botInView: String? {
+        didSet {
+            guard botInView != oldValue else { return }
+            // A tab of the bot left behind goes out of view: the one beside it takes its place.
+            if let selected = tabs.first(where: { $0.id == selection }), !isVisible(selected) {
+                selection = visibleTabs.last { $0.kind == .browser }?.id ?? visibleTabs.first?.id
+            }
+        }
+    }
 
     /// The tab chosen in each place, to come back to.
     @ObservationIgnored private var chosen: [String: UUID] = [:]
@@ -65,7 +79,7 @@ final class Utilities {
 
     func isVisible(_ tab: Tab) -> Bool {
         switch tab.kind {
-        case .browser: place == nil
+        case .browser: place == nil && (tab.owner == nil || tab.owner == botInView)
         case .machinePage(let machine, _): place == machine
         default: true
         }
@@ -140,10 +154,12 @@ final class Utilities {
     /// A browser tab at `address`; or, given WebKit's configuration, a window a page opened, placed
     /// right after the page's tab. When that window closes itself, its page's tab comes back.
     @discardableResult
-    func newBrowser(_ address: String? = nil, configuration: WKWebViewConfiguration? = nil, openedFrom opener: UUID? = nil, byAgent: Bool = false) -> BrowserSession {
+    func newBrowser(_ address: String? = nil, configuration: WKWebViewConfiguration? = nil, openedFrom opener: UUID? = nil, byAgent: Bool = false, owner: String? = nil) -> BrowserSession {
         // Yours only: not the agent's tabs, nor windows a page opened.
         if !byAgent, configuration == nil { Analytics.shared.track("panel_opened", ["tool": "browser"]) }
-        let tab = Tab(kind: .browser)
+        // A window a bot's page opens is the bot's too.
+        let owner = owner ?? opener.flatMap { id in tabs.first { $0.id == id }?.owner }
+        let tab = Tab(kind: .browser, owner: owner)
         let browser = BrowserSession(configuration: configuration)
         browser.onVisit = { [weak history] url, title, icon in history?.record(url, title: title, iconURL: icon) }
         browser.openWindow = { [weak self] configuration in
@@ -242,7 +258,7 @@ final class Utilities {
             let tab = tabs.first { $0.kind == .machinePage(place, machineBrowser?(place)?.activeID) }
                 ?? tabs.last { if case .machinePage(place, _) = $0.kind { true } else { false } }
             if let tab { selection = tab.id }
-        } else if let browser = activeBrowser, let id = browsers.first(where: { $0.value === browser })?.key {
+        } else if let browser = botInView.flatMap(botBrowser) ?? activeBrowser, let id = browsers.first(where: { $0.value === browser })?.key {
             selection = id
         }
         revealRequest += 1
@@ -314,14 +330,29 @@ final class Utilities {
 
     /// Brings the panel into view, on `browser`'s tab if given.
     func reveal(_ browser: BrowserSession? = nil) {
-        if let browser, let id = browsers.first(where: { $0.value === browser })?.key { selection = id }
+        if let browser, let id = browsers.first(where: { $0.value === browser })?.key {
+            // A bot's tab out of view stays there: the bot browses out of sight.
+            guard let tab = tabs.first(where: { $0.id == id }), isVisible(tab) else { return }
+            selection = id
+        }
         if PanelSettings.isOn(PanelSettings.revealsForAgent) { revealRequest += 1 }
     }
 
-    /// The browser in view, or the most recent one.
+    /// Your browser in view, or your most recent one (never a bot's).
     var activeBrowser: BrowserSession? {
-        if let selected, let browser = browsers[selected.id] { return browser }
-        return tabs.reversed().lazy.compactMap { self.browsers[$0.id] }.first
+        if let selected, selected.owner == nil, let browser = browsers[selected.id] { return browser }
+        return tabs.reversed().lazy.filter { $0.owner == nil }.compactMap { self.browsers[$0.id] }.first
+    }
+
+    /// The tab a bot on this Mac browses in: the one in view if it's the bot's, else its latest.
+    func botBrowser(_ owner: String) -> BrowserSession? {
+        if let selected, selected.owner == owner, let browser = browsers[selected.id] { return browser }
+        return tabs.reversed().lazy.filter { $0.owner == owner }.compactMap { self.browsers[$0.id] }.first
+    }
+
+    /// The browser tabs of a bot, or yours (nil), in order.
+    func browserTabs(of owner: String?) -> [(id: UUID, browser: BrowserSession)] {
+        tabs.filter { $0.owner == owner }.compactMap { tab in browsers[tab.id].map { (tab.id, $0) } }
     }
 
     /// Closes a tab, and what it shows: its terminal, its page (on a machine too).
@@ -330,6 +361,11 @@ final class Utilities {
             machineBrowser?(machine)?.close(page)
         }
         remove(id)
+    }
+
+    /// Closes a bot's tabs, when the bot is deleted.
+    func closeTabs(of owner: String) {
+        for tab in tabs where tab.owner == owner { close(tab.id) }
     }
 
     /// Takes a tab out of the strip; the tab beside it takes its place.
@@ -365,6 +401,7 @@ final class Utilities {
 
     private func add(_ tab: Tab, at index: Int? = nil) {
         tabs.insert(tab, at: index ?? tabs.count)
-        selection = tab.id
+        // A bot's tab out of view stays out of view.
+        if isVisible(tab) { selection = tab.id }
     }
 }

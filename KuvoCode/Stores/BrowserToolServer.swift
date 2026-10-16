@@ -131,7 +131,7 @@ final class BrowserToolServer {
             let arguments = params["arguments"] as? [String: Any] ?? [:]
             // The engine names the session calling, so an ask goes to the right conversation.
             let caller = (params["_meta"] as? [String: Any])?["ai.opencode/sessionID"] as? String
-            return reply(await BrowserTools.call(name, arguments: arguments, agent: agent, caller: caller))
+            return reply(await BrowserTools.call(name, arguments: arguments, agent: agent.serving(caller), caller: caller))
         default:
             return ["jsonrpc": "2.0", "id": id, "error": ["code": -32601, "message": "Unknown method \(method)"]]
         }

@@ -10,10 +10,23 @@ import WebKit
 final class BrowserAgent {
     private let utilities: Utilities
     private let asks: BrowserAsks
+    /// The bot on this Mac this agent is, which browses in tabs of its own; nil for an agent in
+    /// your sessions, which uses yours.
+    let owner: String?
 
-    init(utilities: Utilities, asks: BrowserAsks) {
+    init(utilities: Utilities, asks: BrowserAsks, owner: String? = nil) {
         self.utilities = utilities
         self.asks = asks
+        self.owner = owner
+    }
+
+    /// Which bot on this Mac a session is, if it is one.
+    static var botOwner: (String) -> String? = { _ in nil }
+
+    /// The agent for one tool call: a bot's browses in its own tabs.
+    func serving(_ caller: String?) -> BrowserAgent {
+        let owner = caller.flatMap(Self.botOwner)
+        return owner == self.owner ? self : BrowserAgent(utilities: utilities, asks: asks, owner: owner)
     }
 
     // MARK: Actions
@@ -27,7 +40,7 @@ final class BrowserAgent {
     }
 
     func newTab(_ address: String?) async -> String {
-        let browser = utilities.newBrowser(address, byAgent: true)
+        let browser = utilities.newBrowser(address, byAgent: true, owner: owner)
         Analytics.shared.trackOnce("agent_used_browser")
         utilities.reveal()
         if address != nil { await settle(browser, expectNavigation: true) }
@@ -76,21 +89,22 @@ final class BrowserAgent {
     static var accepting = 0
     static var acceptsDialogs: Bool { accepting > 0 }
 
-    /// The panel's browser tabs, numbered from 1; or switches to one, or closes one.
+    /// The panel's browser tabs (a bot's own, for a bot), numbered from 1; or switches to one, or
+    /// closes one.
     func tabs(_ action: String, tab number: Int?) async -> String {
-        let open = utilities.tabs.compactMap { tab in utilities.browsers[tab.id].map { (id: tab.id, browser: $0) } }
+        let open = utilities.browserTabs(of: owner)
         if action != "list" {
             guard let number, open.indices.contains(number - 1) else { return "There's no tab [\(number ?? 0)]. " + Self.list(open.map(\.browser), inUse: utilities.activeBrowser) }
             let chosen = open[number - 1]
             if action == "close" {
                 utilities.close(chosen.id)
-                let rest = utilities.tabs.compactMap { utilities.browsers[$0.id] }
-                return "Closed tab [\(number)]. " + Self.list(rest, inUse: utilities.activeBrowser)
+                return "Closed tab [\(number)]. " + Self.list(utilities.browserTabs(of: owner).map(\.browser), inUse: inUse)
             }
             utilities.reveal(chosen.browser)
+            if owner != nil { use = chosen.browser }
             return await snapshot()
         }
-        return Self.list(open.map(\.browser), inUse: utilities.activeBrowser)
+        return Self.list(open.map(\.browser), inUse: inUse)
     }
 
     private static func list(_ browsers: [BrowserSession], inUse: BrowserSession?) -> String {
@@ -321,12 +335,27 @@ final class BrowserAgent {
 
     // MARK: Helpers
 
-    /// The browser in view, or a new one; either way the panel shows it.
+    /// The browser in view, or a new one; either way the panel shows it. A bot on this Mac uses
+    /// its own tab, out of sight unless its conversation is in view.
     private func browser() -> BrowserSession {
-        let browser = utilities.activeBrowser ?? utilities.newBrowser(byAgent: true)
+        let browser: BrowserSession
+        if let owner {
+            browser = use ?? utilities.botBrowser(owner) ?? utilities.newBrowser(byAgent: true, owner: owner)
+            use = browser
+        } else {
+            browser = utilities.activeBrowser ?? utilities.newBrowser(byAgent: true)
+        }
         Analytics.shared.trackOnce("agent_used_browser")
         utilities.reveal(browser)
         return browser
+    }
+
+    /// The tab a bot works in during this call.
+    private var use: BrowserSession?
+
+    /// The tab in use, for the tab list.
+    private var inUse: BrowserSession? {
+        owner.flatMap { utilities.botBrowser($0) } ?? utilities.activeBrowser
     }
 
     /// Shows the pointer where the agent's about to act, and gives it a moment to get there.

@@ -295,7 +295,11 @@ struct MainView: View {
             utilities.place = directory.flatMap(RemoteFolder.machine(of:))
         }
         // Its agent's browsing brings pages forward; others' stay where they are.
-        .onChange(of: sessionID, initial: true) { _, id in utilities.sessionInView = id }
+        .onChange(of: sessionID, initial: true) { _, id in
+            utilities.sessionInView = id
+            // A bot on this Mac: its own browser tabs show beside yours.
+            utilities.botInView = bots.bot(forSession: id).flatMap { $0.machine == nil ? $0.id : nil }
+        }
         .task(id: activeDirectory) {
             if let activeDirectory { await workspace.loadBranch(for: activeDirectory) }
         }

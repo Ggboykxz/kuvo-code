@@ -17,6 +17,10 @@ extension AppModel {
         // connection that brings the ask here.
         browserAsks.onChange = { [weak self] sessions in self?.workspace.askingInBrowser = sessions }
         workspace.botName = { [weak self] session in self?.bots.bot(forSession: session)?.name }
+        // A bot on this Mac browses in tabs of its own.
+        BrowserAgent.botOwner = { [weak self] session in
+            self?.bots.bot(forSession: session).flatMap { $0.machine == nil ? $0.id : nil }
+        }
         browserAsks.askerName = { [weak self] session in
             self?.bots.bot(forSession: session)?.name ?? self?.workspace.session(session)?.title
         }

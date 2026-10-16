@@ -199,6 +199,7 @@ final class Bots {
         list.removeAll { $0.id == bot.id }
         save()
         wakes[bot.id] = nil
+        app?.utilities.closeTabs(of: bot.id)
         app?.workspace.botSessions = sessionIDs
         await app?.workspace.delete(bot.sessionID)
         if let machine = bot.machine {
