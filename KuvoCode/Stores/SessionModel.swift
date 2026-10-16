@@ -343,8 +343,8 @@ final class SessionModel {
     /// agent works, it gets the message at its next step, ahead of the queue. With `queue`, the
     /// message waits for the run, and everything queued before it, to finish.
     /// The first message in a folder the engine has just opened can come before its tools (the
-    /// browser's) are connected, and the model would go without them: it waits for them, a few
-    /// seconds at most, once.
+    /// browser's, the integrations') are connected, and the model would go without them, to the
+    /// browser for a service it has an integration for: it waits for them, once.
     @ObservationIgnored private var toolsChecked = false
 
     private func waitForTools() async {
@@ -817,11 +817,12 @@ final class SessionModel {
 }
 
 extension OpenCodeAPI {
-    /// Until the MCP servers of `directory` are connected (the engine connects them a moment
-    /// after it opens a folder), four seconds at most, and a moment more if they only just did:
-    /// a message sent sooner reaches a model without their tools.
+    /// Until the MCP servers of `directory` are connected (the engine connects them after it
+    /// opens a folder; an integration's server can take a while the first time, as it's
+    /// fetched), twenty seconds at most, and a moment more if they only just did: a message sent
+    /// sooner reaches a model without their tools.
     func waitForTools(in directory: String) async {
-        let deadline = ContinuousClock.now + .seconds(4)
+        let deadline = ContinuousClock.now + .seconds(20)
         var waited = false
         while ContinuousClock.now < deadline {
             guard let servers = try? await mcpServers(directory: directory) else { return }

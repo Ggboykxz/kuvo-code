@@ -358,12 +358,14 @@ public enum Wakes {
       [ -n "$port" ] && [ -n "$password" ] || exit 0
       # Sends a wake-up's text to the bot's session; true once it's gone.
       deliver() {
-        # The bot's folder's tools (its browser) first: the engine connects them a moment after
-        # it opens the folder, and a wake-up sent sooner goes without them.
+        # The bot's folder's tools (its browser, integrations) first: the engine connects them
+        # after it opens the folder, and a wake-up sent sooner goes without them. Twenty seconds
+        # at most, as an integration's server can take a while the first time.
         if [ -f "${bot}directory" ] && command -v curl >/dev/null 2>&1 && [ -z "$tools" ]; then
-          tools=1; waited=
+          tools=1; waited=; tries=0
           folder=$(sed -e 's/%/%25/g' -e 's/ /%20/g' "${bot}directory")
-          for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do
+          while [ "$tries" -lt 80 ]; do
+            tries=$((tries + 1))
             curl -sf -m 5 -u "opencode:$password" -H "x-opencode-directory: $folder" "http://127.0.0.1:$port/api/mcp" | grep -q '"pending"' || break
             waited=1; sleep 0.25
           done
