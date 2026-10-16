@@ -119,7 +119,7 @@ public struct RemoteEngineInstaller: Sendable {
     /// so it never touches the machine's own opencode, if it has one.
     static let folders = """
         K="$HOME/\(root)"
-        export XDG_DATA_HOME="$K/data" XDG_CONFIG_HOME="$K/config" XDG_STATE_HOME="$K/state" XDG_CACHE_HOME="$K/cache"
+        export XDG_DATA_HOME="$K/data" XDG_CONFIG_HOME="$K/config" XDG_STATE_HOME="$K/state" XDG_CACHE_HOME="$K/cache" npm_config_cache="$K/cache/npm" BUN_INSTALL="$K/cache/bun"
         mkdir -p "$K/data" "$K/config" "$K/state" "$K/cache" "$K/workspace"
         """
 

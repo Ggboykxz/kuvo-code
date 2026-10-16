@@ -27,6 +27,10 @@ public struct EngineFolders: Sendable {
             "XDG_CONFIG_HOME": root.appending(path: "config").path,
             "XDG_STATE_HOME": root.appending(path: "state").path,
             "XDG_CACHE_HOME": root.appending(path: "cache").path,
+            // What MCP servers it runs with npx or bunx download, in its own cache too (npm's
+            // and Bun's own would be in the home folder).
+            "npm_config_cache": root.appending(path: "cache/npm").path,
+            "BUN_INSTALL": root.appending(path: "cache/bun").path,
         ]
     }
 
