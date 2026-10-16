@@ -679,22 +679,11 @@ final class Bots {
     }
 
     private static func load() -> [Bot] {
-        guard let data = try? Data(contentsOf: file) else { return [] }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return (try? decoder.decode([Bot].self, from: data)) ?? []
+        JSONFile.read([Bot].self, from: file, isoDates: true) ?? []
     }
 
     private func save() {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        do {
-            try FileManager.default.createDirectory(at: AppInfo.supportDirectory, withIntermediateDirectories: true)
-            try encoder.encode(list).write(to: Self.file, options: .atomic)
-        } catch {
-            log.error("Bots weren't saved: \(error.localizedDescription, privacy: .public)")
-        }
+        JSONFile.write(list, to: Self.file, isoDates: true, readable: true)
     }
 }
 

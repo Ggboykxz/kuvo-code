@@ -25,9 +25,7 @@ final class BrowserHistory {
 
     init(folder: URL = AppInfo.supportDirectory.appending(path: "Browser")) {
         self.folder = folder
-        if let data = try? Data(contentsOf: file), let saved = try? JSONDecoder().decode([Site].self, from: data) {
-            sites = saved
-        }
+        if let saved = JSONFile.read([Site].self, from: file) { sites = saved }
     }
 
     /// The most visited sites lately: visits count, and fade over a few weeks.
@@ -98,8 +96,7 @@ final class BrowserHistory {
     }
 
     private func save() {
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        if let data = try? JSONEncoder().encode(sites) { try? data.write(to: file, options: .atomic) }
+        JSONFile.write(sites, to: file)
     }
 }
 

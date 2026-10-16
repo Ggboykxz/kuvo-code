@@ -1,5 +1,4 @@
 import Foundation
-import os
 
 /// How a bot talks. The same words tell you what it's like and tell the bot how to be.
 struct Personality: Codable, Identifiable, Hashable {
@@ -35,13 +34,10 @@ final class Personalities {
     ]
 
     private(set) var custom: [Personality] = []
-    private let log = Logger(subsystem: "run.kuvo.code", category: "personalities")
     private static var file: URL { AppInfo.supportDirectory.appending(path: "personalities.json") }
 
     private init() {
-        if let data = try? Data(contentsOf: Self.file) {
-            custom = (try? JSONDecoder().decode([Personality].self, from: data)) ?? []
-        }
+        custom = JSONFile.read([Personality].self, from: Self.file) ?? []
     }
 
     var all: [Personality] { Self.presets + custom }
@@ -69,13 +65,6 @@ final class Personalities {
     }
 
     private func save() {
-        do {
-            try FileManager.default.createDirectory(at: AppInfo.supportDirectory, withIntermediateDirectories: true)
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try encoder.encode(custom).write(to: Self.file, options: .atomic)
-        } catch {
-            log.error("Personalities weren't saved: \(error.localizedDescription, privacy: .public)")
-        }
+        JSONFile.write(custom, to: Self.file, readable: true)
     }
 }

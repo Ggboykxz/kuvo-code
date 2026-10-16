@@ -843,44 +843,19 @@ final class BotGroups {
     // MARK: Storage
 
     private static func load() -> [BotGroup] {
-        guard let data = try? Data(contentsOf: file) else { return [] }
-        return (try? decoder.decode([BotGroup].self, from: data)) ?? []
+        JSONFile.read([BotGroup].self, from: file, isoDates: true) ?? []
     }
 
     private func save() {
-        do {
-            try FileManager.default.createDirectory(at: AppInfo.supportDirectory, withIntermediateDirectories: true)
-            try Self.encoder.encode(list).write(to: Self.file, options: .atomic)
-        } catch {
-            log.error("Group chats weren't saved: \(error.localizedDescription, privacy: .public)")
-        }
+        JSONFile.write(list, to: Self.file, isoDates: true, readable: true)
     }
 
     private static func loadLog(_ id: String) -> [GroupMessage] {
-        guard let data = try? Data(contentsOf: folder.appending(path: "\(id).json")) else { return [] }
-        return (try? decoder.decode([GroupMessage].self, from: data)) ?? []
+        JSONFile.read([GroupMessage].self, from: folder.appending(path: "\(id).json"), isoDates: true) ?? []
     }
 
     private func saveLog(_ id: String) {
         guard let messages = logs[id] else { return }
-        do {
-            try FileManager.default.createDirectory(at: Self.folder, withIntermediateDirectories: true)
-            try Self.encoder.encode(messages).write(to: Self.folder.appending(path: "\(id).json"), options: .atomic)
-        } catch {
-            log.error("A group chat's messages weren't saved: \(error.localizedDescription, privacy: .public)")
-        }
+        JSONFile.write(messages, to: Self.folder.appending(path: "\(id).json"), isoDates: true, readable: true)
     }
-
-    private static let encoder: JSONEncoder = {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return encoder
-    }()
-
-    private static let decoder: JSONDecoder = {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return decoder
-    }()
 }
