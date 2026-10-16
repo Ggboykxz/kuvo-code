@@ -3,8 +3,8 @@ import UserNotifications
 
 /// Tells you when a session finishes or needs your answer while you're in another app, and
 /// counts the sessions waiting for you on the Dock icon. Clicking a notification opens the
-/// session; a permission request's buttons answer it without opening the app. macOS asks for
-/// permission the first time there's something to tell.
+/// session; a permission request's buttons answer it, and a finished one's Reply writes back,
+/// without opening the app. macOS asks for permission the first time there's something to tell.
 final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     static let shared = Notifier()
     /// Settings › Notifications: notifications, their sound and the Dock badge, each on unless
@@ -30,6 +30,8 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     /// Answers a permission request from its notification: the request's session, the request,
     /// and the decision.
     var answer: ((String, String, PermissionAnswer) -> Void)?
+    /// Sends what you wrote in a notification's Reply to its session.
+    var reply: ((String, String) -> Void)?
 
     enum PermissionAnswer: String, CaseIterable {
         case once, always, reject
@@ -44,6 +46,8 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     }
 
     private static let permissionCategory = "permission"
+    private static let replyCategory = "reply"
+    private nonisolated static let replyAction = "reply"
     private var isAuthorized: Bool?
 
     func start() {
@@ -53,13 +57,17 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
             UNNotificationCategory(identifier: Self.permissionCategory, actions: PermissionAnswer.allCases.map { answer in
                 UNNotificationAction(identifier: answer.rawValue, title: answer.title, options: answer == .reject ? [.destructive] : [])
             }, intentIdentifiers: []),
+            UNNotificationCategory(identifier: Self.replyCategory, actions: [
+                UNTextInputNotificationAction(identifier: Self.replyAction, title: "Reply", options: [], textInputButtonTitle: "Send", textInputPlaceholder: "Message"),
+            ], intentIdentifiers: []),
         ])
     }
 
     /// Posts a notification about `session`, unless you're in the app (its sidebar and tabs
     /// already show it) or notifications are off.
-    /// A `permission` (its session, and the request) gets the buttons that answer it.
-    func notify(session: String, title: String, subtitle: String? = nil, body: String, permission: (session: String, request: String)? = nil) {
+    /// A `permission` (its session, and the request) gets the buttons that answer it; one that
+    /// `replies` gets Reply, to write back to the session from the notification.
+    func notify(session: String, title: String, subtitle: String? = nil, body: String, permission: (session: String, request: String)? = nil, replies: Bool = false) {
         guard Self.isEnabled, !NSApp.isActive else { return }
         Task {
             guard await authorize() else { return }
@@ -74,6 +82,8 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
                 content.categoryIdentifier = Self.permissionCategory
                 content.userInfo["requestSession"] = permission.session
                 content.userInfo["request"] = permission.request
+            } else if replies, !session.isEmpty {
+                content.categoryIdentifier = Self.replyCategory
             }
             try? await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
         }
@@ -119,6 +129,10 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
             return
         }
         guard let session = info["session"] as? String else { return }
+        if response.actionIdentifier == Self.replyAction, let text = (response as? UNTextInputNotificationResponse)?.userText {
+            await MainActor.run { Notifier.shared.reply?(session, text) }
+            return
+        }
         await MainActor.run {
             NSApp.activate()
             if !session.isEmpty { Notifier.shared.open?(session) }

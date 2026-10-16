@@ -673,7 +673,8 @@ final class Workspace {
                         session: id,
                         title: botName?(id) ?? session.title ?? "New Session",
                         subtitle: botName?(id) == nil ? projectName(session.location.directory) : nil,
-                        body: failed ? "Stopped with an error." : reply ?? "Finished."
+                        body: failed ? "Stopped with an error." : reply ?? "Finished.",
+                        replies: true
                     )
                 }
             }
@@ -740,6 +741,27 @@ final class Workspace {
         default:
             break
         }
+    }
+
+    /// Sends a message to a session from outside its conversation (a notification's Reply), with
+    /// the model it last used. Says so in a notification if it didn't go.
+    func send(_ text: String, to id: String) async {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        let failure: String
+        if let api = api(forSession: id) {
+            do {
+                try await api.prompt(session: id, id: Identifier.message(), text: text, delivery: .queue)
+                Analytics.shared.track("notification_replied")
+                return
+            } catch {
+                failure = error.localizedDescription
+            }
+        } else {
+            failure = "Its engine isn’t connected."
+        }
+        Notifier.shared.notify(session: id, title: botName?(id) ?? session(id)?.title ?? AppInfo.name,
+                               body: "Your reply didn’t go: \(failure) Open the conversation to send it again.")
     }
 
     /// `permission` is the request, for a notification whose buttons answer it.

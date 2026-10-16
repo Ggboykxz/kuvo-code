@@ -31,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         Notifier.shared.start()
         Notifier.shared.answer = { [model] session, request, answer in model.workspace.answer(request, in: session, with: answer) }
+        Notifier.shared.reply = { [model] session, text in Task { await model.workspace.send(text, to: session) } }
         Analytics.shared.start()
         UsageMenuBar.shared.onPanelShown = { Analytics.shared.track("usage_panel_opened") }
         #if DEBUG

@@ -1196,6 +1196,8 @@ struct MainView: View {
         openTab(bot.sessionID)
         // KUVO_DEMO_EDIT_BOT: its Edit Bot sheet, open.
         if environment["KUVO_DEMO_EDIT_BOT"] != nil { openBotEditor(bot: bot) }
+        // KUVO_DEMO_REPLY: a reply sent as a notification's Reply sends it.
+        if let reply = environment["KUVO_DEMO_REPLY"] { await workspace.send(reply, to: bot.sessionID) }
         if let prompt = environment["KUVO_DEMO_BOT_PROMPT"], let model = workspace.model(for: bot.sessionID) {
             try? await Task.sleep(for: .seconds(1))
             model.submit(prompt, files: [], for: nil, queue: false, commands: [])
