@@ -119,8 +119,8 @@ public struct RemoteEngineInstaller: Sendable {
     /// so it never touches the machine's own opencode, if it has one.
     static let folders = """
         K="$HOME/\(root)"
-        export XDG_DATA_HOME="$K/data" XDG_CONFIG_HOME="$K/config" XDG_STATE_HOME="$K/state" XDG_CACHE_HOME="$K/cache" npm_config_cache="$K/cache/npm" BUN_INSTALL="$K/cache/bun"
-        mkdir -p "$K/data" "$K/config" "$K/state" "$K/cache" "$K/workspace"
+        export XDG_DATA_HOME="$K/data" XDG_CONFIG_HOME="$K/config" XDG_STATE_HOME="$K/state" XDG_CACHE_HOME="$K/cache" npm_config_cache="$K/cache/npm" BUN_INSTALL="$K/cache/bun" KUVO_INTEGRATIONS="$K/integrations"
+        mkdir -p "$K/data" "$K/config" "$K/state" "$K/cache" "$K/workspace" "$K/integrations"
         """
 
     /// Connects and checks that the machine can run the engine: the build it needs, and whether
@@ -291,6 +291,7 @@ public final class RemoteServer: @unchecked Sendable {
         \(RemoteEngineInstaller.folders)
         R="$K/run"; mkdir -p "$R"; chmod 700 "$R"
         \(Wakes.installScript)
+        \(Launcher.installScript)
         export PATH="$K/bin:$PATH"
         cd "$K/workspace"
         touch "$R/attached"
