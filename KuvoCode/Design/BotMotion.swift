@@ -181,8 +181,9 @@ final class BotMotionView: NSView {
         let now = CACurrentMediaTime()
         let into = now.truncatingRemainder(dividingBy: length)
 
-        /// Each pose's value, back to the first at the end, as the round starts again.
-        func play(_ layer: CALayer, _ keyPath: String, discrete: Bool = false, _ value: (BotPose) -> Any) {
+        /// Each pose's value, back to the first at the end, as the round starts again. A part
+        /// with a rhythm of its own (the sparks' orbit) goes round in `round`, `over` its poses.
+        func play(_ layer: CALayer, _ keyPath: String, discrete: Bool = false, over poses: [BotPose] = poses, round: Double = length, _ value: (BotPose) -> Any) {
             var values = poses.map(value)
             values.append(values[0])
             // The same all round: set, not played.
@@ -198,11 +199,11 @@ final class BotMotionView: NSView {
             layer.setValue(values[0], forKeyPath: keyPath)
             let animation = CAKeyframeAnimation(keyPath: keyPath)
             animation.values = values
-            animation.duration = length
+            animation.duration = round
             animation.repeatCount = .infinity
             animation.isRemovedOnCompletion = false
             if discrete { animation.calculationMode = .discrete }
-            animation.beginTime = layer.convertTime(now, from: nil) - into
+            animation.beginTime = layer.convertTime(now, from: nil) - now.truncatingRemainder(dividingBy: round)
             layer.add(animation, forKey: keyPath)
         }
 
@@ -254,19 +255,25 @@ final class BotMotionView: NSView {
         play(glow, "opacity") { Double(0.4 * (1 - $0.glow)) * ($0.glow > 0 ? 1 : 0) }
         play(glow, "transform.scale") { Double(1 + 0.5 * $0.glow) }
 
+        // The sparks circle in 1.3 s, which no round of the rest fits: a round of their own.
+        let orbit = 1.3
+        let orbitPoses = spec.mood == .working
+            ? (0..<39).map { BotPose(mood: spec.mood, noticed: spec.noticed, time: Double($0) / 30 + spec.seed, seed: spec.seed, small: spec.size < 24) }
+            : poses
+        let orbitRound = spec.mood == .working ? orbit : length
         for (index, dot) in dots.enumerated() {
             let spark = index / 5, step = index % 5
             func placement(_ pose: BotPose) -> BotAvatar.Placement? {
                 guard pose.sparks.indices.contains(spark) else { return nil }
                 return BotAvatar.sparkDots(at: pose.sparks[spark], size: size)[step]
             }
-            play(dot, "position") { pose in
+            play(dot, "position", over: orbitPoses, round: orbitRound) { pose in
                 let offset = placement(pose)?.offset ?? .zero
                 return NSValue(point: CGPoint(x: center.x + offset.width, y: center.y + offset.height))
             }
-            play(dot, "transform.scale") { Double(placement($0)?.scale ?? 1) }
-            play(dot, "opacity") { placement($0)?.opacity ?? 0 }
-            play(dot, "zPosition", discrete: true) { pose in
+            play(dot, "transform.scale", over: orbitPoses, round: orbitRound) { Double(placement($0)?.scale ?? 1) }
+            play(dot, "opacity", over: orbitPoses, round: orbitRound) { placement($0)?.opacity ?? 0 }
+            play(dot, "zPosition", discrete: true, over: orbitPoses, round: orbitRound) { pose in
                 pose.sparks.indices.contains(spark) && BotAvatar.sparkInFront(pose.sparks[spark]) ? 1.0 : -1.0
             }
         }
