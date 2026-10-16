@@ -34,11 +34,17 @@ final class SessionModel {
         set { Drafts.shared[id].files = newValue }
     }
 
-    /// What you're replying to, over the composer.
-    var draftQuote: String? {
-        get { Drafts.shared[id].quote }
-        set { Drafts.shared[id].quote = newValue }
+    /// What you're replying to, over the composer, each with your answer to it.
+    var draftQuotes: [Drafts.Quote] {
+        get { Drafts.shared[id].quotes }
+        set {
+            Drafts.shared[id].quotes = newValue
+            Drafts.shared[id].quote = nil
+        }
     }
+
+    /// The quote whose answer takes the keyboard: the one just added.
+    private(set) var quoteFocus: UUID?
 
     /// Messages you sent here, oldest first, for going back through with ↑.
     var sentMessages: [String] {
@@ -67,6 +73,17 @@ final class SessionModel {
         findRequest += 1
     }
 
+    /// A message's quotes, each with what was said to it, and the words before them (or, with
+    /// no quote, all of it): the message as it was in the composer.
+    static func quotes(in message: String) -> (quotes: [Drafts.Quote], text: String) {
+        var quotes: [Drafts.Quote] = []
+        var text = ""
+        for segment in Quoting.segments(message) {
+            if let quote = segment.quote { quotes.append(Drafts.Quote(text: quote, response: segment.text)) } else { text = segment.text }
+        }
+        return (quotes, text)
+    }
+
     /// Started by another session's agent to do part of its task.
     var isSubagent: Bool { session.parentID != nil }
 
@@ -82,12 +99,24 @@ final class SessionModel {
         if draftText.isEmpty { composerBlur += 1 }
     }
 
-    /// Replies to a message: the part of it you selected (else all of `text`) goes into the
-    /// composer as a quote, and the composer takes the keyboard.
+    /// Replies to all of a message: it goes over the composer as a quote, to answer under.
     func reply(to text: String) {
-        draftQuote = Quoting.selection(in: text) ?? text.trimmingCharacters(in: .whitespacesAndNewlines)
-        focusComposer()
-        Analytics.shared.track("message_replied")
+        addQuote(text, how: "message")
+    }
+
+    /// Adds a quote to answer (all of a message, or a part you selected), after those there are,
+    /// and its answer takes the keyboard.
+    func addQuote(_ text: String, how: String) {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        if let same = draftQuotes.first(where: { $0.text == text }) {
+            quoteFocus = same.id
+            return
+        }
+        let quote = Drafts.Quote(text: text)
+        draftQuotes.append(quote)
+        quoteFocus = quote.id
+        Analytics.shared.track("message_replied", ["how": how])
     }
     /// Queued messages wait for Resume: after Stop, a failed run, or when the app finds them
     /// waiting at launch.
@@ -454,8 +483,8 @@ final class SessionModel {
     private func restoreDraft(_ message: String, files picked: [URL] = []) {
         let (withComments, paths) = Attachments.split(message)
         let (quoted, comments) = ReviewComments.split(withComments)
-        let (quote, text) = Quoting.split(quoted)
-        if draftQuote == nil { draftQuote = quote }
+        let (quotes, text) = Self.quotes(in: quoted)
+        draftQuotes = quotes + draftQuotes
         draftText = [text, draftText].filter { !$0.isEmpty }.joined(separator: "\n\n")
         let files = picked + paths.map { URL(filePath: $0) }
         draftFiles = files + draftFiles.filter { !files.contains($0) }

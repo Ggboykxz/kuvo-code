@@ -47,6 +47,48 @@ enum Quoting {
         return block + "\n\n" + text
     }
 
+    /// The message to send: each quote you're replying to, as Markdown, with your answer to it
+    /// under it, then the rest of your words.
+    static func message(quotes: [Drafts.Quote], text: String) -> String {
+        let parts = quotes.flatMap { quote in
+            [message(quote: quote.text, text: ""), quote.response.trimmingCharacters(in: .whitespacesAndNewlines)]
+        } + [text.trimmingCharacters(in: .whitespacesAndNewlines)]
+        return parts.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }.joined(separator: "\n\n")
+    }
+
+    /// A message as what it quotes and what it says: each run of lines starting with ">" with the
+    /// words after it, in order (the first part's quote is nil when it starts with words).
+    static func segments(_ message: String) -> [(quote: String?, text: String)] {
+        var segments: [(quote: String?, text: String)] = []
+        var quote: [String] = []
+        var words: [String] = []
+        func close() {
+            let text = words.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            let quoted = quote.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !quoted.isEmpty || !text.isEmpty { segments.append((quoted.isEmpty ? nil : quoted, text)) }
+            quote = []
+            words = []
+        }
+        for line in message.split(separator: "\n", omittingEmptySubsequences: false) {
+            if line.hasPrefix(">") {
+                // A new quote after words: the part before is done.
+                if !words.joined().trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { close() }
+                var content = line.dropFirst()
+                if content.first == " " { content = content.dropFirst() }
+                quote.append(String(content))
+            } else {
+                words.append(String(line))
+            }
+        }
+        close()
+        return segments.isEmpty ? [(nil, message)] : segments
+    }
+
+    /// A message's own words, without what it quotes.
+    static func words(of message: String) -> String {
+        segments(message).map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n")
+    }
+
     /// A message's quote (the lines starting with ">" that it opens with) and the rest.
     static func split(_ message: String) -> (quote: String?, text: String) {
         let lines = message.split(separator: "\n", omittingEmptySubsequences: false)

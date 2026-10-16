@@ -291,3 +291,4 @@ final class AppModel {
         engine = .failed("The engine stopped unexpectedly (exit code \(status)).\(output.isEmpty ? "" : "\n\n" + String(output.suffix(600)))")
     }
 }
+

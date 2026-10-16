@@ -127,7 +127,8 @@ private struct BottomStack: View {
                 Composer(
                     text: $model.draftText,
                     files: $model.draftFiles,
-                    quote: $model.draftQuote,
+                    quotes: $model.draftQuotes,
+                    quoteFocus: model.quoteFocus,
                     agent: model.agent,
                     approval: model.approval,
                     model: model.session.model ?? lastModel ?? catalog.defaultModel?.ref,
@@ -176,9 +177,11 @@ private struct BottomStack: View {
         .padding(.bottom, 16)
         .readableColumn()
         #if DEBUG
-        // KUVO_DEMO_QUOTE=<text>: replying to that, over the composer.
         .onAppear {
-            if let quote = ProcessInfo.processInfo.environment["KUVO_DEMO_QUOTE"] { model.draftQuote = quote }
+            // KUVO_DEMO_QUOTE=<text>[||<text>…]: replying to those.
+            if let quotes = ProcessInfo.processInfo.environment["KUVO_DEMO_QUOTE"] {
+                model.draftQuotes = quotes.components(separatedBy: "||").map { Drafts.Quote(text: $0) }
+            }
             // KUVO_DEMO_FAILURE=<text>: as if something just failed.
             if let failure = ProcessInfo.processInfo.environment["KUVO_DEMO_FAILURE"] { model.failure = failure }
         }
@@ -213,11 +216,11 @@ private struct BottomStack: View {
         let commands = catalog.commands(in: model.session.location.directory)
         // A "!" or "/" command runs as typed; what you were replying to waits for a message.
         let isCommand = SessionModel.shellCommand(in: model.draftText) != nil || SlashCommands.parse(model.draftText, commands: commands) != nil
-        let text = isCommand ? model.draftText : Quoting.message(quote: model.draftQuote, text: model.draftText)
+        let text = isCommand ? model.draftText : Quoting.message(quotes: model.draftQuotes, text: model.draftText)
         model.submit(text, files: model.draftFiles, for: catalog.model(model.session.model), queue: queue, commands: commands)
         model.draftText = ""
         model.draftFiles = []
-        if !isCommand { model.draftQuote = nil }
+        if !isCommand { model.draftQuotes = [] }
     }
 }
 

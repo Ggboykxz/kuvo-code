@@ -47,6 +47,8 @@ struct TranscriptView: View {
             .animation(.ui, value: rows.map(\.id))
         }
         .scrollPosition($position)
+        // What you select, to reply to or copy.
+        .modifier(SelectionMenu { text in model.addQuote(text, how: "selection") })
         // Only where it starts. An anchor for size changes fought the rubber band: the lazy
         // stack re-measures rows during a bounce, so the end kept moving and the bounce
         // crawled, then snapped back. Following the end is done below, only while idle.
@@ -477,13 +479,21 @@ struct UserBubble: View {
             ForEach(comments) { comment in
                 CommentReference(comment: comment)
             }
-            let parts = Quoting.split(text)
-            if let quote = parts.quote {
-                QuoteBlock(text: quote)
-                    .frame(maxWidth: 420, alignment: .trailing)
-            }
-            if !parts.text.isEmpty {
-                MessageText(text: parts.quote == nil ? text : parts.text, styled: styled)
+            // What it replied to, each part above the words that answer it.
+            let segments = Quoting.segments(text)
+            if segments.count == 1, segments[0].quote == nil {
+                if !text.isEmpty { MessageText(text: text, styled: styled) }
+            } else {
+                ForEach(segments.indices, id: \.self) { index in
+                    if let quote = segments[index].quote {
+                        QuoteBlock(text: quote)
+                            .frame(maxWidth: 420, alignment: .trailing)
+                            .padding(.top, index == 0 ? 0 : 6)
+                    }
+                    if !segments[index].text.isEmpty {
+                        MessageText(text: segments[index].text, styled: segments.count == 1 ? styled : nil)
+                    }
+                }
             }
             if let status {
                 Text(status)

@@ -9,7 +9,10 @@ struct Composer: View {
     @Binding var text: String
     @Binding var files: [URL]
     /// What you're replying to, as a card over the text, with a way to drop it.
-    var quote: Binding<String?> = .constant(nil)
+    /// What you're replying to, each with your answer to it under it.
+    var quotes: Binding<[Drafts.Quote]> = .constant([])
+    /// The quote whose answer takes the keyboard (the one just added).
+    var quoteFocus: UUID?
     let agent: String
     let approval: ToolApproval
     let model: ModelRef?
@@ -54,6 +57,7 @@ struct Composer: View {
     @Environment(\.messageFont) private var messageFont
     @Environment(\.bot) private var bot
     @FocusState private var isFocused: Bool
+    @FocusState private var answering: UUID?
     @Namespace private var glass
     @State private var isTargeted = false
     /// The sent message showing in the field, while going through them.
@@ -71,7 +75,8 @@ struct Composer: View {
     private var canSend: Bool {
         if isOffline { return false }
         if isShell { return SessionModel.shellCommand(in: text) != nil }
-        return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty || commentCount > 0
+        let answered = quotes.wrappedValue.contains { !$0.response.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || answered || !files.isEmpty || commentCount > 0
     }
 
     /// "!" first: the message is a command to run in the project's folder, not words for the agent.
@@ -117,9 +122,23 @@ struct Composer: View {
                 .scrollIndicators(.hidden)
             }
 
-            if let replying = quote.wrappedValue {
-                QuoteCard(text: replying) { withAnimation(.ui) { quote.wrappedValue = nil } }
-                    .transition(.opacity.combined(with: .offset(y: 4)))
+            // Each quote with your answer to it, in the order they go.
+            ForEach(quotes) { $quote in
+                VStack(alignment: .leading, spacing: 6) {
+                    QuoteCard(text: quote.text) {
+                        let id = quote.id
+                        withAnimation(.ui) { quotes.wrappedValue.removeAll { $0.id == id } }
+                    }
+                    TextField("Your answer to this…", text: $quote.response, axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .font(messageFont.body)
+                        .lineLimit(1...6)
+                        .focused($answering, equals: quote.id)
+                        .onSubmit(send)
+                        .padding(.leading, 12)
+                        .padding(.bottom, 4)
+                }
+                .transition(.opacity.combined(with: .offset(y: 4)))
             }
             TextField(placeholder, text: $text, axis: .vertical)
                 .textFieldStyle(.plain)
@@ -254,7 +273,11 @@ struct Composer: View {
         } isTargeted: { isTargeted = $0 }
         .modifier(PasteAttachments(isActive: isFocused, attach: attach))
         .onChange(of: focusRequest) { focusAtEnd() }
-        .onChange(of: blurRequest) { isFocused = false }
+        .onChange(of: blurRequest) {
+            isFocused = false
+            answering = nil
+        }
+        .onChange(of: quoteFocus) { _, id in answering = id }
         .onAppear {
             focusAtEnd()
             #if DEBUG

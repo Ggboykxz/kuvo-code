@@ -539,7 +539,7 @@ struct QuestionProgress: Equatable {
     var isStarted = false
 }
 
-private struct WindowReader: NSViewRepresentable {
+struct WindowReader: NSViewRepresentable {
     let box: WindowBox
 
     func makeNSView(context: Context) -> NSView {

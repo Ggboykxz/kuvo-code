@@ -41,7 +41,7 @@ public struct EngineFolders: Sendable {
     /// app's own temporary folder, as a short path without spaces (sockets made under it must fit
     /// in 104 bytes, and scripts don't always quote it).
     public var temporary: URL {
-        FileManager.default.temporaryDirectory.appending(path: Bundle.main.bundleIdentifier ?? "opencodekit")
+        FileManager.default.temporaryDirectory.appending(path: Bundle.main.bundleIdentifier ?? "opencodekit").appending(path: "engine")
     }
 
     func create() throws {
