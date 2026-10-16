@@ -510,7 +510,7 @@ struct MainView: View {
                     Button("Close", systemImage: "xmark") { withAnimation(.ui) { botEditor = nil } }
                         .help("Close")
                 } content: {
-                    BotEditor(bot: request.bot) {
+                    BotEditor(bot: request.bot, recipe: request.recipe) {
                         withAnimation(.ui) { botEditor = nil }
                     } created: { bot in
                         openTab(bot.sessionID)
@@ -640,13 +640,13 @@ struct MainView: View {
         }
     }
 
-    /// Makes a bot, or changes `bot`, in the main card.
-    private func openBotEditor(bot: Bot?) {
+    /// Makes a bot (from a shared one's `recipe`, if given), or changes `bot`, in the main card.
+    private func openBotEditor(bot: Bot?, recipe: BotRecipe? = nil) {
         withAnimation(.ui) {
             panelExpanded = false
             app.showsSettings = false
             groupEditor = nil
-            botEditor = BotEditorRequest(bot: bot)
+            botEditor = BotEditorRequest(bot: bot, recipe: recipe)
         }
         focus = .conversation
     }
@@ -810,6 +810,7 @@ struct MainView: View {
             openFolder: openFolder,
             newProject: { projectSheet = ProjectSheetRequest(project: nil) },
             newBot: { openBotEditor(bot: nil) },
+            importBot: { if let recipe = BotRecipe.pick() { openBotEditor(bot: nil, recipe: recipe) } },
             newGroup: { openGroupEditor(group: nil) },
             newChat: { newSession(in: Workspace.chatsFolder) },
             stop: { model?.stop() },
@@ -1041,6 +1042,11 @@ struct MainView: View {
             default: continue
             }
             showsPanel = true
+        }
+        // KUVO_DEMO_IMPORT_BOT=<path>: New Bot, from that shared bot's file.
+        if let path = environment["KUVO_DEMO_IMPORT_BOT"], let data = FileManager.default.contents(atPath: path),
+           let recipe = try? JSONDecoder().decode(BotRecipe.self, from: data) {
+            openBotEditor(bot: nil, recipe: recipe)
         }
         // KUVO_DEMO_CHAT=<message>: a new chat, with this message sent; KUVO_DEMO_MOVE_CHAT=<folder>
         // then moves the newest chat into that project.
@@ -1361,6 +1367,8 @@ private struct MoveToProjectButton: View {
 struct BotEditorRequest: Identifiable {
     let id = UUID()
     let bot: Bot?
+    /// A shared bot a new one starts from.
+    var recipe: BotRecipe?
 }
 
 struct GroupEditorRequest: Identifiable {

@@ -119,6 +119,8 @@ struct AppCommands: Commands {
                 .disabled(actions == nil)
             Button("New Bot…") { actions?.newBot() }
                 .disabled(actions == nil)
+            Button("Import Bot…") { actions?.importBot() }
+                .disabled(actions == nil)
             Button("New Group Chat…") { actions?.newGroup() }
                 .disabled(actions == nil)
             Button("Open Folder…") { actions?.openFolder() }
@@ -233,6 +235,8 @@ struct SessionActions {
     var openFolder: () -> Void
     var newProject: () -> Void
     var newBot: () -> Void
+    /// A new bot from a shared one's file.
+    var importBot: () -> Void
     var newGroup: () -> Void
     var newChat: () -> Void
     var stop: () -> Void

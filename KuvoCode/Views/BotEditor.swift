@@ -41,18 +41,19 @@ struct BotEditor: View {
 
     private enum Field { case name, job, instructions }
 
-    init(bot: Bot?, close: @escaping () -> Void, created: @escaping (Bot) -> Void = { _ in }) {
+    /// `recipe`: a shared bot that a new one starts from.
+    init(bot: Bot?, recipe: BotRecipe? = nil, close: @escaping () -> Void, created: @escaping (Bot) -> Void = { _ in }) {
         self.bot = bot
         self.close = close
         self.created = created
-        _look = State(initialValue: bot?.look ?? .random())
-        _name = State(initialValue: bot?.name ?? "")
-        _job = State(initialValue: bot?.job ?? "")
-        _instructions = State(initialValue: bot?.instructions ?? "")
+        _look = State(initialValue: bot?.look ?? recipe?.look ?? .random())
+        _name = State(initialValue: bot?.name ?? recipe?.name ?? "")
+        _job = State(initialValue: bot?.job ?? recipe?.job ?? "")
+        _instructions = State(initialValue: bot?.instructions ?? recipe?.instructions ?? "")
         _machine = State(initialValue: bot?.machine)
         _project = State(initialValue: bot?.project)
         _model = State(initialValue: bot?.model)
-        _personality = State(initialValue: bot?.personality)
+        _personality = State(initialValue: bot?.personality ?? recipe?.personalityHere())
     }
 
     /// The models of the engine where it lives.
@@ -220,9 +221,12 @@ struct BotEditor: View {
 
     private var footer: some View {
         HStack(spacing: 10) {
-            if !isNew {
+            if let bot {
                 Button("Delete Bot…", role: .destructive) { confirmsDelete = true }
                     .buttonStyle(.glass)
+                Button("Export…") { BotRecipe.export(bot) }
+                    .buttonStyle(.glass)
+                    .help("Save a file to share \(bot.name): its look, job, instructions and personality")
             }
             if isWorking {
                 Spinner(size: 16)
