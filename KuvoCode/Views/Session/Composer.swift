@@ -22,6 +22,9 @@ struct Composer: View {
     var commands: [Command] = []
     /// Puts the cursor here when it changes.
     var focusRequest = 0
+    /// The engine it sends to can't be reached now (its machine is reconnecting): you can write,
+    /// not send.
+    var isOffline = false
     /// Comments on the changes waiting to go with the next message.
     var commentCount = 0
     var onDiscardComments: () -> Void = {}
@@ -62,6 +65,7 @@ struct Composer: View {
     @State private var dismissedCommands = false
 
     private var canSend: Bool {
+        if isOffline { return false }
         if isShell { return SessionModel.shellCommand(in: text) != nil }
         return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty || commentCount > 0
     }
@@ -288,7 +292,7 @@ struct Composer: View {
                 .glassEffect(.regular, in: .circle)
                 .disabled(!canSend)
                 .glassEffectID("action", in: glass)
-                .help(isShell ? "Run the Command (Return)" : isRunning ? "Send: the agent reads it at its next step (Return). ⌘Return queues it for after this run." : "Send (Return)")
+                .help(isOffline ? "Sends once the connection is back" : isShell ? "Run the Command (Return)" : isRunning ? "Send: the agent reads it at its next step (Return). ⌘Return queues it for after this run." : "Send (Return)")
                 .contextMenu {
                     Button("Send", action: send)
                     Button("Queue for After This Run", action: queue)

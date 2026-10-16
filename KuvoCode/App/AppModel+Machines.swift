@@ -58,6 +58,13 @@ extension AppModel {
         return engine
     }
 
+    /// Connects again now, rather than waiting for the connection to come back by itself.
+    func reconnectNow(_ engine: MachineEngine) {
+        engine.disconnect()
+        workspace.forget(engine.machine.id)
+        connect(engine)
+    }
+
     /// Installs and starts a machine's engine over SSH, with what it gets from this Mac, and
     /// feeds its sessions into the workspace.
     func connect(_ engine: MachineEngine) {
@@ -80,12 +87,12 @@ extension AppModel {
         Task { await start(engine) }
     }
 
-    /// After a dropped connection (the Mac slept, the machine restarted): a few tries, further
-    /// apart each time, while its sessions wait.
+    /// After a dropped connection (the Mac slept, the machine restarted): tries further apart
+    /// each time, for half an hour, while its sessions wait.
     private func reconnect(_ engine: MachineEngine) async {
         engine.isRetrying = true
         defer { engine.isRetrying = false }
-        for delay in [3, 15, 60] {
+        for delay in [3, 10, 30, 60, 120, 120, 300, 300, 300, 300, 300] {
             try? await Task.sleep(for: .seconds(delay))
             // Removed, or connected again some other way (Try Again).
             guard machines.engine(engine.machine.id) === engine, case .failed = engine.state else { return }
@@ -180,6 +187,8 @@ extension AppModel {
                 environment["OPENCODE_CONFIG_CONTENT"] = String(decoding: json, as: UTF8.self)
             }
         }
+        // Keys you brought for integrations, in memory as on this Mac.
+        environment.merge(IntegrationKeys.environment) { _, key in key }
         // What some providers need until opencode handles it, as on this Mac.
         let compatibility = ProviderCompatibility.config
         if !compatibility.isEmpty {

@@ -164,6 +164,9 @@ final class MachineEngine {
     /// Closes the connection. The engine keeps running on the machine.
     func disconnect() {
         isStopping = true
+        downCheck?.cancel()
+        downCheck = nil
+        connections += 1
         eventTask?.cancel()
         eventTask = nil
         heartbeatTask?.cancel()
@@ -202,12 +205,15 @@ final class MachineEngine {
                 case .connected:
                     let wasLive = isLive
                     isLive = true
+                    downCheck?.cancel()
+                    downCheck = nil
                     if !wasLive {
                         await catalog.refresh()
                         await onReconnect()
                     }
                 case .disconnected:
                     isLive = false
+                    checkWhileDown(api)
                 case .event(let event):
                     catalog.handle(event)
                     onEvent(event)
@@ -216,13 +222,49 @@ final class MachineEngine {
         }
     }
 
+    @ObservationIgnored private var downCheck: Task<Void, Never>?
+    /// Goes up with each disconnection, so a check from an earlier connection stops.
+    @ObservationIgnored private var connections = 0
+
+    /// The live feed went down. It comes back by itself after a blip; but when the engine behind
+    /// the tunnel is gone (restarted on another port, say) while the tunnel stays up, nothing
+    /// would ever change. So a few seconds on, ask the engine; not answering, the connection is
+    /// lost, and connecting again starts (as after the network went).
+    private func checkWhileDown(_ api: OpenCodeAPI) {
+        // Once for each time it's down: the feed says so again at each of its own retries.
+        guard downCheck == nil else { return }
+        let connection = connections
+        downCheck = Task { [weak self] in
+            for wait in [6, 10, 20, 30] {
+                try? await Task.sleep(for: .seconds(wait))
+                guard let self, !Task.isCancelled, !isLive, state == .ready, connections == connection else { return }
+                let answered = await withTaskGroup(of: Bool.self) { group in
+                    group.addTask { (try? await api.info()) != nil }
+                    group.addTask { try? await Task.sleep(for: .seconds(5)); return false }
+                    let first = await group.next() ?? false
+                    group.cancelAll()
+                    return first
+                }
+                guard !answered else { continue }
+                log.error("\(self.machine.destination, privacy: .public)'s engine stopped answering through its tunnel")
+                lost("The connection to \(machine.name) was lost.")
+                return
+            }
+        }
+    }
+
+    /// The connection is gone: say so, and let the app connect again.
+    private func lost(_ reason: String) {
+        disconnect()
+        state = .failed(reason)
+        onExit()
+    }
+
     private func exited(status: Int32) {
         guard !isStopping else { return }
         let output = server?.recentOutput.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         log.error("\(self.machine.destination, privacy: .public) closed with status \(status): \(output, privacy: .public)")
-        disconnect()
-        state = .failed("The connection to \(machine.name) was lost.\(output.isEmpty ? "" : "\n\n" + String(output.suffix(400)))")
-        onExit()
+        lost("The connection to \(machine.name) was lost.\(output.isEmpty ? "" : "\n\n" + String(output.suffix(400)))")
     }
 }
 

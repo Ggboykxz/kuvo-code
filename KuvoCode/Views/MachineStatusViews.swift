@@ -86,3 +86,29 @@ struct MachineWaitingView: View {
         }
     }
 }
+
+/// Over the composer while a session's machine can't be reached: that it's connecting again,
+/// that what you write waits, and a way to connect now.
+struct MachineOfflineBar: View {
+    let engine: MachineEngine
+    @Environment(AppModel.self) private var app
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Spinner(size: 13)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Reconnecting to \(engine.machine.name)…")
+                    .font(.system(size: 13, weight: .medium))
+                Text("You can write meanwhile; it sends once the connection is back.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            Button("Connect Now") { app.reconnectNow(engine) }
+                .buttonStyle(.glass)
+                .help("Drop this connection and connect to \(engine.machine.name) again")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+}

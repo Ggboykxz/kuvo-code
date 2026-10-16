@@ -59,6 +59,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - For a site you choose, agents can sign in on their own with its saved password: tick **Let agents sign in here on their own** in the sign-in card. It still goes straight into the page, you get a notification, and **Settings › Passwords** lists those sites to turn off.
 - **Agents can sign in for you**: when a page wants a sign-in, the agent asks in its conversation, like a permission request. Type your username and password there (or pick a saved one) and they go straight into the page, in your Mac's browser or a machine's; the agent and the model never see them, and they're blanked out of what the agent reads and its screenshots. It asks the same way for a two-step code, and for a step only you can do, like approving the sign-in on your phone. The conversation shows the hand in the sidebar until you answer.
 - After your Mac wakes, a machine that lost its connection while it slept connects again by itself.
+- A machine whose connection stopped working without closing (its engine restarted behind it, say) is noticed within seconds and connected again by itself, and it keeps trying for half an hour. Meanwhile a bar over the composer says so, with **Connect Now**, and sending waits, rather than failing with an error.
 
 ## 0.4.0
 

@@ -60,6 +60,12 @@ private struct BottomStack: View {
                         .glassEffect(.regular, in: .rect(cornerRadius: Metrics.composerRadius))
                         .glassEffectID(ask.id, in: glass)
                 }
+                if let engine = offlineMachine {
+                    MachineOfflineBar(engine: engine)
+                        .glassEffect(.regular, in: .rect(cornerRadius: Metrics.composerRadius))
+                        .glassEffectID("offline", in: glass)
+                        .transition(.opacity)
+                }
                 if !model.waiting.isEmpty {
                     QueueDock(model: model)
                         .glassEffect(.regular, in: .rect(cornerRadius: Metrics.composerRadius))
@@ -77,6 +83,7 @@ private struct BottomStack: View {
                     folders: [model.session.location.directory] + workspace.extraFolders(model.session.location.directory),
                     commands: catalog.commands(in: model.session.location.directory),
                     focusRequest: model.composerFocus,
+                    isOffline: offlineMachine != nil,
                     commentCount: model.reviewComments.count,
                     onDiscardComments: { model.reviewComments = [] },
                     onSelectAgent: model.selectAgent,
@@ -98,6 +105,7 @@ private struct BottomStack: View {
             .animation(.ui, value: model.transcript.permissions.map(\.id))
             .animation(.ui, value: model.transcript.forms.map(\.id))
             .animation(.ui, value: model.waiting.isEmpty)
+            .animation(.ui, value: offlineMachine == nil)
             .animation(.ui, value: app.browserAsks.asks(for: model.session.id).map(\.id))
         }
         .padding(.horizontal, Metrics.gutter)
@@ -105,7 +113,14 @@ private struct BottomStack: View {
         .readableColumn()
     }
 
+    /// The machine this session runs on, while it can't be reached (connecting again).
+    private var offlineMachine: MachineEngine? {
+        guard let id = RemoteFolder.machine(of: model.session.location.directory), let engine = app.machines.engine(id) else { return nil }
+        return engine.isReady && engine.isLive ? nil : engine
+    }
+
     private func send(queue: Bool) {
+        guard offlineMachine == nil else { return }
         model.submit(model.draftText, files: model.draftFiles, for: catalog.model(model.session.model), queue: queue, commands: catalog.commands(in: model.session.location.directory))
         model.draftText = ""
         model.draftFiles = []
