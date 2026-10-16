@@ -248,18 +248,21 @@ final class BrowserSession: NSObject {
 }
 
 extension BrowserSession: WKUIDelegate {
+    // The completion handlers are WebKit's own type, main-actor ones: with plain closures these
+    // methods aren't WebKit's at all, and it never calls them.
+
     /// The page's alerts, confirmations and questions show in a bar over it. While the agent is
     /// at work they're answered at once: an alert accepted, the others declined unless the agent
     /// said to accept them; the agent hears about it.
-    func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
+    func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor () -> Void) {
         ask(PageDialog(kind: .alert, message: message)) { _, _ in completionHandler() }
     }
 
-    func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+    func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor (Bool) -> Void) {
         ask(PageDialog(kind: .confirm, message: message)) { accepted, _ in completionHandler(accepted) }
     }
 
-    func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (String?) -> Void) {
+    func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor (String?) -> Void) {
         ask(PageDialog(kind: .prompt, message: prompt, defaultText: defaultText ?? "")) { accepted, text in completionHandler(accepted ? text ?? "" : nil) }
     }
 
@@ -286,7 +289,7 @@ extension BrowserSession: WKUIDelegate {
     }
 
     /// The page's file picker: the Mac's open panel, over the window.
-    func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
+    func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor ([URL]?) -> Void) {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = parameters.allowsMultipleSelection
         panel.canChooseDirectories = parameters.allowsDirectories
