@@ -19,6 +19,13 @@ public struct EventStream: Sendable {
         self.client = client
     }
 
+    /// How long to wait before trying again: a second after a connection that worked (a blip),
+    /// then twice as long each time, up to half a minute, while the server stays away (one that
+    /// moved, through a tunnel that no longer reaches it, shouldn't be knocked on every second).
+    static func wait(after attempt: Int) -> Duration {
+        .seconds(min(pow(2, Double(max(attempt, 1) - 1)), 30))
+    }
+
     public func updates() -> AsyncStream<Update> {
         AsyncStream { continuation in
             let task = Task {
@@ -37,8 +44,7 @@ public struct EventStream: Sendable {
                         continuation.yield(.disconnected(error))
                     }
                     attempt = connected.isSet ? 1 : attempt + 1
-                    // 1 s, then back off to 5 s while the server stays away.
-                    try? await Task.sleep(for: .seconds(min(Double(attempt), 5)))
+                    try? await Task.sleep(for: Self.wait(after: attempt))
                 }
                 continuation.finish()
             }

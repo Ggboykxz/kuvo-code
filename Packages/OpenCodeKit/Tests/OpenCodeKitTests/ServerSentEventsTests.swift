@@ -27,3 +27,10 @@ struct ServerSentEventsTests {
         #expect(parse("data:none\n\n").first?.data == "none")
     }
 }
+
+struct EventStreamRetryTests {
+    @Test func backsOffToHalfAMinute() {
+        let waits = (1...8).map { EventStream.wait(after: $0) }
+        #expect(waits == [.seconds(1), .seconds(2), .seconds(4), .seconds(8), .seconds(16), .seconds(30), .seconds(30), .seconds(30)])
+    }
+}
