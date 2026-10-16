@@ -45,10 +45,10 @@ struct MachineWaitingView: View {
             Text(title)
                 .font(.title3.weight(.semibold))
             switch engine.state {
-            case .downloading(let progress):
+            case .downloading(let progress) where progress > 0:
                 ProgressView(value: progress)
                     .frame(width: 220)
-            case .starting:
+            case .downloading, .starting:
                 Spinner(size: 16)
             case .failed where engine.isRetrying:
                 Spinner(size: 16)
@@ -78,8 +78,9 @@ struct MachineWaitingView: View {
     private var title: String {
         let name = engine.machine.name
         return switch engine.state {
-        case .downloading: "Installing the engine on \(name)…"
-        case .starting, .ready: "Connecting to \(name)…"
+        // At 0 it's only checking the engine it has.
+        case .downloading(let progress) where progress > 0: "Installing the engine on \(name)…"
+        case .downloading, .starting, .ready: engine.isRetrying ? "Reconnecting to \(name)…" : "Connecting to \(name)…"
         case .failed where engine.isRetrying: "Reconnecting to \(name)…"
         case .failed: "Couldn’t connect to \(name)"
         case .preparing: "\(name) isn’t connected"
