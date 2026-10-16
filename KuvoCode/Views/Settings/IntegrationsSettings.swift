@@ -12,12 +12,27 @@ struct IntegrationsSettings: View {
     /// The sign-ins the engine keeps, by integration: a server can answer without one (Google's
     /// do), then turn every call down.
     @State private var signedIn: Set<String> = []
+    /// Each connected machine's MCP servers, by machine.
+    @State private var remote: [String: [MCPServer]] = [:]
+    /// A service you sign in to on its site, in the sheet.
+    @State private var signingInSite: Integrations.Service?
+    @State private var removing: Integrations.Service?
 
     private var config: EngineConfig { app.engineConfig }
 
+    /// Each kind, in order. KUVO_DEMO_INTEGRATION_KINDS=<kinds>: only those, for screenshots.
+    private static var kinds: [Integrations.Kind] {
+        #if DEBUG
+        if let only = ProcessInfo.processInfo.environment["KUVO_DEMO_INTEGRATION_KINDS"] {
+            return Integrations.Kind.allCases.filter { kind in only.split(separator: ",").contains { kind.rawValue.lowercased().hasPrefix($0.lowercased()) } }
+        }
+        #endif
+        return Integrations.Kind.allCases
+    }
+
     var body: some View {
         ScrollingSettingsForm {
-            ForEach(Integrations.Kind.allCases, id: \.self) { kind in
+            ForEach(Self.kinds, id: \.self) { kind in
                 Section(kind.rawValue) {
                     ForEach(Integrations.all.filter { $0.kind == kind }) { service in
                         row(service)
@@ -32,11 +47,34 @@ struct IntegrationsSettings: View {
         }
         .modifier(LiveMCPServers(servers: $live, api: { app.api }, change: config.settings))
         .task(id: live) { await readSignIns() }
+        .task {
+            // The machines' servers, as their engines say.
+            while !Task.isCancelled {
+                var read: [String: [MCPServer]] = [:]
+                for engine in app.machines.engines.values where engine.isReady {
+                    if let servers = try? await engine.api?.mcpServers() { read[engine.machine.id] = servers }
+                }
+                remote = read
+                try? await Task.sleep(for: .seconds(4))
+            }
+        }
+        .sheet(item: $signingInSite) { service in
+            SiteSignInSheet(service: service) { signingInSite = nil }
+        }
+        .confirmationDialog("Remove \(removing?.title ?? "")?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), presenting: removing) { service in
+            Button("Remove", role: .destructive) { remove(service) }
+        } message: { _ in
+            Text("The agent and your bots stop using it, and your sign-in or key goes with it.")
+        }
         #if DEBUG
         // KUVO_DEMO_ADD_INTEGRATION=<id>: added, as Connect does.
         .onAppear {
             if let id = ProcessInfo.processInfo.environment["KUVO_DEMO_ADD_INTEGRATION"], let service = Integrations.service(id),
                config.value(at: MCPSettings.path + [id]) == nil { add(service) }
+            // KUVO_DEMO_SIGN_IN_SITE=<id>: signing in to that service on its site, in the sheet.
+            if let id = ProcessInfo.processInfo.environment["KUVO_DEMO_SIGN_IN_SITE"], let service = Integrations.service(id) {
+                signingInSite = service
+            }
             // KUVO_DEMO_CONNECTED=<id>: its sign-in sheet, on its last step.
             if let id = ProcessInfo.processInfo.environment["KUVO_DEMO_CONNECTED"], let service = Integrations.service(id) {
                 signingIn = IntegrationRef(id: "mcp_demo", service: service)
@@ -67,7 +105,7 @@ struct IntegrationsSettings: View {
 
     private func row(_ service: Integrations.Service) -> some View {
         let added = config.value(at: MCPSettings.path + [service.id]) != nil
-        let server = live.first { $0.name == service.id }
+        let places = added ? self.places(service) : []
         return HStack(alignment: .center, spacing: 12) {
             Image(systemName: service.symbol)
                 .font(.system(size: 15))
@@ -83,13 +121,17 @@ struct IntegrationsSettings: View {
                 Text(service.summary)
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                if !places.isEmpty {
+                    PlacesLine(places: places, waitsForCodeHelp: "Ask the agent to use \(service.title): the first time, it gives you a code to enter on Microsoft's page.")
+                        .padding(.top, 2)
+                }
             }
             Spacer()
             HStack {
                 switch service.way {
                 case .browser:
-                    Button("Open") { open(service) }
-                        .help("Open \(service.title) in the panel's browser, to sign in there. A bot on a machine browses there, and asks you to sign in when it needs to.")
+                    Button("Sign In…") { signingInSite = service }
+                        .help("Sign in to \(service.title) in the browser the agent and your bots use, on this Mac or one of your machines")
                 default:
                     if !added {
                         if case .officialApp = service.way {
@@ -100,33 +142,65 @@ struct IntegrationsSettings: View {
                             Button("Connect") { add(service) }
                         }
                     } else {
-                        let unsigned = needsSignIn(service, server)
-                        if server?.status.status == "connected", waitsForCode(service) {
-                            Text("Not signed in yet")
-                                .font(.subheadline)
-                                .foregroundStyle(.orange)
-                                .help("Ask the agent to use \(service.title): the first time, it gives you a code to enter on Microsoft's page.")
-                        } else {
-                            status(server, unsigned: unsigned)
-                        }
-                        if let server, unsigned, let integrationID = server.integrationID {
+                        let server = live.first { $0.name == service.id }
+                        // What needs you, first.
+                        if places.first?.state == .needsSignIn, let integrationID = server?.integrationID {
                             Button("Sign In…") { signingIn = IntegrationRef(id: integrationID, service: service) }
-                        } else if server?.status.status == "failed" {
-                            Button("Try Again") {
-                                Task {
-                                    if let api = app.api { await app.reconnect(service.id, api: api, machine: nil) }
-                                    await refresh()
-                                }
+                        } else if places.contains(where: { $0.state == .failed }) {
+                            Button("Try Again") { reconnect(service, where: places.filter { $0.state == .failed }) }
+                        }
+                        Menu {
+                            if let integrationID = server?.integrationID {
+                                Button("Sign In Again…") { signingIn = IntegrationRef(id: integrationID, service: service) }
                             }
+                            if !Integrations.keys(of: service.way).isEmpty {
+                                Button(isApp(service) ? "Change App…" : "Change Key…") { addingKey = KeyRequest(service: service) }
+                            }
+                            Button("Reconnect") { reconnect(service, where: places) }
+                            Divider()
+                            Button("Remove…", role: .destructive) { removing = service }
+                        } label: {
+                            Image(systemName: "ellipsis")
                         }
-                        if !Integrations.keys(of: service.way).isEmpty {
-                            Button(isApp(service) ? "Change App…" : "Change Key…") { addingKey = KeyRequest(service: service) }
-                        }
-                        Button("Remove") { remove(service) }
-                            .help("The agent stops using \(service.title) (your sign-in or key goes with it)")
+                        .menuIndicator(.hidden)
+                        .fixedSize()
+                        .help("More")
                     }
                 }
             }
+        }
+    }
+
+    /// How it's doing on this Mac, then on each machine connected now that runs it.
+    private func places(_ service: Integrations.Service) -> [Place] {
+        let server = live.first { $0.name == service.id }
+        var here = Place.state(server)
+        if here == .connected, needsSignIn(service, server) { here = .needsSignIn }
+        // Microsoft 365's sign-in is one for all, copied between this Mac and the machines.
+        let waits = waitsForCode(service)
+        if here == .connected, waits { here = .waitsForCode }
+        var places = [Place(name: "this Mac", machine: nil, state: here)]
+        guard !Integrations.macOnly.contains(service.id) else { return places }
+        for engine in app.machines.list.compactMap({ app.machines.engine($0.id) }) where engine.isReady {
+            guard let servers = remote[engine.machine.id] else { continue }
+            var there = Place.state(servers.first { $0.name == service.id })
+            if there == .connected, waits { there = .waitsForCode }
+            places.append(Place(name: engine.machine.name, machine: engine.machine.id, state: there))
+        }
+        return places
+    }
+
+    /// Connects it again, on this Mac and the machines among `places`.
+    private func reconnect(_ service: Integrations.Service, where places: [Place]) {
+        Task {
+            for place in places {
+                if let machine = place.machine {
+                    if let api = app.machines.engine(machine)?.api { await app.reconnect(service.id, api: api, machine: machine) }
+                } else if let api = app.api {
+                    await app.reconnect(service.id, api: api, machine: nil)
+                }
+            }
+            await refresh()
         }
     }
 
@@ -162,19 +236,6 @@ struct IntegrationsSettings: View {
     private func waitsForCode(_ service: Integrations.Service) -> Bool {
         guard let files = Integrations.signInFiles[service.id], let first = files.first else { return false }
         return !FileManager.default.fileExists(atPath: AppInfo.supportDirectory.appending(path: "integrations/\(service.id)/\(first)").path)
-    }
-
-    @ViewBuilder private func status(_ server: MCPServer?, unsigned: Bool = false) -> some View {
-        let (title, color): (String, Color) = switch unsigned ? "needs_auth" : server?.status.status {
-        case "connected": ("Connected", .green)
-        case "pending": ("Connecting…", .secondary)
-        case "needs_auth": ("Needs sign-in", .orange)
-        case "failed": ("Couldn’t connect", .red)
-        default: ("Starts with the engine", .secondary)
-        }
-        Text(title)
-            .font(.subheadline)
-            .foregroundStyle(color)
     }
 
     static func how(_ way: Integrations.Way) -> String {
@@ -218,15 +279,87 @@ struct IntegrationsSettings: View {
         if !Integrations.macOnly.contains(service.id) { app.renewEngines(mac: false) }
     }
 
-    /// The site in the panel's browser, for you to sign in there; the agent then uses it as you.
-    private func open(_ service: Integrations.Service) {
-        app.showsSettings = false
-        app.utilities.newBrowser(service.site)
-        app.utilities.reveal()
-    }
-
     private func refresh() async {
         live = await MCPStatus.read(app.api) ?? []
+    }
+}
+
+/// Where an integration runs, and how it's doing there.
+private struct Place: Identifiable {
+    let name: String
+    /// nil for this Mac.
+    let machine: String?
+    let state: State
+    var id: String { machine ?? "" }
+
+    /// Worst last.
+    enum State: Int, Comparable {
+        case connected, starting, waitsForCode, needsSignIn, failed
+
+        static func < (a: State, b: State) -> Bool { a.rawValue < b.rawValue }
+
+        var title: String {
+            switch self {
+            case .connected: "Connected"
+            case .starting: "Starting"
+            case .waitsForCode: "Not signed in yet"
+            case .needsSignIn: "Needs sign-in"
+            case .failed: "Couldn’t connect"
+            }
+        }
+
+        var color: Color {
+            switch self {
+            case .connected: .green
+            case .starting: .secondary
+            case .waitsForCode, .needsSignIn: .orange
+            case .failed: .red
+            }
+        }
+    }
+
+    /// As an engine reports its server (none yet: it starts with the engine).
+    static func state(_ server: MCPServer?) -> State {
+        switch server?.status.status {
+        case "connected": .connected
+        case "needs_auth": .needsSignIn
+        case "failed": .failed
+        default: .starting
+        }
+    }
+}
+
+/// An integration's state in a line: a dot in the color of the worst, and each state with where
+/// ("Connected on this Mac · Needs sign-in on lokum"); with no machines, just the state.
+private struct PlacesLine: View {
+    let places: [Place]
+    let waitsForCodeHelp: String
+
+    private var text: String {
+        guard places.count > 1 else { return places.first?.state.title ?? "" }
+        let states = Set(places.map(\.state)).sorted()
+        if states == [.connected] { return "Connected on " + Self.list(places.map(\.name)) }
+        return states.reversed().map { state in
+            state.title + " on " + Self.list(places.filter { $0.state == state }.map(\.name))
+        }.joined(separator: " · ")
+    }
+
+    static func list(_ names: [String]) -> String {
+        names.count <= 1 ? names.joined() : names.dropLast().joined(separator: ", ") + " and " + names.last!
+    }
+
+    var body: some View {
+        let worst = places.map(\.state).max() ?? .connected
+        HStack(spacing: 6) {
+            Circle()
+                .fill(worst.color)
+                .frame(width: 7, height: 7)
+            Text(text)
+                .lineLimit(1)
+        }
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
+        .help(places.contains { $0.state == .waitsForCode } ? waitsForCodeHelp : "")
     }
 }
 

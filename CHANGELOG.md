@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Settings › Integrations shows how each one is doing on this Mac and on each machine ("Connected on this Mac and lokum"), with one button when something needs you and the rest in a ⋯ menu. **Sign In…** for a service the agent uses on its site opens the site right there, over Settings, for this Mac or one of your machines, instead of a tab in the panel that didn't show.
 - Settings › Integrations shows Sign In… for Gmail and Google Calendar until you've signed in (they used to say Connected), and says when Outlook hasn't been signed in yet.
 - A key you save for an integration reaches the engine and your machines' engines on its own, once whatever's working there is done; there's no Restart Engine button to remember.
 - **Integrations work the way you'd expect**: once you connect one, the agent uses its tools directly, on this Mac and on your machines, instead of opening the service's website. Integrations you added before are switched over when Kuvo Code starts.
