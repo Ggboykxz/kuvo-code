@@ -88,9 +88,9 @@ side panel and the usage menu.
   Mac, to `~/.kuvo-code` there, runs it on the machine's localhost only, and
   talks to it through an SSH tunnel. The engine outlives the connection, so a
   task carries on while the Mac is off; it stops when the app quits with
-  nothing running, or after a day without the app, unless a bot's wake-up is
-  waiting, which it sends when it's due. API keys reach it in memory, never
-  written to the machine's disk.
+  nothing running, or after a day without the app, unless a bot's wake-up or
+  watch is waiting, which it sends or runs when it's due. API keys reach it in
+  memory, never written to the machine's disk.
 - **The agent's browser tools** are served by the app on `127.0.0.1`, with a
   new port and token each launch. They read a page the way
   [browser-use](https://github.com/browser-use/browser-use) does, as numbered
