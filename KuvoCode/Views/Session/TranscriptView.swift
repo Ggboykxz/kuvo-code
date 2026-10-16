@@ -395,9 +395,6 @@ private struct RowView: View, Equatable {
     /// Quotes a reply (or the part of it you selected) in the composer.
     let reply: (String) -> Void
     @Environment(\.isOffline) private var isOffline
-    @State private var confirmsUndo = false
-    /// Under the pointer: a message shows its buttons.
-    @State private var isHovering = false
 
     static func sentAt(_ created: Milliseconds) -> String {
         MessageTime.sentAt(Date(timeIntervalSince1970: created / 1000))

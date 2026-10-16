@@ -614,8 +614,11 @@ private struct PasteAttachments: ViewModifier {
     private func install() {
         guard monitor == nil else { return }
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // Only in the window it's in: not in a sheet over it, nor a panel, where the paste is
+            // that field's.
             guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
                   event.charactersIgnoringModifiers == "v",
+                  let window = event.window, window.attachedSheet == nil, window.sheetParent == nil, !(window is NSPanel),
                   let urls = Self.pastedFiles() else { return event }
             attach(urls)
             return nil
