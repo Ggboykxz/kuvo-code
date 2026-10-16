@@ -18,7 +18,7 @@ extension UsageMenuBar {
                 name: snapshot.displayName,
                 plan: snapshot.plan,
                 color: Self.hex(TotalSpendPalette.color(for: provider.id)),
-                icon: Self.mark(for: provider.id),
+                icon: Self.phoneMark(for: provider.id),
                 iconIsTemplate: true,
                 refreshed: snapshot.refreshedAt,
                 notice: store.headerNotice(for: provider.id),
@@ -54,7 +54,7 @@ extension UsageMenuBar {
 
     /// The provider's mark, black on clear, 64 points square, as base64 PNG for the phone to tint;
     /// drawn once per provider.
-    private static func mark(for providerID: String) -> String? {
+    public static func phoneMark(for providerID: String) -> String? {
         if let drawn = marks[providerID] { return drawn }
         let view = Group {
             if let mark = ProviderMarks.mark(for: providerID) {

@@ -438,15 +438,17 @@ final class PhoneLink {
 
     private static var sampleUsage: String {
         let now = Int(Date.now.timeIntervalSince1970)
+        // The providers' own marks, as the real panel sends them.
+        let icon = { (id: String) in UsageMenuBar.phoneMark(for: id).map { #""icon":"\#($0)","iconIsTemplate":true,"# } ?? "" }
         return """
         {"providers":[\
-        {"id":"claude","name":"Claude","plan":"Max","color":"#DE7356","refreshed":\(now - 40),"lines":[\
+        {"id":"claude",\(icon("claude"))"name":"Claude","plan":"Max","color":"#DE7356","refreshed":\(now - 40),"lines":[\
         {"type":"progress","label":"Session","used":42,"limit":100,"format":{"kind":"percent"},"resetsAt":\(now + 7_200),"periodDurationMs":18000000},\
         {"type":"progress","label":"Weekly","used":67,"limit":100,"format":{"kind":"percent"},"resetsAt":\(now + 259_200),"periodDurationMs":604800000}]},\
-        {"id":"codex","name":"Codex","plan":"Pro","color":"#10A37F","refreshed":\(now - 95),"lines":[\
+        {"id":"codex",\(icon("codex"))"name":"Codex","plan":"Pro","color":"#10A37F","refreshed":\(now - 95),"lines":[\
         {"type":"progress","label":"Session","used":18,"limit":100,"format":{"kind":"percent"},"resetsAt":\(now + 12_600),"periodDurationMs":18000000},\
         {"type":"text","label":"Credits","value":"$12.40"}]},\
-        {"id":"cursor","name":"Cursor","color":"#13120A","refreshed":\(now - 900),"notice":"Not logged in. Sign in to Cursor to see its usage.","stale":true,"lines":[\
+        {"id":"cursor",\(icon("cursor"))"name":"Cursor","color":"#13120A","refreshed":\(now - 900),"notice":"Not logged in. Sign in to Cursor to see its usage.","stale":true,"lines":[\
         {"type":"badge","label":"Error","text":"Not logged in"}]}],\
         "refreshing":false,"refreshed":\(now - 40)}
         """
