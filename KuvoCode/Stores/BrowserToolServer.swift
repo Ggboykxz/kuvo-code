@@ -134,6 +134,10 @@ final class BrowserToolServer {
             // Not the browser's: no page to serve it.
             if name == BrowserTools.showInPanel { return reply(BrowserTools.showInPanelCall(arguments, caller: caller)) }
             if name == BrowserTools.showWidget { return reply(BrowserTools.showWidgetCall(arguments)) }
+            if BrowserTools.mailTools.contains(name) {
+                let result = await BrowserTools.mail(name, arguments, caller)
+                return reply(["content": [["type": "text", "text": result.text]], "isError": result.isError])
+            }
             return reply(await BrowserTools.call(name, arguments: arguments, agent: agent.serving(caller), caller: caller))
         default:
             return ["jsonrpc": "2.0", "id": id, "error": ["code": -32601, "message": "Unknown method \(method)"]]
@@ -189,6 +193,11 @@ enum BrowserTools {
         tool(showWidget, "Show the user something visual or interactive right in this conversation, drawn live where this call is: a chart or graph, a diagram or flow, a mockup, a table to sort, a small app, calculator or game, a timeline, a visual explanation, or choices for them to click. Use it whenever seeing or playing with something says it better than words, and be creative. Write the HTML: a fragment, or a whole page, with its CSS and JavaScript inline; libraries only from cdnjs.cloudflare.com, cdn.jsdelivr.net or unpkg.com (Chart.js, D3, Mermaid, Three.js, Leaflet won't load maps); it can't fetch or send anything. Follow light and dark with CSS (it starts transparent with color-scheme light dark, text in CanvasText, and --kuvo-accent as the accent). It's as tall as its content, up to about 760 points, then it scrolls. To hear back, call kuvo.send(text) from a click in it: that sends text to you as the user's message (a choice they made, values they set).",
              ["html": ["type": "string", "description": "The HTML to show."],
               "title": ["type": "string", "description": "A short name for it, shown above it."]], required: ["html"]),
+        tool("list_agents", "List the other agents you can write to with send_message: the user's bots (named helpers with a job of their own) and their other recent sessions, on their Mac and their machines, each with its name, where it runs and its address."),
+        tool("send_message", "Write to another agent (a bot or another session, from list_agents): it reaches that conversation as a message from you, and its agent takes it up, with its own tools and what it knows. Use it to hand off work, ask for help or information, coordinate, or report back. With wait, you get its answer back here (up to ten minutes); without, it can answer you with send_message later. A message from another agent reaches you the same way, saying who it's from.",
+             ["to": ["type": "string", "description": "Its name or address, from list_agents."],
+              "text": ["type": "string", "description": "What to say: all it needs to know, as it hasn't seen this conversation."],
+              "wait": ["type": "boolean", "description": "Wait for its answer and get it back here."]], required: ["to", "text"]),
     ]
 
     /// The folder a conversation works in, by its session (on this Mac).
@@ -201,6 +210,11 @@ enum BrowserTools {
     /// The tool that shows something the agent made, live in the conversation; the transcript
     /// draws it from the call (see `WidgetCard`), for a session here or on a machine alike.
     nonisolated static let showWidget = "show_widget"
+
+    /// The tools agents write to each other with (see `AgentMail`).
+    nonisolated static let mailTools: Set<String> = ["list_agents", "send_message"]
+    /// Carries out their calls from this Mac's conversations.
+    static var mail: (_ name: String, _ arguments: [String: Any], _ caller: String?) async -> (text: String, isError: Bool) = { _, _, _ in ("Not available.", true) }
 
     /// Says it's shown; the conversation draws it.
     nonisolated static func showWidgetCall(_ arguments: [String: Any]) -> [String: Any] {

@@ -1210,6 +1210,118 @@ const noAnswer = (answer, what) =>
 
 const text = (value, isError = false) => ({ content: [{ type: "text", text: value }], isError });
 
+// Agents writing to each other (AgentMail in Kuvo Code): the list of everyone Kuvo Code leaves in
+// run/agents.json, messages to agents on this machine straight to its engine, and to agents
+// elsewhere left in run/outbox for the Mac to take on. The same words as on the Mac.
+const mailSent = new Map();
+
+function readJSON(file) {
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/// Like the engine's message IDs: time-ordered, so a reply comes after what it answers.
+let lastID = { ms: 0, counter: 0 };
+function messageID() {
+  const ms = Date.now();
+  lastID = lastID.ms === ms ? { ms, counter: lastID.counter + 1 } : { ms, counter: 1 };
+  const value = (BigInt(ms) * 4096n + BigInt(lastID.counter)) & 0xffffffffffffn;
+  const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+  let random = "";
+  for (let i = 0; i < 14; i++) random += alphabet[Math.floor(Math.random() * alphabet.length)];
+  return "msg_" + value.toString(16).padStart(12, "0") + random;
+}
+
+async function engine(method, pathname, body) {
+  const record = readJSON(path.join(K, "run", "engine.json"));
+  if (!record) throw new ToolError("This machine's engine isn't running.");
+  const response = await fetch(`http://127.0.0.1:${record.port}/${pathname}`, {
+    method,
+    headers: { Authorization: "Basic " + Buffer.from("opencode:" + record.password).toString("base64"), "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!response.ok) throw new ToolError(`This machine's engine said ${response.status}.`);
+  const answer = await response.text();
+  return answer ? JSON.parse(answer) : null;
+}
+
+function describeAgents(agents, from, here) {
+  const others = agents.filter((agent) => agent.session !== from);
+  if (!others.length) return "No other agents yet.";
+  const place = (agent) => (agent.machine === here ? "here" : agent.machine ? `on ${agent.machine}` : "on the Mac");
+  const lines = others.map((agent) => `- ${agent.name} (${agent.kind}, ${place(agent)}${agent.project ? `, in ${agent.project}` : ""}) address: ${agent.session}${agent.about ? `: ${agent.about}` : ""}`);
+  return "Agents you can write to with send_message (by name or address):\n" + lines.join("\n");
+}
+
+function composeMail(name, session, words, waits) {
+  const answer = waits ? "They're waiting for your reply: just answer, in your words." : `To answer, use send_message to ${session}.`;
+  return `[Message from ${name} · ${session}] (${answer})\n\n${words}`;
+}
+
+async function mail(name, args, from) {
+  const directory = readJSON(path.join(K, "run", "agents.json")) ?? { machine: null, agents: [] };
+  const agents = directory.agents ?? [];
+  const here = directory.machine ?? null;
+  if (name === "list_agents") {
+    if (!agents.length) return text("Kuvo Code on the Mac hasn't shared the list of agents with this machine yet. Write to a session here by its address (ses_…).");
+    return text(describeAgents(agents, from, here));
+  }
+  const to = typeof args.to === "string" ? args.to.trim() : "";
+  const words = typeof args.text === "string" ? args.text : "";
+  if (!to) return text("Say who to write to (to).", true);
+  if (!words.trim()) return text("Say what to write (text).", true);
+  const waits = args.wait === true;
+  let matches = agents.filter((agent) => agent.session === to);
+  if (!matches.length) matches = agents.filter((agent) => agent.name.localeCompare(to, undefined, { sensitivity: "base" }) === 0);
+  // A session here not in the list (it started since): by its address.
+  if (!matches.length && to.startsWith("ses_")) matches = [{ session: to, name: "a session", kind: "session", machine: here }];
+  if (!matches.length) return text(`There's no agent called ${to}. Use list_agents to see who there is.`, true);
+  if (matches.length > 1) return text(`More than one agent is called ${to}: use one's address.\n` + describeAgents(matches, from, here), true);
+  const target = matches[0];
+  if (target.session === from) return text("That's you.", true);
+  const key = from ?? "outside";
+  const lately = (mailSent.get(key) ?? []).filter((at) => Date.now() - at < 600_000);
+  if (lately.length >= 20) return text("You've sent a lot of messages in the last few minutes. Wait a while, or ask the user how to go on.", true);
+  mailSent.set(key, [...lately, Date.now()]);
+  const sender = agents.find((agent) => agent.session === from)?.name ?? (here ? `an agent on ${here}` : "an agent on a machine");
+  if ((target.machine ?? null) !== here) {
+    // Elsewhere: for the Mac to take on.
+    const outbox = path.join(K, "run", "outbox");
+    fs.mkdirSync(outbox, { recursive: true, mode: 0o700 });
+    const file = path.join(outbox, messageID() + ".json");
+    fs.writeFileSync(file + ".new", JSON.stringify({ from, name: sender, to: target.session, text: words }), { mode: 0o600 });
+    fs.renameSync(file + ".new", file);
+    return text(`Left for ${target.name}: it goes on as soon as Kuvo Code on the user's Mac is connected (at once, if it is)${waits ? "; across machines there's no waiting for the answer, which comes to you as a message" : ""}.`);
+  }
+  const id = messageID();
+  await engine("POST", `api/session/${encodeURIComponent(target.session)}/prompt`, { id, text: composeMail(sender, from ?? "unknown", words, waits), delivery: "steer" });
+  if (!waits) return text(`Sent to ${target.name}. Its answer, if it writes one, comes to you as a message.`);
+  // Its words once it's done with ours, ten minutes at most.
+  const began = Date.now();
+  let started = false;
+  while (Date.now() - began < 600_000) {
+    await sleep(2000);
+    const active = (await engine("GET", "api/session/active").catch(() => null))?.data ?? {};
+    if (active[target.session]) {
+      started = true;
+      continue;
+    }
+    if (!started && Date.now() - began < 6000) continue;
+    const page = await engine("GET", `api/session/${encodeURIComponent(target.session)}/message?limit=20&order=desc`).catch(() => null);
+    const replies = (page?.data ?? [])
+      .filter((message) => message.type === "assistant" && message.id > id)
+      .reverse()
+      .map((message) => (message.content ?? []).filter((part) => part.type === "text").map((part) => part.text).join("\n"))
+      .filter(Boolean);
+    if (replies.length) return text(`${target.name} answered:\n\n` + replies.join("\n\n").slice(0, 8000));
+    if (started) break;
+  }
+  return text(`${target.name} hasn't answered yet. It may still write back with send_message.`);
+}
+
 /// While you have the page a conversation works in, its tool call waits, up to ten minutes,
 /// before it joins the others (so it holds up no one else's); nil when the page is free, else the
 /// page and whether you still have it.
@@ -1535,6 +1647,11 @@ async function mcp() {
         return reply({ tools: CONFIG.tools });
       case "tools/call": {
         // Showing something in Kuvo Code's panel needs no browser, nor a turn in the line.
+        // Nor does writing to another agent.
+        if (params.name === "list_agents" || params.name === "send_message") {
+          mail(params.name, params.arguments || {}, params._meta?.["ai.opencode/sessionID"] ?? null).then(reply, (error) => reply(text(error instanceof ToolError ? error.message : String(error), true)));
+          return;
+        }
         if (params.name === "show_in_panel" || params.name === "show_widget") {
           tool(params.name, params.arguments || {}).then(reply, (error) => reply(text(error instanceof ToolError ? error.message : String(error), true)));
           return;

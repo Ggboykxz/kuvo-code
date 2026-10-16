@@ -114,6 +114,8 @@ enum StepsSummary {
         case "bash", "shell": return "shell"
         case "edit", "write", "patch": return "edit"
         case "kuvo-browser_show_in_panel": return "show"
+        case "kuvo-browser_send_message": return "message"
+        case "kuvo-browser_list_agents": return "agents"
         default: return name
         }
     }
@@ -131,6 +133,8 @@ enum StepsSummary {
         case "subagent": return many ? "handed off \(count) tasks" : "handed off a task"
         case "question": return many ? "asked you \(count) questions" : "asked you a question"
         case "show": return many ? "showed you \(count) things" : "showed you something"
+        case "message": return many ? "wrote to other agents \(count) times" : "wrote to another agent"
+        case "agents": return "looked up the other agents"
         case "todowrite", "todoread": return "kept its to-do list"
         default: return many ? "used \(kind) \(count) times" : "used \(kind)"
         }

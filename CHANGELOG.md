@@ -6,9 +6,10 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- **Agents write to each other**: any session or bot, on this Mac or a machine, can see who else there is and send one a message, then wait for its answer or carry on. A message from another agent shows who it's from, with Open to go to its conversation. Two agents can't keep writing back and forth unattended.
 - **Agents make things you can see and play with**, right in the conversation: charts, diagrams, mockups, small apps and games, or choices to click, drawn live where they made them, in sessions and group chats. What you click in one can answer the agent for you.
 - The usage panel does less work: it reads only what's new in Claude and Codex logs, and finds their accounts without holding up launch.
-- Kuvo Code runs opencode 2.0.30, with fixes for MCP servers, configured instructions and long conversations.
+- Kuvo Code runs opencode 2.0.31, with fixes for MCP servers, configured instructions, long conversations and models' reasoning settings.
 - **Chats**: conversations of no project, for a question or an idea. Start one with **+** next to Chats or ⌥⌘N; when it turns into work, **Move to Project** carries it, conversation and all, into one of your projects.
 - Sidebar sections fold: click Bots, Chats, Projects or Recents to tuck it away.
 - With the tab bar hidden, the side panel's button stays at the top right of the window, so the panel is easy to find.

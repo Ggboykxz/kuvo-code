@@ -466,6 +466,10 @@ private struct RowView: View, Equatable {
 
     var body: some View {
         switch row {
+        case .user(let message) where AgentMail.parse(CommandMessages.shared.text(of: message)) != nil:
+            if let mail = AgentMail.parse(CommandMessages.shared.text(of: message)) {
+                AgentMessageRow(from: mail.name, session: mail.session, text: mail.text, at: message.time.created)
+            }
         case .user(let message) where CommandMessages.shared.text(of: message).hasPrefix(Wakes.marker):
             WakeRow(note: String(CommandMessages.shared.text(of: message).dropFirst(Wakes.marker.count)), at: message.time.created)
         case .user(let message):
@@ -1040,6 +1044,46 @@ struct ErrorCard: View {
 }
 
 /// A bot woke itself up, as it planned: its note to itself, in place of a message from you.
+/// What another agent wrote to this one (send_message): who from, and what, with a way to its
+/// conversation.
+private struct AgentMessageRow: View {
+    let from: String
+    let session: String
+    let text: String
+    let at: Milliseconds
+    @Environment(AppModel.self) private var app
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: "paperplane")
+                    .foregroundStyle(.tint)
+                    .frame(width: 16)
+                Text("From \(Text(from).fontWeight(.semibold).foregroundStyle(.primary))")
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                Text(Date(timeIntervalSince1970: at / 1000), format: .dateTime.hour().minute())
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                if app.workspace.session(session) != nil {
+                    Button("Open") { app.open(.session(session)) }
+                        .buttonStyle(TextButtonStyle())
+                        .help("Open \(from)'s conversation")
+                }
+            }
+            .font(.callout)
+            MarkdownText(text: text)
+                .padding(.leading, 24)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .recessedWell(RoundedRectangle(cornerRadius: 10))
+        // The well reaches past the column, so its icon and text line up with the steps'.
+        .padding(.horizontal, -10)
+        .help("A message another agent sent this one")
+    }
+}
+
 private struct WakeRow: View {
     let note: String
     let at: Milliseconds

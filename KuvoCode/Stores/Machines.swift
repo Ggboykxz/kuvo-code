@@ -36,6 +36,9 @@ final class MachineEngine {
     /// Keeps its sign-ins in step with this Mac's while it's connected (`AppModel.syncSignIns`).
     @ObservationIgnored var signInSync: Task<Void, Never>?
     @ObservationIgnored var signInNudge: Task<Void, Never>?
+    /// Keeps its agents' list of everyone current, and brings their messages for agents
+    /// elsewhere (`AgentMail`).
+    @ObservationIgnored var agentSync: Task<Void, Never>?
     /// Events for the stores that span every machine (sessions); the catalog takes its own.
     @ObservationIgnored var onEvent: (ServerEvent) -> Void = { _ in }
     /// The feed came back after a gap: whatever it missed has to be read again.

@@ -14,6 +14,14 @@ extension AppModel {
         // shows its own browser for an agent here.
         workspace.onMachineBrowsing = { [weak self] machine, session in self?.utilities.revealMachineBrowser(machine, for: session) }
         BrowserTools.sessionFolder = { [weak self] session in self?.workspace.session(session)?.location.directory }
+        // Agents writing to each other, here and on machines.
+        AgentMail.shared.app = self
+        BrowserTools.mail = { name, arguments, caller in await AgentMail.shared.call(name, arguments: arguments, caller: caller) }
+        // An agent on a machine left a message for one elsewhere: on its way at once.
+        workspace.onAgentMessage = { [weak self] machine in
+            guard let engine = self?.machines.engine(machine) else { return }
+            Task { await AgentMail.shared.collect(from: engine) }
+        }
         // An agent showing you a file or folder: in the panel, beside its conversation.
         workspace.onShowInPanel = { [weak self] session, machine, path, isFolder in
             let url = machine.map { RemoteFolder.url(RemoteFolder.folder(path, on: $0)) } ?? URL(filePath: path, directoryHint: isFolder ? .isDirectory : .notDirectory)
@@ -137,12 +145,23 @@ extension AppModel {
         if engine.isReady {
             await syncSignIns(with: engine)
             await syncSignInFiles(with: engine)
+            await AgentMail.shared.share(with: engine)
+            await AgentMail.shared.collect(from: engine)
             engine.signInSync = Task { [weak self, weak engine] in
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(600))
                     guard let engine, engine.isReady, !Task.isCancelled else { return }
                     await self?.syncSignIns(with: engine)
                     await self?.syncSignInFiles(with: engine)
+                }
+            }
+            engine.agentSync?.cancel()
+            engine.agentSync = Task { [weak engine] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(60))
+                    guard let engine, engine.isReady, !Task.isCancelled else { return }
+                    await AgentMail.shared.share(with: engine)
+                    await AgentMail.shared.collect(from: engine)
                 }
             }
         }

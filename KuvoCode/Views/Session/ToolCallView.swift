@@ -216,6 +216,11 @@ struct ToolCallView: View {
         case "browser_sign_in": return isActive ? "Waiting for your sign-in" : "Asked you to sign in"
         case "browser_ask_code": return isActive ? "Waiting for your code" : "Asked you for a code"
         case "browser_ask_user": return isActive ? "Waiting for you on the page" : "Asked you to step in"
+        case "list_agents": return isActive ? "Looking up the other agents" : "Looked up the other agents"
+        case "send_message":
+            let to = string("to") ?? "another agent"
+            if input?["wait"]?.bool == true { return (isActive ? "Asking " : "Asked ") + to }
+            return (isActive ? "Writing to " : "Wrote to ") + to
         default: return "Used the browser"
         }
     }
@@ -298,6 +303,8 @@ struct ToolCallView: View {
         case "browser_sign_in": "key"
         case "browser_ask_code": "number"
         case "browser_ask_user": "hand.raised"
+        case "list_agents": "person.2"
+        case "send_message": "paperplane"
         default: "safari"
         }
     }
