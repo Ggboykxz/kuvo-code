@@ -330,6 +330,36 @@ final class Bots {
         watches[bot.id]?.removeAll { $0.letters == letters }
     }
 
+    /// Runs a watch's check now, as its own run would (in the bot's folder, for at most a minute),
+    /// and returns what it prints, without counting it as a run.
+    func tryCheck(_ watch: Wakes.Watch, of bot: Bot) async -> String {
+        let folder = bot.machine.map { _ in RemoteFolder.parse(bot.directory)?.path ?? bot.directory } ?? bot.directory
+        let script = "cd \(SSHConnection.quoted(folder)) 2>/dev/null || cd \(SSHConnection.quoted(bot.folder)); "
+            + "if command -v timeout >/dev/null 2>&1; then timeout 60 sh -c \(SSHConnection.quoted(watch.check)); else sh -c \(SSHConnection.quoted(watch.check)); fi 2>&1 </dev/null | head -c 4000"
+        if let machine = bot.machine {
+            let output = await Task.detached { RemoteShell.run(script, on: machine) }.value
+            return output.map { String(decoding: $0, as: UTF8.self) } ?? "Couldn’t reach \(machine)."
+        }
+        let environment = app?.shellEnvironment ?? ProcessInfo.processInfo.environment
+        return await Task.detached { () -> String in
+            let process = Process()
+            process.executableURL = URL(filePath: "/bin/sh")
+            process.arguments = ["-c", script]
+            process.environment = environment
+            process.standardInput = FileHandle.nullDevice
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = pipe
+            guard (try? process.run()) != nil else { return "" }
+            let stop = DispatchWorkItem { if process.isRunning { process.terminate() } }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 60, execute: stop)
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            stop.cancel()
+            return String(decoding: data, as: UTF8.self)
+        }.value
+    }
+
     private static func localWatches(of bot: Bot) -> [Wakes.Watch] {
         let folder = (bot.folder as NSString).appendingPathComponent("watches")
         let read = { (watch: String, file: String) in

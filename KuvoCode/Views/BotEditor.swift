@@ -717,6 +717,8 @@ private struct WakeList: View {
     @State private var draft: Draft?
     @State private var failure: String?
     @State private var isAdding = false
+    /// What a watch's check printed when you tried it, by its letters; nil while it runs.
+    @State private var tried: [String: String?] = [:]
     @FocusState private var noteFocused: Bool
 
     private struct Draft {
@@ -800,9 +802,38 @@ private struct WakeList: View {
                                 .font(.callout)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(2)
+                            if let result = tried[watch.letters] {
+                                Group {
+                                    if let output = result {
+                                        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                                        Text(trimmed.isEmpty ? "It printed nothing." : trimmed)
+                                            .font(.system(.callout, design: .monospaced))
+                                            .textSelection(.enabled)
+                                            .lineLimit(6)
+                                    } else {
+                                        HStack(spacing: 6) {
+                                            Spinner(size: 11)
+                                            Text("Checking…")
+                                        }
+                                        .font(.callout)
+                                        .foregroundStyle(.secondary)
+                                    }
+                                }
+                                .padding(8)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .recessedWell(RoundedRectangle(cornerRadius: 8))
+                                .padding(.top, 4)
+                            }
                         }
                         .padding(.vertical, 8)
                         Spacer(minLength: 8)
+                        Button("Check Now") {
+                            tried[watch.letters] = .some(nil)
+                            Task { tried[watch.letters] = .some(await bots.tryCheck(watch, of: bot)) }
+                        }
+                        .buttonStyle(TextButtonStyle())
+                        .disabled(tried[watch.letters] == .some(nil))
+                        .help("Run its check now and see what it prints; it doesn’t count as a run, nor wake the bot")
                         Button("Stop Watching", systemImage: "minus.circle.fill") {
                             Task { await bots.cancelWatch(watch, of: bot) }
                         }
@@ -862,7 +893,15 @@ private struct WakeList: View {
                 .padding(.vertical, 8)
             }
         }
-        .task { await bots.readWakes(bot) }
+        .task {
+            await bots.readWakes(bot)
+            #if DEBUG
+            // KUVO_DEMO_TRY_WATCH: Check Now on its first watch.
+            if ProcessInfo.processInfo.environment["KUVO_DEMO_TRY_WATCH"] != nil, let watch = bots.watches[bot.id]?.first {
+                tried[watch.letters] = .some(await bots.tryCheck(watch, of: bot))
+            }
+            #endif
+        }
     }
 
     /// When, how often, and what the bot does then.
