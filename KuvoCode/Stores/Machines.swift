@@ -67,10 +67,11 @@ final class MachineEngine {
         var helper: (text: String, hash: String)
 
         /// Changes when the accounts or settings do, so an engine started with older ones is known.
-        /// The watchdog's and the browser helper's versions count too: an engine running older ones
-        /// is started over the next time it's idle.
+        /// The launch script's, the watchdog's and the browser helper's versions count too: an
+        /// engine running older ones is started over the next time it's idle. (The launch script's
+        /// goes up when what it sets up changes: its folders, `kuvo-npx`.)
         var fingerprint: String {
-            let text = environment.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "\n") + "\nwatchdog=wakes\nbrowser=\(helper.hash)"
+            let text = environment.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "\n") + "\nlaunch=2\nwatchdog=wakes\nbrowser=\(helper.hash)"
             return SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
         }
     }
@@ -104,9 +105,14 @@ final class MachineEngine {
         }
         isStopping = false
         let connection = machine.connection
+        // Disconnecting (Connect Now) or a newer attempt ends this one at its next step.
+        let attempt = connections
+        let check = { if self.connections != attempt { throw Superseded() } }
+        var attached: RemoteServer?
         do {
             state = .starting
             var engine = try await RemoteServer.running(on: connection)
+            try check()
             let isNewer = engine.map { $0.version.compare(OpenCodeEngine.version, options: .numeric) == .orderedDescending } ?? false
             if engine?.version != OpenCodeEngine.version, !(isNewer && engine.map(isAnotherMacs) == true) {
                 state = .downloading(progress: 0)
@@ -115,21 +121,30 @@ final class MachineEngine {
                         if case .downloading = self.state { self.state = .downloading(progress: progress) }
                     }
                 }
+                try check()
                 state = .starting
                 if engine != nil { try await RemoteServer.stop(on: connection) }
                 engine = nil
             }
             // The browser tools' helper, which an engine starts with.
             try await MachineBrowserInstaller.installHelper(launch.helper, on: connection)
+            try check()
             let running: RemoteServer.Engine
             if let engine { running = engine } else { running = try await launchEngine(launch) }
+            try check()
             var server = try await attach(running, launch)
+            attached = server
+            try check()
             let api = OpenCodeAPI(endpoint: server.endpoint, folderPrefix: RemoteFolder.prefix(for: machine.id))
             if server.engine.notes["settings"] != launch.fingerprint, !isAnotherMacs(server.engine), (try? await api.activeSessions())?.isEmpty == true {
                 // Started with older accounts or settings, and nothing to interrupt: start it over.
+                try check()
                 server.disconnect()
+                attached = nil
                 try await RemoteServer.stop(on: connection)
                 server = try await attach(launchEngine(launch), launch)
+                attached = server
+                try check()
             }
             self.server = server
             let current = OpenCodeAPI(endpoint: server.endpoint, folderPrefix: RemoteFolder.prefix(for: machine.id))
@@ -143,6 +158,9 @@ final class MachineEngine {
             Task { await browser.prepare() }
             browser.resume()
             await catalog.refresh()
+        } catch is Superseded {
+            // What it connected is its own to close; the newer attempt has the rest.
+            if let attached, attached !== server { attached.disconnect() }
         } catch {
             log.error("\(self.machine.destination, privacy: .public) didn't start: \(error.localizedDescription, privacy: .public)")
             server?.disconnect()
@@ -150,6 +168,8 @@ final class MachineEngine {
             state = .failed(error.localizedDescription)
         }
     }
+
+    private struct Superseded: Error {}
 
     private func launchEngine(_ launch: Launch) async throws -> RemoteServer.Engine {
         try await RemoteServer.launch(on: machine.connection, environment: launch.environment, notes: ["settings": launch.fingerprint, "mac": Self.macID])
@@ -198,6 +218,8 @@ final class MachineEngine {
     }
 
     private func listen(to api: OpenCodeAPI) {
+        // One feed at a time: two would tell every event twice.
+        eventTask?.cancel()
         eventTask = Task { [weak self] in
             for await update in api.events.updates() {
                 guard let self else { return }
@@ -250,6 +272,8 @@ final class MachineEngine {
                 lost("The connection to \(machine.name) was lost.")
                 return
             }
+            // It answered every time: the next time the feed goes down, check again.
+            if let self, connections == connection { downCheck = nil }
         }
     }
 

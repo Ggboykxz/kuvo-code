@@ -24,6 +24,19 @@ enum Quoting {
         return trimmed.isEmpty ? nil : trimmed
     }
 
+    /// What's selected, when it's part of `message` (not something selected elsewhere: in the
+    /// panel's terminal, say, or another message).
+    static func selection(in message: String) -> String? {
+        guard let selected = selection() else { return nil }
+        return plain(message).contains(plain(selected)) ? selected : nil
+    }
+
+    /// Text as it reads, for comparing what's shown with its Markdown: without the marks, its
+    /// spaces and line breaks as single spaces.
+    private static func plain(_ text: String) -> String {
+        text.filter { !"*_`#>[]".contains($0) }.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
+
     /// The message to send: the quote you're replying to, as Markdown, ahead of your words.
     static func message(quote: String?, text: String) -> String {
         guard let quote, !quote.isEmpty else { return text }

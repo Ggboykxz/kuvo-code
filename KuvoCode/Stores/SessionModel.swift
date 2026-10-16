@@ -11,6 +11,10 @@ final class SessionModel {
     private(set) var isCopy = false
     /// Made from a copy: no engine to read from until its machine is back.
     private var waitsForEngine = false
+    /// Whether its engine can be reached (a machine's is connected); set by the workspace.
+    @ObservationIgnored var isReachable: () -> Bool = { true }
+    /// What's done here waits while its engine can't be reached: it would only fail.
+    private var canReach: Bool { !waitsForEngine && isReachable() }
     private(set) var changes: [FileDiff] = []
     /// Comments on lines of the changes, sent with the next message.
     var reviewComments: [ReviewComment] = []
@@ -71,7 +75,7 @@ final class SessionModel {
     /// Replies to a message: the part of it you selected (else all of `text`) goes into the
     /// composer as a quote, and the composer takes the keyboard.
     func reply(to text: String) {
-        draftQuote = Quoting.selection() ?? text.trimmingCharacters(in: .whitespacesAndNewlines)
+        draftQuote = Quoting.selection(in: text) ?? text.trimmingCharacters(in: .whitespacesAndNewlines)
         focusComposer()
         Analytics.shared.track("message_replied")
     }
@@ -249,6 +253,7 @@ final class SessionModel {
     }
 
     func send(_ text: String, files: [URL] = [], for model: Model?, queue: Bool = false) {
+        let written = text
         let comments = reviewComments
         let text = ReviewComments.text(text.trimmingCharacters(in: .whitespacesAndNewlines), adding: comments)
         guard !text.isEmpty || !files.isEmpty else { return }
@@ -279,6 +284,13 @@ final class SessionModel {
             } catch {
                 transcript.removeLocal(id: id)
                 reviewComments = comments + reviewComments
+                // It didn't go: back in the composer, unless you've written something since.
+                if draftText.isEmpty, draftFiles.isEmpty {
+                    let (quote, words) = Quoting.split(written)
+                    draftText = words
+                    draftFiles = files
+                    if draftQuote == nil { draftQuote = quote }
+                }
                 failure = error.localizedDescription
             }
         }
@@ -306,6 +318,7 @@ final class SessionModel {
     /// right away, without waking the agent; it and its output join the conversation, and the
     /// agent gets them with your next message.
     func runShell(_ command: String) {
+        guard canReach else { return }
         Analytics.shared.track("shell_run")
         let previous = sending
         sending = Task {
@@ -317,6 +330,7 @@ final class SessionModel {
     /// Runs a command, with files as a message would carry them. With `queue`, it waits for the
     /// run, as a queued message does.
     func runCommand(_ name: String, arguments: String, files: [URL] = [], for model: Model? = nil, queue: Bool = false) {
+        guard canReach else { return }
         let running = RunningCommand(
             command: arguments.isEmpty ? "/\(name)" : "/\(name) \(arguments)",
             started: Date(),
@@ -377,6 +391,7 @@ final class SessionModel {
     }
 
     func cancelPending(_ item: Transcript.Pending) {
+        guard canReach else { return }
         if item.isLocal { transcript.removeLocal(id: item.id); return }
         Task { try? await api.cancelInbox(session: id, item: item.id) }
     }
@@ -384,6 +399,7 @@ final class SessionModel {
     /// Gives a waiting message to the agent right away: its current step stops, and it carries
     /// on from there with this message.
     func sendNow(_ item: Transcript.Pending) {
+        guard canReach else { return }
         Analytics.shared.track("message_sent_now")
         guard !item.isLocal else { return }
         isQueuePaused = false
@@ -402,6 +418,7 @@ final class SessionModel {
     /// Takes a waiting message back into the composer, with its files and comments, ahead of
     /// anything already there.
     func edit(_ item: Transcript.Pending) {
+        guard canReach else { return }
         guard !item.isLocal, !editing.contains(item.id) else { return }
         editing.insert(item.id)
         Task {
@@ -425,10 +442,12 @@ final class SessionModel {
     }
 
     /// Puts a message back in the composer, ahead of anything already there: its text, its
-    /// attached files and its comments on the changes.
+    /// attached files, its comments on the changes and what it replied to.
     private func restoreDraft(_ message: String, files picked: [URL] = []) {
         let (withComments, paths) = Attachments.split(message)
-        let (text, comments) = ReviewComments.split(withComments)
+        let (quoted, comments) = ReviewComments.split(withComments)
+        let (quote, text) = Quoting.split(quoted)
+        if draftQuote == nil { draftQuote = quote }
         draftText = [text, draftText].filter { !$0.isEmpty }.joined(separator: "\n\n")
         let files = picked + paths.map { URL(filePath: $0) }
         draftFiles = files + draftFiles.filter { !files.contains($0) }
@@ -476,6 +495,7 @@ final class SessionModel {
     /// files it changed since go back, and the message returns to the composer to edit or
     /// send again. Redo brings it all back, until the next message makes it final.
     func undo(from message: Message.User) {
+        guard canReach else { return }
         Analytics.shared.track("undo_used")
         Task {
             do {
@@ -498,6 +518,7 @@ final class SessionModel {
     /// Sends a message again after its run failed. Its turn is taken back first, so the
     /// conversation reads as if it had gone through the first time.
     func retry(_ message: Message.User) {
+        guard canReach else { return }
         guard !isRunning, !isRetrying else { return }
         isRetrying = true
         Task {
@@ -534,6 +555,7 @@ final class SessionModel {
 
     /// Takes back an undo: the conversation and the files come back as they were.
     func redo() {
+        guard canReach else { return }
         Analytics.shared.track("redo_used")
         Task {
             do {
@@ -550,6 +572,7 @@ final class SessionModel {
     /// Edits the message that would go last, if there is one.
     @discardableResult
     func editLast() -> Bool {
+        guard canReach else { return false }
         guard let item = waiting.last(where: { !$0.isLocal && !editing.contains($0.id) }) else { return false }
         edit(item)
         return true
@@ -557,6 +580,7 @@ final class SessionModel {
 
     /// After Plan mode's answer: switches to Build, then has the agent carry the plan out.
     func buildPlan() {
+        guard canReach else { return }
         session.agent = "build"
         Task {
             do { try await api.selectAgent(session: id, agent: "build") } catch {
@@ -569,6 +593,7 @@ final class SessionModel {
 
     /// Summarizes the conversation so far, to make room in the context window.
     func compact() {
+        guard canReach else { return }
         Task {
             do { try await api.compact(session: id) } catch { failure = error.localizedDescription }
         }
@@ -576,6 +601,7 @@ final class SessionModel {
 
     /// Picks the queue up again after Stop or a failed run.
     func resumeQueue() {
+        guard canReach else { return }
         isQueuePaused = false
         scheduleDrain(after: .zero)
     }
@@ -598,6 +624,7 @@ final class SessionModel {
     }
 
     func selectModel(_ model: ModelRef) {
+        guard canReach else { return }
         guard !model.sameModel(as: session.model) || model.variant != session.model?.variant else { return }
         session.model = model
         Task {
@@ -608,6 +635,7 @@ final class SessionModel {
     var approval: ToolApproval { ToolApproval(rules: session.permissions) }
 
     func setApproval(_ approval: ToolApproval) {
+        guard canReach else { return }
         // The rules for particular things (the project's folders, a bot's folder and its
         // wake-ups) stay, after the approval rules.
         let rules = approval.rules + (session.permissions ?? []).filter { $0.resource != "*" }
@@ -639,6 +667,7 @@ final class SessionModel {
     }
 
     func selectAgent(_ agent: String) {
+        guard canReach else { return }
         guard agent != session.agent else { return }
         session.agent = agent
         Task {
@@ -647,6 +676,7 @@ final class SessionModel {
     }
 
     func reply(to request: PermissionRequest, _ decision: PermissionRequest.Decision, message: String? = nil) {
+        guard canReach else { return }
         Analytics.shared.track("permission_answered", ["action": Analytics.action(request.action), "decision": decision.rawValue])
         Task {
             do { try await api.reply(session: id, permission: request.id, decision: decision, message: message) } catch { failure = error.localizedDescription }
@@ -654,6 +684,7 @@ final class SessionModel {
     }
 
     func answer(_ form: FormRequest, with answer: FormAnswer) {
+        guard canReach else { return }
         Analytics.shared.track("question_answered", ["kind": form.isQuestion ? "question" : "form"])
         Task {
             do { try await api.reply(session: id, form: form.id, answer: answer) } catch { failure = error.localizedDescription }
@@ -661,6 +692,7 @@ final class SessionModel {
     }
 
     func dismiss(_ form: FormRequest, message: String? = nil) {
+        guard canReach else { return }
         Analytics.shared.track("question_dismissed", ["kind": form.isQuestion ? "question" : "form"])
         Task { try? await api.dismiss(session: id, form: form.id, message: message) }
     }

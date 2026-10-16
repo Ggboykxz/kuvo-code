@@ -420,7 +420,8 @@ final class BotGroups {
         let last = messages(in: group.id).last { $0.kind != .note }
         let candidates = members.filter { $0 != last?.author && !quiet.contains($0) }
         guard !candidates.isEmpty else { return nil }
-        if let last, let named = mentions(in: last.text, among: candidates).first {
+        // Its own words: a quote it replies to names whoever that message did.
+        if let last, let named = mentions(in: Quoting.split(last.text).text, among: candidates).first {
             return named
         }
         guard let author = last?.author, let index = group.members.firstIndex(of: author) else {

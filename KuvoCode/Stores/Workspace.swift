@@ -252,6 +252,7 @@ final class Workspace {
         // Written either way: the engine may merge metadata rather than replace it.
         metadata[key] = .bool(value)
         sessions[index].metadata = .object(metadata)
+        if let machine = RemoteFolder.machine(of: sessions[index].location.directory) { keepList(of: machine) }
         try? await api.setMetadata(session: id, .object(metadata))
     }
 
@@ -267,6 +268,7 @@ final class Workspace {
         guard let api = api(forFolder: folder), let session = try? await api.session(id) else { return nil }
         if let model = models[id] { return model }
         let model = SessionModel(session: session, api: api)
+        model.isReachable = reachable(folder)
         models[id] = model
         return model
     }
@@ -332,9 +334,39 @@ final class Workspace {
             guard let self else { return [] }
             return self.extraFolders(self.session(id)?.location.directory ?? directory)
         }
+        model.isReachable = reachable(directory)
         models[id] = model
         return model
     }
+
+    /// A machine's sessions as they are now, kept for when it's away (see `showLastSeen`): a
+    /// moment after they change, as several often change together.
+    @ObservationIgnored private var listSaves: [String: Task<Void, Never>] = [:]
+
+    private func keepList(of machine: String) {
+        guard connectedMachines.contains(machine) else { return }
+        listSaves[machine]?.cancel()
+        listSaves[machine] = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard let self, !Task.isCancelled else { return }
+            saveList(of: machine)
+        }
+    }
+
+    private func saveList(of machine: String) {
+        listSaves[machine]?.cancel()
+        listSaves[machine] = nil
+        SessionCopies.saveSessions(sessions.filter { RemoteFolder.machine(of: $0.location.directory) == machine }, of: machine)
+    }
+
+    /// Whether a folder's engine can be reached: a machine's, while it's connected.
+    private func reachable(_ folder: String) -> () -> Bool {
+        guard let machine = RemoteFolder.machine(of: folder) else { return { true } }
+        return { [weak self] in self?.connectedMachines.contains(machine) ?? false }
+    }
+
+    /// Whether the machine's sessions are live (it's connected and they've been read).
+    func isConnected(_ machine: String) -> Bool { connectedMachines.contains(machine) }
 
     /// A session on a machine that's connecting, from its conversation as last seen, to read
     /// meanwhile. It takes the machine's engine once it's back (see `refresh`).
@@ -347,6 +379,7 @@ final class Workspace {
             guard let self else { return [] }
             return self.extraFolders(self.session(id)?.location.directory ?? directory)
         }
+        model.isReachable = reachable(directory)
         model.show(copy.messages)
         models[id] = model
         return model
@@ -535,17 +568,20 @@ final class Workspace {
         requestedTab = session.id
     }
 
+    /// Deleted on its engine; one on a machine that's away waits for it (it would come back).
     func delete(_ id: String) async {
-        let api = api(forSession: id)
+        guard let api = api(forSession: id) else { return }
+        if let machine = session(id).flatMap({ RemoteFolder.machine(of: $0.location.directory) }) { keepList(of: machine) }
         sessions.removeAll { $0.id == id }
         models[id] = nil
         Drafts.shared.remove(id)
-        try? await api?.deleteSession(id)
+        try? await api.deleteSession(id)
     }
 
     func rename(_ id: String, to title: String) async {
-        guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
+        guard let index = sessions.firstIndex(where: { $0.id == id }), api(forSession: id) != nil else { return }
         sessions[index].title = title
+        if let machine = RemoteFolder.machine(of: sessions[index].location.directory) { keepList(of: machine) }
         try? await api(forSession: id)?.renameSession(id, title: title)
     }
 
@@ -600,8 +636,14 @@ final class Workspace {
     func refresh(_ engine: MachineEngine) async {
         guard let api = engine.api else { return }
         let machine = engine.machine.id
+        // Still the connection it started with: a newer one (or none) takes over from here.
+        let isCurrent = { engine.isReady && engine.api?.client.endpoint == api.client.endpoint }
         do {
             let listed = try await api.sessions().data
+            guard isCurrent() else { return }
+            // Its open conversations take this connection first, so nothing sent from them goes
+            // to the old one.
+            for model in models.values where RemoteFolder.machine(of: model.session.location.directory) == machine { model.reconnect(api) }
             let theirs = listed.filter { !isHidden($0) }
             tellMissedNews(in: theirs, machine: machine)
             sessions = sessions.filter { RemoteFolder.machine(of: $0.location.directory) != machine } + theirs
@@ -611,18 +653,23 @@ final class Workspace {
             Self.saveRemoteSessions(remoteSessions)
             SessionCopies.saveSessions(theirs, of: machine)
             connectedMachines.insert(machine)
-            let active = try await api.activeSessions()
-            running = running.filter { id in session(id).map { RemoteFolder.machine(of: $0.location.directory) != machine } ?? true }.union(active)
-            // Its open conversations, kept while it was away, take this connection; one deleted
-            // there meanwhile goes.
+            if let active = try? await api.activeSessions(), isCurrent() {
+                running = running.filter { id in session(id).map { RemoteFolder.machine(of: $0.location.directory) != machine } ?? true }.union(active)
+            }
+            // Its open conversations, kept while it was away, are read again; one deleted there
+            // meanwhile goes. (The list has only the newest, so one missing from it is asked about.)
             let known = Set(listed.map(\.id))
             for (id, model) in models where RemoteFolder.machine(of: model.session.location.directory) == machine {
+                guard isCurrent() else { return }
                 if !model.isSubagent, !known.contains(id) {
-                    models[id] = nil
-                    continue
+                    guard let session = try? await api.session(id) else {
+                        models[id] = nil
+                        continue
+                    }
+                    model.session = session
+                } else if let session = listed.first(where: { $0.id == id }) {
+                    model.session = session
                 }
-                if let session = listed.first(where: { $0.id == id }) { model.session = session }
-                model.reconnect(api)
                 await model.load()
             }
         } catch {
@@ -634,6 +681,7 @@ final class Workspace {
     /// conversations to read. Removed for good, they're forgotten.
     func forget(_ machine: String, forGood: Bool = false) {
         let gone = Set(sessions.filter { RemoteFolder.machine(of: $0.location.directory) == machine }.map(\.id))
+        if !forGood, connectedMachines.contains(machine) { saveList(of: machine) }
         running.subtract(gone)
         connectedMachines.remove(machine)
         if forGood {
@@ -737,6 +785,7 @@ final class Workspace {
             Task { await reload(id) }
         case "session.deleted":
             sessions.removeAll { $0.id == id }
+            if let machine { keepList(of: machine) }
             if remoteSessions.removeValue(forKey: id) != nil {
                 Self.saveRemoteSessions(remoteSessions)
                 SessionCopies.remove(id)
@@ -933,7 +982,8 @@ final class Workspace {
         Notifier.shared.clear(session: id)
         // Read: its next news is read afresh.
         if replyPreviews[id] != nil { replyPreviews[id] = nil }
-        guard let index = sessions.firstIndex(where: { $0.id == id }), sessions[index].isUnread, let idle = sessions[index].time.idle else { return }
+        guard let index = sessions.firstIndex(where: { $0.id == id }), sessions[index].isUnread, let idle = sessions[index].time.idle,
+              api(forSession: id) != nil else { return }
         sessions[index].time.viewed = idle
         Task { try? await api(forSession: id)?.markViewed(id, idle: idle) }
     }
@@ -963,6 +1013,7 @@ final class Workspace {
         }
         models[session.id]?.session = session
         if let machine = RemoteFolder.machine(of: session.location.directory) {
+            keepList(of: machine)
             sessionMachines[session.id] = machine
             remoteSessions[session.id] = RemoteSession(machine: machine, title: session.title)
             Self.saveRemoteSessions(remoteSessions)

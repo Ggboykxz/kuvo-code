@@ -31,10 +31,11 @@ struct SessionView: View {
             }
     }
 
-    /// The machine a session runs on, while it can't be reached (connecting again).
+    /// The machine a session runs on, while it can't be reached (connecting again), or its
+    /// conversation hasn't taken the new connection yet.
     static func offlineMachine(of model: SessionModel, in app: AppModel) -> MachineEngine? {
         guard let id = RemoteFolder.machine(of: model.session.location.directory), let engine = app.machines.engine(id) else { return nil }
-        return engine.isReady && engine.isLive ? nil : engine
+        return engine.isReady && engine.isLive && app.workspace.isConnected(id) && !model.isCopy ? nil : engine
     }
 }
 
@@ -162,11 +163,14 @@ private struct BottomStack: View {
 
     private func send(queue: Bool) {
         guard offlineMachine == nil else { return }
-        let text = Quoting.message(quote: model.draftQuote, text: model.draftText)
-        model.submit(text, files: model.draftFiles, for: catalog.model(model.session.model), queue: queue, commands: catalog.commands(in: model.session.location.directory))
+        let commands = catalog.commands(in: model.session.location.directory)
+        // A "!" or "/" command runs as typed; what you were replying to waits for a message.
+        let isCommand = SessionModel.shellCommand(in: model.draftText) != nil || SlashCommands.parse(model.draftText, commands: commands) != nil
+        let text = isCommand ? model.draftText : Quoting.message(quote: model.draftQuote, text: model.draftText)
+        model.submit(text, files: model.draftFiles, for: catalog.model(model.session.model), queue: queue, commands: commands)
         model.draftText = ""
         model.draftFiles = []
-        model.draftQuote = nil
+        if !isCommand { model.draftQuote = nil }
     }
 }
 

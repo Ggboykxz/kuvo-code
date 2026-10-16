@@ -9,7 +9,8 @@ struct ArchivedSessionsSettings: View {
 
     private var archived: [Session] {
         workspace.sessions
-            .filter { Workspace.isArchived($0) && $0.parentID == nil }
+            // On a machine that's away, they wait for it: deleting or unarchiving needs it.
+            .filter { Workspace.isArchived($0) && $0.parentID == nil && workspace.waitingMachine(for: $0.id) == nil }
             .filter { search.isEmpty || ($0.title ?? "").localizedCaseInsensitiveContains(search) || workspace.projectName($0.location.directory).localizedCaseInsensitiveContains(search) }
             .sorted { $0.time.updated > $1.time.updated }
     }

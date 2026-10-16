@@ -541,7 +541,10 @@ struct SidebarView: View {
         // On a machine that's away, the session is as last seen: what it does waits for it.
         if let engine = app.machines.engine(workspace.waitingMachine(for: session.id)) {
             Text("\(engine.machine.name) isn’t connected")
-            Button("Connect Now") { app.reconnectNow(engine) }
+            switch engine.state {
+            case .starting, .downloading: Text("Connecting…")
+            default: Button("Connect Now") { app.reconnectNow(engine) }
+            }
         } else {
             liveMenu(for: session)
         }

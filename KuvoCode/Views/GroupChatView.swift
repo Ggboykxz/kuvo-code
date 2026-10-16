@@ -89,7 +89,7 @@ struct GroupChatView: View {
     /// Replies to a bot's message: the part you selected (else all of it) quoted in the composer,
     /// naming the bot so it's the one to answer.
     private func reply(to message: GroupMessage) {
-        Drafts.shared[draftKey].quote = Quoting.selection() ?? message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        Drafts.shared[draftKey].quote = Quoting.selection(in: message.text) ?? message.text.trimmingCharacters(in: .whitespacesAndNewlines)
         // Named, so it's the one to answer.
         if let name = message.author.flatMap({ bots.bot($0)?.name }), !Drafts.shared[draftKey].text.contains("@" + name) {
             let draft = Drafts.shared[draftKey].text.trimmingCharacters(in: .whitespacesAndNewlines)

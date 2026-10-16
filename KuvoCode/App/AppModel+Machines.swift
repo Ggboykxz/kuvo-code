@@ -60,6 +60,11 @@ extension AppModel {
 
     /// Connects again now, rather than waiting for the connection to come back by itself.
     func reconnectNow(_ engine: MachineEngine) {
+        // Already connecting.
+        switch engine.state {
+        case .starting, .downloading: return
+        default: break
+        }
         engine.disconnect()
         workspace.forget(engine.machine.id)
         connect(engine)
@@ -194,7 +199,7 @@ extension AppModel {
             }
         }
         // Keys you brought for integrations, in memory as on this Mac.
-        environment.merge(IntegrationKeys.environment) { _, key in key }
+        environment.merge(await Task.detached { IntegrationKeys.environment }.value) { _, key in key }
         // What some providers need until opencode handles it, as on this Mac.
         let compatibility = ProviderCompatibility.config
         if !compatibility.isEmpty {

@@ -142,7 +142,8 @@ struct MachineOfflineBar: View {
     private var title: String {
         let name = engine.machine.name
         return switch engine.state {
-        case .downloading: "Installing the engine on \(name)…"
+        // At 0 it's only checking the engine it has.
+        case .downloading(let progress) where progress > 0: "Installing the engine on \(name)…"
         case .preparing: "\(name) isn’t connected"
         case .failed where !engine.isRetrying: "Couldn’t connect to \(name)"
         case .starting where !engine.isRetrying: "Connecting to \(name)…"

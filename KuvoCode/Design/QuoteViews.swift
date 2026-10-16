@@ -35,17 +35,30 @@ struct QuoteCard: View {
 /// In a message you sent: what it replied to, above your words.
 struct QuoteBlock: View {
     let text: String
+    @State private var isExpanded = false
+
+    /// More than fits in its four lines, likely: it opens to all of it.
+    private var isLong: Bool {
+        text.count > 280 || text.split(separator: "\n", omittingEmptySubsequences: false).count > 4
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             Capsule()
                 .fill(.secondary.opacity(0.45))
                 .frame(width: 3)
-            Text(text)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .lineLimit(4)
-                .textSelection(.enabled)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(text)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(isExpanded ? nil : 4)
+                    .textSelection(.enabled)
+                if isLong {
+                    Button(isExpanded ? "Show Less" : "Show All") { withAnimation(.ui) { isExpanded.toggle() } }
+                        .buttonStyle(TextButtonStyle())
+                        .font(.caption)
+                }
+            }
         }
         .fixedSize(horizontal: false, vertical: true)
     }
