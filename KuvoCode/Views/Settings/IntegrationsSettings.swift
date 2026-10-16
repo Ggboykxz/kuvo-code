@@ -347,7 +347,7 @@ private struct Place: Identifiable {
 }
 
 /// An integration's state in a line: a dot in the color of the worst, and each state with where
-/// ("Connected on this Mac · Needs sign-in on lokum"); with no machines, just the state.
+/// ("Connected on this Mac · Needs sign-in on my-server"); with no machines, just the state.
 private struct PlacesLine: View {
     let places: [Place]
     let waitsForCodeHelp: String
