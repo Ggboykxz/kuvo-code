@@ -29,6 +29,19 @@ struct TranscriptView: View {
         let matches = isFinding ? Self.matches(of: query, in: rows) : []
         ConversationScroll(scroller: scroller, animation: rowCache.isBulk ? nil : Self.rowAnimation, change: RowCache.Change(count: rows.count, last: rows.last?.id),
                            quote: { model.addQuote($0, how: "selection") }) {
+            // Its top in view: the messages before, read and put ahead, the view staying put.
+            if model.hasEarlier, !rows.isEmpty {
+                HStack(spacing: 8) {
+                    Spinner(size: 12)
+                    Text("Earlier messages…")
+                        .foregroundStyle(.secondary)
+                }
+                .font(.callout)
+                .frame(maxWidth: .infinity)
+                .padding(.bottom, 20)
+                .id("earlier")
+                .onAppear { loadEarlier(above: rows.first?.id) }
+            }
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                 RowView(row: row, directory: model.session.location.directory, folders: model.folders, cancel: model.cancelPending, undo: model.undo(from:), redo: model.redo, fork: fork, retry: model.retry(_:), buildPlan: model.agent == "plan" && !isOffline ? { model.buildPlan() } as () -> Void : nil, reply: model.reply(to:))
                     .equatable()
@@ -112,6 +125,15 @@ struct TranscriptView: View {
                 model.findPreset = nil
             }
             withAnimation(.ui) { isFinding = true }
+        }
+    }
+
+    private func loadEarlier(above id: String?) {
+        // Only once you've scrolled up to it: not as the conversation opens at its end.
+        guard !scroller.followsEnd else { return }
+        Task {
+            await model.loadEarlier()
+            if let id { scroller.keep(id) }
         }
     }
 

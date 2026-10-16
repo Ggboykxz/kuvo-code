@@ -192,7 +192,37 @@ final class SessionModel {
     /// out of reach (see `SessionCopies`).
     private func keepCopy() {
         guard api.folderPrefix != nil, !isSubagent, !transcript.messages.isEmpty else { return }
-        SessionCopies.save(.init(session: session, messages: transcript.messages))
+        // The latest, as opening it reads them: earlier ones are read again as you scroll up.
+        SessionCopies.save(.init(session: session, messages: Array(transcript.messages.suffix(Self.pageSize))))
+    }
+
+    /// How many messages one read takes: the latest on opening, then as many earlier ones each
+    /// time the conversation's top comes into view.
+    static let pageSize = 200
+    /// Where the messages not read yet end, while there are earlier ones.
+    private(set) var earlierCursor: String?
+    private(set) var isLoadingEarlier = false
+    var hasEarlier: Bool { earlierCursor != nil }
+
+    /// The page's way back to earlier messages, when it was full (so there may be more).
+    private static func cursor(before page: Page<Message>) -> String? {
+        page.data.count >= pageSize ? (page.cursor?.next ?? page.cursor?.previous) : nil
+    }
+
+    /// Reads the messages before those on screen, and puts them ahead of them.
+    func loadEarlier() async {
+        guard let cursor = earlierCursor, !isLoadingEarlier, !waitsForEngine else { return }
+        isLoadingEarlier = true
+        defer { isLoadingEarlier = false }
+        guard let page = try? await api.messages(session: id, limit: Self.pageSize, before: cursor) else { return }
+        let known = Set(transcript.messages.map(\.id))
+        let older = page.data.filter { !known.contains($0.id) }
+        guard !older.isEmpty else {
+            earlierCursor = nil
+            return
+        }
+        transcript.messages = older + transcript.messages
+        earlierCursor = Self.cursor(before: page)
     }
 
     /// Its machine connected again, through `api`.
@@ -203,14 +233,18 @@ final class SessionModel {
 
     func load() async {
         guard !waitsForEngine else { return }
-        async let messages = api.messages(session: id, limit: 200)
+        async let messages = api.messages(session: id, limit: Self.pageSize)
         async let inbox = api.inbox(session: id)
         async let permissions = api.permissions(session: id)
         async let forms = api.forms(session: id)
         async let active = api.activeSessions()
         do {
+            let page = try await messages
+            // Earlier messages read as you scrolled up stay, ahead of the latest.
+            let kept = page.data.first.map { first in transcript.messages.filter { $0.id < first.id } } ?? []
+            if kept.isEmpty { earlierCursor = Self.cursor(before: page) }
             transcript.load(
-                messages: try await messages.data,
+                messages: kept + page.data,
                 inbox: (try? await inbox) ?? [],
                 permissions: (try? await permissions) ?? [],
                 forms: (try? await forms) ?? [],

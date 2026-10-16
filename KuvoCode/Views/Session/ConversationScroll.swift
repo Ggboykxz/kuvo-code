@@ -7,6 +7,8 @@ final class ConversationScroller {
     enum Request: Equatable {
         case end(animated: Bool)
         case row(String)
+        /// A row at the top, where it was, after rows came in above it.
+        case top(String)
         /// A distance from the top, for the scrolling test.
         case offset(CGFloat)
     }
@@ -28,6 +30,11 @@ final class ConversationScroller {
     func reveal(_ id: String) {
         followsEnd = false
         ask(.row(id))
+    }
+
+    /// `id`'s row stays where it was at the top, as earlier rows come in above it.
+    func keep(_ id: String) {
+        ask(.top(id))
     }
 
     func scroll(to offset: CGFloat) {
@@ -138,6 +145,8 @@ struct ConversationScroll<Rows: View>: View {
                 }
             case .row(let id):
                 withAnimation(.ui) { position.scrollTo(id: id, anchor: .center) }
+            case .top(let id):
+                position.scrollTo(id: id, anchor: .top)
             case .offset(let y):
                 position.scrollTo(y: y)
             case nil:
