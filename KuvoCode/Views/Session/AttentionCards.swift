@@ -166,10 +166,28 @@ struct QuestionCard: View {
         .padding(16)
         .animation(.ui, value: index)
         .onAppear { answers = FormFieldsView.defaults(for: form.fields) }
+        .onChange(of: answers) { old, new in advance(from: old, to: new) }
         #if DEBUG
         // KUVO_DEMO_QUESTIONS=<n>: on the nth question (from 0).
         .onAppear { if let n = Int(ProcessInfo.processInfo.environment["KUVO_DEMO_QUESTIONS"] ?? "") { page = n } }
         #endif
+    }
+}
+
+extension QuestionCard {
+    /// A choice picked in a question with one answer goes on to the next question, a moment
+    /// later (Back goes back); words typed don't.
+    private func advance(from old: FormAnswer, to new: FormAnswer) {
+        guard isPaged, !isLast, let field = shown.first, case .string(let options?, _, _, _, _, _) = field.kind,
+              case .string(let picked)? = new[field.key], old[field.key] != new[field.key],
+              options.contains(where: { $0.value == picked }),
+              // Not the defaults going in.
+              !(old.isEmpty && new == FormFieldsView.defaults(for: form.fields)) else { return }
+        let from = index
+        Task {
+            try? await Task.sleep(for: .milliseconds(300))
+            if index == from { page = from + 1 }
+        }
     }
 }
 
