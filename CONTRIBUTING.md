@@ -122,7 +122,7 @@ without clicking, for trying a change or taking screenshots:
 | `KUVO_DEMO_WORKTREE` | Start that session in a worktree of its own |
 | `KUVO_DEMO_DRAFT` | With `KUVO_DEMO_FOLDER` and no prompt: a message typed, not sent, in the new session's composer |
 | `KUVO_DEMO_SHOW_IN_PANEL` | `<path>\|folder` or `<path>\|file`: as if the agent of the session in view showed that in the panel |
-| `KUVO_DEMO_SCROLL` | Seconds after the conversation in view opens: it scrolls up through it in steps and writes how long that took to `KUVO_PERF_LOG` (a file); `KUVO_PERF_NO_GLASS`, `KUVO_PERF_PLAIN`, `KUVO_PERF_NO_EDGE` and `KUVO_PERF_NO_ANIM` turn parts of the transcript off to compare. A window behind others draws less often, so compare runs alike |
+| `KUVO_DEMO_SCROLL` | Seconds after the conversation in view opens: it scrolls up through it in steps and writes how long that took to `KUVO_PERF_LOG` (a file); `KUVO_PERF_NO_GLASS`, `KUVO_PERF_PLAIN`, `KUVO_PERF_NO_EDGE` and `KUVO_PERF_NO_ANIM` turn parts of the transcript off to compare. A window behind others draws less often, so compare runs alike. Debug builds also log real dropped frames as you scroll (`log show --predicate 'subsystem == "run.kuvo.code" AND category == "scroll"'`) |
 | `KUVO_DEMO_TABS` | Open the project's sessions as tabs |
 | `KUVO_DEMO_SESSION` | Open the session with this ID in a tab (one on a machine shows its conversation as last seen until the machine connects) |
 | `KUVO_DEMO_QUEUE` | Messages to queue once that session's agent is working, separated by `\|` |
@@ -186,6 +186,12 @@ without clicking, for trying a change or taking screenshots:
 | `KUVO_DEMO_PHONE_PAIR` | A file: Settings › Phone shows a pairing code once the relay answers and writes its link there, for pairing a simulator (launch the iPhone app with `KUVO_DEMO_PAIR` set to it) |
 | `KUVO_DEMO_MACHINE_ROOT` | A folder of its own in machines' home folders (like `.kuvo-code-demo`), so the demo copy's engine and browser there never touch your own copy's |
 | `KUVO_DEMO_COMMENT` | Add a review comment to the session in view, as `<path in the project>:<line>:<text>` |
+| `KUVO_DEMO_QUOTES` | With `KUVO_DEMO_SESSION`: that many quotes to answer in its composer (a session's or a group chat's, as `group:<id>`) |
+| `KUVO_DEMO_FIND` | With `KUVO_DEMO_SESSION`: Find in it, looking for these words |
+| `KUVO_DEMO_CONNECTED` | With `KUVO_DEMO_SETTINGS=integrations`: that integration's sign-in sheet, on its last step |
+| `KUVO_DEMO_WIDGET_SNAPSHOTS` | A folder: each widget an agent made, once drawn, saved there as a picture (a background copy's window draws no web pages) |
+| `KUVO_DEMO_WIDGET_LARGE` | The first widget shown opens larger, as Open Larger does |
+| `KUVO_PERF_STILL_BOTS` | Every bot holds still, to compare what their motion costs |
 | `KUVO_ANALYTICS_URL` | Send anonymous usage to this collector, e.g. `http://127.0.0.1:8787/kuvo/code`; debug builds send none otherwise |
 
 ### The icon
