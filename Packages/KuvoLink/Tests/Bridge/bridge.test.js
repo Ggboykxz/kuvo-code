@@ -237,7 +237,7 @@ test("the self-test passes here", () => {
   assert.ok(link.selftest());
 });
 
-test("setup keeps the machine's keys, starts the bridge, and stops it with no phones left", async () => {
+test("setup keeps the machine's keys and its own phones, starts the bridge, and stops it with no phones left", async () => {
   const { spawnSync } = await import("node:child_process");
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), "kuvo-link-setup-"));
   fs.mkdirSync(path.join(folder, "workspace"));
@@ -261,8 +261,19 @@ test("setup keeps the machine's keys, starts the bridge, and stops it with no ph
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(folder, "run", "link.json"), "utf8")).phones.map(p => p.key), ["AAAA", "BBBB"]);
     assert.equal(Number(fs.readFileSync(pidFile, "utf8")), pid);
 
+    // A phone paired with the machine itself stays when the Mac's list changes.
+    const linkFile = path.join(folder, "run", "link.json");
+    const saved = JSON.parse(fs.readFileSync(linkFile, "utf8"));
+    fs.writeFileSync(linkFile, JSON.stringify({ ...saved, phones: [...saved.phones, { key: "CCCC", name: "C", added: 1, from: "pair" }] }));
+    setup({ relay: "ws://127.0.0.1:9", name: "test", phones: [{ key: "BBBB", name: "B" }] });
+    assert.deepEqual(JSON.parse(fs.readFileSync(linkFile, "utf8")).phones.map(p => p.key), ["BBBB", "CCCC"]);
+
+    // Nothing left to answer: the bridge stops, and the machine keeps its keys.
+    fs.writeFileSync(linkFile, JSON.stringify({ ...saved, phones: [] }));
     assert.deepEqual(setup({ relay: "ws://127.0.0.1:9", phones: [] }), {});
-    assert.ok(!fs.existsSync(path.join(folder, "run", "link.json")));
+    const kept = JSON.parse(fs.readFileSync(linkFile, "utf8"));
+    assert.equal(kept.secret, saved.secret);
+    assert.deepEqual(kept.phones, []);
     let stopped = false;
     for (let i = 0; i < 50 && !stopped; i++) {
       try { process.kill(pid, 0); await new Promise(r => setTimeout(r, 50)); } catch { stopped = true; }

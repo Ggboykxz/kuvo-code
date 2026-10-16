@@ -151,8 +151,11 @@ once.
 On a machine the bridge keeps its state in `~/.kuvo-code/run/link.json` (mode 600):
 
 ```json
-{"relay": "wss://…", "secret": "…", "key": "<static private key>", "phones": [{"key": "…", "name": "…", "added": 1760000000}]}
+{"relay": "wss://…", "secret": "…", "key": "<static private key>", "phones": [{"key": "…", "name": "…", "added": 1760000000, "from": "mac"}]}
 ```
 
-The Mac writes it, so a phone paired with the Mac reaches the machine too, and removes a
-phone from it when you unpair.
+The Mac sets the phones paired with it (`"from": "mac"`), so they reach the machine too,
+and takes a phone off when you unpair; phones paired with the machine itself (`"pair"`)
+stay. The machine's keys stay when no phones are left, so pairing again gives the same
+address. The bridge reads the file every 30 seconds: a phone taken off loses its sessions,
+and with no phones and no pairing waiting the bridge stops.

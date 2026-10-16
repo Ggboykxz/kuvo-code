@@ -258,6 +258,22 @@
       "allowed": false
     },
     {
+      "path": "api/session/%2e%2e/credential",
+      "allowed": false
+    },
+    {
+      "path": "api/session%2f..%2fcredential",
+      "allowed": false
+    },
+    {
+      "path": "api/fs/read/..%5c..%5csecret",
+      "allowed": false
+    },
+    {
+      "path": "api/fs/read/a%5cb",
+      "allowed": false
+    },
+    {
       "path": "api/fs/read/bad%E0%A4%A",
       "allowed": false
     },

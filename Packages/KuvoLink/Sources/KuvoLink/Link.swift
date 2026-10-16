@@ -152,6 +152,13 @@ public actor LinkClient {
         return LinkResponse(stream: stream, stop: stop)
     }
 
+    #if DEBUG
+    /// The relay connection gone, as a phone put to sleep loses it: no close sent to anyone.
+    func dropRelayForTesting() {
+        relay?.close()
+    }
+    #endif
+
     /// Ends every session and the relay connection.
     public func disconnect() {
         for session in sessions.values { end(session, with: .closed) }
@@ -173,6 +180,8 @@ public actor LinkClient {
         sessions[address] = session
         do {
             let relay = try await relayConnection()
+            // Ended while connecting (a pairing started over, the relay dropped): nothing will answer it.
+            guard sessions[address] === session else { throw LinkError.closed }
             var initiator = IKInitiator(staticKey: key, remoteStatic: host.key, prologue: Link.prologue)
             var hello = self.hello
             hello.pair = token?.base64URL
@@ -191,8 +200,9 @@ public actor LinkClient {
         }
     }
 
+    /// No answer in time: whoever waits on it hears so, whether or not it's still the current one.
     private func timeOut(_ session: Session) {
-        if session.transport == nil, sessions[session.host.linkAddress] === session { end(session, with: .timedOut) }
+        if session.transport == nil { end(session, with: .timedOut) }
     }
 
     private func end(_ session: Session, with error: LinkError) {

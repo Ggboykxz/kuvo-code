@@ -20,7 +20,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 // Goes up with every change, so `setup` replaces a running bridge that's older.
-export const BRIDGE_VERSION = "0.2.0";
+export const BRIDGE_VERSION = "0.3.0";
 const K = process.env.KUVO_HOME || path.join(os.homedir(), ".kuvo-code");
 const RUN = path.join(K, "run");
 export const LINK_FILE = path.join(RUN, "link.json");
@@ -283,6 +283,7 @@ export function decodeMessage(bytes) {
 
 // `head` and `body` as messages that each fit: the first with `head`, the rest as `data`.
 export function pieces(head, body, end) {
+  if (Buffer.byteLength(sortedJSON(head)) > 60_000) throw new Error("head too long");
   const out = [];
   let current = { ...head, end: false };
   let offset = 0;
@@ -313,7 +314,25 @@ export class LinkHost {
 
   get active() { return this.sessions.size; }
 
+  // A phone the relay can't reach any more (asleep, gone): what it asked for has nobody to go to.
+  forget(address) {
+    for (const session of this.sessions.values()) if (session.from.equals(address)) this.end(session, false);
+  }
+
+  // Phones no longer paired (removed on the Mac) lose the sessions they have open.
+  keepOnly(keys) {
+    for (const session of this.sessions.values()) if (!keys.has(session.phone.key.toString("base64url"))) this.end(session, true);
+  }
+
   async receive(from, payload) {
+    try {
+      await this.receiveFrame(from, payload);
+    } catch {
+      // Nothing a phone sends gets to stop the bridge.
+    }
+  }
+
+  async receiveFrame(from, payload) {
     const parsed = readFrame(payload);
     if (!parsed) return;
     const id = `${from.toString("base64url")}:${parsed.session}`;
@@ -329,7 +348,7 @@ export class LinkHost {
         } catch {
           message = null;
         }
-        if (!message) return this.end(session, true);
+        if (!message || typeof message.head !== "object" || message.head === null) return this.end(session, true);
         return this.message(session, message);
       }
       case Frame.close:
@@ -449,7 +468,8 @@ const RESPONSE_HEADERS = ["content-type", "cache-control"];
 // it, and lists a folder above the project if asked.
 const leavesProject = path => {
   try {
-    return path.includes("..") || decodeURIComponent(path).includes("..");
+    const decoded = decodeURIComponent(path);
+    return path.includes("..") || decoded.includes("..") || decoded.includes("\\");
   } catch {
     return true;
   }
@@ -546,7 +566,7 @@ export function authorizePhone(key, hello) {
   const given = Buffer.from(String(hello.pair), "base64url");
   const expected = Buffer.from(pairing.token, "base64url");
   if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) return false;
-  link.phones = [...(link.phones ?? []), { key: encoded, name: String(hello.name ?? "").slice(0, 100), added: Math.floor(Date.now() / 1000) }];
+  link.phones = [...(link.phones ?? []), { key: encoded, name: String(hello.name ?? "").slice(0, 100), added: Math.floor(Date.now() / 1000), from: "pair" }];
   delete link.pairing;
   writeLink(link);
   return true;
@@ -582,6 +602,7 @@ function connectOnce(relay, secret, host) {
         return;
       }
       if (message.kind === "deliver" && !message.address.equals(self)) host.receive(message.address, message.payload);
+      if (message.kind === "unreachable" && !message.address.equals(self)) host.forget(message.address);
     };
     socket.onerror = () => {};
     socket.onclose = () => {
@@ -602,11 +623,24 @@ function alive(pid) {
   }
 }
 
+// A bridge, not whatever took its number after a crash: on Linux its command line says so.
+function isBridge(pid) {
+  if (!pid || pid === process.pid || !alive(pid)) return false;
+  try {
+    return fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").includes("kuvo-link.js");
+  } catch {
+    return !fs.existsSync("/proc");
+  }
+}
+
+// Something to answer: a paired phone, or a pairing code waiting.
+const needed = link => Boolean(link && ((link.phones ?? []).length || (link.pairing && Date.now() < link.pairing.expires)));
+
 async function run() {
   // One bridge at a time: a newer one (the engine restarted) takes over.
   try {
     const old = Number(fs.readFileSync(PID_FILE, "utf8"));
-    if (old && old !== process.pid && alive(old)) process.kill(old, "SIGTERM");
+    if (isBridge(old)) process.kill(old, "SIGTERM");
   } catch {}
   fs.mkdirSync(RUN, { recursive: true, mode: 0o700 });
   fs.writeFileSync(PID_FILE, String(process.pid), { mode: 0o600 });
@@ -618,17 +652,23 @@ async function run() {
   process.on("SIGTERM", cleanUp);
   process.on("SIGINT", cleanUp);
 
-  // Stops with the engine, and when nothing's paired any more.
+  // Stops with the engine, when nothing's paired any more, or when another bridge took over;
+  // phones removed since lose what they have open.
+  let current = null;
   setInterval(() => {
     let engine;
     try { engine = readEngineFile(); } catch {}
-    if (!engine || !alive(engine.pid) || !readLink()) cleanUp();
+    let owner = null;
+    try { owner = Number(fs.readFileSync(PID_FILE, "utf8")); } catch {}
+    const link = readLink();
+    if (!engine || !alive(engine.pid) || !needed(link) || owner !== process.pid) return cleanUp();
+    current?.keepOnly(new Set((link.phones ?? []).map(phone => phone.key)));
   }, 30_000);
 
   let attempt = 0;
   while (true) {
     const link = readLink();
-    if (!link) return cleanUp();
+    if (!needed(link)) return cleanUp();
     let engine = {};
     try { engine = readEngineFile(); } catch {}
     const host = new LinkHost({
@@ -638,6 +678,7 @@ async function run() {
       handle: engineHandler(readEngineFile, { name: link.name || os.hostname() }),
       send: () => {},
     });
+    current = host;
     const welcomed = await connectOnce(link.relay, Buffer.from(link.secret, "base64url"), host);
     attempt = welcomed ? 0 : attempt + 1;
     await sleep(Math.min(60_000, 1000 * 2 ** Math.min(attempt, 6)));
@@ -647,7 +688,7 @@ async function run() {
 function runningBridge() {
   try {
     const pid = Number(fs.readFileSync(PID_FILE, "utf8"));
-    return pid && alive(pid) ? pid : null;
+    return isBridge(pid) ? pid : null;
   } catch {
     return null;
   }
@@ -667,8 +708,9 @@ function startBridge() {
 
 // What the Mac sends: the relay, this machine's name, and the phones you've paired with the Mac,
 // which may reach it directly. Keeps the machine's own keys (made the first time, and never
-// leaving it), starts the bridge or restarts it on another relay, and prints the machine's
-// address and public key for the Mac to tell your phones. No phones left: the bridge stops.
+// leaving it) and phones paired with the machine itself, starts the bridge or restarts it (on
+// another relay, or a newer one), and prints the machine's address and public key for the Mac
+// to tell your phones. Nothing left to answer: the bridge stops, and the keys stay.
 async function setup() {
   let input;
   try {
@@ -681,18 +723,20 @@ async function setup() {
   }
   const phones = Array.isArray(input.phones) ? input.phones.filter(p => typeof p?.key === "string") : [];
   const running = runningBridge();
-  if (!phones.length) {
-    try { fs.unlinkSync(LINK_FILE); } catch {}
+  const old = readLink();
+  const own = (old?.phones ?? []).filter(phone => phone.from === "pair");
+  if (!phones.length && !own.length) {
+    if (old) writeLink({ ...old, phones: [] });
     if (running) process.kill(running, "SIGTERM");
     console.log("{}");
     return;
   }
-  const old = readLink();
   const link = old ?? { secret: crypto.randomBytes(32).toString("base64url"), key: newKey().toString("base64url"), phones: [] };
   link.relay = String(input.relay);
   link.name = String(input.name || link.name || os.hostname()).slice(0, 100);
   const added = new Map((old?.phones ?? []).map(p => [p.key, p.added]));
-  link.phones = phones.map(p => ({ key: p.key, name: String(p.name ?? "").slice(0, 100), added: added.get(p.key) ?? Math.floor(Date.now() / 1000) }));
+  const fromMac = phones.map(p => ({ key: p.key, name: String(p.name ?? "").slice(0, 100), added: added.get(p.key) ?? Math.floor(Date.now() / 1000), from: "mac" }));
+  link.phones = [...fromMac, ...own.filter(phone => !fromMac.some(p => p.key === phone.key))];
   writeLink(link);
   // A new relay or name needs a new connection, and a newer bridge replaces an older one.
   let runningVersion = null;
@@ -725,6 +769,7 @@ function pair(relay) {
   });
   console.log(`kuvo-link://pair?${query}`);
   console.error(`Open this link on your phone within ${PAIRING_MINUTES} minutes. It works once.`);
+  if (!runningBridge()) startBridge();
 }
 
 // Checks this runtime has what the link needs, both ends of a session and a mail.

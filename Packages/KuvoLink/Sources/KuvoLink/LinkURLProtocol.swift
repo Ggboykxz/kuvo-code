@@ -56,6 +56,8 @@ public final class LinkURLProtocol: URLProtocol, @unchecked Sendable {
                         loader.loaded(data)
                     }
                 }
+                // Stopped, it says nothing more to URLSession.
+                guard !Task.isCancelled else { return }
                 loader.finished()
             } catch {
                 guard !Task.isCancelled else { return }

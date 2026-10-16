@@ -66,10 +66,10 @@ final class FakeEngine: URLProtocol, @unchecked Sendable {
         #expect(FakeEngine.asked.isEmpty)
     }
 
-    @Test func eventsGoLineByLine() async throws {
+    @Test func eventsGoOneByOne() async throws {
         let (_, headers, pieces) = try await collect(EngineRoutes.forward(LinkRequest(path: "api/event"), to: base, password: nil, session: session))
         #expect(headers["content-type"] == "text/event-stream")
-        #expect(pieces.count == 4)
-        #expect(String(decoding: pieces[0], as: UTF8.self) == "data: {\"type\":\"server.connected\"}\n")
+        #expect(pieces.count == 2)
+        #expect(String(decoding: pieces[0], as: UTF8.self) == "data: {\"type\":\"server.connected\"}\n\n")
     }
 }

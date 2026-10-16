@@ -52,8 +52,16 @@ public actor LinkServer {
         for session in sessions.values { end(session, notify: false) }
         self.relay = relay
         for await message in relay.messages {
-            guard case .deliver(let from, let payload) = message, let frame = try? LinkFrame(payload) else { continue }
-            await receive(frame, from: from)
+            switch message {
+            case .deliver(let from, let payload):
+                guard let frame = try? LinkFrame(payload) else { continue }
+                await receive(frame, from: from)
+            case .unreachable(let address):
+                // The phone's gone (asleep, out of reach): nothing it asked for has anyone to go to.
+                for session in sessions.values where session.key.address == address { end(session, notify: false) }
+            default:
+                continue
+            }
         }
         if self.relay === relay {
             self.relay = nil

@@ -47,7 +47,8 @@ routes = [{"path": p, "allowed": a} for p, a in [
     ("api/fs/list", True), ("api/fs/list?path=Sources", True), ("api/fs/find?query=main", True),
     ("api/fs/read/Sources/main.swift", True), ("api/fs/read", False), ("api/fs/write/x", False), ("api/fs/read/../../etc/hosts", False),
     ("api/fs/list?path=%2E%2E", False), ("api/fs/list?path=..%2F", False), ("api/fs/read/%2e%2e%2fsecret", False),
-    ("api/session/%2E%2E/credential", False), ("api/fs/read/bad%E0%A4%A", False),
+    ("api/session/%2E%2E/credential", False), ("api/session/%2e%2e/credential", False), ("api/session%2f..%2fcredential", False),
+    ("api/fs/read/..%5c..%5csecret", False), ("api/fs/read/a%5cb", False), ("api/fs/read/bad%E0%A4%A", False),
     ("api/sessions", False), ("api/eventual", False), ("api/session/../credential", False), ("kuvo/info", False), ("", False),
 ]]
 

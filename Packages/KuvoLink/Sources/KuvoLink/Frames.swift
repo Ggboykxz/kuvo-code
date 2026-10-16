@@ -165,7 +165,9 @@ public struct LinkMessage: Equatable, Sendable {
         var pieces: [LinkMessage] = []
         var rest = body[...]
         repeat {
-            let room = room(for: head) - 8 // the head grows by `"end":true` at most
+            // The head grows by `"end":true` at most. A head too big to leave room makes a message
+            // too long, which sealing turns away, rather than one byte at a time forever.
+            let room = max(room(for: head) - 8, 1024)
             pieces.append(LinkMessage(head, body: Data(rest.prefix(room))))
             rest = rest.dropFirst(room)
             head = Head(t: .data, id: head.id, end: false)

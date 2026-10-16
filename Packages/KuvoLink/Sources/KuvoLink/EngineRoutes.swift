@@ -9,7 +9,7 @@ public enum EngineRoutes {
     public static func allows(_ path: String) -> Bool {
         // No way out of the project, written plainly or percent-encoded ("%2E%2E"): the engine
         // decodes it, and lists a folder above the project if asked.
-        guard let decoded = path.removingPercentEncoding, !decoded.contains(".."), !path.contains("..") else { return false }
+        guard let decoded = path.removingPercentEncoding, !decoded.contains(".."), !decoded.contains("\\"), !path.contains("..") else { return false }
         return path.prefixMatch(of: #/api/session(/|\?|$)/#) != nil
             || path.prefixMatch(of: #/api/experimental/session/[^/]+/wait(\?|$)/#) != nil
             || path.prefixMatch(of: #/api/event(\?|$)/#) != nil
@@ -48,13 +48,15 @@ public enum EngineRoutes {
                     var headers: [String: String] = [:]
                     for name in responseHeaders { if let value = http.value(forHTTPHeaderField: name) { headers[name] = value } }
                     continuation.yield(.head(status: http.statusCode, headers: headers))
-                    // In pieces: at each line's end, so an event goes as soon as it's whole, or
-                    // every 32 KB of a long body.
+                    // In pieces: at each event's end (a blank line), so an event goes as soon as
+                    // it's whole and each costs the relay one message, or every 32 KB of a long body.
                     var piece = Data()
                     piece.reserveCapacity(32 * 1024)
+                    var previous: UInt8 = 0
                     for try await byte in bytes {
                         piece.append(byte)
-                        if byte == UInt8(ascii: "\n") || piece.count >= 32 * 1024 {
+                        defer { previous = byte }
+                        if (byte == UInt8(ascii: "\n") && previous == UInt8(ascii: "\n")) || piece.count >= 32 * 1024 {
                             continuation.yield(.body(piece))
                             piece.removeAll(keepingCapacity: true)
                         }

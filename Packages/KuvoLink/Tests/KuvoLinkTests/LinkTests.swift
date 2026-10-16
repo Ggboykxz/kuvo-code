@@ -197,6 +197,34 @@ private func collect(_ stream: LinkResponse) async throws -> (status: Int, heade
         #expect(try await collect(client.send(LinkRequest(path: "api/info"), to: paired)).status == 200)
     }
 
+    @Test func aStreamStopsOnTheHostWhenThePhoneIsGone() async throws {
+        let relay = MemoryRelay()
+        let stopped = AsyncStream.makeStream(of: Void.self)
+        let host = TestHost(relay: relay) { request, phone in
+            guard request.path == "api/event" else { return echo(request, phone) }
+            return AsyncThrowingStream { continuation in
+                let task = Task {
+                    continuation.yield(.head(status: 200, headers: ["content-type": "text/event-stream"]))
+                    while !Task.isCancelled {
+                        continuation.yield(.body(Data("data: {}\n\n".utf8)))
+                        try? await Task.sleep(for: .milliseconds(5))
+                    }
+                    stopped.continuation.yield()
+                }
+                continuation.onTermination = { _ in task.cancel() }
+            }
+        }
+        let client = phone(on: relay)
+        let paired = try await client.pair(host.link)
+        // The phone goes away mid-stream without a word, as one put to sleep does.
+        let reading = Task { for try await _ in client.send(LinkRequest(path: "api/event"), to: paired) {} }
+        try await Task.sleep(for: .milliseconds(50))
+        await client.dropRelayForTesting()
+        reading.cancel()
+        var iterator = stopped.stream.makeAsyncIterator()
+        _ = await iterator.next()
+    }
+
     @Test func aHostThatIsNotConnectedIsOffline() async throws {
         let relay = MemoryRelay()
         let client = phone(on: relay)
