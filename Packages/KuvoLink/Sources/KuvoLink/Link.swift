@@ -19,6 +19,8 @@ public enum LinkError: Error, Equatable, LocalizedError {
     case relayUnavailable
     case unsupportedVersion
     case timedOut
+    /// The host wouldn't open a socket there.
+    case notAvailable
 
     public var errorDescription: String? {
         switch self {
@@ -28,6 +30,7 @@ public enum LinkError: Error, Equatable, LocalizedError {
         case .relayUnavailable: "Couldn’t reach the relay."
         case .unsupportedVersion: "It runs a version this app doesn’t know. Update both."
         case .timedOut: "It didn’t answer."
+        case .notAvailable: "It couldn’t open that."
         }
     }
 }
@@ -62,6 +65,35 @@ public struct LinkRequest: Sendable, Equatable {
         self.headers = headers
         self.body = body
     }
+}
+
+extension LinkRequest {
+    /// A request that opens a socket on the host's engine (PROTOCOL.md, "Sockets").
+    public static func socket(_ path: String, headers: [String: String] = [:]) -> LinkRequest {
+        LinkRequest(path: path, headers: headers.merging(["upgrade": "websocket"]) { $1 })
+    }
+
+    public var isSocket: Bool { headers["upgrade"]?.lowercased() == "websocket" }
+}
+
+/// What comes over a socket: that it's open, then its messages.
+public enum LinkSocketEvent: Sendable, Equatable {
+    case open
+    case text(Data)
+    case binary(Data)
+}
+
+/// A socket on a host's engine, through the link: what comes from it, and a way to send it text.
+/// It closes when you close it, stop reading, or the host or engine ends it.
+public struct LinkSocket: Sendable {
+    public let events: AsyncThrowingStream<LinkSocketEvent, Error>
+    let write: @Sendable (Data) async throws -> Void
+    let stop: @Sendable () -> Void
+
+    /// Sends one text message, once it's open.
+    public func send(_ text: Data) async throws { try await write(text) }
+
+    public func close() { stop() }
 }
 
 /// A response, as it arrives: its status and headers once, then its body in pieces.
@@ -107,6 +139,7 @@ public actor LinkClient {
         var waiting: [CheckedContinuation<Void, Error>] = []
         var nextID = 1
         var streams: [Int: AsyncThrowingStream<LinkResponsePart, Error>.Continuation] = [:]
+        var sockets: [Int: AsyncThrowingStream<LinkSocketEvent, Error>.Continuation] = [:]
 
         init(host: PairedHost) { self.host = host }
     }
@@ -150,6 +183,22 @@ public actor LinkClient {
             }
         }
         return LinkResponse(stream: stream, stop: stop)
+    }
+
+    /// Opens a socket on `host`'s engine (`api/pty/<id>/connect`, a terminal).
+    public nonisolated func socket(_ request: LinkRequest, to host: PairedHost) -> LinkSocket {
+        let request = LinkRequest.socket(request.path, headers: request.headers)
+        let ticket = Ticket()
+        let stop: @Sendable () -> Void = { Task { await self.cancel(ticket, on: host) } }
+        let events = AsyncThrowingStream<LinkSocketEvent, Error> { continuation in
+            let task = Task { await self.start(request, to: host, ticket: ticket, for: .socket(continuation)) }
+            continuation.onTermination = { termination in
+                guard case .cancelled = termination else { return }
+                task.cancel()
+                stop()
+            }
+        }
+        return LinkSocket(events: events, write: { text in try await self.write(text, ticket: ticket, on: host) }, stop: stop)
     }
 
     #if DEBUG
@@ -212,11 +261,31 @@ public actor LinkClient {
         session.waiting = []
         for stream in session.streams.values { stream.finish(throwing: error) }
         session.streams = [:]
+        for socket in session.sockets.values { socket.finish(throwing: error) }
+        session.sockets = [:]
         if session.transport != nil { relay?.send(.send(to: address, payload: LinkFrame(.close, session: session.id).data)) }
         session.transport = nil
     }
 
     private func start(_ request: LinkRequest, to host: PairedHost, ticket: Ticket, continuation: AsyncThrowingStream<LinkResponsePart, Error>.Continuation) async {
+        await start(request, to: host, ticket: ticket, for: .response(continuation))
+    }
+
+    /// Who hears a request's answer.
+    private enum Listener: Sendable {
+        case response(AsyncThrowingStream<LinkResponsePart, Error>.Continuation)
+        case socket(AsyncThrowingStream<LinkSocketEvent, Error>.Continuation)
+
+        func failed(_ error: Error) {
+            switch self {
+            case .response(let continuation): continuation.finish(throwing: error)
+            case .socket(let continuation): continuation.finish(throwing: error)
+            }
+        }
+    }
+
+    /// Sends `request`, once there's a session, with who hears its answer set up first.
+    private func start(_ request: LinkRequest, to host: PairedHost, ticket: Ticket, for listener: Listener) async {
         do {
             try await open(host, pairing: nil)
             guard let session = sessions[host.linkAddress], session.transport != nil else { throw LinkError.closed }
@@ -224,21 +293,35 @@ public actor LinkClient {
             let id = session.nextID
             session.nextID += 1
             ticket.set(id: id, session: session.id)
-            session.streams[id] = continuation
+            switch listener {
+            case .response(let continuation): session.streams[id] = continuation
+            case .socket(let continuation): session.sockets[id] = continuation
+            }
             let head = LinkMessage.Head(t: .req, id: id, m: request.method, p: request.path, h: request.headers)
             for piece in LinkMessage.pieces(head, body: request.body, end: true) {
                 try seal(piece, in: session)
             }
         } catch {
-            continuation.finish(throwing: error)
+            listener.failed(error)
         }
     }
 
     private func cancel(_ ticket: Ticket, on host: PairedHost) {
-        guard let (id, sessionID) = ticket.value, let session = sessions[host.linkAddress], session.id == sessionID,
-              session.streams.removeValue(forKey: id) != nil
-        else { return }
+        guard let (id, sessionID) = ticket.value, let session = sessions[host.linkAddress], session.id == sessionID else { return }
+        let socket = session.sockets.removeValue(forKey: id)
+        guard session.streams.removeValue(forKey: id) != nil || socket != nil else { return }
+        socket?.finish()
         try? seal(LinkMessage(.init(t: .cancel, id: id)), in: session)
+    }
+
+    /// One text message on an open socket.
+    private func write(_ text: Data, ticket: Ticket, on host: PairedHost) throws {
+        guard let (id, sessionID) = ticket.value, let session = sessions[host.linkAddress], session.id == sessionID,
+              session.sockets[id] != nil
+        else { throw LinkError.closed }
+        for piece in LinkMessage.pieces(.init(t: .data, id: id), body: text, end: false) {
+            try seal(piece, in: session)
+        }
     }
 
     private func seal(_ message: LinkMessage, in session: Session) throws {
@@ -323,6 +406,19 @@ public actor LinkClient {
         let head = message.head
         switch head.t {
         case .res, .data:
+            if let id = head.id, let socket = session.sockets[id] {
+                if head.t == .res, head.s != 101 {
+                    session.sockets[id] = nil
+                    return socket.finish(throwing: LinkError.notAvailable)
+                }
+                if head.t == .res { socket.yield(.open) }
+                if !message.body.isEmpty { socket.yield(head.h?["type"] == "binary" ? .binary(message.body) : .text(message.body)) }
+                if head.end == true {
+                    session.sockets[id] = nil
+                    socket.finish()
+                }
+                return
+            }
             guard let id = head.id, let stream = session.streams[id] else { return }
             if head.t == .res { stream.yield(.head(status: head.s ?? 502, headers: head.h ?? [:])) }
             if !message.body.isEmpty { stream.yield(.body(message.body)) }
@@ -331,8 +427,9 @@ public actor LinkClient {
                 stream.finish()
             }
         case .cancel:
-            guard let id = head.id, let stream = session.streams.removeValue(forKey: id) else { return }
-            stream.finish(throwing: LinkError.closed)
+            guard let id = head.id else { return }
+            session.streams.removeValue(forKey: id)?.finish(throwing: LinkError.closed)
+            session.sockets.removeValue(forKey: id)?.finish(throwing: LinkError.closed)
         case .ping:
             try? seal(LinkMessage(.init(t: .pong)), in: session)
         case .req, .pong:

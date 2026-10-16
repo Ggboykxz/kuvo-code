@@ -296,6 +296,80 @@
     {
       "path": "",
       "allowed": false
+    },
+    {
+      "path": "api/pty",
+      "allowed": true
+    },
+    {
+      "path": "api/pty?location[directory]=x",
+      "allowed": true
+    },
+    {
+      "path": "api/pty/pty_1",
+      "allowed": true
+    },
+    {
+      "path": "api/pty/pty_1/connect-token",
+      "allowed": true
+    },
+    {
+      "path": "api/ptys",
+      "allowed": false
+    },
+    {
+      "path": "api/pty/%2e%2e/x",
+      "allowed": false
+    },
+    {
+      "path": "api/experimental/persistent-pty/pty_1",
+      "allowed": false
+    }
+  ],
+  "sockets": [
+    {
+      "path": "api/pty/pty_1/connect",
+      "allowed": true
+    },
+    {
+      "path": "api/pty/pty_1/connect?cursor=0",
+      "allowed": true
+    },
+    {
+      "path": "api/pty/pty_1",
+      "allowed": false
+    },
+    {
+      "path": "api/pty",
+      "allowed": false
+    },
+    {
+      "path": "api/event",
+      "allowed": false
+    },
+    {
+      "path": "api/pty/pty_1/connect/x",
+      "allowed": false
+    },
+    {
+      "path": "api/pty/a/b/connect",
+      "allowed": false
+    },
+    {
+      "path": "api/pty/%2e%2e/connect",
+      "allowed": false
+    },
+    {
+      "path": "api/pty/..%5cx/connect",
+      "allowed": false
+    },
+    {
+      "path": "api/experimental/persistent-pty/pty_1/connect",
+      "allowed": false
+    },
+    {
+      "path": "api/session/ses_1/connect",
+      "allowed": false
     }
   ]
 }

@@ -243,6 +243,9 @@ final class PhoneLink {
                     continuation.finish()
                 }
             }
+        } connect: { request, _, input in
+            // Terminals: the engine's, in a project's folder.
+            EngineRoutes.connect(request, to: base, password: password, input: input)
         }
     }
 

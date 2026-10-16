@@ -20,7 +20,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 // Goes up with every change, so `setup` replaces a running bridge that's older.
-export const BRIDGE_VERSION = "0.3.0";
+export const BRIDGE_VERSION = "0.4.0";
 const K = process.env.KUVO_HOME || path.join(os.homedir(), ".kuvo-code");
 const RUN = path.join(K, "run");
 export const LINK_FILE = path.join(RUN, "link.json");
@@ -301,9 +301,11 @@ export function pieces(head, body, end) {
 
 export class LinkHost {
   // authorize(key, hello) → whether to let the phone in; handle(request, phone, signal) → an
-  // async iterable of { head: { status, headers } } and { body }; send(bytes) → to the relay.
-  constructor({ key, hello, authorize, handle, send }) {
-    Object.assign(this, { key, hello, authorize, handle, send });
+  // async iterable of { head: { status, headers } } and { body }; connect(request, phone,
+  // { open, text, binary, end }) → a socket's { send, close } (PROTOCOL.md, "Sockets");
+  // send(bytes) → to the relay.
+  constructor({ key, hello, authorize, handle, connect, send }) {
+    Object.assign(this, { key, hello, authorize, handle, connect, send });
     this.sessions = new Map();
   }
 
@@ -370,7 +372,7 @@ export class LinkHost {
     // One session per phone: a new one replaces what's left of the last.
     for (const old of this.sessions.values()) if (old.from.equals(from)) this.end(old, false);
     const phone = { key: responder.rs, name: String(hello.name ?? ""), address: from };
-    this.sessions.set(id, { id, from, number, phone, transport, incoming: new Map(), running: new Map() });
+    this.sessions.set(id, { id, from, number, phone, transport, incoming: new Map(), running: new Map(), sockets: new Map() });
     this.send(relaySend(from, frame(Frame.handshake2, number, message)));
   }
 
@@ -378,11 +380,21 @@ export class LinkHost {
     switch (head.t) {
       case "req": {
         const request = { method: head.m ?? "GET", path: head.p ?? "", headers: head.h ?? {}, body };
-        if (head.end === false) session.incoming.set(head.id, request);
+        if (String(request.headers.upgrade ?? "").toLowerCase() === "websocket") this.open(session, head.id, request);
+        else if (head.end === false) session.incoming.set(head.id, request);
         else this.run(session, head.id, request);
         return;
       }
       case "data": {
+        const socket = session.sockets.get(head.id);
+        if (socket) {
+          if (body.length) socket.handle?.send(body);
+          if (head.end === true) {
+            session.sockets.delete(head.id);
+            socket.handle?.close();
+          }
+          return;
+        }
         const request = session.incoming.get(head.id);
         if (!request) return;
         request.body = Buffer.concat([request.body, body]);
@@ -396,6 +408,8 @@ export class LinkHost {
         session.running.get(head.id)?.abort();
         session.running.delete(head.id);
         session.incoming.delete(head.id);
+        session.sockets.get(head.id)?.handle?.close();
+        session.sockets.delete(head.id);
         return;
       case "ping":
         return this.seal(session, encodeMessage({ t: "pong" }));
@@ -435,6 +449,35 @@ export class LinkHost {
     })();
   }
 
+  // A socket: open once the engine's is, then messages both ways until either side ends it.
+  open(session, id, request) {
+    const socket = { handle: null, opened: false };
+    session.sockets.set(id, socket);
+    const live = () => this.sessions.get(session.id) === session && session.sockets.get(id) === socket;
+    const reply = (head, body, end) => {
+      if (!live()) return;
+      for (const piece of pieces(head, body, end)) this.seal(session, piece);
+    };
+    const end = error => {
+      if (!live()) return;
+      if (socket.opened) reply({ t: "data", id }, EMPTY, true);
+      else reply({ t: "res", id, s: 502, h: { "content-type": "text/plain" } }, Buffer.from(String(error?.message ?? "It closed.")), true);
+      session.sockets.delete(id);
+    };
+    if (!this.connect) return end(new Error("Sockets aren't available here."));
+    socket.handle = this.connect(request, session.phone, {
+      open: () => {
+        socket.opened = true;
+        reply({ t: "res", id, s: 101 }, EMPTY, false);
+      },
+      text: data => reply({ t: "data", id }, data, false),
+      // Binary messages are small (the engine's notes on a terminal); one too long to go whole
+      // doesn't go.
+      binary: data => { if (data.length <= 60_000) reply({ t: "data", id, h: { type: "binary" } }, data, false); },
+      end,
+    });
+  }
+
   seal(session, plaintext) {
     this.send(relaySend(session.from, frame(Frame.transport, session.number, session.transport.seal(plaintext))));
   }
@@ -444,6 +487,8 @@ export class LinkHost {
     this.sessions.delete(session.id);
     for (const controller of session.running.values()) controller.abort();
     session.running.clear();
+    for (const socket of session.sockets.values()) socket.handle?.close();
+    session.sockets.clear();
     if (notify) this.send(relaySend(session.from, frame(Frame.close, session.number)));
   }
 }
@@ -460,7 +505,10 @@ const ALLOWED = [
   /^api\/(info|agent|command|model|provider|project|location|skill|vcs|worktree|permission|form)(\/|\?|$)/,
   /^api\/fs\/(list|find)(\?|$)/,
   /^api\/fs\/read\//,
+  /^api\/pty(\/|\?|$)/,
 ];
+// The sockets a phone may open: a terminal's.
+const SOCKETS = [/^api\/pty\/[^/?]+\/connect(\?|$)/];
 const REQUEST_HEADERS = ["content-type", "accept", "x-opencode-directory", "last-event-id"];
 const RESPONSE_HEADERS = ["content-type", "cache-control"];
 
@@ -475,6 +523,7 @@ const leavesProject = path => {
   }
 };
 export const allowed = path => !leavesProject(path) && ALLOWED.some(pattern => pattern.test(path));
+export const socketAllowed = path => !leavesProject(path) && SOCKETS.some(pattern => pattern.test(path));
 
 const readEngineFile = () => JSON.parse(fs.readFileSync(ENGINE_FILE, "utf8"));
 
@@ -524,6 +573,46 @@ export function engineHandler(readEngine = readEngineFile, info = {}) {
     } finally {
       reader.cancel().catch(() => {});
     }
+  };
+}
+
+// What LinkHost runs to open a socket: the engine's WebSocket at that path, with its password.
+export function engineConnect(readEngine = readEngineFile) {
+  return (request, phone, events) => {
+    let ended = false;
+    const end = error => {
+      if (ended) return;
+      ended = true;
+      events.end(error);
+    };
+    const refuse = words => {
+      queueMicrotask(() => end(new Error(words)));
+      return { send() {}, close() {} };
+    };
+    if (!socketAllowed(request.path)) return refuse("That isn't available over the link.");
+    let engine;
+    try {
+      engine = readEngine();
+    } catch {
+      return refuse("The engine isn't running.");
+    }
+    touchAttached();
+    const headers = { authorization: `Basic ${Buffer.from(`opencode:${engine.password}`).toString("base64")}` };
+    const directory = Object.entries(request.headers ?? {}).find(([name]) => name.toLowerCase() === "x-opencode-directory")?.[1];
+    if (directory) headers["x-opencode-directory"] = directory;
+    const socket = new WebSocket(`ws://127.0.0.1:${engine.port}/${request.path}`, { headers });
+    socket.binaryType = "arraybuffer";
+    socket.onopen = () => events.open();
+    socket.onmessage = event => typeof event.data === "string" ? events.text(Buffer.from(event.data)) : events.binary(Buffer.from(event.data));
+    socket.onerror = () => end(new Error("The engine closed it."));
+    socket.onclose = () => end();
+    return {
+      send: data => { if (socket.readyState === 1) socket.send(data.toString("utf8")); },
+      close: () => {
+        ended = true;
+        try { socket.close(); } catch {}
+      },
+    };
   };
 }
 
@@ -676,6 +765,7 @@ async function run() {
       hello: { v: 1, kind: "machine", name: link.name || os.hostname(), app: BRIDGE_VERSION, engine: engine.version ?? null },
       authorize: authorizePhone,
       handle: engineHandler(readEngineFile, { name: link.name || os.hostname() }),
+      connect: engineConnect(readEngineFile),
       send: () => {},
     });
     current = host;

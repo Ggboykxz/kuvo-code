@@ -63,7 +63,7 @@ private struct TestHost {
     let server: LinkServer
     let link: PairingLink
 
-    init(relay: MemoryRelay, handle: @escaping LinkServer.Handle) {
+    init(relay: MemoryRelay, handle: @escaping LinkServer.Handle, connect: LinkServer.Connect? = nil) {
         let paired = Paired()
         let token = self.token
         server = LinkServer(key: key, hello: HostHello(kind: .mac, name: "Test Mac", app: "0.0.1", engine: "2.0.30"), authorize: { key, hello in
@@ -71,7 +71,7 @@ private struct TestHost {
             guard hello.pair == token.base64URL else { return false }
             paired.insert(key)
             return true
-        }, handle: handle)
+        }, handle: handle, connect: connect)
         link = PairingLink(relay: URL(string: "wss://relay.test")!, host: secret.address, key: key.publicBytes, token: token, name: "Test Mac")
         let connection = relay.connect(secret)
         Task { [server] in await server.serve(connection) }
@@ -223,6 +223,51 @@ private func collect(_ stream: LinkResponse) async throws -> (status: Int, heade
         reading.cancel()
         var iterator = stopped.stream.makeAsyncIterator()
         _ = await iterator.next()
+    }
+
+    @Test func socketsCarryMessagesBothWaysUntilClosed() async throws {
+        let relay = MemoryRelay()
+        let closed = AsyncStream.makeStream(of: Void.self)
+        let note = Data([0]) + Data(#"{"cursor":0}"#.utf8)
+        // A terminal that answers each line it's sent, after a note of where its output starts.
+        let host = TestHost(relay: relay, handle: echo) { request, _, input in
+            AsyncThrowingStream { continuation in
+                guard request.path == "api/pty/pty_1/connect" else { return continuation.finish(throwing: URLError(.badURL)) }
+                continuation.yield(.open)
+                continuation.yield(.binary(note))
+                let task = Task {
+                    for await text in input { continuation.yield(.text(Data("echo:".utf8) + text)) }
+                    closed.continuation.yield()
+                    continuation.finish()
+                }
+                continuation.onTermination = { _ in task.cancel() }
+            }
+        }
+        let client = phone(on: relay)
+        let paired = try await client.pair(host.link)
+        let socket = client.socket(.socket("api/pty/pty_1/connect"), to: paired)
+        var events = socket.events.makeAsyncIterator()
+        #expect(try await events.next() == .open)
+        #expect(try await events.next() == .binary(note))
+        try await socket.send(Data("ls\r".utf8))
+        #expect(try await events.next() == .text(Data("echo:ls\r".utf8)))
+        // Closing it ends it on the host.
+        socket.close()
+        var stops = closed.stream.makeAsyncIterator()
+        _ = await stops.next()
+
+        // One the host won't open fails, and the session carries on.
+        let refused = client.socket(.socket("api/pty/pty_2/connect"), to: paired)
+        await #expect(throws: LinkError.notAvailable) { for try await _ in refused.events {} }
+        #expect(try await collect(client.send(LinkRequest(path: "api/info"), to: paired)).status == 200)
+    }
+
+    @Test func aHostWithoutSocketsTurnsThemAway() async throws {
+        let relay = MemoryRelay()
+        let host = TestHost(relay: relay, handle: echo)
+        let client = phone(on: relay)
+        let paired = try await client.pair(host.link)
+        await #expect(throws: LinkError.notAvailable) { for try await _ in client.socket(.socket("api/pty/pty_1/connect"), to: paired).events {} }
     }
 
     @Test func aHostThatIsNotConnectedIsOffline() async throws {

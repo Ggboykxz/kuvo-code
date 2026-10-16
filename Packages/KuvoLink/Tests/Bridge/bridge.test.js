@@ -69,6 +69,7 @@ test("addresses, relay messages, frames and messages match the vectors", () => {
     assert.deepEqual(link.readFrame(hex(f.bytes)), { kind: f.kind, session: f.session, body: hex(f.body) });
   }
   for (const r of v.routes) assert.equal(link.allowed(r.path), r.allowed, r.path);
+  for (const r of v.sockets) assert.equal(link.socketAllowed(r.path), r.allowed, r.path);
   for (const m of v.messages) {
     assert.equal(link.encodeMessage(m.head, hex(m.body)).toString("hex"), m.bytes);
     assert.deepEqual(link.decodeMessage(hex(m.bytes)), { head: m.head, body: hex(m.body) });
@@ -221,6 +222,74 @@ test("requests go to the engine with its password; other routes don't", async t 
   phone.send({ t: "cancel", id: 9 });
   for (let i = 0; i < 50 && !engine.asked.some(a => a.closed === "/api/event"); i++) await new Promise(r => setTimeout(r, 20));
   assert.ok(engine.asked.some(a => a.closed === "/api/event"));
+});
+
+// A terminal on a free port as the engine serves one: a WebSocket that first says where its
+// output starts, then answers each line. Short frames only, which is all this needs.
+async function fakeTerminal() {
+  const asked = [];
+  const server = http.createServer();
+  server.on("upgrade", (request, socket) => {
+    asked.push({ url: request.url, auth: request.headers.authorization, directory: request.headers["x-opencode-directory"] });
+    const accept = crypto.createHash("sha1").update(request.headers["sec-websocket-key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
+    socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
+    const send = (opcode, payload) => socket.write(Buffer.concat([Buffer.from([0x80 | opcode, payload.length]), payload]));
+    send(2, Buffer.concat([Buffer.from([0]), Buffer.from('{"cursor":0}')]));
+    let buffered = Buffer.alloc(0);
+    socket.on("data", chunk => {
+      buffered = Buffer.concat([buffered, chunk]);
+      while (buffered.length >= 6) {
+        const opcode = buffered[0] & 0x0f;
+        const length = buffered[1] & 0x7f;
+        if (buffered.length < 6 + length) return;
+        const mask = buffered.subarray(2, 6);
+        const payload = Buffer.from(buffered.subarray(6, 6 + length).map((byte, i) => byte ^ mask[i % 4]));
+        buffered = buffered.subarray(6 + length);
+        if (opcode === 1) send(1, Buffer.concat([Buffer.from("echo:"), payload]));
+        if (opcode === 8) socket.end();
+      }
+    });
+    socket.on("close", () => asked.push({ closed: request.url }));
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  return { asked, port: server.address().port, close: () => { server.closeAllConnections(); server.close(); } };
+}
+
+test("a socket reaches the engine's terminal with its password, both ways, until the phone closes it", async t => {
+  const terminal = await fakeTerminal();
+  t.after(terminal.close);
+  const hostKey = link.newKey();
+  const engine = () => ({ pid: process.pid, port: terminal.port, password: "s3cret", version: "2.0.30" });
+  const host = new link.LinkHost({ key: hostKey, hello: { v: 1, kind: "machine", name: "m", app: "0" }, authorize: () => true, handle: link.engineHandler(engine), connect: link.engineConnect(engine) });
+  const phone = phoneFor(host, hostKey);
+  await phone.open({});
+
+  phone.send({ t: "req", id: 1, m: "GET", p: "api/pty/pty_1/connect?cursor=0", h: { upgrade: "websocket", "x-opencode-directory": "/home/me/p" } });
+  const opened = await phone.receive();
+  assert.deepEqual([opened.head.t, opened.head.s, opened.head.end], ["res", 101, false]);
+  const note = await phone.receive();
+  assert.equal(note.head.h.type, "binary");
+  assert.deepEqual(note.body, Buffer.concat([Buffer.from([0]), Buffer.from('{"cursor":0}')]));
+  const call = terminal.asked[0];
+  assert.equal(call.url, "/api/pty/pty_1/connect?cursor=0");
+  assert.equal(call.auth, `Basic ${Buffer.from("opencode:s3cret").toString("base64")}`);
+  assert.equal(call.directory, "/home/me/p");
+
+  phone.send({ t: "data", id: 1, end: false }, Buffer.from("ls\r"));
+  const answer = await phone.receive();
+  assert.equal(answer.head.t, "data");
+  assert.equal(answer.head.h, undefined);
+  assert.equal(answer.body.toString(), "echo:ls\r");
+
+  phone.send({ t: "cancel", id: 1 });
+  for (let i = 0; i < 50 && !terminal.asked.some(a => a.closed); i++) await new Promise(r => setTimeout(r, 20));
+  assert.ok(terminal.asked.some(a => a.closed));
+
+  // Anything but a terminal's socket is turned away, without reaching the engine.
+  phone.send({ t: "req", id: 2, m: "GET", p: "api/event", h: { upgrade: "websocket" } });
+  const refused = await phone.response();
+  assert.equal(refused.head.s, 502);
+  assert.equal(terminal.asked.length, 2);
 });
 
 test("a session the host doesn't know is closed, and tampering ends one", async () => {

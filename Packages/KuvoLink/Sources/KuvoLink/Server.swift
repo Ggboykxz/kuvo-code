@@ -13,11 +13,15 @@ public actor LinkServer {
     public typealias Authorize = @Sendable (_ key: Data, _ hello: PhoneHello) async -> Bool
     /// Answers a request, in pieces.
     public typealias Handle = @Sendable (LinkRequest, Phone) -> AsyncThrowingStream<LinkResponsePart, Error>
+    /// Opens a socket (PROTOCOL.md, "Sockets"): what the phone sends arrives on the input; what
+    /// comes back goes to the phone, `.open` first.
+    public typealias Connect = @Sendable (LinkRequest, Phone, AsyncStream<Data>) -> AsyncThrowingStream<LinkSocketEvent, Error>
 
     let key: LinkKey
     let hello: HostHello
     let authorize: Authorize
     let handle: Handle
+    let connect: Connect?
     private var relay: (any RelayTransport)?
     private var sessions: [SessionKey: Session] = [:]
 
@@ -32,6 +36,8 @@ public actor LinkServer {
         var transport: Transport
         var incoming: [Int: LinkRequest] = [:]
         var running: [Int: Task<Void, Never>] = [:]
+        /// Open sockets' input, by request.
+        var sockets: [Int: AsyncStream<Data>.Continuation] = [:]
 
         init(key: SessionKey, phone: Phone, transport: Transport) {
             self.key = key
@@ -40,11 +46,12 @@ public actor LinkServer {
         }
     }
 
-    public init(key: LinkKey, hello: HostHello, authorize: @escaping Authorize, handle: @escaping Handle) {
+    public init(key: LinkKey, hello: HostHello, authorize: @escaping Authorize, handle: @escaping Handle, connect: Connect? = nil) {
         self.key = key
         self.hello = hello
         self.authorize = authorize
         self.handle = handle
+        self.connect = connect
     }
 
     /// Serves over `relay` until it closes. Sessions on an earlier connection end.
@@ -112,8 +119,19 @@ public actor LinkServer {
         case .req:
             guard let id = head.id, let method = head.m, let path = head.p else { return }
             let request = LinkRequest(method: method, path: path, headers: head.h ?? [:], body: message.body)
-            if head.end == false { session.incoming[id] = request } else { run(request, id: id, in: session) }
+            if request.isSocket {
+                open(request, id: id, in: session)
+            } else if head.end == false {
+                session.incoming[id] = request
+            } else {
+                run(request, id: id, in: session)
+            }
         case .data:
+            if let id = head.id, let socket = session.sockets[id] {
+                if !message.body.isEmpty { socket.yield(message.body) }
+                if head.end == true { session.sockets.removeValue(forKey: id)?.finish() }
+                return
+            }
             guard let id = head.id, var request = session.incoming[id] else { return }
             request.body += message.body
             if head.end == true {
@@ -126,6 +144,7 @@ public actor LinkServer {
             guard let id = head.id else { return }
             session.running.removeValue(forKey: id)?.cancel()
             session.incoming[id] = nil
+            session.sockets.removeValue(forKey: id)?.finish()
         case .ping:
             seal(LinkMessage(.init(t: .pong)), in: session)
         case .res, .pong:
@@ -161,6 +180,45 @@ public actor LinkServer {
         }
     }
 
+    /// A socket: open once the engine's is, then messages both ways until either side ends it.
+    private func open(_ request: LinkRequest, id: Int, in session: Session) {
+        guard let connect else {
+            session.running[id] = Task {}
+            return reply(.init(t: .res, id: id, h: ["content-type": "text/plain"], s: 501), body: Data("Sockets aren’t available here.".utf8), id: id, end: true, in: session)
+        }
+        let (input, feed) = AsyncStream<Data>.makeStream(bufferingPolicy: .bufferingNewest(4096))
+        session.sockets[id] = feed
+        let events = connect(request, session.phone, input)
+        session.running[id] = Task {
+            var opened = false
+            do {
+                for try await event in events {
+                    switch event {
+                    case .open:
+                        opened = true
+                        self.reply(.init(t: .res, id: id, s: 101), body: Data(), id: id, end: false, in: session)
+                    case .text(let data):
+                        self.reply(.init(t: .data, id: id), body: data, id: id, end: false, in: session)
+                    case .binary(let data):
+                        // Binary messages are small (the engine's notes on a terminal); one too long to
+                        // go whole doesn't go.
+                        let head = LinkMessage.Head(t: .data, id: id, h: ["type": "binary"])
+                        guard data.count <= LinkMessage.room(for: head) - 16 else { continue }
+                        self.reply(head, body: data, id: id, end: false, in: session)
+                    }
+                }
+                self.reply(opened ? .init(t: .data, id: id) : .init(t: .res, id: id, s: 502), body: Data(), id: id, end: true, in: session)
+            } catch {
+                if opened {
+                    self.reply(.init(t: .data, id: id), body: Data(), id: id, end: true, in: session)
+                } else {
+                    self.reply(.init(t: .res, id: id, h: ["content-type": "text/plain"], s: 502), body: Data(String(describing: error).utf8), id: id, end: true, in: session)
+                }
+            }
+            session.sockets.removeValue(forKey: id)?.finish()
+        }
+    }
+
     private func reply(_ head: LinkMessage.Head, body: Data, id: Int, end: Bool?, in session: Session) {
         // A cancelled request says nothing more.
         guard session.running[id] != nil, sessions[session.key] === session else { return }
@@ -182,6 +240,8 @@ public actor LinkServer {
         sessions[session.key] = nil
         for task in session.running.values { task.cancel() }
         session.running = [:]
+        for socket in session.sockets.values { socket.finish() }
+        session.sockets = [:]
         if notify { send(.close, key: session.key) }
     }
 

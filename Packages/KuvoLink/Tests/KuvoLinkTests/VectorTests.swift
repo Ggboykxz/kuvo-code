@@ -52,6 +52,12 @@ import Testing
         }
     }
 
+    @Test func sockets() {
+        for item in list("sockets") {
+            #expect(EngineRoutes.allowsSocket(item["path"] as! String) == item["allowed"] as! Bool, "\(item["path"]!)")
+        }
+    }
+
     @Test func messages() throws {
         for item in list("messages") {
             let head = try JSONDecoder().decode(LinkMessage.Head.self, from: JSONSerialization.data(withJSONObject: item["head"]!))

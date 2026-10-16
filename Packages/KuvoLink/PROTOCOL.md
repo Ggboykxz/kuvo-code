@@ -132,14 +132,24 @@ like HTTP:
 itself. A host serves:
 
 - `api/…`: passed to its engine, if the path is on the host's list (sessions, messages,
-  prompts, permissions, questions, events, providers, agents, commands). Never accounts or
-  keys.
+  prompts, permissions, questions, events, providers, agents, commands, a project's files,
+  terminals). Never accounts or keys.
 - `kuvo/info`: what the host is and runs.
 - On a Mac, `kuvo/hosts`: the machines this phone may reach directly, with their addresses
   and static keys, so pairing once with the Mac reaches them all.
 - On a Mac, `kuvo/bots`: your bots by their session, wherever they live, with their name,
   look and job, and what only the Mac knows: paused, the next wake-up, how many things each
   watches.
+
+### Sockets
+
+A request with `h.upgrade = "websocket"` opens a WebSocket on the host's engine; today only a
+terminal's (`api/pty/<id>/connect`). Its body is empty. The host answers `res` with `s: 101`
+once the engine's socket is open, or another status and `end: true` if it won't open. Then
+each `data` message for that `id`, either way, is one message on the socket: text, or binary
+if `h.type = "binary"`. Text from the engine too long for one message goes in several;
+binary that long doesn't go. The phone closes it with `cancel` (or `data` with `end: true`);
+when the engine closes it, the host sends `data` with `end: true`.
 
 ## Pairing
 

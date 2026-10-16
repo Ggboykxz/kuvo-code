@@ -65,6 +65,73 @@ struct LiveLinkTests {
         #expect(connected)
     }
 
+    @Test func opensATerminal() async throws {
+        let session = try await session()
+        var create = URLRequest(url: try await url("api/pty"))
+        create.httpMethod = "POST"
+        create.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        create.setValue(Self.project, forHTTPHeaderField: "x-opencode-directory")
+        create.httpBody = try JSONSerialization.data(withJSONObject: ["title": "Live test"])
+        let (created, _) = try await session.data(for: create)
+        let id = try #require(((try JSONSerialization.jsonObject(with: created) as? [String: Any])?["data"] as? [String: Any])?["id"] as? String)
+        var failure: Error?
+        do {
+            try await Self.answers(Self.client.socket(.socket("api/pty/\(id)/connect?cursor=0", headers: ["x-opencode-directory": Self.project]), to: try await paired()))
+        } catch {
+            failure = error
+        }
+        var remove = URLRequest(url: try await url("api/pty/\(id)"))
+        remove.httpMethod = "DELETE"
+        remove.setValue(Self.project, forHTTPHeaderField: "x-opencode-directory")
+        _ = try await session.data(for: remove)
+        if let failure { throw failure }
+    }
+
+    /// The Mac's side of a socket (`EngineRoutes.connect`), straight to the engine's terminal.
+    @Test(.enabled(if: environment["KUVO_TEST_ENGINE_FILE"] != nil))
+    func theMacReachesATerminal() async throws {
+        struct Engine: Decodable { var port: Int; var password: String }
+        let engine = try JSONDecoder().decode(Engine.self, from: Data(contentsOf: URL(filePath: Self.environment["KUVO_TEST_ENGINE_FILE"]!)))
+        let base = URL(string: "http://127.0.0.1:\(engine.port)/")!
+        let headers = ["x-opencode-directory": Self.project, "content-type": "application/json"]
+        var created = Data()
+        for try await part in EngineRoutes.forward(LinkRequest(method: "POST", path: "api/pty", headers: headers, body: Data(#"{"title":"Live test"}"#.utf8)), to: base, password: engine.password) {
+            if case .body(let data) = part { created += data }
+        }
+        let id = try #require(((try JSONSerialization.jsonObject(with: created) as? [String: Any])?["data"] as? [String: Any])?["id"] as? String)
+        let (input, feed) = AsyncStream<Data>.makeStream()
+        let events = EngineRoutes.connect(.socket("api/pty/\(id)/connect?cursor=0", headers: headers), to: base, password: engine.password, input: input)
+        var failure: Error?
+        do {
+            try await Self.answers(LinkSocket(events: events, write: { feed.yield($0) }, stop: { feed.finish() }))
+        } catch {
+            failure = error
+        }
+        for try await _ in EngineRoutes.forward(LinkRequest(method: "DELETE", path: "api/pty/\(id)", headers: headers), to: base, password: engine.password) {}
+        if let failure { throw failure }
+    }
+
+    /// A terminal's socket opens, and a command typed into it answers.
+    static func answers(_ socket: LinkSocket) async throws {
+        var output = ""
+        var typed = false
+        for try await event in socket.events {
+            switch event {
+            case .open:
+                continue
+            case .binary:
+                // Its note of where the output starts, then the shell's first prompt.
+                guard !typed else { continue }
+                typed = true
+                try await socket.send(Data("echo kuvo-$((40+2))\r".utf8))
+            case .text(let data):
+                output += String(decoding: data, as: UTF8.self)
+                if output.contains("kuvo-42\r\n") { return socket.close() }
+            }
+        }
+        Issue.record("The terminal ended without answering: \(output.suffix(300))")
+    }
+
     @Test func keepsAccountsAndSettingsOff() async throws {
         let session = try await session()
         for path in ["api/credential", "api/config", "api/integration"] {

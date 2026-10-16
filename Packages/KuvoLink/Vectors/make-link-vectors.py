@@ -50,6 +50,16 @@ routes = [{"path": p, "allowed": a} for p, a in [
     ("api/session/%2E%2E/credential", False), ("api/session/%2e%2e/credential", False), ("api/session%2f..%2fcredential", False),
     ("api/fs/read/..%5c..%5csecret", False), ("api/fs/read/a%5cb", False), ("api/fs/read/bad%E0%A4%A", False),
     ("api/sessions", False), ("api/eventual", False), ("api/session/../credential", False), ("kuvo/info", False), ("", False),
+    ("api/pty", True), ("api/pty?location[directory]=x", True), ("api/pty/pty_1", True), ("api/pty/pty_1/connect-token", True),
+    ("api/ptys", False), ("api/pty/%2e%2e/x", False), ("api/experimental/persistent-pty/pty_1", False),
 ]]
 
-json.dump({"addresses": addresses, "relay": relay, "frames": frames, "messages": messages, "routes": routes}, open("link.json", "w"), indent=2)
+# The sockets a phone may open (PROTOCOL.md, "Sockets"): a terminal's.
+sockets = [{"path": p, "allowed": a} for p, a in [
+    ("api/pty/pty_1/connect", True), ("api/pty/pty_1/connect?cursor=0", True),
+    ("api/pty/pty_1", False), ("api/pty", False), ("api/event", False), ("api/pty/pty_1/connect/x", False),
+    ("api/pty/a/b/connect", False), ("api/pty/%2e%2e/connect", False), ("api/pty/..%5cx/connect", False),
+    ("api/experimental/persistent-pty/pty_1/connect", False), ("api/session/ses_1/connect", False),
+]]
+
+json.dump({"addresses": addresses, "relay": relay, "frames": frames, "messages": messages, "routes": routes, "sockets": sockets}, open("link.json", "w"), indent=2)

@@ -3,23 +3,82 @@ import Foundation
 /// What a phone may ask an engine for, and passing it on: the Mac's side of what a machine's
 /// bridge does in `kuvo-link.js` (the two lists are checked against `Vectors/link.json`).
 public enum EngineRoutes {
-    /// Sessions and what's in them, live events, what the phone needs to show them, and a
-    /// project's files to read. Never accounts, keys or integrations, the engine's settings, MCP
-    /// servers or plugins.
+    /// Sessions and what's in them, live events, what the phone needs to show them, a project's
+    /// files to read, and terminals. Never accounts, keys or integrations, the engine's settings,
+    /// MCP servers or plugins.
     public static func allows(_ path: String) -> Bool {
-        // No way out of the project, written plainly or percent-encoded ("%2E%2E"): the engine
-        // decodes it, and lists a folder above the project if asked.
-        guard let decoded = path.removingPercentEncoding, !decoded.contains(".."), !decoded.contains("\\"), !path.contains("..") else { return false }
+        guard staysInProject(path) else { return false }
         return path.prefixMatch(of: #/api/session(/|\?|$)/#) != nil
             || path.prefixMatch(of: #/api/experimental/session/[^/]+/wait(\?|$)/#) != nil
             || path.prefixMatch(of: #/api/event(\?|$)/#) != nil
             || path.prefixMatch(of: #/api/(info|agent|command|model|provider|project|location|skill|vcs|worktree|permission|form)(/|\?|$)/#) != nil
             || path.prefixMatch(of: #/api/fs/(list|find)(\?|$)/#) != nil
             || path.prefixMatch(of: #/api/fs/read//#) != nil
+            || path.prefixMatch(of: #/api/pty(/|\?|$)/#) != nil
+    }
+
+    /// The sockets a phone may open: a terminal's.
+    public static func allowsSocket(_ path: String) -> Bool {
+        staysInProject(path) && path.prefixMatch(of: #/api/pty/[^/?]+/connect(\?|$)/#) != nil
+    }
+
+    /// No way out of the project, written plainly or percent-encoded ("%2E%2E"): the engine
+    /// decodes it, and lists a folder above the project if asked.
+    static func staysInProject(_ path: String) -> Bool {
+        guard let decoded = path.removingPercentEncoding else { return false }
+        return !decoded.contains("..") && !decoded.contains("\\") && !path.contains("..")
     }
 
     static let requestHeaders = ["content-type", "accept", "x-opencode-directory", "last-event-id"]
     static let responseHeaders = ["content-type", "cache-control"]
+
+    /// Opens the socket `request` names on the engine at `base` (its password added here): text
+    /// from `input` goes to it, and what it sends comes back, `.open` first.
+    public static func connect(_ request: LinkRequest, to base: URL, password: String?, input: AsyncStream<Data>) -> AsyncThrowingStream<LinkSocketEvent, Error> {
+        AsyncThrowingStream { continuation in
+            guard allowsSocket(request.path), let url = URL(string: request.path, relativeTo: base),
+                  var components = URLComponents(url: url.absoluteURL, resolvingAgainstBaseURL: false)
+            else { return continuation.finish(throwing: URLError(.badURL)) }
+            components.scheme = components.scheme == "https" ? "wss" : "ws"
+            guard let socketURL = components.url else { return continuation.finish(throwing: URLError(.badURL)) }
+            var outgoing = URLRequest(url: socketURL)
+            if let directory = request.headers["x-opencode-directory"] { outgoing.setValue(directory, forHTTPHeaderField: "x-opencode-directory") }
+            if let password { outgoing.setValue("Basic " + Data("opencode:\(password)".utf8).base64EncodedString(), forHTTPHeaderField: "Authorization") }
+            // A session of its own, to hear when the socket's open.
+            let watcher = SocketWatcher()
+            let session = URLSession(configuration: .ephemeral, delegate: watcher, delegateQueue: nil)
+            let socket = session.webSocketTask(with: outgoing)
+            socket.resume()
+            let reading = Task {
+                do {
+                    try await watcher.opened()
+                    continuation.yield(.open)
+                    while true {
+                        switch try await socket.receive() {
+                        case .string(let text): continuation.yield(.text(Data(text.utf8)))
+                        case .data(let data): continuation.yield(.binary(data))
+                        @unknown default: break
+                        }
+                    }
+                } catch {
+                    // Closed by the engine (the shell exited): the end, not a failure.
+                    if socket.closeCode != .invalid { continuation.finish() } else { continuation.finish(throwing: error) }
+                }
+            }
+            let writing = Task {
+                for await text in input {
+                    try? await socket.send(.string(String(decoding: text, as: UTF8.self)))
+                }
+                socket.cancel(with: .normalClosure, reason: nil)
+            }
+            continuation.onTermination = { _ in
+                reading.cancel()
+                writing.cancel()
+                socket.cancel(with: .goingAway, reason: nil)
+                session.finishTasksAndInvalidate()
+            }
+        }
+    }
 
     /// Passes `request` to the engine at `base` (its password added here), and its response back
     /// in pieces as they come: an event stream's events one by one.
@@ -69,5 +128,37 @@ public enum EngineRoutes {
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+}
+
+/// Says when a WebSocket task opens, or that it never will.
+private final class SocketWatcher: NSObject, URLSessionWebSocketDelegate, @unchecked Sendable {
+    private let lock = NSLock()
+    private var outcome: Result<Void, Error>?
+    private var waiting: CheckedContinuation<Void, Error>?
+
+    func opened() async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            lock.withLock {
+                if let outcome { continuation.resume(with: outcome) } else { waiting = continuation }
+            }
+        }
+    }
+
+    private func settle(_ result: Result<Void, Error>) {
+        lock.withLock {
+            guard outcome == nil else { return }
+            outcome = result
+            waiting?.resume(with: result)
+            waiting = nil
+        }
+    }
+
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
+        settle(.success(()))
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        settle(.failure(error ?? URLError(.networkConnectionLost)))
     }
 }
