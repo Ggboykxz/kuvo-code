@@ -234,6 +234,10 @@ struct TranscriptView: View {
                         // Something it made shows on its own, in the conversation's flow.
                         flushSteps(live: false)
                         rows.append(.widget(call))
+                    case .tool(let call) where call.name == "kuvo-browser_send_message":
+                        // So does what it wrote to another agent.
+                        flushSteps(live: false)
+                        rows.append(.sent(call))
                     case .reasoning, .tool:
                         if steps.isEmpty { stepsID = "steps-" + assistant.id + "#\(part)" }
                         steps.append(block)
@@ -376,6 +380,8 @@ enum Row: Identifiable, Hashable {
     case steps(String, [Message.Content], isLive: Bool)
     /// Something the agent made with show_widget, drawn in the conversation.
     case widget(Message.ToolCall)
+    /// What it wrote to another agent (send_message).
+    case sent(Message.ToolCall)
     /// `isLast`: the conversation ends here, so a failed run can be tried again.
     case turnEnd(Message.Idle, TurnStats, isLast: Bool)
     case notice(String, String, String)
@@ -401,7 +407,7 @@ enum Row: Identifiable, Hashable {
     /// Space above this row: steps of one reply sit close, a new message gets room.
     func spacing(after previous: Row) -> CGFloat {
         switch (previous, self) {
-        case (_, .widget), (.widget, _): 14
+        case (_, .widget), (.widget, _), (_, .sent), (.sent, _): 14
         case (.assistant, .assistant), (.assistant, .turnEnd), (.assistant, .working(_)),
              (.steps, .assistant), (.assistant, .steps), (.steps, .turnEnd), (.steps, .working(_)): 10
         case (_, .user), (_, .pending): 28
@@ -419,6 +425,7 @@ enum Row: Identifiable, Hashable {
         case .assistant(let m, _): m.id
         case .steps(let id, _, _): id
         case .widget(let call): call.id
+        case .sent(let call): call.id
         case .turnEnd(let m, _, _): m.id
         case .notice(let id, _, _): id
         case .shell(let m): m.id
@@ -492,6 +499,8 @@ private struct RowView: View, Equatable {
             StepsRow(blocks: blocks, isLive: isLive, directory: directory)
         case .widget(let call):
             WidgetCard(call: call, send: answerAgent)
+        case .sent(let call):
+            AgentSentRow(call: call)
         case .turnEnd(let idle, let stats, let isLast):
             TurnEndView(idle: idle, stats: stats, directory: directory, retry: isLast && !isOffline ? stats.message.map { message in { retry(message) } } : nil,
                         build: isLast && stats.agent == "plan" ? buildPlan : nil, reply: reply)
@@ -983,6 +992,75 @@ struct ErrorCard: View {
 }
 
 /// A bot woke itself up, as it planned: its note to itself, in place of a message from you.
+/// What this agent wrote to another (send_message): to whom, what, and its answer when it
+/// waited for one; with a way to that agent's conversation.
+private struct AgentSentRow: View {
+    let call: Message.ToolCall
+    @Environment(AppModel.self) private var app
+
+    private var input: JSONValue? {
+        switch call.state {
+        case .running(let input, _), .completed(let input, _, _), .failed(let input, _, _, _): input
+        case .streaming: nil
+        }
+    }
+
+    /// What the tool said back: the answer it waited for, or that it's sent.
+    private var said: String? {
+        guard case .completed(_, let output, _) = call.state else { return nil }
+        return output.compactMap { if case .text(let text) = $0 { text } else { nil } }.joined()
+    }
+
+    var body: some View {
+        let to = input?["to"]?.string ?? "another agent"
+        let address = AgentMail.shared.directory().first { $0.session == to || $0.name.caseInsensitiveCompare(to) == .orderedSame }
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: "paperplane.fill")
+                    .foregroundStyle(.tint)
+                    .frame(width: 16)
+                Text("To \(Text(address?.name ?? to).fontWeight(.semibold).foregroundStyle(.primary))")
+                    .foregroundStyle(.secondary)
+                if case .running = call.state, input?["wait"]?.bool == true {
+                    Spinner(size: 11)
+                    Text("Waiting for its answer")
+                        .foregroundStyle(.secondary)
+                }
+                if case .failed = call.state {
+                    Text("Didn't go")
+                        .foregroundStyle(.orange)
+                }
+                Spacer(minLength: 8)
+                if let session = address?.session, app.workspace.session(session) != nil {
+                    Button("Open") { app.open(.session(session)) }
+                        .buttonStyle(TextButtonStyle())
+                        .help("Open \(address?.name ?? to)'s conversation")
+                }
+            }
+            .font(.callout)
+            if let text = input?["text"]?.string {
+                MarkdownText(text: text)
+                    .padding(.leading, 24)
+            }
+            // What it answered, when it was waited for.
+            if let said, let answer = said.range(of: " answered:\n\n").map({ String(said[$0.upperBound...]) }) {
+                Divider().padding(.leading, 24)
+                Text("\(Text(address?.name ?? to).fontWeight(.semibold)) answered")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 24)
+                MarkdownText(text: answer)
+                    .padding(.leading, 24)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .recessedWell(RoundedRectangle(cornerRadius: 10))
+        .padding(.horizontal, -10)
+        .help("A message this agent sent another")
+    }
+}
+
 /// What another agent wrote to this one (send_message): who from, and what, with a way to its
 /// conversation.
 private struct AgentMessageRow: View {

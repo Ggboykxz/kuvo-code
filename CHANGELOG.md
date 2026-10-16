@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- What an agent writes to another shows in its conversation, as "To Scout" with the message, and the answer when it waited for one.
 - ⌘F finds in group chats too, as in sessions.
 - **Agents write to each other**: any session or bot, on this Mac or a machine, can see who else there is and send one a message, then wait for its answer or carry on. A message from another agent shows who it's from, with Open to go to its conversation. Two agents can't keep writing back and forth unattended.
 - **Agents make things you can see and play with**, right in the conversation: charts, diagrams, mockups, small apps and games, or choices to click, drawn live where they made them, in sessions and group chats. What you click in one can answer the agent for you.
