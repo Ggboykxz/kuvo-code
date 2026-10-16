@@ -184,7 +184,7 @@ struct MainView: View {
                 if app.showsSettings {
                     SettingsView(
                         sidebarWidth: min(max(layout.sessions ?? sessionsWidth, PaneLayout.sessionsRange.lowerBound), proxy.size.width * 0.4),
-                        topInset: showsTabBar ? 0 : Metrics.windowControlsHeight,
+                        topInset: keepsTitleBar ? 0 : Metrics.windowControlsHeight,
                         close: closeSettings
                     )
                     .transition(.opacity)
@@ -196,8 +196,8 @@ struct MainView: View {
         .padding(.bottom, Metrics.paneGap)
         // Without the tab bar, the cards reach up into the title bar; the window's buttons sit
         // at the top of the sidebar.
-        .padding(.top, showsTabBar ? 0 : Metrics.paneGap)
-        .ignoresSafeArea(.container, edges: showsTabBar ? [] : .top)
+        .padding(.top, keepsTitleBar ? 0 : Metrics.paneGap)
+        .ignoresSafeArea(.container, edges: keepsTitleBar ? [] : .top)
         // Without the tab bar, the panel's button stays at the top right, on the rightmost card's
         // header row, so the panel can still be found.
         .overlay(alignment: .topTrailing) {
@@ -714,6 +714,12 @@ struct MainView: View {
     }
 
     private static let settingsPageTab = "settings.page"
+
+    /// The title bar keeps its row: with the tab bar, or with Settings' tabs (even when you hid
+    /// the tab bar, they need somewhere to be).
+    private var keepsTitleBar: Bool {
+        showsTabBar || (app.showsSettings && !app.settingsTabs.sites.isEmpty)
+    }
 
     private var settingsTabSelection: Binding<String?> {
         Binding(get: { app.settingsTabs.selected ?? Self.settingsPageTab },
