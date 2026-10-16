@@ -927,7 +927,7 @@ struct MainView: View {
         if actions.canReopenTab {
             add("Reopen Closed Tab", "arrow.uturn.backward", "⇧⌘T", actions.reopenTab)
         }
-        for page in SettingsPage.allCases {
+        for page in SettingsPage.shown {
             add("Settings › \(page.title)", page.symbol, page == .general ? "⌘," : nil) { app.openSettings(page) }
         }
         return items

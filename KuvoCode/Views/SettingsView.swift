@@ -75,13 +75,18 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     /// The open page, in UserDefaults; its values are the pages' raw values.
     static let storageKey = "settings.tab"
 
-    case general, appearance, notifications, shortcuts, privacy, storage
+    case general, appearance, notifications, phone, shortcuts, privacy, storage
     case accounts, usage
     case agents, permissions, commands, skills, integrations, mcp, engine
     case git, worktrees, archived, machines
     case panel, browser, passwords
 
     var id: String { rawValue }
+
+    /// The pages Settings lists: Phone only while the phone link is switched on.
+    static var shown: [SettingsPage] {
+        allCases.filter { $0 != .phone || PhoneLink.isEnabled }
+    }
 
     enum Group: String, CaseIterable {
         case app = "Kuvo Code"
@@ -93,7 +98,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
 
     var group: Group {
         switch self {
-        case .general, .appearance, .notifications, .shortcuts, .privacy, .storage: .app
+        case .general, .appearance, .notifications, .phone, .shortcuts, .privacy, .storage: .app
         case .accounts, .usage: .models
         case .agents, .permissions, .commands, .skills, .integrations, .mcp, .engine: .agent
         case .git, .worktrees, .archived, .machines: .projects
@@ -106,6 +111,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .general: "General"
         case .appearance: "Appearance"
         case .notifications: "Notifications"
+        case .phone: "Phone"
         case .shortcuts: "Keyboard Shortcuts"
         case .privacy: "Privacy"
         case .storage: "Storage"
@@ -133,6 +139,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .general: "gearshape"
         case .appearance: "paintpalette"
         case .notifications: "bell"
+        case .phone: "iphone"
         case .shortcuts: "command"
         case .privacy: "hand.raised"
         case .storage: "internaldrive"
@@ -161,6 +168,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .general: nil
         case .appearance: "How Kuvo Code looks, and how conversations read."
         case .notifications: "What Kuvo Code tells you while you're in another app."
+        case .phone: "Your sessions on your iPhone, from anywhere."
         case .shortcuts: "Every keyboard shortcut in Kuvo Code."
         case .privacy: "What Kuvo Code shares, and what stays on this Mac."
         case .storage: "What Kuvo Code keeps on this Mac, and room you can get back."
@@ -189,6 +197,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .general: "tab bar updates editor open files with startup"
         case .appearance: "dark light mode theme accent color font text size glass solid window"
         case .notifications: "alerts sound dock badge"
+        case .phone: "iphone mobile pair qr relay companion"
         case .shortcuts: "keys keyboard hotkeys"
         case .privacy: "analytics anonymous usage data"
         case .storage: "disk space size clean up delete old sessions logs cache"
@@ -222,6 +231,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .general: GeneralSettings()
         case .appearance: AppearanceSettings()
         case .notifications: NotificationSettings()
+        case .phone: PhoneSettings()
         case .shortcuts: ShortcutsSettings()
         case .privacy: PrivacySettings()
         case .storage: StorageSettings()
@@ -260,7 +270,7 @@ private struct SettingsSidebar: View {
             SidebarSearchRow(text: $search)
             ScrollView {
                 VStack(alignment: .leading, spacing: 1) {
-                    let pages = SettingsPage.allCases.filter { $0.matches(search) }
+                    let pages = SettingsPage.shown.filter { $0.matches(search) }
                     if pages.isEmpty {
                         Text("No Results")
                             .font(.system(size: 13))
@@ -306,7 +316,7 @@ private struct SettingsSidebar: View {
             .scrollIndicators(.never)
             // Searching opens the first page it finds.
             .onChange(of: search) {
-                let pages = SettingsPage.allCases.filter { $0.matches(search) }
+                let pages = SettingsPage.shown.filter { $0.matches(search) }
                 if !search.isEmpty, !pages.contains(selection), let first = pages.first { selection = first }
             }
         }
