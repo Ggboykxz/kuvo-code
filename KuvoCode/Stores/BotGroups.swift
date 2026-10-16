@@ -88,8 +88,9 @@ final class BotGroups {
     @ObservationIgnored private var runs: [String: UUID] = [:]
     /// Goes up with each message of yours, so a discussion under way starts its count again.
     @ObservationIgnored private var asked: [String: Int] = [:]
-    /// Chats talking over a meeting that came due: you hear how it went when it ends.
-    @ObservationIgnored private var meetingsUnderWay: Set<String> = []
+    /// Chats talking over a meeting that came due, and its message: you hear how it went when it
+    /// ends.
+    @ObservationIgnored private var meetingsUnderWay: [String: String] = [:]
     @ObservationIgnored private var meeting: Task<Void, Never>?
     /// Requests from seats already turned down.
     @ObservationIgnored private var declined: Set<String> = []
@@ -264,7 +265,7 @@ final class BotGroups {
         let message = append(GroupMessage(id: Self.newID(), author: nil, text: topic, time: .now, kind: .meeting), to: id)
         asked[id, default: 0] += 1
         paused.remove(id)
-        meetingsUnderWay.insert(id)
+        meetingsUnderWay[id] = message.id
         Analytics.shared.track("group_met")
         if let speaker = speaking[id] {
             Task { await steer(speaker, in: id, with: message) }
@@ -275,8 +276,13 @@ final class BotGroups {
     /// A meeting's talk ended: how it went (the lead's sum-up, or the last word), in a notification
     /// while you're elsewhere, which you can answer from.
     private func meetingEnded(_ id: String) {
-        guard meetingsUnderWay.remove(id) != nil, let group = group(id),
-              let last = messages(in: id).last(where: { $0.author != nil && $0.kind != .note }) else { return }
+        guard let start = meetingsUnderWay.removeValue(forKey: id), let group = group(id) else { return }
+        // What was said since it began; no one could take part, it says so.
+        let since = messages(in: id).drop { $0.id != start }.dropFirst()
+        guard let last = since.last(where: { $0.author != nil && $0.kind != .note }) else {
+            Notifier.shared.notify(session: Self.tabKey(id), title: group.name, body: "The meeting came, but no one could take part.")
+            return
+        }
         let who = app?.bots.bot(last.author)?.name
         let plain = last.text
             .replacingOccurrences(of: #"[*_`#>]+"#, with: "", options: .regularExpression)
@@ -314,8 +320,9 @@ final class BotGroups {
         return text
     }
 
-    /// Stops the discussion; the bot talking stops mid-sentence.
+    /// Stops the discussion; the bot talking stops mid-sentence (a meeting with it).
     func stop(_ id: String) {
+        meetingsUnderWay[id] = nil
         discussions.removeValue(forKey: id)?.cancel()
         runs[id] = nil
         paused.remove(id)
@@ -400,7 +407,7 @@ final class BotGroups {
         }
         // The lead sums up a discussion that went back and forth, or a meeting where more than one
         // spoke, unless you've written since.
-        guard !Task.isCancelled, said >= (meetingsUnderWay.contains(id) ? 2 : 3), asked[id, default: 0] == epoch, let group = group(id), group.members.count >= 2,
+        guard !Task.isCancelled, said >= (meetingsUnderWay[id] != nil ? 2 : 3), asked[id, default: 0] == epoch, let group = group(id), group.members.count >= 2,
               let lead = group.lead, app?.bots.bot(lead) != nil else { return epoch }
         _ = await turn(of: lead, in: id, wrapUp: true)
         return epoch
