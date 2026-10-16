@@ -1088,6 +1088,39 @@ function destination(input) {
   return search.replace("%s", encodeURIComponent(text));
 }
 
+// The sites of the integrations added on this machine, which the agent reaches through their
+// tools rather than the browser: opening one, it's told so instead, the first time (asked again
+// a while after, it goes, for when the user asked for the website itself). From the Mac's
+// Integrations.Site, which writes what it's told.
+const integrationSites = (() => {
+  try {
+    return JSON.parse(process.env.KUVO_INTEGRATION_SITES || "[]");
+  } catch {
+    return [];
+  }
+})();
+const sentAway = new Map();
+
+function integrationNote(address, caller) {
+  const trimmed = typeof address === "string" ? address.trim() : "";
+  if (!trimmed || trimmed.includes(" ")) return null;
+  let url;
+  try {
+    url = new URL(trimmed.includes("://") ? trimmed : "https://" + trimmed);
+  } catch {
+    return null;
+  }
+  if (!["http:", "https:"].includes(url.protocol)) return null;
+  const host = url.hostname.toLowerCase();
+  const site = integrationSites.find((site) => site.hosts.some((h) => host === h || host.endsWith("." + h)) && (!site.path || url.pathname.startsWith(site.path)));
+  if (!site) return null;
+  const key = (caller ?? "") + "\0" + site.id;
+  const when = sentAway.get(key);
+  if (when && Date.now() - when < 600_000) return null;
+  sentAway.set(key, Date.now());
+  return site.note;
+}
+
 async function navigate(p, url) {
   const target = destination(url);
   if (!target) return `Not an address or search: ${url}`;
@@ -1651,6 +1684,11 @@ async function mcp() {
         if (params.name === "list_agents" || params.name === "send_message") {
           mail(params.name, params.arguments || {}, params._meta?.["ai.opencode/sessionID"] ?? null).then(reply, (error) => reply(text(error instanceof ToolError ? error.message : String(error), true)));
           return;
+        }
+        // An added integration's site: to its tools instead, with no browser needed.
+        if (params.name === "browser_navigate" || params.name === "browser_new_tab") {
+          const note = integrationNote(params.arguments?.url, params._meta?.["ai.opencode/sessionID"] ?? null);
+          if (note) return reply(text(note));
         }
         if (params.name === "show_in_panel" || params.name === "show_widget") {
           tool(params.name, params.arguments || {}).then(reply, (error) => reply(text(error instanceof ToolError ? error.message : String(error), true)));

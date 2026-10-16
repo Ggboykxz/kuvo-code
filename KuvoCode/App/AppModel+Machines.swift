@@ -17,6 +17,8 @@ extension AppModel {
         // Agents writing to each other, here and on machines.
         AgentMail.shared.app = self
         BrowserTools.mail = { name, arguments, caller in await AgentMail.shared.call(name, arguments: arguments, caller: caller) }
+        // The browser sends agents from the sites of integrations you added to their tools.
+        BrowserTools.integrationSites = { [weak self] in self.map { Integrations.sites(Integrations.added(in: $0.engineConfig)) } ?? [] }
         // An agent on a machine left a message for one elsewhere: on its way at once.
         workspace.onAgentMessage = { [weak self] machine in
             guard let engine = self?.machines.engine(machine) else { return }
@@ -129,7 +131,8 @@ extension AppModel {
         for _ in 0..<240 where api == nil { try? await Task.sleep(for: .milliseconds(250)) }
         var environment = await machineEnvironment().environment
         // The browser tools, with the machine's own browser.
-        environment["OPENCODE_CONFIG_CONTENT"] = AppModel.merged(MachineBrowserInstaller.engineConfig, into: environment["OPENCODE_CONFIG_CONTENT"])
+        let sites = Integrations.sites(Integrations.added(in: engineConfig).filter { !Integrations.macOnly.contains($0) })
+        environment["OPENCODE_CONFIG_CONTENT"] = AppModel.merged(MachineBrowserInstaller.engineConfig(sites: sites), into: environment["OPENCODE_CONFIG_CONTENT"])
         let launch = MachineEngine.Launch(environment: environment, helper: MachineBrowserInstaller.helper)
         await engine.start(launch, cache: AppInfo.supportDirectory.appending(path: "engine-linux"))
         // Its sessions, once it's up: tried again a few times, as they're what makes them live.

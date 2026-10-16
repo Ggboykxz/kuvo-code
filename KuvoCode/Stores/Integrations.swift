@@ -63,8 +63,25 @@ nonisolated enum Integrations {
     }
 
     /// Its settings in the engine's file. Keys go in as `{env:…}` (their values reach the engine
-    /// in memory, never the file).
+    /// in memory, never the file). Its tools are plain tools, as the browser's are: behind the
+    /// engine's Code Mode, the agent sees only a short list of them under one tool, and went to
+    /// the service's site in the browser instead.
     static func settings(for service: Service) -> JSONValue? {
+        guard case .object(var settings) = server(for: service) else { return nil }
+        settings["codemode"] = .bool(false)
+        return .object(settings)
+    }
+
+    /// Integrations added before their tools were plain tools: made so, once, before the
+    /// engine starts.
+    @MainActor static func upgrade(_ config: EngineConfig) {
+        guard case .object(let servers) = config.value(at: MCPSettings.path) else { return }
+        for (id, server) in servers where service(id) != nil && server["codemode"] == nil && server.object != nil {
+            config.set(.bool(false), at: MCPSettings.path + [id, "codemode"])
+        }
+    }
+
+    private static func server(for service: Service) -> JSONValue? {
         let env = { (name: String) in JSONValue.string("{env:\(IntegrationKeys.variable(service.id, name))}") }
         switch service.way {
         case .official(let url):
@@ -102,6 +119,54 @@ nonisolated enum Integrations {
     }
 
     static func service(_ id: String) -> Service? { all.first { $0.id == id } }
+
+    // MARK: Their sites
+
+    /// An added integration's site, which the agent reaches through the integration's tools
+    /// rather than the browser: what the browser says when the agent opens it anyway.
+    struct Site: Codable, Sendable {
+        let id: String
+        /// Hosts it's on, each with the ones under it.
+        let hosts: [String]
+        /// Only addresses under this path, where the site's host has more than the service.
+        let path: String?
+        let note: String
+    }
+
+    /// Other hosts a service's pages are on.
+    private static let moreHosts: [String: [String]] = [
+        "notion": ["notion.com"],
+        "atlassian": ["atlassian.net"],
+        "microsoft-365": ["outlook.office.com", "outlook.office365.com"],
+    ]
+
+    /// The integrations added in the engine's settings, by ID.
+    @MainActor static func added(in config: EngineConfig) -> [String] {
+        (config.value(at: MCPSettings.path)?.object ?? [:]).keys.filter { service($0) != nil }.sorted()
+    }
+
+    /// The sites of the integrations `ids`, those with tools of their own.
+    static func sites(_ ids: some Sequence<String>) -> [Site] {
+        ids.compactMap(service).compactMap { service in
+            if case .browser = service.way { return nil }
+            guard let url = URL(string: service.site), var host = url.host() else { return nil }
+            for prefix in ["www.", "app."] where host.hasPrefix(prefix) { host.removeFirst(prefix.count) }
+            let path = url.path().trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            let note = "\(service.title) is connected to Kuvo Code as an integration, so use its tools (their names start with \(service.id)_) rather than its website: they reach the user's account directly. If you don't see them, or they say they need signing in, tell the user to sign in to \(service.title) under Settings › Integrations (if it was just added, it may still be starting: try again in a moment). Only if the user asked for the website itself, call this again with the same address."
+            return Site(id: service.id, hosts: [host] + (moreHosts[service.id] ?? []), path: path.isEmpty ? nil : "/" + path, note: note)
+        }
+    }
+
+    /// The site of an added integration that `address` (what the agent asked the browser to
+    /// open) is on, if any.
+    static func site(of address: String, in sites: [Site]) -> Site? {
+        let trimmed = address.trimmingCharacters(in: .whitespaces)
+        guard let url = URL(string: trimmed.contains("://") ? trimmed : "https://" + trimmed),
+              ["http", "https"].contains(url.scheme ?? ""), !trimmed.contains(" "), let host = url.host()?.lowercased() else { return nil }
+        return sites.first { site in
+            site.hosts.contains { host == $0 || host.hasSuffix("." + $0) } && site.path.map { url.path().hasPrefix($0) } != false
+        }
+    }
 
     /// Integrations whose servers keep their sign-in in files of their own, in their folder (see
     /// `AppModel.syncSignInFiles`), by the files' names.

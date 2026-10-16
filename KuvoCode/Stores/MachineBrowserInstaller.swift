@@ -392,12 +392,14 @@ extension MachineBrowserInstaller {
     }
 
     /// The machine's engine's config entry for the browser tools: the helper, as a local MCP
-    /// server, under the same name as the panel's browser tools on this Mac.
-    @MainActor static var engineConfig: [String: Any] {
-        ["mcp": ["servers": ["kuvo-browser": [
+    /// server, under the same name as the panel's browser tools on this Mac; with the sites of
+    /// the integrations added there, which it sends the agent away from, to their tools.
+    @MainActor static func engineConfig(sites: [Integrations.Site]) -> [String: Any] {
+        let encoded = (try? JSONEncoder().encode(sites)).map { String(decoding: $0, as: UTF8.self) } ?? "[]"
+        return ["mcp": ["servers": ["kuvo-browser": [
             "type": "local",
             "command": ["sh", "-c", command("mcp")],
-            "environment": ["KUVO_SEARCH": searchTemplate],
+            "environment": ["KUVO_SEARCH": searchTemplate, "KUVO_INTEGRATION_SITES": encoded],
             // Plain tools, so every model calls them directly.
             "codemode": false,
             // A tool that asks you (to sign in, for a code) waits for you.

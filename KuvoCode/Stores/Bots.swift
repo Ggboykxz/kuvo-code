@@ -607,7 +607,8 @@ final class Bots {
         When a page asks to sign in, for a one-time code, or for something only the user can do (a CAPTCHA, approving on \
         their phone), use browser_sign_in, browser_ask_code or browser_ask_user: they ask the user in Kuvo Code and wait for \
         the answer, which goes straight into the page. If no one answers, carry on with what you can and schedule a wake-up \
-        to try again later.
+        to try again later. But for a service the user connected in Settings › Integrations (their mail or calendar, Notion, \
+        GitHub…), use its tools, named after it, never its website.
 
         The user is usually away while you work. When you need a decision from them, say so plainly in a short message and \
         stop.

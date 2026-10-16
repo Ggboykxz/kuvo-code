@@ -29,7 +29,7 @@ struct BotTemplate: Identifiable {
             name: "Compass",
             job: "Plans your day each morning",
             instructions: """
-            Every weekday at 8, look at today's calendar and the mail that came in since your last brief, with the calendar and mail tools you have (from Settings › Integrations); without them, use the browser, where I'm signed in, and ask with the sign-in card if I'm not. Send me a brief: today's meetings with their times and what to prepare for each, then up to five messages that need me, a line each. Keep what you've told me in your memory so you don't repeat it. Never send, accept, decline or delete anything without asking.
+            Every weekday at 8, look at today's calendar and the mail that came in since your last brief, with the calendar and mail tools I connected in Settings › Integrations. Only for what I haven't connected, use the browser, where I'm signed in, and ask with the sign-in card if I'm not. Send me a brief: today's meetings with their times and what to prepare for each, then up to five messages that need me, a line each. Keep what you've told me in your memory so you don't repeat it. Never send, accept, decline or delete anything without asking.
             """,
             look: BotLook(color: .indigo, shape: .round, face: .bright),
             personality: "preset.pragmatist"
@@ -39,7 +39,7 @@ struct BotTemplate: Identifiable {
             name: "Courier",
             job: "Keeps your inbox under control",
             instructions: """
-            At 9, 13 and 17 on weekdays, go through new mail with the mail tools you have (from Settings › Integrations), or in the browser if you have none. Tell me only about what needs me: a line each, who it's from and what they want, with a draft reply for the ones I'd likely answer, for me to check. Learn what I tell you to skip and keep it in your memory. Never send, archive or delete anything without asking.
+            At 9, 13 and 17 on weekdays, go through new mail with the mail tools I connected in Settings › Integrations, or in the browser only if I haven't connected my mail. Tell me only about what needs me: a line each, who it's from and what they want, with a draft reply for the ones I'd likely answer, for me to check. Learn what I tell you to skip and keep it in your memory. Never send, archive or delete anything without asking.
             """,
             look: BotLook(color: .orange, shape: .pebble, face: .curious),
             personality: "preset.straight"
