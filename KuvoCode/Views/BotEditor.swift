@@ -916,19 +916,8 @@ private struct WakeList: View {
                 WellRow {
                     Image(systemName: "clock")
                 } content: {
-                    HStack(spacing: 10) {
-                        PlainDatePicker(date: Binding(get: { draft?.due ?? .now }, set: { draft?.due = $0 }), from: .now)
-                            .accessibilityLabel("When")
-                        Spacer(minLength: 8)
-                        Picker("Repeats", selection: Binding(get: { draft?.every }, set: { draft?.every = $0 })) {
-                            ForEach(Self.repeats, id: \.self) { every in
-                                Text(every.map { $0.words.prefix(1).uppercased() + $0.words.dropFirst() } ?? "Once").tag(every)
-                            }
-                        }
-                        .labelsHidden()
-                        .fixedSize()
-                    }
-                    .padding(.vertical, 6)
+                    ScheduleRow(date: Binding(get: { draft?.due ?? .now }, set: { draft?.due = $0 }), from: .now,
+                                every: Binding(get: { draft?.every }, set: { draft?.every = $0 }), choices: Self.repeats, label: "When")
                 }
                 WellDivider()
                 TextField("What to do", text: Binding(get: { draft?.note ?? "" }, set: { draft?.note = $0 }),
@@ -967,5 +956,32 @@ private struct WakeList: View {
                 failure = error.localizedDescription
             }
         }
+    }
+}
+
+/// When something happens (a bot's wake-up, a group chat's meeting) and how often: a date and
+/// time, then Once or a repeat from `choices`.
+struct ScheduleRow: View {
+    @Binding var date: Date
+    /// The earliest it can be; nil for any time.
+    let from: Date?
+    @Binding var every: Wakes.Repeat?
+    let choices: [Wakes.Repeat?]
+    let label: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            PlainDatePicker(date: $date, from: from)
+                .accessibilityLabel(label)
+            Spacer(minLength: 8)
+            Picker("Repeats", selection: $every) {
+                ForEach(choices, id: \.self) { every in
+                    Text(every.map { $0.words.prefix(1).uppercased() + $0.words.dropFirst() } ?? "Once").tag(every)
+                }
+            }
+            .labelsHidden()
+            .fixedSize()
+        }
+        .padding(.vertical, 6)
     }
 }

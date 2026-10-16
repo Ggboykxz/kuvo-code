@@ -207,19 +207,7 @@ struct GroupEditor: View {
                 WellRow {
                     Image(systemName: "clock")
                 } content: {
-                    HStack(spacing: 10) {
-                        PlainDatePicker(date: $meetsAt, from: nil)
-                            .accessibilityLabel("Next meeting")
-                        Spacer(minLength: 8)
-                        Picker("Repeats", selection: $meetsEvery) {
-                            ForEach(Self.repeats, id: \.self) { every in
-                                Text(every.map { $0.words.prefix(1).uppercased() + $0.words.dropFirst() } ?? "Once").tag(every)
-                            }
-                        }
-                        .labelsHidden()
-                        .fixedSize()
-                    }
-                    .padding(.vertical, 6)
+                    ScheduleRow(date: $meetsAt, from: nil, every: $meetsEvery, choices: Self.repeats, label: "Next meeting")
                 }
                 WellDivider()
                 TextField("Topic", text: $topic, prompt: Text("What to go over, like What changed since yesterday, and what’s in the way"), axis: .vertical)
