@@ -538,6 +538,16 @@ struct SidebarView: View {
     }
 
     @ViewBuilder private func menu(for session: Session) -> some View {
+        // On a machine that's away, the session is as last seen: what it does waits for it.
+        if let engine = app.machines.engine(workspace.waitingMachine(for: session.id)) {
+            Text("\(engine.machine.name) isn’t connected")
+            Button("Connect Now") { app.reconnectNow(engine) }
+        } else {
+            liveMenu(for: session)
+        }
+    }
+
+    @ViewBuilder private func liveMenu(for session: Session) -> some View {
         if !Workspace.isArchived(session) {
             if Workspace.isPinned(session) {
                 Button("Unpin") { Task { await workspace.setPinned(session.id, false) } }
