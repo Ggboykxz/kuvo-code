@@ -41,7 +41,7 @@ struct IntegrationsSettings: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .modifier(LiveMCPServers(servers: $live, api: app.api, change: config.settings))
+        .modifier(LiveMCPServers(servers: $live, api: { app.api }, change: config.settings))
         #if DEBUG
         // KUVO_DEMO_ADD_INTEGRATION=<id>: added, as Connect does.
         .onAppear {

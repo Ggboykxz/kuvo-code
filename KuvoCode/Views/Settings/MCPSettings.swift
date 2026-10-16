@@ -84,7 +84,7 @@ struct MCPSettings: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .modifier(LiveMCPServers(servers: $live, api: app.api, change: config.settings))
+        .modifier(LiveMCPServers(servers: $live, api: { app.api }, change: config.settings))
         .sheet(item: $editing, onDismiss: removePending) { edit in
             ServerEditor(name: edit.name, taken: Set(live.map(\.name))) { editing = nil } remove: { path in
                 removal = path

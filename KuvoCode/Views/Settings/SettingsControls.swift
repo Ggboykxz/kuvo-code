@@ -373,17 +373,18 @@ struct ConnectSheet: View {
 /// file, and every few seconds while it's open, as servers connect in their own time.
 struct LiveMCPServers<Change: Equatable>: ViewModifier {
     @Binding var servers: [MCPServer]
-    let api: OpenCodeAPI?
+    /// The engine as it is each time (it restarts to take a new key).
+    let api: () -> OpenCodeAPI?
     /// What, changing, means the engine's settings did.
     let change: Change
 
     func body(content: Content) -> some View {
         content
-            .task(id: change) { servers = await MCPStatus.read(api) ?? [] }
+            .task(id: change) { servers = await MCPStatus.read(api()) ?? [] }
             .task {
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(3))
-                    if let read = try? await api?.mcpServers() { servers = read }
+                    if let read = try? await api()?.mcpServers() { servers = read }
                 }
             }
     }
