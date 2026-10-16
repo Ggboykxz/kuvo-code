@@ -170,8 +170,10 @@ final class Bots {
         let approval = UserDefaults.standard.string(forKey: ToolApproval.key).flatMap(ToolApproval.init) ?? .approveAll
         let rules = approval.rules + Self.ownRules(for: bot)
         let catalog = machine.flatMap { app.machines.engine($0)?.catalog } ?? app.catalog
-        // The one picked, if the engine where it lives has it; otherwise the last one used.
-        bot.model = [model, Self.lastModel].compactMap { $0 }.first { catalog.model($0) != nil }
+        // The one picked, if the engine where it lives has it; otherwise the last one used. Before
+        // its models are known (just after launch), the one picked or last used, as it is.
+        let wanted = [model, Self.lastModel].compactMap { $0 }
+        bot.model = catalog.isLoaded ? wanted.first { catalog.model($0) != nil } : wanted.first
         let session = try await api.createSession(directory: bot.directory, title: name, model: bot.model, permissions: rules)
         bot.sessionID = session.id
         try? await api.setMetadata(session: session.id, .object(["kuvo": .object(["bot": .string(id)])]))
