@@ -1,5 +1,8 @@
 import Foundation
 
+// Starts processes, so only on the Mac; the phone reaches engines through Kuvo Link.
+#if os(macOS)
+
 /// A machine reached over SSH: a host from `~/.ssh/config` (like `my-server`) or `user@host`.
 /// Everything goes through the system's `ssh`, so the user's keys, agent and config apply.
 public struct SSHConnection: Sendable, Hashable, Codable {
@@ -435,3 +438,5 @@ final class ExitSignal: @unchecked Sendable {
         }
     }
 }
+
+#endif

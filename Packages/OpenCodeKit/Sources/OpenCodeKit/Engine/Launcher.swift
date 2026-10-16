@@ -30,6 +30,7 @@ public enum Launcher {
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
     }
 
+    #if os(macOS)
     /// Puts it in `$K/bin` on a machine (needs `$K`), for its engine.
     static var installScript: String {
         """
@@ -39,4 +40,5 @@ public enum Launcher {
         chmod 755 "$K/bin/\(name).new" && mv -f "$K/bin/\(name).new" "$K/bin/\(name)"
         """
     }
+    #endif
 }

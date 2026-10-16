@@ -2,6 +2,9 @@ import CryptoKit
 import Foundation
 import Security
 
+// Starts processes, so only on the Mac; the phone reaches engines through Kuvo Link.
+#if os(macOS)
+
 /// One pinned build of the opencode server: where to download it and how to
 /// recognise the genuine file.
 public struct EngineRelease: Sendable, Equatable {
@@ -187,3 +190,5 @@ private final class DownloadProgress: NSObject, URLSessionTaskDelegate, Sendable
         }
     }
 }
+
+#endif

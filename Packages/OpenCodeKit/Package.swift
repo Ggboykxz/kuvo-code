@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "OpenCodeKit",
-    platforms: [.macOS(.v26)],
+    platforms: [.macOS(.v26), .iOS(.v26)],
     products: [
         .library(name: "OpenCodeKit", targets: ["OpenCodeKit"]),
     ],

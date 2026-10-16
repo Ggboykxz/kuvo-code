@@ -1,5 +1,8 @@
 import Foundation
 
+// Starts processes, so only on the Mac; the phone reaches engines through Kuvo Link.
+#if os(macOS)
+
 /// The environment a terminal would have. Apps opened from the Finder or Dock
 /// inherit launchd's bare environment (PATH is `/usr/bin:/bin:/usr/sbin:/sbin`),
 /// so the agent's shell commands wouldn't find Homebrew, nvm, bun, etc.
@@ -56,3 +59,5 @@ public enum ShellEnvironment {
         return result
     }
 }
+
+#endif

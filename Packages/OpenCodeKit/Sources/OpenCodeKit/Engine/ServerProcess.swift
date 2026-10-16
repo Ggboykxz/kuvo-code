@@ -1,5 +1,8 @@
 import Foundation
 
+// Starts processes, so only on the Mac; the phone reaches engines through Kuvo Link.
+#if os(macOS)
+
 /// Folders the engine keeps its database, config, state and caches in. The app
 /// gives it its own, so it never migrates or shares an `opencode` install's data.
 public struct EngineFolders: Sendable {
@@ -216,3 +219,5 @@ final class LogTail: @unchecked Sendable {
         lock.withLock { String(decoding: buffer, as: UTF8.self) }
     }
 }
+
+#endif

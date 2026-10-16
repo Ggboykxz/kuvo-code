@@ -200,10 +200,12 @@ public enum Wakes {
         """
     }
 
+    #if os(macOS)
     /// Puts `kuvo-wake` on the machine, for an engine started before it was there.
     public static func install(on connection: SSHConnection) async throws {
         try await connection.run(RemoteEngineInstaller.folders + "\n" + installScript)
     }
+    #endif
 
     /// The command, in POSIX sh, for macOS and Linux. A bot is named by its ID, its folder being
     /// in `$KUVO_BOTS` (`~/.kuvo-code/bots` by default), or by its folder's path:
