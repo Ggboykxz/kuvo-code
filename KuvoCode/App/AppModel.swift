@@ -35,6 +35,8 @@ final class AppModel {
     /// Bots: named agents with one job each, on this Mac or a machine.
     let bots = Bots()
     let groups = BotGroups()
+    /// Kuvo Code for iPhone's way in (off until it's switched on; see PhoneLink).
+    let phoneLink = PhoneLink()
     /// The engine's settings file, for Settings.
     @ObservationIgnored private(set) lazy var engineConfig = EngineConfig(file: engineFolders.configFile)
     /// Skills added in Settings, beside the settings file: the engine reads them for every project.
@@ -188,6 +190,7 @@ final class AppModel {
             workspace.seats = groups.seatIDs
             usage.api = api
             engine = .ready
+            phoneLink.start(endpoint: server.endpoint)
             Analytics.shared.trackOnce("engine_ready", ["seconds": Int(Date.now.timeIntervalSince(began)), "downloaded": downloaded])
             listen(to: api)
             Task { await usage.sync() }
@@ -241,6 +244,7 @@ final class AppModel {
         server = nil
         api = nil
         isLive = false
+        phoneLink.stop()
     }
 
     /// The server answers 503 until it has loaded.
