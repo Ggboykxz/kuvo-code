@@ -29,6 +29,9 @@ struct WidgetCard: View {
     @Environment(\.cardIsFocused) private var cardIsFocused
 
     private static let shape = RoundedRectangle(cornerRadius: 12)
+    #if DEBUG
+    private static var openedLarge = false
+    #endif
 
     var body: some View {
         switch call.state {
@@ -76,6 +79,17 @@ struct WidgetCard: View {
         .background(Surface.cardFill(scheme, focused: cardIsFocused), in: Self.shape)
         .clipShape(Self.shape)
         .recessedWell(Self.shape)
+        #if DEBUG
+        // KUVO_DEMO_WIDGET_LARGE: the first widget shown opens larger.
+        .onAppear {
+            guard ProcessInfo.processInfo.environment["KUVO_DEMO_WIDGET_LARGE"] != nil, !Self.openedLarge else { return }
+            Self.openedLarge = true
+            Task {
+                try? await Task.sleep(for: .seconds(2))
+                isLarge = true
+            }
+        }
+        #endif
         .sheet(isPresented: $isLarge) {
             VStack(spacing: 0) {
                 HStack {
