@@ -6,6 +6,7 @@ struct PasswordsSettings: View {
     @AppStorage(Passwords.offersKey) private var offersToSave = true
     @State private var logins: [Passwords.Login] = []
     @State private var never: [String] = []
+    @State private var agentSites: [String] = []
     @State private var search = ""
     /// Passwords shown, by login, after you've confirmed it's you.
     @State private var revealed: [String: String] = [:]
@@ -23,7 +24,7 @@ struct PasswordsSettings: View {
                     Text("When you sign in to a site in the panel’s browser. Click the key in its toolbar to fill one in.")
                 }
             } footer: {
-                Text("Kept in your login keychain, where Keychain Access lists them too. Kuvo Code fills one in only when you ask, and the agent never sees them.")
+                Text("Kept in your login keychain, where Keychain Access lists them too. Kuvo Code fills one in only when you ask, or for a site you let agents sign in to on their own, and the agent never sees them.")
                     .foregroundStyle(.secondary)
             }
 
@@ -74,6 +75,23 @@ struct PasswordsSettings: View {
                 Text(logins.isEmpty ? "Saved Passwords" : "Saved Passwords (\(logins.count))")
             }
 
+            if !agentSites.isEmpty {
+                Section {
+                    ForEach(agentSites, id: \.self) { host in
+                        LabeledContent(host) {
+                            Button("Remove") {
+                                Passwords.setAgentSignIn(host, false)
+                                load()
+                            }
+                        }
+                    }
+                } header: {
+                    Text("Agents Sign In On Their Own")
+                } footer: {
+                    Text("When an agent asks to sign in to one of these, its saved password goes straight into the page without asking you. Remove one to be asked again.")
+                        .foregroundStyle(.secondary)
+                }
+            }
             if !never.isEmpty {
                 Section {
                     ForEach(never, id: \.self) { host in
@@ -107,6 +125,7 @@ struct PasswordsSettings: View {
     private func load() {
         logins = Passwords.logins()
         never = Passwords.neverSites
+        agentSites = Passwords.agentSites
     }
 
     private func toggleReveal(_ login: Passwords.Login) {

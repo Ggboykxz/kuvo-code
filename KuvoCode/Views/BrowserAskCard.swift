@@ -38,6 +38,8 @@ struct BrowserAskCard: View {
     @State private var password = ""
     @State private var code = ""
     @State private var saves = false
+    /// Let agents sign in to this site with its saved password from now on, without asking.
+    @State private var allowsAgents = false
     @FocusState private var focus: Field?
 
     private enum Field { case username, password, code }
@@ -147,6 +149,12 @@ struct BrowserAskCard: View {
                     .controlSize(.small)
                     .disabled(!saved.isEmpty && saved.contains { $0.account == username })
             }
+            if saves || saved.contains(where: { $0.account == username }) {
+                Toggle("Let agents sign in here on their own next time", isOn: $allowsAgents)
+                    .toggleStyle(.checkbox)
+                    .controlSize(.small)
+                    .help("With its saved password, without asking you; it still goes straight into the page. Settings › Passwords lists these sites.")
+            }
         }
     }
 
@@ -207,8 +215,21 @@ struct BrowserAskCard: View {
         switch ask.kind {
         case .signIn:
             guard !username.isEmpty || !password.isEmpty else { return }
-            if saves, !password.isEmpty { _ = Passwords.save(host: ask.host, account: username, password: password) }
-            app.browserAsks.answer(ask.id, .signIn(username: username.isEmpty ? nil : username, password: password.isEmpty ? nil : password))
+            let typed = saves && !password.isEmpty
+            if typed { _ = Passwords.save(host: ask.host, account: username, password: password) }
+            let answer = BrowserAsks.Answer.signIn(username: username.isEmpty ? nil : username, password: password.isEmpty ? nil : password)
+            guard allowsAgents, !password.isEmpty else {
+                app.browserAsks.answer(ask.id, answer)
+                return
+            }
+            // A password you typed now is yours to allow; one filled in from Passwords asks you
+            // first, as showing it in Settings does.
+            let host = ask.host, id = ask.id, asks = app.browserAsks
+            Task {
+                let allowed = typed ? true : await Passwords.authenticate(reason: "let agents sign in to \(host) with its saved password")
+                if allowed { Passwords.setAgentSignIn(host, true) }
+                asks.answer(id, answer)
+            }
         case .code:
             guard !code.isEmpty else { return }
             app.browserAsks.answer(ask.id, .code(code.trimmingCharacters(in: .whitespaces)))

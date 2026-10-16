@@ -107,6 +107,14 @@ final class BrowserAsks {
             ask.asker = asker.name
             ask.session = asker.session
         }
+        // A site you let agents sign in to on their own: its saved password, without asking.
+        if case .signIn = ask.kind, Passwords.agentSites.contains(ask.host), let login = Passwords.logins(for: ask.host).first,
+           let password = Passwords.password(for: login) {
+            remembered[key(ask)] = (login.account.isEmpty ? nil : login.account, password, .now, ask.session)
+            respond(.signIn(username: login.account.isEmpty ? nil : login.account, password: password))
+            Notifier.shared.notify(session: tab(ask) ?? "", title: "Signed in to \(ask.host)", subtitle: ask.asker, body: "With your saved password, as you allowed for this site.")
+            return
+        }
         // The rest of a sign-in you just gave the same conversation (its password, on the page
         // after the username's).
         if case .signIn(let needsUsername, let needsPassword) = ask.kind, let saved = remembered[key(ask)], saved.session == ask.session,

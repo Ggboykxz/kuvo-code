@@ -24,6 +24,17 @@ nonisolated enum Passwords {
 
     static var neverSites: [String] { UserDefaults.standard.stringArray(forKey: neverKey) ?? [] }
 
+    /// Sites you let agents sign in to with their saved password, without asking you each time.
+    static let agentSitesKey = "passwords.agentSignIn"
+
+    static var agentSites: [String] { UserDefaults.standard.stringArray(forKey: agentSitesKey) ?? [] }
+
+    static func setAgentSignIn(_ host: String, _ allowed: Bool) {
+        var sites = agentSites.filter { $0 != host }
+        if allowed { sites.append(host) }
+        UserDefaults.standard.set(sites.sorted(), forKey: agentSitesKey)
+    }
+
     static func setNever(_ host: String, _ never: Bool) {
         var sites = neverSites.filter { $0 != host }
         if never { sites.append(host) }
