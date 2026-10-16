@@ -68,6 +68,7 @@ struct GroupChatView: View {
                 }
                 GroupComposer(
                     text: Binding(get: { Drafts.shared[draftKey].text }, set: { Drafts.shared[draftKey].text = $0 }),
+                    quote: Binding(get: { Drafts.shared[draftKey].quote }, set: { Drafts.shared[draftKey].quote = $0 }),
                     placeholder: "Message \(group.name)…",
                     members: members,
                     isTalking: groups.discussing.contains(group.id),
@@ -88,8 +89,12 @@ struct GroupChatView: View {
     /// Replies to a bot's message: the part you selected (else all of it) quoted in the composer,
     /// naming the bot so it's the one to answer.
     private func reply(to message: GroupMessage) {
-        let quoted = Quoting.quoted(Quoting.selection() ?? message.text, into: Drafts.shared[draftKey].text)
-        Drafts.shared[draftKey].text = quoted + (message.author.flatMap { bots.bot($0)?.name }.map { "@\($0) " } ?? "")
+        Drafts.shared[draftKey].quote = Quoting.selection() ?? message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Named, so it's the one to answer.
+        if let name = message.author.flatMap({ bots.bot($0)?.name }), !Drafts.shared[draftKey].text.contains("@" + name) {
+            let draft = Drafts.shared[draftKey].text.trimmingCharacters(in: .whitespacesAndNewlines)
+            Drafts.shared[draftKey].text = "@\(name) " + draft
+        }
         composerFocus += 1
         Analytics.shared.track("message_replied", ["group": true])
     }
@@ -97,16 +102,19 @@ struct GroupChatView: View {
     /// Takes the chat back to before your message, which comes back to the composer, ahead of
     /// anything already there.
     private func undo(from message: GroupMessage) {
-        guard let text = groups.undo(from: message.id, in: group.id) else { return }
+        guard let taken = groups.undo(from: message.id, in: group.id) else { return }
+        let (quote, text) = Quoting.split(taken)
         let draft = Drafts.shared[draftKey].text
         Drafts.shared[draftKey].text = [text, draft].filter { !$0.isEmpty }.joined(separator: "\n\n")
+        if let quote { Drafts.shared[draftKey].quote = quote }
     }
 
     private func send() {
         let text = Drafts.shared[draftKey].text
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        groups.send(text, to: group.id)
+        groups.send(Quoting.message(quote: Drafts.shared[draftKey].quote, text: text), to: group.id)
         Drafts.shared[draftKey].text = ""
+        Drafts.shared[draftKey].quote = nil
         followsEnd = true
         position.scrollTo(edge: .bottom)
     }
@@ -171,7 +179,7 @@ private struct GroupMessageRow: View {
                 .multilineTextAlignment(.center)
         } else if message.author == nil {
             VStack(alignment: .trailing, spacing: 2) {
-                UserBubble(text: message.text, styled: GroupMentions.styled(message.text, bots: members))
+                UserBubble(text: message.text, styled: GroupMentions.styled(Quoting.split(message.text).text, bots: members))
                 // Always laid out, shown under the pointer: nothing moves when they appear.
                 HStack(spacing: 0) {
                     Text(MessageTime.sentAt(message.time))
@@ -393,6 +401,8 @@ private struct PausedBar: View {
 /// (or stop, while they talk).
 private struct GroupComposer: View {
     @Binding var text: String
+    /// What you're replying to, as a card over the text.
+    @Binding var quote: String?
     let placeholder: String
     let members: [Bot]
     let isTalking: Bool
@@ -407,6 +417,9 @@ private struct GroupComposer: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if let replying = quote {
+                QuoteCard(text: replying) { withAnimation(.ui) { quote = nil } }
+            }
             TextField(placeholder, text: $text, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(messageFont.body)

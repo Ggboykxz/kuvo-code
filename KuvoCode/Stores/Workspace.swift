@@ -497,7 +497,9 @@ final class Workspace {
         let recent = (try? await api.messages(session: id, limit: 100).data) ?? []
         var stored = message
         for case .user(let user) in recent where user.id == message.id { stored = user }
-        Drafts.shared[session.id] = Drafts.Draft(text: ReviewComments.split(withComments).text, files: SessionModel.files(of: stored) + paths.map { URL(filePath: $0) })
+        // A quote it replied to comes back over the composer, as you wrote it.
+        let (quote, text) = Quoting.split(ReviewComments.split(withComments).text)
+        Drafts.shared[session.id] = Drafts.Draft(text: text, files: SessionModel.files(of: stored) + paths.map { URL(filePath: $0) }, quote: quote)
         requestedTab = session.id
     }
 

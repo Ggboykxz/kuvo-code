@@ -24,13 +24,27 @@ enum Quoting {
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    /// `text` as a Markdown quote, ahead of what you'd written (`draft`), with room under it.
-    static func quoted(_ text: String, into draft: String) -> String {
-        let quote = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// The message to send: the quote you're replying to, as Markdown, ahead of your words.
+    static func message(quote: String?, text: String) -> String {
+        guard let quote, !quote.isEmpty else { return text }
+        let block = quote.trimmingCharacters(in: .whitespacesAndNewlines)
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map { $0.isEmpty ? ">" : "> " + $0 }
             .joined(separator: "\n")
-        let rest = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        return rest.isEmpty ? quote + "\n\n" : rest + "\n\n" + quote + "\n\n"
+        return block + "\n\n" + text
+    }
+
+    /// A message's quote (the lines starting with ">" that it opens with) and the rest.
+    static func split(_ message: String) -> (quote: String?, text: String) {
+        let lines = message.split(separator: "\n", omittingEmptySubsequences: false)
+        let quoted = lines.prefix { $0.hasPrefix(">") }
+        guard !quoted.isEmpty, quoted.count < lines.count || !message.isEmpty else { return (nil, message) }
+        let quote = quoted.map { line in
+            var line = line.dropFirst()
+            if line.first == " " { line = line.dropFirst() }
+            return String(line)
+        }.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        let rest = lines.dropFirst(quoted.count).joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        return quote.isEmpty ? (nil, message) : (quote, rest)
     }
 }

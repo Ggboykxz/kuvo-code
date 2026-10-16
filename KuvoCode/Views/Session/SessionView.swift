@@ -74,6 +74,7 @@ private struct BottomStack: View {
                 Composer(
                     text: $model.draftText,
                     files: $model.draftFiles,
+                    quote: $model.draftQuote,
                     agent: model.agent,
                     approval: model.approval,
                     model: model.session.model ?? lastModel ?? catalog.defaultModel?.ref,
@@ -111,6 +112,10 @@ private struct BottomStack: View {
         .padding(.horizontal, Metrics.gutter)
         .padding(.bottom, 16)
         .readableColumn()
+        #if DEBUG
+        // KUVO_DEMO_QUOTE=<text>: replying to that, over the composer.
+        .onAppear { if let quote = ProcessInfo.processInfo.environment["KUVO_DEMO_QUOTE"] { model.draftQuote = quote } }
+        #endif
     }
 
     /// The machine this session runs on, while it can't be reached (connecting again).
@@ -121,9 +126,11 @@ private struct BottomStack: View {
 
     private func send(queue: Bool) {
         guard offlineMachine == nil else { return }
-        model.submit(model.draftText, files: model.draftFiles, for: catalog.model(model.session.model), queue: queue, commands: catalog.commands(in: model.session.location.directory))
+        let text = Quoting.message(quote: model.draftQuote, text: model.draftText)
+        model.submit(text, files: model.draftFiles, for: catalog.model(model.session.model), queue: queue, commands: catalog.commands(in: model.session.location.directory))
         model.draftText = ""
         model.draftFiles = []
+        model.draftQuote = nil
     }
 }
 

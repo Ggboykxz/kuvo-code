@@ -470,8 +470,13 @@ struct UserBubble: View {
             ForEach(comments) { comment in
                 CommentReference(comment: comment)
             }
-            if !text.isEmpty {
-                MessageText(text: text, styled: styled)
+            let parts = Quoting.split(text)
+            if let quote = parts.quote {
+                QuoteBlock(text: quote)
+                    .frame(maxWidth: 420, alignment: .trailing)
+            }
+            if !parts.text.isEmpty {
+                MessageText(text: parts.quote == nil ? text : parts.text, styled: styled)
             }
             if let status {
                 Text(status)

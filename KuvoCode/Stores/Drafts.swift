@@ -10,8 +10,10 @@ final class Drafts {
     struct Draft: Codable, Hashable {
         var text = ""
         var files: [URL] = []
+        /// What you're replying to, shown over the composer and sent as a quote ahead of the text.
+        var quote: String?
 
-        var isEmpty: Bool { text.isEmpty && files.isEmpty }
+        var isEmpty: Bool { text.isEmpty && files.isEmpty && quote == nil }
     }
 
     private var drafts: [String: Draft]

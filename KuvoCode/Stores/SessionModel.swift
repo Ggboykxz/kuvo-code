@@ -21,6 +21,12 @@ final class SessionModel {
         set { Drafts.shared[id].files = newValue }
     }
 
+    /// What you're replying to, over the composer.
+    var draftQuote: String? {
+        get { Drafts.shared[id].quote }
+        set { Drafts.shared[id].quote = newValue }
+    }
+
     /// Messages you sent here, oldest first, for going back through with ↑.
     var sentMessages: [String] {
         var texts: [String] = []
@@ -61,7 +67,7 @@ final class SessionModel {
     /// Replies to a message: the part of it you selected (else all of `text`) goes into the
     /// composer as a quote, and the composer takes the keyboard.
     func reply(to text: String) {
-        draftText = Quoting.quoted(Quoting.selection() ?? text, into: draftText)
+        draftQuote = Quoting.selection() ?? text.trimmingCharacters(in: .whitespacesAndNewlines)
         focusComposer()
         Analytics.shared.track("message_replied")
     }

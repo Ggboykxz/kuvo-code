@@ -8,6 +8,8 @@ import UniformTypeIdentifiers
 struct Composer: View {
     @Binding var text: String
     @Binding var files: [URL]
+    /// What you're replying to, as a card over the text, with a way to drop it.
+    var quote: Binding<String?> = .constant(nil)
     let agent: String
     let approval: ToolApproval
     let model: ModelRef?
@@ -113,6 +115,10 @@ struct Composer: View {
                 .scrollIndicators(.hidden)
             }
 
+            if let replying = quote.wrappedValue {
+                QuoteCard(text: replying) { withAnimation(.ui) { quote.wrappedValue = nil } }
+                    .transition(.opacity.combined(with: .offset(y: 4)))
+            }
             TextField(placeholder, text: $text, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(isShell ? .system(size: messageFont.size - 0.5, design: .monospaced) : messageFont.body)
