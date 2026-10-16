@@ -61,7 +61,13 @@ struct ToolCallView: View {
             }
         }
         // A subagent at work shows what it's doing; opened later, its steps stay folded.
-        .onAppear { if call.name == "subagent", !call.state.isFinished { isExpanded = true } }
+        .onAppear {
+            if call.name == "subagent", !call.state.isFinished { isExpanded = true }
+            #if DEBUG
+            // KUVO_DEMO_OPEN_STEPS: every step shows its details, for screenshots.
+            if ProcessInfo.processInfo.environment["KUVO_DEMO_OPEN_STEPS"] != nil { isExpanded = true }
+            #endif
+        }
     }
 
     private var header: some View {

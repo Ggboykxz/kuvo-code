@@ -128,6 +128,7 @@ without clicking, for trying a change or taking screenshots:
 | `KUVO_DEMO_WELCOME` | No tabs, so the welcome card shows |
 | `KUVO_DEMO_NEW_BOT` | The New Bot editor, open |
 | `KUVO_DEMO_BOT`, `KUVO_DEMO_BOT_PROMPT` | Make the bot `<name>\|<job>\|<instructions>[\|<machine>]` unless one has that name, open it, and give it this task |
+| `KUVO_DEMO_OPEN_STEPS` | Every step in the conversation shows its details, opened |
 | `KUVO_DEMO_EDIT_BOT` | With `KUVO_DEMO_BOT`: that bot's editor, open (`bottom`: scrolled to its wake-ups and memory) |
 | `KUVO_DEMO_NEW_GROUP` | The New Group Chat editor, open |
 | `KUVO_DEMO_GROUP` | Make the group chat `<name>\|<bot>,<bot>,…` unless one has that name, open it, and send it `\|<message>` if one follows |
