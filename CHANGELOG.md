@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Every model uses your integrations' tools directly: the engine's Code Mode is off, where cheaper models went looking for an integration's tools, didn't find them and gave up. MCP servers you add get plain tools too.
 - Signing in to X, LinkedIn or Reddit for the agent happens right in Settings › Integrations, which shows whether you're signed in on this Mac and on each machine, live as you sign in.
 - X opens on your machines: a page opened there at an address used to stay blank on sites that turn headless browsers away.
 - Settings › Integrations shows how each one is doing on this Mac and on each machine ("Connected on this Mac and lokum"), with one button when something needs you and the rest in a ⋯ menu. **Sign In…** for a service the agent uses on its site opens the site right there, over Settings, for this Mac or one of your machines, instead of a tab in the panel that didn't show.

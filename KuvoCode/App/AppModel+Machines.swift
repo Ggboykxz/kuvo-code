@@ -275,6 +275,8 @@ extension AppModel {
             // A shell or a worktree folder on this Mac means nothing on the machine, nor do
             // integrations that use this Mac's apps.
             for key in ["$schema", "shell", "worktree"] { settings.removeValue(forKey: key) }
+            // After your own rules, as on this Mac (see Integrations.noCodeMode).
+            settings["permissions"] = ((settings["permissions"] as? [Any]) ?? []) + Integrations.noCodeMode
             if var mcp = settings["mcp"] as? [String: Any], var servers = mcp["servers"] as? [String: Any] {
                 for id in Integrations.macOnly { servers.removeValue(forKey: id) }
                 mcp["servers"] = servers

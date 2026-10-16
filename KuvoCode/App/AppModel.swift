@@ -164,6 +164,8 @@ final class AppModel {
             try? FileManager.default.createDirectory(at: integrations, withIntermediateDirectories: true)
             shell["KUVO_INTEGRATIONS"] = integrations.path
             Integrations.upgrade(engineConfig)
+            // Its rules go with your own (Settings › Permissions): the engine adds lists up.
+            shell["OPENCODE_CONFIG_CONTENT"] = Self.merged(["permissions": Integrations.noCodeMode], into: shell["OPENCODE_CONFIG_CONTENT"])
             // What some providers need until opencode handles it (see ProviderCompatibility).
             let compatibility = ProviderCompatibility.config
             if !compatibility.isEmpty { shell["OPENCODE_CONFIG_CONTENT"] = Self.merged(compatibility, into: shell["OPENCODE_CONFIG_CONTENT"]) }
