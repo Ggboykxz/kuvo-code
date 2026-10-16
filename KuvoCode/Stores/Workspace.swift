@@ -25,7 +25,9 @@ final class Workspace {
     private(set) var connectedMachines: Set<String> = []
     /// The machines you've added. A removed machine's projects leave the sidebar but keep their
     /// settings, for when it's added again.
-    var machines: Set<String> = []
+    var machines: Set<String> = [] {
+        didSet { for machine in machines.subtracting(oldValue) { showLastSeen(machine) } }
+    }
 
     struct RemoteSession: Codable {
         var machine: String
@@ -35,8 +37,17 @@ final class Workspace {
     /// The machine a session is on, while that machine isn't connected; nil once it is (or
     /// for this Mac's sessions).
     func waitingMachine(for id: String) -> String? {
-        guard session(id) == nil, let machine = remoteSessions[id]?.machine, !connectedMachines.contains(machine) else { return nil }
+        guard let machine = session(id).flatMap({ RemoteFolder.machine(of: $0.location.directory) }) ?? remoteSessions[id]?.machine,
+              !connectedMachines.contains(machine) else { return nil }
         return machine
+    }
+
+    /// A machine's sessions as last seen, in the lists until it connects.
+    private func showLastSeen(_ machine: String) {
+        guard !connectedMachines.contains(machine), !sessions.contains(where: { RemoteFolder.machine(of: $0.location.directory) == machine }) else { return }
+        let seen = SessionCopies.sessions(of: machine).filter { !isHidden($0) }
+        for session in seen { sessionMachines[session.id] = machine }
+        sessions += seen
     }
 
     /// A waiting session's title, as last seen.
@@ -598,6 +609,7 @@ final class Workspace {
             remoteSessions = remoteSessions.filter { $0.value.machine != machine }
             for session in theirs { remoteSessions[session.id] = RemoteSession(machine: machine, title: session.title) }
             Self.saveRemoteSessions(remoteSessions)
+            SessionCopies.saveSessions(theirs, of: machine)
             connectedMachines.insert(machine)
             let active = try await api.activeSessions()
             running = running.filter { id in session(id).map { RemoteFolder.machine(of: $0.location.directory) != machine } ?? true }.union(active)
@@ -618,16 +630,17 @@ final class Workspace {
         }
     }
 
-    /// A machine disconnected: its sessions leave the lists until it's back (their tabs wait,
-    /// showing their conversations as last seen). Removed for good, they're forgotten too.
+    /// A machine disconnected: its sessions stay as last seen until it's back, their
+    /// conversations to read. Removed for good, they're forgotten.
     func forget(_ machine: String, forGood: Bool = false) {
         let gone = Set(sessions.filter { RemoteFolder.machine(of: $0.location.directory) == machine }.map(\.id))
-        sessions.removeAll { gone.contains($0.id) }
         running.subtract(gone)
-        if forGood { for id in gone { models[id] = nil } }
         connectedMachines.remove(machine)
         if forGood {
+            sessions.removeAll { gone.contains($0.id) }
+            for id in gone { models[id] = nil }
             for (id, session) in remoteSessions where session.machine == machine { SessionCopies.remove(id) }
+            SessionCopies.removeSessions(of: machine)
             models = models.filter { RemoteFolder.machine(of: $0.value.session.location.directory) != machine }
             remoteSessions = remoteSessions.filter { $0.value.machine != machine }
             Self.saveRemoteSessions(remoteSessions)

@@ -61,7 +61,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - After your Mac wakes, a machine that lost its connection while it slept connects again by itself.
 - A machine whose connection stopped working without closing (its engine restarted behind it, say) is noticed within seconds and connected again by itself, and it keeps trying for half an hour. Meanwhile a bar over the composer says so, with **Connect Now**, and sending waits, rather than failing with an error.
 - **Integrations**: let the agent and your bots work with your mail, calendars, chats, socials and code tools, in **Settings › Integrations**. Each connects the best way it has: its maker's own server where you sign in once (Fastmail, GitLab, Linear, Notion, Jira, Calendly), with a token or app of yours (GitHub, Slack, Gmail, Google Calendar, Asana, Zoom), through an open-source server with a key you bring (Outlook, Apple Calendar and Reminders, CalDAV calendars, Todoist, Figma), or on its site in the panel's browser (Discord, Telegram, WhatsApp, X, LinkedIn, Reddit, Bluesky, Mastodon). Keys stay in your Keychain.
-- A session on a remote machine keeps its conversation on screen while the machine reconnects, and shows it as last seen while it connects at launch, so you can read it meanwhile. The bar over the composer says whether it's connecting, reconnecting or couldn't, and things that need the machine, like Undo, wait for it.
+- A remote machine's sessions stay in the sidebar, and keep their conversations on screen, while the machine reconnects or connects at launch, so you can read them meanwhile. The bar over the composer says whether it's connecting, reconnecting or couldn't, and things that need the machine, like Undo, wait for it.
 
 ## 0.4.0
 
