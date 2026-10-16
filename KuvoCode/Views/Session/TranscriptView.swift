@@ -990,7 +990,7 @@ struct EmptyConversationView: View {
     }
 
     /// A bot's first message: start on the job it was given.
-    static let kickoff = "Start on your job now: read your instructions and your memory, ask me for anything you need to get going (like what to watch or which topics), do the first round, and if your job repeats, schedule it to repeat."
+    static let kickoff = "Start on your job now: read your instructions and your memory, ask me for anything you need to get going (like what to watch or which topics), do the first round, and if your job repeats or keeps an eye on something, set that up (a repeating wake-up, or a watch)."
 
     private var plain: some View {
         VStack(spacing: 10) {

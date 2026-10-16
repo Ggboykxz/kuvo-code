@@ -59,7 +59,7 @@ struct BotTemplate: Identifiable {
             name: "Keeper",
             job: "Keeps the build green",
             instructions: """
-            Every hour, build this project and run its tests (and, if it uses GitHub Actions and gh is signed in, look at its latest runs). When something fails, find out why, fix it on a branch of its own, and tell me what broke and what you changed. Never push to the main branch or merge without asking.
+            Every hour, build this project and run its tests. If it uses GitHub Actions and gh is signed in, also set a watch on its latest run's result, so you wake up as soon as it changes. When something fails, find out why, fix it on a branch of its own, and tell me what broke and what you changed. Never push to the main branch or merge without asking.
             """,
             look: BotLook(color: .mint, shape: .squircle, face: .calm),
             personality: "preset.perfectionist",
