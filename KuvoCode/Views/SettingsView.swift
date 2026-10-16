@@ -47,6 +47,7 @@ struct SettingsView: View {
                                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                             }
                             .frame(maxWidth: SettingsMetrics.columnWidth)
+                            .modifier(SettingsColumnInset())
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .id(page)
                         case .site(let id):
@@ -361,6 +362,7 @@ private struct SettingsSidebar: View {
 /// A page's title, large, and the line under it.
 private struct SettingsPageHeader: View {
     let page: SettingsPage
+    @Environment(\.settingsInset) private var inset
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -374,17 +376,41 @@ private struct SettingsPageHeader: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, SettingsMetrics.inset)
+        .padding(.horizontal, inset)
         .padding(.top, 26)
         .padding(.bottom, 4)
     }
 }
 
 enum SettingsMetrics {
-    /// Where a page's title lines up with its groups' edges (a grouped form's own margin).
+    /// Where a page's title lines up with its groups' edges (a grouped form's own margin), on a
+    /// page at its full width.
     static let inset: CGFloat = 49
     /// A page's width at most: as wide as a grouped form's groups grow (about 700 points) and its
     /// margins, so they start under the title. Wider, the form centers its groups and leaves the
     /// title behind.
     static let columnWidth: CGFloat = 700 + 2 * inset
+
+    /// Where a grouped form's groups start on a page this wide: they grow to about 700 points,
+    /// centered, and keep a margin of 20 points when the page is narrower than that.
+    static func inset(forWidth width: CGFloat) -> CGFloat {
+        min(inset, max(20, (width - 700) / 2))
+    }
+}
+
+extension EnvironmentValues {
+    /// Where a Settings page's title and groups start, for the page's width.
+    @Entry var settingsInset = SettingsMetrics.inset
+}
+
+/// Gives a page the inset its title (and anything else that lines up with the groups) uses at
+/// its width, so a narrow window keeps the title over the groups.
+private struct SettingsColumnInset: ViewModifier {
+    @State private var width = SettingsMetrics.columnWidth
+
+    func body(content: Content) -> some View {
+        content
+            .environment(\.settingsInset, SettingsMetrics.inset(forWidth: width))
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+    }
 }

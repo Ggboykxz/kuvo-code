@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- In a narrow window, each Settings page's title stays lined up with the settings under it.
 - A draft waiting in the composer opens with the cursor after it, instead of all selected, when the window takes a moment to come forward.
 
 ## 0.5.1

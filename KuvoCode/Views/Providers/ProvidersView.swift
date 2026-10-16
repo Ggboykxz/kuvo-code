@@ -8,6 +8,7 @@ struct ProvidersView: View {
     @Environment(Catalog.self) private var catalog
     @Environment(AppModel.self) private var app
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.settingsInset) private var inset
     @State private var connecting: Integration?
     @State private var search = ""
 
@@ -103,7 +104,7 @@ struct ProvidersView: View {
                 }
             }
             // Lined up with the page's title above it.
-            .padding(.horizontal, SettingsMetrics.inset)
+            .padding(.horizontal, inset)
             .padding(.vertical, 16)
         }
     }
