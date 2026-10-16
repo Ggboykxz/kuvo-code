@@ -6,7 +6,14 @@ import OpenCodeKit
 final class SessionModel {
     var session: Session
     private(set) var transcript: Transcript {
-        didSet { transcriptVersion &+= 1 }
+        didSet {
+            transcriptVersion &+= 1
+            // Answers in progress go once their question has (answered, or dismissed).
+            if !questionProgress.isEmpty {
+                let open = Set(transcript.forms.map(\.id))
+                questionProgress = questionProgress.filter { open.contains($0.key) }
+            }
+        }
     }
     /// Goes up with each change to the transcript, so what's made from it (the conversation's
     /// rows) is made again only then.
@@ -101,7 +108,7 @@ final class SessionModel {
 
     /// A question came: the composer lets go of the keyboard for it, unless you're writing.
     func yieldComposer() {
-        if draftText.isEmpty { composerBlur += 1 }
+        if draftText.isEmpty, draftQuotes.allSatisfy({ $0.response.isEmpty }) { composerBlur += 1 }
     }
 
     /// Replies to all of a message: it goes over the composer as a quote, to answer under.
@@ -727,7 +734,6 @@ final class SessionModel {
 
     func answer(_ form: FormRequest, with answer: FormAnswer) {
         guard canReach else { return }
-        questionProgress[form.id] = nil
         Analytics.shared.track("question_answered", ["kind": form.isQuestion ? "question" : "form"])
         Task {
             do { try await api.reply(session: id, form: form.id, answer: answer) } catch { failure = error.localizedDescription }
@@ -736,7 +742,6 @@ final class SessionModel {
 
     func dismiss(_ form: FormRequest, message: String? = nil) {
         guard canReach else { return }
-        questionProgress[form.id] = nil
         Analytics.shared.track("question_dismissed", ["kind": form.isQuestion ? "question" : "form"])
         Task { try? await api.dismiss(session: id, form: form.id, message: message) }
     }

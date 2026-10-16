@@ -20,7 +20,8 @@ final class WindowVisibility {
     }
 
     private func update() {
-        let visible = !NSApp.isHidden && NSApp.windows.contains { $0.isVisible && !$0.isMiniaturized && $0.occlusionState.contains(.visible) }
+        // Its own windows: not the menu bar item's, which is always on screen, nor panels.
+        let visible = !NSApp.isHidden && NSApp.windows.contains { $0.canBecomeMain && $0.isVisible && !$0.isMiniaturized && $0.occlusionState.contains(.visible) }
         if visible != isVisible { isVisible = visible }
     }
 }

@@ -84,11 +84,12 @@ struct SelectionMenu: ViewModifier {
         switch event.type {
         case .leftMouseDown:
             // A click on the menu is its own.
-            guard !menuFrame.contains(inWindow) else { return }
+            guard point == nil || !menuFrame.contains(inWindow) else { return }
             point = nil
+            menuFrame = .zero
             downAt = inWindow
         case .leftMouseUp:
-            guard frame.contains(inWindow), !menuFrame.contains(inWindow) else { return }
+            guard frame.contains(inWindow), point == nil || !menuFrame.contains(inWindow) else { return }
             let dragged = downAt.map { hypot($0.x - inWindow.x, $0.y - inWindow.y) > 4 } ?? false
             guard dragged || event.clickCount >= 2 else { return }
             let at = CGPoint(x: inWindow.x - frame.minX, y: inWindow.y - frame.minY)
@@ -99,6 +100,7 @@ struct SelectionMenu: ViewModifier {
             }
         default:
             point = nil
+            menuFrame = .zero
         }
     }
 

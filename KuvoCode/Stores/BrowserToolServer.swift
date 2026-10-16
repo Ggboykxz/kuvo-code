@@ -132,7 +132,7 @@ final class BrowserToolServer {
             // The engine names the session calling, so an ask goes to the right conversation.
             let caller = (params["_meta"] as? [String: Any])?["ai.opencode/sessionID"] as? String
             // Not the browser's: no page to serve it.
-            if name == BrowserTools.showInPanel { return reply(BrowserTools.showInPanelCall(arguments)) }
+            if name == BrowserTools.showInPanel { return reply(BrowserTools.showInPanelCall(arguments, caller: caller)) }
             return reply(await BrowserTools.call(name, arguments: arguments, agent: agent.serving(caller), caller: caller))
         default:
             return ["jsonrpc": "2.0", "id": id, "error": ["code": -32601, "message": "Unknown method \(method)"]]
@@ -187,6 +187,9 @@ enum BrowserTools {
              ["path": ["type": "string", "description": "The file's or folder's full path."]], required: ["path"]),
     ]
 
+    /// The folder a conversation works in, by its session (on this Mac).
+    static var sessionFolder: (String) -> String? = { _ in nil }
+
     /// The tool that shows a file or folder in the panel; the window does it when the call
     /// succeeds (see `Workspace.onShowInPanel`), for a session here or on a machine alike.
     nonisolated static let showInPanel = "show_in_panel"
@@ -197,10 +200,13 @@ enum BrowserTools {
     }
 
     /// Checks the path, here, and says it's shown.
-    static func showInPanelCall(_ arguments: [String: Any]) -> [String: Any] {
+    static func showInPanelCall(_ arguments: [String: Any], caller: String?) -> [String: Any] {
         func text(_ value: String, error: Bool = false) -> [String: Any] { ["content": [["type": "text", "text": value]], "isError": error] }
         guard let raw = arguments["path"] as? String, !raw.isEmpty else { return text("Missing path.", error: true) }
-        let full = URL(filePath: (raw as NSString).expandingTildeInPath).standardizedFileURL.path
+        // A relative one is in the folder the conversation works in.
+        let expanded = (raw as NSString).expandingTildeInPath
+        let base = caller.flatMap(sessionFolder) ?? FileManager.default.currentDirectoryPath
+        let full = (expanded.hasPrefix("/") ? URL(filePath: expanded) : URL(filePath: base).appending(path: expanded)).standardizedFileURL.path
         guard full == raw else { return text("Give the full path: \(full)", error: true) }
         var isFolder: ObjCBool = false
         guard FileManager.default.fileExists(atPath: full, isDirectory: &isFolder) else { return text("There's nothing at \(full).", error: true) }

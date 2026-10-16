@@ -174,7 +174,7 @@ struct UtilitiesPane: View {
                 }
             case .file(let url):
                 if let directory {
-                    FilesView(roots: folders.isEmpty ? [directory] : folders, file: url, showsTree: $utilities.showsTree, reveal: utilities.treeReveal) { utilities.open($0) }
+                    FilesView(roots: folders.isEmpty ? [directory] : folders, file: url, showsTree: $utilities.showsTree, reveal: utilities.treeReveal, revealed: utilities.revealed) { utilities.open($0) }
                         .id(folders.joined(separator: "\n") + directory)
                 } else {
                     placeholder("No Project", symbol: "folder", detail: "Open a project to browse its files.")

@@ -11,17 +11,19 @@ struct FilesView: View {
     let roots: [String]
     let file: URL?
     @Binding var showsTree: Bool
-    /// Where the tree should open down to, each time it's asked anew.
-    var reveal: (url: URL, count: Int)?
+    /// Where the tree should open down to; `revealed` says it has.
+    var reveal: URL?
+    var revealed: () -> Void = {}
     let open: (URL) -> Void
     @State private var tree: FileTree
     @State private var width: CGFloat = 600
 
-    init(roots: [String], file: URL?, showsTree: Binding<Bool>, reveal: (url: URL, count: Int)? = nil, open: @escaping (URL) -> Void) {
+    init(roots: [String], file: URL?, showsTree: Binding<Bool>, reveal: URL? = nil, revealed: @escaping () -> Void = {}, open: @escaping (URL) -> Void) {
         self.roots = roots
         self.file = file
         _showsTree = showsTree
         self.reveal = reveal
+        self.revealed = revealed
         self.open = open
         _tree = State(initialValue: FileTree(roots: roots.map(RemoteFolder.url)))
     }
@@ -55,10 +57,11 @@ struct FilesView: View {
             }
         }
         .onGeometryChange(for: CGFloat.self, of: \.size.width) { width = $0 }
-        .task(id: reveal?.count) {
+        .task(id: reveal) {
             guard let reveal else { return }
-            if file != nil { showsTree = true }
-            await tree.reveal(reveal.url)
+            // In this project's tree, the tree shows beside the file.
+            if await tree.reveal(reveal), file != nil { showsTree = true }
+            revealed()
         }
     }
 
@@ -151,8 +154,9 @@ final class FileTree {
     /// Opens the tree down to `target` (and it too, a folder), reading it afresh: an agent just
     /// made it, maybe. A machine's folders are read in the background, so each level waits for
     /// its listing.
-    func reveal(_ target: URL) async {
-        guard let root = roots.first(where: { $0.scheme == target.scheme && $0.host() == target.host() && (target.path == $0.path || target.path.hasPrefix($0.path + "/")) }) else { return }
+    @discardableResult
+    func reveal(_ target: URL) async -> Bool {
+        guard let root = roots.first(where: { $0.scheme == target.scheme && $0.host() == target.host() && (target.path == $0.path || target.path.hasPrefix($0.path + "/")) }) else { return false }
         filter = ""
         reload()
         if roots.count > 1 { expanded.insert(root) }
@@ -163,10 +167,11 @@ final class FileTree {
                 try? await Task.sleep(for: .milliseconds(150))
                 entry = entries(in: directory).first { $0.name == part }
             }
-            guard let entry, entry.isDirectory else { return }
+            guard let entry, entry.isDirectory else { return true }
             expanded.insert(entry.url)
             directory = entry.url
         }
+        return true
     }
 
     /// Forgets what's been read, so the tree shows files created since.

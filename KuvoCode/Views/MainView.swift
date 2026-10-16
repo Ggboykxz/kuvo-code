@@ -145,7 +145,9 @@ struct MainView: View {
                             // With the tab bar hidden, the panel button sits over the rightmost card.
                             .environment(\.windowControlsTrailingInset, !showsTabBar && layout.changes == nil ? 36 : 0)
                             .onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .global).minX }) { mainPaneX = $0 }
-                            // Under the expanded panel: out of reach until it's back.
+                            // Under the expanded panel: out of reach, keys too (a card's Return
+                            // or Esc), until it's back.
+                            .disabled(expands)
                             .allowsHitTesting(!expands)
                             .accessibilityHidden(expands)
                         if let width = layout.changes {
@@ -212,9 +214,11 @@ struct MainView: View {
         .onChange(of: app.showsSettings) { _, shows in
             if shows { NSApp.mainWindow?.makeFirstResponder(nil) }
         }
-        // Nor into the conversation the expanded panel covers.
-        .onChange(of: panelExpanded) { _, expanded in
-            if expanded { NSApp.mainWindow?.makeFirstResponder(nil) }
+        // Nor into the conversation the expanded panel covers (its composer, if it had the
+        // keyboard; the panel's own terminal or page keeps it).
+        .onChange(of: showsPanel && panelExpanded) { _, expanded in
+            guard expanded, let window = NSApp.mainWindow, let editor = window.firstResponder as? NSTextView, editor.isFieldEditor else { return }
+            window.makeFirstResponder(nil)
         }
         // The agent started browsing: show it.
         .onChange(of: utilities.revealRequest) { withAnimation(.ui) { showsPanel = true } }

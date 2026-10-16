@@ -191,11 +191,20 @@ private struct QuestionPager: View {
         .animation(.ui, value: index)
         // Greyed out (its machine away, Settings over it): keys aren't its.
         .onChange(of: isEnabled, initial: true) { _, enabled in windowBox.isEnabled = enabled }
+        // Keys go to the first question only: this one, once the ones before it are answered.
+        .onChange(of: takesKeys, initial: true) { _, takes in
+            if takes {
+                monitor = monitor ?? NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in key(event) ? nil : event }
+            } else if let monitor {
+                NSEvent.removeMonitor(monitor)
+                self.monitor = nil
+            }
+        }
         .onAppear {
             if !progress.isStarted {
                 progress = QuestionProgress(answers: FormFieldsView.defaults(for: form.fields), isStarted: true)
             }
-            if takesKeys { monitor = monitor ?? NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in key(event) ? nil : event } }
+
             #if DEBUG
             // KUVO_DEMO_QUESTIONS=<n>: on the nth question (from 0).
             if let n = Int(ProcessInfo.processInfo.environment["KUVO_DEMO_QUESTIONS"] ?? "") { page = n }

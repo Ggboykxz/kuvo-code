@@ -43,29 +43,38 @@ enum Quoting {
         return parts.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }.joined(separator: "\n\n")
     }
 
-    /// A message as what it quotes and what it says: each run of lines starting with ">" with the
-    /// words after it, in order (the first part's quote is nil when it starts with words).
+    /// A message as what it quotes and what it says: each quote (lines of "> ", as `message`
+    /// writes them, starting the message or after a blank line, and ending at one) with the words
+    /// after it, in order; the first part's quote is nil when it starts with words. Lines in a code
+    /// block, or like ">>> x" or a merge marker, are words.
     static func segments(_ message: String) -> [(quote: String?, text: String)] {
         var segments: [(quote: String?, text: String)] = []
-        var quote: [String] = []
+        var quote: [String]?
         var words: [String] = []
         func close() {
             let text = words.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-            let quoted = quote.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-            if !quoted.isEmpty || !text.isEmpty { segments.append((quoted.isEmpty ? nil : quoted, text)) }
-            quote = []
+            let quoted = quote?.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !(quoted ?? "").isEmpty || !text.isEmpty { segments.append(((quoted ?? "").isEmpty ? nil : quoted, text)) }
+            quote = nil
             words = []
         }
+        var inCode = false
+        var previousBlank = true
+        var quoting = false
         for line in message.split(separator: "\n", omittingEmptySubsequences: false) {
-            if line.hasPrefix(">") {
-                // A new quote after words: the part before is done.
-                if !words.joined().trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { close() }
-                var content = line.dropFirst()
-                if content.first == " " { content = content.dropFirst() }
-                quote.append(String(content))
+            let isQuoteLine = !inCode && (line == ">" || line.hasPrefix("> "))
+            if line.hasPrefix("```") { inCode.toggle() }
+            if isQuoteLine && (quoting || previousBlank) {
+                // A quote starting: the part before is done.
+                if !quoting { close() }
+                quoting = true
+                quote = (quote ?? []) + [line == ">" ? "" : String(line.dropFirst(2))]
             } else {
+                // Anything else ends a quote; the words after it are its answer.
+                quoting = false
                 words.append(String(line))
             }
+            previousBlank = line.trimmingCharacters(in: .whitespaces).isEmpty
         }
         close()
         return segments.isEmpty ? [(nil, message)] : segments
