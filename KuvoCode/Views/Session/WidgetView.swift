@@ -12,6 +12,13 @@ struct WidgetCard: View {
         call.name == "kuvo-browser_" + BrowserTools.showWidget
     }
 
+    /// Its title in arguments still being written (partial JSON), once it's all there.
+    static func title(inPartial input: String) -> String? {
+        guard let match = input.firstMatch(of: /"title"\s*:\s*"((?:[^"\\]|\\.)*)"/) else { return nil }
+        let raw = String(match.1)
+        return (try? JSONDecoder().decode(String.self, from: Data("\"\(raw)\"".utf8))) ?? raw
+    }
+
     let call: Message.ToolCall
     /// Sends what the page wrote back, as your message.
     let send: (String) -> Void
@@ -23,10 +30,14 @@ struct WidgetCard: View {
 
     var body: some View {
         switch call.state {
-        case .streaming:
+        case .streaming(let input):
+            // While it's written: its name once that's there, and how much has come.
             HStack(spacing: 8) {
                 Spinner(size: 12)
-                ShimmerText(text: "Making something…")
+                ShimmerText(text: Self.title(inPartial: input).map { "Making “\($0)”…" } ?? "Making something…")
+                Text(ByteCountFormatter.string(fromByteCount: Int64(input.utf8.count), countStyle: .file))
+                    .foregroundStyle(.tertiary)
+                    .monospacedDigit()
             }
             .font(.callout)
             .frame(maxWidth: .infinity, minHeight: 64)
