@@ -65,6 +65,8 @@ final class AppModel {
         case folder(String)
         case session(String)
         case newSession
+        /// A shared bot's file, opened in Finder: New Bot, from it.
+        case bot(BotRecipe)
     }
     var request: Request?
 

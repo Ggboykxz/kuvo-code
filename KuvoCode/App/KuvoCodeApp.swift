@@ -67,6 +67,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Folders dropped on the Dock icon, picked in Finder's Open With, or passed to
     /// `open -a "Kuvo Code" <folder>`: each becomes a project, with a new session in the first.
     func application(_ application: NSApplication, open urls: [URL]) {
+        // A shared bot: New Bot, from it.
+        if let file = urls.first(where: { $0.pathExtension == "kuvobot" }) {
+            if let recipe = try? BotRecipe.read(file) {
+                Analytics.shared.track("bot_imported")
+                model.open(.bot(recipe))
+            } else {
+                BotRecipe.cantOpen()
+            }
+        }
         let folders = urls.filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
         for folder in folders.dropFirst().reversed() { model.workspace.addFolder(folder.path(percentEncoded: false)) }
         if let first = folders.first { model.open(.folder(first.path(percentEncoded: false))) }

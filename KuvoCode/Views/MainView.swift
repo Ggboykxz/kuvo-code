@@ -337,6 +337,8 @@ struct MainView: View {
                 openTab(id)
             case .newSession:
                 newSession(in: nil)
+            case .bot(let recipe):
+                openBotEditor(bot: nil, recipe: recipe)
             }
         }
         .onChange(of: workspace.waitingCount, initial: true) { Notifier.shared.setBadge(workspace.waitingCount) }

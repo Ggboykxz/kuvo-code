@@ -20,7 +20,23 @@ struct BotRecipe: Codable, Equatable {
         var description: String
     }
 
-    static let type = UTType(filenameExtension: "kuvobot", conformingTo: .json) ?? .json
+    /// Declared in the app's Info.plist, so a .kuvobot file opens in Kuvo Code.
+    static let type = UTType("run.kuvo.code.bot") ?? UTType(filenameExtension: "kuvobot", conformingTo: .json) ?? .json
+
+    /// The recipe in a file.
+    static func read(_ url: URL) throws -> BotRecipe {
+        let recipe = try JSONDecoder().decode(BotRecipe.self, from: Data(contentsOf: url))
+        guard recipe.kind == "kuvo-bot" else { throw CocoaError(.fileReadCorruptFile) }
+        return recipe
+    }
+
+    /// Tells you a file isn't a bot.
+    static func cantOpen() {
+        let alert = NSAlert()
+        alert.messageText = "This isn’t a bot Kuvo Code can open"
+        alert.informativeText = "Choose a file exported from Edit Bot."
+        alert.runModal()
+    }
 
     init(bot: Bot) {
         name = bot.name
@@ -64,15 +80,11 @@ struct BotRecipe: Codable, Equatable {
         panel.message = "Choose a bot to start a new one from."
         guard panel.runModal() == .OK, let url = panel.url else { return nil }
         do {
-            let recipe = try JSONDecoder().decode(BotRecipe.self, from: Data(contentsOf: url))
-            guard recipe.kind == "kuvo-bot" else { throw CocoaError(.fileReadCorruptFile) }
+            let recipe = try read(url)
             Analytics.shared.track("bot_imported")
             return recipe
         } catch {
-            let alert = NSAlert()
-            alert.messageText = "This isn’t a bot Kuvo Code can open"
-            alert.informativeText = "Choose a file exported from Edit Bot."
-            alert.runModal()
+            cantOpen()
             return nil
         }
     }
