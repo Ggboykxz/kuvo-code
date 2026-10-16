@@ -138,7 +138,7 @@ without clicking, for trying a change or taking screenshots:
 | `KUVO_DEMO_GROUP_LATER` | With a message in `KUVO_DEMO_GROUP`: another one, sent while they talk, as `<seconds>\|<message>` |
 | `KUVO_DEMO_GROUP_UNDO` | With `KUVO_DEMO_GROUP`: undo from your last message there after this many seconds |
 | `KUVO_DEMO_EDIT_GROUP` | With `KUVO_DEMO_GROUP`: its editor, open |
-| `KUVO_DEMO_BOT_MOODS` | Show bots in a mood, as `<name>=<mood>,…` with `working`, `waiting`, `news`, `sleeping` or `idle` |
+| `KUVO_DEMO_BOT_MOODS` | Show bots in a mood, as `<name>=<mood>,…` with `working`, `waiting`, `news`, `sleeping`, `watching` or `idle` |
 | `KUVO_DEMO_VIEW_IMAGE` | Show these comma-separated pictures in the image viewer |
 | `KUVO_DEMO_SLOW` | Slow the app's animations down this many times, to look at one frame by frame |
 | `KUVO_DEMO_TOGGLE_PANEL` | Show and hide the side panel every this many seconds, a few times |

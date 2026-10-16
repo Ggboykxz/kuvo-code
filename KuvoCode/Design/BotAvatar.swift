@@ -65,6 +65,9 @@ enum BotMood: Equatable {
     case news
     /// Idle with a wake-up scheduled: asleep, with z's floating up.
     case sleeping
+    /// Idle with something to watch (and no wake-up): awake, looking out one way and the other,
+    /// leaning a little into each look.
+    case watching
 }
 
 /// A bot's face on its shape, at any size: in the sidebar, on its tab, in its header and, large,
@@ -295,6 +298,7 @@ private struct BotPose {
         case .waiting: pose.face = .bright
         case .news: pose.face = .happy; pose.twinkle = 0.8
         case .sleeping: pose.face = .sleepy; pose.zs = [0.5]
+        case .watching: pose.glance = 0.1
         case .idle, .working: pose.face = noticed ? .happy : nil
         }
         return pose
@@ -349,6 +353,19 @@ private struct BotPose {
             if c < 0.9 { hop(c, height: 0.12, period: 0.45) }
             let w = (c - 0.15) / 1.5
             if w > 0 && w < 1 { twinkle = CGFloat(sin(w * .pi)) }
+        case .watching:
+            // Slow breaths; every few seconds a long look out to one side, then the other,
+            // leaning into each, and back.
+            breathe(t, depth: 0.03, period: 4.2)
+            blinks(t, every: 3.8 + seed.truncatingRemainder(dividingBy: 1.2), seed: seed)
+            if noticed {
+                face = .happy
+            } else {
+                let c = (t + seed * 3).truncatingRemainder(dividingBy: 6.4) / 6.4
+                let look = Self.keys(c, [(0, 0), (0.1, 0), (0.2, -1), (0.42, -1), (0.52, 1), (0.78, 1), (0.88, 0), (1, 0)])
+                glance = CGFloat(0.21 * look)
+                tilt = -7 * look
+            }
         case .sleeping:
             // Deep, slow breaths and a slow nod, z's drifting up.
             face = .sleepy

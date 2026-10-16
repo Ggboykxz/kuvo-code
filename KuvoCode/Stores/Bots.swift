@@ -104,6 +104,7 @@ final class Bots {
                     case "waiting": return .waiting
                     case "news": return .news
                     case "sleeping": return .sleeping
+                    case "watching": return .watching
                     default: return .idle
                     }
                 }
@@ -113,7 +114,8 @@ final class Bots {
         if workspace.needsAttention(bot.sessionID) { return .waiting }
         if workspace.running.contains(bot.sessionID) { return .working }
         if workspace.session(bot.sessionID)?.isUnread == true { return .news }
-        if wakes[bot.id]?.isEmpty == false || watches[bot.id]?.isEmpty == false { return .sleeping }
+        if wakes[bot.id]?.isEmpty == false { return .sleeping }
+        if watches[bot.id]?.isEmpty == false { return .watching }
         return .idle
     }
 
