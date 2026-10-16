@@ -24,6 +24,40 @@ final class AgentMail {
     }
 
     weak var app: AppModel?
+
+    /// A message waiting for its agent's machine to be back, kept until then (across launches).
+    struct Waiting: Codable {
+        var from: String?
+        var name: String
+        var to: String
+        var machine: String
+        var text: String
+    }
+
+    private static var waitingFile: URL { AppInfo.supportDirectory.appending(path: "agent-messages.json") }
+    private var waiting: [Waiting] = JSONFile.read([Waiting].self, from: AgentMail.waitingFile) ?? []
+
+    /// Delivers what waited for `engine`'s machine, now it's back.
+    func deliverWaiting(to engine: MachineEngine) async {
+        let machine = engine.machine.id
+        let due = waiting.filter { $0.machine == machine }
+        guard !due.isEmpty else { return }
+        waiting.removeAll { $0.machine == machine }
+        save()
+        for letter in due {
+            let result = await send(from: letter.from, name: letter.name, to: letter.to, text: letter.text, waits: false)
+            if result.isError { log.error("A message for \(machine, privacy: .public) didn't go: \(result.text, privacy: .public)") }
+        }
+    }
+
+    private func save() {
+        if waiting.isEmpty {
+            try? FileManager.default.removeItem(at: Self.waitingFile)
+        } else {
+            JSONFile.write(waiting, to: Self.waitingFile)
+        }
+    }
+
     /// Messages sent lately, by the conversation that sent them, to keep two agents from
     /// writing back and forth for ever.
     private var sent: [String: [Date]] = [:]
@@ -137,7 +171,11 @@ final class AgentMail {
         }
         sent[key] = lately + [.now]
         guard let app, let api = app.workspace.api(forSession: target.session) else {
-            return ("\(target.name) can't be reached now (its machine isn't connected). Try again later.", true)
+            // Its machine is away: it goes when it's back.
+            guard let machine = target.machine else { return ("\(target.name) can't be reached now. Try again later.", true) }
+            waiting.append(Waiting(from: caller, name: name, to: target.session, machine: machine, text: text))
+            save()
+            return ("\(target.name)'s machine (\(machine)) is away: the message goes to it as soon as it's back\(waits ? ", and its answer comes to you as a message" : "").", false)
         }
         let id = Identifier.message()
         do {

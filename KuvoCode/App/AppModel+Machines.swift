@@ -147,6 +147,7 @@ extension AppModel {
             await syncSignInFiles(with: engine)
             await AgentMail.shared.share(with: engine)
             await AgentMail.shared.collect(from: engine)
+            await AgentMail.shared.deliverWaiting(to: engine)
             engine.signInSync = Task { [weak self, weak engine] in
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(600))
