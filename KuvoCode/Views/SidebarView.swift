@@ -835,39 +835,24 @@ private struct GroupRow: View {
     var body: some View {
         let speaker = groups.speaking[group.id].flatMap { bots.bot($0) }
         let isUnread = groups.isUnread(group) && !isSelected
-        Button(action: action) {
-            HStack(spacing: 10) {
-                GroupAvatar(faces: group.members.compactMap { id in
-                    bots.bot(id).map { GroupAvatar.Face(look: $0.look, mood: $0.id == speaker?.id ? .working : .idle) }
-                }, size: 28)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(group.name)
-                        .font(.system(size: 14))
-                        .fontWeight(isUnread ? .semibold : .regular)
-                    Group {
-                        if let speaker {
-                            ShimmerText(text: "\(speaker.name) is typing…")
-                        } else if groups.discussing.contains(group.id) {
-                            ShimmerText(text: "Talking it over…")
-                        } else {
-                            Text(lastLine)
-                        }
-                    }
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                }
-                .lineLimit(1)
-                Spacer(minLength: 6)
-                if isUnread {
-                    Circle().fill(.tint).frame(width: 7, height: 7)
-                        .help("New messages")
-                }
+        FaceRow(title: group.name, isUnread: isUnread, isSelected: isSelected, action: action) {
+            GroupAvatar(faces: group.members.compactMap { id in
+                bots.bot(id).map { GroupAvatar.Face(look: $0.look, mood: $0.id == speaker?.id ? .working : .idle) }
+            }, size: 28)
+        } subtitle: {
+            if let speaker {
+                ShimmerText(text: "\(speaker.name) is typing…")
+            } else if groups.discussing.contains(group.id) {
+                ShimmerText(text: "Talking it over…")
+            } else {
+                Text(lastLine)
             }
-            .padding(.horizontal, 10)
-            .frame(height: 46)
-            .modifier(RowHighlight(isSelected: isSelected))
+        } trailing: {
+            if isUnread {
+                Circle().fill(.tint).frame(width: 7, height: 7)
+                    .help("New messages")
+            }
         }
-        .buttonStyle(.plain)
     }
 
     /// "Mira: Let's ship on Friday", or who's in it before anything's been said.
@@ -878,6 +863,41 @@ private struct GroupRow: View {
             return who + ": " + last.text.filter { !"*`#>".contains($0) }.split(whereSeparator: \.isNewline).joined(separator: " ")
         }
         return group.members.compactMap { bots.bot($0)?.name }.joined(separator: ", ")
+    }
+}
+
+/// A bot's row or a group chat's, in the sidebar: its face, its name over a line of what it's
+/// doing (in bold while there's something you haven't read), and its status at the end.
+private struct FaceRow<Face: View, Subtitle: View, Trailing: View>: View {
+    let title: String
+    let isUnread: Bool
+    let isSelected: Bool
+    let action: () -> Void
+    @ViewBuilder let face: Face
+    @ViewBuilder let subtitle: Subtitle
+    @ViewBuilder let trailing: Trailing
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                face
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(.system(size: 14))
+                        .fontWeight(isUnread ? .semibold : .regular)
+                    subtitle
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                .lineLimit(1)
+                Spacer(minLength: 6)
+                trailing
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 46)
+            .modifier(RowHighlight(isSelected: isSelected))
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -895,31 +915,18 @@ private struct BotRow: View {
     private var session: Session? { workspace.session(bot.sessionID) }
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                BotAvatar(look: bot.look, size: 28, mood: bots.mood(of: bot, in: workspace), noticed: isHovering, animates: animates)
-                    .overlay(alignment: .bottomTrailing) {
-                        if let machine = bot.machine { MachineBadge(machine: machine).offset(x: 4, y: 3) }
-                    }
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(bot.name)
-                        .font(.system(size: 14))
-                        .fontWeight(session?.isUnread == true ? .semibold : .regular)
-                    status
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
+        FaceRow(title: bot.name, isUnread: session?.isUnread == true, isSelected: isSelected, action: action) {
+            BotAvatar(look: bot.look, size: 28, mood: bots.mood(of: bot, in: workspace), noticed: isHovering, animates: animates)
+                .overlay(alignment: .bottomTrailing) {
+                    if let machine = bot.machine { MachineBadge(machine: machine).offset(x: 4, y: 3) }
                 }
-                .lineLimit(1)
-                Spacer(minLength: 6)
-                if let session {
-                    SessionStatus(session: session)
-                }
+        } subtitle: {
+            status
+        } trailing: {
+            if let session {
+                SessionStatus(session: session)
             }
-            .padding(.horizontal, 10)
-            .frame(height: 46)
-            .modifier(RowHighlight(isSelected: isSelected))
         }
-        .buttonStyle(.plain)
         .onHover { isHovering = $0 }
         // Read again whenever it's done some work: it may have scheduled a wake-up.
         .task(id: session?.time.updated) {
