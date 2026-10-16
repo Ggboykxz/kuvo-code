@@ -537,6 +537,30 @@ final class Workspace {
         } || asking.values.contains { RemoteFolder.machine(of: session($0)?.location.directory ?? "") == machine }
     }
 
+    /// The run end each bot's session was last told about (as its idle time), so news that came
+    /// while a machine was out of reach is told once it's back, and only once.
+    @ObservationIgnored private var toldIdle: [String: Double] = [:]
+    /// Machines connected since launch: a later connection is a reconnection.
+    @ObservationIgnored private var connectedOnce: Set<String> = []
+
+    /// Bots on the machine that finished while it was out of reach (your Mac asleep, say): their
+    /// news, in notifications, as if you'd been connected.
+    private func tellMissedNews(in sessions: [Session], machine: String) {
+        let reconnected = !connectedOnce.insert(machine).inserted
+        for session in sessions where botName?(session.id) != nil {
+            guard let idle = session.time.idle else { continue }
+            let told = toldIdle[session.id]
+            toldIdle[session.id] = max(idle, told ?? 0)
+            guard reconnected, session.isUnread, idle > (told ?? 0) else { continue }
+            Task {
+                let reply = await lastReply(of: session.id)
+                if let reply { replyPreviews[session.id] = reply }
+                Notifier.shared.notify(session: session.id, title: botName?(session.id) ?? session.title ?? "New Session",
+                                       body: session.outcome == .failed ? "Stopped with an error." : reply ?? "Finished.", replies: true)
+            }
+        }
+    }
+
     /// A machine's sessions, when it connects (or reconnects after a gap), in place of what was
     /// known of them.
     func refresh(_ engine: MachineEngine) async {
@@ -544,6 +568,7 @@ final class Workspace {
         let machine = engine.machine.id
         do {
             let theirs = try await api.sessions().data.filter { !isHidden($0) }
+            tellMissedNews(in: theirs, machine: machine)
             sessions = sessions.filter { RemoteFolder.machine(of: $0.location.directory) != machine } + theirs
             for session in theirs { sessionMachines[session.id] = machine }
             remoteSessions = remoteSessions.filter { $0.value.machine != machine }
@@ -685,6 +710,8 @@ final class Workspace {
                     let isBot = botName?(id) != nil
                     let reply = failed || !(Notifier.isEnabled || isBot) ? nil : await lastReply(of: id)
                     if isBot { replyPreviews[id] = reply }
+                    // Told: a reconnection won't tell it again.
+                    if let idle = self.session(id)?.time.idle { toldIdle[id] = max(idle, toldIdle[id] ?? 0) }
                     Notifier.shared.notify(
                         session: id,
                         title: botName?(id) ?? session.title ?? "New Session",
