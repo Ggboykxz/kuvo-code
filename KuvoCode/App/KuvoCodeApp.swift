@@ -40,8 +40,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UsageMenuBar.shared.onPanelShown = { Analytics.shared.track("usage_panel_opened") }
         #if DEBUG
         // KUVO_DEMO_USAGE=off leaves the usage tracker out, so a second copy of the app
-        // (for screenshots) never renews the logins the first one is using.
-        if ProcessInfo.processInfo.environment["KUVO_DEMO_USAGE"] == "off" { return }
+        // (for screenshots) never renews the logins the first one is using; `sample` too, and
+        // phones get sample numbers (see PhoneLink).
+        if ["off", "sample"].contains(ProcessInfo.processInfo.environment["KUVO_DEMO_USAGE"]) { return }
         #endif
         // Plan limits and spend in the menu bar (UsageKit).
         model.startUsage()

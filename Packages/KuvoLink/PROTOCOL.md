@@ -155,6 +155,11 @@ itself. A host serves:
   the same way. `POST kuvo/groups/<id>` writes to it (`{"text"}`); `…/stop`, `…/keep-going`
   and `…/viewed` do what they say; `…/undo` (`{"message"}`) takes a message of yours back and
   answers with what was taken. Times are seconds since 1970.
+- On a Mac, `kuvo/usage`: the menu bar's usage panel as its Bars view lists it (each provider's
+  name, plan, brand color, mark as a PNG to tint, notice, whether it's outdated, and its lines as
+  UsageKit writes them), whether a refresh is under way and when the last one ended;
+  `kuvo/usage/events` streams it as it changes, and `POST kuvo/usage/refresh` refreshes it all.
+  A Mac without the usage panel answers 404. Times are seconds since 1970.
 
 ### Sockets
 

@@ -1,0 +1,100 @@
+import AppKit
+import SwiftUI
+
+/// The usage panel for the host's paired phones (fork addition): what the Bars view shows, as
+/// JSON, and a way to refresh it.
+extension UsageMenuBar {
+    /// The providers the Bars view lists, in its order, each with its brand color, its mark,
+    /// what's wrong if anything, and its lines; whether a refresh is under way, and when the last
+    /// one ended. Nil until the panel is up. Dates are seconds since 1970.
+    public func phoneUsage() -> Data? {
+        guard let container else { return nil }
+        let store = container.dataStore
+        let providers = container.layout.displayGroups.compactMap { group -> PhoneUsage.Provider? in
+            let provider = group.provider
+            guard let snapshot = store.snapshots[provider.id] else { return nil }
+            return PhoneUsage.Provider(
+                id: provider.id,
+                name: snapshot.displayName,
+                plan: snapshot.plan,
+                color: Self.hex(TotalSpendPalette.color(for: provider.id)),
+                icon: Self.mark(for: provider.id),
+                iconIsTemplate: true,
+                refreshed: snapshot.refreshedAt,
+                notice: store.headerNotice(for: provider.id),
+                stale: store.stalenessHint(for: provider.id) == nil ? nil : true,
+                lines: snapshot.lines
+            )
+        }
+        let usage = PhoneUsage(providers: providers, refreshing: !store.refreshingProviderIDs.isEmpty, refreshed: store.lastRefreshAt)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .secondsSince1970
+        return try? encoder.encode(usage)
+    }
+
+    /// Refreshes every provider now, past the cache (a phone pulled to refresh). False until the
+    /// panel is up.
+    @discardableResult
+    public func refreshAll() -> Bool {
+        guard let container else { return false }
+        Task { await container.dataStore.refreshAll(force: true) }
+        return true
+    }
+
+    /// Its brand color in light mode, as "#RRGGBB".
+    private static func hex(_ color: Color) -> String {
+        var hex = "#888888"
+        NSAppearance(named: .aqua)?.performAsCurrentDrawingAppearance {
+            guard let rgb = NSColor(color).usingColorSpace(.sRGB) else { return }
+            let channel = { (value: CGFloat) in Int((min(max(value, 0), 1) * 255).rounded()) }
+            hex = String(format: "#%02X%02X%02X", channel(rgb.redComponent), channel(rgb.greenComponent), channel(rgb.blueComponent))
+        }
+        return hex
+    }
+
+    /// The provider's mark, black on clear, 64 points square, as base64 PNG for the phone to tint;
+    /// drawn once per provider.
+    private static func mark(for providerID: String) -> String? {
+        if let drawn = marks[providerID] { return drawn }
+        let view = Group {
+            if let mark = ProviderMarks.mark(for: providerID) {
+                ProviderIconShape(mark: mark, inset: 0.04).fill(Color.black)
+            } else {
+                Image(systemName: ProviderMarks.symbolFallback(for: providerID))
+                    .resizable()
+                    .scaledToFit()
+                    .padding(6)
+                    .foregroundStyle(Color.black)
+            }
+        }
+        .frame(width: 64, height: 64)
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 1
+        guard let image = renderer.cgImage,
+              let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else { return nil }
+        let encoded = png.base64EncodedString()
+        marks[providerID] = encoded
+        return encoded
+    }
+
+    private static var marks: [String: String] = [:]
+}
+
+private struct PhoneUsage: Encodable {
+    struct Provider: Encodable {
+        var id: String
+        var name: String
+        var plan: String?
+        var color: String
+        var icon: String?
+        var iconIsTemplate: Bool?
+        var refreshed: Date
+        var notice: String?
+        var stale: Bool?
+        var lines: [MetricLine]
+    }
+
+    var providers: [Provider]
+    var refreshing: Bool
+    var refreshed: Date?
+}

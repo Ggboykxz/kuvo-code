@@ -139,7 +139,7 @@ without clicking, for trying a change or taking screenshots:
 | `KUVO_DEMO_PALETTE` | Open the command palette with this typed in it (empty for none) |
 | `KUVO_DEMO_MENU` | Open the `mode` menu, the `model` picker (`list` on the model list, `models` with every model shown), or `location` in the New Project sheet |
 | `KUVO_DEMO_EFFORT` | With the model picker open, pick this effort level |
-| `KUVO_DEMO_USAGE` | Open the menu bar's usage panel on `dashboard`, `customize` or `settings`, or `off` to leave the usage tracker out |
+| `KUVO_DEMO_USAGE` | Open the menu bar's usage panel on `dashboard`, `customize` or `settings`; `off` to leave the usage tracker out; `sample` to leave it out and give paired phones sample numbers |
 | `KUVO_DEMO_SETTINGS` | Open Settings on a page, by its `SettingsPage` name: `general`, `appearance`, `storage`, `accounts`, `agents`, `mcp`, `git`, `browser`, `passwords` and so on |
 | `KUVO_DEMO_ADD_MACHINE` | The Add Machine sheet, open, with `KUVO_DEMO_SETTINGS=machines` or over `KUVO_DEMO_NEW_PROJECT` |
 | `KUVO_DEMO_WELCOME` | No tabs, so the welcome card shows |

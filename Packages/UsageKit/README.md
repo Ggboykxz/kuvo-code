@@ -26,6 +26,9 @@ here.
 
 - **Plan limits for the host** (`Embedding/PlanLimits.swift`): the latest limits of one provider,
   read from what the panel already has, for Kuvo Code to show beside a session.
+- **The panel for the host's phones** (`Embedding/UsageMenuBar+Phone.swift`): what the Bars view
+  lists, as JSON (providers in its order with their brand color, mark, notice and lines), and a
+  refresh of everything, for Kuvo Code for iPhone.
 - **API keys pasted into the panel go into the Keychain** (`Providers/APIKeySecrets.swift`), not a
   JSON file; a key an earlier version saved in a file moves there the next time it's read.
 - **A Bars style for the dashboard**, the default (`Views/UsageBarsView.swift`): one compact bar

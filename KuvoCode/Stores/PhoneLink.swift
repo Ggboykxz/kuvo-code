@@ -3,6 +3,7 @@ import Foundation
 import KuvoLink
 import OpenCodeKit
 import os
+import UsageKit
 import Security
 import SystemConfiguration
 
@@ -246,6 +247,7 @@ final class PhoneLink {
             if request.path == "kuvo/asks/events" { return Self.following { self?.asksJSON() } }
             if request.path == "kuvo/groups/events" { return Self.following { self?.groupsJSON() } }
             if let id = Self.groupID(in: request.path, then: "events") { return Self.following { self?.groupJSON(id) } }
+            if request.path == "kuvo/usage/events" { return Self.following { self?.usageJSON() } }
             return AsyncThrowingStream { continuation in
                 Task { @MainActor in
                     let (status, body) = self?.answer(request) ?? (503, Data())
@@ -313,6 +315,14 @@ final class PhoneLink {
             return (200, asksJSON())
         case "kuvo/groups":
             return (200, groupsJSON())
+        case "kuvo/usage":
+            guard let usage = usageJSON() else { return (404, Data()) }
+            return (200, usage)
+        case "kuvo/usage/refresh" where request.method == "POST":
+            #if DEBUG
+            if Self.usageSample { return (200, Data("{}".utf8)) }
+            #endif
+            return UsageMenuBar.shared.refreshAll() ? (200, Data("{}".utf8)) : (404, Data())
         case let path where path.hasPrefix("kuvo/groups/") && request.method == "POST":
             return answerGroup(String(path.dropFirst("kuvo/groups/".count)), with: request.body)
         case let path where path.hasPrefix("kuvo/asks/") && request.method == "POST":
@@ -409,6 +419,39 @@ final class PhoneLink {
         }
         return (200, Data("{}".utf8))
     }
+
+    // MARK: Usage
+
+    /// The menu bar's usage panel, as its Bars view lists it; nil while it isn't running (a phone
+    /// then hides Usage).
+    private func usageJSON() -> Data? {
+        #if DEBUG
+        if Self.usageSample { return Data(Self.sampleUsage.utf8) }
+        #endif
+        return UsageMenuBar.shared.phoneUsage()
+    }
+
+    #if DEBUG
+    /// KUVO_DEMO_USAGE=sample: the usage tracker stays out (as with `off`), and phones get these
+    /// numbers instead of your accounts'.
+    static var usageSample: Bool { ProcessInfo.processInfo.environment["KUVO_DEMO_USAGE"] == "sample" }
+
+    private static var sampleUsage: String {
+        let now = Int(Date.now.timeIntervalSince1970)
+        return """
+        {"providers":[\
+        {"id":"claude","name":"Claude","plan":"Max","color":"#DE7356","refreshed":\(now - 40),"lines":[\
+        {"type":"progress","label":"Session","used":42,"limit":100,"format":{"kind":"percent"},"resetsAt":\(now + 7_200),"periodDurationMs":18000000},\
+        {"type":"progress","label":"Weekly","used":67,"limit":100,"format":{"kind":"percent"},"resetsAt":\(now + 259_200),"periodDurationMs":604800000}]},\
+        {"id":"codex","name":"Codex","plan":"Pro","color":"#10A37F","refreshed":\(now - 95),"lines":[\
+        {"type":"progress","label":"Session","used":18,"limit":100,"format":{"kind":"percent"},"resetsAt":\(now + 12_600),"periodDurationMs":18000000},\
+        {"type":"text","label":"Credits","value":"$12.40"}]},\
+        {"id":"cursor","name":"Cursor","color":"#13120A","refreshed":\(now - 900),"notice":"Not logged in. Sign in to Cursor to see its usage.","stale":true,"lines":[\
+        {"type":"badge","label":"Error","text":"Not logged in"}]}],\
+        "refreshing":false,"refreshed":\(now - 40)}
+        """
+    }
+    #endif
 
     // MARK: Group chats
 
