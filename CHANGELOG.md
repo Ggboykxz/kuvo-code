@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- A widget takes shape as the agent writes it, then comes alive when it's done.
 - What an agent writes to another shows in its conversation, as "To Scout" with the message, and the answer when it waited for one.
 - ⌘F finds in group chats too, as in sessions.
 - **Agents write to each other**: any session or bot, on this Mac or a machine, can see who else there is and send one a message, then wait for its answer or carry on. A message from another agent shows who it's from, with Open to go to its conversation. Two agents can't keep writing back and forth unattended.

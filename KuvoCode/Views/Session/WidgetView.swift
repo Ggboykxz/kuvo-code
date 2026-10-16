@@ -34,9 +34,12 @@ struct WidgetCard: View {
     #endif
 
     var body: some View {
-        switch call.state {
-        case .streaming(let input):
-            // While it's written: its name once that's there, and how much has come.
+        // One card while it's written and once it's done, so the page carries on from its draft.
+        if case .failed = call.state {
+            ToolCallView(call: call, directory: "")
+        } else if let content {
+            card(html: content.html, title: content.title, draft: content.draft)
+        } else if case .streaming(let input) = call.state {
             HStack(spacing: 8) {
                 Spinner(size: 12)
                 ShimmerText(text: Self.title(inPartial: input).map { "Making “\($0)”…" } ?? "Making something…")
@@ -47,16 +50,53 @@ struct WidgetCard: View {
             .font(.callout)
             .frame(maxWidth: .infinity, minHeight: 64)
             .background(Surface.well(scheme), in: Self.shape)
-        case .running(let input, _), .completed(let input, _, _):
-            if let html = input["html"]?.string, !html.isEmpty {
-                card(html: html, title: input["title"]?.string)
-            }
-        case .failed:
-            ToolCallView(call: call, directory: "")
         }
     }
 
-    private func card(html: String, title: String?) -> some View {
+    /// What there is to show: while it's written, what's come so far (once there's something to
+    /// see), with how much has come; then the page.
+    private var content: (html: String, title: String?, draft: Int?)? {
+        switch call.state {
+        case .streaming(let input):
+            guard let html = Self.html(inPartial: input), html.count > 120 else { return nil }
+            return (html, Self.title(inPartial: input), input.utf8.count)
+        case .running(let input, _), .completed(let input, _, _):
+            guard let html = input["html"]?.string, !html.isEmpty else { return nil }
+            return (html, input["title"]?.string, nil)
+        case .failed:
+            return nil
+        }
+    }
+
+    /// The page's HTML in arguments still being written (partial JSON): what's there so far.
+    static func html(inPartial input: String) -> String? {
+        guard let start = input.range(of: #""html"\s*:\s*""#, options: .regularExpression) else { return nil }
+        var html = ""
+        var characters = input[start.upperBound...].makeIterator()
+        while let character = characters.next() {
+            switch character {
+            case "\"": return html
+            case "\\":
+                guard let escaped = characters.next() else { return html }
+                switch escaped {
+                case "n": html.append("\n")
+                case "t": html.append("\t")
+                case "r": html.append("\r")
+                case "b", "f": break
+                case "u":
+                    var hex = ""
+                    for _ in 0..<4 { if let digit = characters.next() { hex.append(digit) } }
+                    if hex.count == 4, let value = UInt32(hex, radix: 16), let scalar = Unicode.Scalar(value) { html.unicodeScalars.append(scalar) }
+                default: html.append(escaped)
+                }
+            default: html.append(character)
+            }
+        }
+        return html
+    }
+
+    /// `draft`: still being written, this many bytes so far.
+    private func card(html: String, title: String?, draft: Int? = nil) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
                 Image(systemName: "sparkles.rectangle.stack")
@@ -65,15 +105,22 @@ struct WidgetCard: View {
                     .fontWeight(.medium)
                     .lineLimit(1)
                 Spacer(minLength: 8)
-                MessageActionButton(symbol: "arrow.up.left.and.arrow.down.right", help: "Open Larger") { isLarge = true }
-                CopyButton(text: html, help: "Copy Its HTML")
+                if let draft {
+                    Spinner(size: 11)
+                    Text(ByteCountFormatter.string(fromByteCount: Int64(draft), countStyle: .file))
+                        .foregroundStyle(.tertiary)
+                        .monospacedDigit()
+                } else {
+                    MessageActionButton(symbol: "arrow.up.left.and.arrow.down.right", help: "Open Larger") { isLarge = true }
+                    CopyButton(text: html, help: "Copy Its HTML")
+                }
             }
             .font(.callout)
             .padding(.leading, 12)
             .padding(.trailing, 6)
             .frame(height: 32)
             Divider()
-            WidgetPage(html: html, accent: NSColor.controlAccentColor, height: $height, send: send)
+            WidgetPage(html: html, accent: NSColor.controlAccentColor, height: $height, isDraft: draft != nil, send: send)
                 .frame(height: max(height, 60))
         }
         .background(Surface.cardFill(scheme, focused: cardIsFocused), in: Self.shape)
@@ -127,6 +174,8 @@ private struct WidgetPage: NSViewRepresentable {
     @Binding var height: CGFloat
     /// It has room of its own (larger, in a sheet): it always scrolls in itself.
     var scrollsInside = false
+    /// Still being written: drawn without its scripts, a couple of times a second.
+    var isDraft = false
     let send: (String) -> Void
 
     /// Taller than this, it scrolls inside.
@@ -140,7 +189,9 @@ private struct WidgetPage: NSViewRepresentable {
         let content = configuration.userContentController
         content.add(WeakHandler(context.coordinator), name: "kuvo")
         content.addUserScript(WKUserScript(source: Self.bridge, injectionTime: .atDocumentStart, forMainFrameOnly: true))
-        content.addUserScript(WKUserScript(source: Self.measure, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        // Apart from the page's own scripts, so it measures a draft drawn without them too.
+        content.add(WeakHandler(context.coordinator), contentWorld: .defaultClient, name: "kuvo")
+        content.addUserScript(WKUserScript(source: Self.measure, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
         let view = WidgetWebView(frame: .zero, configuration: configuration)
         view.setValue(false, forKey: "drawsBackground")
         view.navigationDelegate = context.coordinator
@@ -155,10 +206,7 @@ private struct WidgetPage: NSViewRepresentable {
         coordinator.view = view
         coordinator.scrollsInside = scrollsInside
         if scrollsInside { view.fits = false }
-        let page = Self.page(html, accent: accent)
-        guard coordinator.loaded != page else { return }
-        coordinator.loaded = page
-        view.loadHTMLString(page, baseURL: nil)
+        coordinator.show(Self.page(html, accent: accent), draft: isDraft)
     }
 
     /// Libraries from the usual places, pictures from anywhere; nothing it can send to.
@@ -214,6 +262,34 @@ private struct WidgetPage: NSViewRepresentable {
         weak var view: WidgetWebView?
         var loaded: String?
         var scrollsInside = false
+        /// What's shown is a draft: no scripts.
+        private(set) var isDraft = false
+        private var lastDraft = Date.distantPast
+        private var waitingDraft: Task<Void, Never>?
+
+        /// Loads `page`: the finished one at once, a draft at most twice a second (the last
+        /// one coming once it's had its turn).
+        func show(_ page: String, draft: Bool) {
+            guard loaded != page else { return }
+            waitingDraft?.cancel()
+            let due = lastDraft.addingTimeInterval(0.5)
+            if draft, due > .now {
+                waitingDraft = Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .seconds(due.timeIntervalSinceNow))
+                    guard !Task.isCancelled else { return }
+                    self?.load(page, draft: true)
+                }
+                return
+            }
+            load(page, draft: draft)
+        }
+
+        private func load(_ page: String, draft: Bool) {
+            isDraft = draft
+            if draft { lastDraft = .now }
+            loaded = page
+            view?.loadHTMLString(page, baseURL: nil)
+        }
 
         func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
             guard let body = message.body as? [String: Any] else { return }
@@ -248,14 +324,15 @@ private struct WidgetPage: NSViewRepresentable {
         }
         #endif
 
-        /// Its own page loads; a link goes to your browser instead.
-        func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        /// Its own page loads (a draft without its scripts); a link goes to your browser instead.
+        func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, preferences: WKWebpagePreferences, decisionHandler: @escaping (WKNavigationActionPolicy, WKWebpagePreferences) -> Void) {
             if action.navigationType == .linkActivated || (action.targetFrame?.isMainFrame == true && action.request.url?.scheme.map(["http", "https"].contains) == true) {
                 if let url = action.request.url, ["http", "https"].contains(url.scheme ?? "") { NSWorkspace.shared.open(url) }
-                decisionHandler(.cancel)
+                decisionHandler(.cancel, preferences)
                 return
             }
-            decisionHandler(.allow)
+            preferences.allowsContentJavaScript = !isDraft
+            decisionHandler(.allow, preferences)
         }
 
         /// A link meant for a new window, too.
