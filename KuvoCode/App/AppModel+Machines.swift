@@ -130,6 +130,8 @@ extension AppModel {
             guard engine.isReady else { break }
             if await workspace.refresh(engine) { break }
         }
+        // Phones you've paired reach it directly, through its own bridge.
+        if engine.isReady { await phoneLink.sync(engine) }
         // What you signed in to here works there too, kept in step while it's connected.
         engine.signInSync?.cancel()
         if engine.isReady {
@@ -161,6 +163,7 @@ extension AppModel {
         browserAsks.closeAll(on: id)
         utilities.closeMachineBrowser(id)
         machines.remove(id)
+        phoneLink.forget(machine: id)
         workspace.machines = Set(machines.list.map(\.id))
         workspace.forget(id, forGood: true)
     }

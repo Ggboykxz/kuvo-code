@@ -190,6 +190,7 @@ final class AppModel {
             workspace.seats = groups.seatIDs
             usage.api = api
             engine = .ready
+            phoneLink.readyMachines = { [weak self] in self?.machines.engines.values.filter(\.isReady) ?? [] }
             phoneLink.start(endpoint: server.endpoint)
             Analytics.shared.trackOnce("engine_ready", ["seconds": Int(Date.now.timeIntervalSince(began)), "downloaded": downloaded])
             listen(to: api)

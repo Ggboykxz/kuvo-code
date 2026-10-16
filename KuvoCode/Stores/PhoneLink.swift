@@ -37,6 +37,23 @@ final class PhoneLink {
     }
 
     private(set) var phones: [Phone] = []
+    /// Your machines' bridges, which phones reach directly (with the Mac closed), by machine:
+    /// what `kuvo/hosts` tells a phone.
+    private(set) var machineHosts: [String: MachineHost] = [:]
+    /// The machines that are connected now, for putting the bridge on them; set by AppModel.
+    @ObservationIgnored var readyMachines: () -> [MachineEngine] = { [] }
+
+    struct MachineHost: Codable, Hashable {
+        var name: String
+        var address: String
+        var key: String
+    }
+
+    /// What's kept in phone-link.json.
+    private struct Saved: Codable {
+        var phones: [Phone] = []
+        var machines: [String: MachineHost] = [:]
+    }
     private(set) var status = Status.off
     /// The link a phone pairs with, while Settings › Phone shows it: good for ten minutes, once.
     private(set) var pairing: PairingLink?
@@ -47,6 +64,7 @@ final class PhoneLink {
         set {
             UserDefaults.standard.set(newValue.absoluteString, forKey: "phoneLink.relay")
             restart()
+            syncMachines()
         }
     }
 
@@ -63,7 +81,9 @@ final class PhoneLink {
     private static var file: URL { AppInfo.supportDirectory.appending(path: "phone-link.json") }
 
     init() {
-        phones = (try? JSONDecoder().decode([Phone].self, from: Data(contentsOf: Self.file))) ?? []
+        let saved = (try? JSONDecoder().decode(Saved.self, from: Data(contentsOf: Self.file))) ?? Saved()
+        phones = saved.phones
+        machineHosts = saved.machines
     }
 
     private static func loadIdentity() -> (key: LinkKey, secret: RelaySecret) {
@@ -120,6 +140,64 @@ final class PhoneLink {
         phones.removeAll { $0.id == phone.id }
         save()
         if let key = Data(base64URL: phone.key) { Task { [server] in await server?.forget(phone: key) } }
+        syncMachines()
+    }
+
+    // MARK: Machines
+
+    /// Puts the bridge on each connected machine, with the phones you've paired now.
+    func syncMachines() {
+        for engine in readyMachines() { Task { await sync(engine) } }
+    }
+
+    /// Puts the bridge (`kuvo-link.js`) on `engine`'s machine, in `~/.kuvo-code/bin`, with the
+    /// phones you've paired and the relay, so they reach it directly, with this Mac closed too.
+    /// The machine keeps its own keys and tells this Mac only its address and public key. With
+    /// no phones, the bridge stops there.
+    func sync(_ engine: MachineEngine) async {
+        guard Self.isEnabled, engine.isReady else { return }
+        let machine = engine.machine
+        let folder = FileManager.default.temporaryDirectory.appending(path: Bundle.main.bundleIdentifier ?? "run.kuvo.code").appending(path: "phone-link-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let script = try Bridge.script
+            let hash = SHA256.hash(data: script).map { String(format: "%02x", $0) }.joined()
+            let scriptFile = folder.appending(path: Bridge.fileName)
+            try script.write(to: scriptFile)
+            try await machine.connection.run(RemoteEngineInstaller.script("""
+                f="$K/bin/\(Bridge.fileName)"
+                if [ "$(sha256sum "$f" 2>/dev/null | cut -c1-64)" = "\(hash)" ]; then cat >/dev/null; else cat >"$f.new" && mv -f "$f.new" "$f"; fi
+                """), input: scriptFile)
+
+            struct Setup: Encodable {
+                struct Phone: Encodable { var key: String; var name: String }
+                var relay: String
+                var name: String
+                var phones: [Phone]
+            }
+            let settings = folder.appending(path: "setup.json")
+            try JSONEncoder().encode(Setup(relay: relay.absoluteString, name: machine.name, phones: phones.map { .init(key: $0.key, name: $0.name) })).write(to: settings)
+            let output = try await machine.connection.run(RemoteEngineInstaller.script("""
+                KUVO_HOME="$K" BUN_BE_BUN=1 BUN_RUNTIME_TRANSPILER_CACHE_PATH=0 "$E" "$K/bin/\(Bridge.fileName)" setup
+                """), input: settings)
+            struct Answer: Decodable { var address: String?; var key: String? }
+            let answer = try? JSONDecoder().decode(Answer.self, from: Data(output.utf8))
+            if let address = answer?.address, let key = answer?.key {
+                machineHosts[machine.id] = MachineHost(name: machine.name, address: address, key: key)
+            } else {
+                machineHosts[machine.id] = nil
+            }
+            save()
+        } catch {
+            log.error("Couldn't set up the phone link on a machine: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// A machine you removed: phones stop being told about it.
+    func forget(machine id: String) {
+        guard machineHosts.removeValue(forKey: id) != nil else { return }
+        save()
     }
 
     // MARK: Answering
@@ -170,6 +248,7 @@ final class PhoneLink {
         phones.append(Phone(key: encoded, name: String(hello.name.prefix(100)), added: .now))
         save()
         self.pairing = nil
+        syncMachines()
         log.info("Paired a phone")
         return true
     }
@@ -177,21 +256,24 @@ final class PhoneLink {
     /// Kuvo's own routes, beside the engine's.
     private func answer(_ request: LinkRequest) -> (Int, Data) {
         struct Info: Encodable { var kind = "mac"; var name: String; var app: String; var engine: String }
-        // The machines a phone reaches directly comes with the machines' bridges.
-        struct Hosts: Encodable { var hosts: [String] = [] }
+        struct Hosts: Encodable {
+            struct Host: Encodable { var kind = "machine"; var name: String; var address: String; var key: String; var relay: String }
+            var hosts: [Host]
+        }
         let encoder = JSONEncoder()
         switch request.path {
         case "kuvo/info":
             return (200, (try? encoder.encode(Info(name: Self.computerName, app: AppInfo.version, engine: OpenCodeEngine.version))) ?? Data())
         case "kuvo/hosts":
-            return (200, (try? encoder.encode(Hosts())) ?? Data())
+            let hosts = machineHosts.values.sorted { $0.name < $1.name }.map { Hosts.Host(name: $0.name, address: $0.address, key: $0.key, relay: relay.absoluteString) }
+            return (200, (try? encoder.encode(Hosts(hosts: hosts))) ?? Data())
         default:
             return (404, Data())
         }
     }
 
     private func save() {
-        try? JSONEncoder().encode(phones).write(to: Self.file, options: .atomic)
+        try? JSONEncoder().encode(Saved(phones: phones, machines: machineHosts)).write(to: Self.file, options: .atomic)
     }
 
     // MARK: Keychain
