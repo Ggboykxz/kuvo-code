@@ -24,9 +24,10 @@ nonisolated enum ProjectFolders {
         rule.action == "external_directory" && rule.effect == .allow && rule.resource.hasSuffix("/*")
     }
 
-    /// `rules` with its folder rules replaced by those for `folders`.
+    /// `rules` with its folder rules replaced by those for `folders`. A bot's own folder stays
+    /// allowed: it isn't one of the project's.
     static func permissions(_ rules: [PermissionRule], folders: [String]) -> [PermissionRule] {
-        rules.filter { !isFolderRule($0) } + self.rules(for: folders)
+        rules.filter { !isFolderRule($0) || $0.resource.contains("/bots/bot_") } + self.rules(for: folders)
     }
 
     static func instructions(primary: String, folders: [String]) -> String {

@@ -564,8 +564,9 @@ final class SessionModel {
     var approval: ToolApproval { ToolApproval(rules: session.permissions) }
 
     func setApproval(_ approval: ToolApproval) {
-        // The project's folders stay allowed, after the approval rules.
-        let rules = approval.rules + (session.permissions ?? []).filter(ProjectFolders.isFolderRule)
+        // The rules for particular things (the project's folders, a bot's folder and its
+        // wake-ups) stay, after the approval rules.
+        let rules = approval.rules + (session.permissions ?? []).filter { $0.resource != "*" }
         session.permissions = rules
         Task {
             do { try await api.setPermissions(session: id, rules: rules) } catch { failure = error.localizedDescription }

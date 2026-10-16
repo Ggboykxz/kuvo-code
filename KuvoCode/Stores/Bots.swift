@@ -164,13 +164,7 @@ final class Bots {
         bot.personality = personality
         guard let api = app.workspace.api(forFolder: bot.directory) else { throw Failure.notConnected(machine ?? AppInfo.name) }
         let approval = UserDefaults.standard.string(forKey: ToolApproval.key).flatMap(ToolApproval.init) ?? .approveAll
-        // Its own folder is its to read and write, wherever it works, and its wake-ups never ask.
-        let full = machine == nil ? Self.command.path : Self.machineCommand
-        let rules = approval.rules + [
-            PermissionRule(action: "external_directory", resource: (folder as NSString).appendingPathComponent("*"), effect: .allow),
-            PermissionRule(action: "shell", resource: "kuvo-wake \(id) *", effect: .allow),
-            PermissionRule(action: "shell", resource: "\"\(full)\" \(id) *", effect: .allow),
-        ]
+        let rules = approval.rules + Self.ownRules(for: bot)
         let catalog = machine.flatMap { app.machines.engine($0)?.catalog } ?? app.catalog
         // The one picked, if the engine where it lives has it; otherwise the last one used.
         bot.model = [model, Self.lastModel].compactMap { $0 }.first { catalog.model($0) != nil }
@@ -497,11 +491,40 @@ final class Bots {
 
     /// Gives each bot's session the current wording of its instructions, once a run of the app,
     /// as its engine comes up: bots made by an older version learn what this one can do.
+    /// A bot's own rules: its folder is its to read and write, wherever it works, and scheduling,
+    /// listing and canceling its wake-ups never ask. Anything else it runs, its watches too, goes
+    /// by the conversation's approval.
+    static func ownRules(for bot: Bot) -> [PermissionRule] {
+        let full = bot.machine == nil ? command.path : machineCommand
+        return [PermissionRule(action: "external_directory", resource: (bot.folder as NSString).appendingPathComponent("*"), effect: .allow)]
+            + ["kuvo-wake \(bot.id)", "\"\(full)\" \(bot.id)"].flatMap { name in
+                ["add *", "list*", "cancel *"].map { PermissionRule(action: "shell", resource: "\(name) \($0)", effect: .allow) }
+            }
+    }
+
+    /// Whether a rule is one of a bot's own, as made now or by an earlier version.
+    private static func isOwnRule(_ rule: PermissionRule, of bot: Bot) -> Bool {
+        let full = bot.machine == nil ? command.path : machineCommand
+        if rule.action == "external_directory" { return rule.resource == (bot.folder as NSString).appendingPathComponent("*") }
+        return rule.action == "shell" && (rule.resource.hasPrefix("kuvo-wake \(bot.id) ") || rule.resource.hasPrefix("\"\(full)\" \(bot.id) "))
+    }
+
+    /// Puts a bot's own rules back as they're made now, after its approval and any others: an
+    /// earlier version lost them when its conversation's approval changed, or its folder when the
+    /// project's were synced, and allowed every kuvo-wake command.
+    private func repairRules(of bot: Bot, api: OpenCodeAPI) async {
+        guard let rules = app?.workspace.session(bot.sessionID)?.permissions else { return }
+        let repaired = rules.filter { !Self.isOwnRule($0, of: bot) } + Self.ownRules(for: bot)
+        guard repaired != rules else { return }
+        try? await api.setPermissions(session: bot.sessionID, rules: repaired)
+    }
+
     func syncInstructions() async {
         for bot in list where !synced.contains(bot.id) {
             guard let api = app?.workspace.api(forFolder: bot.directory) else { continue }
             if (try? await api.setInstruction(session: bot.sessionID, key: Self.instructionKey, text: Self.instructions(for: bot))) != nil {
                 synced.insert(bot.id)
+                await repairRules(of: bot, api: api)
                 if let machine = bot.machine {
                     try? await writeSession(of: bot)
                     // Its kuvo-wake as the instructions describe it, for an engine started before.
