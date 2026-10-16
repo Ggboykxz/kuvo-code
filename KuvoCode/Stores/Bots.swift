@@ -445,7 +445,7 @@ final class Bots {
         <when> is +5m, +2h, +1d, or a time like 2026-10-16T09:00 on that computer's clock, at least a minute from now. At that \
         time this conversation gets your note as a new message starting with "\(Wakes.marker.trimmingCharacters(in: .whitespaces))", \
         and you carry on. `kuvo-wake \(bot.id) list` shows what's scheduled; `kuvo-wake \(bot.id) cancel <id>` cancels one. \
-        (If kuvo-wake isn't found, it's "\(full)".)
+        (If kuvo-wake isn't found, it's "\(full)".)\(bot.machine == nil ? "" : " The user is in the time zone \(TimeZone.current.identifier): a time they name is theirs, so if that computer's clock is in another one (check with `date`), convert it.")
 
         For something that repeats, schedule it once with --every, and it keeps coming back until it's canceled:
           kuvo-wake \(bot.id) add 2026-10-17T09:00 --every 1d "<what to do each time>"
