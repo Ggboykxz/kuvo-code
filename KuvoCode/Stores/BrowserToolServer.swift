@@ -187,11 +187,15 @@ enum BrowserTools {
     static let executionTimeout = 960_000
 
     /// What the engine tells the model about the tools.
+    /// Where Kuvo Code's own docs are, for when you ask the agent how to do something in the app.
+    /// Every session has these tools, so it hears it wherever it works.
+    nonisolated static let docs = "You're working inside Kuvo Code, the Mac app the user talks to you in: sessions in projects, a side panel with changes, files, terminals and a browser, bots, group chats and remote machines. When the user asks how to do something in Kuvo Code itself (where a setting is, what a button does, how bots, wake-ups or machines work, a shortcut), read its documentation with webfetch rather than guessing: start at https://www.kuvo.run/code/docs/, whose pages include sessions, changes, panel, browsing, machines, bots, customize, settings, usage, shortcuts, privacy and troubleshooting (each at https://www.kuvo.run/code/docs/<page>/). Answer from what it says, briefly, and say where in the app to find it."
+
     nonisolated static func instructions(machine: Bool) -> String {
         let place = machine
             ? "Use these tools to browse in the browser on this machine, which the user can watch in Kuvo Code's panel. localhost is this machine, so you can open servers you run here."
             : "Use these tools to browse in the browser panel the user sees."
-        return place + " Start with browser_navigate, read pages with browser_snapshot, and act on elements by their number. To sign in, use browser_sign_in; for a one-time code, browser_ask_code; for anything only the user can do (a CAPTCHA, approving on their phone), browser_ask_user. These ask the user in a card in Kuvo Code, where they can also say no. So whenever a page you open asks to sign in, call browser_sign_in right away, even if the user didn't mention signing in, rather than asking in the chat whether to; and never ask for a password or a code in the chat. For a \"Continue with Google\" (or Apple) sign-in, click it and sign in on the page it opens the same way; if that page won't let you, use browser_ask_user."
+        return docs + "\n\n" + place + " Start with browser_navigate, read pages with browser_snapshot, and act on elements by their number. To sign in, use browser_sign_in; for a one-time code, browser_ask_code; for anything only the user can do (a CAPTCHA, approving on their phone), browser_ask_user. These ask the user in a card in Kuvo Code, where they can also say no. So whenever a page you open asks to sign in, call browser_sign_in right away, even if the user didn't mention signing in, rather than asking in the chat whether to; and never ask for a password or a code in the chat. For a \"Continue with Google\" (or Apple) sign-in, click it and sign in on the page it opens the same way; if that page won't let you, use browser_ask_user."
     }
 
     private static func tool(_ name: String, _ description: String, _ properties: [String: Any] = [:], required: [String] = []) -> [String: Any] {
