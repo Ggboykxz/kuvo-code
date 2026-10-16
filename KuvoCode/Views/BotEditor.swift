@@ -53,8 +53,12 @@ struct BotEditor: View {
         _machine = State(initialValue: bot?.machine)
         _project = State(initialValue: bot?.project)
         _model = State(initialValue: bot?.model)
-        _personality = State(initialValue: bot?.personality ?? recipe?.personalityHere())
+        _personality = State(initialValue: bot?.personality)
+        self.recipe = recipe
     }
+
+    /// The shared bot a new one starts from.
+    private let recipe: BotRecipe?
 
     /// The models of the engine where it lives.
     private var placeCatalog: Catalog {
@@ -89,6 +93,8 @@ struct BotEditor: View {
         }
         .onAppear {
             if isNew { focus = .name }
+            // A shared bot's personality, found here (or added) once, not at every redraw.
+            if isNew, personality == nil, let recipe { personality = recipe.personalityHere() }
             // A bot made before bots had a model: the one its conversation uses.
             if model == nil { model = bot.flatMap { workspace.session($0.sessionID)?.model } ?? lastModel ?? placeCatalog.defaultModel?.ref }
         }

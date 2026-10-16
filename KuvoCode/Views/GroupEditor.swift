@@ -183,7 +183,7 @@ struct GroupEditor: View {
                 }
             }
 
-            section("Meets", note: meets ? "At its time, the topic goes to the chat and the bots talk it through; if you’re away, you get the lead’s sum-up. It meets while Kuvo Code is open." : nil) {
+            section("Meets", note: meets ? (meeting.map { $0.next > .now } == false ? "That time has passed. Pick one to come, or how often it repeats." : "At its time, the topic goes to the chat and the bots talk it through; if you’re away, you get the lead’s sum-up. It meets while Kuvo Code is open.") : nil) {
                 meetingRows
             }
         }
@@ -280,7 +280,9 @@ struct GroupEditor: View {
         guard canSave else { return }
         let members = picked.map(\.id)
         let purpose = purpose.trimmingCharacters(in: .whitespacesAndNewlines)
-        if var group {
+        if let editing = group {
+            // Onto the chat as it is now: its seats and what each heard moved on while you edited.
+            var group = groups.group(editing.id) ?? editing
             group.name = trimmedName
             group.purpose = purpose.isEmpty ? nil : purpose
             group.members = members
