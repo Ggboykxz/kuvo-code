@@ -66,7 +66,7 @@ private struct BottomStack: View {
                     .glassEffectID(request.id, in: glass)
                 }
                 ForEach(forms) { form in
-                    QuestionCard(form: form) { answer in
+                    QuestionCard(form: form, takesFocus: model.draftText.isEmpty) { answer in
                         model.answer(form, with: FormFieldsView.payload(form.fields, answer))
                     } dismiss: {
                         model.dismiss(form)

@@ -1,3 +1,4 @@
+import AppKit
 import OpenCodeKit
 import SwiftUI
 
@@ -95,24 +96,366 @@ struct PermissionCard: View {
 /// The agent asked you something (its question tool), or a tool needs details.
 struct QuestionCard: View {
     let form: FormRequest
+    /// Takes the keyboard when it shows (not while you're writing in the composer).
+    var takesFocus = false
+    let submit: (FormAnswer) -> Void
+    let dismiss: () -> Void
+
+    var body: some View {
+        if form.isQuestion, !form.fields.isEmpty, form.fields.allSatisfy(Self.isChoiceOrWords) {
+            QuestionPager(form: form, takesFocus: takesFocus, submit: submit, dismiss: dismiss)
+        } else {
+            FormCard(form: form, submit: submit, dismiss: dismiss)
+        }
+    }
+
+    /// A question answered with a choice (or a few) or in words, which the pager shows.
+    static func isChoiceOrWords(_ field: FormField) -> Bool {
+        switch field.kind {
+        case .string(_, _, _, _, let format, _): format != "password"
+        case .multiselect: true
+        default: false
+        }
+    }
+}
+
+/// The agent's questions, one at a time: the question, its choices, numbered (a number key
+/// picks one), and a line to write your own (typing goes there). A choice goes on to the next
+/// question; Skip leaves one unanswered; × dismisses them all.
+private struct QuestionPager: View {
+    let form: FormRequest
+    let takesFocus: Bool
     let submit: (FormAnswer) -> Void
     let dismiss: () -> Void
 
     @Environment(\.cardRoom) private var room
     @State private var answers: FormAnswer = [:]
-    /// Several questions go one at a time: the one in view.
+    /// What you wrote yourself, by question.
+    @State private var written: [String: String] = [:]
     @State private var page = 0
-    @State private var fieldsHeight: CGFloat = 0
+    @State private var choicesHeight: CGFloat = 0
+    @FocusState private var isWriting: Bool
+    @State private var monitor: Any?
+    @State private var windowBox = WindowBox()
 
-    /// The questions that apply, given the answers so far.
     private var questions: [FormField] {
         form.fields.filter { !$0.isHidden && $0.isActive(given: answers) }
     }
 
-    private var isPaged: Bool { questions.count > 1 }
     private var index: Int { min(page, max(questions.count - 1, 0)) }
-    private var isLast: Bool { !isPaged || index == questions.count - 1 }
-    private var shown: [FormField] { isPaged ? [questions[index]] : form.fields }
+    private var isLast: Bool { index >= questions.count - 1 }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if questions.indices.contains(index) {
+                let field = questions[index]
+                header(field)
+                Text(field.description ?? field.title ?? form.title)
+                    .font(.system(size: 14))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                if !options(of: field).isEmpty {
+                    // As tall as they are, up to the room there is; then they scroll.
+                    ScrollView {
+                        choices(field)
+                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { choicesHeight = $0 }
+                    }
+                    .frame(height: min(max(choicesHeight, 1), room))
+                    .scrollBounceBehavior(.basedOnSize)
+                }
+                footer(field)
+            }
+        }
+        .padding(16)
+        .background(WindowReader(box: windowBox))
+        .onDisappear {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
+        }
+        .animation(.ui, value: index)
+        .onAppear {
+            answers = FormFieldsView.defaults(for: form.fields)
+            // After the composer, which takes the keyboard as it shows too.
+            monitor = monitor ?? NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in key(event) ? nil : event }
+            // The keyboard comes to the question, after the composer takes it as it shows too;
+            // not while you're writing there.
+            if takesFocus {
+                Task {
+                    try? await Task.sleep(for: .milliseconds(150))
+                    if let window = windowBox.window, let editor = window.firstResponder as? NSText, editor.string.isEmpty {
+                        window.makeFirstResponder(nil)
+                    }
+                }
+            }
+            #if DEBUG
+            // KUVO_DEMO_QUESTIONS=<n>: on the nth question (from 0).
+            if let n = Int(ProcessInfo.processInfo.environment["KUVO_DEMO_QUESTIONS"] ?? "") { page = n }
+            #endif
+        }
+    }
+
+    private func header(_ field: FormField) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "questionmark.bubble")
+                .foregroundStyle(.secondary)
+            // The question tool's short header, when it has one.
+            Text(field.description != nil ? field.title ?? "Question" : "Question")
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Spacer()
+            if questions.count > 1 {
+                Button { page = index - 1 } label: { Image(systemName: "chevron.left") }
+                    .disabled(index == 0)
+                    .help("Previous Question")
+                Text("\(index + 1) of \(questions.count)")
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                Button { page = index + 1 } label: { Image(systemName: "chevron.right") }
+                    .disabled(isLast)
+                    .help("Next Question")
+            }
+            Button(action: dismiss) { Image(systemName: "xmark") }
+                .help("Dismiss: the agent carries on without your answers")
+                .padding(.leading, 4)
+        }
+        .font(.callout)
+        .buttonStyle(IconButtonStyle())
+    }
+
+    private func choices(_ field: FormField) -> some View {
+        VStack(spacing: 2) {
+            ForEach(Array(options(of: field).enumerated()), id: \.element.id) { number, option in
+                ChoiceRow(
+                    number: number + 1,
+                    option: option,
+                    isSelected: isSelected(option, in: field),
+                    isMultiple: isMultiple(field)
+                ) { pick(option, in: field) }
+            }
+        }
+    }
+
+    private func footer(_ field: FormField) -> some View {
+        HStack(spacing: 8) {
+            if allowsWords(field) {
+                Image(systemName: "pencil")
+                    .foregroundStyle(.secondary)
+                TextField(options(of: field).isEmpty ? "Write your answer" : "Or write your own response", text: Binding(
+                    get: { written[field.key] ?? "" },
+                    set: { written[field.key] = $0 }
+                ), axis: .vertical)
+                .textFieldStyle(.plain)
+                .lineLimit(1...4)
+                .focused($isWriting)
+                // Focusing a field selects what's in it, and the next key would replace what
+                // was typed to get there: the cursor goes after it.
+                .onChange(of: isWriting) { _, writing in
+                    guard writing else { return }
+                    DispatchQueue.main.async {
+                        guard let editor = windowBox.window?.firstResponder as? NSTextView, editor.isFieldEditor else { return }
+                        editor.setSelectedRange(NSRange(location: (editor.string as NSString).length, length: 0))
+                    }
+                }
+                .onSubmit { if isAnswered(field) { next(field) } }
+            } else {
+                Spacer()
+            }
+            Button("Skip") { skip(field) }
+                .buttonStyle(.glass)
+                .help(isLast ? "Leave this one unanswered and send the rest" : "Leave this one unanswered")
+            Button(isLast ? "Answer" : "Next") { next(field) }
+                .buttonStyle(.glassProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(!isAnswered(field))
+        }
+        .controlSize(.large)
+    }
+
+    /// Keys while nothing you type in has the keyboard: a number picks that choice, Return
+    /// goes on (the Next button's), and other typing goes to your own words.
+    private func key(_ event: NSEvent) -> Bool {
+        guard let window = windowBox.window, event.window === window, !isWriting,
+              event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+              !(window.firstResponder is NSText), questions.indices.contains(index),
+              let characters = event.characters, let character = characters.first,
+              !character.isNewline, !character.isWhitespace || character == " ", character.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }),
+              // Arrows and other function keys.
+              !(character.unicodeScalars.first.map { (0xF700...0xF8FF).contains($0.value) } ?? false) else { return false }
+        let field = questions[index]
+        let options = options(of: field)
+        if let number = character.wholeNumberValue, (1...min(options.count, 9)).contains(number) {
+            pick(options[number - 1], in: field)
+            return true
+        }
+        guard allowsWords(field) else { return false }
+        written[field.key, default: ""] += characters
+        isWriting = true
+        return true
+    }
+
+    // MARK: Answers
+
+    private func options(of field: FormField) -> [FormField.Option] {
+        switch field.kind {
+        case .string(let options, _, _, _, _, _): options ?? []
+        case .multiselect(let options, _, _, _, _): options
+        default: []
+        }
+    }
+
+    private func isMultiple(_ field: FormField) -> Bool {
+        if case .multiselect = field.kind { return true }
+        return false
+    }
+
+    private func allowsWords(_ field: FormField) -> Bool {
+        switch field.kind {
+        case .string(let options, let allowsCustom, _, _, _, _): allowsCustom || (options ?? []).isEmpty
+        case .multiselect(_, let allowsCustom, _, _, _): allowsCustom
+        default: false
+        }
+    }
+
+    private func isSelected(_ option: FormField.Option, in field: FormField) -> Bool {
+        switch answers[field.key] {
+        case .string(let value): value == option.value && (written[field.key] ?? "").isEmpty
+        case .list(let values): values.contains(option.value)
+        default: false
+        }
+    }
+
+    private func isAnswered(_ field: FormField) -> Bool {
+        if !(written[field.key] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return true }
+        switch answers[field.key] {
+        case .string(let value): return !value.isEmpty
+        case .list(let values): return !values.isEmpty
+        default: return false
+        }
+    }
+
+    /// A choice: one with one answer is picked, and goes on to the next question; one of
+    /// several is turned on or off.
+    private func pick(_ option: FormField.Option, in field: FormField) {
+        if isMultiple(field) {
+            var values: [String] = if case .list(let list) = answers[field.key] { list } else { [] }
+            if let at = values.firstIndex(of: option.value) { values.remove(at: at) } else { values.append(option.value) }
+            answers[field.key] = .list(values)
+            return
+        }
+        answers[field.key] = .string(option.value)
+        written[field.key] = nil
+        if !isLast {
+            let from = index
+            Task {
+                try? await Task.sleep(for: .milliseconds(200))
+                if index == from { page = from + 1 }
+            }
+        }
+    }
+
+    private func next(_ field: FormField) {
+        if isLast { submit(payload) } else { page = index + 1 }
+    }
+
+    private func skip(_ field: FormField) {
+        answers[field.key] = nil
+        written[field.key] = nil
+        guard isLast else {
+            page = index + 1
+            return
+        }
+        // Nothing answered at all: the same as dismissing.
+        if questions.contains(where: isAnswered) { submit(payload) } else { dismiss() }
+    }
+
+    /// The answers, with what you wrote yourself: in place of a choice, or added to the ones
+    /// you picked.
+    private var payload: FormAnswer {
+        var merged = answers
+        for (key, text) in written {
+            let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !words.isEmpty, let field = form.fields.first(where: { $0.key == key }) else { continue }
+            if isMultiple(field) {
+                let picked: [String] = if case .list(let list) = merged[key] { list } else { [] }
+                merged[key] = .list(picked + [words])
+            } else {
+                merged[key] = .string(words)
+            }
+        }
+        return FormFieldsView.payload(form.fields, merged)
+    }
+}
+
+/// One of a question's choices: its number, its words, and under the pointer, where it goes.
+private struct ChoiceRow: View {
+    let number: Int
+    let option: FormField.Option
+    let isSelected: Bool
+    let isMultiple: Bool
+    let action: () -> Void
+    @Environment(\.accent) private var accent
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                badge
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(option.label)
+                        .foregroundStyle(.primary)
+                    if let description = option.description, !description.isEmpty {
+                        Text(description)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer(minLength: 8)
+                if !isMultiple {
+                    Image(systemName: "arrow.right")
+                        .foregroundStyle(.secondary)
+                        .opacity(isHovering ? 1 : 0)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .contentShape(.rect(cornerRadius: 10))
+            .background(isSelected ? accent.opacity(0.14) : isHovering ? Pressable.hoverFill : .clear, in: .rect(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovering)
+    }
+
+    private var badge: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isSelected ? accent : Color.primary.opacity(0.06))
+            RoundedRectangle(cornerRadius: 6)
+                .strokeBorder(isSelected ? .clear : Color.primary.opacity(0.12))
+            if isSelected && isMultiple {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.white)
+            } else {
+                Text(number <= 9 ? "\(number)" : "")
+                    .font(.system(size: 11, weight: .medium).monospacedDigit())
+                    .foregroundStyle(isSelected ? .white : .secondary)
+            }
+        }
+        .frame(width: 22, height: 22)
+        .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
+    }
+}
+
+/// A form a tool needs filled (an MCP server's, say): its fields together, then Answer.
+private struct FormCard: View {
+    let form: FormRequest
+    let submit: (FormAnswer) -> Void
+    let dismiss: () -> Void
+
+    @Environment(\.cardRoom) private var room
+    @State private var answers: FormAnswer = [:]
+    @State private var fieldsHeight: CGFloat = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -120,74 +463,30 @@ struct QuestionCard: View {
                 Image(systemName: "questionmark.bubble.fill")
                     .font(.title3)
                     .foregroundStyle(.tint)
-                Text(form.isQuestion ? (isPaged ? "The agent has \(questions.count) questions" : "The agent has a question") : form.title)
+                Text(form.isQuestion ? "The agent has a question" : form.title)
                     .font(.headline)
                 Spacer()
-                if isPaged {
-                    Text("\(index + 1) of \(questions.count)")
-                        .font(.subheadline)
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                }
-                Button("Skip", action: dismiss)
-                    .buttonStyle(.borderless)
-                    .foregroundStyle(.secondary)
+                Button(action: dismiss) { Image(systemName: "xmark") }
+                    .buttonStyle(IconButtonStyle())
+                    .help("Dismiss: the agent carries on without an answer")
             }
-            // As tall as they are, up to the room there is; then they scroll, and the buttons
-            // stay in view.
             ScrollView {
-                FormFieldsView(fields: shown, answers: $answers, style: .question)
+                FormFieldsView(fields: form.fields, answers: $answers, style: .question)
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fieldsHeight = $0 }
             }
             .frame(height: min(max(fieldsHeight, 1), room))
             .scrollBounceBehavior(.basedOnSize)
-            .id(index)
             HStack {
-                if isPaged, index > 0 {
-                    Button("Back") { page = index - 1 }
-                        .controlSize(.large)
-                }
                 Spacer()
-                if isLast {
-                    Button("Answer") { submit(answers) }
-                        .buttonStyle(.glassProminent)
-                        .controlSize(.large)
-                        .keyboardShortcut(.defaultAction)
-                        .disabled(!FormFieldsView.isComplete(form.fields, answers))
-                } else {
-                    Button("Next") { page = index + 1 }
-                        .buttonStyle(.glassProminent)
-                        .controlSize(.large)
-                        .keyboardShortcut(.defaultAction)
-                        .disabled(!FormFieldsView.isComplete(shown, answers))
-                }
+                Button("Answer") { submit(answers) }
+                    .buttonStyle(.glassProminent)
+                    .controlSize(.large)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!FormFieldsView.isComplete(form.fields, answers))
             }
         }
         .padding(16)
-        .animation(.ui, value: index)
         .onAppear { answers = FormFieldsView.defaults(for: form.fields) }
-        .onChange(of: answers) { old, new in advance(from: old, to: new) }
-        #if DEBUG
-        // KUVO_DEMO_QUESTIONS=<n>: on the nth question (from 0).
-        .onAppear { if let n = Int(ProcessInfo.processInfo.environment["KUVO_DEMO_QUESTIONS"] ?? "") { page = n } }
-        #endif
-    }
-}
-
-extension QuestionCard {
-    /// A choice picked in a question with one answer goes on to the next question, a moment
-    /// later (Back goes back); words typed don't.
-    private func advance(from old: FormAnswer, to new: FormAnswer) {
-        guard isPaged, !isLast, let field = shown.first, case .string(let options?, _, _, _, _, _) = field.kind,
-              case .string(let picked)? = new[field.key], old[field.key] != new[field.key],
-              options.contains(where: { $0.value == picked }),
-              // Not the defaults going in.
-              !(old.isEmpty && new == FormFieldsView.defaults(for: form.fields)) else { return }
-        let from = index
-        Task {
-            try? await Task.sleep(for: .milliseconds(300))
-            if index == from { page = from + 1 }
-        }
     }
 }
 
@@ -195,4 +494,24 @@ extension EnvironmentValues {
     /// How tall what's in a card over the composer can be before it scrolls, so the card, the
     /// composer and some of the conversation fit in the window.
     @Entry var cardRoom: CGFloat = 360
+}
+
+
+/// The window a view is in, for what it does with AppKit (watching keys there).
+final class WindowBox {
+    weak var window: NSWindow?
+}
+
+private struct WindowReader: NSViewRepresentable {
+    let box: WindowBox
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async { box.window = view.window }
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        DispatchQueue.main.async { box.window = view.window }
+    }
 }
