@@ -5,6 +5,8 @@ import SwiftUI
 /// bots answer one at a time; you can write any time, and the one talking hears it at once.
 struct GroupChatView: View {
     let group: BotGroup
+    /// Goes up to open the find bar (⌘F).
+    var findRequest = 0
     @Environment(BotGroups.self) private var groups
     @Environment(Bots.self) private var bots
     @State private var scroller = ConversationScroller()
@@ -12,6 +14,10 @@ struct GroupChatView: View {
     @State private var composerFocus = 0
     /// The quote whose answer takes the keyboard: the one just added.
     @State private var quoteFocus: UUID?
+    /// Find in the chat: what's looked for, and which match is in view.
+    @State private var isFinding = false
+    @State private var query = ""
+    @State private var matchIndex = 0
 
     private var members: [Bot] { group.members.compactMap { bots.bot($0) } }
     private var draftKey: String { BotGroups.tabKey(group.id) }
@@ -19,6 +25,7 @@ struct GroupChatView: View {
     var body: some View {
         let messages = groups.messages(in: group.id)
         let speaker = groups.speaking[group.id].flatMap { bots.bot($0) }
+        let matches = isFinding ? Self.matches(of: query, in: messages) : []
         // What you select, to reply to (over the composer) or copy.
         ConversationScroll(scroller: scroller, spacing: 18, change: [messages.last?.id, speaker?.id, String(messages.count)], quote: { text in
             addQuote(text, how: "selection")
@@ -29,6 +36,13 @@ struct GroupChatView: View {
                     undo(from: message)
                 }
                     .equatable()
+                    .background {
+                        if matches.contains(message.id) {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.yellow.opacity(matches.indices.contains(matchIndex) && matches[matchIndex] == message.id ? 0.3 : 0.12))
+                                .padding(-6)
+                        }
+                    }
                     .id(message.id)
                     .transition(.opacity.combined(with: .offset(y: 8)))
             }
@@ -38,6 +52,24 @@ struct GroupChatView: View {
                     .transition(.opacity)
             }
         }
+        .overlay(alignment: .top) {
+            if isFinding {
+                FindBar(query: $query, current: matchIndex, count: matches.count) { step in
+                    guard !matches.isEmpty else { return }
+                    matchIndex = (matchIndex + step + matches.count) % matches.count
+                    scroller.reveal(matches[matchIndex])
+                } close: {
+                    withAnimation(.ui) { isFinding = false }
+                }
+                .padding(.top, 10)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .onChange(of: query) {
+            matchIndex = 0
+            if let first = Self.matches(of: query, in: groups.messages(in: group.id)).first { scroller.reveal(first) }
+        }
+        .onChange(of: findRequest) { withAnimation(.ui) { isFinding = true } }
         // What a bot's widget writes back goes to the group, as yours.
         .environment(\.answerAgent) { text in groups.send(text, to: group.id) }
         .overlay {
@@ -70,6 +102,13 @@ struct GroupChatView: View {
         }
         .onAppear { groups.markViewed(group.id) }
         .onChange(of: messages.count) { groups.markViewed(group.id) }
+    }
+
+    /// Messages whose words have `query`, in order.
+    private static func matches(of query: String, in messages: [GroupMessage]) -> [String] {
+        let query = query.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return [] }
+        return messages.filter { $0.text.localizedStandardContains(query) }.map(\.id)
     }
 
     /// Replies to a bot's message: all of it quoted in the composer, naming the bot so it's the

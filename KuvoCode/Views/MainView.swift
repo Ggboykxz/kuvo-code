@@ -22,6 +22,8 @@ struct MainView: View {
     @AppStorage(TabBar.showsKey) private var showsTabBar = true
     @SceneStorage("showsPanel") private var showsPanel = false
     /// The panel over the conversation, for room.
+    /// Goes up for ⌘F in the group chat in view.
+    @State private var groupFind = 0
     @State private var panelExpanded = false
     /// The room the conversation and the panel share: what the panel takes, expanded.
     @State private var mainAreaWidth: CGFloat = 0
@@ -536,7 +538,7 @@ struct MainView: View {
                     Button("Close Tab", systemImage: "xmark") { closeTab(BotGroups.tabKey(id)) }
                         .help("Close Tab")
                 } content: {
-                    GroupChatView(group: group)
+                    GroupChatView(group: group, findRequest: groupFind)
                 }
                 .id(BotGroups.tabKey(id))
             } else if let id = sessionID, let model = workspace.model(for: id) {
@@ -841,7 +843,9 @@ struct MainView: View {
                 if app.showsSettings { closeSettings() } else if let selection { closeTab(selection) } else { NSApp.keyWindow?.performClose(nil) }
             },
             reopenTab: reopenClosedTab,
-            find: { activeModel?.showFind() },
+            find: {
+                if let model = activeModel { model.showFind() } else if selection.flatMap(BotGroups.groupID(fromTab:)) != nil { groupFind += 1 }
+            },
             showTab: { number in
                 let tabs = tabs
                 guard !tabs.isEmpty else { return }
