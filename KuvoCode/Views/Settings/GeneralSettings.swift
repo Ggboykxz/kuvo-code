@@ -94,7 +94,7 @@ struct NotificationSettings: View {
 
 /// Privacy: anonymous usage, and where your data is.
 struct PrivacySettings: View {
-    @AppStorage(SettingsPage.storageKey) private var tab = SettingsPage.privacy.rawValue
+    @Environment(AppModel.self) private var app
 
     var body: some View {
         ScrollingSettingsForm {
@@ -110,19 +110,19 @@ struct PrivacySettings: View {
             }
             Section {
                 LabeledContent {
-                    Button("Storage…") { tab = SettingsPage.storage.rawValue }
+                    Button("Storage…") { app.settingsTabs.show(.storage) }
                 } label: {
                     Text("Sessions and accounts")
                     Text("Kept on this Mac, in Kuvo Code’s own folder. Messages go only to the model providers you choose.")
                 }
                 LabeledContent {
-                    Button("Browser…") { tab = SettingsPage.browser.rawValue }
+                    Button("Browser…") { app.settingsTabs.show(.browser) }
                 } label: {
                     Text("The panel’s browser")
                     Text("Its sign-ins, cookies and history stay apart from your other browsers.")
                 }
                 LabeledContent {
-                    Button("Passwords…") { tab = SettingsPage.passwords.rawValue }
+                    Button("Passwords…") { app.settingsTabs.show(.passwords) }
                 } label: {
                     Text("Saved passwords")
                     Text("In your Keychain, filled in only when you ask.")

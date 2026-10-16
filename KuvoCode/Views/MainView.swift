@@ -54,7 +54,6 @@ struct MainView: View {
     @State private var mainPaneX: CGFloat = 0
     @State private var titleBarX: CGFloat = 0
     @State private var settingsBarX: CGFloat = 0
-    @AppStorage(SettingsPage.storageKey) private var settingsPage = SettingsPage.general.rawValue
 
     enum Pane { case sessions, conversation, changes }
 
@@ -216,7 +215,7 @@ struct MainView: View {
         .onChange(of: app.showsSettings) { _, shows in
             if shows { NSApp.mainWindow?.makeFirstResponder(nil) }
             // Leaving Settings closes the sites you were signing in to.
-            if !shows { app.settingsTabs.closeAll(machines: app.machines) }
+            if !shows { app.settingsTabs.closeSites(machines: app.machines) }
         }
         // Nor into the conversation the expanded panel covers (its composer, if it had the
         // keyboard; the panel's own terminal or page keeps it).
@@ -233,26 +232,7 @@ struct MainView: View {
             if app.showsSettings {
                 // In Settings, the title bar has the way back, and the tabs once you sign in to a
                 // site: the page's, then each site's, from where the page's card starts.
-                ToolbarItem(placement: .navigation) {
-                    HStack(spacing: 0) {
-                        SettingsBackButton(close: closeSettings)
-                        if !app.settingsTabs.sites.isEmpty {
-                            Color.clear.frame(width: max(8, app.settingsTabs.contentX - settingsBarX - 28))
-                            TabStrip(tabs: settingsTabItems, selection: settingsTabSelection, close: { id in
-                                withAnimation(.ui) { app.settingsTabs.close(id, machines: app.machines) }
-                            }, closeAll: { except in
-                                withAnimation(.ui) {
-                                    for site in app.settingsTabs.sites where site.id != except { app.settingsTabs.close(site.id, machines: app.machines) }
-                                }
-                            })
-                            .transition(.opacity)
-                        }
-                    }
-                    .background(WindowXReader { settingsBarX = $0 })
-                    // Room from the window, as the sessions' tabs have, so titles aren't squeezed.
-                    .frame(width: max(240, contentWidth - 150), alignment: .leading)
-                    .animation(.ui, value: app.settingsTabs.sites.map(\.id))
-                }
+                ToolbarItem(placement: .navigation) { settingsTitleBar }
                 .sharedBackgroundVisibility(.hidden)
             } else if showsTabBar {
                 titleBar
@@ -705,27 +685,53 @@ struct MainView: View {
         return names.isEmpty ? nil : names.joined(separator: ", ")
     }
 
-    /// Back from Settings to the sessions, as they were.
-    /// Settings' tabs: the page you're on (it stays), then each site you're signing in to.
+    /// Settings' tabs: its pages, and the sites you're signing in to; the last one left stays.
     private var settingsTabItems: [TabItem] {
-        let page = SettingsPage(rawValue: settingsPage) ?? .general
-        return [TabItem(id: Self.settingsPageTab, title: page.title, logo: nil, status: .idle, symbol: page.symbol, closes: false)]
-            + app.settingsTabs.sites.map { TabItem(id: $0.id, title: $0.service.title, logo: nil, status: .idle, symbol: $0.service.symbol) }
-    }
-
-    private static let settingsPageTab = "settings.page"
-
-    /// The title bar keeps its row: with the tab bar, or with Settings' tabs (even when you hid
-    /// the tab bar, they need somewhere to be).
-    private var keepsTitleBar: Bool {
-        showsTabBar || (app.showsSettings && !app.settingsTabs.sites.isEmpty)
+        let tabs = app.settingsTabs
+        let closes = tabs.tabs.count > 1
+        return tabs.tabs.compactMap { tab -> TabItem? in
+            switch tab.kind {
+            case .page(let page):
+                return TabItem(id: tab.id, title: page.title, logo: nil, status: .idle, symbol: page.symbol, closes: closes)
+            case .site(let id):
+                guard let site = tabs.site(id) else { return nil }
+                return TabItem(id: tab.id, title: site.service.title, logo: nil, status: .idle, symbol: site.service.symbol, closes: closes)
+            }
+        }
     }
 
     private var settingsTabSelection: Binding<String?> {
-        Binding(get: { app.settingsTabs.selected ?? Self.settingsPageTab },
-                set: { app.settingsTabs.selected = $0 == Self.settingsPageTab ? nil : $0 })
+        Binding(get: { app.settingsTabs.selectedID }, set: { id in
+            guard let id else { return }
+            withAnimation(.ui) { app.settingsTabs.select(id) }
+        })
     }
 
+    /// The title bar keeps its row: with the tab bar, or in Settings, for its tabs (even when
+    /// you hid the tab bar, they need somewhere to be).
+    private var keepsTitleBar: Bool {
+        showsTabBar || app.showsSettings
+    }
+
+    /// In Settings, the title bar has the way back, and Settings' tabs, from where the page's
+    /// card starts.
+    private var settingsTitleBar: some View {
+        HStack(spacing: 0) {
+            SettingsBackButton(close: closeSettings)
+            Color.clear.frame(width: max(8, app.settingsTabs.contentX - settingsBarX - 28))
+            TabStrip(tabs: settingsTabItems, selection: settingsTabSelection, close: { id in
+                withAnimation(.ui) { app.settingsTabs.close(id, machines: app.machines) }
+            }, closeAll: { except in
+                withAnimation(.ui) { app.settingsTabs.closeOthers(than: except, machines: app.machines) }
+            })
+        }
+        .background(WindowXReader { settingsBarX = $0 })
+        // Room from the window, as the sessions' tabs have, so titles aren't squeezed.
+        .frame(width: max(240, contentWidth - 150), alignment: .leading)
+        .animation(.ui, value: app.settingsTabs.tabs.map(\.id))
+    }
+
+    /// Back from Settings to the sessions, as they were.
     private func closeSettings() {
         withAnimation(.ui) { app.showsSettings = false }
     }
@@ -832,6 +838,27 @@ struct MainView: View {
         selection = id
     }
 
+    /// Settings' tabs while Settings shows, else the sessions'.
+    private func cycleAnyTabs(by offset: Int) {
+        if app.showsSettings { withAnimation(.ui) { app.settingsTabs.cycle(by: offset) } } else { cycleTabs(by: offset) }
+    }
+
+    /// ⌘W: in Settings, closes its tab, and with one left goes back to the sessions. With no tab
+    /// left, it closes the window, as it does in browsers.
+    private func closeAnyTab() {
+        if app.showsSettings {
+            if app.settingsTabs.tabs.count > 1 {
+                withAnimation(.ui) { app.settingsTabs.close(app.settingsTabs.selectedID, machines: app.machines) }
+            } else {
+                closeSettings()
+            }
+        } else if let selection {
+            closeTab(selection)
+        } else {
+            NSApp.keyWindow?.performClose(nil)
+        }
+    }
+
     private func cycleTabs(by offset: Int) {
         let tabs = tabs
         guard !tabs.isEmpty else { return }
@@ -879,18 +906,18 @@ struct MainView: View {
             run: runProject,
             newBrowser: { showInPanel { utilities.newBrowser() } },
             toggleSidebar: { withAnimation(.ui) { showsSidebar.toggle() } },
-            nextTab: { cycleTabs(by: 1) },
-            previousTab: { cycleTabs(by: -1) },
-            closeTab: {
-                // In Settings, ⌘W goes back to the sessions. With no tab left, it closes the
-                // window, as it does in browsers.
-                if app.showsSettings { closeSettings() } else if let selection { closeTab(selection) } else { NSApp.keyWindow?.performClose(nil) }
-            },
+            nextTab: { cycleAnyTabs(by: 1) },
+            previousTab: { cycleAnyTabs(by: -1) },
+            closeTab: closeAnyTab,
             reopenTab: reopenClosedTab,
             find: {
                 if let model = activeModel { model.showFind() } else if selection.flatMap(BotGroups.groupID(fromTab:)) != nil { groupFind += 1 }
             },
             showTab: { number in
+                if app.showsSettings {
+                    withAnimation(.ui) { app.settingsTabs.show(number: number) }
+                    return
+                }
                 let tabs = tabs
                 guard !tabs.isEmpty else { return }
                 let index = number == 9 ? tabs.count - 1 : number - 1
@@ -1070,6 +1097,13 @@ struct MainView: View {
         }
         guard workspace.isLoaded, !Self.ranDemo else { return }
         Self.ranDemo = true
+        // KUVO_DEMO_SETTINGS_TABS=<pages>: those pages too, each in a tab of its own, comma-separated;
+        // the first page (KUVO_DEMO_SETTINGS) stays in view.
+        if let pages = environment["KUVO_DEMO_SETTINGS_TABS"] {
+            let shown = app.settingsTabs.selectedID
+            for page in pages.split(separator: ",").compactMap({ SettingsPage(rawValue: String($0)) }) { app.settingsTabs.show(page, inNewTab: true) }
+            app.settingsTabs.select(shown)
+        }
         // KUVO_DEMO_WELCOME: no tabs, so the welcome card shows.
         if environment["KUVO_DEMO_WELCOME"] != nil {
             tabs = []

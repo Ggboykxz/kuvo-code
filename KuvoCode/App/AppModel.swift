@@ -54,7 +54,7 @@ final class AppModel {
 
     /// Shows Settings in the main window, on `page` if one is given (otherwise the last one open).
     func openSettings(_ page: SettingsPage? = nil) {
-        if let page { UserDefaults.standard.set(page.rawValue, forKey: SettingsPage.storageKey) }
+        if let page { settingsTabs.show(page) }
         #if DEBUG
         let background = ProcessInfo.processInfo.environment["KUVO_DEMO_BACKGROUND"] != nil
         #else

@@ -5,7 +5,7 @@ import SwiftUI
 /// Storage: what Kuvo Code keeps on this Mac, by kind, as a bar, and the room you can get back.
 struct StorageSettings: View {
     @Environment(Workspace.self) private var workspace
-    @AppStorage(SettingsPage.storageKey) private var tab = SettingsPage.storage.rawValue
+    @Environment(AppModel.self) private var app
     @State private var report: StorageReport?
     @State private var cleaningUp = false
     @State private var confirmingLogs = false
@@ -68,19 +68,19 @@ struct StorageSettings: View {
                     Text("Delete sessions you haven’t used in a while, with their messages and undo snapshots.")
                 }
                 LabeledContent {
-                    Button("Manage") { tab = SettingsPage.archived.rawValue }
+                    Button("Manage") { app.settingsTabs.show(.archived) }
                 } label: {
                     Text("Archived sessions")
                     Text(archivedCount == 0 ? "None." : "\(archivedCount.counting("session")), out of the sidebar but still taking room.")
                 }
                 LabeledContent {
-                    Button("Manage") { tab = SettingsPage.worktrees.rawValue }
+                    Button("Manage") { app.settingsTabs.show(.worktrees) }
                 } label: {
                     Text("Worktrees")
                     Text("Sessions’ own copies of a project, on a branch.")
                 }
                 LabeledContent {
-                    Button("Manage") { tab = SettingsPage.browser.rawValue }
+                    Button("Manage") { app.settingsTabs.show(.browser) }
                 } label: {
                     Text("Website data")
                     Text("What sites keep in the panel’s browser.")

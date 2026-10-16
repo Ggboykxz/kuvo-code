@@ -1,3 +1,4 @@
+import AppKit
 import OpenCodeKit
 import SwiftUI
 
@@ -17,38 +18,51 @@ struct SettingsView: View {
     /// Back to the sessions.
     let close: () -> Void
 
-    /// Which page is open; other places (the command palette, the browser) can set it.
-    @AppStorage(SettingsPage.storageKey) private var tab = SettingsPage.general.rawValue
     @State private var search = ""
     @Environment(\.colorScheme) private var scheme
     @Environment(AppModel.self) private var app
 
-    private var page: SettingsPage { SettingsPage(rawValue: tab) ?? .general }
+    private var tabs: SettingsTabs { app.settingsTabs }
 
     var body: some View {
         HStack(spacing: Metrics.paneGap) {
-            SettingsSidebar(selection: Binding(get: { page }, set: { tab = $0.rawValue; app.settingsTabs.selected = nil }), search: $search)
+            SettingsSidebar(selection: Binding(get: { tabs.page }, set: { tabs.show($0) }), search: $search) { page in
+                withAnimation(.ui) { tabs.show(page, inNewTab: true) }
+            }
                 .padding(.top, topInset)
                 .frame(width: sidebarWidth)
-            Group {
-                // A site you're signing in to, in its tab: the whole card is its.
-                if let site = app.settingsTabs.selectedSite {
-                    SiteSignInPage(site: site) {
-                        withAnimation(.ui) { app.settingsTabs.close(site.id, machines: app.machines) }
+            // Every tab, kept as it is while another is in view (where you'd scrolled to, what
+            // you'd typed, a page you're signing in on), as a browser keeps its tabs.
+            ZStack {
+                ForEach(tabs.tabs) { tab in
+                    let isShown = tab.id == tabs.selectedID
+                    Group {
+                        switch tab.kind {
+                        case .page(let page):
+                            VStack(alignment: .leading, spacing: 0) {
+                                SettingsPageHeader(page: page)
+                                page.content
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                            }
+                            .frame(maxWidth: SettingsMetrics.columnWidth)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .id(page)
+                        case .site(let id):
+                            // A site you're signing in to: the whole card is its.
+                            if let site = tabs.site(id) {
+                                SiteSignInPage(site: site) {
+                                    withAnimation(.ui) { tabs.close(tab.id, machines: app.machines) }
+                                }
+                            }
+                        }
                     }
-                    .id(site.id)
-                } else {
-                    VStack(alignment: .leading, spacing: 0) {
-                        SettingsPageHeader(page: page)
-                        page.content
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    }
-                    .frame(maxWidth: 880)
-                    .id(page)
+                    .opacity(isShown ? 1 : 0)
+                    .allowsHitTesting(isShown)
+                    .accessibilityHidden(!isShown)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(WindowXReader { app.settingsTabs.contentX = $0 })
+            .background(WindowXReader { tabs.contentX = $0 })
             .background(Surface.cardFill(scheme, focused: true), in: .rect(cornerRadius: Metrics.cardRadius))
             .clipShape(.rect(cornerRadius: Metrics.cardRadius))
             .specularRim(RoundedRectangle(cornerRadius: Metrics.cardRadius))
@@ -62,12 +76,7 @@ struct SettingsView: View {
                 .frame(width: 0, height: 0)
                 .accessibilityHidden(true)
         }
-        .onAppear { Analytics.shared.track("settings_opened", ["tab": tab]) }
-        .onChange(of: tab) {
-            Analytics.shared.track("settings_opened", ["tab": tab])
-            // Picking a page in the sidebar shows it, in its tab.
-            app.settingsTabs.selected = nil
-        }
+        .onAppear { Analytics.shared.track("settings_opened", ["tab": tabs.page.rawValue]) }
     }
 }
 
@@ -276,6 +285,8 @@ enum SettingsPage: String, CaseIterable, Identifiable {
 private struct SettingsSidebar: View {
     @Binding var selection: SettingsPage
     @Binding var search: String
+    /// ⌘-click, or Open in New Tab: the page in a tab of its own.
+    let openInNewTab: (SettingsPage) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
@@ -306,7 +317,7 @@ private struct SettingsSidebar: View {
                                 .padding(.bottom, 4)
                             ForEach(members) { page in
                                 Button {
-                                    selection = page
+                                    if NSEvent.modifierFlags.contains(.command) { openInNewTab(page) } else { selection = page }
                                 } label: {
                                     HStack(spacing: 10) {
                                         Image(systemName: page.symbol)
@@ -323,6 +334,9 @@ private struct SettingsSidebar: View {
                                     .modifier(RowHighlight(isSelected: page == selection))
                                 }
                                 .buttonStyle(.plain)
+                                .contextMenu {
+                                    Button("Open in New Tab") { openInNewTab(page) }
+                                }
                             }
                         }
                     }
@@ -365,4 +379,8 @@ private struct SettingsPageHeader: View {
 enum SettingsMetrics {
     /// Where a page's title lines up with its groups' edges (a grouped form's own margin).
     static let inset: CGFloat = 49
+    /// A page's width at most: as wide as a grouped form's groups grow (about 700 points) and its
+    /// margins, so they start under the title. Wider, the form centers its groups and leaves the
+    /// title behind.
+    static let columnWidth: CGFloat = 700 + 2 * inset
 }
