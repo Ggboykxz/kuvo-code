@@ -34,7 +34,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - The panel's browser handles files: a page's upload button opens the file picker, and downloads go to your Downloads folder, with a bar that shows their progress and **Show in Finder**.
 - The panel's browser shows a page's alerts, confirmations and questions in a bar over it. Before, they were skipped, and a confirmation always answered no.
 - A step that brings back a picture, like the agent's screenshot of a page, shows it when you open the step; click it to look closer.
-- **See where the agent acts**: when it browses, a pointer glides to what it clicks, pulses as it clicks, and rings the field it types into, in your Mac's browser and in a machine's.
+- **See where the agent acts**: when it browses, a pointer glides to what it clicks, pulses as it clicks, and rings the field it types into, in your Mac's browser and in a machine's. In the conversation, each browser step has an icon for what it does.
 - Agents can list, switch and close browser tabs, attach files to a page's upload, find what they download, accept a page's confirmation when it should go ahead, hover over menus, and wait for a text to show on a page.
 - A bot that wakes up, or a conversation's first message in a folder just opened, waits a moment for its tools, so the agent has its browser from the first step.
 - In Edit Bot, **Wake Up Now** sends a waiting wake-up right away, to see the bot's job run, and **Pause Wake-Ups** holds them all until you turn it off; the sidebar says Paused meanwhile.

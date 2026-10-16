@@ -258,7 +258,29 @@ struct ToolCallView: View {
         case "subagent": "person.2"
         case "skill": "wand.and.stars"
         case "execute": "chevron.left.forwardslash.chevron.right"
-        default: call.name.hasPrefix("kuvo-browser_") ? "safari" : "wrench.and.screwdriver"
+        default: browserSymbol ?? "wrench.and.screwdriver"
+        }
+    }
+
+    /// The browser's steps, each by what it does.
+    private var browserSymbol: String? {
+        guard call.name.hasPrefix("kuvo-browser_") else { return nil }
+        return switch call.name.dropFirst("kuvo-browser_".count) {
+        case "browser_click", "browser_hover": "cursorarrow.rays"
+        case "browser_type", "browser_press": "keyboard"
+        case "browser_select": "filemenu.and.selection"
+        case "browser_scroll": "arrow.up.and.down"
+        case "browser_back": "chevron.backward"
+        case "browser_forward": "chevron.forward"
+        case "browser_screenshot": "camera.viewfinder"
+        case "browser_snapshot", "browser_text": "doc.text.magnifyingglass"
+        case "browser_wait": "hourglass"
+        case "browser_new_tab", "browser_tabs": "square.on.square"
+        case "browser_upload": "paperclip"
+        case "browser_sign_in": "key"
+        case "browser_ask_code": "number"
+        case "browser_ask_user": "hand.raised"
+        default: "safari"
         }
     }
 
