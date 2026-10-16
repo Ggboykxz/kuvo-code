@@ -739,13 +739,36 @@ final class MachineBrowser {
             try? await Task.sleep(for: .milliseconds(200))
         }
         guard let link else { return nil }
-        let url = address.flatMap { BrowserSession.url(from: $0)?.absoluteString } ?? "about:blank"
-        guard let id = try? await link.send("Target.createTarget", ["url": url])["targetId"] as? String else { return nil }
+        // Blank first, then the address: a page opened at an address sends its first request
+        // before the browser gives it its identity (Chrome, not headless), and sites that turn
+        // headless browsers away (x.com) answer that one with an empty page.
+        guard let id = try? await link.send("Target.createTarget", ["url": "about:blank"])["targetId"] as? String else { return nil }
+        let url = address.flatMap { BrowserSession.url(from: $0)?.absoluteString }
         if !pages.contains(where: { $0.id == id }) {
-            pages.append(Page(id: id, title: "", url: url))
+            pages.append(Page(id: id, title: "", url: url ?? "about:blank"))
             onPages(pages)
         }
+        if let url { await navigate(id, to: url, link: link) }
         return id
+    }
+
+    /// The browser's cookies (domain, name, expiry), while it's connected; nil otherwise.
+    func cookies() async -> [(domain: String, name: String, expires: Date?)]? {
+        guard state == .live, let link, let all = try? await link.send("Storage.getCookies")["cookies"] as? [[String: Any]] else { return nil }
+        return all.compactMap { cookie in
+            guard let domain = cookie["domain"] as? String, let name = cookie["name"] as? String else { return nil }
+            // -1 for a session cookie.
+            let expires = (cookie["expires"] as? Double).flatMap { $0 > 0 ? Date(timeIntervalSince1970: $0) : nil }
+            return (domain, name, expires)
+        }
+    }
+
+    /// Takes `page` to `url`, through a session of its own for the moment.
+    private func navigate(_ page: String, to url: String, link: MachineBrowserLink) async {
+        guard let attached = try? await link.send("Target.attachToTarget", ["targetId": page, "flatten": true]),
+              let session = attached["sessionId"] as? String else { return }
+        _ = try? await link.send("Page.navigate", ["url": url], session: session)
+        link.fire("Target.detachFromTarget", ["sessionId": session])
     }
 
     /// Closes a page (its tab closed).
