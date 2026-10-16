@@ -19,14 +19,11 @@ struct TranscriptView: View {
     @AppStorage(StepsDetail.key) private var stepsDetail = StepsDetail.summary
     @State private var scroller = ConversationScroller()
     @State private var rowCache = RowCache()
-    /// Find in the conversation (⌘F): what's looked for, and which match is in view.
-    @State private var isFinding = false
-    @State private var query = ""
-    @State private var matchIndex = 0
+    /// Find in the conversation (⌘F).
+    @State private var find = ConversationFind()
 
     var body: some View {
         let rows = rows
-        let matches = isFinding ? Self.matches(of: query, in: rows) : []
         ConversationScroll(scroller: scroller, animation: rowCache.isBulk ? nil : Self.rowAnimation, change: RowCache.Change(count: rows.count, last: rows.last?.id),
                            quote: { model.addQuote($0, how: "selection") }) {
             // Its top in view: the messages before, read and put ahead, the view staying put.
@@ -45,13 +42,7 @@ struct TranscriptView: View {
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                 RowView(row: row, directory: model.session.location.directory, folders: model.folders, cancel: model.cancelPending, undo: model.undo(from:), redo: model.redo, fork: fork, retry: model.retry(_:), buildPlan: model.agent == "plan" && !isOffline ? { model.buildPlan() } as () -> Void : nil, reply: model.reply(to:))
                     .equatable()
-                    .background {
-                        if matches.contains(row.id) {
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(Color.yellow.opacity(matches.indices.contains(matchIndex) && matches[matchIndex] == row.id ? 0.3 : 0.12))
-                                .padding(-6)
-                        }
-                    }
+                    .environment(\.findHighlight, find.highlight(for: row.id))
                     .id(row.id)
                     #if DEBUG
                     .onAppear { ScrollFrameMonitor.rowsMade += 1 }
@@ -69,26 +60,10 @@ struct TranscriptView: View {
                 }
             }
         }
-        .overlay(alignment: .top) {
-            if isFinding {
-                FindBar(query: $query, current: matchIndex, count: matches.count, isSearchingEarlier: model.isLoadingEarlier,
-                        searchEarlier: earlierSearch) { step in
-                    guard !matches.isEmpty else { return }
-                    matchIndex = (matchIndex + step + matches.count) % matches.count
-                    scroller.reveal(matches[matchIndex])
-                } close: {
-                    withAnimation(.ui) { isFinding = false }
-                }
-                .padding(.top, 10)
-                .transition(.move(edge: .top).combined(with: .opacity))
-            }
-        }
+        .conversationFind(find, scroller: scroller, version: model.transcriptVersion, isSearchingEarlier: model.isLoadingEarlier,
+                          searchEarlier: earlierSearch, folders: model.folders, rows: findRows)
         // What you send shows at the end, wherever you'd scrolled to.
         .onChange(of: model.sent) { scroller.toEnd() }
-        .onChange(of: query) {
-            matchIndex = 0
-            if let first = Self.matches(of: query, in: self.rows).first { scroller.reveal(first) }
-        }
         #if DEBUG
         // KUVO_DEMO_SCROLL=<seconds>: that long after it opens, goes up through the conversation a
         // row at a time (as scrolling makes rows appear), to measure it.
@@ -123,11 +98,8 @@ struct TranscriptView: View {
         #endif
         .onChange(of: model.findRequest, initial: true) {
             guard model.findRequest > 0 else { return }
-            if let preset = model.findPreset {
-                query = preset
-                model.findPreset = nil
-            }
-            withAnimation(.ui) { isFinding = true }
+            find.open(model.findPreset)
+            model.findPreset = nil
         }
     }
 
@@ -141,9 +113,13 @@ struct TranscriptView: View {
     private func searchEarlier() {
         Task {
             await model.loadAllEarlier()
-            matchIndex = 0
-            if let first = Self.matches(of: query, in: rows).first { scroller.reveal(first) }
+            find.look(in: findRows(), folders: model.folders(), showsFirst: true)
         }
+    }
+
+    /// The rows' words, for Find.
+    private func findRows() -> [ConversationFind.Row] {
+        rows.map { ConversationFind.Row(id: $0.id, parts: $0.findParts) }
     }
 
     private func loadEarlier(above id: String?) {
@@ -160,13 +136,6 @@ struct TranscriptView: View {
                 try? await Task.sleep(for: .milliseconds(300))
             }
         }
-    }
-
-    /// Rows whose words have `query`, in order.
-    private static func matches(of query: String, in rows: [Row]) -> [String] {
-        let query = query.trimmingCharacters(in: .whitespaces)
-        guard !query.isEmpty else { return [] }
-        return rows.filter { $0.searchText.localizedStandardContains(query) }.map(\.id)
     }
 
     /// Messages, turned into what's drawn: notices are condensed, each finished
@@ -393,14 +362,23 @@ enum Row: Identifiable, Hashable {
     /// The agent at work, since the time of your message.
     case working(since: Milliseconds?)
 
-    /// The words Find looks in: messages and replies.
-    var searchText: String {
+    /// The words Find looks in, as the row shows them: messages, replies, and commands you ran
+    /// with what they printed.
+    var findParts: [ConversationFind.Part] {
         switch self {
-        case .user(let message): CommandMessages.shared.text(of: message)
-        case .assistant(let message, _): message.content.compactMap { if case .text(let part) = $0 { part.text } else { nil } }.joined(separator: " ")
-        case .pending(let item): item.text
-        case .shell(let shell): shell.command + " " + (shell.output?.output ?? "")
-        default: ""
+        case .user(let message):
+            let text = CommandMessages.shared.text(of: message)
+            if let mail = AgentMail.parse(text) { return [.markdown(mail.text)] }
+            if text.hasPrefix(Wakes.marker) { return [.plain(String(text.dropFirst(Wakes.marker.count)))] }
+            return UserBubble.findParts(UserBubble.words(of: text)).map(ConversationFind.Part.plain)
+        case .pending(let item):
+            return UserBubble.findParts(UserBubble.words(of: item.text)).map(ConversationFind.Part.plain)
+        case .assistant(let message, _):
+            return message.content.compactMap { if case .text(let part) = $0 { .markdown(part.text) } else { nil } }
+        case .shell(let shell):
+            return [.plain(shell.command), .plain(ShellRow.output(of: shell))]
+        default:
+            return []
         }
     }
 
@@ -480,16 +458,14 @@ private struct RowView: View, Equatable {
         case .user(let message) where CommandMessages.shared.text(of: message).hasPrefix(Wakes.marker):
             WakeRow(note: String(CommandMessages.shared.text(of: message).dropFirst(Wakes.marker.count)), at: message.time.created)
         case .user(let message):
-            let (withComments, paths) = Attachments.split(CommandMessages.shared.text(of: message))
-            let (text, comments) = ReviewComments.split(withComments)
+            let (text, comments, paths) = UserBubble.split(CommandMessages.shared.text(of: message))
             let stored = (message.files ?? []).enumerated().map { AttachmentItem.stored($1, id: "\(message.id)#\($0)") }
             YourMessage(text: text, attachments: stored + paths.map(AttachmentItem.path), comments: comments, sent: Date(timeIntervalSince1970: message.time.created / 1000),
                         fork: { fork(message) }, undo: { undo(message) },
                         undoNote: "The conversation goes back to before this message, and so do the files the agent changed since. The message comes back to the composer. You can redo it all until you send something.",
                         isOffline: isOffline)
         case .pending(let item):
-            let (withComments, paths) = Attachments.split(item.text)
-            let (text, comments) = ReviewComments.split(withComments)
+            let (text, comments, paths) = UserBubble.split(item.text)
             UserBubble(text: text, attachments: item.files.map(AttachmentItem.local) + paths.map(AttachmentItem.path), comments: comments,
                        status: item.isLocal ? "Sending" : item.delivery == .queue ? "Queued" : "Sending")
                 .contextMenu { Button("Cancel", role: .destructive) { cancel(item) }.disabled(isOffline) }
@@ -553,6 +529,34 @@ struct UserBubble: View {
     var attachments: [AttachmentItem] = []
     var comments: [ReviewComment] = []
     var status: String?
+    @Environment(\.findHighlight) private var highlight
+
+    /// A message as its bubble shows it: its words, the review comments it was sent with, and
+    /// the files it names as attached.
+    static func split(_ message: String) -> (text: String, comments: [ReviewComment], paths: [String]) {
+        let (withComments, paths) = Attachments.split(message)
+        let (text, comments) = ReviewComments.split(withComments)
+        return (text, comments, paths)
+    }
+
+    /// A message's words, as its bubble shows them.
+    static func words(of message: String) -> String {
+        split(message).text
+    }
+
+    /// The parts of the words, in order: each quote it answers, then its answer.
+    private static func parts(_ text: String) -> [(isQuote: Bool, text: String)] {
+        let segments = Quoting.segments(text)
+        if segments.count == 1, segments[0].quote == nil { return text.isEmpty ? [] : [(false, text)] }
+        return segments.flatMap { segment in
+            [segment.quote.map { (true, $0) }, segment.text.isEmpty ? nil : (false, segment.text)].compactMap { $0 }
+        }
+    }
+
+    /// What Find reads in the bubble, in the order it's shown.
+    static func findParts(_ text: String) -> [String] {
+        parts(text).map(\.text)
+    }
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 4) {
@@ -564,20 +568,19 @@ struct UserBubble: View {
                 CommentReference(comment: comment)
             }
             // What it replied to, each part above the words that answer it.
-            let segments = Quoting.segments(text)
-            if segments.count == 1, segments[0].quote == nil {
-                if !text.isEmpty { MessageText(text: text, styled: style?(text)) }
-            } else {
-                ForEach(segments.indices, id: \.self) { index in
-                    if let quote = segments[index].quote {
-                        QuoteBlock(text: quote)
+            let parts = Self.parts(text)
+            let marks = highlight?.spread(over: parts.map(\.text))
+            ForEach(parts.indices, id: \.self) { index in
+                Group {
+                    if parts[index].isQuote {
+                        QuoteBlock(text: parts[index].text)
                             .frame(maxWidth: 420, alignment: .trailing)
                             .padding(.top, index == 0 ? 0 : 6)
-                    }
-                    if !segments[index].text.isEmpty {
-                        MessageText(text: segments[index].text, styled: style?(segments[index].text))
+                    } else {
+                        MessageText(text: parts[index].text, styled: style?(parts[index].text))
                     }
                 }
+                .environment(\.findHighlight, marks?[index])
             }
             if let status {
                 Text(status)
@@ -596,6 +599,7 @@ struct UserBubble: View {
 private struct MessageText: View {
     let text: String
     var styled: AttributedString?
+    @Environment(\.findHighlight) private var highlight
     @State private var isExpanded = false
     @State private var shownHeight: CGFloat = 0
     @State private var fullHeight: CGFloat = 0
@@ -608,9 +612,14 @@ private struct MessageText: View {
 
     private var isCut: Bool { isExpanded || fullHeight > shownHeight + 1 }
 
+    /// The words, with Find's marks.
+    private var shown: AttributedString {
+        FindText.marked(styled ?? AttributedString(text), highlight)
+    }
+
     var body: some View {
         VStack(alignment: .trailing, spacing: 4) {
-            Text(styled ?? AttributedString(text))
+            Text(shown)
                 .transcriptFont()
                 .lineLimit(isExpanded ? nil : Self.lines)
                 .textSelection(.enabled)
@@ -618,7 +627,7 @@ private struct MessageText: View {
                 .background(alignment: .top) {
                     // The whole text, unseen, to tell whether the limit cuts anything.
                     if mayBeLong, !isExpanded {
-                        Text(styled ?? AttributedString(text))
+                        Text(shown)
                             .transcriptFont()
                             .fixedSize(horizontal: false, vertical: true)
                             .hidden()
@@ -640,6 +649,8 @@ private struct MessageText: View {
                 .padding(.trailing, 6)
             }
         }
+        // Find on a place in it: all of it shows, as the place may be past the cut.
+        .onChange(of: highlight?.current) { if highlight?.current != nil, mayBeLong { isExpanded = true } }
     }
 }
 
@@ -650,19 +661,37 @@ private struct AssistantStepView: View {
     let folders: () -> [String]
     let showsError: Bool
 
+    @Environment(\.findHighlight) private var highlight
+
+    /// Find's marks for each of its words, which Find reads one after another.
+    private var marks: [Int: FindHighlight] {
+        guard let highlight else { return [:] }
+        let texts = message.content.enumerated().compactMap { index, block in
+            if case .text(let text) = block { (index, text.text) } else { nil }
+        }
+        let folders = folders()
+        let spread = highlight.spread(over: texts.map { FindText.shown(markdown: $0.1, folders: folders) })
+        return Dictionary(uniqueKeysWithValues: zip(texts.map(\.0), spread))
+    }
+
     var body: some View {
+        let marks = marks
         VStack(alignment: .leading, spacing: 10) {
-            ForEach(Array(message.content.enumerated()), id: \.offset) { _, block in
-                switch block {
-                case .text(let text):
-                    MarkdownText(text: text.text, folders: folders)
-                case .reasoning(let reasoning):
-                    ReasoningView(block: reasoning)
-                case .tool(let call):
-                    ToolCallView(call: call, directory: directory)
-                case .other:
-                    EmptyView()
+            ForEach(Array(message.content.enumerated()), id: \.offset) { index, block in
+                Group {
+                    switch block {
+                    case .text(let text):
+                        MarkdownText(text: text.text, folders: folders)
+                    case .reasoning(let reasoning):
+                        ReasoningView(block: reasoning)
+                    case .tool(let call):
+                        ToolCallView(call: call, directory: directory)
+                    case .other:
+                        EmptyView()
+                    }
                 }
+                // Only its words: Find doesn't look in its thinking and steps.
+                .environment(\.findHighlight, marks[index])
             }
             if let retry = message.retry {
                 Label("Retrying (attempt \(retry.attempt)): \(retry.error.message)", systemImage: "arrow.clockwise")
@@ -684,6 +713,7 @@ struct MarkdownText: View {
     /// In a group chat, its bots, for their mentions.
     var mentions: [Bot] = []
     @Environment(AppModel.self) private var app
+    @Environment(\.findHighlight) private var highlight
 
     var body: some View {
         #if DEBUG
@@ -694,10 +724,14 @@ struct MarkdownText: View {
     }
 
     private var structured: some View {
-        StructuredText(text, parser: FileLinkingParser(folders: folders, mentions: mentions))
+        StructuredText(text, parser: FileLinkingParser(folders: folders, mentions: mentions, highlight: highlight))
+            // Textual reads it again only when the text changes: made again when the marks do.
+            .id(highlight)
             .transcriptFont()
-            // Closer to the text than the GitHub style, so it wins for code blocks.
+            // Closer to the text than the GitHub style, so they win: code blocks, and, with Find's
+            // marks, inline code without its own background (the marks give it one).
             .textual.codeBlockStyle(CopyableCodeBlockStyle())
+            .textual.inlineStyle(highlight == nil ? .gitHub : .findMarks)
             .textual.highlighterTheme(CodeColors.theme)
             .textual.structuredTextStyle(.gitHub)
             .textual.textSelection(.enabled)
@@ -1104,13 +1138,14 @@ private struct AgentMessageRow: View {
 private struct WakeRow: View {
     let note: String
     let at: Milliseconds
+    @Environment(\.findHighlight) private var highlight
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: "alarm")
                 .foregroundStyle(.tint)
                 .frame(width: 16)
-            Text("\(Text("Woke up").fontWeight(.semibold).foregroundStyle(.primary))  \(Text(note).foregroundStyle(.secondary))")
+            Text("\(Text("Woke up").fontWeight(.semibold).foregroundStyle(.primary))  \(Text(FindText.marked(AttributedString(note), highlight)).foregroundStyle(.secondary))")
                 // Room for what a watch saw, after its note.
                 .lineLimit(6)
                 .textSelection(.enabled)

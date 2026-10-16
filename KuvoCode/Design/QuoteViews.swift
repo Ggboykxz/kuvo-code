@@ -35,6 +35,7 @@ struct QuoteCard: View {
 /// In a message you sent: what it replied to, above your words.
 struct QuoteBlock: View {
     let text: String
+    @Environment(\.findHighlight) private var highlight
     @State private var isExpanded = false
 
     /// More than fits in its four lines, likely: it opens to all of it.
@@ -48,7 +49,7 @@ struct QuoteBlock: View {
                 .fill(.secondary.opacity(0.45))
                 .frame(width: 3)
             VStack(alignment: .leading, spacing: 4) {
-                Text(text)
+                Text(FindText.marked(AttributedString(text), highlight))
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .lineLimit(isExpanded ? nil : 4)
@@ -61,5 +62,7 @@ struct QuoteBlock: View {
             }
         }
         .fixedSize(horizontal: false, vertical: true)
+        // Find on a place in it: all of it shows.
+        .onChange(of: highlight?.current) { if highlight?.current != nil, isLong { isExpanded = true } }
     }
 }

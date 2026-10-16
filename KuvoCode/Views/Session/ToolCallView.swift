@@ -376,10 +376,11 @@ struct ToolCallView: View {
 /// A command's output or a step's code, in a recessed well that scrolls sideways for long lines.
 struct OutputBlock: View {
     let text: String
+    @Environment(\.findHighlight) private var highlight
 
     var body: some View {
         ScrollView(.horizontal) {
-            Text(text.trimmingCharacters(in: .whitespacesAndNewlines))
+            Text(FindText.marked(AttributedString(text.trimmingCharacters(in: .whitespacesAndNewlines)), highlight))
                 .transcriptCodeFont()
                 .textSelection(.enabled)
                 .fixedSize(horizontal: true, vertical: false)

@@ -5,13 +5,22 @@ import SwiftUI
 /// printed open under it.
 struct ShellRow: View {
     let shell: Message.Shell
+    @Environment(\.findHighlight) private var highlight
     @State private var isExpanded = true
 
     private static let iconWidth: CGFloat = 16
     private static let iconGap: CGFloat = 8
 
-    private var output: String {
+    /// What it printed, as shown (and as Find reads it).
+    static func output(of shell: Message.Shell) -> String {
         shell.output?.output.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private var output: String { Self.output(of: shell) }
+
+    /// Find's marks for the command, then for what it printed.
+    private var marks: [FindHighlight]? {
+        highlight?.spread(over: [shell.command, output])
     }
 
     var body: some View {
@@ -29,6 +38,7 @@ struct ShellRow: View {
             if isExpanded, !output.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     OutputBlock(text: output)
+                        .environment(\.findHighlight, marks?[1])
                     if shell.output?.truncated == true {
                         Text("Only the end is kept; it printed more.")
                             .font(.caption)
@@ -48,6 +58,8 @@ struct ShellRow: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
+        // Find on a place in what it printed: open to show it.
+        .onChange(of: marks?[1].current) { if marks?[1].current != nil { isExpanded = true } }
         .contextMenu {
             Button("Copy Command") { copy(shell.command) }
             if !output.isEmpty { Button("Copy Output") { copy(output) } }
@@ -64,7 +76,7 @@ struct ShellRow: View {
                 }
             }
             .frame(width: Self.iconWidth)
-            Text((shell.isRunning ? "Running " : "You ran ") + "`\(shell.command)`")
+            Text(AttributedString((shell.isRunning ? "Running " : "You ran ") + "`") + FindText.marked(AttributedString(shell.command), marks?[0]) + AttributedString("`"))
                 .lineLimit(1)
                 .truncationMode(.middle)
             if let exit = shell.exit, exit != 0 {

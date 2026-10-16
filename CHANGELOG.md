@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Find (⌘F) marks each place your words are, right in the text (replies, code, tables and your messages), the one you're on in orange, with a bar in the corner that counts the results.
 - A widget takes shape as the agent writes it, then comes alive when it's done.
 - What an agent writes to another shows in its conversation, as "To Scout" with the message, and the answer when it waited for one.
 - ⌘F finds in group chats too, as in sessions.

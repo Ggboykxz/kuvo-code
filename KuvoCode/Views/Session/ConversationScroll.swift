@@ -7,6 +7,8 @@ final class ConversationScroller {
     enum Request: Equatable {
         case end(animated: Bool)
         case row(String)
+        /// A place in a row, this far down it, in the middle (a place Find found).
+        case place(String, CGFloat)
         /// A row at the top, where it was, after rows came in above it.
         case top(String)
         /// A distance from the top, for the scrolling test.
@@ -32,6 +34,13 @@ final class ConversationScroller {
     func reveal(_ id: String) {
         followsEnd = false
         ask(.row(id))
+    }
+
+    /// The place `fraction` of the way down `id`'s row in the middle, and no following the end
+    /// meanwhile.
+    func reveal(_ id: String, at fraction: CGFloat) {
+        followsEnd = false
+        ask(.place(id, min(max(fraction, 0), 1)))
     }
 
     /// `id`'s row stays where it was at the top, as earlier rows come in above it.
@@ -75,6 +84,7 @@ struct ConversationScroll<Rows: View>: View {
     /// Scrolling now: a plain flag, so starting and stopping don't redraw the conversation.
     @State private var scrolling = ScrollingFlag()
     @State private var endFollower = EndFollower()
+    @State private var spot = ScrollSpot()
 
     var body: some View {
         ScrollView {
@@ -118,6 +128,10 @@ struct ConversationScroll<Rows: View>: View {
                 position.scrollTo(edge: .bottom)
             }
         }
+        // Where it's scrolled to, for going to a place (a plain value, read only then).
+        .onScrollGeometryChange(for: ScrollSpot.Geometry.self) { ScrollSpot.Geometry(offset: $0.contentOffset.y, height: $0.containerSize.height) } action: { _, new in
+            spot.geometry = new
+        }
         // Messages scroll on under the card's header and the composer, blurring away there
         // instead of being cut at an edge.
         .scrollEdgeEffectStyle(Self.edgeStyle, for: .all)
@@ -149,6 +163,15 @@ struct ConversationScroll<Rows: View>: View {
                 }
             case .row(let id):
                 withAnimation(.ui) { position.scrollTo(id: id, anchor: .center) }
+            case .place(let id, let fraction):
+                // Lined up so the place is as far down the view as it is down its row (in view,
+                // however tall the row), then moved to the middle.
+                position.scrollTo(id: id, anchor: UnitPoint(x: 0.5, y: fraction))
+                Task {
+                    try? await Task.sleep(for: .milliseconds(60))
+                    guard scroller.request == .place(id, fraction) else { return }
+                    position.scrollTo(y: max(0, spot.geometry.offset + (fraction - 0.5) * spot.geometry.height))
+                }
             case .top(let id):
                 position.scrollTo(id: id, anchor: .top)
             case .offset(let y):
@@ -158,6 +181,16 @@ struct ConversationScroll<Rows: View>: View {
             }
         }
     }
+}
+
+/// Where the conversation is scrolled to, read only when going to a place.
+final class ScrollSpot {
+    struct Geometry: Equatable {
+        var offset: CGFloat = 0
+        var height: CGFloat = 0
+    }
+
+    var geometry = Geometry()
 }
 
 /// Set while you scroll, read by the handlers only.

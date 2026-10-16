@@ -59,14 +59,40 @@ nonisolated enum FileLinks {
     }
 }
 
+nonisolated extension FileLinks {
+    /// The code spans in `text` that name a file in `folders`, with the file, last first (so
+    /// replacing each leaves the ones before it where they were).
+    static func spans(in text: AttributedString, folders: [String]) -> [(range: Range<AttributedString.Index>, url: URL)] {
+        guard text.runs.contains(where: { $0.inlinePresentationIntent?.contains(.code) == true }) else { return [] }
+        var links: [(range: Range<AttributedString.Index>, url: URL)] = []
+        for run in text.runs where run.inlinePresentationIntent?.contains(.code) == true && run.link == nil {
+            if let url = file(named: String(text[run.range].characters), folders: folders) {
+                links.append((run.range, url))
+            }
+        }
+        return links.reversed()
+    }
+
+    /// What a link shows: the file's name and any line, as "App.swift:42" for "src/App.swift:42".
+    static func label(_ written: String) -> String {
+        guard let slash = written.lastIndex(of: "/"), written.index(after: slash) < written.endIndex else { return written }
+        return String(written[written.index(after: slash)...])
+    }
+
+    /// The icon in front of a file's name, as a character in the text.
+    static let icon = "\u{FFFC}"
+}
+
 /// Textual's Markdown, with code spans that name a file made links to it, drawn as a file: an
-/// icon and its name ("App.swift:42"), in link color rather than as code.
+/// icon and its name ("App.swift:42"), in link color rather than as code. With Find open, the
+/// places it found marked.
 struct FileLinkingParser: MarkupParser {
     /// Asked when parsing rather than while the view updates, so replies don't redraw each
     /// time the project's settings change.
     let folders: () -> [String]
     /// In a group chat, its bots: "@Name" shows their face and color.
     var mentions: [Bot] = []
+    var highlight: FindHighlight?
 
     func attributedString(for input: String) throws -> AttributedString {
         #if DEBUG
@@ -75,24 +101,15 @@ struct FileLinkingParser: MarkupParser {
         #endif
         var text = try AttributedStringMarkdownParser.markdown().attributedString(for: input)
         if !mentions.isEmpty { GroupMentions.apply(to: &text, bots: mentions, faces: true) }
-        guard text.runs.contains(where: { $0.inlinePresentationIntent?.contains(.code) == true }) else { return text }
-        let folders = folders()
-        var links: [(Range<AttributedString.Index>, URL)] = []
-        for run in text.runs where run.inlinePresentationIntent?.contains(.code) == true && run.link == nil {
-            if let url = FileLinks.file(named: String(text[run.range].characters), folders: folders) {
-                links.append((run.range, url))
-            }
-        }
-        // From the end, so the earlier ranges still point where they did.
-        for (range, url) in links.reversed() {
+        for (range, url) in FileLinks.spans(in: text, folders: folders()) {
             var attributes = text[range].runs.first?.attributes ?? AttributeContainer()
             var intent = attributes.inlinePresentationIntent ?? []
             intent.remove(.code)
             attributes.inlinePresentationIntent = intent.isEmpty ? nil : intent
             attributes.link = url
-            var name = AttributedString(Self.label(String(text[range].characters)), attributes: attributes)
+            var name = AttributedString(FileLinks.label(String(text[range].characters)), attributes: attributes)
             // The icon goes before the link, not in it: Textual draws attachments only outside links.
-            var icon = AttributedString("\u{FFFC}", attributes: attributes)
+            var icon = AttributedString(FileLinks.icon, attributes: attributes)
             icon.link = nil
             icon.textual.attachment = AnyAttachment(FileIconAttachment())
             var gap = AttributedString(" ", attributes: attributes)
@@ -100,13 +117,8 @@ struct FileLinkingParser: MarkupParser {
             name.insert(icon + gap, at: name.startIndex)
             text.replaceSubrange(range, with: name)
         }
+        if let highlight { FindText.mark(&text, highlight, inCode: true) }
         return text
-    }
-
-    /// What a link shows: the file's name and any line, as "App.swift:42" for "src/App.swift:42".
-    static func label(_ written: String) -> String {
-        guard let slash = written.lastIndex(of: "/"), written.index(after: slash) < written.endIndex else { return written }
-        return String(written[written.index(after: slash)...])
     }
 }
 

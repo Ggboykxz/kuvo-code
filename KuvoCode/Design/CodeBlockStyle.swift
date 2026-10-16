@@ -18,6 +18,7 @@ private struct CopyableCodeBlock: View {
     @State private var codeHeight: CGFloat = 0
     @Environment(\.colorScheme) private var scheme
     @Environment(\.cardIsFocused) private var cardIsFocused
+    @Environment(\.findHighlight) private var highlight
 
     private static let shape = RoundedRectangle(cornerRadius: 10)
     /// The same room above and below the code.
@@ -26,8 +27,21 @@ private struct CopyableCodeBlock: View {
     /// How many lines the code has, for its numbers. Textual keeps the code itself private, so
     /// this reads it from the copy action's proxy; nil (no numbers) if a Textual update moves it.
     private var lineCount: Int? {
-        guard let content = Mirror(reflecting: configuration.codeBlock).descendant("content") as? AttributedSubstring else { return nil }
+        guard let content else { return nil }
         return content.characters.reduce(1) { $1 == "\n" ? $0 + 1 : $0 }
+    }
+
+    private var content: AttributedSubstring? {
+        Mirror(reflecting: configuration.codeBlock).descendant("content") as? AttributedSubstring
+    }
+
+    /// The code with Find's marks in it, while Find has places there: drawn without its colors,
+    /// as the highlighter colors it over the marks.
+    private var marked: AttributedString? {
+        guard highlight != nil, let content, content.runs.contains(where: { $0.attributes.swiftUI.backgroundColor != nil }) else { return nil }
+        var code = AttributedString(content)
+        if code.characters.last == "\n" { code.characters.removeLast() }
+        return code
     }
 
     var body: some View {
@@ -39,7 +53,15 @@ private struct CopyableCodeBlock: View {
                     .padding(.vertical, Self.inset)
             }
             Overflow {
-                configuration.label
+                Group {
+                    if let marked {
+                        Text(marked)
+                            .transcriptCodeFont()
+                            .lineSpacing(3)
+                    } else {
+                        configuration.label
+                    }
+                }
                     .textual.lineSpacing(.fontScaled(0.225))
                     .textual.fontScale(0.85)
                     .fixedSize(horizontal: false, vertical: true)
