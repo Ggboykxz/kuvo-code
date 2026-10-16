@@ -93,7 +93,7 @@ struct Composer: View {
                 Menu {
                     Button("Discard Comments", role: .destructive, action: onDiscardComments)
                 } label: {
-                    Label("\(commentCount) \(commentCount == 1 ? "comment" : "comments")", systemImage: "text.bubble")
+                    Label(commentCount.counting("comment"), systemImage: "text.bubble")
                         .font(.system(size: 12, weight: .medium))
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)

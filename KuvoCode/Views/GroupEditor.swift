@@ -120,7 +120,7 @@ struct GroupEditor: View {
                         }
                     }
                     .frame(width: 76, height: 76)
-                    Text(picked.isEmpty ? "No bots yet" : picked.count == 1 ? "1 bot" : "\(picked.count) bots")
+                    Text(picked.isEmpty ? "No bots yet" : picked.count.counting("bot"))
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(.secondary)
                         .contentTransition(.numericText())

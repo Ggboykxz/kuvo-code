@@ -61,7 +61,7 @@ struct ArchivedSessionsSettings: View {
                     HStack {
                         Label(group.name, systemImage: "folder")
                         Spacer()
-                        Text("\(group.sessions.count) \(group.sessions.count == 1 ? "session" : "sessions")")
+                        Text(group.sessions.count.counting("session"))
                             .foregroundStyle(.secondary)
                     }
                 }

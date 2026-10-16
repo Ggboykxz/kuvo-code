@@ -65,7 +65,7 @@ struct BrowserSettings: View {
                         .disabled(history.sites.isEmpty)
                 } label: {
                     Text("Browsing history")
-                    Text(history.sites.isEmpty ? "None yet." : "\(history.sites.count) \(history.sites.count == 1 ? "site" : "sites"), which the new tab page suggests.")
+                    Text(history.sites.isEmpty ? "None yet." : "\(history.sites.count.counting("site")), which the new tab page suggests.")
                 }
             }
 

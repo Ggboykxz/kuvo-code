@@ -117,6 +117,6 @@ private struct QueueRow: View {
         }
         let names = item.files.map(\.lastPathComponent) + paths.map { ($0 as NSString).lastPathComponent }
         if !names.isEmpty { return names.joined(separator: ", ") }
-        return comments.isEmpty ? "" : "\(comments.count) \(comments.count == 1 ? "comment" : "comments")"
+        return comments.isEmpty ? "" : comments.count.counting("comment")
     }
 }

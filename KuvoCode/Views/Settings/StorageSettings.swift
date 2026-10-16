@@ -71,7 +71,7 @@ struct StorageSettings: View {
                     Button("Manage") { tab = SettingsPage.archived.rawValue }
                 } label: {
                     Text("Archived sessions")
-                    Text(archivedCount == 0 ? "None." : "\(archivedCount) \(archivedCount == 1 ? "session" : "sessions"), out of the sidebar but still taking room.")
+                    Text(archivedCount == 0 ? "None." : "\(archivedCount.counting("session")), out of the sidebar but still taking room.")
                 }
                 LabeledContent {
                     Button("Manage") { tab = SettingsPage.worktrees.rawValue }
@@ -327,7 +327,7 @@ private struct OldSessionsSheet: View {
                         }
                     }
                 } header: {
-                    Text(old.isEmpty ? "Sessions" : "\(old.count) \(old.count == 1 ? "Session" : "Sessions")")
+                    Text(old.isEmpty ? "Sessions" : old.count.counting("Session"))
                 }
             }
             .formStyle(.grouped)
@@ -337,7 +337,7 @@ private struct OldSessionsSheet: View {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button(old.count == 1 ? "Delete 1 Session" : "Delete \(old.count) Sessions", role: .destructive) {
+                Button("Delete " + old.count.counting("Session"), role: .destructive) {
                     isDeleting = true
                     let ids = old.map(\.id)
                     Task {

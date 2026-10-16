@@ -446,7 +446,7 @@ private struct RowView: View, Equatable {
                 .frame(maxWidth: .infinity)
         case .undone(let count):
             HStack(spacing: 10) {
-                Label(count == 1 ? "Undid 1 message" : "Undid \(count) messages", systemImage: "arrow.uturn.backward")
+                Label("Undid " + count.counting("message"), systemImage: "arrow.uturn.backward")
                 Button("Redo", action: redo)
                     .buttonStyle(.borderless)
                     .disabled(isOffline)
@@ -831,7 +831,7 @@ private struct TurnFiles: View {
         Button {
             isShowing.toggle()
         } label: {
-            Label(files.count == 1 ? "Edited 1 file" : "Edited \(files.count) files", systemImage: "plus.forwardslash.minus")
+            Label("Edited " + files.count.counting("file"), systemImage: "plus.forwardslash.minus")
                 .font(.caption)
         }
         .buttonStyle(TextButtonStyle(outset: true))

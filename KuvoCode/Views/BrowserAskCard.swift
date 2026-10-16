@@ -95,7 +95,7 @@ struct BrowserAskCard: View {
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(Color.primary.opacity(0.07), in: .capsule)
-                    .help(waiting == 1 ? "1 more waiting" : "\(waiting) more waiting")
+                    .help("\(waiting) more waiting")
             }
         }
     }

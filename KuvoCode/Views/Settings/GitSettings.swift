@@ -107,7 +107,7 @@ struct WorktreesSettings: View {
                         }
                     } label: {
                         Text(item.tree.branch)
-                        Text("\(workspace.projectName(item.tree.project)) · \(sessions.count == 1 ? "1 session" : "\(sessions.count) sessions")")
+                        Text("\(workspace.projectName(item.tree.project)) · \(sessions.count.counting("session"))")
                     }
                 }
             } header: {

@@ -70,7 +70,7 @@ struct StepsRow: View {
 
     /// "12 steps".
     static func count(_ blocks: [Message.Content]) -> String {
-        blocks.count == 1 ? "1 step" : "\(blocks.count) steps"
+        blocks.count.counting("step")
     }
 
     /// "Thought for 40s, ran 6 commands, read 3 files (1 failed)".

@@ -135,7 +135,7 @@ struct WorkplaceChip: View {
         menu.addItem(.separator())
         let counts = NSMenu()
         for count in 1...4 {
-            counts.addItem(ActionItem(count == 1 ? "1 Session" : "\(count) Sessions", subtitle: count == 1 ? nil : "Each tries it in a worktree of its own", checked: worktree && count == attempts) {
+            counts.addItem(ActionItem(count.counting("Session"), subtitle: count == 1 ? nil : "Each tries it in a worktree of its own", checked: worktree && count == attempts) {
                 onSelect(true)
                 onSelectAttempts(count)
             })
