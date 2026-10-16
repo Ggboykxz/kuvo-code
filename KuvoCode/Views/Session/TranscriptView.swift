@@ -27,10 +27,6 @@ struct TranscriptView: View {
     @State private var scrolling = ScrollingFlag()
     @State private var endFollower = EndFollower()
     @State private var rowCache = RowCache()
-    #if DEBUG
-    /// How tall the conversation is, for the scrolling test (KUVO_DEMO_SCROLL).
-    @State private var demoHeight: CGFloat = 0
-    #endif
     /// Find in the conversation (⌘F): what's looked for, and which match is in view.
     @State private var isFinding = false
     @State private var query = ""
@@ -51,6 +47,9 @@ struct TranscriptView: View {
                             }
                         }
                         .id(row.id)
+                        #if DEBUG
+                        .onAppear { ScrollFrameMonitor.rowsMade += 1 }
+                        #endif
                         .padding(.top, index == 0 ? 0 : row.spacing(after: rows[index - 1]))
                         .transition(Self.rowTransition)
                 }
@@ -70,20 +69,21 @@ struct TranscriptView: View {
         // stack re-measures rows during a bounce, so the end kept moving and the bounce
         // crawled, then snapped back. Following the end is done below, only while idle.
         .defaultScrollAnchor(.bottom, for: .initialOffset)
-        .onScrollPhaseChange { _, phase in scrolling.isOn = phase != .idle }
-        .onScrollGeometryChange(for: Bool.self) { geometry in
-            geometry.visibleRect.maxY >= geometry.contentSize.height - 40
-        } action: { _, atEnd in
-            // Your scrolling decides; growth below the fold doesn't.
-            if scrolling.isOn { followsEnd = atEnd }
-        }
-        .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { old, new in
+        .onScrollPhaseChange { _, phase in
+            scrolling.isOn = phase != .idle
             #if DEBUG
-            demoHeight = new
+            ScrollFrameMonitor.shared.scrolling(phase != .idle)
             #endif
+        }
+        // One watcher for both, as SwiftUI passes on only one change a frame from each.
+        .onScrollGeometryChange(for: EndGeometry.self) { geometry in
+            EndGeometry(atEnd: geometry.visibleRect.maxY >= geometry.contentSize.height - 40, height: geometry.contentSize.height)
+        } action: { old, new in
+            // Your scrolling decides; growth below the fold doesn't.
+            if scrolling.isOn { followsEnd = new.atEnd }
             // Shrinking too: the lazy stack's first guess at the height can be too big, and a
             // session would then open part of the way up.
-            guard followsEnd, !scrolling.isOn, new != old else { return }
+            guard followsEnd, !scrolling.isOn, new.height != old.height else { return }
             endFollower.follow {
                 // Later, you may have started scrolling meanwhile.
                 guard followsEnd, !scrolling.isOn else { return }
@@ -150,8 +150,10 @@ struct TranscriptView: View {
             ParseClock.count = 0
             // As you scrolling up does: no following the end.
             followsEnd = false
-            var y = demoHeight
-            let height = demoHeight
+            // How tall it is, from AppKit's scroll view (SwiftUI doesn't pass on every change).
+            func scrollViews(in view: NSView) -> [NSScrollView] { (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(scrollViews) }
+            let height = NSApp.windows.compactMap(\.contentView).flatMap(scrollViews).map { $0.documentView?.frame.height ?? 0 }.max() ?? 0
+            var y = height
             for _ in 0..<150 where y > 0 {
                 y -= 200
                 position.scrollTo(y: max(y, 0))
@@ -1201,6 +1203,12 @@ final class RowCache {
 /// Set while you scroll, read by the handlers only.
 final class ScrollingFlag {
     var isOn = false
+}
+
+/// Whether the end is in view, and how tall the conversation is.
+struct EndGeometry: Equatable {
+    var atEnd: Bool
+    var height: CGFloat
 }
 
 /// Keeps the end in view as the conversation grows. Scrolling makes the lazy stack make the rows

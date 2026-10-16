@@ -61,6 +61,9 @@ private struct CopyableCodeBlock: View {
         .clipShape(Self.shape)
         .recessedWell(Self.shape)
         .textual.blockSpacing(.init(top: 0, bottom: 16))
+        #if DEBUG
+        .onAppear { ScrollFrameMonitor.codeBlocksMade += 1 }
+        #endif
     }
 
     /// The well's own color, solid, fading in from the left: code under the corner disappears
