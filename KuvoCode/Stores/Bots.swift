@@ -53,6 +53,8 @@ final class Bots {
     @ObservationIgnored private var waking: Task<Void, Never>?
     /// Bots whose session has this version's instructions.
     @ObservationIgnored private var synced: Set<String> = []
+    /// Machines given this copy's kuvo-wake since launch.
+    @ObservationIgnored private var wakeInstalled: Set<String> = []
     private let log = Logger(subsystem: "run.kuvo.code", category: "bots")
 
     /// The key under which a bot's job goes to its session.
@@ -295,7 +297,8 @@ final class Bots {
         guard let api = app?.workspace.api(forFolder: bot.directory) else { throw Failure.notConnected(bot.machine ?? "This Mac's engine") }
         await api.waitForTools(in: bot.directory)
         try await api.prompt(session: bot.sessionID, id: Identifier.message(), text: Wakes.marker + wake.note, delivery: .queue)
-        await cancelWake(wake, of: bot)
+        // One that repeats keeps its time.
+        if wake.every == nil { await cancelWake(wake, of: bot) }
     }
 
     /// Sends this Mac's bots' wake-ups as they come due, while the app runs; ones missed while it
@@ -326,7 +329,13 @@ final class Bots {
             for wake in pending where wake.due <= .now {
                 do {
                     try await api.prompt(session: bot.sessionID, id: Identifier.message(), text: Wakes.marker + wake.note, delivery: .queue)
-                    try? FileManager.default.removeItem(atPath: ((bot.folder as NSString).appendingPathComponent("wakes") as NSString).appendingPathComponent(wake.id))
+                    // Sent: one that repeats comes back at its next time; others are done.
+                    let folder = (bot.folder as NSString).appendingPathComponent("wakes") as NSString
+                    if let next = wake.nextID() {
+                        try? FileManager.default.moveItem(atPath: folder.appendingPathComponent(wake.id), toPath: folder.appendingPathComponent(next))
+                    } else {
+                        try? FileManager.default.removeItem(atPath: folder.appendingPathComponent(wake.id))
+                    }
                 } catch {
                     log.error("A wake-up for \(bot.id, privacy: .public) didn't go: \(error.localizedDescription, privacy: .public)")
                 }
@@ -407,9 +416,12 @@ final class Bots {
         and you carry on. `kuvo-wake \(bot.id) list` shows what's scheduled; `kuvo-wake \(bot.id) cancel <id>` cancels one. \
         (If kuvo-wake isn't found, it's "\(full)".)
 
-        For something that repeats: do it now, report briefly, and schedule the next run, with a note that says what to do and \
-        that it repeats. Each time you wake up, do the work, report briefly, and schedule the next run again, until the user says \
-        to stop or the job is done. Keep reports short; the user reads them later.
+        For something that repeats, schedule it once with --every, and it keeps coming back until it's canceled:
+          kuvo-wake \(bot.id) add 2026-10-17T09:00 --every 1d "<what to do each time>"
+        The repeat is 30m, 2h, 1d, 1w (at least 5m), or weekdays; days, weeks and weekdays keep the same time of day. Don't \
+        schedule the next run yourself each time. To change a schedule, cancel it and add the new one; check the list first so \
+        you never keep two for the same thing. When it's due now too, also do the first round now. Keep reports short; the \
+        user reads them later.
 
         Memory: the file "\(bot.memoryFile)" is yours. Read it when you start a piece of work. Keep in it what you'll need next \
         time: lasting preferences, how things are set up, where ongoing work stands, and any schedule you're keeping. Keep it short \
@@ -442,7 +454,13 @@ final class Bots {
             guard let api = app?.workspace.api(forFolder: bot.directory) else { continue }
             if (try? await api.setInstruction(session: bot.sessionID, key: Self.instructionKey, text: Self.instructions(for: bot))) != nil {
                 synced.insert(bot.id)
-                if bot.machine != nil { try? await writeSession(of: bot) }
+                if let machine = bot.machine {
+                    try? await writeSession(of: bot)
+                    // Its kuvo-wake as the instructions describe it, for an engine started before.
+                    if wakeInstalled.insert(machine).inserted, let engine = app?.machines.engine(machine) {
+                        try? await Wakes.install(on: engine.machine.connection)
+                    }
+                }
             }
         }
     }
@@ -471,6 +489,19 @@ final class Bots {
             try encoder.encode(list).write(to: Self.file, options: .atomic)
         } catch {
             log.error("Bots weren't saved: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+}
+
+extension Wakes.Repeat {
+    /// "every day", "every 2 hours", "on weekdays".
+    var words: String {
+        switch self {
+        case .minutes(let n): "every \(n) min"
+        case .hours(let n): n == 1 ? "every hour" : "every \(n) hours"
+        case .days(let n): n == 1 ? "every day" : "every \(n) days"
+        case .weeks(let n): n == 1 ? "every week" : "every \(n) weeks"
+        case .weekdays: "on weekdays"
         }
     }
 }

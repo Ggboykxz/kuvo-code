@@ -15,26 +15,95 @@ public enum Wakes {
 
     /// One waiting wake-up, from its file.
     public struct Pending: Sendable, Hashable, Identifiable {
-        /// The file's name: the time it's due, in seconds, a dash and a few random letters.
+        /// The file's name: the time it's due, in seconds, a dash and a few random letters, and for
+        /// one that repeats, a dash and its repeat.
         public let id: String
         public let due: Date
         public let note: String
+        /// How often it comes back, if it does.
+        public let every: Repeat?
 
         public init?(id: String, note: String) {
-            guard let seconds = id.split(separator: "-").first.flatMap({ TimeInterval($0) }) else { return nil }
+            let parts = id.split(separator: "-", maxSplits: 2)
+            guard let seconds = parts.first.flatMap({ TimeInterval($0) }) else { return nil }
             self.id = id
             due = Date(timeIntervalSince1970: seconds)
             self.note = note
+            every = parts.count > 2 ? Repeat(String(parts[2])) : nil
+        }
+
+        /// The file's name for its next time, after it went at `now`; nil if it doesn't repeat.
+        public func nextID(after now: Date = .now, calendar: Calendar = .current) -> String? {
+            guard let every else { return nil }
+            let next = every.next(after: due, now: now, calendar: calendar)
+            return Wakes.name(due: next, every: every)
         }
     }
 
-    /// A `kuvo-wake` command a bot ran, read back: what it did, and for `add`, when and the note.
+    /// How often a wake-up comes back: every so many minutes, hours, days or weeks, or on weekdays.
+    public enum Repeat: Sendable, Hashable {
+        case minutes(Int), hours(Int), days(Int), weeks(Int)
+        case weekdays
+
+        /// 30m, 2h, 1d, 1w or weekdays, as `kuvo-wake` takes it.
+        public init?(_ text: String) {
+            if text == "weekdays" { self = .weekdays; return }
+            guard let unit = text.last, let count = Int(text.dropLast()), count > 0, text.first?.isNumber == true else { return nil }
+            switch unit {
+            case "m" where count >= 5: self = .minutes(count)
+            case "h": self = .hours(count)
+            case "d": self = .days(count)
+            case "w": self = .weeks(count)
+            default: return nil
+            }
+        }
+
+        public var text: String {
+            switch self {
+            case .minutes(let n): "\(n)m"
+            case .hours(let n): "\(n)h"
+            case .days(let n): "\(n)d"
+            case .weeks(let n): "\(n)w"
+            case .weekdays: "weekdays"
+            }
+        }
+
+        /// The first time after `now` it comes back, from when it was due: the same time of day for
+        /// days and weeks, across a daylight saving change too, and skipping weekends for weekdays.
+        public func next(after due: Date, now: Date, calendar: Calendar = .current) -> Date {
+            switch self {
+            case .minutes(let n), .hours(let n):
+                let period = TimeInterval(n * (self == .hours(n) ? 3600 : 60))
+                return due.addingTimeInterval(((now.timeIntervalSince(due) / period).rounded(.down) + 1) * period)
+            case .days, .weeks, .weekdays:
+                let days = switch self { case .days(let n): n; case .weeks(let n): n * 7; default: 1 }
+                var next = due
+                // Whole periods missed first, then one at a time.
+                let missed = Int(now.timeIntervalSince(due) / Double(days * 86_400))
+                if missed > 0 { next = calendar.date(byAdding: .day, value: missed * days, to: due) ?? next }
+                repeat {
+                    next = calendar.date(byAdding: .day, value: days, to: next) ?? next.addingTimeInterval(Double(days * 86_400))
+                } while next <= now || (self == .weekdays && calendar.isDateInWeekend(next))
+                return next
+            }
+        }
+    }
+
+    /// A wake-up's file name: its time, a few random letters, and its repeat if it has one.
+    static func name(due: Date, every: Repeat?) -> String {
+        let letters = String((0..<6).map { _ in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789".randomElement()! })
+        return "\(Int(due.timeIntervalSince1970))-\(letters)" + (every.map { "-\($0.text)" } ?? "")
+    }
+
+    /// A `kuvo-wake` command a bot ran, read back: what it did, and for `add`, when, how often and
+    /// the note.
     public struct Command: Sendable, Equatable {
         public enum Verb: String, Sendable { case add, list, cancel }
         public let verb: Verb
         /// As written: +2h, 2026-10-16T09:00, …
         public let when: String?
         public let note: String?
+        public var every: Repeat? = nil
     }
 
     /// The command, if `line` runs `kuvo-wake` for a bot (by name, or by its full path).
@@ -45,8 +114,15 @@ public enum Wakes {
         let rest = match.2.trimmingCharacters(in: .whitespaces)
         let when = rest.prefix { !$0.isWhitespace }
         var note = rest.dropFirst(when.count).trimmingCharacters(in: .whitespaces)
+        var every: Repeat?
+        if note.hasPrefix("--every ") {
+            let repeating = note.dropFirst("--every ".count).trimmingCharacters(in: .whitespaces)
+            let text = repeating.prefix { !$0.isWhitespace }
+            every = Repeat(String(text))
+            note = repeating.dropFirst(text.count).trimmingCharacters(in: .whitespaces)
+        }
         if let first = note.first, first == "\"" || first == "'", note.last == first, note.count >= 2 { note = String(note.dropFirst().dropLast()) }
-        return Command(verb: verb, when: when.isEmpty ? nil : String(when), note: note.isEmpty ? nil : note)
+        return Command(verb: verb, when: when.isEmpty ? nil : String(when), note: note.isEmpty ? nil : note, every: every)
     }
 
     /// Puts `kuvo-wake` in `$K/bin` on a machine, and the bots' folder beside it (needs `$K`).
@@ -68,7 +144,9 @@ public enum Wakes {
     /// The command, in POSIX sh, for macOS and Linux. A bot is named by its ID, its folder being
     /// in `$KUVO_BOTS` (`~/.kuvo-code/bots` by default), or by its folder's path:
     ///
-    ///     kuvo-wake <bot> add <when> <note>    when: +30m, +2h, +1d, or 2026-10-16T09:00
+    ///     kuvo-wake <bot> add <when> [--every <repeat>] <note>
+    ///                          when: +30m, +2h, +1d, or 2026-10-16T09:00
+    ///                          repeat: 30m, 2h, 1d, 1w (at least 5m) or weekdays, until canceled
     ///     kuvo-wake <bot> list
     ///     kuvo-wake <bot> cancel <id>
     ///     kuvo-wake fire <bots folder> <engine.json>   sends what's due (the watchdog, on a machine)
@@ -79,7 +157,9 @@ public enum Wakes {
 
     usage() {
       echo "Usage:"
-      echo "  kuvo-wake <bot> add <when> <note>   when: +30m, +2h, +1d, or a time like 2026-10-16T09:00 on this computer's clock"
+      echo "  kuvo-wake <bot> add <when> [--every <repeat>] <note>"
+      echo "      when: +30m, +2h, +1d, or a time like 2026-10-16T09:00 on this computer's clock"
+      echo "      repeat: 30m, 2h, 1d, 1w (at least 5m), or weekdays; it keeps coming back until canceled"
       echo "  kuvo-wake <bot> list"
       echo "  kuvo-wake <bot> cancel <id>"
     }
@@ -104,6 +184,54 @@ public enum Wakes {
 
     readable() { date -d "@$1" "+%a %b %-d, %H:%M" 2>/dev/null || date -r "$1" "+%a %b %-d, %H:%M"; }
 
+    # A time (seconds) in a date format, with GNU's date or the BSD one.
+    clock() { date -d "@$1" "+$2" 2>/dev/null || date -r "$1" "+$2"; }
+
+    # Minutes into the day of a time.
+    minutes() { set -- $(clock "$1" '%H %M'); echo $((${1#0} * 60 + ${2#0})); }
+
+    # The same time of day, $2 days after $1, across a daylight saving change too.
+    later() {
+      l_t=$(($1 + $2 * 86400))
+      l_d=$(($(minutes "$1") - $(minutes "$l_t")))
+      [ "$l_d" -gt 720 ] && l_d=$((l_d - 1440)); [ "$l_d" -lt -720 ] && l_d=$((l_d + 1440))
+      echo $((l_t + l_d * 60))
+    }
+
+    # Whether a repeat reads: 30m, 2h, 1d, 1w (at least 5m), or weekdays.
+    repeats() {
+      case "$1" in
+        weekdays) return 0 ;;
+        *[mhdw]) r_n=${1%?}; case "$r_n" in ''|*[!0-9]*) return 1;; esac
+          [ "$r_n" -gt 0 ] || return 1
+          case "$1" in *m) [ "$r_n" -ge 5 ] || return 1;; esac ;;
+        *) return 1 ;;
+      esac
+    }
+
+    # A repeating wake-up's next time after now: $1 the time it was due, $2 its repeat.
+    next() {
+      case "$2" in
+        *m|*h)
+          n_p=${2%?}; case "$2" in *h) n_p=$((n_p * 3600));; *) n_p=$((n_p * 60));; esac
+          echo $(($1 + (($now - $1) / n_p + 1) * n_p)) ;;
+        *)
+          case "$2" in weekdays) n_days=1;; *w) n_days=$((${2%?} * 7));; *) n_days=${2%?};; esac
+          # Whole periods missed first, then one at a time.
+          n_skip=$((($now - $1) / (n_days * 86400)))
+          n_t=$1; [ "$n_skip" -gt 0 ] && n_t=$(later "$1" $((n_skip * n_days)))
+          while :; do
+            n_t=$(later "$n_t" "$n_days")
+            [ "$n_t" -gt "$now" ] || continue
+            [ "$2" != weekdays ] || [ "$(clock "$n_t" %u)" -le 5 ] && break
+          done
+          echo "$n_t" ;;
+      esac
+    }
+
+    # What a wake-up's file is called: its time, a few random letters, and its repeat if it has one.
+    name() { echo "$1-$(random 6)${2:+-$2}"; }
+
     random() { LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c "$1"; }
 
     # A string as JSON.
@@ -123,7 +251,8 @@ public enum Wakes {
         [ -n "$session" ] || continue
         for wake in "$bot"wakes/*; do
           [ -f "$wake" ] || continue
-          due=${wake##*/}; due=${due%%-*}
+          due=${wake##*/}; every=${due#*-}; due=${due%%-*}
+          case "$every" in *-*) every=${every#*-};; *) every=;; esac
           case "$due" in ''|*[!0-9]*) continue;; esac
           [ "$due" -le "$now" ] || continue
           # The bot's folder's tools (its browser) first: the engine connects them a moment
@@ -141,11 +270,16 @@ public enum Wakes {
           id=msg_$(printf '%012x' $(((ms * 4096 + 1) & 0xFFFFFFFFFFFF)))$(random 14)
           body="{\"id\":\"$id\",\"text\":\"$(json "[Wake-up] $(cat "$wake")")\",\"delivery\":\"queue\"}"
           url="http://127.0.0.1:$port/api/session/$session/prompt"
+          sent=
           if command -v curl >/dev/null 2>&1; then
-            curl -sf -m 20 -u "opencode:$password" -H 'Content-Type: application/json' --data-binary "$body" "$url" >/dev/null && rm -f "$wake"
+            curl -sf -m 20 -u "opencode:$password" -H 'Content-Type: application/json' --data-binary "$body" "$url" >/dev/null && sent=1
           elif command -v wget >/dev/null 2>&1; then
             auth=$(printf 'opencode:%s' "$password" | base64 | tr -d '\n')
-            wget -q -T 20 -O /dev/null --header="Authorization: Basic $auth" --header='Content-Type: application/json' --post-data="$body" "$url" && rm -f "$wake"
+            wget -q -T 20 -O /dev/null --header="Authorization: Basic $auth" --header='Content-Type: application/json' --post-data="$body" "$url" && sent=1
+          fi
+          # Sent: a repeating one comes back at its next time; others are done.
+          if [ -n "$sent" ]; then
+            if [ -n "$every" ] && repeats "$every"; then mv -f "$wake" "${bot}wakes/$(name "$(next "$due" "$every")" "$every")"; else rm -f "$wake"; fi
           fi
         done
       done
@@ -158,21 +292,29 @@ public enum Wakes {
     case "$command" in
       add)
         due=$(seconds "$3") || { echo "Couldn't read the time \"$3\". Use +30m, +2h, +1d, or a time like 2026-10-16T09:00." >&2; exit 2; }
-        shift 3; note="$*"
+        shift 3; every=
+        if [ "$1" = --every ]; then
+          repeats "$2" || { echo "Couldn't read the repeat \"$2\". Use 30m, 2h, 1d, 1w (at least 5m), or weekdays." >&2; exit 2; }
+          every=$2; shift 2
+          # On weekdays: the first one too.
+          if [ "$every" = weekdays ]; then while [ "$(clock "$due" %u)" -gt 5 ]; do due=$(later "$due" 1); done; fi
+        fi
+        note="$*"
         [ -n "$note" ] || { echo "Add a note for yourself: what to do when you wake up." >&2; exit 2; }
         [ "$due" -gt $((now + 30)) ] || { echo "That's not in the future. Wake-ups are for later; do it now instead." >&2; exit 2; }
         mkdir -p "$bot/wakes"
         count=$(ls "$bot/wakes" 2>/dev/null | wc -l)
         [ "$count" -lt 50 ] || { echo "You already have 50 wake-ups waiting. Cancel some first." >&2; exit 2; }
-        id=$due-$(random 6)
+        id=$(name "$due" "$every")
         printf '%s' "$note" >"$bot/wakes/$id"
-        echo "Scheduled $id for $(readable "$due")." ;;
+        echo "Scheduled $id for $(readable "$due")${every:+, then every $every until canceled}." ;;
       list)
         found=
         for wake in "$bot"/wakes/*; do
           [ -f "$wake" ] || continue
           found=1; id=${wake##*/}
-          echo "$id  $(readable "${id%%-*}")  $(head -n 1 "$wake")"
+          every=${id#*-}; case "$every" in *-*) every=" (every ${every#*-})";; *) every=;; esac
+          echo "$id  $(readable "${id%%-*}")$every  $(head -n 1 "$wake")"
         done
         [ -n "$found" ] || echo "No wake-ups scheduled." ;;
       cancel)

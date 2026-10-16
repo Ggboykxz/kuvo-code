@@ -739,11 +739,12 @@ private struct WakeList: View {
             ForEach(Array(wakes.enumerated()), id: \.element.id) { index, wake in
                 if index > 0 { WellDivider() }
                 WellRow {
-                    Image(systemName: "alarm")
+                    Image(systemName: wake.every == nil ? "alarm" : "repeat")
                 } content: {
                     HStack(spacing: 10) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(wake.due, format: .dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute())
+                            (Text(wake.due, format: .dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute())
+                                + Text(wake.every.map { ", then \($0.words)" } ?? ""))
                                 .font(.system(size: 13, weight: .medium))
                             Text(wake.note)
                                 .font(.callout)
@@ -756,7 +757,7 @@ private struct WakeList: View {
                             Task { try? await bots.wakeNow(wake, of: bot) }
                         }
                         .buttonStyle(TextButtonStyle())
-                        .help("Send this wake-up now, to see the job run")
+                        .help(wake.every == nil ? "Send this wake-up now, to see the job run" : "Send this wake-up now, to see the job run; it still comes back at its time")
                         Button("Cancel Wake-Up", systemImage: "minus.circle.fill") {
                             Task { await bots.cancelWake(wake, of: bot) }
                         }

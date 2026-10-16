@@ -218,7 +218,8 @@ struct ToolCallView: View {
         case .cancel: return isActive ? "Canceling a wake-up" : "Canceled a wake-up"
         case .add:
             let when = wake.when.map(Self.when) ?? ""
-            return (isActive ? "Scheduling a wake-up" : "Scheduled a wake-up") + (when.isEmpty ? "" : " " + when) + (wake.note.map { ": \($0)" } ?? "")
+            let every = wake.every.map { ", \($0.words)" } ?? ""
+            return (isActive ? "Scheduling a wake-up" : "Scheduled a wake-up") + (when.isEmpty ? "" : " " + when) + every + (wake.note.map { ": \($0)" } ?? "")
         }
     }
 
