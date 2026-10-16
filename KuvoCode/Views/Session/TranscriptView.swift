@@ -39,6 +39,7 @@ struct TranscriptView: View {
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                     RowView(row: row, directory: model.session.location.directory, folders: model.folders, cancel: model.cancelPending, undo: model.undo(from:), redo: model.redo, fork: fork, retry: model.retry(_:), buildPlan: model.agent == "plan" && !isOffline ? { model.buildPlan() } as () -> Void : nil, reply: model.reply(to:))
+                        .equatable()
                         .background {
                             if matches.contains(row.id) {
                                 RoundedRectangle(cornerRadius: 8)
@@ -444,7 +445,13 @@ enum Row: Identifiable, Hashable {
     }
 }
 
-private struct RowView: View {
+/// Equal when what it shows is: its actions are the session's own, the same every time, so a
+/// change to one row (the reply being written) draws only that row, not every one made so far.
+private struct RowView: View, Equatable {
+    static func == (lhs: RowView, rhs: RowView) -> Bool {
+        lhs.row == rhs.row && lhs.directory == rhs.directory && (lhs.buildPlan == nil) == (rhs.buildPlan == nil)
+    }
+
     let row: Row
     @Environment(\.bot) private var bot
     let directory: String
