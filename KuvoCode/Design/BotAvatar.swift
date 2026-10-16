@@ -90,10 +90,14 @@ struct BotAvatar: View {
             figure(BotPose.still(mood, noticed: noticed))
         } else {
             // Smoothest while you're in the app and it's at work; slower, but still alive, while
-            // it rests or the app is beside another; still while no window of it can be seen.
-            TimelineView(.animation(minimumInterval: 1 / framesPerSecond, paused: !WindowVisibility.shared.isVisible)) { context in
-                figure(BotPose(mood: mood, noticed: noticed, time: context.date.timeIntervalSinceReferenceDate + seed, seed: seed, small: size < 24))
+            // it rests or the app is beside another; still while no window of it can be seen. In a
+            // graph of its own, so each frame updates only the bot.
+            OwnGraph {
+                TimelineView(.animation(minimumInterval: 1 / framesPerSecond, paused: !WindowVisibility.shared.isVisible)) { context in
+                    figure(BotPose(mood: mood, noticed: noticed, time: context.date.timeIntervalSinceReferenceDate + seed, seed: seed, small: size < 24))
+                }
             }
+            .frame(width: size, height: size)
         }
     }
 
