@@ -71,6 +71,7 @@ struct IntegrationsSettings: View {
                 add(request.service)
                 // Nothing at work: restart now; otherwise when you say.
                 if app.workspace.running.isEmpty { Task { await app.restart() } } else { needsRestart = true }
+                renewMachines()
             }
         }
     }
@@ -164,6 +165,16 @@ struct IntegrationsSettings: View {
         guard let settings = Integrations.settings(for: service) else { return }
         config.set(settings, at: MCPSettings.path + [service.id])
         Analytics.shared.track("integration_added", ["integration": service.id])
+        // One that needs a key waits for it (saving it renews them).
+        if Integrations.keys(of: service.way).isEmpty, !Integrations.macOnly.contains(service.id) { renewMachines() }
+    }
+
+    /// Machines' engines take new keys when they start: those connected with nothing at work
+    /// connect again, and so start over with them (one at work does when it's next idle).
+    private func renewMachines() {
+        for engine in app.machines.engines.values where engine.isReady && !app.workspace.isRunning(on: engine.machine.id) {
+            app.reconnectNow(engine)
+        }
     }
 
     /// Out of the engine's settings, with its keys, its sign-in and what its server kept.
@@ -174,6 +185,7 @@ struct IntegrationsSettings: View {
         // What its server kept here: its own folder (and the file it once kept).
         for name in [service.id, "\(service.id).json"] { try? FileManager.default.removeItem(at: AppInfo.supportDirectory.appending(path: "integrations/\(name)")) }
         if let signIn, let api = app.api { Task { try? await api.removeCredential(signIn) } }
+        if !Integrations.macOnly.contains(service.id) { renewMachines() }
     }
 
     /// The site in the panel's browser, for you to sign in there; the agent then uses it as you.
