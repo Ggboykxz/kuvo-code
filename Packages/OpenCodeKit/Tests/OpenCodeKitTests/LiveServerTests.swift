@@ -9,7 +9,9 @@ import Testing
 struct LiveServerTests {
     @Test func startsAndAnswersInfo() async throws {
         let binary = URL(filePath: ProcessInfo.processInfo.environment["OPENCODE_TEST_BINARY"]!)
-        let folders = EngineFolders(root: FileManager.default.temporaryDirectory.appending(path: "opencodekit-tests"))
+        let root = FileManager.default.temporaryDirectory.appending(path: "opencodekit-tests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folders = EngineFolders(root: root)
         let server = try await ServerProcess.start(executable: binary, folders: folders, environment: ProcessInfo.processInfo.environment)
         defer { server.stop() }
 

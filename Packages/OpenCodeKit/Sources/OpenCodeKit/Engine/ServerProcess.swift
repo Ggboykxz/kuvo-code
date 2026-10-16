@@ -31,12 +31,24 @@ public struct EngineFolders: Sendable {
             // and Bun's own would be in the home folder).
             "npm_config_cache": root.appending(path: "cache/npm").path,
             "BUN_INSTALL": root.appending(path: "cache/bun").path,
+            // Temporary files of its own and of what it runs (Bun's, its servers'), rather
+            // than the Mac's shared temporary folder.
+            "TMPDIR": temporary.path + "/",
         ]
     }
+
+    /// The engine's temporary folder, cleared of what's a few days old when it starts.
+    public var temporary: URL { root.appending(path: "cache/tmp") }
 
     func create() throws {
         for path in environment.values + [workspace.path] {
             try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+        }
+        let old = Date.now.addingTimeInterval(-3 * 86_400)
+        for item in (try? FileManager.default.contentsOfDirectory(at: temporary, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [] {
+            if let modified = try? item.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate, modified < old {
+                try? FileManager.default.removeItem(at: item)
+            }
         }
     }
 }
