@@ -89,11 +89,18 @@ struct BotAvatar: View {
         if reduceMotion || (!animates && !noticed) {
             figure(BotPose.still(mood, noticed: noticed))
         } else {
-            // Smoothest while you're in the app; slower, but still alive, while it's beside another.
-            TimelineView(.animation(minimumInterval: appearsActive ? 1.0 / 30 : 1.0 / 15)) { context in
+            // Smoothest while you're in the app and it's at work; slower, but still alive, while
+            // it rests or the app is beside another; still while no window of it can be seen.
+            TimelineView(.animation(minimumInterval: 1 / framesPerSecond, paused: !WindowVisibility.shared.isVisible)) { context in
                 figure(BotPose(mood: mood, noticed: noticed, time: context.date.timeIntervalSinceReferenceDate + seed, seed: seed, small: size < 24))
             }
         }
+    }
+
+    /// Each frame redraws the window, so a resting bot (breathing, blinking) takes fewer.
+    private var framesPerSecond: Double {
+        let busy = mood == .working || mood == .waiting || mood == .news || noticed
+        return (busy ? 30 : 20) / (appearsActive ? 1 : 2)
     }
 
     /// Keeps bots out of step with each other, and the same from one launch to the next.
