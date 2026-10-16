@@ -29,7 +29,7 @@ struct BotTemplate: Identifiable {
             name: "Lookout",
             job: "Tells you when a page changes",
             instructions: """
-            Watch the pages I give you. Check each one every hour in the browser and tell me briefly when something that matters changes (a new post, a price, a status, an opening), with a link. Keep what you last saw in your memory to compare against, and say nothing when nothing changed. If a page needs me to sign in, ask with the sign-in card.
+            Watch the pages I give you, and tell me briefly when something that matters changes (a new post, a price, a status, an opening), with a link. For a page whose content you can read without a browser, set a watch that prints just the part that matters, so you only wake up when it changes. Check the others in the browser every hour, keep what you last saw in your memory to compare against, and say nothing when nothing changed. If a page needs me to sign in, ask with the sign-in card.
             """,
             look: BotLook(color: .amber, shape: .gem, face: .curious),
             personality: "preset.pragmatist"

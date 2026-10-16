@@ -302,7 +302,7 @@ public final class RemoteServer: @unchecked Sendable {
           sleep 0.1; i=$((i + 1))
         done
         (umask 077; printf '{"pid":%s,%s\n' "$pid" "$record" >"$R/engine.json")
-        setsid sh -c 'i=0; while kill -0 "$1" 2>/dev/null; do sleep 60; "$3/bin/kuvo-wake" fire "$3/bots" "$2/engine.json" 2>/dev/null; i=$((i + 1)); [ $((i % 10)) -eq 0 ] || continue; ls "$3"/bots/*/wakes/* >/dev/null 2>&1 && continue; [ -n "$(find "$2/attached" -mmin +1440 2>/dev/null)" ] && kill "$1"; done' watchdog "$pid" "$R" "$K" >/dev/null 2>&1 </dev/null &
+        setsid sh -c 'i=0; while kill -0 "$1" 2>/dev/null; do sleep 60; "$3/bin/kuvo-wake" fire "$3/bots" "$2/engine.json" 2>/dev/null; i=$((i + 1)); [ $((i % 10)) -eq 0 ] || continue; { ls "$3"/bots/*/wakes/* || ls -d "$3"/bots/*/watches/*/; } >/dev/null 2>&1 && continue; [ -n "$(find "$2/attached" -mmin +1440 2>/dev/null)" ] && kill "$1"; done' watchdog "$pid" "$R" "$K" >/dev/null 2>&1 </dev/null &
         echo "$pid"
         """
     }
@@ -385,7 +385,7 @@ public final class RemoteServer: @unchecked Sendable {
     public static func stopNow(on connection: SSHConnection, timeout: TimeInterval = 3, unlessWaking: Bool = false) {
         let process = Process()
         process.executableURL = URL(filePath: "/usr/bin/ssh")
-        let waiting = "ls \"$HOME/\(RemoteEngineInstaller.root)\"/bots/*/wakes/* >/dev/null 2>&1 && exit 0\n"
+        let waiting = "{ ls \"$HOME/\(RemoteEngineInstaller.root)\"/bots/*/wakes/* || ls -d \"$HOME/\(RemoteEngineInstaller.root)\"/bots/*/watches/*/; } >/dev/null 2>&1 && exit 0\n"
         process.arguments = connection.arguments(running: (unlessWaking ? waiting : "") + stopScript)
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice

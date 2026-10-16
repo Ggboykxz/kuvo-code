@@ -216,6 +216,9 @@ struct ToolCallView: View {
         switch wake.verb {
         case .list: return isActive ? "Checking its wake-ups" : "Checked its wake-ups"
         case .cancel: return isActive ? "Canceling a wake-up" : "Canceled a wake-up"
+        case .watch:
+            let every = wake.when.flatMap(Wakes.Repeat.init).map { " \($0.words)" } ?? ""
+            return (isActive ? "Starting a watch" : "Started a watch") + every + (wake.note.map { ": \($0)" } ?? "")
         case .add:
             let when = wake.when.map(Self.when) ?? ""
             let every = wake.every.map { ", \($0.words)" } ?? ""

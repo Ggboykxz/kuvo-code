@@ -927,7 +927,8 @@ private struct WakeRow: View {
                 .foregroundStyle(.tint)
                 .frame(width: 16)
             (Text("Woke up").fontWeight(.semibold).foregroundStyle(.primary) + Text("  ") + Text(note).foregroundStyle(.secondary))
-                .lineLimit(3)
+                // Room for what a watch saw, after its note.
+                .lineLimit(6)
                 .textSelection(.enabled)
             Spacer(minLength: 8)
             Text(Date(timeIntervalSince1970: at / 1000), format: .dateTime.hour().minute())

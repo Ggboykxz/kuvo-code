@@ -99,10 +99,47 @@ public enum Wakes {
         return "\(Int(due.timeIntervalSince1970))-\(letters)" + (every.map { "-\($0.text)" } ?? "")
     }
 
+    /// A watch: every so often its check (a shell command) runs, without the model, and when what
+    /// it prints changes, the bot wakes up with the new output. Kept in the bot's `watches`, a
+    /// folder for each, named by its letters.
+    public struct Watch: Sendable, Hashable, Identifiable {
+        public let letters: String
+        /// 30m, 2h, 1d.
+        public let every: String
+        public let check: String
+        public let note: String
+        public var id: String { letters }
+
+        public init(letters: String, every: String, check: String, note: String) {
+            self.letters = letters
+            self.every = every
+            self.check = check
+            self.note = note
+        }
+    }
+
+    /// The wake-ups `kuvo-wake <bot> check` prints, one for each watch that saw a change: its
+    /// letters, and the message for the bot.
+    public static func watchMessages(in output: String) -> [(letters: String, text: String)] {
+        var found: [(String, String)] = []
+        var current: (letters: String, lines: [String])?
+        for line in output.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) {
+            if line.hasPrefix("KUVO-WATCH ") {
+                current = (String(line.dropFirst("KUVO-WATCH ".count)), [])
+            } else if line == "KUVO-END", let watch = current {
+                found.append((watch.letters, watch.lines.joined(separator: "\n")))
+                current = nil
+            } else {
+                current?.lines.append(line)
+            }
+        }
+        return found
+    }
+
     /// A `kuvo-wake` command a bot ran, read back: what it did, and for `add`, when, how often and
-    /// the note.
+    /// the note; for `watch`, how often (as `when`) and the note.
     public struct Command: Sendable, Equatable {
-        public enum Verb: String, Sendable { case add, list, cancel }
+        public enum Verb: String, Sendable { case add, list, cancel, watch }
         public let verb: Verb
         /// As written: +2h, 2026-10-16T09:00, …
         public let when: String?
@@ -112,8 +149,22 @@ public enum Wakes {
 
     /// The command, if `line` runs `kuvo-wake` for a bot (by name, or by its full path).
     public static func command(in line: String) -> Command? {
-        let pattern = #/kuvo-wake"?\s+(?:"[^"]*"|'[^']*'|\S+)\s+(add|list|cancel)\b\s*(.*)$/#
+        let pattern = #/kuvo-wake"?\s+(?:"[^"]*"|'[^']*'|\S+)\s+(add|list|cancel|watch)\b\s*(.*)$/#
         guard let match = line.firstMatch(of: pattern), let verb = Command.Verb(rawValue: String(match.1)) else { return nil }
+        if verb == .watch {
+            // watch <every> <check> <note>: the check is quoted, or one word.
+            let rest = match.2.trimmingCharacters(in: .whitespaces)
+            let every = rest.prefix { !$0.isWhitespace }
+            var after = rest.dropFirst(every.count).drop { $0.isWhitespace }
+            if let quote = after.first, quote == "\"" || quote == "'", let end = after.dropFirst().firstIndex(of: quote) {
+                after = after[after.index(after: end)...]
+            } else {
+                after = after.drop { !$0.isWhitespace }
+            }
+            var note = after.trimmingCharacters(in: .whitespaces)
+            if let first = note.first, first == "\"" || first == "'", note.last == first, note.count >= 2 { note = String(note.dropFirst().dropLast()) }
+            return Command(verb: .watch, when: every.isEmpty ? nil : String(every), note: note.isEmpty ? nil : note)
+        }
         guard verb == .add else { return Command(verb: verb, when: nil, note: nil) }
         let rest = match.2.trimmingCharacters(in: .whitespaces)
         let when = rest.prefix { !$0.isWhitespace }
@@ -165,6 +216,8 @@ public enum Wakes {
       echo "      when: +30m, +2h, +1d, or a time like 2026-10-16T09:00 on this computer's clock"
       echo "      repeat: 30m, 2h, 1d, 1w (at least 5m), or weekdays; it keeps coming back until canceled"
       echo "  kuvo-wake <bot> list"
+      echo "  kuvo-wake <bot> watch <every> <check> <note>"
+      echo "      every 5m or more, 2h, 1d: runs the check, a shell command, and wakes you when what it prints changes"
       echo "  kuvo-wake <bot> cancel <id>"
       echo "Times are on this computer's clock, or in the time zone in the bot's folder's timezone file."
     }
@@ -237,6 +290,41 @@ public enum Wakes {
     # What a wake-up's file is called: its time, a few random letters, and its repeat if it has one.
     name() { echo "$1-$(random 6)${2:+-$2}"; }
 
+    # Seconds in a watch's interval: 5m or more, 2h, 1d.
+    period() {
+      p_n=${1%?}; case "$p_n" in ''|*[!0-9]*) return 1;; esac
+      case "$1" in *m) [ "$p_n" -ge 5 ] && echo $((p_n * 60));; *h) [ "$p_n" -ge 1 ] && echo $((p_n * 3600));; *d) [ "$p_n" -ge 1 ] && echo $((p_n * 86400));; *) return 1;; esac
+    }
+
+    # Runs a command for at most a minute, where the system lets one say so.
+    limited() {
+      if command -v timeout >/dev/null 2>&1; then timeout 60 sh -c "$1"
+      elif command -v perl >/dev/null 2>&1; then perl -e 'alarm 60; exec @ARGV' sh -c "$1"
+      else sh -c "$1"; fi
+    }
+
+    # A bot's watches that are due ($1, its folder): each runs its check, in the folder the bot
+    # works in, and one whose output changed since its last run (not its first) prints its wake-up
+    # message, between "KUVO-WATCH <letters>" and "KUVO-END" lines.
+    checks() {
+      for w in "$1"/watches/*/; do
+        [ -f "${w}check" ] || continue
+        c_next=$(cat "${w}next" 2>/dev/null); case "$c_next" in ''|*[!0-9]*) c_next=0;; esac
+        [ "$c_next" -le "$now" ] || continue
+        c_period=$(period "$(cat "${w}every" 2>/dev/null)") || continue
+        printf '%s' $((now + c_period)) >"${w}next"
+        c_dir=$(cat "$1/directory" 2>/dev/null); [ -d "$c_dir" ] || c_dir=$1
+        c_out=$(cd "$c_dir" && limited "$(cat "${w}check")" 2>&1 </dev/null | head -c 4000)
+        c_sum=$(printf '%s' "$c_out" | cksum)
+        c_last=$(cat "${w}last" 2>/dev/null)
+        printf '%s' "$c_sum" >"${w}last"
+        [ -n "$c_last" ] && [ "$c_last" != "$c_sum" ] || continue
+        c_letters=${w%/}; c_letters=${c_letters##*/}
+        printf 'KUVO-WATCH %s\n%s\n\nYour watch (%s, every %s) saw a change. Its check, %s, now prints:\n%s\nKUVO-END\n' \
+          "$c_letters" "$(cat "${w}note")" "$c_letters" "$(cat "${w}every")" "$(head -n 1 "${w}check")" "$c_out"
+      done
+    }
+
     random() { LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c "$1"; }
 
     # A string as JSON.
@@ -248,6 +336,32 @@ public enum Wakes {
       port=$(sed -n 's/.*"port":\([0-9]*\).*/\1/p' "$record")
       password=$(sed -n 's/.*"password":"\([^"]*\)".*/\1/p' "$record")
       [ -n "$port" ] && [ -n "$password" ] || exit 0
+      # Sends a wake-up's text to the bot's session; true once it's gone.
+      deliver() {
+        # The bot's folder's tools (its browser) first: the engine connects them a moment after
+        # it opens the folder, and a wake-up sent sooner goes without them.
+        if [ -f "${bot}directory" ] && command -v curl >/dev/null 2>&1 && [ -z "$tools" ]; then
+          tools=1; waited=
+          folder=$(sed -e 's/%/%25/g' -e 's/ /%20/g' "${bot}directory")
+          for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do
+            curl -sf -m 5 -u "opencode:$password" -H "x-opencode-directory: $folder" "http://127.0.0.1:$port/api/mcp" | grep -q '"pending"' || break
+            waited=1; sleep 0.25
+          done
+          [ -n "$waited" ] && sleep 1.5
+        fi
+        ms=$(date +%s%3N 2>/dev/null); case "$ms" in *[!0-9]*|'') ms=$((now * 1000));; esac
+        id=msg_$(printf '%012x' $(((ms * 4096 + 1) & 0xFFFFFFFFFFFF)))$(random 14)
+        body="{\"id\":\"$id\",\"text\":\"$(json "[Wake-up] $1")\",\"delivery\":\"queue\"}"
+        url="http://127.0.0.1:$port/api/session/$session/prompt"
+        if command -v curl >/dev/null 2>&1; then
+          curl -sf -m 20 -u "opencode:$password" -H 'Content-Type: application/json' --data-binary "$body" "$url" >/dev/null
+        elif command -v wget >/dev/null 2>&1; then
+          auth=$(printf 'opencode:%s' "$password" | base64 | tr -d '\n')
+          wget -q -T 20 -O /dev/null --header="Authorization: Basic $auth" --header='Content-Type: application/json' --post-data="$body" "$url"
+        else
+          return 1
+        fi
+      }
       for bot in "$bots"/*/; do
         # Paused by you: its wake-ups wait.
         [ -e "${bot}paused" ] && continue
@@ -260,31 +374,9 @@ public enum Wakes {
           case "$rest" in *-*) every=${rest#*-};; *) every=;; esac
           case "$due" in ''|*[!0-9]*) continue;; esac
           [ "$due" -le "$now" ] || continue
-          # The bot's folder's tools (its browser) first: the engine connects them a moment
-          # after it opens the folder, and a wake-up sent sooner goes without them.
-          if [ -f "${bot}directory" ] && command -v curl >/dev/null 2>&1 && [ -z "$tools" ]; then
-            tools=1; waited=
-            folder=$(sed -e 's/%/%25/g' -e 's/ /%20/g' "${bot}directory")
-            for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do
-              curl -sf -m 5 -u "opencode:$password" -H "x-opencode-directory: $folder" "http://127.0.0.1:$port/api/mcp" | grep -q '"pending"' || break
-              waited=1; sleep 0.25
-            done
-            [ -n "$waited" ] && sleep 1.5
-          fi
-          ms=$(date +%s%3N 2>/dev/null); case "$ms" in *[!0-9]*|'') ms=$((now * 1000));; esac
-          id=msg_$(printf '%012x' $(((ms * 4096 + 1) & 0xFFFFFFFFFFFF)))$(random 14)
-          body="{\"id\":\"$id\",\"text\":\"$(json "[Wake-up] $(cat "$wake")")\",\"delivery\":\"queue\"}"
-          url="http://127.0.0.1:$port/api/session/$session/prompt"
-          sent=
-          if command -v curl >/dev/null 2>&1; then
-            curl -sf -m 20 -u "opencode:$password" -H 'Content-Type: application/json' --data-binary "$body" "$url" >/dev/null && sent=1
-          elif command -v wget >/dev/null 2>&1; then
-            auth=$(printf 'opencode:%s' "$password" | base64 | tr -d '\n')
-            wget -q -T 20 -O /dev/null --header="Authorization: Basic $auth" --header='Content-Type: application/json' --post-data="$body" "$url" && sent=1
-          fi
           # Sent: a repeating one comes back at its next time (in the user's time zone, which the
           # bot's folder names), keeping its letters; others are done.
-          if [ -n "$sent" ]; then
+          if deliver "$(cat "$wake")"; then
             if [ -n "$every" ] && repeats "$every"; then
               tz=$(cat "${bot}timezone" 2>/dev/null)
               mv -f "$wake" "${bot}wakes/$( [ -n "$tz" ] && export TZ="$tz"; next "$due" "$every")-$rest"
@@ -293,6 +385,20 @@ public enum Wakes {
             fi
           fi
         done
+        # Its watches: what changed wakes it, with what the check prints now.
+        if [ -d "${bot}watches" ]; then
+          tz=$(cat "${bot}timezone" 2>/dev/null)
+          ( [ -n "$tz" ] && export TZ="$tz"; checks "${bot%/}" ) | {
+            message=; inside=
+            while IFS= read -r line; do
+              case "$line" in
+                "KUVO-WATCH "*) inside=1; message= ;;
+                KUVO-END) [ -n "$inside" ] && deliver "$message"; inside= ;;
+                *) if [ -n "$inside" ]; then if [ -n "$message" ]; then message=$(printf '%s\n%s' "$message" "$line"); else message=$line; fi; fi ;;
+              esac
+            done
+          }
+        fi
       done
       exit 0
     fi
@@ -321,6 +427,20 @@ public enum Wakes {
         id=$(name "$due" "$every")
         printf '%s' "$note" >"$bot/wakes/$id"
         echo "Scheduled $id for $(readable "$due")${every:+, then every $every until canceled}." ;;
+      watch)
+        who=$1; every=$3; check=$4
+        period "$every" >/dev/null || { echo "Couldn't read how often, \"$3\". Use 5m or more, 2h or 1d." >&2; exit 2; }
+        [ -n "$check" ] || { echo "Give the check: a shell command that prints what you watch, and prints something else when it changes." >&2; exit 2; }
+        shift 4; note="$*"
+        [ -n "$note" ] || { echo "Add a note for yourself: what to do when it changes." >&2; exit 2; }
+        count=$(ls "$bot/watches" 2>/dev/null | wc -l)
+        [ "$count" -lt 20 ] || { echo "You already have 20 watches. Cancel some first." >&2; exit 2; }
+        letters=$(random 6); w="$bot/watches/$letters"
+        mkdir -p "$w" && printf '%s' "$every" >"$w/every" && printf '%s' "$check" >"$w/check" && printf '%s' "$note" >"$w/note" && printf '%s' "$now" >"$w/next"
+        echo "Watching ($letters): every $every the check runs, without you, and when what it prints changes (not the first time), you wake up with the new output. Cancel with: kuvo-wake $who cancel $letters" ;;
+      check)
+        # For the Mac's app: the watches that are due, run now.
+        checks "$bot" ;;
       list)
         found=
         for wake in "$bot"/wakes/*; do
@@ -329,12 +449,19 @@ public enum Wakes {
           every=${id#*-}; case "$every" in *-*) every=" (every ${every#*-})";; *) every=;; esac
           echo "$id  $(readable "${id%%-*}")$every  $(head -n 1 "$wake")"
         done
+        for w in "$bot"/watches/*/; do
+          [ -f "${w}check" ] || continue
+          found=1; l=${w%/}; l=${l##*/}
+          echo "$l  watch every $(cat "${w}every"): $(head -n 1 "${w}check")  ->  $(head -n 1 "${w}note")"
+        done
         [ -n "$found" ] || echo "No wake-ups scheduled." ;;
       cancel)
         # By its letters, which a repeating one keeps as its time moves on.
         letters=${3#*-}; letters=${letters%%-*}; found=
         if [ -n "$letters" ]; then
           for f in "$bot"/wakes/*-"$letters" "$bot"/wakes/*-"$letters"-*; do [ -f "$f" ] && rm -f "$f" && found=1; done
+          # Or a watch, by its letters alone.
+          [ -d "$bot/watches/$3" ] && rm -rf "$bot/watches/$3" && found=1
         fi
         [ -n "$found" ] || { echo "No wake-up \"$3\". See kuvo-wake $1 list." >&2; exit 2; }
         echo "Canceled $3." ;;

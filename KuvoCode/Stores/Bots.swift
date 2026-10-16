@@ -47,6 +47,8 @@ final class Bots {
     private(set) var list: [Bot] = []
     /// Each bot's waiting wake-ups, as last read.
     private(set) var wakes: [String: [Wakes.Pending]] = [:]
+    /// Each bot's watches, as last read.
+    private(set) var watches: [String: [Wakes.Watch]] = [:]
     /// Bots whose wake-ups you paused: they wait until you resume them.
     private(set) var paused: Set<String> = []
     @ObservationIgnored weak var app: AppModel?
@@ -111,7 +113,7 @@ final class Bots {
         if workspace.needsAttention(bot.sessionID) { return .waiting }
         if workspace.running.contains(bot.sessionID) { return .working }
         if workspace.session(bot.sessionID)?.isUnread == true { return .news }
-        if wakes[bot.id]?.isEmpty == false { return .sleeping }
+        if wakes[bot.id]?.isEmpty == false || watches[bot.id]?.isEmpty == false { return .sleeping }
         return .idle
     }
 
@@ -240,18 +242,29 @@ final class Bots {
     func readWakes(_ bot: Bot) async {
         if bot.machine == nil {
             wakes[bot.id] = Self.localWakes(of: bot)
+            let found = Self.localWatches(of: bot)
+            if watches[bot.id] != found { watches[bot.id] = found }
             notePaused(bot, FileManager.default.fileExists(atPath: Self.pauseFile(of: bot)))
             return
         }
         guard let machine = bot.machine else { return }
         let folder = (bot.folder as NSString).appendingPathComponent("wakes")
-        // One line each: the file's name, a tab, the note on one line; "paused" first if it is.
-        let script = "[ -e \(SSHConnection.quoted(Self.pauseFile(of: bot))) ] && echo paused; for f in \(SSHConnection.quoted(folder))/*; do [ -f \"$f\" ] && printf '%s\\t%s\\n' \"${f##*/}\" \"$(tr '\\n' ' ' <\"$f\" | head -c 400)\"; done; true"
+        let watching = (bot.folder as NSString).appendingPathComponent("watches")
+        // One line each: the file's name, a tab, the note on one line; "paused" first if it is;
+        // then each watch, after "watch" and a tab: its letters, how often, its check and note.
+        let one = "tr '\\t\\n' '  '"
+        let script = "[ -e \(SSHConnection.quoted(Self.pauseFile(of: bot))) ] && echo paused; for f in \(SSHConnection.quoted(folder))/*; do [ -f \"$f\" ] && printf '%s\\t%s\\n' \"${f##*/}\" \"$(tr '\\n' ' ' <\"$f\" | head -c 400)\"; done; for w in \(SSHConnection.quoted(watching))/*/; do [ -f \"${w}check\" ] && l=${w%/} && printf 'watch\\t%s\\t%s\\t%s\\t%s\\n' \"${l##*/}\" \"$(cat \"${w}every\")\" \"$(\(one) <\"${w}check\" | head -c 300)\" \"$(\(one) <\"${w}note\" | head -c 400)\"; done; true"
         let output = await Task.detached { RemoteShell.run(script, on: machine) }.value
         var lines = output.map { String(decoding: $0, as: UTF8.self) }?.split(separator: "\n") ?? []
         guard output != nil else { return }
         notePaused(bot, lines.first == "paused")
         if lines.first == "paused" { lines.removeFirst() }
+        let found = lines.filter { $0.hasPrefix("watch\t") }.compactMap { line -> Wakes.Watch? in
+            let parts = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+            return parts.count >= 5 ? Wakes.Watch(letters: parts[1], every: parts[2], check: parts[3], note: parts[4]) : nil
+        }
+        if watches[bot.id] != found { watches[bot.id] = found }
+        lines.removeAll { $0.hasPrefix("watch\t") }
         wakes[bot.id] = lines.compactMap { line in
             let parts = line.split(separator: "\t", maxSplits: 1).map(String.init)
             return parts.first.flatMap { Wakes.Pending(id: $0, note: parts.count > 1 ? parts[1] : "") }
@@ -300,6 +313,58 @@ final class Bots {
             }
         }
         wakes[bot.id]?.removeAll { $0.letters == letters }
+    }
+
+    /// Stops a watch.
+    func cancelWatch(_ watch: Wakes.Watch, of bot: Bot) async {
+        let letters = watch.letters
+        guard !letters.isEmpty, letters.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else { return }
+        let folder = ((bot.folder as NSString).appendingPathComponent("watches") as NSString).appendingPathComponent(letters)
+        if let machine = bot.machine {
+            _ = await Task.detached { RemoteShell.run("rm -rf \(SSHConnection.quoted(folder))", on: machine) }.value
+        } else {
+            try? FileManager.default.removeItem(atPath: folder)
+        }
+        watches[bot.id]?.removeAll { $0.letters == letters }
+    }
+
+    private static func localWatches(of bot: Bot) -> [Wakes.Watch] {
+        let folder = (bot.folder as NSString).appendingPathComponent("watches")
+        let read = { (watch: String, file: String) in
+            (try? String(contentsOfFile: ((folder as NSString).appendingPathComponent(watch) as NSString).appendingPathComponent(file), encoding: .utf8)) ?? ""
+        }
+        return ((try? FileManager.default.contentsOfDirectory(atPath: folder)) ?? []).sorted().compactMap { letters in
+            let check = read(letters, "check")
+            return check.isEmpty ? nil : Wakes.Watch(letters: letters, every: read(letters, "every"), check: check, note: read(letters, "note"))
+        }
+    }
+
+    /// Runs this Mac's bot's watches that are due (kuvo-wake does), in your shell's environment:
+    /// the wake-ups of those that saw a change.
+    private func dueWatches(of bot: Bot) async -> [String] {
+        guard FileManager.default.fileExists(atPath: (bot.folder as NSString).appendingPathComponent("watches")) else { return [] }
+        let environment = app?.shellEnvironment ?? ProcessInfo.processInfo.environment
+        let command = Self.command.path
+        let folder = bot.folder
+        let output = await Task.detached { () -> String in
+            let process = Process()
+            process.executableURL = URL(filePath: "/bin/sh")
+            process.arguments = [command, folder, "check"]
+            process.environment = environment
+            process.standardInput = FileHandle.nullDevice
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = FileHandle.nullDevice
+            guard (try? process.run()) != nil else { return "" }
+            // Each check stops after a minute; the lot, after a few.
+            let stop = DispatchWorkItem { if process.isRunning { process.terminate() } }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 300, execute: stop)
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            stop.cancel()
+            return String(decoding: data, as: UTF8.self)
+        }.value
+        return Wakes.watchMessages(in: output).map(\.text)
     }
 
     // MARK: Pausing
@@ -364,6 +429,15 @@ final class Bots {
     private func wakeDue() async {
         guard let api = app?.api else { return }
         for bot in list where bot.machine == nil && !FileManager.default.fileExists(atPath: Self.pauseFile(of: bot)) {
+            // What its watches saw change, as wake-ups.
+            for text in await dueWatches(of: bot) {
+                await api.waitForTools(in: bot.directory)
+                do {
+                    try await api.prompt(session: bot.sessionID, id: Identifier.message(), text: Wakes.marker + text, delivery: .queue)
+                } catch {
+                    log.error("A watch's wake-up for \(bot.id, privacy: .public) didn't go: \(error.localizedDescription, privacy: .public)")
+                }
+            }
             let pending = Self.localWakes(of: bot)
             if pending.contains(where: { $0.due <= .now }) { await api.waitForTools(in: bot.directory) }
             for wake in pending where wake.due <= .now {
@@ -422,6 +496,8 @@ final class Bots {
             guard await Task.detached(operation: { RemoteShell.run(script, on: machine) }).value != nil else { throw Failure.noFolder }
         } else {
             try Data(bot.sessionID.utf8).write(to: URL(filePath: file))
+            // Where its watches' checks run.
+            try Data(bot.directory.utf8).write(to: URL(filePath: (bot.folder as NSString).appendingPathComponent("directory")))
         }
     }
 
@@ -457,6 +533,15 @@ final class Bots {
         time this conversation gets your note as a new message starting with "\(Wakes.marker.trimmingCharacters(in: .whitespaces))", \
         and you carry on. `kuvo-wake \(bot.id) list` shows what's scheduled; `kuvo-wake \(bot.id) cancel <id>` cancels one. \
         (If kuvo-wake isn't found, it's "\(full)".)
+
+        To watch for a change (a status page, a build, a price, a file), don't wake up every time just to look: give \
+        kuvo-wake a check, a shell command that prints what matters, and it runs it for you and wakes you only when what it \
+        prints changes, with the new output:
+          kuvo-wake \(bot.id) watch 30m "<check>" "<what to do when it changes>"
+        How often is 5m or more, 2h or 1d. Make the check print just what you watch, like `curl -s <url> | grep -o '<the \
+        part that matters>'` or `gh run list --limit 1 --json conclusion -q '.[0].conclusion'`, so a clock or an ad on the \
+        page doesn't count as a change. It runs in your folder, for at most a minute. A page that needs a real browser to show \
+        its content can't be watched this way; check it in the browser on a wake-up instead.
 
         For something that repeats, schedule it once with --every, and it keeps coming back until it's canceled:
           kuvo-wake \(bot.id) add 2026-10-17T09:00 --every 1d "<what to do each time>"
@@ -525,8 +610,8 @@ final class Bots {
             if (try? await api.setInstruction(session: bot.sessionID, key: Self.instructionKey, text: Self.instructions(for: bot))) != nil {
                 synced.insert(bot.id)
                 await repairRules(of: bot, api: api)
+                try? await writeSession(of: bot)
                 if let machine = bot.machine {
-                    try? await writeSession(of: bot)
                     // Its kuvo-wake as the instructions describe it, for an engine started before.
                     if wakeInstalled.insert(machine).inserted, let engine = app?.machines.engine(machine) {
                         try? await Wakes.install(on: engine.machine.connection)

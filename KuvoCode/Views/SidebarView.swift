@@ -953,6 +953,8 @@ private struct BotRow: View {
                     ShimmerText(text: "Waking up…")
                 }
             }
+        } else if let watching = bots.watches[bot.id], !watching.isEmpty {
+            Text(watching.count == 1 ? "Watching" : "Watching \(watching.count) things")
         } else {
             Text(bot.job.isEmpty ? (bot.machine.map { "On \($0)" } ?? "On this Mac") : bot.job)
         }

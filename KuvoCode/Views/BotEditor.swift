@@ -182,7 +182,7 @@ struct BotEditor: View {
                             }
                         }
                     }
-                    section("Wake-Ups", note: "The bot schedules these itself, to carry on later. Add one, and at its time what it says to do arrives in the bot’s conversation.") {
+                    section("Wake-Ups", note: "The bot schedules these itself: wake-ups to carry on later, and watches, which check something without its model and wake it when that changes. Add a wake-up of your own, and at its time what it says to do arrives in its conversation.") {
                         WakeList(bot: bot)
                     }
                     section("Memory") {
@@ -753,6 +753,7 @@ private struct WakeList: View {
 
     private var list: some View {
         let wakes = bots.wakes[bot.id] ?? []
+        let watches = bots.watches[bot.id] ?? []
         return WellGroup {
             WellRow {
                 Image(systemName: "pause.circle")
@@ -769,7 +770,7 @@ private struct WakeList: View {
                 .padding(.vertical, 8)
             }
             WellDivider()
-            if wakes.isEmpty {
+            if wakes.isEmpty && watches.isEmpty {
                 WellRow {
                     Image(systemName: "alarm")
                 } content: {
@@ -777,6 +778,37 @@ private struct WakeList: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            ForEach(Array(watches.enumerated()), id: \.element.id) { index, watch in
+                if index > 0 { WellDivider() }
+                WellRow {
+                    Image(systemName: "eye")
+                } content: {
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Watches " + (Wakes.Repeat(watch.every)?.words ?? "every \(watch.every)") + ", and wakes when this changes")
+                                .font(.system(size: 13, weight: .medium))
+                            Text(watch.check)
+                                .font(.system(.callout, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Text(watch.note)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                        .padding(.vertical, 8)
+                        Spacer(minLength: 8)
+                        Button("Stop Watching", systemImage: "minus.circle.fill") {
+                            Task { await bots.cancelWatch(watch, of: bot) }
+                        }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(RemoveButtonStyle())
+                        .help("Stop this watch")
+                    }
+                }
+            }
+            if !watches.isEmpty && !wakes.isEmpty { WellDivider() }
             ForEach(Array(wakes.enumerated()), id: \.element.id) { index, wake in
                 if index > 0 { WellDivider() }
                 WellRow {

@@ -112,6 +112,48 @@ struct WakesTests {
         #expect(utc.component(.hour, from: newYork.due) == 14)
     }
 
+    @Test func watchesWakeOnlyWhenTheirCheckChanges() throws {
+        let k = try folder()
+        defer { try? FileManager.default.removeItem(at: k) }
+        #expect(try sh(Wakes.installScript, in: k).status == 0)
+        let wake = k.appending(path: "bin/kuvo-wake").path
+        let bot = k.appending(path: "bots/bot_test")
+        try FileManager.default.createDirectory(at: bot, withIntermediateDirectories: true)
+        let run = { (command: String) in try self.sh("\"\(wake)\" \"\(bot.path)\" \(command)", in: k) }
+
+        #expect(try run("watch 2m 'cat state.txt' 'too often'").status != 0)
+        #expect(try run("watch 10m '' 'no check'").status != 0)
+        let added = try run("watch 10m 'cat state.txt' 'Tell the user what changed'")
+        #expect(added.status == 0)
+        let letters = try #require(try FileManager.default.contentsOfDirectory(atPath: bot.appending(path: "watches").path).first)
+        #expect(try run("list").output.contains("watch every 10m: cat state.txt"))
+
+        // The first run only notes what it prints; a change wakes the bot, the same output doesn't.
+        let due = { try "0".write(to: bot.appending(path: "watches/\(letters)/next"), atomically: true, encoding: .utf8) }
+        try "open".write(to: bot.appending(path: "state.txt"), atomically: true, encoding: .utf8)
+        #expect(try run("check").output.isEmpty)
+        #expect(try run("check").output.isEmpty, "not due again yet")
+        try due()
+        try "closed".write(to: bot.appending(path: "state.txt"), atomically: true, encoding: .utf8)
+        let changed = try run("check").output
+        #expect(changed.hasPrefix("KUVO-WATCH \(letters)\nTell the user what changed"))
+        #expect(changed.contains("closed"))
+        #expect(changed.hasSuffix("KUVO-END\n"))
+        try due()
+        #expect(try run("check").output.isEmpty)
+
+        let messages = Wakes.watchMessages(in: changed)
+        #expect(messages.count == 1)
+        #expect(messages.first?.letters == letters)
+        #expect(messages.first?.text.hasPrefix("Tell the user what changed") == true)
+        #expect(messages.first?.text.contains("closed") == true)
+        let command = Wakes.command(in: #"kuvo-wake bot_abc watch 30m "curl -s https://example.com | grep -i outage" "Tell me about it""#)
+        #expect(command == Wakes.Command(verb: .watch, when: "30m", note: "Tell me about it"))
+
+        #expect(try run("cancel \(letters)").status == 0)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: bot.appending(path: "watches").path).isEmpty)
+    }
+
     /// The script's next time for a repeat, from its own functions, at `now`.
     private func scriptNext(_ due: Date, _ every: String, now: Date, zone: String) throws -> Date {
         let functions = try #require(Wakes.script.components(separatedBy: "if [ \"$1\" = fire ]").first)
