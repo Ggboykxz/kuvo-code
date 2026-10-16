@@ -69,7 +69,8 @@ struct TranscriptView: View {
         }
         .overlay(alignment: .top) {
             if isFinding {
-                FindBar(query: $query, current: matchIndex, count: matches.count) { step in
+                FindBar(query: $query, current: matchIndex, count: matches.count, isSearchingEarlier: model.isLoadingEarlier,
+                        searchEarlier: earlierSearch) { step in
                     guard !matches.isEmpty else { return }
                     matchIndex = (matchIndex + step + matches.count) % matches.count
                     scroller.reveal(matches[matchIndex])
@@ -125,6 +126,21 @@ struct TranscriptView: View {
                 model.findPreset = nil
             }
             withAnimation(.ui) { isFinding = true }
+        }
+    }
+
+    /// While there's more of the conversation than has been read, a way for Find to look there.
+    private var earlierSearch: (() -> Void)? {
+        guard model.hasEarlier else { return nil }
+        return { searchEarlier() }
+    }
+
+    /// Find, in what hasn't been read yet: all of it read, then the first match shown.
+    private func searchEarlier() {
+        Task {
+            await model.loadAllEarlier()
+            matchIndex = 0
+            if let first = Self.matches(of: query, in: rows).first { scroller.reveal(first) }
         }
     }
 
@@ -798,6 +814,10 @@ private struct FindBar: View {
     @Binding var query: String
     let current: Int
     let count: Int
+    /// Reading what came before, to look in it too.
+    var isSearchingEarlier = false
+    /// The conversation goes back further than what's been read: a way to look there too.
+    var searchEarlier: (() -> Void)?
     let step: (Int) -> Void
     let close: () -> Void
     @FocusState private var isFocused: Bool
@@ -820,6 +840,14 @@ private struct FindBar: View {
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .fixedSize()
+                if isSearchingEarlier {
+                    Spinner(size: 11)
+                } else if let searchEarlier {
+                    Button("Search Earlier", action: searchEarlier)
+                        .buttonStyle(.borderless)
+                        .font(.callout.weight(.medium))
+                        .help("Read the rest of the conversation, from its start, and look in it too")
+                }
             }
             Button("Previous", systemImage: "chevron.up") { step(-1) }
                 .buttonStyle(CardActionStyle())

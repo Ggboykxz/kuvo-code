@@ -1262,6 +1262,8 @@ struct MainView: View {
         // KUVO_DEMO_SESSION=<id>: that session's tab, in view (one on a machine waits for it).
         if let id = environment["KUVO_DEMO_SESSION"] {
             openTab(id)
+            // KUVO_DEMO_FIND=<words>: Find in it, looking for those.
+            if let words = environment["KUVO_DEMO_FIND"] { workspace.model(for: id)?.showFind(words) }
             // KUVO_DEMO_QUOTES=<n>: that many quotes to answer in its composer.
             if let count = Int(environment["KUVO_DEMO_QUOTES"] ?? "") {
                 Drafts.shared[id].quotes = []

@@ -209,6 +209,15 @@ final class SessionModel {
         page.data.count >= pageSize ? (page.cursor?.next ?? page.cursor?.previous) : nil
     }
 
+    /// Reads every earlier message there is (to search them), up to a great many.
+    func loadAllEarlier() async {
+        while hasEarlier, transcript.messages.count < 20_000 {
+            let before = transcript.messages.count
+            await loadEarlier()
+            if transcript.messages.count == before { return }
+        }
+    }
+
     /// Reads the messages before those on screen, and puts them ahead of them.
     func loadEarlier() async {
         guard let cursor = earlierCursor, !isLoadingEarlier, !waitsForEngine else { return }

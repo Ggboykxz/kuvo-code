@@ -70,7 +70,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Shift-Return starts a new line where the cursor is, not at the end of what you've written, in sessions and group chats.
 - Group chats quote as sessions do: each part you reply to goes over the composer with a line for your answer, and one message can answer several. Opening a group chat with a draft puts the cursor after it, instead of selecting it.
 - Group chats scroll as sessions do, with the button back to the newest message when you scroll up; and sending in a session takes you back to the end, as in a group chat.
-- Long conversations can be read from the start: scrolling to the top reads the messages before, 200 at a time, and keeps your place. Before, only the latest 200 showed.
+- Long conversations can be read from the start: scrolling to the top reads the messages before, 200 at a time, and keeps your place. Before, only the latest 200 showed. Find offers **Search Earlier**, to look through all of it.
 - Long conversations stay smooth while the agent writes: only the reply being written is drawn again, not every message before it.
 - A conversation no longer opens blank until you show or hide the side panel: when its rows turned out shorter than first guessed, it could stay scrolled past its end.
 - Answering many quotes at once no longer fills the window: past a few, they scroll above the message field, with the one you're answering in view, and **Remove All** clears them.
