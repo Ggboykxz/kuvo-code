@@ -98,7 +98,21 @@ struct QuestionCard: View {
     let submit: (FormAnswer) -> Void
     let dismiss: () -> Void
 
+    @Environment(\.cardRoom) private var room
     @State private var answers: FormAnswer = [:]
+    /// Several questions go one at a time: the one in view.
+    @State private var page = 0
+    @State private var fieldsHeight: CGFloat = 0
+
+    /// The questions that apply, given the answers so far.
+    private var questions: [FormField] {
+        form.fields.filter { !$0.isHidden && $0.isActive(given: answers) }
+    }
+
+    private var isPaged: Bool { questions.count > 1 }
+    private var index: Int { min(page, max(questions.count - 1, 0)) }
+    private var isLast: Bool { !isPaged || index == questions.count - 1 }
+    private var shown: [FormField] { isPaged ? [questions[index]] : form.fields }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -106,24 +120,61 @@ struct QuestionCard: View {
                 Image(systemName: "questionmark.bubble.fill")
                     .font(.title3)
                     .foregroundStyle(.tint)
-                Text(form.isQuestion ? "The agent has a question" : form.title)
+                Text(form.isQuestion ? (isPaged ? "The agent has \(questions.count) questions" : "The agent has a question") : form.title)
                     .font(.headline)
                 Spacer()
+                if isPaged {
+                    Text("\(index + 1) of \(questions.count)")
+                        .font(.subheadline)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
                 Button("Skip", action: dismiss)
                     .buttonStyle(.borderless)
                     .foregroundStyle(.secondary)
             }
-            FormFieldsView(fields: form.fields, answers: $answers, style: .question)
+            // As tall as they are, up to the room there is; then they scroll, and the buttons
+            // stay in view.
+            ScrollView {
+                FormFieldsView(fields: shown, answers: $answers, style: .question)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fieldsHeight = $0 }
+            }
+            .frame(height: min(max(fieldsHeight, 1), room))
+            .scrollBounceBehavior(.basedOnSize)
+            .id(index)
             HStack {
+                if isPaged, index > 0 {
+                    Button("Back") { page = index - 1 }
+                        .controlSize(.large)
+                }
                 Spacer()
-                Button("Answer") { submit(answers) }
-                    .buttonStyle(.glassProminent)
-                    .controlSize(.large)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!FormFieldsView.isComplete(form.fields, answers))
+                if isLast {
+                    Button("Answer") { submit(answers) }
+                        .buttonStyle(.glassProminent)
+                        .controlSize(.large)
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(!FormFieldsView.isComplete(form.fields, answers))
+                } else {
+                    Button("Next") { page = index + 1 }
+                        .buttonStyle(.glassProminent)
+                        .controlSize(.large)
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(!FormFieldsView.isComplete(shown, answers))
+                }
             }
         }
         .padding(16)
+        .animation(.ui, value: index)
         .onAppear { answers = FormFieldsView.defaults(for: form.fields) }
+        #if DEBUG
+        // KUVO_DEMO_QUESTIONS=<n>: on the nth question (from 0).
+        .onAppear { if let n = Int(ProcessInfo.processInfo.environment["KUVO_DEMO_QUESTIONS"] ?? "") { page = n } }
+        #endif
     }
+}
+
+extension EnvironmentValues {
+    /// How tall what's in a card over the composer can be before it scrolls, so the card, the
+    /// composer and some of the conversation fit in the window.
+    @Entry var cardRoom: CGFloat = 360
 }

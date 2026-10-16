@@ -135,6 +135,7 @@ without clicking, for trying a change or taking screenshots:
 | `KUVO_DEMO_REPLY` | With `KUVO_DEMO_BOT`: sends this to the bot as a notification's Reply does |
 | `KUVO_DEMO_IMPORT_BOT` | A shared bot's file: New Bot opens from it, as File › Import Bot… does |
 | `KUVO_DEMO_TRY_WATCH` | With `KUVO_DEMO_EDIT_BOT`: Check Now on the bot's first watch |
+| `KUVO_DEMO_QUESTIONS` | The agent asking three questions at once, over the composer of the session in view; a number opens that question (from 0) |
 | `KUVO_DEMO_QUOTE` | Replying to this text, over the composer of the session in view |
 | `KUVO_DEMO_ADD_INTEGRATION` | With Settings › Integrations open: adds that integration, as Connect does |
 | `KUVO_DEMO_TAKE_OVER` | Seconds: the panel's browser is taken over from the agent once it starts browsing, and handed back after that long |

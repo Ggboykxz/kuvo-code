@@ -6,6 +6,7 @@ struct SessionView: View {
     @Environment(Catalog.self) private var catalog
     @Environment(AppModel.self) private var app
     @LastModel private var lastModel
+    @State private var height: CGFloat = 0
 
     var body: some View {
         TranscriptView(model: model)
@@ -13,7 +14,10 @@ struct SessionView: View {
             // blurred there by the scroll view's edge effect.
             .safeAreaBar(edge: .bottom, spacing: 0) {
                 BottomStack(model: model, lastModel: $lastModel)
+                    // Room for the composer, the cards' own buttons and a little conversation.
+                    .environment(\.cardRoom, max(160, height - 440))
             }
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
             // Its machine out of reach: the conversation to read, without what needs the engine.
             .environment(\.isOffline, Self.offlineMachine(of: model, in: app) != nil)
             .navigationTitle(model.session.title ?? "New Session")
@@ -61,7 +65,7 @@ private struct BottomStack: View {
                     .glassEffect(.regular, in: .rect(cornerRadius: Metrics.composerRadius))
                     .glassEffectID(request.id, in: glass)
                 }
-                ForEach(model.transcript.forms) { form in
+                ForEach(forms) { form in
                     QuestionCard(form: form) { answer in
                         model.answer(form, with: FormFieldsView.payload(form.fields, answer))
                     } dismiss: {
@@ -135,6 +139,26 @@ private struct BottomStack: View {
     }
 
     private var offlineMachine: MachineEngine? { SessionView.offlineMachine(of: model, in: app) }
+
+    private var forms: [FormRequest] {
+        #if DEBUG
+        return model.transcript.forms + Self.demoForms
+        #else
+        return model.transcript.forms
+        #endif
+    }
+
+    #if DEBUG
+    /// KUVO_DEMO_QUESTIONS: the agent asking three questions at once, over the composer.
+    private static let demoForms: [FormRequest] = {
+        guard ProcessInfo.processInfo.environment["KUVO_DEMO_QUESTIONS"] != nil else { return [] }
+        func options(_ items: [(String, String)]) -> String {
+            items.map { #"{"value":"\#($0.0)","label":"\#($0.0)","description":"\#($0.1)"}"# }.joined(separator: ",")
+        }
+        let json = #"{"id":"frm_demo","sessionID":"ses_demo","title":"Questions","metadata":{"kind":"question"},"fields":[{"key":"goal","title":"Goal of the outreach","description":"What should the outreach aim for?","type":"string","required":true,"custom":true,"options":[\#(options([("Early users and feedback", "Get people to try it and say what they think."), ("Paid licenses", "Teams that would need a commercial license."), ("Both, separate lists", "Individuals for feedback, companies for licenses.")]))]},{"key":"who","title":"Who to target","description":"Which kinds of people should I look for?","type":"multiselect","required":true,"custom":true,"options":[\#(options([("Mac developers using agents", "People using coding agents on a Mac."), ("Self-hosters", "People running home servers."), ("Indie hackers", "Builders who'd hand ops and research to bots."), ("Small teams", "Possible license buyers.")]))]},{"key":"where","title":"Where to leave drafts","description":"Where should the finished drafts live?","type":"string","required":true,"custom":true,"options":[\#(options([("A file on the server", "A Markdown list of each lead and a message."), ("Mail drafts", "Drafts in your mail, ready to send."), ("Social drafts", "Typed into each site's compose box, not sent.")]))]}]}"#
+        return (try? JSONDecoder().decode(FormRequest.self, from: Data(json.utf8))).map { [$0] } ?? []
+    }()
+    #endif
 
     private func send(queue: Bool) {
         guard offlineMachine == nil else { return }
