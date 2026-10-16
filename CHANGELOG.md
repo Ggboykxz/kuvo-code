@@ -43,6 +43,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - In Edit Bot, **Add Wake-Up…** schedules one yourself: pick when, how often it repeats and what the bot does then, without asking it in its conversation.
 - **Reply from a notification**: when a session or a bot finishes while you're in another app, its notification's **Reply** sends your answer straight to the conversation, like a chat app, without switching to Kuvo Code.
 - When an agent or a bot asks you a question while you're in another app, the notification shows the question itself, with its choices as buttons (and a field to answer in your own words), so you can answer without switching.
+- A bot with news you haven't read shows the start of what it said under its name in the sidebar, as a chat list does.
 - A bot on a machine whose clock is in another time zone than yours wakes up at the times you mean, not the machine's.
 - When a session or a bot finishes while you're in another app, the notification shows the start of its reply, not just "Finished", and a bot's carries its name.
 - **Start a bot from a ready-made one**: New Bot offers bots to begin with, like a morning news digest, a page watcher, a price tracker, a researcher, a build keeper and a morning standup, each with a job, instructions and a look to change as you like. A new bot's conversation offers **Start Its Job**, which sets it going: it asks for what it needs and schedules its next run.

@@ -922,10 +922,17 @@ private struct BotRow: View {
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
         // Read again whenever it's done some work: it may have scheduled a wake-up.
-        .task(id: session?.time.updated) { await bots.readWakes(bot) }
+        .task(id: session?.time.updated) {
+            await bots.readWakes(bot)
+            if hasNews { await workspace.loadReplyPreview(bot.sessionID) }
+        }
     }
 
-    /// What it's up to: working, waiting for you, when it wakes next, or its job.
+    /// It said something you haven't read.
+    private var hasNews: Bool { bots.mood(of: bot, in: workspace) == .news }
+
+    /// What it's up to: working, waiting for you, what it said that you haven't read, when it
+    /// wakes next, or its job.
     @ViewBuilder private var status: some View {
         if workspace.needsAttention(bot.sessionID) {
             Text("Needs you")
@@ -933,6 +940,8 @@ private struct BotRow: View {
             ShimmerText(text: "Working…")
         } else if let machine = bot.machine, app.machines.engine(machine)?.isReady != true {
             Text("On \(machine), not connected")
+        } else if hasNews, let reply = workspace.replyPreviews[bot.sessionID] {
+            Text(reply)
         } else if bots.paused.contains(bot.id) {
             Text("Paused")
         } else if let wakes = bots.wakes[bot.id], !wakes.isEmpty {

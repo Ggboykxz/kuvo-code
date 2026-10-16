@@ -598,9 +598,19 @@ final class Workspace {
     /// A bot's name, by its session, for its notifications.
     @ObservationIgnored var botName: ((String) -> String?)?
 
+    /// The start of a bot's last reply, for its row in the sidebar while it's unread, as a chat
+    /// list shows a message.
+    private(set) var replyPreviews: [String: String] = [:]
+
+    /// Reads a bot's last reply for its row, unless it's known.
+    func loadReplyPreview(_ id: String) async {
+        guard replyPreviews[id] == nil, let reply = await lastReply(of: id) else { return }
+        replyPreviews[id] = reply
+    }
+
     /// The text of a session's last reply, shortened for a notification.
     private func lastReply(of id: String) async -> String? {
-        guard Notifier.isEnabled, let page = try? await api(forSession: id)?.messages(session: id, limit: 6) else { return nil }
+        guard let page = try? await api(forSession: id)?.messages(session: id, limit: 6) else { return nil }
         for message in page.data.reversed() {
             guard case .assistant(let reply) = message else { continue }
             let text = reply.content.compactMap { content -> String? in
@@ -667,8 +677,11 @@ final class Workspace {
                 // A run you stopped needs no news.
                 if event.type != "session.execution.interrupted", let session = session(id) {
                     let failed = event.type == "session.execution.failed"
-                    // What it said last, as a chat app's notification shows the message.
-                    let reply = failed ? nil : await lastReply(of: id)
+                    // What it said last, as a chat app's notification shows the message, and a
+                    // bot's row.
+                    let isBot = botName?(id) != nil
+                    let reply = failed || !(Notifier.isEnabled || isBot) ? nil : await lastReply(of: id)
+                    if isBot { replyPreviews[id] = reply }
                     Notifier.shared.notify(
                         session: id,
                         title: botName?(id) ?? session.title ?? "New Session",
