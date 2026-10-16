@@ -170,30 +170,8 @@ private struct CommandEditor: View {
             } else {
                 naming
             }
-            HStack {
-                if name != nil {
-                    Button("Delete Command…", role: .destructive) { confirmsRemoval = true }
-                }
-                Spacer()
-                if name == nil {
-                    Button("Cancel", role: .cancel, action: done)
-                        .keyboardShortcut(.cancelAction)
-                    Button("Create Command", action: create)
-                        .keyboardShortcut(.defaultAction)
-                        .disabled(newID.isEmpty || problem != nil)
-                } else {
-                    Button("Done", action: done)
-                        .keyboardShortcut(.defaultAction)
-                        // Changes are saved as you make them, so Escape closes it too.
-                        .background {
-                            Button("Close", action: done)
-                                .keyboardShortcut(.cancelAction)
-                                .opacity(0)
-                                .accessibilityHidden(true)
-                        }
-                }
-            }
-            .padding(16)
+            EditorSheetButtons(create: name == nil ? "Create Command" : nil, canCreate: !newID.isEmpty && problem == nil, onCreate: create,
+                               remove: "Delete Command…", onRemove: { confirmsRemoval = true }, done: done)
         }
         .frame(width: SettingsView.sheetWidth, height: name == nil ? 220 : SettingsView.sheetHeight)
         .confirmationDialog("Delete \(title)?", isPresented: $confirmsRemoval) {

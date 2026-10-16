@@ -368,6 +368,47 @@ struct ConnectSheet: View {
     }
 }
 
+/// The buttons along the bottom of a sheet that makes or edits something in Settings (an agent,
+/// a command, an MCP server, a provider). Making one: Cancel and the button that makes it. Editing
+/// one, which is saved as you go: Done, which Escape presses too; and its Remove or Delete at the
+/// leading edge.
+struct EditorSheetButtons: View {
+    /// What makes a new one ("Create Agent"); nil while editing one.
+    let create: String?
+    var canCreate = true
+    var onCreate: () -> Void = {}
+    /// Deletes the one being edited ("Delete Agent…"), when it can be.
+    var remove: String?
+    var onRemove: () -> Void = {}
+    let done: () -> Void
+
+    var body: some View {
+        HStack {
+            if create == nil, let remove {
+                Button(remove, role: .destructive, action: onRemove)
+            }
+            Spacer()
+            if let create {
+                Button("Cancel", role: .cancel, action: done)
+                    .keyboardShortcut(.cancelAction)
+                Button(create, action: onCreate)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!canCreate)
+            } else {
+                Button("Done", action: done)
+                    .keyboardShortcut(.defaultAction)
+                    .background {
+                        Button("Close", action: done)
+                            .keyboardShortcut(.cancelAction)
+                            .opacity(0)
+                            .accessibilityHidden(true)
+                    }
+            }
+        }
+        .padding(16)
+    }
+}
+
 /// An integration, by its ID, for a sheet; with what you know it as, when that's another name.
 struct IntegrationRef: Identifiable {
     let id: String

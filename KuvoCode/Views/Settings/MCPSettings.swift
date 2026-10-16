@@ -274,30 +274,9 @@ private struct ServerEditor: View {
             } else {
                 naming
             }
-            HStack {
-                if name != nil {
-                    Button("Remove Server…", role: .destructive) { confirmsRemoval = true }
-                }
-                Spacer()
-                if let name {
-                    Button("Done") { close(MCPSettings.path + [name]) }
-                        .keyboardShortcut(.defaultAction)
-                        // Changes are saved as you make them, so Escape closes it too.
-                        .background {
-                            Button("Close") { close(MCPSettings.path + [name]) }
-                                .keyboardShortcut(.cancelAction)
-                                .opacity(0)
-                                .accessibilityHidden(true)
-                        }
-                } else {
-                    Button("Cancel", role: .cancel, action: done)
-                        .keyboardShortcut(.cancelAction)
-                    Button("Add Server", action: add)
-                        .keyboardShortcut(.defaultAction)
-                        .disabled(newID.isEmpty || problem != nil)
-                }
-            }
-            .padding(16)
+            EditorSheetButtons(create: name == nil ? "Add Server" : nil, canCreate: !newID.isEmpty && problem == nil, onCreate: add,
+                               remove: "Remove Server…", onRemove: { confirmsRemoval = true },
+                               done: { if let name { close(MCPSettings.path + [name]) } else { done() } })
         }
         .frame(width: SettingsView.sheetWidth, height: name == nil ? 220 : SettingsView.sheetHeight)
         .confirmationDialog("Remove \(name ?? "")?", isPresented: $confirmsRemoval) {

@@ -131,23 +131,8 @@ private struct CustomProviderEditor: View {
                 }
                 .formStyle(.grouped)
             }
-            HStack {
-                if id != nil {
-                    Button("Remove Provider…", role: .destructive) { confirmsRemoval = true }
-                }
-                Spacer()
-                if id == nil {
-                    Button("Cancel", action: done)
-                        .keyboardShortcut(.cancelAction)
-                    Button("Create", action: create)
-                        .keyboardShortcut(.defaultAction)
-                        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
-                } else {
-                    Button("Done", action: done)
-                        .keyboardShortcut(.defaultAction)
-                }
-            }
-            .padding(16)
+            EditorSheetButtons(create: id == nil ? "Create" : nil, canCreate: !name.trimmingCharacters(in: .whitespaces).isEmpty, onCreate: create,
+                               remove: "Remove Provider…", onRemove: { confirmsRemoval = true }, done: done)
         }
         .frame(width: SettingsView.sheetWidth, height: id == nil ? 220 : SettingsView.sheetHeight)
         .confirmationDialog("Remove this provider?", isPresented: $confirmsRemoval) {

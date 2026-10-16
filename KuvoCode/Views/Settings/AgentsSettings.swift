@@ -204,30 +204,9 @@ private struct AgentEditor: View {
             } else {
                 naming
             }
-            HStack {
-                if let id, config.value(at: ["agents", id]) != nil {
-                    Button(isBuiltIn ? "Reset to Built-In…" : "Delete Agent…", role: .destructive) { confirmsRemoval = true }
-                }
-                Spacer()
-                if id == nil {
-                    Button("Cancel", role: .cancel, action: done)
-                        .keyboardShortcut(.cancelAction)
-                    Button("Create Agent", action: create)
-                        .keyboardShortcut(.defaultAction)
-                        .disabled(newID.isEmpty || problem != nil)
-                } else {
-                    Button("Done", action: done)
-                        .keyboardShortcut(.defaultAction)
-                        // Changes are saved as you make them, so Escape closes it too.
-                        .background {
-                            Button("Close", action: done)
-                                .keyboardShortcut(.cancelAction)
-                                .opacity(0)
-                                .accessibilityHidden(true)
-                        }
-                }
-            }
-            .padding(16)
+            EditorSheetButtons(create: id == nil ? "Create Agent" : nil, canCreate: !newID.isEmpty && problem == nil, onCreate: create,
+                               remove: id.flatMap { config.value(at: ["agents", $0]) } != nil ? (isBuiltIn ? "Reset to Built-In…" : "Delete Agent…") : nil,
+                               onRemove: { confirmsRemoval = true }, done: done)
         }
         .frame(width: SettingsView.sheetWidth, height: id == nil ? 220 : SettingsView.sheetHeight)
         .confirmationDialog(isBuiltIn ? "Reset \(name) to how it's built in?" : "Delete \(name)?", isPresented: $confirmsRemoval) {
