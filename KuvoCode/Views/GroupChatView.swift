@@ -335,7 +335,7 @@ private struct GroupComposer: View {
                 .onKeyPress(.return, phases: .down) { press in
                     // Return sends; Shift-Return starts a new line.
                     if press.modifiers.contains(.shift) || press.modifiers.contains(.option) {
-                        text += "\n"
+                        Composer.newLine(in: $text)
                         return .handled
                     }
                     send()

@@ -141,7 +141,7 @@ struct Composer: View {
                     }
                     // Return sends; Shift-Return starts a new line; ⌘Return queues.
                     if press.modifiers.contains(.shift) || press.modifiers.contains(.option) {
-                        text += "\n"
+                        Self.newLine(in: $text)
                         return .handled
                     }
                     if press.modifiers.contains(.command) {
@@ -279,6 +279,16 @@ struct Composer: View {
     private func focusAtEnd() {
         isFocused = true
         Self.cursorToEnd(of: text)
+    }
+
+    /// A new line where the cursor is (Shift-Return), in the field that has the keyboard; at the
+    /// end if it can't be found. For every composer.
+    static func newLine(in text: Binding<String>) {
+        if let editor = NSApp.keyWindow?.firstResponder as? NSTextView, editor.isFieldEditor {
+            editor.insertNewlineIgnoringFieldEditor(nil)
+        } else {
+            text.wrappedValue += "\n"
+        }
     }
 
     /// Once the field holding `text` has the keyboard, its cursor after the text rather than all
