@@ -99,7 +99,7 @@ struct IntegrationsSettings: View {
                 switch service.way {
                 case .browser:
                     Button("Open") { open(service) }
-                        .help("Open \(service.title) in the panel's browser, to sign in there")
+                        .help("Open \(service.title) in the panel's browser, to sign in there. A bot on a machine browses there, and asks you to sign in when it needs to.")
                 default:
                     if !added {
                         if case .officialApp = service.way {
