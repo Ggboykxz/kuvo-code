@@ -1,0 +1,680 @@
+// Kuvo Code's link on a machine: lets the phones you've paired reach this machine's engine
+// through the relay, so its sessions and bots work from the phone with the Mac closed. The
+// engine's own runtime runs it, so the machine needs nothing else:
+//
+//   BUN_BE_BUN=1 opencode kuvo-link.js run             the bridge, started beside the engine
+//   BUN_BE_BUN=1 opencode kuvo-link.js pair [relay]    a link to pair a phone with this machine
+//   BUN_BE_BUN=1 opencode kuvo-link.js selftest        checks the runtime has what it needs
+//
+// It keeps its state in ~/.kuvo-code/run/link.json (mode 600), reads the engine's port and
+// password from run/engine.json, and connects out to the relay; it never listens. The protocol
+// is in PROTOCOL.md beside this file's source (kuvo-ai's Packages/KuvoLink), with the same in
+// Swift for the Mac and the phone.
+
+import crypto from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+export const BRIDGE_VERSION = "0.1.0";
+const K = process.env.KUVO_HOME || path.join(os.homedir(), ".kuvo-code");
+const RUN = path.join(K, "run");
+export const LINK_FILE = path.join(RUN, "link.json");
+const ENGINE_FILE = path.join(RUN, "engine.json");
+const PID_FILE = path.join(RUN, "link.pid");
+const PAIRING_MINUTES = 10;
+
+// ---- Keys: X25519 keys are kept as their raw 32 bytes ----
+
+const PKCS8 = Buffer.from("302e020100300506032b656e04220420", "hex");
+const SPKI = Buffer.from("302a300506032b656e032100", "hex");
+const EMPTY = Buffer.alloc(0);
+
+const privateKey = raw => crypto.createPrivateKey({ key: Buffer.concat([PKCS8, raw]), format: "der", type: "pkcs8" });
+const publicKey = raw => crypto.createPublicKey({ key: Buffer.concat([SPKI, raw]), format: "der", type: "spki" });
+export const newKey = () => crypto.generateKeyPairSync("x25519").privateKey.export({ format: "der", type: "pkcs8" }).subarray(PKCS8.length);
+export const publicOf = raw => crypto.createPublicKey(privateKey(raw)).export({ format: "der", type: "spki" }).subarray(SPKI.length);
+const dh = (raw, remote) => crypto.diffieHellman({ privateKey: privateKey(raw), publicKey: publicKey(remote) });
+export const addressOf = secret => crypto.createHash("sha256").update("kuvo-link address v1").update(secret).digest().subarray(0, 16);
+
+// ---- Noise: IK for sessions, K for mail, with X25519, AES-GCM and SHA-256 ----
+
+const sha256 = data => crypto.createHash("sha256").update(data).digest();
+const hmac = (key, data) => crypto.createHmac("sha256", key).update(data).digest();
+function hkdf(chainingKey, input) {
+  const temp = hmac(chainingKey, input);
+  const first = hmac(temp, Buffer.from([1]));
+  return [first, hmac(temp, Buffer.concat([first, Buffer.from([2])]))];
+}
+
+export class CipherState {
+  constructor(key) {
+    this.key = key;
+    this.n = 0n;
+  }
+
+  nonce() {
+    const nonce = Buffer.alloc(12);
+    nonce.writeBigUInt64BE(this.n, 4);
+    return nonce;
+  }
+
+  encrypt(ad, plaintext) {
+    if (!this.key) return plaintext;
+    const cipher = crypto.createCipheriv("aes-256-gcm", this.key, this.nonce());
+    cipher.setAAD(ad);
+    const sealed = Buffer.concat([cipher.update(plaintext), cipher.final(), cipher.getAuthTag()]);
+    this.n += 1n;
+    return sealed;
+  }
+
+  decrypt(ad, ciphertext) {
+    if (!this.key) return ciphertext;
+    if (ciphertext.length < 16) throw new Error("decrypt");
+    const decipher = crypto.createDecipheriv("aes-256-gcm", this.key, this.nonce());
+    decipher.setAAD(ad);
+    decipher.setAuthTag(ciphertext.subarray(-16));
+    let plaintext;
+    try {
+      plaintext = Buffer.concat([decipher.update(ciphertext.subarray(0, -16)), decipher.final()]);
+    } catch {
+      throw new Error("decrypt");
+    }
+    this.n += 1n;
+    return plaintext;
+  }
+}
+
+class SymmetricState {
+  constructor(name, prologue) {
+    const bytes = Buffer.from(name);
+    this.h = bytes.length <= 32 ? Buffer.concat([bytes, Buffer.alloc(32 - bytes.length)]) : sha256(bytes);
+    this.ck = this.h;
+    this.cipher = new CipherState();
+    this.mixHash(prologue);
+  }
+
+  mixKey(input) {
+    const [chainingKey, key] = hkdf(this.ck, input);
+    this.ck = chainingKey;
+    this.cipher = new CipherState(key);
+  }
+
+  mixHash(data) {
+    this.h = sha256(Buffer.concat([this.h, data]));
+  }
+
+  encryptAndHash(plaintext) {
+    const ciphertext = this.cipher.encrypt(this.h, plaintext);
+    this.mixHash(ciphertext);
+    return ciphertext;
+  }
+
+  decryptAndHash(ciphertext) {
+    const plaintext = this.cipher.decrypt(this.h, ciphertext);
+    this.mixHash(ciphertext);
+    return plaintext;
+  }
+
+  split() {
+    const [first, second] = hkdf(this.ck, EMPTY);
+    return [new CipherState(first), new CipherState(second)];
+  }
+}
+
+const IK = "Noise_IK_25519_AESGCM_SHA256";
+const ONE_WAY = "Noise_K_25519_AESGCM_SHA256";
+export const PROLOGUE = Buffer.from("kuvo-link v1");
+export const MAIL_PROLOGUE = Buffer.from("kuvo-link mail v1");
+
+const transport = (sending, receiving, hash) => ({
+  hash,
+  seal: plaintext => sending.encrypt(EMPTY, plaintext),
+  open: ciphertext => receiving.decrypt(EMPTY, ciphertext),
+});
+
+// The side that starts (the phone), knowing the other's static key. Here for tests.
+export class IKInitiator {
+  constructor(s, rs, prologue, e = newKey()) {
+    Object.assign(this, { s, rs, e, state: new SymmetricState(IK, prologue) });
+    this.state.mixHash(rs);
+  }
+
+  writeMessage1(payload) {
+    const state = this.state;
+    const ephemeral = publicOf(this.e);
+    state.mixHash(ephemeral);
+    state.mixKey(dh(this.e, this.rs));
+    const s = state.encryptAndHash(publicOf(this.s));
+    state.mixKey(dh(this.s, this.rs));
+    return Buffer.concat([ephemeral, s, state.encryptAndHash(payload)]);
+  }
+
+  readMessage2(message) {
+    if (message.length < 48) throw new Error("malformed");
+    const state = this.state;
+    const re = message.subarray(0, 32);
+    state.mixHash(re);
+    state.mixKey(dh(this.e, re));
+    state.mixKey(dh(this.s, re));
+    const payload = state.decryptAndHash(message.subarray(32));
+    const [first, second] = state.split();
+    return { payload, transport: transport(first, second, state.h) };
+  }
+}
+
+// The side that answers (this machine), learning the phone's static key.
+export class IKResponder {
+  constructor(s, prologue, e = newKey()) {
+    Object.assign(this, { s, e, state: new SymmetricState(IK, prologue) });
+    this.state.mixHash(publicOf(s));
+  }
+
+  readMessage1(message) {
+    if (message.length < 96) throw new Error("malformed");
+    const state = this.state;
+    this.re = message.subarray(0, 32);
+    state.mixHash(this.re);
+    state.mixKey(dh(this.s, this.re));
+    this.rs = state.decryptAndHash(message.subarray(32, 80));
+    state.mixKey(dh(this.s, this.rs));
+    return state.decryptAndHash(message.subarray(80));
+  }
+
+  writeMessage2(payload) {
+    const state = this.state;
+    const ephemeral = publicOf(this.e);
+    state.mixHash(ephemeral);
+    state.mixKey(dh(this.e, this.re));
+    state.mixKey(dh(this.e, this.rs));
+    const message = Buffer.concat([ephemeral, state.encryptAndHash(payload)]);
+    const [first, second] = state.split();
+    return { message, transport: transport(second, first, state.h) };
+  }
+}
+
+// One message to a device that knows the sender, for pushes.
+export function sealOneWay(payload, s, rs, prologue = MAIL_PROLOGUE, e = newKey()) {
+  const state = new SymmetricState(ONE_WAY, prologue);
+  state.mixHash(publicOf(s));
+  state.mixHash(rs);
+  const ephemeral = publicOf(e);
+  state.mixHash(ephemeral);
+  state.mixKey(dh(e, rs));
+  state.mixKey(dh(s, rs));
+  return { message: Buffer.concat([ephemeral, state.encryptAndHash(payload)]), following: state.split()[0] };
+}
+
+export function openOneWay(message, s, rs, prologue = MAIL_PROLOGUE) {
+  if (message.length < 48) throw new Error("malformed");
+  const state = new SymmetricState(ONE_WAY, prologue);
+  state.mixHash(rs);
+  state.mixHash(publicOf(s));
+  const re = message.subarray(0, 32);
+  state.mixHash(re);
+  state.mixKey(dh(s, re));
+  state.mixKey(dh(s, rs));
+  return { payload: state.decryptAndHash(message.subarray(32)), following: state.split()[0] };
+}
+
+// ---- Frames ----
+
+export const Frame = { handshake1: 1, handshake2: 2, transport: 3, close: 4, mail: 5 };
+const MAX_MESSAGE = 65535 - 16;
+
+export const relayHello = secret => Buffer.concat([Buffer.from([1]), secret]);
+export const relaySend = (to, payload) => Buffer.concat([Buffer.from([2]), to, payload]);
+export const relayPush = (to, payload) => Buffer.concat([Buffer.from([5]), to, payload]);
+
+// What the relay sent, or null.
+export function readRelay(bytes) {
+  const kind = bytes[0];
+  const address = bytes.subarray(1, 17);
+  if (kind === 1 && bytes.length === 17) return { kind: "welcome", address };
+  if (kind === 2 && bytes.length >= 17) return { kind: "deliver", address, payload: bytes.subarray(17) };
+  if (kind === 3 && bytes.length === 17) return { kind: "unreachable", address };
+  if (kind === 6 && bytes.length === 18) return { kind: "pushed", address, status: bytes[17] };
+  return null;
+}
+
+export function frame(kind, session, body = EMPTY) {
+  const header = Buffer.alloc(5);
+  header[0] = kind;
+  header.writeUInt32BE(session, 1);
+  return Buffer.concat([header, body]);
+}
+
+export function readFrame(bytes) {
+  if (bytes.length < 5 || bytes[0] < 1 || bytes[0] > 5) return null;
+  return { kind: bytes[0], session: bytes.readUInt32BE(1), body: bytes.subarray(5) };
+}
+
+// JSON with sorted keys, as the Swift side writes it.
+function sortedJSON(value) {
+  if (Array.isArray(value)) return `[${value.map(sortedJSON).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().filter(k => value[k] !== undefined).map(k => `${JSON.stringify(k)}:${sortedJSON(value[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+export function encodeMessage(head, body = EMPTY) {
+  const json = Buffer.from(sortedJSON(head));
+  const length = Buffer.alloc(2);
+  length.writeUInt16BE(json.length);
+  return Buffer.concat([length, json, body]);
+}
+
+export function decodeMessage(bytes) {
+  if (bytes.length < 2) return null;
+  const length = bytes.readUInt16BE(0);
+  if (bytes.length < 2 + length) return null;
+  try {
+    return { head: JSON.parse(bytes.subarray(2, 2 + length).toString("utf8")), body: bytes.subarray(2 + length) };
+  } catch {
+    return null;
+  }
+}
+
+// `head` and `body` as messages that each fit: the first with `head`, the rest as `data`.
+export function pieces(head, body, end) {
+  const out = [];
+  let current = { ...head, end: false };
+  let offset = 0;
+  do {
+    const room = MAX_MESSAGE - 2 - Buffer.byteLength(sortedJSON(current)) - 8;
+    out.push([current, body.subarray(offset, offset + room)]);
+    offset += room;
+    current = { t: "data", id: head.id, end: false };
+  } while (offset < body.length);
+  out[out.length - 1][0].end = end;
+  return out.map(([h, b]) => encodeMessage(h, b));
+}
+
+// ---- The host: answers paired phones' sessions (the Mac app's LinkServer, in JavaScript) ----
+
+export class LinkHost {
+  // authorize(key, hello) → whether to let the phone in; handle(request, phone, signal) → an
+  // async iterable of { head: { status, headers } } and { body }; send(bytes) → to the relay.
+  constructor({ key, hello, authorize, handle, send }) {
+    Object.assign(this, { key, hello, authorize, handle, send });
+    this.sessions = new Map();
+  }
+
+  // The relay connection dropped: what was under way is gone.
+  reset() {
+    for (const session of this.sessions.values()) this.end(session, false);
+  }
+
+  get active() { return this.sessions.size; }
+
+  async receive(from, payload) {
+    const parsed = readFrame(payload);
+    if (!parsed) return;
+    const id = `${from.toString("base64url")}:${parsed.session}`;
+    const session = this.sessions.get(id);
+    switch (parsed.kind) {
+      case Frame.handshake1:
+        return this.handshake(from, parsed.session, id, parsed.body);
+      case Frame.transport: {
+        if (!session) return this.send(relaySend(from, frame(Frame.close, parsed.session)));
+        let message;
+        try {
+          message = decodeMessage(session.transport.open(parsed.body));
+        } catch {
+          message = null;
+        }
+        if (!message) return this.end(session, true);
+        return this.message(session, message);
+      }
+      case Frame.close:
+        if (session) this.end(session, false);
+    }
+  }
+
+  async handshake(from, number, id, body) {
+    const refuse = () => this.send(relaySend(from, frame(Frame.close, number)));
+    const responder = new IKResponder(this.key, PROLOGUE);
+    let hello;
+    try {
+      hello = JSON.parse(responder.readMessage1(body).toString("utf8"));
+    } catch {
+      return refuse();
+    }
+    if (hello?.v !== 1 || !(await this.authorize(responder.rs, hello))) return refuse();
+    const { message, transport } = responder.writeMessage2(Buffer.from(JSON.stringify(this.hello)));
+    // One session per phone: a new one replaces what's left of the last.
+    for (const old of this.sessions.values()) if (old.from.equals(from)) this.end(old, false);
+    const phone = { key: responder.rs, name: String(hello.name ?? ""), address: from };
+    this.sessions.set(id, { id, from, number, phone, transport, incoming: new Map(), running: new Map() });
+    this.send(relaySend(from, frame(Frame.handshake2, number, message)));
+  }
+
+  message(session, { head, body }) {
+    switch (head.t) {
+      case "req": {
+        const request = { method: head.m ?? "GET", path: head.p ?? "", headers: head.h ?? {}, body };
+        if (head.end === false) session.incoming.set(head.id, request);
+        else this.run(session, head.id, request);
+        return;
+      }
+      case "data": {
+        const request = session.incoming.get(head.id);
+        if (!request) return;
+        request.body = Buffer.concat([request.body, body]);
+        if (head.end === true) {
+          session.incoming.delete(head.id);
+          this.run(session, head.id, request);
+        }
+        return;
+      }
+      case "cancel":
+        session.running.get(head.id)?.abort();
+        session.running.delete(head.id);
+        session.incoming.delete(head.id);
+        return;
+      case "ping":
+        return this.seal(session, encodeMessage({ t: "pong" }));
+    }
+  }
+
+  run(session, id, request) {
+    const controller = new AbortController();
+    session.running.set(id, controller);
+    const live = () => !controller.signal.aborted && this.sessions.get(session.id) === session;
+    const reply = (head, body, end) => {
+      if (!live()) return;
+      for (const piece of pieces(head, body, end)) this.seal(session, piece);
+    };
+    (async () => {
+      let head = null;
+      let started = false;
+      try {
+        for await (const part of this.handle(request, session.phone, controller.signal)) {
+          if (!live()) return;
+          if (part.head) {
+            head = { t: "res", id, s: part.head.status, h: part.head.headers };
+          } else if (part.body?.length) {
+            // The head goes with the first piece of the body.
+            reply(started ? { t: "data", id } : head ?? { t: "data", id }, part.body, false);
+            started = true;
+          }
+        }
+        reply(started ? { t: "data", id } : head ?? { t: "data", id }, EMPTY, true);
+      } catch (error) {
+        if (!live()) return;
+        if (!started) reply({ t: "res", id, s: 502, h: { "content-type": "text/plain" } }, Buffer.from(String(error?.message ?? error)), true);
+        else this.seal(session, encodeMessage({ t: "cancel", id }));
+      } finally {
+        if (session.running.get(id) === controller) session.running.delete(id);
+      }
+    })();
+  }
+
+  seal(session, plaintext) {
+    this.send(relaySend(session.from, frame(Frame.transport, session.number, session.transport.seal(plaintext))));
+  }
+
+  end(session, notify) {
+    if (this.sessions.get(session.id) !== session) return;
+    this.sessions.delete(session.id);
+    for (const controller of session.running.values()) controller.abort();
+    session.running.clear();
+    if (notify) this.send(relaySend(session.from, frame(Frame.close, session.number)));
+  }
+}
+
+// ---- Forwarding to the engine ----
+
+// What a phone may ask the engine for: sessions and what's in them, live events, and what it
+// needs to show them. Never accounts, keys or integrations, the engine's settings, MCP servers
+// or plugins.
+const ALLOWED = [
+  /^api\/session(\/|\?|$)/,
+  /^api\/experimental\/session\/[^/]+\/wait(\?|$)/,
+  /^api\/event(\?|$)/,
+  /^api\/(info|agent|command|model|provider|project|location|skill|vcs|worktree|permission|form)(\/|\?|$)/,
+];
+const REQUEST_HEADERS = ["content-type", "accept", "x-opencode-directory", "last-event-id"];
+const RESPONSE_HEADERS = ["content-type", "cache-control"];
+
+export const allowed = path => !path.includes("..") && ALLOWED.some(pattern => pattern.test(path));
+
+const readEngineFile = () => JSON.parse(fs.readFileSync(ENGINE_FILE, "utf8"));
+
+// The handler LinkHost runs for each request.
+export function engineHandler(readEngine = readEngineFile, info = {}) {
+  return async function* (request, phone, signal) {
+    const text = (status, words) => [{ head: { status, headers: { "content-type": "text/plain" } } }, { body: Buffer.from(words) }];
+    if (request.path === "kuvo/info") {
+      let engine = {};
+      try { engine = readEngine(); } catch {}
+      yield { head: { status: 200, headers: { "content-type": "application/json" } } };
+      yield { body: Buffer.from(JSON.stringify({ kind: "machine", bridge: BRIDGE_VERSION, engine: engine.version ?? null, ...info })) };
+      return;
+    }
+    if (!allowed(request.path)) return yield* text(403, "That isn't available over the link.");
+    let engine;
+    try {
+      engine = readEngine();
+    } catch {
+      return yield* text(503, "The engine isn't running.");
+    }
+    touchAttached();
+    const headers = { authorization: `Basic ${Buffer.from(`opencode:${engine.password}`).toString("base64")}` };
+    const given = Object.fromEntries(Object.entries(request.headers).map(([k, v]) => [k.toLowerCase(), v]));
+    for (const name of REQUEST_HEADERS) if (given[name]) headers[name] = given[name];
+    const method = request.method.toUpperCase();
+    const response = await fetch(`http://127.0.0.1:${engine.port}/${request.path}`, {
+      method,
+      headers,
+      body: method === "GET" || method === "HEAD" ? undefined : request.body,
+      signal,
+    });
+    const out = {};
+    for (const name of RESPONSE_HEADERS) {
+      const value = response.headers.get(name);
+      if (value) out[name] = value;
+    }
+    yield { head: { status: response.status, headers: out } };
+    if (!response.body) return;
+    const reader = response.body.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) return;
+        yield { body: Buffer.from(value) };
+      }
+    } finally {
+      reader.cancel().catch(() => {});
+    }
+  };
+}
+
+// The engine's watchdog stops it after a day without the app; a phone counts as the app.
+let touched = 0;
+function touchAttached() {
+  if (Date.now() - touched < 5 * 60_000) return;
+  touched = Date.now();
+  try {
+    const now = new Date();
+    fs.utimesSync(path.join(RUN, "attached"), now, now);
+  } catch {}
+}
+
+// ---- State ----
+
+export function readLink() {
+  try {
+    return JSON.parse(fs.readFileSync(LINK_FILE, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+export function writeLink(link) {
+  fs.mkdirSync(RUN, { recursive: true, mode: 0o700 });
+  const temporary = `${LINK_FILE}.${process.pid}.tmp`;
+  fs.writeFileSync(temporary, JSON.stringify(link, null, 2), { mode: 0o600 });
+  fs.renameSync(temporary, LINK_FILE);
+}
+
+// Lets in phones in link.json, and a new one showing the pairing token (once, in time).
+export function authorizePhone(key, hello) {
+  const link = readLink();
+  if (!link) return false;
+  const encoded = key.toString("base64url");
+  if (link.phones?.some(phone => phone.key === encoded)) return true;
+  const pairing = link.pairing;
+  if (!pairing || !hello.pair || Date.now() > pairing.expires) return false;
+  const given = Buffer.from(String(hello.pair), "base64url");
+  const expected = Buffer.from(pairing.token, "base64url");
+  if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) return false;
+  link.phones = [...(link.phones ?? []), { key: encoded, name: String(hello.name ?? "").slice(0, 100), added: Math.floor(Date.now() / 1000) }];
+  delete link.pairing;
+  writeLink(link);
+  return true;
+}
+
+// ---- The relay connection ----
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+// Connects once, serves until the connection ends. Resolves whether it got as far as welcome.
+function connectOnce(relay, secret, host) {
+  return new Promise(resolve => {
+    const self = addressOf(secret);
+    let welcomed = false;
+    let lastHeard = Date.now();
+    const socket = new WebSocket(relay);
+    socket.binaryType = "arraybuffer";
+    // Something sent to ourselves comes back through the relay: that shows the connection's
+    // alive, where WebSocket pings can't be seen from here.
+    const check = setInterval(() => {
+      if (Date.now() - lastHeard > 90_000) return socket.close();
+      if (welcomed) socket.send(relaySend(self, EMPTY));
+    }, 30_000);
+    socket.onopen = () => socket.send(relayHello(secret));
+    socket.onmessage = event => {
+      lastHeard = Date.now();
+      const message = readRelay(Buffer.from(event.data));
+      if (!message) return;
+      if (!welcomed) {
+        if (message.kind !== "welcome" || !message.address.equals(self)) return socket.close();
+        welcomed = true;
+        host.send = bytes => { if (socket.readyState === 1) socket.send(bytes); };
+        return;
+      }
+      if (message.kind === "deliver" && !message.address.equals(self)) host.receive(message.address, message.payload);
+    };
+    socket.onerror = () => {};
+    socket.onclose = () => {
+      clearInterval(check);
+      host.reset();
+      host.send = () => {};
+      resolve(welcomed);
+    };
+  });
+}
+
+function alive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function run() {
+  // One bridge at a time: a newer one (the engine restarted) takes over.
+  try {
+    const old = Number(fs.readFileSync(PID_FILE, "utf8"));
+    if (old && old !== process.pid && alive(old)) process.kill(old, "SIGTERM");
+  } catch {}
+  fs.mkdirSync(RUN, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(PID_FILE, String(process.pid), { mode: 0o600 });
+  const cleanUp = () => {
+    try { if (fs.readFileSync(PID_FILE, "utf8") === String(process.pid)) fs.unlinkSync(PID_FILE); } catch {}
+    process.exit(0);
+  };
+  process.on("SIGTERM", cleanUp);
+  process.on("SIGINT", cleanUp);
+
+  // Stops with the engine, and when nothing's paired any more.
+  setInterval(() => {
+    let engine;
+    try { engine = readEngineFile(); } catch {}
+    if (!engine || !alive(engine.pid) || !readLink()) cleanUp();
+  }, 30_000);
+
+  let attempt = 0;
+  while (true) {
+    const link = readLink();
+    if (!link) return cleanUp();
+    let engine = {};
+    try { engine = readEngineFile(); } catch {}
+    const host = new LinkHost({
+      key: Buffer.from(link.key, "base64url"),
+      hello: { v: 1, kind: "machine", name: link.name || os.hostname(), app: BRIDGE_VERSION, engine: engine.version ?? null },
+      authorize: authorizePhone,
+      handle: engineHandler(readEngineFile, { name: link.name || os.hostname() }),
+      send: () => {},
+    });
+    const welcomed = await connectOnce(link.relay, Buffer.from(link.secret, "base64url"), host);
+    attempt = welcomed ? 0 : attempt + 1;
+    await sleep(Math.min(60_000, 1000 * 2 ** Math.min(attempt, 6)));
+  }
+}
+
+function pair(relay) {
+  const link = readLink() ?? { secret: crypto.randomBytes(32).toString("base64url"), key: newKey().toString("base64url"), name: os.hostname(), phones: [] };
+  if (relay) link.relay = relay;
+  if (!link.relay) {
+    console.error("Give the relay's address: kuvo-link.js pair wss://…");
+    process.exit(1);
+  }
+  link.pairing = { token: crypto.randomBytes(16).toString("base64url"), expires: Date.now() + PAIRING_MINUTES * 60_000 };
+  writeLink(link);
+  const query = new URLSearchParams({
+    v: "1",
+    relay: link.relay,
+    host: addressOf(Buffer.from(link.secret, "base64url")).toString("base64url"),
+    key: publicOf(Buffer.from(link.key, "base64url")).toString("base64url"),
+    token: link.pairing.token,
+    name: link.name,
+  });
+  console.log(`kuvo-link://pair?${query}`);
+  console.error(`Open this link on your phone within ${PAIRING_MINUTES} minutes. It works once.`);
+}
+
+// Checks this runtime has what the link needs, both ends of a session and a mail.
+export function selftest() {
+  const phone = newKey(), host = newKey();
+  const initiator = new IKInitiator(phone, publicOf(host), PROLOGUE);
+  const responder = new IKResponder(host, PROLOGUE);
+  const said = responder.readMessage1(initiator.writeMessage1(Buffer.from("hello")));
+  const { message, transport: hostSide } = responder.writeMessage2(Buffer.from("welcome"));
+  const { payload, transport: phoneSide } = initiator.readMessage2(message);
+  const echoed = hostSide.open(phoneSide.seal(Buffer.from("ping")));
+  const mail = openOneWay(sealOneWay(Buffer.from("mail"), host, publicOf(phone)).message, phone, publicOf(host)).payload;
+  const ok = said.toString() === "hello" && payload.toString() === "welcome" && echoed.toString() === "ping" && mail.toString() === "mail"
+    && responder.rs.equals(publicOf(phone)) && typeof WebSocket === "function" && typeof fetch === "function";
+  return ok;
+}
+
+const main = process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+if (main) {
+  const [mode, argument] = process.argv.slice(2);
+  if (mode === "run") await run();
+  else if (mode === "pair") pair(argument);
+  else if (mode === "selftest") {
+    const ok = selftest();
+    console.log(ok ? "ok" : "failed");
+    process.exit(ok ? 0 : 1);
+  } else {
+    console.error("Usage: kuvo-link.js run | pair [relay] | selftest");
+    process.exit(2);
+  }
+}

@@ -98,7 +98,7 @@ private let echo: LinkServer.Handle = { request, _ in
     }
 }
 
-private func collect(_ stream: AsyncThrowingStream<LinkResponsePart, Error>) async throws -> (status: Int, headers: [String: String], body: Data) {
+private func collect(_ stream: LinkResponse) async throws -> (status: Int, headers: [String: String], body: Data) {
     var status = 0, headers: [String: String] = [:], body = Data()
     for try await part in stream {
         switch part {
@@ -166,8 +166,9 @@ private func collect(_ stream: AsyncThrowingStream<LinkResponsePart, Error>) asy
     @Test func aStreamStopsOnTheHostWhenThePhoneStopsReading() async throws {
         let relay = MemoryRelay()
         let stopped = AsyncStream.makeStream(of: Void.self)
-        let host = TestHost(relay: relay) { _, _ in
-            AsyncThrowingStream { continuation in
+        let host = TestHost(relay: relay) { request, phone in
+            guard request.path == "api/event" else { return echo(request, phone) }
+            return AsyncThrowingStream { continuation in
                 let task = Task {
                     continuation.yield(.head(status: 200, headers: ["content-type": "text/event-stream"]))
                     var n = 0
@@ -247,7 +248,7 @@ private func collect(_ stream: AsyncThrowingStream<LinkResponsePart, Error>) asy
     }
 
     @Test func pairingLinksGoBothWays() throws {
-        let link = PairingLink(relay: URL(string: "wss://link.example/v1")!, host: RelaySecret().address, key: LinkKey().publicBytes, name: "Serhat’s MacBook & co")
+        let link = PairingLink(relay: URL(string: "wss://link.example/v1")!, host: RelaySecret().address, key: LinkKey().publicBytes, name: "Sam’s MacBook & co")
         #expect(PairingLink(link.url) == link)
         #expect(PairingLink(URL(string: "kuvo-link://pair?v=2")!) == nil)
         #expect(PairingLink(URL(string: "https://pair")!) == nil)

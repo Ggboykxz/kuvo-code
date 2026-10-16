@@ -1,0 +1,135 @@
+{
+  "addresses": [
+    {
+      "secret": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "address": "34dc906174094645b96aeceff36552bd"
+    },
+    {
+      "secret": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "address": "394990364febb27cad3cc4833214c295"
+    },
+    {
+      "secret": "09aaefbbd0924bd4462525cfb32a356bddbcf8587b2aef7f6ecedebbb1b8a069",
+      "address": "1510642f7c6f1b703096c3a657d63a00"
+    }
+  ],
+  "relay": [
+    {
+      "name": "hello",
+      "from": "device",
+      "bytes": "01000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+    },
+    {
+      "name": "welcome",
+      "from": "relay",
+      "address": "34dc906174094645b96aeceff36552bd",
+      "bytes": "0134dc906174094645b96aeceff36552bd"
+    },
+    {
+      "name": "send",
+      "from": "device",
+      "to": "394990364febb27cad3cc4833214c295",
+      "payload": "68656c6c6f",
+      "bytes": "02394990364febb27cad3cc4833214c29568656c6c6f"
+    },
+    {
+      "name": "deliver",
+      "from": "relay",
+      "address": "34dc906174094645b96aeceff36552bd",
+      "payload": "68656c6c6f",
+      "bytes": "0234dc906174094645b96aeceff36552bd68656c6c6f"
+    },
+    {
+      "name": "unreachable",
+      "from": "relay",
+      "address": "394990364febb27cad3cc4833214c295",
+      "bytes": "03394990364febb27cad3cc4833214c295"
+    },
+    {
+      "name": "pushed",
+      "from": "relay",
+      "address": "394990364febb27cad3cc4833214c295",
+      "status": 2,
+      "bytes": "06394990364febb27cad3cc4833214c29502"
+    }
+  ],
+  "frames": [
+    {
+      "kind": 1,
+      "session": 1,
+      "body": "000000",
+      "bytes": "0100000001000000"
+    },
+    {
+      "kind": 3,
+      "session": 3735928559,
+      "body": "63697068657274657874",
+      "bytes": "03deadbeef63697068657274657874"
+    },
+    {
+      "kind": 4,
+      "session": 42,
+      "body": "",
+      "bytes": "040000002a"
+    },
+    {
+      "kind": 5,
+      "session": 0,
+      "body": "6d61696c",
+      "bytes": "05000000006d61696c"
+    }
+  ],
+  "messages": [
+    {
+      "head": {
+        "t": "req",
+        "id": 1,
+        "m": "GET",
+        "p": "api/session?limit=50",
+        "h": {
+          "x-opencode-directory": "/home/me/p"
+        },
+        "end": true
+      },
+      "body": "",
+      "bytes": "006c7b22656e64223a747275652c2268223a7b22782d6f70656e636f64652d6469726563746f7279223a222f686f6d652f6d652f70227d2c226964223a312c226d223a22474554222c2270223a226170692f73657373696f6e3f6c696d69743d3530222c2274223a22726571227d"
+    },
+    {
+      "head": {
+        "t": "res",
+        "id": 1,
+        "s": 200,
+        "h": {
+          "content-type": "application/json"
+        },
+        "end": true
+      },
+      "body": "5b7b226964223a227365735f31227d5d",
+      "bytes": "004d7b22656e64223a747275652c2268223a7b22636f6e74656e742d74797065223a226170706c69636174696f6e2f6a736f6e227d2c226964223a312c2273223a3230302c2274223a22726573227d5b7b226964223a227365735f31227d5d"
+    },
+    {
+      "head": {
+        "t": "data",
+        "id": 7,
+        "end": false
+      },
+      "body": "646174613a207b7d0a0a",
+      "bytes": "001f7b22656e64223a66616c73652c226964223a372c2274223a2264617461227d646174613a207b7d0a0a"
+    },
+    {
+      "head": {
+        "t": "cancel",
+        "id": 7
+      },
+      "body": "",
+      "bytes": "00157b226964223a372c2274223a2263616e63656c227d"
+    },
+    {
+      "head": {
+        "t": "ping"
+      },
+      "body": "",
+      "bytes": "000c7b2274223a2270696e67227d"
+    }
+  ]
+}

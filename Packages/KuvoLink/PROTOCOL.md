@@ -78,7 +78,7 @@ pairing; the host learns the phone's from the first message and checks it.
 The first message's payload is JSON:
 
 ```json
-{"v": 1, "name": "Serhat's iPhone", "app": "0.1.0", "pair": "<token>"}
+{"v": 1, "name": "My iPhone", "app": "0.1.0", "pair": "<token>"}
 ```
 
 `pair` is there only while pairing. The host answers if the phone's key is one it has
@@ -86,7 +86,7 @@ paired, or if `pair` is the token it's showing; otherwise it sends a close. Its 
 payload:
 
 ```json
-{"v": 1, "kind": "mac", "name": "Serhat's MacBook", "app": "0.4.0", "engine": "2.0.30"}
+{"v": 1, "kind": "mac", "name": "My MacBook", "app": "0.4.0", "engine": "2.0.30"}
 ```
 
 `kind` is `mac` or `machine`. Each side checks `v` and closes the session on a version it

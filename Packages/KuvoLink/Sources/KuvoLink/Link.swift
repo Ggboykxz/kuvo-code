@@ -136,18 +136,20 @@ public actor LinkClient {
         try await open(host, pairing: nil)
     }
 
-    /// Sends `request` to `host`; the response arrives in pieces. Ending the stream early cancels
-    /// the request on the host.
-    public nonisolated func send(_ request: LinkRequest, to host: PairedHost) -> AsyncThrowingStream<LinkResponsePart, Error> {
-        AsyncThrowingStream { continuation in
-            let ticket = Ticket()
+    /// Sends `request` to `host`; the response arrives in pieces. Stopping early (leaving the loop,
+    /// or cancelling the task that reads) cancels the request on the host.
+    public nonisolated func send(_ request: LinkRequest, to host: PairedHost) -> LinkResponse {
+        let ticket = Ticket()
+        let stop: @Sendable () -> Void = { Task { await self.cancel(ticket, on: host) } }
+        let stream = AsyncThrowingStream<LinkResponsePart, Error> { continuation in
             let task = Task { await self.start(request, to: host, ticket: ticket, continuation: continuation) }
             continuation.onTermination = { termination in
                 guard case .cancelled = termination else { return }
                 task.cancel()
-                Task { await self.cancel(ticket, on: host) }
+                stop()
             }
         }
+        return LinkResponse(stream: stream, stop: stop)
     }
 
     /// Ends every session and the relay connection.
@@ -326,6 +328,35 @@ public actor LinkClient {
         case .req, .pong:
             break
         }
+    }
+}
+
+/// A response's pieces as they arrive. The session holds on to the stream while the host may
+/// still send, so leaving the loop early has to say so: the iterator does when it goes.
+public struct LinkResponse: AsyncSequence, Sendable {
+    public typealias Element = LinkResponsePart
+
+    let stream: AsyncThrowingStream<LinkResponsePart, Error>
+    let stop: @Sendable () -> Void
+
+    public func makeAsyncIterator() -> Iterator {
+        Iterator(base: stream.makeAsyncIterator(), stopper: Stopper(stop))
+    }
+
+    public struct Iterator: AsyncIteratorProtocol {
+        var base: AsyncThrowingStream<LinkResponsePart, Error>.Iterator
+        let stopper: Stopper
+
+        public mutating func next() async throws -> LinkResponsePart? {
+            try await base.next()
+        }
+    }
+
+    final class Stopper {
+        let stop: @Sendable () -> Void
+        init(_ stop: @escaping @Sendable () -> Void) { self.stop = stop }
+        // Cancelling a request that already ended does nothing.
+        deinit { stop() }
     }
 }
 
