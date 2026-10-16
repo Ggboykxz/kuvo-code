@@ -14,8 +14,6 @@ struct IntegrationsSettings: View {
     @State private var signedIn: Set<String> = []
     /// Each connected machine's MCP servers, by machine.
     @State private var remote: [String: [MCPServer]] = [:]
-    /// A service you sign in to on its site, in the sheet.
-    @State private var signingInSite: Integrations.Service?
     @State private var removing: Integrations.Service?
 
     private var config: EngineConfig { app.engineConfig }
@@ -31,15 +29,7 @@ struct IntegrationsSettings: View {
     }
 
     var body: some View {
-        Group {
-            if let service = signingInSite {
-                // Signing in on its site, in place of the list, as a page of its own.
-                SiteSignInPage(service: service) { withAnimation(.ui) { signingInSite = nil } }
-                    .transition(.opacity)
-            } else {
-                list
-            }
-        }
+        list
         .modifier(LiveMCPServers(servers: $live, api: { app.api }, change: config.settings))
         .task(id: live) { await readSignIns() }
         .task {
@@ -66,7 +56,7 @@ struct IntegrationsSettings: View {
                config.value(at: MCPSettings.path + [id]) == nil { add(service) }
             // KUVO_DEMO_SIGN_IN_SITE=<id>: signing in to that service on its site, in the sheet.
             if let id = ProcessInfo.processInfo.environment["KUVO_DEMO_SIGN_IN_SITE"], let service = Integrations.service(id) {
-                signingInSite = service
+                app.settingsTabs.open(service)
             }
             // KUVO_DEMO_CONNECTED=<id>: its sign-in sheet, on its last step.
             if let id = ProcessInfo.processInfo.environment["KUVO_DEMO_CONNECTED"], let service = Integrations.service(id) {
@@ -105,11 +95,6 @@ struct IntegrationsSettings: View {
                     }
                 }
             }
-            Section {
-            } footer: {
-                Text("Each works the best way it has: through its maker's own server, where you sign in once; with a key you bring, kept in your Keychain; or on its site, in the browser the agent uses, signed in as you. The agent and your bots use them here and on your machines.")
-                    .foregroundStyle(.secondary)
-            }
         }
     }
 
@@ -140,7 +125,7 @@ struct IntegrationsSettings: View {
             HStack {
                 switch service.way {
                 case .browser:
-                    Button(SiteSignIns.shared.isSignedIn(service.id, on: nil) == true ? "Open…" : "Sign In…") { withAnimation(.ui) { signingInSite = service } }
+                    Button(SiteSignIns.shared.isSignedIn(service.id, on: nil) == true ? "Open…" : "Sign In…") { withAnimation(.ui) { app.settingsTabs.open(service) } }
                         .help("Sign in to \(service.title) in the browser the agent and your bots use, on this Mac or one of your machines")
                 default:
                     if !added {

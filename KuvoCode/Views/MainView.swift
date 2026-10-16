@@ -53,6 +53,8 @@ struct MainView: View {
     /// tabs line up with the card.
     @State private var mainPaneX: CGFloat = 0
     @State private var titleBarX: CGFloat = 0
+    @State private var settingsBarX: CGFloat = 0
+    @AppStorage(SettingsPage.storageKey) private var settingsPage = SettingsPage.general.rawValue
 
     enum Pane { case sessions, conversation, changes }
 
@@ -213,6 +215,8 @@ struct MainView: View {
         // Typing mustn't go on into a composer or terminal that Settings now hide.
         .onChange(of: app.showsSettings) { _, shows in
             if shows { NSApp.mainWindow?.makeFirstResponder(nil) }
+            // Leaving Settings closes the sites you were signing in to.
+            if !shows { app.settingsTabs.closeAll(machines: app.machines) }
         }
         // Nor into the conversation the expanded panel covers (its composer, if it had the
         // keyboard; the panel's own terminal or page keeps it).
@@ -227,9 +231,29 @@ struct MainView: View {
         // header row, and the sidebar is a click away. The panel is still ⌥⌘0, and sessions ⌘K.
         .toolbar {
             if app.showsSettings {
-                // In Settings, the title bar has only the way back.
-                ToolbarItem(placement: .navigation) { SettingsBackButton(close: closeSettings) }
-                    .sharedBackgroundVisibility(.hidden)
+                // In Settings, the title bar has the way back, and the tabs once you sign in to a
+                // site: the page's, then each site's, from where the page's card starts.
+                ToolbarItem(placement: .navigation) {
+                    HStack(spacing: 0) {
+                        SettingsBackButton(close: closeSettings)
+                        if !app.settingsTabs.sites.isEmpty {
+                            Color.clear.frame(width: max(8, app.settingsTabs.contentX - settingsBarX - 28))
+                            TabStrip(tabs: settingsTabItems, selection: settingsTabSelection, close: { id in
+                                withAnimation(.ui) { app.settingsTabs.close(id, machines: app.machines) }
+                            }, closeAll: { except in
+                                withAnimation(.ui) {
+                                    for site in app.settingsTabs.sites where site.id != except { app.settingsTabs.close(site.id, machines: app.machines) }
+                                }
+                            })
+                            .transition(.opacity)
+                        }
+                    }
+                    .background(WindowXReader { settingsBarX = $0 })
+                    // Room from the window, as the sessions' tabs have, so titles aren't squeezed.
+                    .frame(width: max(240, contentWidth - 150), alignment: .leading)
+                    .animation(.ui, value: app.settingsTabs.sites.map(\.id))
+                }
+                .sharedBackgroundVisibility(.hidden)
             } else if showsTabBar {
                 titleBar
             } else {
@@ -682,6 +706,20 @@ struct MainView: View {
     }
 
     /// Back from Settings to the sessions, as they were.
+    /// Settings' tabs: the page you're on (it stays), then each site you're signing in to.
+    private var settingsTabItems: [TabItem] {
+        let page = SettingsPage(rawValue: settingsPage) ?? .general
+        return [TabItem(id: Self.settingsPageTab, title: page.title, logo: nil, status: .idle, symbol: page.symbol, closes: false)]
+            + app.settingsTabs.sites.map { TabItem(id: $0.id, title: $0.service.title, logo: nil, status: .idle, symbol: $0.service.symbol) }
+    }
+
+    private static let settingsPageTab = "settings.page"
+
+    private var settingsTabSelection: Binding<String?> {
+        Binding(get: { app.settingsTabs.selected ?? Self.settingsPageTab },
+                set: { app.settingsTabs.selected = $0 == Self.settingsPageTab ? nil : $0 })
+    }
+
     private func closeSettings() {
         withAnimation(.ui) { app.showsSettings = false }
     }

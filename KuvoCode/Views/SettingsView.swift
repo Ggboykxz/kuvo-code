@@ -21,26 +21,38 @@ struct SettingsView: View {
     @AppStorage(SettingsPage.storageKey) private var tab = SettingsPage.general.rawValue
     @State private var search = ""
     @Environment(\.colorScheme) private var scheme
+    @Environment(AppModel.self) private var app
 
     private var page: SettingsPage { SettingsPage(rawValue: tab) ?? .general }
 
     var body: some View {
         HStack(spacing: Metrics.paneGap) {
-            SettingsSidebar(selection: Binding(get: { page }, set: { tab = $0.rawValue }), search: $search)
+            SettingsSidebar(selection: Binding(get: { page }, set: { tab = $0.rawValue; app.settingsTabs.selected = nil }), search: $search)
                 .padding(.top, topInset)
                 .frame(width: sidebarWidth)
-            VStack(alignment: .leading, spacing: 0) {
-                SettingsPageHeader(page: page)
-                page.content
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            Group {
+                // A site you're signing in to, in its tab: the whole card is its.
+                if let site = app.settingsTabs.selectedSite {
+                    SiteSignInPage(site: site) {
+                        withAnimation(.ui) { app.settingsTabs.close(site.id, machines: app.machines) }
+                    }
+                    .id(site.id)
+                } else {
+                    VStack(alignment: .leading, spacing: 0) {
+                        SettingsPageHeader(page: page)
+                        page.content
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    }
+                    .frame(maxWidth: 880)
+                    .id(page)
+                }
             }
-            .frame(maxWidth: 880)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(WindowXReader { app.settingsTabs.contentX = $0 })
             .background(Surface.cardFill(scheme, focused: true), in: .rect(cornerRadius: Metrics.cardRadius))
             .clipShape(.rect(cornerRadius: Metrics.cardRadius))
             .specularRim(RoundedRectangle(cornerRadius: Metrics.cardRadius))
             .shadow(color: .black.opacity(scheme == .dark ? 0.3 : 0.06), radius: 6, y: 1)
-            .id(page)
         }
         // Escape goes back to the sessions, from anywhere on the page; a sheet takes its own.
         .background {
@@ -51,7 +63,11 @@ struct SettingsView: View {
                 .accessibilityHidden(true)
         }
         .onAppear { Analytics.shared.track("settings_opened", ["tab": tab]) }
-        .onChange(of: tab) { Analytics.shared.track("settings_opened", ["tab": tab]) }
+        .onChange(of: tab) {
+            Analytics.shared.track("settings_opened", ["tab": tab])
+            // Picking a page in the sidebar shows it, in its tab.
+            app.settingsTabs.selected = nil
+        }
     }
 }
 

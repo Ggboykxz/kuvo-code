@@ -1,24 +1,18 @@
 import SwiftUI
 import WebKit
 
-/// Signing in to a service the agent uses on its site (X, Discord…), in Settings: the site, in the
-/// browser the agent and your bots browse with, on this Mac or on one of your machines (each
-/// keeps its own sign-ins), and whether it's signed in there.
+/// Signing in to a service the agent uses on its site (X, Discord…), in a tab of Settings: the
+/// site, in the browser the agent and your bots browse with, on this Mac or on one of your
+/// machines (each keeps its own sign-ins), and whether it's signed in there.
 struct SiteSignInPage: View {
-    let service: Integrations.Service
+    @Bindable var site: SettingsTabs.Site
+    /// Closes its tab.
     let done: () -> Void
     @Environment(AppModel.self) private var app
     @Environment(\.colorScheme) private var scheme
-    /// Where you sign in: "" for this Mac, else a machine's ID.
-    @State private var place = ""
-    @State private var pages = SignInPages()
-    /// The page opened on each machine, by machine, closed when you're done.
-    @State private var machinePages: [String: String] = [:]
-    @State private var opening: String?
 
-    private static let shape = RoundedRectangle(cornerRadius: 14)
-
-    private var machine: String? { place.isEmpty ? nil : place }
+    private var service: Integrations.Service { site.service }
+    private var machine: String? { site.place.isEmpty ? nil : site.place }
 
     private var machines: [MachineEngine] {
         app.machines.list.compactMap { app.machines.engine($0.id) }.filter(\.isReady)
@@ -29,26 +23,26 @@ struct SiteSignInPage: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 0) {
             header
+                .padding(.horizontal, 18)
+                .padding(.top, 16)
+                .padding(.bottom, 14)
             browser
         }
-        .padding(.horizontal, SettingsMetrics.inset - 20)
-        .padding(.top, 14)
-        .padding(.bottom, 20)
         .onAppear {
-            pages.open(service.site)
+            openOnMachine()
             #if DEBUG
             // KUVO_DEMO_SIGN_IN_PLACE=<machine>: on that machine.
             if let machine = ProcessInfo.processInfo.environment["KUVO_DEMO_SIGN_IN_PLACE"] {
                 Task {
                     try? await Task.sleep(for: .seconds(4))
-                    place = machine
+                    site.place = machine
                 }
             }
             #endif
         }
-        .onChange(of: place) { openOnMachine() }
+        .onChange(of: site.place) { openOnMachine() }
         // Whether it's signed in, as you sign in.
         .task {
             while !Task.isCancelled {
@@ -86,7 +80,7 @@ struct SiteSignInPage: View {
             if !machines.isEmpty {
                 PillPicker(options: [.init(value: "", title: "This Mac", symbol: "laptopcomputer")]
                     + machines.map { .init(value: $0.machine.id, title: $0.machine.name, symbol: "server.rack") },
-                           selection: $place)
+                           selection: $site.place)
             }
             Button("Done", action: close)
                 .keyboardShortcut(.defaultAction)
@@ -95,11 +89,11 @@ struct SiteSignInPage: View {
         .animation(.ui, value: SiteSignIns.shared.isSignedIn(service.id, on: machine))
     }
 
-    /// The page, in a card of its own.
+    /// The page, edge to edge under the header, its toolbar on the card.
     private var browser: some View {
         Group {
             if let machine, let engine = app.machines.engine(machine) {
-                if let id = machinePages[machine] {
+                if let id = site.machinePages[machine] {
                     MachineBrowserPane(browser: engine.browser, page: id) {
                         EmptyView()
                     } onSubmit: { address in
@@ -113,32 +107,24 @@ struct SiteSignInPage: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-            } else if let session = pages.top {
+            } else if let session = site.pages.top {
                 BrowserPane(session: session) { EmptyView() }
                     .id(ObjectIdentifier(session))
             }
         }
-        .padding(.top, 8)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Surface.cardFill(scheme, focused: true), in: Self.shape)
-        .clipShape(Self.shape)
-        .specularRim(Self.shape)
-        .shadow(color: .black.opacity(scheme == .dark ? 0.35 : 0.08), radius: 10, y: 3)
     }
 
     private func openOnMachine() {
-        guard let machine, machinePages[machine] == nil, opening != machine, let engine = app.machines.engine(machine) else { return }
-        opening = machine
+        guard let machine, site.machinePages[machine] == nil, site.opening != machine, let engine = app.machines.engine(machine) else { return }
+        site.opening = machine
         Task {
-            if let id = await engine.browser.newPage(service.site) { machinePages[machine] = id }
-            opening = nil
+            if let id = await engine.browser.newPage(service.site) { site.machinePages[machine] = id }
+            site.opening = nil
         }
     }
 
     private func close() {
-        for (machine, id) in machinePages { app.machines.engine(machine)?.browser.close(id) }
-        machinePages = [:]
-        pages.closeAll()
         done()
     }
 }

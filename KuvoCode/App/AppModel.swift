@@ -49,6 +49,8 @@ final class AppModel {
     var openMainWindow: (() -> Void)?
     /// Settings fill the main window in place of the sessions while this is on.
     var showsSettings = false
+    /// Settings' tabs: the page, and the sites you're signing in to.
+    let settingsTabs = SettingsTabs()
 
     /// Shows Settings in the main window, on `page` if one is given (otherwise the last one open).
     func openSettings(_ page: SettingsPage? = nil) {

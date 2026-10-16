@@ -19,6 +19,10 @@ struct TabItem: Identifiable, Equatable {
     /// A group chat's tab shows its bots.
     var group: [GroupAvatar.Face]?
     var status: Status
+    /// Its symbol, when it's not a session's (a page of Settings, a site).
+    var symbol: String?
+    /// One that stays (Settings' page) has no close button.
+    var closes = true
 
     enum Status {
         case idle, working, waiting, failed, unread
@@ -129,7 +133,7 @@ private struct TabButton: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            TabIcon(logo: tab.logo, symbol: SidebarView.draftDirectory(from: tab.id) == nil ? "bubble.left" : "square.and.pencil", bot: tab.bot, botMood: tab.botMood, group: tab.group, status: tab.status)
+            TabIcon(logo: tab.logo, symbol: tab.symbol ?? (SidebarView.draftDirectory(from: tab.id) == nil ? "bubble.left" : "square.and.pencil"), bot: tab.bot, botMood: tab.botMood, group: tab.group, status: tab.status)
             Text(tab.title)
                 .font(.system(size: 13, weight: isActive ? .medium : .regular))
                 .foregroundStyle(isActive ? .primary : .secondary)
@@ -148,13 +152,15 @@ private struct TabButton: View {
                         Color.black
                     }
                 }
-            Button(action: close) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .bold))
+            if tab.closes {
+                Button(action: close) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                }
+                .buttonStyle(IconButtonStyle(width: 16, height: 16, cornerRadius: 8))
+                .opacity(isHovering ? 1 : 0)
+                .help("Close Tab")
             }
-            .buttonStyle(IconButtonStyle(width: 16, height: 16, cornerRadius: 8))
-            .opacity(isHovering ? 1 : 0)
-            .help("Close Tab")
         }
         .padding(.leading, 6)
         .padding(.trailing, 8)

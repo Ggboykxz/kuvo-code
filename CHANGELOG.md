@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Settings has tabs: signing in to a site for the agent opens it in a tab of its own in the title bar, beside the page you were on, filling the window, and stays open while you go back and forth.
 - Every model uses your integrations' tools directly: the engine's Code Mode is off, where cheaper models went looking for an integration's tools, didn't find them and gave up. MCP servers you add get plain tools too.
 - Signing in to X, LinkedIn or Reddit for the agent happens right in Settings › Integrations, which shows whether you're signed in on this Mac and on each machine, live as you sign in.
 - X opens on your machines: a page opened there at an address used to stay blank on sites that turn headless browsers away.
