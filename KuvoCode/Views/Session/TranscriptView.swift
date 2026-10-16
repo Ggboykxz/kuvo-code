@@ -25,6 +25,7 @@ struct TranscriptView: View {
     @State private var followsEnd = true
     /// Scrolling now: a plain flag, so starting and stopping don't redraw the conversation.
     @State private var scrolling = ScrollingFlag()
+    @State private var endFollower = EndFollower()
     @State private var rowCache = RowCache()
     #if DEBUG
     /// How tall the conversation is, for the scrolling test (KUVO_DEMO_SCROLL).
@@ -83,7 +84,11 @@ struct TranscriptView: View {
             // Shrinking too: the lazy stack's first guess at the height can be too big, and a
             // session would then open part of the way up.
             guard followsEnd, !scrolling.isOn, new != old else { return }
-            position.scrollTo(edge: .bottom)
+            endFollower.follow {
+                // Later, you may have started scrolling meanwhile.
+                guard followsEnd, !scrolling.isOn else { return }
+                position.scrollTo(edge: .bottom)
+            }
         }
         // Messages scroll on under the card's header and the composer, blurring away there
         // instead of being cut at an edge.
@@ -1196,6 +1201,35 @@ final class RowCache {
 /// Set while you scroll, read by the handlers only.
 final class ScrollingFlag {
     var isOn = false
+}
+
+/// Keeps the end in view as the conversation grows. Scrolling makes the lazy stack make the rows
+/// it comes to, which measure taller or shorter than it guessed, so the height changes again in
+/// the same frame, and SwiftUI drops scroll geometry updates that come more than once a frame. A
+/// height that shrank and was dropped left it scrolled past the end: a blank conversation until
+/// something laid it out again (showing the panel). So each change scrolls at once (a
+/// conversation opens at its end), again on the next turn of the run loop for the changes after
+/// it, and once more when they've settled, for any that weren't passed on.
+final class EndFollower {
+    private var isBusy = false
+    private var settle: Task<Void, Never>?
+
+    func follow(_ scroll: @escaping () -> Void) {
+        if !isBusy {
+            isBusy = true
+            scroll()
+            DispatchQueue.main.async { [self] in
+                isBusy = false
+                scroll()
+            }
+        }
+        settle?.cancel()
+        settle = Task {
+            try? await Task.sleep(for: .milliseconds(200))
+            guard !Task.isCancelled else { return }
+            scroll()
+        }
+    }
 }
 
 /// The end of a message that's cut short, fading out.
