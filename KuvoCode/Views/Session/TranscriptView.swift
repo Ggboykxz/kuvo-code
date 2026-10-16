@@ -147,11 +147,18 @@ struct TranscriptView: View {
     }
 
     private func loadEarlier(above id: String?) {
-        // Only once you've scrolled up to it: not as the conversation opens at its end.
-        guard !scroller.followsEnd else { return }
+        // Only once you've scrolled up to it, not as the conversation opens at its end; unless
+        // it all fits, when the top is in view from the start.
+        guard !scroller.followsEnd || scroller.fits else { return }
         Task {
             await model.loadEarlier()
             if let id { scroller.keep(id) }
+            // Still all in view: the top won't come into view again, so on to the next.
+            try? await Task.sleep(for: .milliseconds(300))
+            while model.hasEarlier, scroller.fits, !Task.isCancelled {
+                await model.loadEarlier()
+                try? await Task.sleep(for: .milliseconds(300))
+            }
         }
     }
 

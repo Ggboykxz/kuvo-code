@@ -212,9 +212,11 @@ final class SessionModel {
     /// Reads every earlier message there is (to search them), up to a great many.
     func loadAllEarlier() async {
         while hasEarlier, transcript.messages.count < 20_000 {
+            // After one already on its way (scrolling up).
+            while isLoadingEarlier { try? await Task.sleep(for: .milliseconds(100)) }
             let before = transcript.messages.count
             await loadEarlier()
-            if transcript.messages.count == before { return }
+            if transcript.messages.count == before, !isLoadingEarlier { return }
         }
     }
 
@@ -249,8 +251,12 @@ final class SessionModel {
         async let active = api.activeSessions()
         do {
             let page = try await messages
-            // Earlier messages read as you scrolled up stay, ahead of the latest.
-            let kept = page.data.first.map { first in transcript.messages.filter { $0.id < first.id } } ?? []
+            // Earlier messages read as you scrolled up stay, ahead of the latest: only those this
+            // read, not a saved copy's (whose start it doesn't know), and only when they reach the
+            // latest page; after a gap (many messages while it was away), it starts again from it.
+            let earlier = transcript.messages
+            let reaches = page.data.first.map { first in earlier.last.map { $0.id >= first.id } ?? false } ?? false
+            let kept = !isCopy && reaches ? page.data.first.map { first in earlier.filter { $0.id < first.id } } ?? [] : []
             if kept.isEmpty { earlierCursor = Self.cursor(before: page) }
             transcript.load(
                 messages: kept + page.data,

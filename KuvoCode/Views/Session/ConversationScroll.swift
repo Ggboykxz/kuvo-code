@@ -16,6 +16,8 @@ final class ConversationScroller {
     /// Whether to keep the newest in view: true until you scroll up, true again once you scroll
     /// back to the end.
     var followsEnd = true
+    /// All of it fits in view: nothing to scroll. (Not until it's known.)
+    @ObservationIgnored fileprivate(set) var fits = false
     @ObservationIgnored fileprivate(set) var request: Request?
     /// Goes up with each request, for the scroll view to take it.
     fileprivate(set) var requests = 0
@@ -101,8 +103,10 @@ struct ConversationScroll<Rows: View>: View {
         }
         // One watcher for both, as SwiftUI passes on only one change a frame from each.
         .onScrollGeometryChange(for: EndGeometry.self) { geometry in
-            EndGeometry(atEnd: geometry.visibleRect.maxY >= geometry.contentSize.height - 40, height: geometry.contentSize.height)
+            EndGeometry(atEnd: geometry.visibleRect.maxY >= geometry.contentSize.height - 40, height: geometry.contentSize.height,
+                        fits: geometry.contentSize.height <= geometry.containerSize.height + 1)
         } action: { old, new in
+            scroller.fits = new.fits
             // Your scrolling decides; growth below the fold doesn't.
             if scrolling.isOn { scroller.followsEnd = new.atEnd }
             // Shrinking too: the lazy stack's first guess at the height can be too big, and a
@@ -165,6 +169,7 @@ final class ScrollingFlag {
 struct EndGeometry: Equatable {
     var atEnd: Bool
     var height: CGFloat
+    var fits = false
 }
 
 /// Keeps the end in view as the conversation grows. Scrolling makes the lazy stack make the rows
