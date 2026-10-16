@@ -201,16 +201,10 @@ enum BrowserTools {
     }
 
     static func call(_ name: String, arguments: [String: Any], agent: BrowserAgent, caller: String? = nil) async -> [String: Any] {
-        // While a tool works, a dialog the page shows is answered at once (it would hold the
-        // page, and the tool, until someone did).
-        BrowserAgent.working += 1
-        let accepts = (arguments["accept_dialog"] as? NSNumber)?.boolValue ?? false
-        if accepts { BrowserAgent.accepting += 1 }
-        defer {
-            BrowserAgent.working -= 1
-            if accepts { BrowserAgent.accepting -= 1 }
-            agent.finished()
-        }
+        // While the tool works in a page, a dialog it shows is answered at once (it would hold
+        // the page, and the tool, until someone did); the agent marks the page it works in.
+        agent.acceptsDialogs = (arguments["accept_dialog"] as? NSNumber)?.boolValue ?? false
+        defer { agent.finished() }
         // You have the page: the step waits until you hand it back.
         if let handedBack = await agent.waitForControl() {
             return ["content": [["type": "text", "text": handedBack]], "isError": false]

@@ -40,23 +40,34 @@ final class BrowserAgent {
     func waitForControl() async -> String? {
         let page = owner.map { owner in use ?? utilities.botBrowser(owner) } ?? utilities.activeBrowser
         guard let page, page.isHeld else { return nil }
+        // Its badge shows while it waits; a closed page, or a stopped run, ends the wait.
         page.agentWorks(caller)
-        touched = page
         let started = ContinuousClock.now
-        while page.isHeld, ContinuousClock.now - started < .seconds(600) {
+        while page.isHeld, !Task.isCancelled, ContinuousClock.now - started < .seconds(600) {
             try? await Task.sleep(for: .milliseconds(300))
         }
+        page.agentRests()
         guard !page.isHeld else { return Self.stillHeld }
         return Self.handedBack + (await snapshot())
     }
 
-    /// The tool call ended: the page's badge stays a moment, for the next.
+    /// The tool call ended: its page's badge stays a moment, for the next.
     func finished() {
-        touched?.agentRests()
+        touched?.agentStepEnded(accepting: acceptsDialogs)
+        touched = nil
     }
 
-    /// The page this call worked in.
+    /// The page this call works in: its dialogs are answered for it, and a bot's is the one it
+    /// goes on in.
     private weak var touched: BrowserSession?
+
+    private func works(in browser: BrowserSession) {
+        guard touched !== browser else { return }
+        touched?.agentStepEnded(accepting: acceptsDialogs)
+        touched = browser
+        browser.agentStepBegan(caller, accepting: acceptsDialogs)
+        if let owner { utilities.botWorks(owner, in: browser) }
+    }
 
     // MARK: Actions
 
@@ -70,8 +81,11 @@ final class BrowserAgent {
 
     func newTab(_ address: String?) async -> String {
         let browser = utilities.newBrowser(address, byAgent: true, owner: owner)
+        // A bot's new tab is the one it goes on in.
+        if owner != nil { use = browser }
         Analytics.shared.trackOnce("agent_used_browser")
-        utilities.reveal()
+        // Brought forward, unless it's a bot's out of view.
+        utilities.reveal(browser)
         if address != nil { await settle(browser, expectNavigation: true) }
         return await snapshot()
     }
@@ -101,8 +115,9 @@ final class BrowserAgent {
     }
 
     /// What happened in the browser since the agent's last tool (a download), for its next result.
+    /// What happened in this agent's tabs (yours, or a bot's own) since: downloads, dialogs.
     func takeNotes() -> String {
-        let notes = utilities.browsers.values.flatMap { browser in
+        let notes = utilities.browserTabs(of: owner).map(\.browser).flatMap { browser in
             defer { browser.agentNotes = [] }
             return browser.agentNotes
         }
@@ -111,12 +126,8 @@ final class BrowserAgent {
 
     static let unanswered = "The user didn't answer in time. Carry on with what you can without it, and say in your reply what you need; if you work on your own (a bot), schedule a wake-up to try again later."
 
-    /// Browser tools at work: while any is, dialogs pages show are answered at once.
-    static var working = 0
-    static var isWorking: Bool { working > 0 }
-    /// Of them, those that said to accept confirmations and prompts rather than decline them.
-    static var accepting = 0
-    static var acceptsDialogs: Bool { accepting > 0 }
+    /// This call said to accept confirmations and prompts its page shows, rather than decline them.
+    var acceptsDialogs = false
 
     /// The panel's browser tabs (a bot's own, for a bot), numbered from 1; or switches to one, or
     /// closes one.
@@ -376,8 +387,7 @@ final class BrowserAgent {
         }
         Analytics.shared.trackOnce("agent_used_browser")
         utilities.reveal(browser)
-        browser.agentWorks(caller)
-        touched = browser
+        works(in: browser)
         return browser
     }
 

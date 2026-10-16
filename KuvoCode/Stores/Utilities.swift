@@ -29,7 +29,10 @@ final class Utilities {
     }
 
     private(set) var tabs: [Tab] = [Tab(kind: .changes)]
-    var selection: UUID?
+    var selection: UUID? {
+        // A tab of yours you took over and moved on from: back to the agent, which would wait.
+        didSet { if oldValue != selection, let old = oldValue, let browser = browsers[old], browser.isHeld { browser.isHeld = false } }
+    }
     /// Whether file tabs show the tree beside the file.
     var showsTree = true
     private(set) var terminals: [UUID: TerminalSession] = [:]
@@ -168,7 +171,7 @@ final class Utilities {
         browser.onClose = { [weak self] in
             guard let self else { return }
             close(tab.id)
-            if let opener, tabs.contains(where: { $0.id == opener }) { selection = opener }
+            if let opener, let page = tabs.first(where: { $0.id == opener }), isVisible(page) { selection = opener }
         }
         browsers[tab.id] = browser
         if let address { browser.load(address) }
@@ -344,10 +347,19 @@ final class Utilities {
         return tabs.reversed().lazy.filter { $0.owner == nil }.compactMap { self.browsers[$0.id] }.first
     }
 
-    /// The tab a bot on this Mac browses in: the one in view if it's the bot's, else its latest.
+    /// The tab a bot on this Mac browses in: the one in view if it's the bot's, else the one it
+    /// last worked in, else its latest.
     func botBrowser(_ owner: String) -> BrowserSession? {
         if let selected, selected.owner == owner, let browser = browsers[selected.id] { return browser }
+        if let id = botTabs[owner], let browser = browsers[id] { return browser }
         return tabs.reversed().lazy.filter { $0.owner == owner }.compactMap { self.browsers[$0.id] }.first
+    }
+
+    /// Each bot's tab it last worked in, so a tab it switched to stays its tab in use.
+    @ObservationIgnored private var botTabs: [String: UUID] = [:]
+
+    func botWorks(_ owner: String, in browser: BrowserSession) {
+        botTabs[owner] = browsers.first { $0.value === browser }?.key
     }
 
     /// The browser tabs of a bot, or yours (nil), in order.

@@ -36,7 +36,26 @@ final class BrowserSession: NSObject {
         didSet { if isHeld, !oldValue { Analytics.shared.track("browser_taken_over", ["machine": false]) } }
     }
 
-    /// An agent's step in the page begins.
+    /// Agent steps at work in this page now, and of them those told to accept confirmations: while
+    /// any is, a dialog the page shows is answered at once (it would hold the page, and the step).
+    @ObservationIgnored private var agentSteps = 0
+    @ObservationIgnored private var acceptingSteps = 0
+
+    /// An agent's step begins in this page.
+    func agentStepBegan(_ session: String?, accepting: Bool) {
+        agentSteps += 1
+        if accepting { acceptingSteps += 1 }
+        agentWorks(session)
+    }
+
+    /// The step ended.
+    func agentStepEnded(accepting: Bool) {
+        agentSteps = max(0, agentSteps - 1)
+        if accepting { acceptingSteps = max(0, acceptingSteps - 1) }
+        if agentSteps == 0 { agentRests() }
+    }
+
+    /// An agent is at work in the page (or waiting for it): its badge shows.
     func agentWorks(_ session: String?) {
         resting?.cancel()
         if agentSession != session { agentSession = session }
@@ -163,6 +182,8 @@ final class BrowserSession: NSObject {
 
     func close() {
         if dialog != nil { answerDialog(accept: false) }
+        // An agent waiting for it goes on.
+        isHeld = false
         webView.stopLoading()
         observations = []
     }
@@ -243,8 +264,9 @@ extension BrowserSession: WKUIDelegate {
     }
 
     private func ask(_ dialog: PageDialog, answer: @escaping (Bool, String?) -> Void) {
-        if BrowserAgent.isWorking {
-            let accept = dialog.kind == .alert || BrowserAgent.acceptsDialogs
+        // While you have the page, it asks you, even with a step at work.
+        if agentSteps > 0, !isHeld {
+            let accept = dialog.kind == .alert || acceptingSteps > 0
             answer(accept, dialog.defaultText)
             let what = dialog.kind == .alert ? "an alert" : dialog.kind == .confirm ? "a confirmation" : "a question"
             agentNotes.append("The page showed \(what): “\(dialog.message)” (\(accept ? "accepted" : "declined"))." + (accept ? "" : " If it should go ahead, do it again with accept_dialog: true."))
