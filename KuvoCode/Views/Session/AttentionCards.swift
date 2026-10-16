@@ -175,6 +175,9 @@ private struct QuestionPager: View {
                     }
                     .frame(height: min(max(choicesHeight, 1), room))
                     .scrollBounceBehavior(.basedOnSize)
+                    // The rows' fill reaches out past the column, so their numbers line up
+                    // with the question above.
+                    .padding(.horizontal, -ChoiceRow.inset)
                 }
                 footer(field)
             }
@@ -413,11 +416,14 @@ private struct ChoiceRow: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
+            // The badge and the arrow centered on the choice's first line, which sits in a row as
+            // tall as the badge.
+            HStack(alignment: .top, spacing: 10) {
                 badge
                 VStack(alignment: .leading, spacing: 2) {
                     Text(option.label)
                         .foregroundStyle(.primary)
+                        .frame(minHeight: Self.badgeSize)
                     if let description = option.description, !description.isEmpty {
                         Text(description)
                             .font(.callout)
@@ -428,10 +434,11 @@ private struct ChoiceRow: View {
                 if !isMultiple {
                     Image(systemName: "arrow.right")
                         .foregroundStyle(.secondary)
+                        .frame(height: Self.badgeSize)
                         .opacity(isHovering ? 1 : 0)
                 }
             }
-            .padding(.horizontal, 10)
+            .padding(.horizontal, Self.inset)
             .padding(.vertical, 8)
             .contentShape(.rect(cornerRadius: 10))
             .background(isSelected ? accent.opacity(0.14) : isHovering ? Pressable.hoverFill : .clear, in: .rect(cornerRadius: 10))
@@ -457,9 +464,12 @@ private struct ChoiceRow: View {
                     .foregroundStyle(isSelected ? .white : .secondary)
             }
         }
-        .frame(width: 22, height: 22)
-        .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
+        .frame(width: Self.badgeSize, height: Self.badgeSize)
     }
+
+    private static let badgeSize: CGFloat = 22
+    /// How far its content sits inside its fill.
+    static let inset: CGFloat = 10
 }
 
 /// A form a tool needs filled (an MCP server's, say): its fields together, then Answer.
