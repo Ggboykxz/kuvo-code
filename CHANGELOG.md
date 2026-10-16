@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- With Outlook and Microsoft 365 connected, every message used to carry all 196 of its tools, about 280,000 tokens, so sessions were slow and costly and small models ran out of room. Now the agent looks up the tool it needs, and each message is about 30 times smaller. Integrations you added earlier get this, and any newer version of their server, on their own.
 - In a narrow window, each Settings page's title stays lined up with the settings under it.
 - A draft waiting in the composer opens with the cursor after it, instead of all selected, when the window takes a moment to come forward.
 

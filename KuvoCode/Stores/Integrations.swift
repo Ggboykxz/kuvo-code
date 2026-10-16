@@ -72,13 +72,30 @@ nonisolated enum Integrations {
         return .object(settings)
     }
 
-    /// Integrations added before their tools were plain tools: made so, once, before the
-    /// engine starts.
+    /// Brings added integrations up to date before the engine starts: tools made plain tools (for
+    /// those added before they were), and a package's server started as it's pinned now, so a
+    /// new version or option reaches integrations added with an older one.
     @MainActor static func upgrade(_ config: EngineConfig) {
         guard case .object(let servers) = config.value(at: MCPSettings.path) else { return }
-        for (id, server) in servers where service(id) != nil && server["codemode"] == nil && server.object != nil {
-            config.set(.bool(false), at: MCPSettings.path + [id, "codemode"])
+        for (id, server) in servers {
+            guard let service = service(id), server.object != nil else { continue }
+            if server["codemode"] == nil {
+                config.set(.bool(false), at: MCPSettings.path + [id, "codemode"])
+            }
+            // The same package through kuvo-npx, pinned or started differently: as it is now.
+            if case .package(let command, _, _, _, _, _) = service.way, let package = command.first,
+               case .array(let old)? = server["command"], old.first?.string == Launcher.name,
+               let oldPackage = old.dropFirst().first?.string, Self.packageName(oldPackage) == Self.packageName(package) {
+                let current = ([Launcher.name] + command).map(JSONValue.string)
+                if old != current { config.set(.array(current), at: MCPSettings.path + [id, "command"]) }
+            }
         }
+    }
+
+    /// "@scope/name" of "@scope/name@1.2.3", "name" of "name@1.2.3".
+    static func packageName(_ spec: String) -> String {
+        guard let at = spec.dropFirst().lastIndex(of: "@") else { return spec }
+        return String(spec[..<at])
     }
 
     private static func server(for service: Service) -> JSONValue? {
@@ -206,7 +223,9 @@ nonisolated enum Integrations {
         Service(id: "apple-calendar", title: "Apple Calendar and Reminders", summary: "Events and reminders in your Mac's Calendar and Reminders, with every account you have there", kind: .mail, symbol: "calendar", site: "https://www.icloud.com/calendar",
                 way: .package(command: ["mcp-server-apple-events@1.6.0"], keys: [], help: nil, by: "FradSer's mcp-server-apple-events", macOnly: true)),
         Service(id: "microsoft-365", title: "Outlook and Microsoft 365", summary: "Mail, calendar, contacts and files; you sign in with a code the first time", kind: .mail, symbol: "envelope", site: "https://outlook.live.com",
-                way: .package(command: ["@softeria/ms-365-mcp-server@0.168.0"], keys: [], help: nil, by: "Softeria's ms-365-mcp-server", environment: [
+                // --discovery: its own way of keeping its 196 tools (about 280k tokens) out of every
+                // request; the agent searches them and runs the one it needs.
+                way: .package(command: ["@softeria/ms-365-mcp-server@0.168.0", "--discovery"], keys: [], help: nil, by: "Softeria's ms-365-mcp-server", environment: [
                     // Its sign-in, chosen account and logs in a folder of its own, not the home folder or the keychain.
                     "MS365_MCP_TOKEN_CACHE_PATH": "{env:KUVO_INTEGRATIONS}/microsoft-365/token-cache.json",
                     "MS365_MCP_SELECTED_ACCOUNT_PATH": "{env:KUVO_INTEGRATIONS}/microsoft-365/selected-account.json",
