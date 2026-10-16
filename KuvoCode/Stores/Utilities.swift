@@ -29,9 +29,25 @@ final class Utilities {
     }
 
     private(set) var tabs: [Tab] = [Tab(kind: .changes)]
-    var selection: UUID? {
-        // A tab of yours you took over and moved on from: back to the agent, which would wait.
-        didSet { if oldValue != selection, let old = oldValue, let browser = browsers[old], browser.isHeld { browser.isHeld = false } }
+    var selection: UUID?
+
+    /// You picked a tab in the strip. A page you took over and moved on from goes back to its
+    /// agent, which would otherwise wait for it (a tab chosen any other way, like a popup the page
+    /// opened, leaves it yours).
+    func choose(_ id: UUID) {
+        if let old = selection, old != id, let tab = tabs.first(where: { $0.id == old }) {
+            if let browser = browsers[old], browser.isHeld { browser.isHeld = false }
+            if case .machinePage(let machine, let page?) = tab.kind { machineBrowser?(machine)?.handBack(page) }
+        }
+        selection = id
+    }
+
+    /// The page in view is one you took over: agents' steps elsewhere leave the panel on it.
+    private var holdsSelection: Bool {
+        guard let selected else { return false }
+        if browsers[selected.id]?.isHeld == true { return true }
+        if case .machinePage(let machine, _) = selected.kind { return machineBrowser?(machine)?.isHeld == true }
+        return false
     }
     /// Whether file tabs show the tree beside the file.
     var showsTree = true
@@ -334,8 +350,9 @@ final class Utilities {
     /// Brings the panel into view, on `browser`'s tab if given.
     func reveal(_ browser: BrowserSession? = nil) {
         if let browser, let id = browsers.first(where: { $0.value === browser })?.key {
-            // A bot's tab out of view stays there: the bot browses out of sight.
-            guard let tab = tabs.first(where: { $0.id == id }), isVisible(tab) else { return }
+            // A bot's tab out of view stays there: the bot browses out of sight; and a page you
+            // took over stays in view.
+            guard let tab = tabs.first(where: { $0.id == id }), isVisible(tab), !holdsSelection || id == selection else { return }
             selection = id
         }
         if PanelSettings.isOn(PanelSettings.revealsForAgent) { revealRequest += 1 }

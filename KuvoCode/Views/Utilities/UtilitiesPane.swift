@@ -53,7 +53,7 @@ struct UtilitiesPane: View {
                                     title: title(for: tab),
                                     icon: icon(for: tab),
                                     isSelected: tab.id == utilities.selected?.id,
-                                    select: { utilities.selection = tab.id },
+                                    select: { utilities.choose(tab.id) },
                                     close: { withAnimation(.ui) { utilities.close(tab.id) } }
                                 )
                                 .frame(minWidth: 120, maxWidth: 190)

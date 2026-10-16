@@ -63,10 +63,7 @@ final class MachineBrowser {
     /// The page in use: the one the agent or you last used.
     private(set) var activeID: String?
     /// The page the panel shows.
-    private(set) var shownPage: String? {
-        // A page you took over and moved on from: back to the agent, which would otherwise wait.
-        didSet { if let old = oldValue, old != shownPage, myHolds.contains(old) { hold(old, false) } }
-    }
+    private(set) var shownPage: String?
     /// Its latest picture, which goes straight to the view showing it (`pictureView`), never
     /// through SwiftUI: they come many times a second.
     @ObservationIgnored private(set) var picture: Picture? {
@@ -140,6 +137,11 @@ final class MachineBrowser {
         guard let page = shownPage else { return }
         hold(page, on)
         if on { Analytics.shared.track("browser_taken_over", ["machine": true]) }
+    }
+
+    /// You moved on from a page you took over: back to its agent.
+    func handBack(_ page: String) {
+        if myHolds.contains(page) { hold(page, false) }
     }
 
     private func hold(_ page: String, _ on: Bool) {
