@@ -290,14 +290,22 @@ final class Bots {
         Analytics.shared.track("bot_wake_added", ["repeats": every != nil])
     }
 
+    /// Cancels a wake-up by its letters, which a repeating one keeps as its time moves on (it may
+    /// have come back since it was listed).
     func cancelWake(_ wake: Wakes.Pending, of bot: Bot) async {
-        let file = ((bot.folder as NSString).appendingPathComponent("wakes") as NSString).appendingPathComponent(wake.id)
+        let folder = (bot.folder as NSString).appendingPathComponent("wakes")
+        let letters = wake.letters
+        // As kuvo-wake names them; anything else isn't one of its wake-ups (or safe in a command).
+        guard !letters.isEmpty, letters.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else { return }
         if let machine = bot.machine {
-            _ = await Task.detached { RemoteShell.run("rm -f \(SSHConnection.quoted(file))", on: machine) }.value
+            let base = SSHConnection.quoted(folder)
+            _ = await Task.detached { RemoteShell.run("rm -f \(base)/*-\(letters) \(base)/*-\(letters)-*", on: machine) }.value
         } else {
-            try? FileManager.default.removeItem(atPath: file)
+            for name in (try? FileManager.default.contentsOfDirectory(atPath: folder)) ?? [] where Wakes.Pending(id: name, note: "")?.letters == letters {
+                try? FileManager.default.removeItem(atPath: (folder as NSString).appendingPathComponent(name))
+            }
         }
-        wakes[bot.id]?.removeAll { $0.id == wake.id }
+        wakes[bot.id]?.removeAll { $0.letters == letters }
     }
 
     // MARK: Pausing
@@ -413,8 +421,10 @@ final class Bots {
         let file = (bot.folder as NSString).appendingPathComponent("session")
         if let machine = bot.machine {
             let directory = (bot.folder as NSString).appendingPathComponent("directory")
+            let timezone = (bot.folder as NSString).appendingPathComponent("timezone")
             let path = RemoteFolder.parse(bot.directory)?.path ?? bot.directory
-            let script = "printf '%s' \(SSHConnection.quoted(bot.sessionID)) >\(SSHConnection.quoted(file)) && printf '%s' \(SSHConnection.quoted(path)) >\(SSHConnection.quoted(directory))"
+            // Your time zone, which its wake-ups' times are in.
+            let script = "printf '%s' \(SSHConnection.quoted(bot.sessionID)) >\(SSHConnection.quoted(file)) && printf '%s' \(SSHConnection.quoted(path)) >\(SSHConnection.quoted(directory)) && printf '%s' \(SSHConnection.quoted(TimeZone.current.identifier)) >\(SSHConnection.quoted(timezone))"
             guard await Task.detached(operation: { RemoteShell.run(script, on: machine) }).value != nil else { throw Failure.noFolder }
         } else {
             try Data(bot.sessionID.utf8).write(to: URL(filePath: file))
@@ -449,10 +459,10 @@ final class Bots {
 
         To schedule a wake-up, run:
           kuvo-wake \(bot.id) add <when> "<note to yourself>"
-        <when> is +5m, +2h, +1d, or a time like 2026-10-16T09:00 on that computer's clock, at least a minute from now. At that \
+        <when> is +5m, +2h, +1d, or a time like 2026-10-16T09:00 \(bot.machine == nil ? "on this Mac's clock" : "in the user's time zone, \(TimeZone.current.identifier)"), at least a minute from now. At that \
         time this conversation gets your note as a new message starting with "\(Wakes.marker.trimmingCharacters(in: .whitespaces))", \
         and you carry on. `kuvo-wake \(bot.id) list` shows what's scheduled; `kuvo-wake \(bot.id) cancel <id>` cancels one. \
-        (If kuvo-wake isn't found, it's "\(full)".)\(bot.machine == nil ? "" : " The user is in the time zone \(TimeZone.current.identifier): a time they name is theirs, so if that computer's clock is in another one (check with `date`), convert it.")
+        (If kuvo-wake isn't found, it's "\(full)".)
 
         For something that repeats, schedule it once with --every, and it keeps coming back until it's canceled:
           kuvo-wake \(bot.id) add 2026-10-17T09:00 --every 1d "<what to do each time>"

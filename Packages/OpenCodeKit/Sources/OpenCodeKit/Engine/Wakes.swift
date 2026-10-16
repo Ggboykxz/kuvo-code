@@ -32,11 +32,15 @@ public enum Wakes {
             every = parts.count > 2 ? Repeat(String(parts[2])) : nil
         }
 
-        /// The file's name for its next time, after it went at `now`; nil if it doesn't repeat.
+        /// The letters that name it for good: a repeating one keeps them when it comes back.
+        public var letters: String { String(id.split(separator: "-").dropFirst().first ?? "") }
+
+        /// The file's name for its next time, after it went at `now`, with the same letters; nil
+        /// if it doesn't repeat.
         public func nextID(after now: Date = .now, calendar: Calendar = .current) -> String? {
             guard let every else { return nil }
             let next = every.next(after: due, now: now, calendar: calendar)
-            return Wakes.name(due: next, every: every)
+            return "\(Int(next.timeIntervalSince1970))-\(letters)-\(every.text)"
         }
     }
 
@@ -162,6 +166,7 @@ public enum Wakes {
       echo "      repeat: 30m, 2h, 1d, 1w (at least 5m), or weekdays; it keeps coming back until canceled"
       echo "  kuvo-wake <bot> list"
       echo "  kuvo-wake <bot> cancel <id>"
+      echo "Times are on this computer's clock, or in the time zone in the bot's folder's timezone file."
     }
 
     # A time as seconds since 1970, from +30m, +2h, +1d, an ISO date and time, or seconds.
@@ -251,8 +256,8 @@ public enum Wakes {
         [ -n "$session" ] || continue
         for wake in "$bot"wakes/*; do
           [ -f "$wake" ] || continue
-          due=${wake##*/}; every=${due#*-}; due=${due%%-*}
-          case "$every" in *-*) every=${every#*-};; *) every=;; esac
+          file=${wake##*/}; rest=${file#*-}; due=${file%%-*}
+          case "$rest" in *-*) every=${rest#*-};; *) every=;; esac
           case "$due" in ''|*[!0-9]*) continue;; esac
           [ "$due" -le "$now" ] || continue
           # The bot's folder's tools (its browser) first: the engine connects them a moment
@@ -277,9 +282,15 @@ public enum Wakes {
             auth=$(printf 'opencode:%s' "$password" | base64 | tr -d '\n')
             wget -q -T 20 -O /dev/null --header="Authorization: Basic $auth" --header='Content-Type: application/json' --post-data="$body" "$url" && sent=1
           fi
-          # Sent: a repeating one comes back at its next time; others are done.
+          # Sent: a repeating one comes back at its next time (in the user's time zone, which the
+          # bot's folder names), keeping its letters; others are done.
           if [ -n "$sent" ]; then
-            if [ -n "$every" ] && repeats "$every"; then mv -f "$wake" "${bot}wakes/$(name "$(next "$due" "$every")" "$every")"; else rm -f "$wake"; fi
+            if [ -n "$every" ] && repeats "$every"; then
+              tz=$(cat "${bot}timezone" 2>/dev/null)
+              mv -f "$wake" "${bot}wakes/$( [ -n "$tz" ] && export TZ="$tz"; next "$due" "$every")-$rest"
+            else
+              rm -f "$wake"
+            fi
           fi
         done
       done
@@ -289,6 +300,8 @@ public enum Wakes {
     bot=$1; command=$2
     case "$bot" in */*) ;; ?*) bot="${KUVO_BOTS:-$HOME/.kuvo-code/bots}/$bot" ;; esac
     if [ -z "$1" ] || [ ! -d "$bot" ]; then usage >&2; exit 2; fi
+    # The user's time zone, when the bot lives on a machine whose clock may be in another.
+    if [ -s "$bot/timezone" ]; then TZ=$(cat "$bot/timezone"); export TZ; fi
     case "$command" in
       add)
         due=$(seconds "$3") || { echo "Couldn't read the time \"$3\". Use +30m, +2h, +1d, or a time like 2026-10-16T09:00." >&2; exit 2; }
@@ -318,8 +331,13 @@ public enum Wakes {
         done
         [ -n "$found" ] || echo "No wake-ups scheduled." ;;
       cancel)
-        [ -n "$3" ] && [ -f "$bot/wakes/$3" ] || { echo "No wake-up \"$3\". See kuvo-wake $1 list." >&2; exit 2; }
-        rm -f "$bot/wakes/$3"; echo "Canceled $3." ;;
+        # By its letters, which a repeating one keeps as its time moves on.
+        letters=${3#*-}; letters=${letters%%-*}; found=
+        if [ -n "$letters" ]; then
+          for f in "$bot"/wakes/*-"$letters" "$bot"/wakes/*-"$letters"-*; do [ -f "$f" ] && rm -f "$f" && found=1; done
+        fi
+        [ -n "$found" ] || { echo "No wake-up \"$3\". See kuvo-wake $1 list." >&2; exit 2; }
+        echo "Canceled $3." ;;
       *) usage ;;
     esac
     """#

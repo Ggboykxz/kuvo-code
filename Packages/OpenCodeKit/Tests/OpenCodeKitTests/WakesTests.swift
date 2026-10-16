@@ -99,6 +99,17 @@ struct WakesTests {
         utc.timeZone = TimeZone(identifier: "UTC")!
         #expect(utc.component(.weekday, from: monday.due) == 2)
         #expect(utc.component(.hour, from: monday.due) == 9)
+
+        // Canceled by its letters, which it keeps as its time moves on.
+        #expect(try sh("\"\(wake)\" \"\(bot.path)\" cancel \(monday.letters)", in: k).status == 0)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: bot.appending(path: "wakes").path).isEmpty)
+
+        // On a machine, the times are in the user's time zone, which the bot's folder names.
+        try "America/New_York".write(to: bot.appending(path: "timezone"), atomically: true, encoding: .utf8)
+        #expect(try sh("TZ=UTC \"\(wake)\" \"\(bot.path)\" add 2099-01-05T09:00 'in New York'", in: k).status == 0)
+        let names = try FileManager.default.contentsOfDirectory(atPath: bot.appending(path: "wakes").path)
+        let newYork = try #require(Wakes.Pending(id: names[0], note: ""))
+        #expect(utc.component(.hour, from: newYork.due) == 14)
     }
 
     /// The script's next time for a repeat, from its own functions, at `now`.
@@ -138,7 +149,8 @@ struct WakesTests {
         #expect(Wakes.Repeat("d") == nil)
         let wake = Wakes.Pending(id: "1792080986-CkytYD-1d", note: "hi")
         #expect(wake?.every == .days(1))
-        #expect(wake?.nextID()?.hasSuffix("-1d") == true)
+        #expect(wake?.nextID()?.hasSuffix("-CkytYD-1d") == true)
+        #expect(wake?.letters == "CkytYD")
         #expect(Wakes.Pending(id: "1792080986-CkytYD", note: "hi")?.nextID() == nil)
         let command = Wakes.command(in: #"kuvo-wake bot_abc add 2026-10-17T09:00 --every weekdays "standup""#)
         #expect(command == Wakes.Command(verb: .add, when: "2026-10-17T09:00", note: "standup", every: .weekdays))
