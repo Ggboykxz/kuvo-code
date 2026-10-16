@@ -3,14 +3,19 @@ import Foundation
 /// What a phone may ask an engine for, and passing it on: the Mac's side of what a machine's
 /// bridge does in `kuvo-link.js` (the two lists are checked against `Vectors/link.json`).
 public enum EngineRoutes {
-    /// Sessions and what's in them, live events, and what the phone needs to show them. Never
-    /// accounts, keys or integrations, the engine's settings, MCP servers or plugins.
+    /// Sessions and what's in them, live events, what the phone needs to show them, and a
+    /// project's files to read. Never accounts, keys or integrations, the engine's settings, MCP
+    /// servers or plugins.
     public static func allows(_ path: String) -> Bool {
-        guard !path.contains("..") else { return false }
+        // No way out of the project, written plainly or percent-encoded ("%2E%2E"): the engine
+        // decodes it, and lists a folder above the project if asked.
+        guard let decoded = path.removingPercentEncoding, !decoded.contains(".."), !path.contains("..") else { return false }
         return path.prefixMatch(of: #/api/session(/|\?|$)/#) != nil
             || path.prefixMatch(of: #/api/experimental/session/[^/]+/wait(\?|$)/#) != nil
             || path.prefixMatch(of: #/api/event(\?|$)/#) != nil
             || path.prefixMatch(of: #/api/(info|agent|command|model|provider|project|location|skill|vcs|worktree|permission|form)(/|\?|$)/#) != nil
+            || path.prefixMatch(of: #/api/fs/(list|find)(\?|$)/#) != nil
+            || path.prefixMatch(of: #/api/fs/read//#) != nil
     }
 
     static let requestHeaders = ["content-type", "accept", "x-opencode-directory", "last-event-id"]

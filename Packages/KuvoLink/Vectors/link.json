@@ -214,6 +214,54 @@
       "allowed": false
     },
     {
+      "path": "api/fs/list",
+      "allowed": true
+    },
+    {
+      "path": "api/fs/list?path=Sources",
+      "allowed": true
+    },
+    {
+      "path": "api/fs/find?query=main",
+      "allowed": true
+    },
+    {
+      "path": "api/fs/read/Sources/main.swift",
+      "allowed": true
+    },
+    {
+      "path": "api/fs/read",
+      "allowed": false
+    },
+    {
+      "path": "api/fs/write/x",
+      "allowed": false
+    },
+    {
+      "path": "api/fs/read/../../etc/hosts",
+      "allowed": false
+    },
+    {
+      "path": "api/fs/list?path=%2E%2E",
+      "allowed": false
+    },
+    {
+      "path": "api/fs/list?path=..%2F",
+      "allowed": false
+    },
+    {
+      "path": "api/fs/read/%2e%2e%2fsecret",
+      "allowed": false
+    },
+    {
+      "path": "api/session/%2E%2E/credential",
+      "allowed": false
+    },
+    {
+      "path": "api/fs/read/bad%E0%A4%A",
+      "allowed": false
+    },
+    {
       "path": "api/sessions",
       "allowed": false
     },

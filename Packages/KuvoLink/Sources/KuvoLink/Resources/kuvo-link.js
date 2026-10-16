@@ -19,12 +19,14 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-export const BRIDGE_VERSION = "0.1.0";
+// Goes up with every change, so `setup` replaces a running bridge that's older.
+export const BRIDGE_VERSION = "0.2.0";
 const K = process.env.KUVO_HOME || path.join(os.homedir(), ".kuvo-code");
 const RUN = path.join(K, "run");
 export const LINK_FILE = path.join(RUN, "link.json");
 const ENGINE_FILE = path.join(RUN, "engine.json");
 const PID_FILE = path.join(RUN, "link.pid");
+const VERSION_FILE = path.join(RUN, "link.version");
 const PAIRING_MINUTES = 10;
 
 // ---- Keys: X25519 keys are kept as their raw 32 bytes ----
@@ -429,19 +431,30 @@ export class LinkHost {
 
 // ---- Forwarding to the engine ----
 
-// What a phone may ask the engine for: sessions and what's in them, live events, and what it
-// needs to show them. Never accounts, keys or integrations, the engine's settings, MCP servers
-// or plugins.
+// What a phone may ask the engine for: sessions and what's in them, live events, what it needs
+// to show them, and a project's files to read. Never accounts, keys or integrations, the
+// engine's settings, MCP servers or plugins.
 const ALLOWED = [
   /^api\/session(\/|\?|$)/,
   /^api\/experimental\/session\/[^/]+\/wait(\?|$)/,
   /^api\/event(\?|$)/,
   /^api\/(info|agent|command|model|provider|project|location|skill|vcs|worktree|permission|form)(\/|\?|$)/,
+  /^api\/fs\/(list|find)(\?|$)/,
+  /^api\/fs\/read\//,
 ];
 const REQUEST_HEADERS = ["content-type", "accept", "x-opencode-directory", "last-event-id"];
 const RESPONSE_HEADERS = ["content-type", "cache-control"];
 
-export const allowed = path => !path.includes("..") && ALLOWED.some(pattern => pattern.test(path));
+// No way out of the project, written plainly or percent-encoded ("%2E%2E"): the engine decodes
+// it, and lists a folder above the project if asked.
+const leavesProject = path => {
+  try {
+    return path.includes("..") || decodeURIComponent(path).includes("..");
+  } catch {
+    return true;
+  }
+};
+export const allowed = path => !leavesProject(path) && ALLOWED.some(pattern => pattern.test(path));
 
 const readEngineFile = () => JSON.parse(fs.readFileSync(ENGINE_FILE, "utf8"));
 
@@ -597,6 +610,7 @@ async function run() {
   } catch {}
   fs.mkdirSync(RUN, { recursive: true, mode: 0o700 });
   fs.writeFileSync(PID_FILE, String(process.pid), { mode: 0o600 });
+  fs.writeFileSync(VERSION_FILE, BRIDGE_VERSION, { mode: 0o600 });
   const cleanUp = () => {
     try { if (fs.readFileSync(PID_FILE, "utf8") === String(process.pid)) fs.unlinkSync(PID_FILE); } catch {}
     process.exit(0);
@@ -680,9 +694,12 @@ async function setup() {
   const added = new Map((old?.phones ?? []).map(p => [p.key, p.added]));
   link.phones = phones.map(p => ({ key: p.key, name: String(p.name ?? "").slice(0, 100), added: added.get(p.key) ?? Math.floor(Date.now() / 1000) }));
   writeLink(link);
-  // A new relay or name needs a new connection.
-  if (running && (old?.relay !== link.relay || old?.name !== link.name)) process.kill(running, "SIGTERM");
-  if (!running || old?.relay !== link.relay || old?.name !== link.name) startBridge();
+  // A new relay or name needs a new connection, and a newer bridge replaces an older one.
+  let runningVersion = null;
+  try { runningVersion = fs.readFileSync(VERSION_FILE, "utf8").trim(); } catch {}
+  const restart = old?.relay !== link.relay || old?.name !== link.name || runningVersion !== BRIDGE_VERSION;
+  if (running && restart) process.kill(running, "SIGTERM");
+  if (!running || restart) startBridge();
   console.log(JSON.stringify({
     address: addressOf(Buffer.from(link.secret, "base64url")).toString("base64url"),
     key: publicOf(Buffer.from(link.key, "base64url")).toString("base64url"),

@@ -44,6 +44,10 @@ routes = [{"path": p, "allowed": a} for p, a in [
     ("api/experimental/session/ses_1/wait", True), ("api/experimental/session/ses_1/instructions/entries/k", False),
     ("api/credential", False), ("api/credential/anthropic", False), ("api/integration/github/connect/key", False),
     ("api/config", False), ("api/config/shell", False), ("api/mcp", False), ("api/plugin", False),
+    ("api/fs/list", True), ("api/fs/list?path=Sources", True), ("api/fs/find?query=main", True),
+    ("api/fs/read/Sources/main.swift", True), ("api/fs/read", False), ("api/fs/write/x", False), ("api/fs/read/../../etc/hosts", False),
+    ("api/fs/list?path=%2E%2E", False), ("api/fs/list?path=..%2F", False), ("api/fs/read/%2e%2e%2fsecret", False),
+    ("api/session/%2E%2E/credential", False), ("api/fs/read/bad%E0%A4%A", False),
     ("api/sessions", False), ("api/eventual", False), ("api/session/../credential", False), ("kuvo/info", False), ("", False),
 ]]
 
