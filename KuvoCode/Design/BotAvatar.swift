@@ -83,17 +83,15 @@ struct BotAvatar: View {
     /// for its mood, and only moves when it's pointed at. One bot moves in one place at a time.
     var animates = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.appearsActive) private var appearsActive
 
     var body: some View {
         if reduceMotion || (!animates && !noticed) || Self.stillForTesting {
             figure(BotPose.still(mood, noticed: noticed))
         } else {
-            // Smoothest while you're in the app and it's at work; slower, but still alive, while
-            // it rests or the app is beside another; still while no window of it can be seen.
-            TimelineView(.animation(minimumInterval: 1 / framesPerSecond, paused: !WindowVisibility.shared.isVisible)) { context in
-                figure(BotPose(mood: mood, noticed: noticed, time: context.date.timeIntervalSinceReferenceDate + seed, seed: seed, small: size < 24))
-            }
+            // Played by Core Animation, which moves it without the app drawing each frame (and
+            // not at all while no window of it can be seen).
+            BotMotion(look: look, size: size, mood: mood, noticed: noticed, seed: seed)
+                .frame(width: size, height: size)
         }
     }
 
@@ -103,12 +101,6 @@ struct BotAvatar: View {
     #else
     private static let stillForTesting = false
     #endif
-
-    /// Each frame redraws the window, so a resting bot (breathing, blinking) takes fewer.
-    private var framesPerSecond: Double {
-        let busy = mood == .working || mood == .waiting || mood == .news || noticed
-        return (busy ? 30 : 20) / (appearsActive ? 1 : 2)
-    }
 
     /// Keeps bots out of step with each other, and the same from one launch to the next.
     private var seed: Double {
@@ -132,13 +124,7 @@ struct BotAvatar: View {
                 ForEach(Array(pose.sparks.enumerated()), id: \.offset) { _, angle in
                     spark(at: angle, tint: tint)
                 }
-                BotShape(form: look.shape)
-                    .fill(LinearGradient(colors: [tint.mix(with: .white, by: 0.14), tint.mix(with: .black, by: 0.06)], startPoint: .top, endPoint: .bottom))
-                    // A lit top edge, like the window's other raised surfaces.
-                    .overlay {
-                        BotShape(form: look.shape)
-                            .stroke(LinearGradient(colors: [.white.opacity(0.55), .white.opacity(0)], startPoint: .top, endPoint: .center), lineWidth: max(0.5, size / 40))
-                    }
+                Self.body(look, size: size)
                     .rotationEffect(.degrees(spins ? pose.spin : 0))
                     .shadow(color: .black.opacity(size > 40 ? 0.12 : 0.08), radius: size / 24, y: size / 48)
                     .zIndex(0)
@@ -153,21 +139,18 @@ struct BotAvatar: View {
             .offset(y: pose.lift * size)
             // Z's drifting up from a sleeping bot, swaying as they go.
             ForEach(Array(pose.zs.enumerated()), id: \.offset) { _, progress in
-                Text("z")
-                    .font(.system(size: max(7, size * 0.32), weight: .heavy, design: .rounded))
-                    .foregroundStyle(.secondary)
-                    .scaleEffect(0.45 + 0.8 * progress)
-                    .opacity(min(1, progress * 5) * (1 - pow(progress, 3)))
-                    .offset(x: size * (0.3 + 0.28 * progress + 0.06 * sin(progress * 2 * .pi)), y: -size * (0.26 + 0.56 * progress))
+                let place = Self.z(at: progress, size: size)
+                Self.zLetter(size: size)
+                    .scaleEffect(place.scale)
+                    .opacity(place.opacity)
+                    .offset(place.offset)
             }
             // A sparkle beside a bot with news.
             if pose.twinkle > 0 {
-                Star()
-                    .fill(Color(red: 1, green: 0.76, blue: 0.2))
-                    .frame(width: size * 0.34, height: size * 0.34)
+                Self.star(size: size)
                     .scaleEffect(pose.twinkle)
                     .rotationEffect(.degrees(Double(pose.twinkle) * 45))
-                    .offset(x: size * 0.46, y: -size * 0.42)
+                    .offset(Self.starOffset(size: size))
             }
         }
         .frame(width: size, height: size)
@@ -176,26 +159,87 @@ struct BotAvatar: View {
     /// One spark on a tilted orbit around the bot's middle, with a fading trail, drawn in front
     /// of the bot on the near side of the orbit and behind it on the far side.
     private func spark(at angle: Double, tint: Color) -> some View {
-        let depth = (sin(angle) + 1) / 2
-        let dot = max(2.5, size * 0.13)
-        return ZStack {
-            ForEach(0..<5) { step in
-                let a = angle - Double(step) * 0.2
-                let fade = 1 - Double(step) / 5
-                Circle()
-                    .fill(step == 0 ? tint.mix(with: .white, by: 0.45) : tint)
-                    .frame(width: dot, height: dot)
-                    .scaleEffect((0.55 + 0.45 * depth) * (0.4 + 0.6 * fade))
-                    .opacity((0.45 + 0.55 * depth) * fade)
-                    .offset(x: cos(a) * size * 0.62, y: sin(a) * size * 0.24 + size * 0.04)
+        ZStack {
+            ForEach(Array(Self.sparkDots(at: angle, size: size).enumerated()), id: \.offset) { step, dot in
+                Self.sparkDot(step: step, tint: tint, size: size)
+                    .scaleEffect(dot.scale)
+                    .opacity(dot.opacity)
+                    .offset(dot.offset)
             }
         }
-        .zIndex(depth > 0.5 ? 1 : -1)
+        .zIndex(Self.sparkInFront(angle) ? 1 : -1)
     }
 
+    private var faceOffset: CGFloat { Self.faceOffset(look.shape, size: size) }
+
+    // What both ways of drawing a bot share (still and moving here, played by Core Animation in
+    // BotMotion): its pieces, and where they go for a pose.
+
+    /// Its shape in its color, with a lit top edge like the window's other raised surfaces.
+    static func body(_ look: BotLook, size: CGFloat) -> some View {
+        let tint = look.color.color
+        return BotShape(form: look.shape)
+            .fill(LinearGradient(colors: [tint.mix(with: .white, by: 0.14), tint.mix(with: .black, by: 0.06)], startPoint: .top, endPoint: .bottom))
+            .overlay {
+                BotShape(form: look.shape)
+                    .stroke(LinearGradient(colors: [.white.opacity(0.55), .white.opacity(0)], startPoint: .top, endPoint: .center), lineWidth: max(0.5, size / 40))
+            }
+            .frame(width: size, height: size)
+    }
+
+    /// Where a piece sits, from the middle of the avatar, and how big and clear it is.
+    struct Placement {
+        var offset: CGSize
+        var scale: CGFloat
+        var opacity: Double
+    }
+
+    /// One spark's five dots, its head first and its fading trail after, on a tilted orbit
+    /// around the bot's middle.
+    static func sparkDots(at angle: Double, size: CGFloat) -> [Placement] {
+        let depth = (sin(angle) + 1) / 2
+        return (0..<5).map { step in
+            let a = angle - Double(step) * 0.2
+            let fade = 1 - Double(step) / 5
+            return Placement(offset: CGSize(width: cos(a) * size * 0.62, height: sin(a) * size * 0.24 + size * 0.04),
+                             scale: (0.55 + 0.45 * depth) * (0.4 + 0.6 * fade), opacity: (0.45 + 0.55 * depth) * fade)
+        }
+    }
+
+    /// On the near side of its orbit, a spark is drawn in front of the bot; behind it on the far.
+    static func sparkInFront(_ angle: Double) -> Bool { (sin(angle) + 1) / 2 > 0.5 }
+
+    static func sparkDot(step: Int, tint: Color, size: CGFloat) -> some View {
+        let dot = max(2.5, size * 0.13)
+        return Circle()
+            .fill(step == 0 ? tint.mix(with: .white, by: 0.45) : tint)
+            .frame(width: dot, height: dot)
+    }
+
+    /// A z drifting up from a sleeping bot, swaying as it goes, `progress` 0 to 1.
+    static func z(at progress: Double, size: CGFloat) -> Placement {
+        Placement(offset: CGSize(width: size * (0.3 + 0.28 * progress + 0.06 * sin(progress * 2 * .pi)), height: -size * (0.26 + 0.56 * progress)),
+                  scale: 0.45 + 0.8 * progress, opacity: min(1, progress * 5) * (1 - pow(progress, 3)))
+    }
+
+    static func zLetter(size: CGFloat) -> some View {
+        Text("z")
+            .font(.system(size: max(7, size * 0.32), weight: .heavy, design: .rounded))
+            .foregroundStyle(.secondary)
+    }
+
+    /// The sparkle beside a bot with news.
+    static func star(size: CGFloat) -> some View {
+        Star()
+            .fill(Color(red: 1, green: 0.76, blue: 0.2))
+            .frame(width: size * 0.34, height: size * 0.34)
+    }
+
+    static func starOffset(size: CGFloat) -> CGSize { CGSize(width: size * 0.46, height: -size * 0.42) }
+
     /// The pebble's face sits low, where it's widest.
-    private var faceOffset: CGFloat {
-        switch look.shape {
+    static func faceOffset(_ shape: BotLook.Form, size: CGFloat) -> CGFloat {
+        switch shape {
         case .pebble: size * 0.12
         default: -size * 0.03
         }
@@ -266,7 +310,7 @@ struct GroupAvatar: View {
 }
 
 /// A four-pointed sparkle.
-nonisolated private struct Star: Shape {
+nonisolated struct Star: Shape {
     func path(in rect: CGRect) -> Path {
         let c = CGPoint(x: rect.midX, y: rect.midY), r = min(rect.width, rect.height) / 2
         let tips = [CGPoint(x: c.x, y: c.y - r), CGPoint(x: c.x + r, y: c.y), CGPoint(x: c.x, y: c.y + r), CGPoint(x: c.x - r, y: c.y)]
@@ -282,7 +326,7 @@ nonisolated private struct Star: Shape {
 
 /// Where everything about a bot's avatar is at one moment: worked out from the time, so the
 /// motion is smooth at any frame rate and two bots never move in step.
-private struct BotPose {
+struct BotPose {
     /// Up, as a share of the avatar's size (negative is up).
     var lift: CGFloat = 0
     var scaleX: CGFloat = 1
@@ -545,7 +589,7 @@ nonisolated struct BotShape: Shape {
 }
 
 /// Two eyes, drawn in the box they're given (twice as wide as tall), with an expression.
-private struct BotFace: View {
+struct BotFace: View {
     let face: BotLook.Face
     /// On a deep color: light eyes.
     let deep: Bool
