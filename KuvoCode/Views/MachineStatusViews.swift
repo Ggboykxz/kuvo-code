@@ -40,13 +40,16 @@ struct MachineWaitingView: View {
     let engine: MachineEngine
     @Environment(AppModel.self) private var app
 
+    /// Up, its sessions not read yet: still on its way, from here.
+    private var connection: MachineEngine.Connection { engine.connection == .connected ? .connecting : engine.connection }
+
     var body: some View {
         VStack(spacing: 14) {
             Spacer()
             Image(systemName: "server.rack")
                 .font(.system(size: 34, weight: .light))
                 .foregroundStyle(.secondary)
-            Text(engine.statusTitle)
+            Text(engine.statusTitle(connection))
                 .font(.title3.weight(.semibold))
             switch engine.state {
             case .downloading(let progress) where progress > 0:
@@ -87,9 +90,12 @@ struct MachineOfflineBar: View {
     let engine: MachineEngine
     @Environment(AppModel.self) private var app
 
+    /// Up, but this conversation not on it yet (its sessions being read): still on its way.
+    private var connection: MachineEngine.Connection { engine.connection == .connected ? .reconnecting : engine.connection }
+
     var body: some View {
         HStack(spacing: 10) {
-            if engine.connection.isUnderWay {
+            if connection.isUnderWay {
                 Spinner(size: 13)
             } else {
                 Image(systemName: "bolt.horizontal.circle")
@@ -97,17 +103,17 @@ struct MachineOfflineBar: View {
                     .foregroundStyle(.orange)
             }
             VStack(alignment: .leading, spacing: 1) {
-                Text(engine.statusTitle)
+                Text(engine.statusTitle(connection))
                     .font(.system(size: 13, weight: .medium))
                 Text("This is the conversation as last seen. You can write meanwhile, and send once it’s back.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
-            .help(engine.failure ?? engine.statusTitle)
+            .help(engine.failure ?? engine.statusTitle(connection))
             Spacer(minLength: 8)
             // Not while it's trying already.
             if !isAttempting {
-                Button(engine.connection.isUnderWay ? "Connect Now" : engine.connection == .notConnected ? "Connect" : "Try Again") { app.reconnectNow(engine) }
+                Button(connection.isUnderWay ? "Connect Now" : connection == .notConnected ? "Connect" : "Try Again") { app.reconnectNow(engine) }
                     .buttonStyle(.glass)
                     .help("Connect to \(engine.machine.name) again")
             }
@@ -120,6 +126,8 @@ struct MachineOfflineBar: View {
     private var isAttempting: Bool {
         switch engine.state {
         case .starting, .downloading: true
+        // Up, its sessions being read: nothing to do.
+        case .ready: engine.isLive
         default: false
         }
     }

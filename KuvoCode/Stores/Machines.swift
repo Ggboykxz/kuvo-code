@@ -84,7 +84,10 @@ final class MachineEngine {
     }
 
     /// The same, naming it, for where it stands on its own.
-    var statusTitle: String {
+    var statusTitle: String { statusTitle(connection) }
+
+    /// `connection`'s words, naming it.
+    func statusTitle(_ connection: Connection) -> String {
         let name = machine.name
         return switch connection {
         case .notConnected: "\(name) isn’t connected"
