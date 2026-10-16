@@ -140,6 +140,24 @@ nonisolated enum Integrations {
         "microsoft-365": ["outlook.office.com", "outlook.office365.com"],
     ]
 
+    /// The cookie a site keeps while you're signed in to it, for those the agent uses on their
+    /// site, by service: how Settings tells whether a browser is signed in there. (The others
+    /// keep their sign-in where it can't be read from outside the page.)
+    static let signInCookies: [String: (domain: String, name: String)] = [
+        "x": ("x.com", "auth_token"),
+        "linkedin": ("linkedin.com", "li_at"),
+        "reddit": ("reddit.com", "reddit_session"),
+    ]
+
+    /// Whether `cookies` (domain, name, expiry) have `service`'s sign-in; nil when that can't be told.
+    static func isSignedIn(_ service: String, cookies: [(domain: String, name: String, expires: Date?)]) -> Bool? {
+        guard let wanted = signInCookies[service] else { return nil }
+        return cookies.contains { cookie in
+            let domain = cookie.domain.hasPrefix(".") ? String(cookie.domain.dropFirst()) : cookie.domain
+            return (domain == wanted.domain || domain.hasSuffix("." + wanted.domain)) && cookie.name == wanted.name && (cookie.expires ?? .distantFuture) > .now
+        }
+    }
+
     /// How to sign in to a service whose server signs in some way of its own, for the agent to
     /// say (otherwise, under Settings › Integrations).
     static let signInHow: [String: String] = [

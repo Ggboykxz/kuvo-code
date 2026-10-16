@@ -9,7 +9,8 @@ struct MachineBrowserPane<NewTab: View>: View {
     /// The page this tab shows; nil for a new tab that hasn't opened one yet.
     let page: String?
     /// Attaches files to the message being written, for Add Screenshot to Message.
-    var attach: ([URL]) -> Void = { _ in }
+    /// None where there's no message to add a screenshot to (signing in, in Settings).
+    var attach: (([URL]) -> Void)?
     @ViewBuilder let newTab: () -> NewTab
     /// Goes to an address typed in a new tab (opening its page).
     let onSubmit: (String) -> Void
@@ -123,13 +124,15 @@ struct MachineBrowserPane<NewTab: View>: View {
             if browser.zoom != 1 {
                 BrowserZoomChip(zoom: browser.zoom) { browser.resetZoom() }
             }
-            Button {
-                if let file = browser.screenshotFile() { attach([file]) }
-            } label: {
-                Label("Add Screenshot to Message", systemImage: "camera.viewfinder")
+            if let attach {
+                Button {
+                    if let file = browser.screenshotFile() { attach([file]) }
+                } label: {
+                    Label("Add Screenshot to Message", systemImage: "camera.viewfinder")
+                }
+                .disabled(!isLive || !browser.hasPicture || url == nil)
+                .help("Add a screenshot of the page to your message, so the agent sees what you see")
             }
-            .disabled(!isLive || !browser.hasPicture || url == nil)
-            .help("Add a screenshot of the page to your message, so the agent sees what you see")
             BrowserMoreMenu(url: url, canReload: isLive && url != nil, reload: browser.reload) { step in
                 if step == 0 { browser.resetZoom() } else { browser.zoom(in: step > 0) }
             }

@@ -31,18 +31,13 @@ struct IntegrationsSettings: View {
     }
 
     var body: some View {
-        ScrollingSettingsForm {
-            ForEach(Self.kinds, id: \.self) { kind in
-                Section(kind.rawValue) {
-                    ForEach(Integrations.all.filter { $0.kind == kind }) { service in
-                        row(service)
-                    }
-                }
-            }
-            Section {
-            } footer: {
-                Text("Each works the best way it has: through its maker's own server, where you sign in once; with a key you bring, kept in your Keychain; or on its site, in the panel's browser, signed in as you. The agent and your bots use them here and on your machines.")
-                    .foregroundStyle(.secondary)
+        Group {
+            if let service = signingInSite {
+                // Signing in on its site, in place of the list, as a page of its own.
+                SiteSignInPage(service: service) { withAnimation(.ui) { signingInSite = nil } }
+                    .transition(.opacity)
+            } else {
+                list
             }
         }
         .modifier(LiveMCPServers(servers: $live, api: { app.api }, change: config.settings))
@@ -55,11 +50,9 @@ struct IntegrationsSettings: View {
                     if let servers = try? await engine.api?.mcpServers() { read[engine.machine.id] = servers }
                 }
                 remote = read
+                await SiteSignIns.shared.refresh(app)
                 try? await Task.sleep(for: .seconds(4))
             }
-        }
-        .sheet(item: $signingInSite) { service in
-            SiteSignInSheet(service: service) { signingInSite = nil }
         }
         .confirmationDialog("Remove \(removing?.title ?? "")?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), presenting: removing) { service in
             Button("Remove", role: .destructive) { remove(service) }
@@ -103,9 +96,26 @@ struct IntegrationsSettings: View {
         }
     }
 
+    private var list: some View {
+        ScrollingSettingsForm {
+            ForEach(Self.kinds, id: \.self) { kind in
+                Section(kind.rawValue) {
+                    ForEach(Integrations.all.filter { $0.kind == kind }) { service in
+                        row(service)
+                    }
+                }
+            }
+            Section {
+            } footer: {
+                Text("Each works the best way it has: through its maker's own server, where you sign in once; with a key you bring, kept in your Keychain; or on its site, in the browser the agent uses, signed in as you. The agent and your bots use them here and on your machines.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
     private func row(_ service: Integrations.Service) -> some View {
         let added = config.value(at: MCPSettings.path + [service.id]) != nil
-        let places = added ? self.places(service) : []
+        let places = added ? self.places(service) : siteSignIns(service)
         return HStack(alignment: .center, spacing: 12) {
             Image(systemName: service.symbol)
                 .font(.system(size: 15))
@@ -130,7 +140,7 @@ struct IntegrationsSettings: View {
             HStack {
                 switch service.way {
                 case .browser:
-                    Button("Sign In…") { signingInSite = service }
+                    Button(SiteSignIns.shared.isSignedIn(service.id, on: nil) == true ? "Open…" : "Sign In…") { withAnimation(.ui) { signingInSite = service } }
                         .help("Sign in to \(service.title) in the browser the agent and your bots use, on this Mac or one of your machines")
                 default:
                     if !added {
@@ -187,6 +197,24 @@ struct IntegrationsSettings: View {
             if there == .connected, waits { there = .waitsForCode }
             places.append(Place(name: engine.machine.name, machine: engine.machine.id, state: there))
         }
+        return places
+    }
+
+    /// Where a service the agent uses on its site is signed in, as far as its cookies tell.
+    private func siteSignIns(_ service: Integrations.Service) -> [Place] {
+        guard case .browser = service.way else { return [] }
+        let signIns = SiteSignIns.shared
+        var places: [Place] = []
+        if let here = signIns.isSignedIn(service.id, on: nil) {
+            places.append(Place(name: "this Mac", machine: nil, state: here ? .signedIn : .signedOut))
+        }
+        for engine in app.machines.list.compactMap({ app.machines.engine($0.id) }) {
+            if let there = signIns.isSignedIn(service.id, on: engine.machine.id) {
+                places.append(Place(name: engine.machine.name, machine: engine.machine.id, state: there ? .signedIn : .signedOut))
+            }
+        }
+        // Only here known, with machines: say it's here.
+        if places.count == 1, places[0].machine == nil, !app.machines.list.isEmpty { places[0].namesPlace = true }
         return places
     }
 
@@ -290,17 +318,21 @@ private struct Place: Identifiable {
     /// nil for this Mac.
     let machine: String?
     let state: State
+    /// Alone in its line, it still says where ("Signed in on this Mac").
+    var namesPlace = false
     var id: String { machine ?? "" }
 
     /// Worst last.
     enum State: Int, Comparable {
-        case connected, starting, waitsForCode, needsSignIn, failed
+        case connected, signedIn, starting, signedOut, waitsForCode, needsSignIn, failed
 
         static func < (a: State, b: State) -> Bool { a.rawValue < b.rawValue }
 
         var title: String {
             switch self {
             case .connected: "Connected"
+            case .signedIn: "Signed in"
+            case .signedOut: "Not signed in"
             case .starting: "Starting"
             case .waitsForCode: "Not signed in yet"
             case .needsSignIn: "Needs sign-in"
@@ -310,8 +342,8 @@ private struct Place: Identifiable {
 
         var color: Color {
             switch self {
-            case .connected: .green
-            case .starting: .secondary
+            case .connected, .signedIn: .green
+            case .starting, .signedOut: .secondary
             case .waitsForCode, .needsSignIn: .orange
             case .failed: .red
             }
@@ -336,9 +368,12 @@ private struct PlacesLine: View {
     let waitsForCodeHelp: String
 
     private var text: String {
-        guard places.count > 1 else { return places.first?.state.title ?? "" }
+        guard places.count > 1 else {
+            guard let place = places.first else { return "" }
+            return place.state.title + (place.namesPlace ? " on " + place.name : "")
+        }
         let states = Set(places.map(\.state)).sorted()
-        if states == [.connected] { return "Connected on " + Self.list(places.map(\.name)) }
+        if states.count == 1, let state = states.first, [.connected, .signedIn].contains(state) { return state.title + " on " + Self.list(places.map(\.name)) }
         return states.reversed().map { state in
             state.title + " on " + Self.list(places.filter { $0.state == state }.map(\.name))
         }.joined(separator: " · ")

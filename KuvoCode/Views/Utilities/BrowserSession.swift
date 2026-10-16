@@ -466,7 +466,8 @@ extension BrowserSession: WKDownloadDelegate {
 struct BrowserPane<NewTab: View>: View {
     let session: BrowserSession
     /// Attaches files to the message being written, for Add Screenshot to Message.
-    var attach: ([URL]) -> Void = { _ in }
+    /// None where there's no message to add a screenshot to (signing in, in Settings).
+    var attach: (([URL]) -> Void)?
     @ViewBuilder let newTab: () -> NewTab
     @State private var address = ""
     @FocusState private var editing: Bool
@@ -551,11 +552,13 @@ struct BrowserPane<NewTab: View>: View {
                 .fixedSize()
                 .help(session.savedLogins.count == 1 ? "Fill in the saved password for \(session.savedLogins[0].account)" : "Fill in a saved password")
             }
-            Button(action: addScreenshot) {
-                Label("Add Screenshot to Message", systemImage: "camera.viewfinder")
+            if attach != nil {
+                Button(action: addScreenshot) {
+                    Label("Add Screenshot to Message", systemImage: "camera.viewfinder")
+                }
+                .disabled(session.url == nil)
+                .help("Add a screenshot of the page to your message, so the agent sees what you see")
             }
-            .disabled(session.url == nil)
-            .help("Add a screenshot of the page to your message, so the agent sees what you see")
             Button {
                 if let url = session.url { NSWorkspace.shared.open(url) }
             } label: { Label("Open in Your Browser", systemImage: "arrow.up.forward.app") }
@@ -576,7 +579,7 @@ struct BrowserPane<NewTab: View>: View {
                 guard let image, let tiff = image.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]),
                       let url = Attachments.write(png, named: "Screenshot of \(host)", extension: "png") else { return }
                 Analytics.shared.track("browser_screenshot_added")
-                attach([url])
+                attach?([url])
             }
         }
     }

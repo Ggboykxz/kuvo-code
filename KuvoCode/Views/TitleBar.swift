@@ -104,7 +104,7 @@ struct TabStrip: View {
 
 /// Rex's raised pill: white (a lighter glass in dark mode) with a lit edge, held off the
 /// track by a tight contact shadow and a soft one under it.
-private struct ActivePill: View {
+struct ActivePill: View {
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
