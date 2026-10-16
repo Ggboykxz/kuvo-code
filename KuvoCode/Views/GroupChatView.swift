@@ -257,10 +257,11 @@ private struct GroupSteps: View {
     }
 
     private static func kind(of name: String) -> String {
-        if name.hasPrefix("browser_") { return "browser" }
+        // The browser's tools, as the engine names them ("kuvo-browser_browser_click").
+        if name.hasPrefix("kuvo-browser_") || name.hasPrefix("browser_") { return "browser" }
         switch name {
         case "grep", "glob", "list": return "search"
-        case "bash": return "shell"
+        case "bash", "shell": return "shell"
         default: return name
         }
     }
@@ -273,7 +274,7 @@ private struct GroupSteps: View {
         case "read": return many ? "read \(count) files" : "read a file"
         case "search": return many ? "searched the files \(count) times" : "searched the files"
         case "shell": return many ? "ran \(count) commands" : "ran a command"
-        case "browser": return "used the browser"
+        case "browser": return many ? "used the browser (\(count) steps)" : "used the browser"
         case "subagent": return many ? "handed off \(count) tasks" : "handed off a task"
         default: return many ? "used \(kind) \(count) times" : "used \(kind)"
         }
