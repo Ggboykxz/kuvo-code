@@ -23,6 +23,8 @@ struct WidgetCard: View {
     /// Sends what the page wrote back, as your message.
     let send: (String) -> Void
     @State private var height: CGFloat = 0
+    /// Shown larger, over the window.
+    @State private var isLarge = false
     @Environment(\.colorScheme) private var scheme
     @Environment(\.cardIsFocused) private var cardIsFocused
 
@@ -60,6 +62,7 @@ struct WidgetCard: View {
                     .fontWeight(.medium)
                     .lineLimit(1)
                 Spacer(minLength: 8)
+                MessageActionButton(symbol: "arrow.up.left.and.arrow.down.right", help: "Open Larger") { isLarge = true }
                 CopyButton(text: html, help: "Copy Its HTML")
             }
             .font(.callout)
@@ -73,6 +76,25 @@ struct WidgetCard: View {
         .background(Surface.cardFill(scheme, focused: cardIsFocused), in: Self.shape)
         .clipShape(Self.shape)
         .recessedWell(Self.shape)
+        .sheet(isPresented: $isLarge) {
+            VStack(spacing: 0) {
+                HStack {
+                    Text(title.flatMap { $0.isEmpty ? nil : $0 } ?? "Made for you")
+                        .font(.headline)
+                    Spacer()
+                    Button("Done") { isLarge = false }
+                        .keyboardShortcut(.defaultAction)
+                }
+                .padding(14)
+                Divider()
+                // Its own room, scrolling inside; what it writes back goes on, then it closes.
+                WidgetPage(html: html, accent: NSColor.controlAccentColor, height: .constant(0), scrollsInside: true) { text in
+                    isLarge = false
+                    send(text)
+                }
+            }
+            .frame(width: 960, height: 720)
+        }
     }
 }
 
@@ -89,6 +111,8 @@ private struct WidgetPage: NSViewRepresentable {
     let html: String
     let accent: NSColor
     @Binding var height: CGFloat
+    /// It has room of its own (larger, in a sheet): it always scrolls in itself.
+    var scrollsInside = false
     let send: (String) -> Void
 
     /// Taller than this, it scrolls inside.
@@ -115,6 +139,8 @@ private struct WidgetPage: NSViewRepresentable {
         coordinator.height = $height
         coordinator.send = send
         coordinator.view = view
+        coordinator.scrollsInside = scrollsInside
+        if scrollsInside { view.fits = false }
         let page = Self.page(html, accent: accent)
         guard coordinator.loaded != page else { return }
         coordinator.loaded = page
@@ -173,6 +199,7 @@ private struct WidgetPage: NSViewRepresentable {
         var send: (String) -> Void = { _ in }
         weak var view: WidgetWebView?
         var loaded: String?
+        var scrollsInside = false
 
         func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
             guard let body = message.body as? [String: Any] else { return }
@@ -180,7 +207,7 @@ private struct WidgetPage: NSViewRepresentable {
             case "height":
                 guard let value = body["value"] as? Double else { return }
                 let fits = CGFloat(value) <= WidgetPage.tallest
-                view?.fits = fits
+                view?.fits = fits && !scrollsInside
                 let new = min(CGFloat(value), WidgetPage.tallest)
                 if abs((height?.wrappedValue ?? 0) - new) > 0.5 { height?.wrappedValue = new }
             case "send":
