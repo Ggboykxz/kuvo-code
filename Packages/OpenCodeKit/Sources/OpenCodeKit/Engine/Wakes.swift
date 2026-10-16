@@ -118,22 +118,31 @@ public enum Wakes {
         }
     }
 
-    /// The wake-ups `kuvo-wake <bot> check` prints, one for each watch that saw a change: its
-    /// letters, and the message for the bot.
-    public static func watchMessages(in output: String) -> [(letters: String, text: String)] {
-        var found: [(String, String)] = []
-        var current: (letters: String, lines: [String])?
-        for line in output.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) {
-            if line.hasPrefix("KUVO-WATCH ") {
-                current = (String(line.dropFirst("KUVO-WATCH ".count)), [])
-            } else if line == "KUVO-END", let watch = current {
-                found.append((watch.letters, watch.lines.joined(separator: "\n")))
-                current = nil
-            } else {
-                current?.lines.append(line)
-            }
+    /// The watches `kuvo-wake <bot> check` found changed, by their letters, from what it prints.
+    public static func changedWatches(in output: String) -> [String] {
+        output.split(separator: "\n").compactMap { line in
+            line.hasPrefix("KUVO-WATCH ") ? String(line.dropFirst("KUVO-WATCH ".count)) : nil
         }
-        return found
+    }
+
+    /// A changed watch's wake-up, from its folder in the bot's (on this Mac).
+    public static func watchMessage(_ letters: String, inBot folder: String) -> String? {
+        try? String(contentsOfFile: watchFolder(letters, inBot: folder) + "/message", encoding: .utf8)
+    }
+
+    /// The watch's wake-up went: its output is what the bot heard, as kuvo-wake's `delivered` does.
+    public static func watchDelivered(_ letters: String, inBot folder: String) {
+        let watch = watchFolder(letters, inBot: folder)
+        let manager = FileManager.default
+        if manager.fileExists(atPath: watch + "/pending") {
+            try? manager.removeItem(atPath: watch + "/last")
+            try? manager.moveItem(atPath: watch + "/pending", toPath: watch + "/last")
+        }
+        try? manager.removeItem(atPath: watch + "/message")
+    }
+
+    private static func watchFolder(_ letters: String, inBot folder: String) -> String {
+        ((folder as NSString).appendingPathComponent("watches") as NSString).appendingPathComponent(letters)
     }
 
     /// A `kuvo-wake` command a bot ran, read back: what it did, and for `add`, when, how often and
@@ -299,13 +308,16 @@ public enum Wakes {
     # Runs a command for at most a minute, where the system lets one say so.
     limited() {
       if command -v timeout >/dev/null 2>&1; then timeout 60 sh -c "$1"
-      elif command -v perl >/dev/null 2>&1; then perl -e 'alarm 60; exec @ARGV' sh -c "$1"
+      elif command -v perl >/dev/null 2>&1; then
+        # In a group of its own, so the minute's end stops the whole pipeline, not just sh.
+        perl -e 'my $p = fork; if (!$p) { setpgrp; exec @ARGV; exit 127 } $SIG{ALRM} = sub { kill "TERM", -$p; sleep 1; kill "KILL", -$p; exit 124 }; alarm 60; waitpid $p, 0; exit($? >> 8)' sh -c "$1"
       else sh -c "$1"; fi
     }
 
     # A bot's watches that are due ($1, its folder): each runs its check, in the folder the bot
-    # works in, and one whose output changed since its last run (not its first) prints its wake-up
-    # message, between "KUVO-WATCH <letters>" and "KUVO-END" lines.
+    # works in. One whose output changed since what the bot last heard (not its first run) writes
+    # its wake-up to its `message`, the new output's sum to `pending`, and prints
+    # "KUVO-WATCH <letters>"; once the wake-up is delivered, `delivered` makes it what the bot heard.
     checks() {
       for w in "$1"/watches/*/; do
         [ -f "${w}check" ] || continue
@@ -317,18 +329,24 @@ public enum Wakes {
         c_out=$(cd "$c_dir" && limited "$(cat "${w}check")" 2>&1 </dev/null | head -c 4000)
         c_sum=$(printf '%s' "$c_out" | cksum)
         c_last=$(cat "${w}last" 2>/dev/null)
-        printf '%s' "$c_sum" >"${w}last"
-        [ -n "$c_last" ] && [ "$c_last" != "$c_sum" ] || continue
+        # The first run is what it starts from.
+        if [ -z "$c_last" ]; then printf '%s' "$c_sum" >"${w}last"; continue; fi
+        [ "$c_last" != "$c_sum" ] || { rm -f "${w}pending" "${w}message"; continue; }
         c_letters=${w%/}; c_letters=${c_letters##*/}
-        printf 'KUVO-WATCH %s\n%s\n\nYour watch (%s, every %s) saw a change. Its check, %s, now prints:\n%s\nKUVO-END\n' \
-          "$c_letters" "$(cat "${w}note")" "$c_letters" "$(cat "${w}every")" "$(head -n 1 "${w}check")" "$c_out"
+        printf '%s\n\nYour watch (%s, every %s) saw a change. Its check, %s, now prints:\n%s\n' \
+          "$(cat "${w}note")" "$c_letters" "$(cat "${w}every")" "$(head -n 1 "${w}check")" "$c_out" >"${w}message"
+        printf '%s' "$c_sum" >"${w}pending"
+        echo "KUVO-WATCH $c_letters"
       done
     }
+
+    # A watch's wake-up went: its output is what the bot heard ($1, the watch's folder).
+    delivered() { [ -f "$1/pending" ] && mv -f "$1/pending" "$1/last"; rm -f "$1/message"; }
 
     random() { LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c "$1"; }
 
     # A string as JSON.
-    json() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/	/\\t/g' | awk 'BEGIN { ORS = "" } NR > 1 { print "\\n" } { print }'; }
+    json() { printf '%s' "$1" | tr -d '\000-\010\013-\037' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/	/\\t/g' | awk 'BEGIN { ORS = "" } NR > 1 { print "\\n" } { print }'; }
 
     if [ "$1" = fire ]; then
       bots=$2; record=$3
@@ -385,20 +403,20 @@ public enum Wakes {
             fi
           fi
         done
-        # Its watches: what changed wakes it, with what the check prints now.
-        if [ -d "${bot}watches" ]; then
-          tz=$(cat "${bot}timezone" 2>/dev/null)
-          ( [ -n "$tz" ] && export TZ="$tz"; checks "${bot%/}" ) | {
-            message=; inside=
-            while IFS= read -r line; do
-              case "$line" in
-                "KUVO-WATCH "*) inside=1; message= ;;
-                KUVO-END) [ -n "$inside" ] && deliver "$message"; inside= ;;
-                *) if [ -n "$inside" ]; then if [ -n "$message" ]; then message=$(printf '%s\n%s' "$message" "$line"); else message=$line; fi; fi ;;
-              esac
-            done
-          }
-        fi
+      done
+      # Then their watches (a slow check never holds up a wake-up): what changed wakes the bot,
+      # with what its check prints now; one that can't go is tried again at the next check.
+      for bot in "$bots"/*/; do
+        [ -e "${bot}paused" ] && continue
+        [ -d "${bot}watches" ] || continue
+        tools=
+        session=$(cat "$bot/session" 2>/dev/null) || continue
+        [ -n "$session" ] || continue
+        tz=$(cat "${bot}timezone" 2>/dev/null)
+        for letters in $( ( [ -n "$tz" ] && export TZ="$tz"; checks "${bot%/}" ) | sed -n 's/^KUVO-WATCH //p'); do
+          w="${bot}watches/$letters"
+          [ -f "$w/message" ] && deliver "$(cat "$w/message")" && delivered "$w"
+        done
       done
       exit 0
     fi

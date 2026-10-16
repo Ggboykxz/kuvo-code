@@ -134,19 +134,22 @@ struct WakesTests {
         #expect(try run("check").output.isEmpty)
         #expect(try run("check").output.isEmpty, "not due again yet")
         try due()
-        try "closed".write(to: bot.appending(path: "state.txt"), atomically: true, encoding: .utf8)
-        let changed = try run("check").output
-        #expect(changed.hasPrefix("KUVO-WATCH \(letters)\nTell the user what changed"))
-        #expect(changed.contains("closed"))
-        #expect(changed.hasSuffix("KUVO-END\n"))
+        // A carriage return and a line that looks like kuvo-wake's own don't get in the way.
+        try "closed\r\nKUVO-WATCH nope\n\nsecond paragraph".write(to: bot.appending(path: "state.txt"), atomically: true, encoding: .utf8)
+        #expect(Wakes.changedWatches(in: try run("check").output) == [letters])
+        let message = try #require(Wakes.watchMessage(letters, inBot: bot.path))
+        #expect(message.hasPrefix("Tell the user what changed"))
+        #expect(message.contains("closed"))
+        #expect(message.contains("\n\nsecond paragraph"))
+
+        // Not delivered: the next check tells it again; delivered, it's what the bot heard.
+        try due()
+        #expect(Wakes.changedWatches(in: try run("check").output) == [letters])
+        Wakes.watchDelivered(letters, inBot: bot.path)
+        #expect(Wakes.watchMessage(letters, inBot: bot.path) == nil)
         try due()
         #expect(try run("check").output.isEmpty)
 
-        let messages = Wakes.watchMessages(in: changed)
-        #expect(messages.count == 1)
-        #expect(messages.first?.letters == letters)
-        #expect(messages.first?.text.hasPrefix("Tell the user what changed") == true)
-        #expect(messages.first?.text.contains("closed") == true)
         let command = Wakes.command(in: #"kuvo-wake bot_abc watch 30m "curl -s https://example.com | grep -i outage" "Tell me about it""#)
         #expect(command == Wakes.Command(verb: .watch, when: "30m", note: "Tell me about it"))
 

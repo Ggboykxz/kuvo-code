@@ -371,8 +371,33 @@ final class Bots {
         }
     }
 
+    /// This Mac's bots' watches, run while the app does, beside their wake-ups (so a slow check
+    /// never holds one up): what changed wakes the bot, and one that can't go is tried again at its
+    /// next check.
+    @ObservationIgnored private var watching: Task<Void, Never>?
+
+    private func watchDue() {
+        guard watching == nil, let api = app?.api else { return }
+        watching = Task { [weak self] in
+            guard let self else { return }
+            for bot in list where bot.machine == nil && !FileManager.default.fileExists(atPath: Self.pauseFile(of: bot)) {
+                for letters in await dueWatches(of: bot) {
+                    guard let message = Wakes.watchMessage(letters, inBot: bot.folder) else { continue }
+                    await api.waitForTools(in: bot.directory)
+                    do {
+                        try await api.prompt(session: bot.sessionID, id: Identifier.message(), text: Wakes.marker + message, delivery: .queue)
+                        Wakes.watchDelivered(letters, inBot: bot.folder)
+                    } catch {
+                        log.error("A watch's wake-up for \(bot.id, privacy: .public) didn't go: \(error.localizedDescription, privacy: .public)")
+                    }
+                }
+            }
+            watching = nil
+        }
+    }
+
     /// Runs this Mac's bot's watches that are due (kuvo-wake does), in your shell's environment:
-    /// the wake-ups of those that saw a change.
+    /// the letters of those that saw a change.
     private func dueWatches(of bot: Bot) async -> [String] {
         guard FileManager.default.fileExists(atPath: (bot.folder as NSString).appendingPathComponent("watches")) else { return [] }
         let environment = app?.shellEnvironment ?? ProcessInfo.processInfo.environment
@@ -396,7 +421,7 @@ final class Bots {
             stop.cancel()
             return String(decoding: data, as: UTF8.self)
         }.value
-        return Wakes.watchMessages(in: output).map(\.text)
+        return Wakes.changedWatches(in: output)
     }
 
     // MARK: Pausing
@@ -450,6 +475,7 @@ final class Bots {
         waking = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.syncInstructions()
+                self?.watchDue()
                 await self?.wakeDue()
                 // On time: up to the next one due here, at most 20 seconds.
                 let next = self?.nextLocalWake().map { $0.timeIntervalSinceNow } ?? 20
@@ -461,15 +487,6 @@ final class Bots {
     private func wakeDue() async {
         guard let api = app?.api else { return }
         for bot in list where bot.machine == nil && !FileManager.default.fileExists(atPath: Self.pauseFile(of: bot)) {
-            // What its watches saw change, as wake-ups.
-            for text in await dueWatches(of: bot) {
-                await api.waitForTools(in: bot.directory)
-                do {
-                    try await api.prompt(session: bot.sessionID, id: Identifier.message(), text: Wakes.marker + text, delivery: .queue)
-                } catch {
-                    log.error("A watch's wake-up for \(bot.id, privacy: .public) didn't go: \(error.localizedDescription, privacy: .public)")
-                }
-            }
             let pending = Self.localWakes(of: bot)
             if pending.contains(where: { $0.due <= .now }) { await api.waitForTools(in: bot.directory) }
             for wake in pending where wake.due <= .now {
