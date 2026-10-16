@@ -58,7 +58,6 @@ struct Composer: View {
     @Environment(\.bot) private var bot
     @FocusState private var isFocused: Bool
     @FocusState private var answering: UUID?
-    @Namespace private var glass
     @State private var isTargeted = false
     /// The sent message showing in the field, while going through them.
     @State private var historyIndex: Int?
@@ -299,36 +298,16 @@ struct Composer: View {
         return agent == "plan" ? "Ask the agent to plan something…" : "Ask the agent to build, fix or explain something…"
     }
 
-    @ViewBuilder private var actionButton: some View {
-        GlassEffectContainer {
-            if isRunning && !canSend {
-                Button(action: onStop) {
-                    Image(systemName: "stop.fill")
-                        .font(.system(size: 12, weight: .bold))
-                }
-                .buttonStyle(ActionButtonStyle(isAccent: false))
-                .glassEffect(.regular, in: .circle)
-                .glassEffectID("action", in: glass)
-                .help("Stop (⌘.)")
-            } else {
-                Button(action: send) {
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 13, weight: .bold))
-                }
-                .buttonStyle(ActionButtonStyle())
-                .glassEffect(.regular, in: .circle)
-                .disabled(!canSend)
-                .glassEffectID("action", in: glass)
-                .help(isOffline ? "Send once the connection is back" : isShell ? "Run the Command (Return)" : isRunning ? "Send: the agent reads it at its next step (Return). ⌘Return queues it for after this run." : "Send (Return)")
-                .contextMenu {
-                    Button("Send", action: send)
-                    Button("Queue for After This Run", action: queue)
-                        .disabled(!isRunning && !hasQueue)
-                }
-            }
+    private var actionButton: some View {
+        SendStopButton(
+            stops: isRunning, canSend: canSend,
+            sendHelp: isOffline ? "Send once the connection is back" : isShell ? "Run the Command (Return)" : isRunning ? "Send: the agent reads it at its next step (Return). ⌘Return queues it for after this run." : "Send (Return)",
+            stopHelp: "Stop (⌘.)", send: send, stop: onStop
+        ) {
+            Button("Send", action: send)
+            Button("Queue for After This Run", action: queue)
+                .disabled(!isRunning && !hasQueue)
         }
-        .animation(.ui, value: isRunning && !canSend)
-        .animation(.easeOut(duration: 0.15), value: canSend)
     }
 
     private func send() {
@@ -417,6 +396,53 @@ struct Composer: View {
         panel.message = "Choose files or folders to attach."
         guard panel.runModal() == .OK else { return }
         attach(panel.urls)
+    }
+}
+
+/// A composer's round button, a session's or a group chat's: Send, or Stop while it works and
+/// nothing's written, the one turning into the other. `menu`, on a right-click of Send.
+struct SendStopButton<Menu: View>: View {
+    let stops: Bool
+    let canSend: Bool
+    let sendHelp: String
+    let stopHelp: String
+    let send: () -> Void
+    let stop: () -> Void
+    @ViewBuilder var menu: Menu
+    @Namespace private var glass
+
+    var body: some View {
+        GlassEffectContainer {
+            if stops && !canSend {
+                Button(action: stop) {
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 12, weight: .bold))
+                }
+                .buttonStyle(ActionButtonStyle(isAccent: false))
+                .glassEffect(.regular, in: .circle)
+                .glassEffectID("action", in: glass)
+                .help(stopHelp)
+            } else {
+                Button(action: send) {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 13, weight: .bold))
+                }
+                .buttonStyle(ActionButtonStyle())
+                .glassEffect(.regular, in: .circle)
+                .disabled(!canSend)
+                .glassEffectID("action", in: glass)
+                .help(sendHelp)
+                .contextMenu { menu }
+            }
+        }
+        .animation(.ui, value: stops && !canSend)
+        .animation(.easeOut(duration: 0.15), value: canSend)
+    }
+}
+
+extension SendStopButton where Menu == EmptyView {
+    init(stops: Bool, canSend: Bool, sendHelp: String, stopHelp: String, send: @escaping () -> Void, stop: @escaping () -> Void) {
+        self.init(stops: stops, canSend: canSend, sendHelp: sendHelp, stopHelp: stopHelp, send: send, stop: stop) { EmptyView() }
     }
 }
 

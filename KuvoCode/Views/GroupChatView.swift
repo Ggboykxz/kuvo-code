@@ -385,24 +385,7 @@ private struct GroupComposer: View {
                     .help("Ask \(bot.name)")
                 }
                 Spacer(minLength: 0)
-                if isTalking && !canSend {
-                    Button(action: stop) {
-                        Image(systemName: "stop.fill")
-                            .font(.system(size: 12, weight: .bold))
-                    }
-                    .buttonStyle(ActionButtonStyle(isAccent: false))
-                    .glassEffect(.regular, in: .circle)
-                    .help("Stop the Discussion (Esc)")
-                } else {
-                    Button(action: send) {
-                        Image(systemName: "arrow.up")
-                            .font(.system(size: 13, weight: .bold))
-                    }
-                    .buttonStyle(ActionButtonStyle())
-                    .glassEffect(.regular, in: .circle)
-                    .disabled(!canSend)
-                    .help("Send (Return)")
-                }
+                SendStopButton(stops: isTalking, canSend: canSend, sendHelp: "Send (Return)", stopHelp: "Stop the Discussion (Esc)", send: send, stop: stop)
             }
             .padding(.leading, -8)
         }
