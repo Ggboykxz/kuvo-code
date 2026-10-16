@@ -11,7 +11,9 @@ struct GroupChatView: View {
     @State private var followsEnd = true
     /// Goes up to have the composer take the keyboard.
     @State private var composerFocus = 0
-    @State private var isScrolling = false
+    /// Scrolling now: a plain flag, so starting and stopping don't redraw the chat.
+    @State private var scrolling = ScrollingFlag()
+    @State private var endFollower = EndFollower()
 
     private var members: [Bot] { group.members.compactMap { bots.bot($0) } }
     private var draftKey: String { BotGroups.tabKey(group.id) }
@@ -26,6 +28,7 @@ struct GroupChatView: View {
                                     reply: { reply(to: message) }) {
                         undo(from: message)
                     }
+                        .equatable()
                         .id(message.id)
                         .transition(.opacity.combined(with: .offset(y: 8)))
                 }
@@ -50,15 +53,17 @@ struct GroupChatView: View {
             composerFocus += 1
             Analytics.shared.track("message_replied", ["group": true, "how": "selection"])
         })
-        .onScrollPhaseChange { _, phase in isScrolling = phase != .idle }
-        .onScrollGeometryChange(for: Bool.self) { geometry in
-            geometry.visibleRect.maxY >= geometry.contentSize.height - 40
-        } action: { _, atEnd in
-            if isScrolling { followsEnd = atEnd }
-        }
-        .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { old, new in
-            guard followsEnd, !isScrolling, new != old else { return }
-            position.scrollTo(edge: .bottom)
+        .onScrollPhaseChange { _, phase in scrolling.isOn = phase != .idle }
+        // As in a session: one watcher for both, the end followed as the chat settles too.
+        .onScrollGeometryChange(for: EndGeometry.self) { geometry in
+            EndGeometry(atEnd: geometry.visibleRect.maxY >= geometry.contentSize.height - 40, height: geometry.contentSize.height)
+        } action: { old, new in
+            if scrolling.isOn { followsEnd = new.atEnd }
+            guard followsEnd, !scrolling.isOn, new.height != old.height else { return }
+            endFollower.follow {
+                guard followsEnd, !scrolling.isOn else { return }
+                position.scrollTo(edge: .bottom)
+            }
         }
         .scrollEdgeEffectStyle(.soft, for: .all)
         .overlay {
@@ -154,7 +159,13 @@ private struct MeetingRow: View {
 
 /// One message: yours in a bubble on the right, a bot's beside its face, Kuvo Code's own
 /// quietly in the middle.
-private struct GroupMessageRow: View {
+/// Equal when what it shows is (its actions are the chat's own), so a new message draws only
+/// itself.
+private struct GroupMessageRow: View, Equatable {
+    static func == (lhs: GroupMessageRow, rhs: GroupMessageRow) -> Bool {
+        lhs.message == rhs.message && lhs.author == rhs.author && lhs.members == rhs.members && (lhs.reply == nil) == (rhs.reply == nil)
+    }
+
     let message: GroupMessage
     let author: Bot?
     /// The chat's bots, for their mentions.
