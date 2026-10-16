@@ -37,13 +37,19 @@ public struct EngineFolders: Sendable {
         ]
     }
 
-    /// The engine's temporary folder, cleared of what's a few days old when it starts.
-    public var temporary: URL { root.appending(path: "cache/tmp") }
+    /// The engine's temporary folder, cleared of what's a few days old when it starts: in the
+    /// app's own temporary folder, as a short path without spaces (sockets made under it must fit
+    /// in 104 bytes, and scripts don't always quote it).
+    public var temporary: URL {
+        FileManager.default.temporaryDirectory.appending(path: Bundle.main.bundleIdentifier ?? "opencodekit")
+    }
 
     func create() throws {
         for path in environment.values + [workspace.path] {
             try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
         }
+        // Where it was before (a test build's): its long path broke sockets.
+        try? FileManager.default.removeItem(at: root.appending(path: "cache/tmp"))
         let old = Date.now.addingTimeInterval(-3 * 86_400)
         for item in (try? FileManager.default.contentsOfDirectory(at: temporary, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [] {
             if let modified = try? item.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate, modified < old {

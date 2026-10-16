@@ -633,14 +633,16 @@ final class Workspace {
 
     /// A machine's sessions, when it connects (or reconnects after a gap), in place of what was
     /// known of them.
-    func refresh(_ engine: MachineEngine) async {
-        guard let api = engine.api else { return }
+    /// False when the machine couldn't list its sessions (to try again).
+    @discardableResult
+    func refresh(_ engine: MachineEngine) async -> Bool {
+        guard let api = engine.api else { return true }
         let machine = engine.machine.id
         // Still the connection it started with: a newer one (or none) takes over from here.
         let isCurrent = { engine.isReady && engine.api?.client.endpoint == api.client.endpoint }
         do {
             let listed = try await api.sessions().data
-            guard isCurrent() else { return }
+            guard isCurrent() else { return true }
             // Its open conversations take this connection first, so nothing sent from them goes
             // to the old one.
             for model in models.values where RemoteFolder.machine(of: model.session.location.directory) == machine { model.reconnect(api) }
@@ -660,7 +662,7 @@ final class Workspace {
             // meanwhile goes. (The list has only the newest, so one missing from it is asked about.)
             let known = Set(listed.map(\.id))
             for (id, model) in models where RemoteFolder.machine(of: model.session.location.directory) == machine {
-                guard isCurrent() else { return }
+                guard isCurrent() else { return true }
                 if !model.isSubagent, !known.contains(id) {
                     guard let session = try? await api.session(id) else {
                         models[id] = nil
@@ -674,7 +676,9 @@ final class Workspace {
             }
         } catch {
             log.error("\(machine, privacy: .public) sessions: \(String(describing: error), privacy: .public)")
+            return false
         }
+        return true
     }
 
     /// A machine disconnected: its sessions stay as last seen until it's back, their
@@ -685,6 +689,8 @@ final class Workspace {
         running.subtract(gone)
         connectedMachines.remove(machine)
         if forGood {
+            listSaves[machine]?.cancel()
+            listSaves[machine] = nil
             sessions.removeAll { gone.contains($0.id) }
             for id in gone { models[id] = nil }
             for (id, session) in remoteSessions where session.machine == machine { SessionCopies.remove(id) }

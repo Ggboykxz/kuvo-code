@@ -90,8 +90,9 @@ private struct BottomStack: View {
                     .glassEffect(.regular, in: .rect(cornerRadius: Metrics.composerRadius))
                     .glassEffectID(request.id, in: glass)
                 }
-                ForEach(forms) { form in
-                    QuestionCard(form: form, takesFocus: model.draftText.isEmpty) { answer in
+                ForEach(Array(forms.enumerated()), id: \.element.id) { index, form in
+                    QuestionCard(form: form, progress: Binding(get: { model.questionProgress[form.id] ?? QuestionProgress() }, set: { model.questionProgress[form.id] = $0 }),
+                                 takesKeys: index == 0) { answer in
                         model.answer(form, with: FormFieldsView.payload(form.fields, answer))
                     } dismiss: {
                         model.dismiss(form)
@@ -137,6 +138,7 @@ private struct BottomStack: View {
                     commands: catalog.commands(in: model.session.location.directory),
                     focusRequest: model.composerFocus,
                     isOffline: offlineMachine != nil,
+                    blurRequest: model.composerBlur,
                     commentCount: model.reviewComments.count,
                     onDiscardComments: { model.reviewComments = [] },
                     onSelectAgent: model.selectAgent,
@@ -157,6 +159,14 @@ private struct BottomStack: View {
             }
             .animation(.ui, value: model.transcript.permissions.map(\.id))
             .animation(.ui, value: model.transcript.forms.map(\.id))
+            // A question came: the keyboard goes to it, after the composer takes it as it shows.
+            .onChange(of: forms.first?.id, initial: true) { _, id in
+                guard id != nil else { return }
+                Task {
+                    try? await Task.sleep(for: .milliseconds(150))
+                    model.yieldComposer()
+                }
+            }
             .animation(.ui, value: model.waiting.isEmpty)
             .animation(.ui, value: offlineMachine == nil)
             .animation(.ui, value: model.failure)

@@ -96,14 +96,16 @@ struct PermissionCard: View {
 /// The agent asked you something (its question tool), or a tool needs details.
 struct QuestionCard: View {
     let form: FormRequest
-    /// Takes the keyboard when it shows (not while you're writing in the composer).
-    var takesFocus = false
+    /// Your answers so far, kept with the session while you look elsewhere.
+    @Binding var progress: QuestionProgress
+    /// Keys go to it (numbers pick, typing writes): the first of the questions only.
+    var takesKeys = true
     let submit: (FormAnswer) -> Void
     let dismiss: () -> Void
 
     var body: some View {
         if form.isQuestion, !form.fields.isEmpty, form.fields.allSatisfy(Self.isChoiceOrWords) {
-            QuestionPager(form: form, takesFocus: takesFocus, submit: submit, dismiss: dismiss)
+            QuestionPager(form: form, progress: $progress, takesKeys: takesKeys, submit: submit, dismiss: dismiss)
         } else {
             FormCard(form: form, submit: submit, dismiss: dismiss)
         }
@@ -124,15 +126,26 @@ struct QuestionCard: View {
 /// question; Skip leaves one unanswered; × dismisses them all.
 private struct QuestionPager: View {
     let form: FormRequest
-    let takesFocus: Bool
+    @Binding var progress: QuestionProgress
+    let takesKeys: Bool
     let submit: (FormAnswer) -> Void
     let dismiss: () -> Void
 
     @Environment(\.cardRoom) private var room
-    @State private var answers: FormAnswer = [:]
+    @Environment(\.isEnabled) private var isEnabled
+    private var answers: FormAnswer {
+        get { progress.answers }
+        nonmutating set { progress.answers = newValue }
+    }
     /// What you wrote yourself, by question.
-    @State private var written: [String: String] = [:]
-    @State private var page = 0
+    private var written: [String: String] {
+        get { progress.written }
+        nonmutating set { progress.written = newValue }
+    }
+    private var page: Int {
+        get { progress.page }
+        nonmutating set { progress.page = newValue }
+    }
     @State private var choicesHeight: CGFloat = 0
     @FocusState private var isWriting: Bool
     @State private var monitor: Any?
@@ -173,20 +186,13 @@ private struct QuestionPager: View {
             monitor = nil
         }
         .animation(.ui, value: index)
+        // Greyed out (its machine away, Settings over it): keys aren't its.
+        .onChange(of: isEnabled, initial: true) { _, enabled in windowBox.isEnabled = enabled }
         .onAppear {
-            answers = FormFieldsView.defaults(for: form.fields)
-            // After the composer, which takes the keyboard as it shows too.
-            monitor = monitor ?? NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in key(event) ? nil : event }
-            // The keyboard comes to the question, after the composer takes it as it shows too;
-            // not while you're writing there.
-            if takesFocus {
-                Task {
-                    try? await Task.sleep(for: .milliseconds(150))
-                    if let window = windowBox.window, let editor = window.firstResponder as? NSText, editor.string.isEmpty {
-                        window.makeFirstResponder(nil)
-                    }
-                }
+            if !progress.isStarted {
+                progress = QuestionProgress(answers: FormFieldsView.defaults(for: form.fields), isStarted: true)
             }
+            if takesKeys { monitor = monitor ?? NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in key(event) ? nil : event } }
             #if DEBUG
             // KUVO_DEMO_QUESTIONS=<n>: on the nth question (from 0).
             if let n = Int(ProcessInfo.processInfo.environment["KUVO_DEMO_QUESTIONS"] ?? "") { page = n }
@@ -271,19 +277,21 @@ private struct QuestionPager: View {
         .controlSize(.large)
     }
 
-    /// Keys while nothing you type in has the keyboard: a number picks that choice, Return
-    /// goes on (the Next button's), and other typing goes to your own words.
+    /// Keys while nothing you type in has the keyboard (no field, terminal or page): a number
+    /// picks that choice, Return goes on (the Next button's), and other typing goes to your own
+    /// words.
     private func key(_ event: NSEvent) -> Bool {
-        guard let window = windowBox.window, event.window === window, !isWriting,
+        guard let window = windowBox.window, event.window === window, windowBox.isEnabled, !isWriting,
+              Self.isFree(window.firstResponder, in: window),
               event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
-              !(window.firstResponder is NSText), questions.indices.contains(index),
+              questions.indices.contains(index),
               let characters = event.characters, let character = characters.first,
               !character.isNewline, !character.isWhitespace || character == " ", character.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }),
               // Arrows and other function keys.
               !(character.unicodeScalars.first.map { (0xF700...0xF8FF).contains($0.value) } ?? false) else { return false }
         let field = questions[index]
         let options = options(of: field)
-        if let number = character.wholeNumberValue, (1...min(options.count, 9)).contains(number) {
+        if let number = character.wholeNumberValue, number >= 1, number <= min(options.count, 9) {
             pick(options[number - 1], in: field)
             return true
         }
@@ -291,6 +299,13 @@ private struct QuestionPager: View {
         written[field.key, default: ""] += characters
         isWriting = true
         return true
+    }
+
+    /// Nothing that takes typing has the keyboard: the window does, or SwiftUI's own host
+    /// view (a control, not a field). A text field, the terminal or a page keeps its keys.
+    private static func isFree(_ responder: NSResponder?, in window: NSWindow) -> Bool {
+        guard let responder, responder !== window else { return true }
+        return String(describing: type(of: responder)).contains("HostingView")
     }
 
     // MARK: Answers
@@ -500,6 +515,18 @@ extension EnvironmentValues {
 /// The window a view is in, for what it does with AppKit (watching keys there).
 final class WindowBox {
     weak var window: NSWindow?
+    /// Whether what it's in takes input now (not greyed out).
+    var isEnabled = true
+}
+
+/// Your answers to the agent's questions so far: the choices, your own words by question, and
+/// the question in view.
+struct QuestionProgress: Equatable {
+    var answers: FormAnswer = [:]
+    var written: [String: String] = [:]
+    var page = 0
+    /// Its answers start from the form's defaults, once.
+    var isStarted = false
 }
 
 private struct WindowReader: NSViewRepresentable {

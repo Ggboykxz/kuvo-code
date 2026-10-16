@@ -7,6 +7,11 @@ final class SessionModel {
     var session: Session
     private(set) var transcript: Transcript
     private(set) var isLoaded = false
+    /// Your answers to the agent's questions so far, by form: kept while you look elsewhere.
+    var questionProgress: [String: QuestionProgress] = [:]
+    /// Goes up when the agent asks something while the composer is empty: it lets go of the
+    /// keyboard, for the question.
+    private(set) var composerBlur = 0
     /// Showing the conversation as last seen (its machine is connecting), not the engine's.
     private(set) var isCopy = false
     /// Made from a copy: no engine to read from until its machine is back.
@@ -71,6 +76,11 @@ final class SessionModel {
     }
 
     func focusComposer() { composerFocus += 1 }
+
+    /// A question came: the composer lets go of the keyboard for it, unless you're writing.
+    func yieldComposer() {
+        if draftText.isEmpty { composerBlur += 1 }
+    }
 
     /// Replies to a message: the part of it you selected (else all of `text`) goes into the
     /// composer as a quote, and the composer takes the keyboard.
@@ -194,6 +204,9 @@ final class SessionModel {
             keepCopy()
         } catch {
             failure = error.localizedDescription
+            // Its machine is back but this one couldn't be read: no longer waiting, so the
+            // failure shows (and what you do goes to the engine, which may answer now).
+            if !waitsForEngine { isCopy = false }
         }
         refreshChanges()
     }
@@ -284,13 +297,8 @@ final class SessionModel {
             } catch {
                 transcript.removeLocal(id: id)
                 reviewComments = comments + reviewComments
-                // It didn't go: back in the composer, unless you've written something since.
-                if draftText.isEmpty, draftFiles.isEmpty {
-                    let (quote, words) = Quoting.split(written)
-                    draftText = words
-                    draftFiles = files
-                    if draftQuote == nil { draftQuote = quote }
-                }
+                // It didn't go: back in the composer, ahead of anything written since.
+                restoreDraft(written, files: files)
                 failure = error.localizedDescription
             }
         }
@@ -685,6 +693,7 @@ final class SessionModel {
 
     func answer(_ form: FormRequest, with answer: FormAnswer) {
         guard canReach else { return }
+        questionProgress[form.id] = nil
         Analytics.shared.track("question_answered", ["kind": form.isQuestion ? "question" : "form"])
         Task {
             do { try await api.reply(session: id, form: form.id, answer: answer) } catch { failure = error.localizedDescription }
@@ -693,6 +702,7 @@ final class SessionModel {
 
     func dismiss(_ form: FormRequest, message: String? = nil) {
         guard canReach else { return }
+        questionProgress[form.id] = nil
         Analytics.shared.track("question_dismissed", ["kind": form.isQuestion ? "question" : "form"])
         Task { try? await api.dismiss(session: id, form: form.id, message: message) }
     }

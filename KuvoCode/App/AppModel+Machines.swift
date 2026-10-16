@@ -89,7 +89,7 @@ extension AppModel {
         }
         engine.browser.onAskClosed = { [weak self] id in self?.browserAsks.closed(id) }
         engine.onEvent = { [weak self] event in self?.workspace.handle(event, machine: machine) }
-        engine.onReconnect = { [weak self] in await self?.workspace.refresh(engine) }
+        engine.onReconnect = { [weak self] in _ = await self?.workspace.refresh(engine) }
         engine.onExit = { [weak self] in
             self?.workspace.forget(machine)
             Task { await self?.reconnect(engine) }
@@ -119,7 +119,12 @@ extension AppModel {
         environment["OPENCODE_CONFIG_CONTENT"] = AppModel.merged(MachineBrowserInstaller.engineConfig, into: environment["OPENCODE_CONFIG_CONTENT"])
         let launch = MachineEngine.Launch(environment: environment, helper: MachineBrowserInstaller.helper)
         await engine.start(launch, cache: AppInfo.supportDirectory.appending(path: "engine-linux"))
-        if engine.isReady { await workspace.refresh(engine) }
+        // Its sessions, once it's up: tried again a few times, as they're what makes them live.
+        for wait in [0, 2, 5, 10, 20] where engine.isReady {
+            try? await Task.sleep(for: .seconds(wait))
+            guard engine.isReady else { break }
+            if await workspace.refresh(engine) { break }
+        }
     }
 
     /// Closes the connection to a machine. Its engine stops too, unless a session there is still
@@ -203,8 +208,11 @@ extension AppModel {
                 environment["OPENCODE_CONFIG_CONTENT"] = String(decoding: json, as: UTF8.self)
             }
         }
-        // Keys you brought for integrations, in memory as on this Mac.
-        environment.merge(await Task.detached { IntegrationKeys.environment }.value) { _, key in key }
+        // Keys you brought for the integrations machines run, in memory as on this Mac: not
+        // those that stay on this Mac (an app's secret for a sign-in, say).
+        let here = Set(Integrations.macOnly.map { IntegrationKeys.variable($0, "") })
+        let keys = await Task.detached { IntegrationKeys.environment }.value.filter { name, _ in !here.contains { name.hasPrefix($0) } }
+        environment.merge(keys) { _, key in key }
         // What some providers need until opencode handles it, as on this Mac.
         let compatibility = ProviderCompatibility.config
         if !compatibility.isEmpty {

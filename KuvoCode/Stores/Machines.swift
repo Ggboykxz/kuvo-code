@@ -146,6 +146,7 @@ final class MachineEngine {
                 attached = server
                 try check()
             }
+            try check()
             self.server = server
             let current = OpenCodeAPI(endpoint: server.endpoint, folderPrefix: RemoteFolder.prefix(for: machine.id))
             self.api = current
@@ -160,6 +161,9 @@ final class MachineEngine {
             await catalog.refresh()
         } catch is Superseded {
             // What it connected is its own to close; the newer attempt has the rest.
+            if let attached, attached !== server { attached.disconnect() }
+        } catch where connections != attempt {
+            // Failed after a newer attempt began: that one's state isn't this one's to change.
             if let attached, attached !== server { attached.disconnect() }
         } catch {
             log.error("\(self.machine.destination, privacy: .public) didn't start: \(error.localizedDescription, privacy: .public)")
@@ -267,6 +271,8 @@ final class MachineEngine {
                     group.cancelAll()
                     return first
                 }
+                // The feed came back meanwhile (which cancels this): nothing was lost.
+                guard !Task.isCancelled else { return }
                 guard !answered else { continue }
                 log.error("\(self.machine.destination, privacy: .public)'s engine stopped answering through its tunnel")
                 lost("The connection to \(machine.name) was lost.")

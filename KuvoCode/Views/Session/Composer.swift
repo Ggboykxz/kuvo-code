@@ -27,6 +27,8 @@ struct Composer: View {
     /// The engine it sends to can't be reached now (its machine is reconnecting): you can write,
     /// not send.
     var isOffline = false
+    /// Goes up when it should let go of the keyboard (for a question that came).
+    var blurRequest = 0
     /// Comments on the changes waiting to go with the next message.
     var commentCount = 0
     var onDiscardComments: () -> Void = {}
@@ -252,6 +254,7 @@ struct Composer: View {
         } isTargeted: { isTargeted = $0 }
         .modifier(PasteAttachments(isActive: isFocused, attach: attach))
         .onChange(of: focusRequest) { focusAtEnd() }
+        .onChange(of: blurRequest) { isFocused = false }
         .onAppear {
             focusAtEnd()
             #if DEBUG

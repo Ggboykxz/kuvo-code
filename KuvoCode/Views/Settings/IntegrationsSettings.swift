@@ -182,8 +182,14 @@ struct IntegrationsSettings: View {
         let signIn = live.first { $0.name == service.id }?.integrationID
         config.set(nil, at: MCPSettings.path + [service.id])
         for key in Integrations.keys(of: service.way) { IntegrationKeys.set(nil, for: IntegrationKeys.variable(service.id, key.name)) }
-        // What its server kept here: its own folder (and the file it once kept).
+        // What its server kept: its own folder (and the file it once kept), here and on the
+        // machines that are connected.
         for name in [service.id, "\(service.id).json"] { try? FileManager.default.removeItem(at: AppInfo.supportDirectory.appending(path: "integrations/\(name)")) }
+        let kept = "\"$HOME/\(RemoteEngineInstaller.root)/integrations/\(service.id)\""
+        for engine in app.machines.engines.values where engine.isReady {
+            let machine = engine.machine.id
+            Task.detached { _ = RemoteShell.run("rm -rf \(kept)", on: machine) }
+        }
         if let signIn, let api = app.api { Task { try? await api.removeCredential(signIn) } }
         if !Integrations.macOnly.contains(service.id) { renewMachines() }
     }
