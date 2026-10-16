@@ -38,12 +38,14 @@ One WebSocket per device, binary messages, first byte the kind:
 | `0x02` send | device | `to(16) payload` | Pass `payload` to the device at `to`. |
 | `0x02` deliver | relay | `from(16) payload` | Something sent to you. |
 | `0x03` unreachable | relay | `to(16)` | Nothing is connected at `to`; what you sent is dropped. |
-| `0x04` register | phone | JSON | `{"token", "environment": "sandbox"\|"production", "topic", "senders": [address]}`: send pushes to this APNs token, only from these addresses. Kept until replaced. |
+| `0x04` register | phone | JSON | `{"token", "environment": "sandbox"\|"production", "topic", "senders": [address]}`: send pushes to this APNs token, only from these addresses. Kept for 90 days; the phone sends it again whenever it connects. |
 | `0x05` push | host | `to(16) payload` | Push `payload` (a mail frame, below) to `to`'s phone. |
 | `0x06` pushed | relay | `to(16) status(1)` | 0 sent, 1 no phone registered, 2 not one of its senders, 3 Apple refused. |
 
 `payload` is at most 65,600 bytes. The relay closes a connection that sends anything else
-(4000), a wrong secret (4001), or too much too fast (4003).
+(4000), a wrong secret (4001), far too much too fast (4003), or one too many from the same
+IP address (4005). A device a little too fast, or sending faster than the one it sends to
+takes in, is held back: the relay stops reading from it for a moment.
 
 An APNs push carries `{"aps": {"alert": {"title": "Kuvo Code", "body": "New activity"},
 "mutable-content": 1}, "f": "<sender's address>", "k": "<payload, base64>"}`. The phone's
