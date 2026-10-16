@@ -159,7 +159,7 @@ nonisolated enum Integrations {
         Service(id: "atlassian", title: "Jira and Confluence", summary: "Issues and pages at Atlassian", kind: .work, symbol: "square.stack.3d.up", site: "https://www.atlassian.com",
                 way: .official(url: "https://mcp.atlassian.com/v2/mcp")),
         Service(id: "todoist", title: "Todoist", summary: "Tasks and projects", kind: .work, symbol: "checkmark.circle", site: "https://app.todoist.com",
-                way: .package(command: ["@doist/todoist-mcp@13.5.0"], keys: [Key(name: "TODOIST_API_KEY", label: "API token", prompt: "From Settings › Integrations › Developer")], help: "https://app.todoist.com/app/settings/integrations/developer", by: "Doist's own todoist-mcp")),
+                way: .package(command: ["@doist/todoist-mcp@13.6.0"], keys: [Key(name: "TODOIST_API_KEY", label: "API token", prompt: "From Settings › Integrations › Developer")], help: "https://app.todoist.com/app/settings/integrations/developer", by: "Doist's own todoist-mcp")),
         Service(id: "calendly", title: "Calendly", summary: "Your event types, bookings and availability", kind: .work, symbol: "calendar.badge.plus", site: "https://calendly.com/app",
                 way: .official(url: "https://mcp.calendly.com")),
         Service(id: "figma", title: "Figma", summary: "Files and frames, to build designs from", kind: .work, symbol: "paintbrush", site: "https://www.figma.com",
