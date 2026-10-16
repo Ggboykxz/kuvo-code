@@ -137,6 +137,9 @@ itself. A host serves:
 - `kuvo/info`: what the host is and runs.
 - On a Mac, `kuvo/hosts`: the machines this phone may reach directly, with their addresses
   and static keys, so pairing once with the Mac reaches them all.
+- On a Mac, `kuvo/bots`: your bots by their session, wherever they live, with their name,
+  look and job, and what only the Mac knows: paused, the next wake-up, how many things each
+  watches.
 
 ## Pairing
 

@@ -42,8 +42,9 @@ final class PhoneLink {
     private(set) var machineHosts: [String: MachineHost] = [:]
     /// The machines that are connected now, for putting the bridge on them; set by AppModel.
     @ObservationIgnored var readyMachines: () -> [MachineEngine] = { [] }
-    /// Your bots, for `kuvo/bots`: the phone draws each as the Mac does; set by AppModel.
-    @ObservationIgnored var bots: () -> [Bot] = { [] }
+    /// Your bots, for `kuvo/bots`: the phone draws and describes each as the Mac does; set by
+    /// AppModel.
+    @ObservationIgnored weak var bots: Bots?
 
     struct MachineHost: Codable, Hashable {
         var name: String
@@ -272,13 +273,24 @@ final class PhoneLink {
         case "kuvo/info":
             return (200, (try? encoder.encode(Info(name: Self.computerName, app: AppInfo.version, engine: OpenCodeEngine.version))) ?? Data())
         case "kuvo/bots":
-            // Each bot by its session (here or on a machine), with its name and look.
-            struct Bots: Encodable {
-                struct Entry: Encodable { var session: String; var name: String; var look: BotLook; var machine: String? }
+            // Each bot by its session (here or on a machine): its name, look and job, and what
+            // the Mac knows of it that its session doesn't say: paused, when it next wakes (in
+            // seconds since 1970), how many things it watches.
+            struct Listed: Encodable {
+                struct Entry: Encodable {
+                    var session: String, name: String, look: BotLook, machine: String?, job: String
+                    var paused: Bool, wakes: Double?, watching: Int
+                }
                 var bots: [Entry]
             }
-            let bots = bots().map { Bots.Entry(session: $0.sessionID, name: $0.name, look: $0.look, machine: $0.machine) }
-            return (200, (try? encoder.encode(Bots(bots: bots))) ?? Data())
+            let entries = (bots?.list ?? []).map { bot in
+                Listed.Entry(
+                    session: bot.sessionID, name: bot.name, look: bot.look, machine: bot.machine, job: bot.job,
+                    paused: bots?.paused.contains(bot.id) == true,
+                    wakes: bots?.wakes[bot.id]?.map(\.due).min()?.timeIntervalSince1970,
+                    watching: bots?.watches[bot.id]?.count ?? 0)
+            }
+            return (200, (try? encoder.encode(Listed(bots: entries))) ?? Data())
         case "kuvo/hosts":
             let hosts = machineHosts.values.sorted { $0.name < $1.name }.map { Hosts.Host(name: $0.name, address: $0.address, key: $0.key, relay: relay.absoluteString) }
             return (200, (try? encoder.encode(Hosts(hosts: hosts))) ?? Data())
