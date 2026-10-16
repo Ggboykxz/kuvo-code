@@ -5,7 +5,7 @@ import os
 /// While the conversation scrolls, counts the frames that came late and the rows and code blocks
 /// made meanwhile, and logs them when it stops: scrolling measured where it's seen, on screen.
 /// Debug builds only; read it with
-/// `log stream --predicate 'subsystem == "run.kuvo.code" AND category == "scroll"'`.
+/// `log show --last 1h --predicate 'subsystem == "run.kuvo.code" AND category == "scroll"'`.
 final class ScrollFrameMonitor: NSObject {
     static let shared = ScrollFrameMonitor()
 
@@ -67,7 +67,7 @@ final class ScrollFrameMonitor: NSObject {
         guard frames > 0 else { return }
         let seconds = CACurrentMediaTime() - began
         let hertz = Int((1 / interval).rounded())
-        log.info("scrolled \(seconds, format: .fixed(precision: 2), privacy: .public) s: \(self.frames, privacy: .public) frames at \(hertz, privacy: .public) Hz, \(self.late, privacy: .public) late, \(self.dropped, privacy: .public) missed, worst \(Int(self.worst * 1000), privacy: .public) ms; \(Self.rowsMade - self.rows, privacy: .public) rows and \(Self.codeBlocksMade - self.codeBlocks, privacy: .public) code blocks made")
+        log.notice("scrolled \(seconds, format: .fixed(precision: 2), privacy: .public) s: \(self.frames, privacy: .public) frames at \(hertz, privacy: .public) Hz, \(self.late, privacy: .public) late, \(self.dropped, privacy: .public) missed, worst \(Int(self.worst * 1000), privacy: .public) ms; \(Self.rowsMade - self.rows, privacy: .public) rows and \(Self.codeBlocksMade - self.codeBlocks, privacy: .public) code blocks made")
     }
 }
 #endif
