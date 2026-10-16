@@ -275,86 +275,16 @@ struct Composer: View {
         }
     }
 
-    /// The quotes you're answering, each with your answer under it: as tall as they are up to a
-    /// point, then they scroll, made as they come into view (there can be hundreds), with the
-    /// one you're answering in view.
-    private struct QuoteList: View {
-        @Binding var quotes: [Drafts.Quote]
-        var answering: FocusState<UUID?>.Binding
-        let focus: UUID?
-        let font: Font
-        let onSubmit: () -> Void
-        /// How tall they are together, measured as they lay out.
-        @State private var height: CGFloat = 0
-        @State private var position = ScrollPosition(idType: UUID.self)
-
-        private static let tallest: CGFloat = 260
-
-        var body: some View {
-            VStack(alignment: .leading, spacing: 4) {
-                if quotes.count > 2 {
-                    HStack {
-                        Text("\(quotes.count) quotes")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Button("Remove All") { withAnimation(.ui) { quotes.removeAll() } }
-                            .buttonStyle(TextButtonStyle())
-                            .font(.subheadline)
-                    }
-                }
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 6) {
-                        ForEach($quotes) { $quote in
-                            VStack(alignment: .leading, spacing: 6) {
-                                QuoteCard(text: quote.text) {
-                                    let id = quote.id
-                                    withAnimation(.ui) { quotes.removeAll { $0.id == id } }
-                                }
-                                TextField("Your answer to this…", text: $quote.response, axis: .vertical)
-                                    .textFieldStyle(.plain)
-                                    .font(font)
-                                    .lineLimit(1...6)
-                                    .focused(answering, equals: quote.id)
-                                    .onSubmit(onSubmit)
-                                    .padding(.leading, 12)
-                                    .padding(.bottom, 4)
-                            }
-                            .id(quote.id)
-                            .transition(.opacity.combined(with: .offset(y: 4)))
-                        }
-                    }
-                    .scrollTargetLayout()
-                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
-                }
-                .scrollPosition($position)
-                .scrollBounceBehavior(.basedOnSize)
-                .scrollIndicators(height > Self.tallest ? .automatic : .never)
-                // Taller than it shows: it fades out at the edges, rather than being cut there.
-                .mask {
-                    let fade = height > Self.tallest ? 14 / Self.tallest : 0
-                    LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: fade),
-                                           .init(color: .black, location: 1 - fade), .init(color: .clear, location: 1)],
-                                   startPoint: .top, endPoint: .bottom)
-                }
-                // Its own height until it's measured, so it doesn't take the window's first.
-                .frame(height: height == 0 ? nil : min(height, Self.tallest))
-                .fixedSize(horizontal: false, vertical: height == 0)
-                .onChange(of: focus, initial: true) { _, id in
-                    guard let id else { return }
-                    Task {
-                        await Task.yield()
-                        position.scrollTo(id: id)
-                    }
-                }
-            }
-        }
-    }
-
     /// Puts the cursor in the field, after what's there. (Focusing a field selects all of it,
     /// so typing would replace a draft.)
     private func focusAtEnd() {
         isFocused = true
+        Self.cursorToEnd(of: text)
+    }
+
+    /// Once the field holding `text` has the keyboard, its cursor after the text rather than all
+    /// of it selected (which typing would replace). For every composer.
+    static func cursorToEnd(of text: String) {
         Task {
             try? await Task.sleep(for: .milliseconds(50))
             let editor = NSApp.windows.lazy.compactMap { $0.firstResponder as? NSTextView }.first { $0.isFieldEditor && $0.string == text }

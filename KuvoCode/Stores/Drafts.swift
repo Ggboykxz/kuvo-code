@@ -10,11 +10,9 @@ final class Drafts {
     struct Draft: Codable, Hashable {
         var text = ""
         var files: [URL] = []
-        /// What you're replying to, shown over the composer and sent as a quote ahead of the text
-        /// (a group chat's).
+        /// What you were replying to, before you could reply to several (read once, into `quotes`).
         var quote: String?
-        /// What you're replying to in a session, each with your answer to it: sent in order, then
-        /// the text.
+        /// What you're replying to, each with your answer to it: sent in order, then the text.
         var quotes: [Quote] = []
 
         var isEmpty: Bool { text.isEmpty && files.isEmpty && quote == nil && quotes.isEmpty }
@@ -52,9 +50,8 @@ final class Drafts {
         drafts = Dictionary(uniqueKeysWithValues: stored.map { key, draft in
             var draft = draft
             draft.files = draft.files.filter { FileManager.default.fileExists(atPath: $0.path) }
-            // A session's draft from before it could reply to several quotes (a group chat's
-            // keeps its one).
-            if !key.hasPrefix("group:"), let quote = draft.quote, draft.quotes.isEmpty {
+            // A draft from before it could reply to several quotes.
+            if let quote = draft.quote, draft.quotes.isEmpty {
                 draft.quotes = [Quote(text: quote)]
                 draft.quote = nil
             }
@@ -64,6 +61,19 @@ final class Drafts {
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { Drafts.shared.save() }
         }
+    }
+
+    /// Adds a quote to answer to `key`'s draft, after those there are; one already there isn't
+    /// added again. Its ID, for its answer to take the keyboard; nil for nothing to quote.
+    @discardableResult
+    func addQuote(_ text: String, to key: String) -> UUID? {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        if let same = self[key].quotes.first(where: { $0.text == text }) { return same.id }
+        let quote = Quote(text: text)
+        self[key].quotes.append(quote)
+        self[key].quote = nil
+        return quote.id
     }
 
     subscript(key: String) -> Draft {

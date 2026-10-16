@@ -563,7 +563,7 @@ final class Workspace {
         var stored = message
         for case .user(let user) in recent where user.id == message.id { stored = user }
         // What it replied to comes back over the composer, as you wrote it.
-        let (quotes, text) = SessionModel.quotes(in: ReviewComments.split(withComments).text)
+        let (quotes, text) = Quoting.draft(of: ReviewComments.split(withComments).text)
         Drafts.shared[session.id] = Drafts.Draft(text: text, files: SessionModel.files(of: stored) + paths.map { URL(filePath: $0) }, quotes: quotes)
         requestedTab = session.id
     }

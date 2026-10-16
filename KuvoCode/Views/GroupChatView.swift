@@ -10,6 +10,8 @@ struct GroupChatView: View {
     @State private var scroller = ConversationScroller()
     /// Goes up to have the composer take the keyboard.
     @State private var composerFocus = 0
+    /// The quote whose answer takes the keyboard: the one just added.
+    @State private var quoteFocus: UUID?
 
     private var members: [Bot] { group.members.compactMap { bots.bot($0) } }
     private var draftKey: String { BotGroups.tabKey(group.id) }
@@ -19,9 +21,7 @@ struct GroupChatView: View {
         let speaker = groups.speaking[group.id].flatMap { bots.bot($0) }
         // What you select, to reply to (over the composer) or copy.
         ConversationScroll(scroller: scroller, spacing: 18, change: [messages.last?.id, speaker?.id, String(messages.count)], quote: { text in
-            Drafts.shared[draftKey].quote = text
-            composerFocus += 1
-            Analytics.shared.track("message_replied", ["group": true, "how": "selection"])
+            addQuote(text, how: "selection")
         }) {
             ForEach(messages) { message in
                 GroupMessageRow(message: message, author: message.author.flatMap { bots.bot($0) }, members: members,
@@ -51,7 +51,8 @@ struct GroupChatView: View {
                 }
                 GroupComposer(
                     text: Binding(get: { Drafts.shared[draftKey].text }, set: { Drafts.shared[draftKey].text = $0 }),
-                    quote: Binding(get: { Drafts.shared[draftKey].quote }, set: { Drafts.shared[draftKey].quote = $0 }),
+                    quotes: Binding(get: { Drafts.shared[draftKey].quotes }, set: { Drafts.shared[draftKey].quotes = $0 }),
+                    quoteFocus: quoteFocus,
                     placeholder: "Message \(group.name)…",
                     members: members,
                     isTalking: groups.discussing.contains(group.id),
@@ -72,32 +73,41 @@ struct GroupChatView: View {
     /// Replies to a bot's message: all of it quoted in the composer, naming the bot so it's the
     /// one to answer.
     private func reply(to message: GroupMessage) {
-        Drafts.shared[draftKey].quote = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        addQuote(message.text, how: "message")
         // Named, so it's the one to answer.
         if let name = message.author.flatMap({ bots.bot($0)?.name }), !Drafts.shared[draftKey].text.contains("@" + name) {
             let draft = Drafts.shared[draftKey].text.trimmingCharacters(in: .whitespacesAndNewlines)
             Drafts.shared[draftKey].text = "@\(name) " + draft
         }
-        composerFocus += 1
-        Analytics.shared.track("message_replied", ["group": true])
+    }
+
+    /// A quote to answer, after those there are, as in a session; its answer takes the keyboard.
+    private func addQuote(_ text: String, how: String) {
+        let count = Drafts.shared[draftKey].quotes.count
+        guard let id = Drafts.shared.addQuote(text, to: draftKey) else { return }
+        quoteFocus = id
+        if Drafts.shared[draftKey].quotes.count > count { Analytics.shared.track("message_replied", ["group": true, "how": how]) }
     }
 
     /// Takes the chat back to before your message, which comes back to the composer, ahead of
     /// anything already there.
     private func undo(from message: GroupMessage) {
         guard let taken = groups.undo(from: message.id, in: group.id) else { return }
-        let (quote, text) = Quoting.split(taken)
+        let (quotes, text) = Quoting.draft(of: taken)
         let draft = Drafts.shared[draftKey].text
         Drafts.shared[draftKey].text = [text, draft].filter { !$0.isEmpty }.joined(separator: "\n\n")
-        if let quote { Drafts.shared[draftKey].quote = quote }
+        Drafts.shared[draftKey].quotes = quotes + Drafts.shared[draftKey].quotes
+        composerFocus += 1
     }
 
     private func send() {
-        let text = Drafts.shared[draftKey].text
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        groups.send(Quoting.message(quote: Drafts.shared[draftKey].quote, text: text), to: group.id)
+        let draft = Drafts.shared[draftKey]
+        let message = Quoting.message(quotes: draft.quotes, text: draft.text)
+        // A quote you didn't answer goes only with words of yours.
+        guard !Quoting.words(of: message).isEmpty else { return }
+        groups.send(message, to: group.id)
         Drafts.shared[draftKey].text = ""
-        Drafts.shared[draftKey].quote = nil
+        Drafts.shared[draftKey].quotes = []
         scroller.toEnd()
     }
 }
@@ -167,7 +177,7 @@ private struct GroupMessageRow: View, Equatable {
                 .multilineTextAlignment(.center)
         } else if message.author == nil {
             VStack(alignment: .trailing, spacing: 2) {
-                UserBubble(text: message.text, styled: GroupMentions.styled(Quoting.split(message.text).text, bots: members))
+                UserBubble(text: message.text, style: { GroupMentions.styled($0, bots: members) })
                 // Always laid out, shown under the pointer: nothing moves when they appear.
                 HStack(spacing: 0) {
                     Text(MessageTime.sentAt(message.time))
@@ -355,8 +365,10 @@ private struct PausedBar: View {
 /// (or stop, while they talk).
 private struct GroupComposer: View {
     @Binding var text: String
-    /// What you're replying to, as a card over the text.
-    @Binding var quote: String?
+    /// What you're replying to, each with your answer to it under it, as in a session.
+    @Binding var quotes: [Drafts.Quote]
+    /// The quote whose answer takes the keyboard (the one just added).
+    var quoteFocus: UUID?
     let placeholder: String
     let members: [Bot]
     let isTalking: Bool
@@ -366,20 +378,24 @@ private struct GroupComposer: View {
     let stop: () -> Void
     @Environment(\.messageFont) private var messageFont
     @FocusState private var isFocused: Bool
+    @FocusState private var answering: UUID?
 
-    private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    private var canSend: Bool {
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || quotes.contains { !$0.response.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let replying = quote {
-                QuoteCard(text: replying) { withAnimation(.ui) { quote = nil } }
+            if !quotes.isEmpty {
+                QuoteList(quotes: $quotes, answering: $answering, focus: quoteFocus, font: messageFont.body, onSubmit: send)
             }
             TextField(placeholder, text: $text, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(messageFont.body)
                 .lineLimit(1...10)
                 .focused($isFocused)
-                .onChange(of: focusRequest) { isFocused = true }
+                .onChange(of: focusRequest) { focusAtEnd() }
                 .onKeyPress(.return, phases: .down) { press in
                     // Return sends; Shift-Return starts a new line.
                     if press.modifiers.contains(.shift) || press.modifiers.contains(.option) {
@@ -433,7 +449,14 @@ private struct GroupComposer: View {
         .padding(.top, 10)
         .padding(.bottom, 7)
         .modifier(ComposerSurface())
-        .onAppear { isFocused = true }
+        .onAppear(perform: focusAtEnd)
+        .onChange(of: quoteFocus) { _, id in answering = id }
+    }
+
+    /// The keyboard, with the cursor after what's written, as in a session.
+    private func focusAtEnd() {
+        isFocused = true
+        Composer.cursorToEnd(of: text)
     }
 
     /// "@Mira " where the message goes on.

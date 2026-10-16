@@ -85,17 +85,14 @@ enum Quoting {
         segments(message).map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n")
     }
 
-    /// A message's quote (the lines starting with ">" that it opens with) and the rest.
-    static func split(_ message: String) -> (quote: String?, text: String) {
-        let lines = message.split(separator: "\n", omittingEmptySubsequences: false)
-        let quoted = lines.prefix { $0.hasPrefix(">") }
-        guard !quoted.isEmpty, quoted.count < lines.count || !message.isEmpty else { return (nil, message) }
-        let quote = quoted.map { line in
-            var line = line.dropFirst()
-            if line.first == " " { line = line.dropFirst() }
-            return String(line)
-        }.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        let rest = lines.dropFirst(quoted.count).joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        return quote.isEmpty ? (nil, message) : (quote, rest)
+    /// A sent message back as a draft (after an undo, say): its quotes, each with its answer, and
+    /// the words that came first or last.
+    static func draft(of message: String) -> (quotes: [Drafts.Quote], text: String) {
+        var quotes: [Drafts.Quote] = []
+        var text = ""
+        for segment in segments(message) {
+            if let quote = segment.quote { quotes.append(Drafts.Quote(text: quote, response: segment.text)) } else { text = segment.text }
+        }
+        return (quotes, text)
     }
 }

@@ -1272,10 +1272,11 @@ struct MainView: View {
         if let id = environment["KUVO_DEMO_SESSION"] {
             openTab(id)
             // KUVO_DEMO_QUOTES=<n>: that many quotes to answer in its composer.
-            if let count = Int(environment["KUVO_DEMO_QUOTES"] ?? ""), let model = workspace.model(for: id) {
-                model.draftQuotes = []
+            if let count = Int(environment["KUVO_DEMO_QUOTES"] ?? "") {
+                Drafts.shared[id].quotes = []
                 for index in 1...max(count, 1) {
-                    model.addQuote("Point \(index): " + String(repeating: "a quoted line from the agent's reply ", count: index % 3 + 1), how: "demo")
+                    let text = "Point \(index): " + String(repeating: "a quoted line from the agent's reply ", count: index % 3 + 1)
+                    if let model = workspace.model(for: id) { model.addQuote(text, how: "demo") } else { Drafts.shared.addQuote(text, to: id) }
                 }
             }
         }

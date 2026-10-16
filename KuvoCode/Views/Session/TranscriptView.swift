@@ -516,8 +516,8 @@ private struct RowView: View, Equatable {
 
 struct UserBubble: View {
     let text: String
-    /// The words with styling of their own (a group chat's mentions), in place of plain `text`.
-    var styled: AttributedString?
+    /// Words with styling of their own (a group chat's mentions), in place of plain ones.
+    var style: ((String) -> AttributedString?)?
     var attachments: [AttachmentItem] = []
     var comments: [ReviewComment] = []
     var status: String?
@@ -534,7 +534,7 @@ struct UserBubble: View {
             // What it replied to, each part above the words that answer it.
             let segments = Quoting.segments(text)
             if segments.count == 1, segments[0].quote == nil {
-                if !text.isEmpty { MessageText(text: text, styled: styled) }
+                if !text.isEmpty { MessageText(text: text, styled: style?(text)) }
             } else {
                 ForEach(segments.indices, id: \.self) { index in
                     if let quote = segments[index].quote {
@@ -543,7 +543,7 @@ struct UserBubble: View {
                             .padding(.top, index == 0 ? 0 : 6)
                     }
                     if !segments[index].text.isEmpty {
-                        MessageText(text: segments[index].text, styled: segments.count == 1 ? styled : nil)
+                        MessageText(text: segments[index].text, styled: style?(segments[index].text))
                     }
                 }
             }

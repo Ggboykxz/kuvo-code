@@ -87,17 +87,6 @@ final class SessionModel {
         findRequest += 1
     }
 
-    /// A message's quotes, each with what was said to it, and the words before them (or, with
-    /// no quote, all of it): the message as it was in the composer.
-    static func quotes(in message: String) -> (quotes: [Drafts.Quote], text: String) {
-        var quotes: [Drafts.Quote] = []
-        var text = ""
-        for segment in Quoting.segments(message) {
-            if let quote = segment.quote { quotes.append(Drafts.Quote(text: quote, response: segment.text)) } else { text = segment.text }
-        }
-        return (quotes, text)
-    }
-
     /// Started by another session's agent to do part of its task.
     var isSubagent: Bool { session.parentID != nil }
 
@@ -121,16 +110,10 @@ final class SessionModel {
     /// Adds a quote to answer (all of a message, or a part you selected), after those there are,
     /// and its answer takes the keyboard.
     func addQuote(_ text: String, how: String) {
-        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        if let same = draftQuotes.first(where: { $0.text == text }) {
-            quoteFocus = same.id
-            return
-        }
-        let quote = Drafts.Quote(text: text)
-        draftQuotes.append(quote)
-        quoteFocus = quote.id
-        Analytics.shared.track("message_replied", ["how": how])
+        let count = draftQuotes.count
+        guard let id = Drafts.shared.addQuote(text, to: self.id) else { return }
+        quoteFocus = id
+        if draftQuotes.count > count { Analytics.shared.track("message_replied", ["how": how]) }
     }
     /// Queued messages wait for Resume: after Stop, a failed run, or when the app finds them
     /// waiting at launch.
@@ -498,7 +481,7 @@ final class SessionModel {
     private func restoreDraft(_ message: String, files picked: [URL] = []) {
         let (withComments, paths) = Attachments.split(message)
         let (quoted, comments) = ReviewComments.split(withComments)
-        let (quotes, text) = Self.quotes(in: quoted)
+        let (quotes, text) = Quoting.draft(of: quoted)
         draftQuotes = quotes + draftQuotes
         draftText = [text, draftText].filter { !$0.isEmpty }.joined(separator: "\n\n")
         let files = picked + paths.map { URL(filePath: $0) }
