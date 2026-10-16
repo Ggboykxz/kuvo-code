@@ -292,6 +292,13 @@ test("a socket reaches the engine's terminal with its password, both ways, until
   assert.equal(terminal.asked.length, 2);
 });
 
+test("a relay that isn't there ends the attempt, so the bridge tries again", async () => {
+  const host = { reset() {}, send() {} };
+  const started = Date.now();
+  assert.equal(await link.connectOnce("ws://127.0.0.1:9", crypto.randomBytes(32), host), false);
+  assert.ok(Date.now() - started < 5000);
+});
+
 test("a session the host doesn't know is closed, and tampering ends one", async () => {
   const hostKey = link.newKey();
   const host = new link.LinkHost({ key: hostKey, hello: { v: 1, kind: "machine", name: "m", app: "0" }, authorize: () => true, handle: async function* () {} });

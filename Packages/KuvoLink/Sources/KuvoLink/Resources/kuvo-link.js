@@ -20,7 +20,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 // Goes up with every change, so `setup` replaces a running bridge that's older.
-export const BRIDGE_VERSION = "0.4.0";
+export const BRIDGE_VERSION = "0.4.1";
 const K = process.env.KUVO_HOME || path.join(os.homedir(), ".kuvo-code");
 const RUN = path.join(K, "run");
 export const LINK_FILE = path.join(RUN, "link.json");
@@ -666,7 +666,7 @@ export function authorizePhone(key, hello) {
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 // Connects once, serves until the connection ends. Resolves whether it got as far as welcome.
-function connectOnce(relay, secret, host) {
+export function connectOnce(relay, secret, host) {
   return new Promise(resolve => {
     const self = addressOf(secret);
     let welcomed = false;
@@ -676,9 +676,23 @@ function connectOnce(relay, secret, host) {
     // Something sent to ourselves comes back through the relay: that shows the connection's
     // alive, where WebSocket pings can't be seen from here.
     const check = setInterval(() => {
-      if (Date.now() - lastHeard > 90_000) return socket.close();
+      if (Date.now() - lastHeard > 90_000) return finish();
       if (welcomed) socket.send(relaySend(self, EMPTY));
     }, 30_000);
+    // Once, however it ends: Node's WebSocket reports a refused connection as an error alone,
+    // with no close to follow, and one that never opens has to be given up on.
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      clearInterval(check);
+      clearTimeout(opening);
+      try { socket.close(); } catch {}
+      host.reset();
+      host.send = () => {};
+      resolve(welcomed);
+    };
+    const opening = setTimeout(() => { if (!welcomed) finish(); }, 15_000);
     socket.onopen = () => socket.send(relayHello(secret));
     socket.onmessage = event => {
       lastHeard = Date.now();
@@ -693,13 +707,8 @@ function connectOnce(relay, secret, host) {
       if (message.kind === "deliver" && !message.address.equals(self)) host.receive(message.address, message.payload);
       if (message.kind === "unreachable" && !message.address.equals(self)) host.forget(message.address);
     };
-    socket.onerror = () => {};
-    socket.onclose = () => {
-      clearInterval(check);
-      host.reset();
-      host.send = () => {};
-      resolve(welcomed);
-    };
+    socket.onerror = finish;
+    socket.onclose = finish;
   });
 }
 
