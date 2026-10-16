@@ -1269,7 +1269,16 @@ struct MainView: View {
             }
         }
         // KUVO_DEMO_SESSION=<id>: that session's tab, in view (one on a machine waits for it).
-        if let id = environment["KUVO_DEMO_SESSION"] { openTab(id) }
+        if let id = environment["KUVO_DEMO_SESSION"] {
+            openTab(id)
+            // KUVO_DEMO_QUOTES=<n>: that many quotes to answer in its composer.
+            if let count = Int(environment["KUVO_DEMO_QUOTES"] ?? ""), let model = workspace.model(for: id) {
+                model.draftQuotes = []
+                for index in 1...max(count, 1) {
+                    model.addQuote("Point \(index): " + String(repeating: "a quoted line from the agent's reply ", count: index % 3 + 1), how: "demo")
+                }
+            }
+        }
         // KUVO_DEMO_TABS: the project's sessions as tabs, the one in view staying in view.
         if environment["KUVO_DEMO_TABS"] != nil,
            let project = workspace.projects.first(where: { $0.directory == activeDirectory }) ?? workspace.projects.first {
