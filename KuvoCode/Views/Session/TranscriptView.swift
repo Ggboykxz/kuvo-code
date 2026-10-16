@@ -9,6 +9,7 @@ struct TranscriptView: View {
     let model: SessionModel
     @Environment(Workspace.self) private var workspace
     @Environment(\.isOffline) private var isOffline
+    @AppStorage(StepsDetail.key) private var stepsDetail = StepsDetail.summary
     @State private var position = ScrollPosition(edge: .bottom)
     /// Whether to keep the newest text in view: true until you scroll up, true again
     /// once you scroll back to the end.
@@ -145,7 +146,16 @@ struct TranscriptView: View {
         let all = model.transcript.messages
         let cut = boundary.map { boundary in all.firstIndex { $0.id == boundary } ?? all.firstIndex { $0.id >= boundary } ?? all.count }
         let messages = cut.map { Array(all[..<$0]) } ?? all
+        // Summed up: the agent's steps between its replies, gathered into one row.
+        var steps: [Message.Content] = []
+        var stepsID = ""
+        func flushSteps(live: Bool) {
+            guard !steps.isEmpty else { return }
+            rows.append(.steps(stepsID, steps, isLive: live))
+            steps = []
+        }
         for (index, message) in messages.enumerated() {
+            if case .assistant = message {} else { flushSteps(live: false) }
             switch message {
             case .user(let user):
                 turn = TurnStats(started: user.time.created, message: user)
@@ -156,8 +166,37 @@ struct TranscriptView: View {
                 // error: the turn's end says "Stopped".
                 let nextIdle = messages[(index + 1)...].lazy.compactMap { if case .idle(let idle) = $0 { idle } else { nil } }.first
                 let showsError = assistant.error.map { !$0.isInterruption } == true && assistant.error?.message != nextIdle?.error?.message
-                if !assistant.content.isEmpty || showsError || assistant.retry != nil {
-                    rows.append(.assistant(assistant, showsError: showsError))
+                if stepsDetail == .each {
+                    if !assistant.content.isEmpty || showsError || assistant.retry != nil {
+                        rows.append(.assistant(assistant, showsError: showsError))
+                    }
+                    break
+                }
+                // Its words as they are, its thinking and tool calls in the line before them.
+                for (part, block) in assistant.content.enumerated() {
+                    switch block {
+                    case .text(let text):
+                        guard !text.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+                        flushSteps(live: false)
+                        var words = assistant
+                        words.id = assistant.id + "#\(part)"
+                        words.content = [block]
+                        words.error = nil
+                        words.retry = nil
+                        rows.append(.assistant(words, showsError: false))
+                    case .reasoning, .tool:
+                        if steps.isEmpty { stepsID = "steps-" + assistant.id + "#\(part)" }
+                        steps.append(block)
+                    case .other:
+                        break
+                    }
+                }
+                if showsError || assistant.retry != nil {
+                    flushSteps(live: false)
+                    var end = assistant
+                    end.id = assistant.id + "#end"
+                    end.content = []
+                    rows.append(.assistant(end, showsError: showsError))
                 }
             case .idle(let idle):
                 rows.append(.turnEnd(idle, turn, isLast: index == messages.count - 1))
@@ -187,6 +226,7 @@ struct TranscriptView: View {
                 break
             }
         }
+        flushSteps(live: model.transcript.isRunning)
         if let cut {
             let undone = all[cut...].count { if case .user = $0 { true } else { false } }
             rows.append(.undone(max(undone, 1)))
@@ -281,6 +321,9 @@ struct TurnStats: Hashable {
 enum Row: Identifiable, Hashable {
     case user(Message.User)
     case assistant(Message.Assistant, showsError: Bool)
+    /// The agent's steps between its replies, summed up (`StepsDetail`); `isLive`, the last of
+    /// them is under way.
+    case steps(String, [Message.Content], isLive: Bool)
     /// `isLast`: the conversation ends here, so a failed run can be tried again.
     case turnEnd(Message.Idle, TurnStats, isLast: Bool)
     case notice(String, String, String)
@@ -306,7 +349,8 @@ enum Row: Identifiable, Hashable {
     /// Space above this row: steps of one reply sit close, a new message gets room.
     func spacing(after previous: Row) -> CGFloat {
         switch (previous, self) {
-        case (.assistant, .assistant), (.assistant, .turnEnd), (.assistant, .working(_)): 10
+        case (.assistant, .assistant), (.assistant, .turnEnd), (.assistant, .working(_)),
+             (.steps, .assistant), (.assistant, .steps), (.steps, .turnEnd), (.steps, .working(_)): 10
         case (_, .user), (_, .pending): 28
         case (.shell, .shell): 12
         case (_, .shell): 20
@@ -320,6 +364,7 @@ enum Row: Identifiable, Hashable {
         switch self {
         case .user(let m): m.id
         case .assistant(let m, _): m.id
+        case .steps(let id, _, _): id
         case .turnEnd(let m, _, _): m.id
         case .notice(let id, _, _): id
         case .shell(let m): m.id
@@ -417,6 +462,8 @@ private struct RowView: View {
                 .contextMenu { Button("Cancel", role: .destructive) { cancel(item) }.disabled(isOffline) }
         case .assistant(let message, let showsError):
             AssistantStepView(message: message, directory: directory, folders: folders, showsError: showsError)
+        case .steps(_, let blocks, let isLive):
+            StepsRow(blocks: blocks, isLive: isLive, directory: directory)
         case .turnEnd(let idle, let stats, let isLast):
             TurnEndView(idle: idle, stats: stats, directory: directory, retry: isLast && !isOffline ? stats.message.map { message in { retry(message) } } : nil,
                         build: isLast && stats.agent == "plan" ? buildPlan : nil, reply: reply)
@@ -624,7 +671,7 @@ struct MarkdownText: View {
 }
 
 /// The model's thinking: one quiet line, open it to read.
-private struct ReasoningView: View {
+struct ReasoningView: View {
     let block: Message.Content.Text
     @State private var isExpanded = false
 

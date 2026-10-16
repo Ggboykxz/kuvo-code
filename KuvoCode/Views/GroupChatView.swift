@@ -299,42 +299,8 @@ private struct GroupSteps: View {
         .padding(.bottom, 2)
     }
 
-    /// "Searched the web 4 times, fetched a page": each kind of step once, in the order first done.
     static func summary(of steps: [Message.ToolCall]) -> String {
-        var order: [String] = []
-        var counts: [String: Int] = [:]
-        for step in steps {
-            let kind = kind(of: step.name)
-            if counts[kind] == nil { order.append(kind) }
-            counts[kind, default: 0] += 1
-        }
-        let parts = order.map { phrase(kind: $0, count: counts[$0] ?? 1) }
-        let text = parts.joined(separator: ", ")
-        return text.prefix(1).uppercased() + text.dropFirst()
-    }
-
-    private static func kind(of name: String) -> String {
-        // The browser's tools, as the engine names them ("kuvo-browser_browser_click").
-        if name.hasPrefix("kuvo-browser_") || name.hasPrefix("browser_") { return "browser" }
-        switch name {
-        case "grep", "glob", "list": return "search"
-        case "bash", "shell": return "shell"
-        default: return name
-        }
-    }
-
-    private static func phrase(kind: String, count: Int) -> String {
-        let many = count > 1
-        switch kind {
-        case "websearch": return many ? "searched the web \(count) times" : "searched the web"
-        case "webfetch": return many ? "fetched \(count) pages" : "fetched a page"
-        case "read": return many ? "read \(count) files" : "read a file"
-        case "search": return many ? "searched the files \(count) times" : "searched the files"
-        case "shell": return many ? "ran \(count) commands" : "ran a command"
-        case "browser": return many ? "used the browser (\(count) steps)" : "used the browser"
-        case "subagent": return many ? "handed off \(count) tasks" : "handed off a task"
-        default: return many ? "used \(kind) \(count) times" : "used \(kind)"
-        }
+        StepsSummary.summary(of: steps)
     }
 }
 

@@ -9,6 +9,7 @@ struct AppearanceSettings: View {
     @AppStorage(Look.windowKey) private var window = Look.Window.glass
     @AppStorage(Look.textSizeKey) private var textSize = 14.0
     @AppStorage(Look.fontKey) private var typeface = Look.Typeface.system
+    @AppStorage(StepsDetail.key) private var steps = StepsDetail.summary
 
     var body: some View {
         ScrollingSettingsForm {
@@ -62,6 +63,17 @@ struct AppearanceSettings: View {
                     Text("Typeface")
                     Text("Code always stays monospaced.")
                 }
+                LabeledContent {
+                    Picker("Agent’s steps", selection: $steps) {
+                        ForEach(StepsDetail.allCases) { Text($0.title).tag($0) }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+                } label: {
+                    Text("Agent’s steps")
+                    Text(stepsCaption)
+                }
                 ConversationPreview(font: MessageFont(size: textSize, typeface: typeface))
             } header: {
                 Text("Messages")
@@ -76,10 +88,19 @@ struct AppearanceSettings: View {
                         window = .glass
                         textSize = 14
                         typeface = .system
+                        steps = .summary
                     }
-                    .disabled(mode == .system && accent == Look.Accent.system.rawValue && window == .glass && textSize == 14 && typeface == .system)
+                    .disabled(mode == .system && accent == Look.Accent.system.rawValue && window == .glass && textSize == 14 && typeface == .system && steps == .summary)
                 }
             }
+        }
+    }
+
+    private var stepsCaption: String {
+        switch steps {
+        case .each: "Every step the agent takes, as it takes it."
+        case .summary: "Its steps between replies in a line, like “Ran 6 commands, read 3 files”, that opens to each."
+        case .minimal: "Only how many steps it took, to open if you want."
         }
     }
 
