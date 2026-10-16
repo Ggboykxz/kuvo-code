@@ -86,20 +86,23 @@ struct BotAvatar: View {
     @Environment(\.appearsActive) private var appearsActive
 
     var body: some View {
-        if reduceMotion || (!animates && !noticed) {
+        if reduceMotion || (!animates && !noticed) || Self.stillForTesting {
             figure(BotPose.still(mood, noticed: noticed))
         } else {
             // Smoothest while you're in the app and it's at work; slower, but still alive, while
-            // it rests or the app is beside another; still while no window of it can be seen. In a
-            // graph of its own, so each frame updates only the bot.
-            OwnGraph {
-                TimelineView(.animation(minimumInterval: 1 / framesPerSecond, paused: !WindowVisibility.shared.isVisible)) { context in
-                    figure(BotPose(mood: mood, noticed: noticed, time: context.date.timeIntervalSinceReferenceDate + seed, seed: seed, small: size < 24))
-                }
+            // it rests or the app is beside another; still while no window of it can be seen.
+            TimelineView(.animation(minimumInterval: 1 / framesPerSecond, paused: !WindowVisibility.shared.isVisible)) { context in
+                figure(BotPose(mood: mood, noticed: noticed, time: context.date.timeIntervalSinceReferenceDate + seed, seed: seed, small: size < 24))
             }
-            .frame(width: size, height: size)
         }
     }
+
+    #if DEBUG
+    /// KUVO_PERF_STILL_BOTS: every bot holds still, for measuring what their motion costs.
+    private static let stillForTesting = ProcessInfo.processInfo.environment["KUVO_PERF_STILL_BOTS"] != nil
+    #else
+    private static let stillForTesting = false
+    #endif
 
     /// Each frame redraws the window, so a resting bot (breathing, blinking) takes fewer.
     private var framesPerSecond: Double {
