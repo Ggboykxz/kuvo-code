@@ -48,6 +48,9 @@ final class PhoneLink {
     /// What agents ask you for while they browse, for `kuvo/asks`: a phone answers them as the
     /// cards in the window do; set by AppModel.
     @ObservationIgnored weak var browserAsks: BrowserAsks?
+    /// Your group chats, for `kuvo/groups`: a phone reads and writes in them as the window does;
+    /// set by AppModel.
+    @ObservationIgnored weak var groups: BotGroups?
     /// A machine's name, by its id, for where an ask's browser runs; set by AppModel.
     @ObservationIgnored var machineName: (String) -> String? = { _ in nil }
 
@@ -241,6 +244,8 @@ final class PhoneLink {
         } handle: { [weak self] request, _ in
             guard request.path.hasPrefix("kuvo/") else { return EngineRoutes.forward(request, to: base, password: password) }
             if request.path == "kuvo/asks/events" { return Self.following { self?.asksJSON() } }
+            if request.path == "kuvo/groups/events" { return Self.following { self?.groupsJSON() } }
+            if let id = Self.groupID(in: request.path, then: "events") { return Self.following { self?.groupJSON(id) } }
             return AsyncThrowingStream { continuation in
                 Task { @MainActor in
                     let (status, body) = self?.answer(request) ?? (503, Data())
@@ -306,6 +311,10 @@ final class PhoneLink {
             return (200, (try? encoder.encode(Hosts(hosts: hosts))) ?? Data())
         case "kuvo/asks":
             return (200, asksJSON())
+        case "kuvo/groups":
+            return (200, groupsJSON())
+        case let path where path.hasPrefix("kuvo/groups/") && request.method == "POST":
+            return answerGroup(String(path.dropFirst("kuvo/groups/".count)), with: request.body)
         case let path where path.hasPrefix("kuvo/asks/") && request.method == "POST":
             return answerAsk(String(path.dropFirst("kuvo/asks/".count)), with: request.body)
         default:
@@ -399,6 +408,105 @@ final class PhoneLink {
             return (400, Data())
         }
         return (200, Data("{}".utf8))
+    }
+
+    // MARK: Group chats
+
+    /// A chat's bots as a phone draws them: their face and name, and where each lives.
+    private struct GroupMember: Encodable {
+        var id: String
+        var name: String
+        var look: BotLook
+        var session: String
+        var directory: String
+    }
+
+    private func members(of group: BotGroup) -> [GroupMember] {
+        group.members.compactMap { bots?.bot($0) }.map { GroupMember(id: $0.id, name: $0.name, look: $0.look, session: $0.sessionID, directory: $0.directory) }
+    }
+
+    private static var groupEncoder: JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .secondsSince1970
+        return encoder
+    }
+
+    /// Your group chats as the sidebar lists them: who's in each, who's talking, whether it
+    /// waits on you to keep going, and the last thing said.
+    private func groupsJSON() -> Data {
+        struct Listed: Encodable {
+            struct Group: Encodable {
+                var id: String
+                var name: String
+                var purpose: String?
+                var members: [GroupMember]
+                var speaking: String?
+                var discussing: Bool
+                var paused: Bool
+                var unread: Bool
+                var last: GroupMessage?
+                var meeting: BotGroup.Meeting?
+            }
+            var groups: [Group]
+        }
+        guard let groups else { return Data(#"{"groups":[]}"#.utf8) }
+        let listed = groups.list.map { group in
+            var last = groups.messages(in: group.id).last { $0.kind != .note }
+            last?.steps = nil
+            return Listed.Group(id: group.id, name: group.name, purpose: group.purpose, members: members(of: group),
+                                speaking: groups.speaking[group.id], discussing: groups.discussing.contains(group.id),
+                                paused: groups.paused.contains(group.id), unread: groups.isUnread(group), last: last, meeting: group.meeting)
+        }
+        return (try? Self.groupEncoder.encode(Listed(groups: listed))) ?? Data()
+    }
+
+    /// One chat as it reads now: its latest messages (with what each bot did on its turn), who's
+    /// talking, and whether it's under way or paused. Nil once the chat's gone.
+    private func groupJSON(_ id: String) -> Data? {
+        struct Chat: Encodable {
+            var messages: [GroupMessage]
+            var speaking: String?
+            var discussing: Bool
+            var paused: Bool
+        }
+        guard let groups, groups.group(id) != nil else { return nil }
+        let chat = Chat(messages: Array(groups.messages(in: id).suffix(300)), speaking: groups.speaking[id],
+                        discussing: groups.discussing.contains(id), paused: groups.paused.contains(id))
+        return try? Self.groupEncoder.encode(chat)
+    }
+
+    /// What a phone does in a chat, as in the window: writes to it (`{"text"}`), stops it, lets it
+    /// keep going, looks at it, or takes a message of yours back (`{"message"}`, answering with
+    /// what was taken, for the phone's composer).
+    private func answerGroup(_ path: String, with body: Data) -> (Int, Data) {
+        let parts = path.split(separator: "/").map(String.init)
+        guard let groups, let id = parts.first, groups.group(id) != nil else { return (404, Data()) }
+        struct Given: Decodable { var text: String?; var message: String? }
+        let given = try? JSONDecoder().decode(Given.self, from: body)
+        switch parts.dropFirst().first {
+        case nil:
+            guard let text = given?.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return (400, Data()) }
+            groups.send(text, to: id)
+        case "stop":
+            groups.stop(id)
+        case "keep-going":
+            groups.keepGoing(id)
+        case "viewed":
+            groups.markViewed(id)
+        case "undo":
+            guard let message = given?.message, let taken = groups.undo(from: message, in: id) else { return (404, Data()) }
+            return (200, (try? JSONEncoder().encode(["text": taken])) ?? Data())
+        default:
+            return (404, Data())
+        }
+        return (200, Data("{}".utf8))
+    }
+
+    /// The chat in `kuvo/groups/<id>/<action>`.
+    nonisolated private static func groupID(in path: String, then action: String) -> String? {
+        let parts = path.split(separator: "/")
+        guard parts.count == 4, parts[0] == "kuvo", parts[1] == "groups", parts[3] == action else { return nil }
+        return String(parts[2])
     }
 
     /// A response that doesn't end: `current()` now, as a line of JSON, and again each time it

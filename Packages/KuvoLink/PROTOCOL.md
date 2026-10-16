@@ -149,6 +149,12 @@ itself. A host serves:
   (or `"saved": "<account>"`, which the Mac fills in from Passwords itself), `{"answer":
   "code", "code"}`, `{"answer": "done"}` or `{"answer": "declined"}`. What's typed goes into
   the page, never to the agent.
+- On a Mac, `kuvo/groups`: your group chats, with their bots (face, name, session), who's
+  talking, whether one is under way or paused, and the last thing said; `kuvo/groups/events`
+  streams that list as it changes, and `kuvo/groups/<id>/events` one chat's latest messages,
+  the same way. `POST kuvo/groups/<id>` writes to it (`{"text"}`); `…/stop`, `…/keep-going`
+  and `…/viewed` do what they say; `…/undo` (`{"message"}`) takes a message of yours back and
+  answers with what was taken. Times are seconds since 1970.
 
 ### Sockets
 

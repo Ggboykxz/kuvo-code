@@ -202,6 +202,7 @@ final class AppModel {
             phoneLink.readyMachines = { [weak self] in self?.machines.engines.values.filter(\.isReady) ?? [] }
             phoneLink.bots = bots
             phoneLink.browserAsks = browserAsks
+            phoneLink.groups = groups
             phoneLink.machineName = { [weak self] id in self?.machines.list.first { $0.id == id }?.name }
             phoneLink.start(endpoint: server.endpoint)
             Analytics.shared.trackOnce("engine_ready", ["seconds": Int(Date.now.timeIntervalSince(began)), "downloaded": downloaded])
