@@ -824,10 +824,18 @@ let viewerCount = 1;
 const choosers = new Map();
 // Pages you took over in Kuvo Code: a tool for one waits until you hand it back.
 let held = new Set();
-let heldChanged = () => {};
+const heldWaiters = new Set();
+
+// The link being opened, so calls at once share it.
+let opening = null;
 
 async function browser() {
   if (link && !link.closed) return link;
+  opening ??= openLink().finally(() => (opening = null));
+  return opening;
+}
+
+async function openLink() {
   const problem = await ensure();
   if (problem) throw new ToolError(problem.message);
   link = await Connection.open();
@@ -841,7 +849,8 @@ async function browser() {
         break;
       case "Kuvo.held":
         held = new Set(message.params.pages ?? []);
-        heldChanged();
+        for (const resolve of heldWaiters) resolve();
+        heldWaiters.clear();
         break;
       case "Kuvo.viewers":
         viewerCount = message.params.count ?? 0;
@@ -1160,30 +1169,33 @@ const noAnswer = (answer, what) =>
 
 const text = (value, isError = false) => ({ content: [{ type: "text", text: value }], isError });
 
-/// While you have the page this conversation works in, its tools wait, up to ten minutes; once
-/// you hand it back, the tool says so, with the page as it is now, rather than doing its step.
-async function waitForControl() {
+/// While you have the page a conversation works in, its tool call waits, up to ten minutes,
+/// before it joins the others (so it holds up no one else's); nil when the page is free, else the
+/// page and whether you still have it.
+async function waitForControl(session, name) {
+  // A new tab is a page of its own.
+  if (!held.size || name === "browser_new_tab") return null;
   const c = await browser();
-  const open = await pages();
-  let target = caller ? (await c.send("Kuvo.mine", { session: caller })).targetId : null;
-  if (!target || !open.some((info) => info.targetId === target)) target = active;
-  if (!target || !held.has(target)) return null;
-  const p = await use(target);
+  // The conversation's own page; one with none yet gets one of its own, never yours.
+  const target = session ? (await c.send("Kuvo.mine", { session })).targetId : active;
+  if (!target || !held.has(target) || !(await pages()).some((info) => info.targetId === target)) return null;
   const started = Date.now();
   while (held.has(target) && Date.now() - started < 600_000) {
     await new Promise((resolve) => {
-      heldChanged = resolve;
+      heldWaiters.add(resolve);
       setTimeout(resolve, 5_000);
     });
   }
-  heldChanged = () => {};
-  if (held.has(target)) return "The user took over the browser and still has it. Carry on without it for now, or try again later; if you work on your own (a bot), schedule a wake-up to come back to it.";
-  return "The user took over the browser while you worked, and has handed it back. The page may have changed: this is where it is now. Go on from here.\n\n" + (await snapshot(p));
+  return { target, stillHeld: held.has(target) };
+}
+
+/// What a tool says instead of its step, after waiting for you.
+async function afterControl(wait) {
+  if (wait.stillHeld) return text("The user took over the browser and still has it. Carry on without it for now, or try again later; if you work on your own (a bot), schedule a wake-up to come back to it.");
+  return text("The user took over the browser while you worked, and has handed it back. The page may have changed: this is where it is now. Go on from here.\n\n" + (await snapshot(await use(wait.target))));
 }
 
 async function tool(name, args) {
-  const handedBack = await waitForControl();
-  if (handedBack) return text(handedBack);
   const integer = (key) => (Number.isFinite(Number(args[key])) && args[key] !== "" && args[key] !== null ? Math.trunc(Number(args[key])) : null);
   const string = (key) => (typeof args[key] === "string" ? args[key] : null);
   const scripts = CONFIG.scripts;
@@ -1451,8 +1463,10 @@ async function mcp() {
         return reply({});
       case "tools/list":
         return reply({ tools: CONFIG.tools });
-      case "tools/call":
-        queue = queue.then(async () => {
+      case "tools/call": {
+        // You have its page: it waits for you first, and only then joins the line of calls, so it
+        // holds up no one else's.
+        waitForControl(params._meta?.["ai.opencode/sessionID"] ?? null, params.name).catch(() => null).then((wait) => (queue = queue.then(async () => {
           const name = params.name || "";
           const status = (working) => {
             currentTool = working ? name : null;
@@ -1466,7 +1480,7 @@ async function mcp() {
             // The engine names the session calling, so an ask goes to the right conversation.
             caller = params._meta?.["ai.opencode/sessionID"] ?? null;
             status(true);
-            reply(await tool(name, params.arguments || {}));
+            reply(wait ? await afterControl(wait) : await tool(name, params.arguments || {}));
           } catch (error) {
             reply(text(error instanceof ToolError ? error.message : "The browser ran into a problem: " + error.message, true));
           } finally {
@@ -1476,8 +1490,9 @@ async function mcp() {
             notes.length = 0;
             status(false);
           }
-        });
+        })));
         return;
+      }
       default:
         return write({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: `Unknown method ${message.method}` } });
     }

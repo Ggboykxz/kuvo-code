@@ -63,7 +63,10 @@ final class MachineBrowser {
     /// The page in use: the one the agent or you last used.
     private(set) var activeID: String?
     /// The page the panel shows.
-    private(set) var shownPage: String?
+    private(set) var shownPage: String? {
+        // A page you took over and moved on from: back to the agent, which would otherwise wait.
+        didSet { if let old = oldValue, old != shownPage, myHolds.contains(old) { hold(old, false) } }
+    }
     /// Its latest picture, which goes straight to the view showing it (`pictureView`), never
     /// through SwiftUI: they come many times a second.
     @ObservationIgnored private(set) var picture: Picture? {
@@ -129,12 +132,25 @@ final class MachineBrowser {
         }
     }
 
+    /// Pages this Mac took over.
+    @ObservationIgnored private var myHolds: Set<String> = []
+
     /// Takes the page shown over from the agent, or hands it back.
     func takeOver(_ on: Bool) {
         guard let page = shownPage else { return }
-        if on { heldPages.insert(page) } else { heldPages.remove(page) }
-        link?.fire("Kuvo.hold", ["targetId": page, "on": on])
+        hold(page, on)
         if on { Analytics.shared.track("browser_taken_over", ["machine": true]) }
+    }
+
+    private func hold(_ page: String, _ on: Bool) {
+        if on {
+            heldPages.insert(page)
+            myHolds.insert(page)
+        } else {
+            heldPages.remove(page)
+            myHolds.remove(page)
+        }
+        link?.fire("Kuvo.hold", ["targetId": page, "on": on])
     }
 
     private func noteWorkers(_ status: [String: Any]) {
@@ -401,6 +417,8 @@ final class MachineBrowser {
             workingPages = (params["status"] as? [String: Any]).map(Self.workingPages) ?? []
             noteWorkers(params["status"] as? [String: Any] ?? [:])
             heldPages = Set(params["held"] as? [String] ?? [])
+            // A new connection: the keeper let go of this Mac's holds with the old one.
+            myHolds = []
             for ask in params["asks"] as? [[String: Any]] ?? [] { asked(ask) }
             Task { await begin() }
         case "Kuvo.asked":
