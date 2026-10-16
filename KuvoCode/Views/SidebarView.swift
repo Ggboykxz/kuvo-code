@@ -825,11 +825,7 @@ private struct MachineLabel: View {
                 .font(.system(size: 9, weight: .semibold))
             Text(engine.machine.name)
                 .lineLimit(1)
-            if case .failed = engine.state, !engine.isRetrying {
-                Circle().fill(.orange).frame(width: 6, height: 6)
-            } else if !engine.isReady || !engine.isLive {
-                Spinner(size: 10)
-            }
+            MachineIndicator(connection: engine.connection, size: 6, quiet: true)
         }
         .font(.system(size: 11, weight: .medium))
         .foregroundStyle(.secondary)

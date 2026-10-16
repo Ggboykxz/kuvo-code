@@ -7,26 +7,30 @@ struct MachineStatus: View {
 
     var body: some View {
         HStack(spacing: 5) {
-            switch engine.state {
-            case .ready where engine.isLive:
-                Circle().fill(.green).frame(width: 7, height: 7)
-            case .failed where !engine.isRetrying:
-                Circle().fill(.orange).frame(width: 7, height: 7)
-            case .preparing:
-                Circle().fill(.secondary).frame(width: 7, height: 7)
-            default:
-                Spinner(size: 11)
-            }
+            MachineIndicator(connection: engine.connection, size: 7)
             Text(engine.statusText)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
-        .help(failure ?? engine.statusText)
+        .help(engine.failure ?? engine.statusText)
     }
+}
 
-    private var failure: String? {
-        if case .failed(let reason) = engine.state { return reason }
-        return nil
+/// A machine's connection as a dot: green connected, orange when it couldn't, gray when it isn't,
+/// and a spinner while it's getting there. The same everywhere it shows.
+struct MachineIndicator: View {
+    let connection: MachineEngine.Connection
+    var size: CGFloat = 7
+    /// Only what needs you (it couldn't connect) or is under way; nothing while all is well.
+    var quiet = false
+
+    var body: some View {
+        switch connection {
+        case .connected: if !quiet { Circle().fill(.green).frame(width: size, height: size) }
+        case .failed: Circle().fill(.orange).frame(width: size, height: size)
+        case .notConnected: Circle().fill(.secondary).frame(width: size, height: size)
+        case .connecting, .reconnecting, .installing: Spinner(size: size + 4)
+        }
     }
 }
 
@@ -42,7 +46,7 @@ struct MachineWaitingView: View {
             Image(systemName: "server.rack")
                 .font(.system(size: 34, weight: .light))
                 .foregroundStyle(.secondary)
-            Text(title)
+            Text(engine.statusTitle)
                 .font(.title3.weight(.semibold))
             switch engine.state {
             case .downloading(let progress) where progress > 0:
@@ -75,17 +79,6 @@ struct MachineWaitingView: View {
         .frame(maxWidth: .infinity)
     }
 
-    private var title: String {
-        let name = engine.machine.name
-        return switch engine.state {
-        // At 0 it's only checking the engine it has.
-        case .downloading(let progress) where progress > 0: "Installing the engine on \(name)…"
-        case .downloading, .starting, .ready: engine.isRetrying ? "Reconnecting to \(name)…" : "Connecting to \(name)…"
-        case .failed where engine.isRetrying: "Reconnecting to \(name)…"
-        case .failed: "Couldn’t connect to \(name)"
-        case .preparing: "\(name) isn’t connected"
-        }
-    }
 }
 
 /// Over the composer while a session's machine can't be reached: what's happening, that the
@@ -96,7 +89,7 @@ struct MachineOfflineBar: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            if isWorking {
+            if engine.connection.isUnderWay {
                 Spinner(size: 13)
             } else {
                 Image(systemName: "bolt.horizontal.circle")
@@ -104,32 +97,23 @@ struct MachineOfflineBar: View {
                     .foregroundStyle(.orange)
             }
             VStack(alignment: .leading, spacing: 1) {
-                Text(title)
+                Text(engine.statusTitle)
                     .font(.system(size: 13, weight: .medium))
                 Text("This is the conversation as last seen. You can write meanwhile, and send once it’s back.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
-            .help(failure ?? title)
+            .help(engine.failure ?? engine.statusTitle)
             Spacer(minLength: 8)
             // Not while it's trying already.
             if !isAttempting {
-                Button(isWorking ? "Connect Now" : engine.state == .preparing ? "Connect" : "Try Again") { app.reconnectNow(engine) }
+                Button(engine.connection.isUnderWay ? "Connect Now" : engine.connection == .notConnected ? "Connect" : "Try Again") { app.reconnectNow(engine) }
                     .buttonStyle(.glass)
                     .help("Connect to \(engine.machine.name) again")
             }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-    }
-
-    /// Connecting by itself: no need to do anything.
-    private var isWorking: Bool {
-        switch engine.state {
-        case .preparing: false
-        case .failed: engine.isRetrying
-        default: true
-        }
     }
 
     /// Connecting this moment (not waiting to try again).
@@ -140,20 +124,4 @@ struct MachineOfflineBar: View {
         }
     }
 
-    private var title: String {
-        let name = engine.machine.name
-        return switch engine.state {
-        // At 0 it's only checking the engine it has.
-        case .downloading(let progress) where progress > 0: "Installing the engine on \(name)…"
-        case .preparing: "\(name) isn’t connected"
-        case .failed where !engine.isRetrying: "Couldn’t connect to \(name)"
-        case .starting where !engine.isRetrying: "Connecting to \(name)…"
-        default: "Reconnecting to \(name)…"
-        }
-    }
-
-    private var failure: String? {
-        if case .failed(let reason) = engine.state { return reason }
-        return nil
-    }
 }

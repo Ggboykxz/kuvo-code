@@ -51,15 +51,55 @@ final class MachineEngine {
 
     var isReady: Bool { state == .ready }
 
+    /// Where its connection is, as every view says it.
+    enum Connection: Equatable {
+        case notConnected, connecting, reconnecting, installing, connected, failed
+
+        /// It's getting there by itself (a spinner), nothing to do.
+        var isUnderWay: Bool { [.connecting, .reconnecting, .installing].contains(self) }
+    }
+
+    var connection: Connection {
+        switch state {
+        case .preparing: .notConnected
+        // At 0 it's only checking the engine it has.
+        case .downloading(let progress) where progress > 0: .installing
+        case .downloading, .starting: isRetrying ? .reconnecting : .connecting
+        // Up, with its feed down for a moment.
+        case .ready: isLive ? .connected : .reconnecting
+        case .failed: isRetrying ? .reconnecting : .failed
+        }
+    }
+
     /// Where its engine is, in a few words, for menus and lists.
     var statusText: String {
-        switch state {
-        case .preparing: "Not connected"
-        case .downloading: "Installing the engine…"
-        case .starting: "Connecting…"
-        case .ready: isLive ? "Connected" : "Reconnecting…"
-        case .failed: isRetrying ? "Reconnecting…" : "Couldn’t connect"
+        switch connection {
+        case .notConnected: "Not connected"
+        case .connecting: "Connecting…"
+        case .reconnecting: "Reconnecting…"
+        case .installing: "Installing the engine…"
+        case .connected: "Connected"
+        case .failed: "Couldn’t connect"
         }
+    }
+
+    /// The same, naming it, for where it stands on its own.
+    var statusTitle: String {
+        let name = machine.name
+        return switch connection {
+        case .notConnected: "\(name) isn’t connected"
+        case .connecting: "Connecting to \(name)…"
+        case .reconnecting: "Reconnecting to \(name)…"
+        case .installing: "Installing the engine on \(name)…"
+        case .connected: "Connected to \(name)"
+        case .failed: "Couldn’t connect to \(name)"
+        }
+    }
+
+    /// Why it couldn't connect, when it couldn't.
+    var failure: String? {
+        if case .failed(let reason) = state { return reason }
+        return nil
     }
 
     /// What a new engine on the machine gets from this Mac.
