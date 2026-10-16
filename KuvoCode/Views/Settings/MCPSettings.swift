@@ -84,14 +84,7 @@ struct MCPSettings: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .task(id: config.settings) { await refresh() }
-        // Servers connect in their own time: keep the statuses current while this is open.
-        .task {
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(3))
-                live = (try? await app.api?.mcpServers()) ?? live
-            }
-        }
+        .modifier(LiveMCPServers(servers: $live, api: app.api, change: config.settings))
         .sheet(item: $editing, onDismiss: removePending) { edit in
             ServerEditor(name: edit.name, taken: Set(live.map(\.name))) { editing = nil } remove: { path in
                 removal = path
@@ -174,9 +167,7 @@ struct MCPSettings: View {
     }
 
     private func refresh() async {
-        // Give the engine a moment to pick up a change to the file.
-        try? await Task.sleep(for: .milliseconds(400))
-        live = (try? await app.api?.mcpServers()) ?? []
+        live = await MCPStatus.read(app.api) ?? []
     }
 
     private func add(_ server: MCPCatalog.Server) {

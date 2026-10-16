@@ -368,6 +368,36 @@ struct ConnectSheet: View {
     }
 }
 
+/// The engine's MCP servers and how each is doing, for a page that shows them (MCP Servers,
+/// Integrations): read again a moment after the settings change, as the engine picks up the
+/// file, and every few seconds while it's open, as servers connect in their own time.
+struct LiveMCPServers<Change: Equatable>: ViewModifier {
+    @Binding var servers: [MCPServer]
+    let api: OpenCodeAPI?
+    /// What, changing, means the engine's settings did.
+    let change: Change
+
+    func body(content: Content) -> some View {
+        content
+            .task(id: change) { servers = await MCPStatus.read(api) ?? [] }
+            .task {
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(3))
+                    if let read = try? await api?.mcpServers() { servers = read }
+                }
+            }
+    }
+
+}
+
+enum MCPStatus {
+    /// The engine's MCP servers, after a moment for it to pick up a change to its settings.
+    static func read(_ api: OpenCodeAPI?) async -> [MCPServer]? {
+        try? await Task.sleep(for: .milliseconds(400))
+        return try? await api?.mcpServers()
+    }
+}
+
 /// The buttons along the bottom of a sheet that makes or edits something in Settings (an agent,
 /// a command, an MCP server, a provider). Making one: Cancel and the button that makes it. Editing
 /// one, which is saved as you go: Done, which Escape presses too; and its Remove or Delete at the

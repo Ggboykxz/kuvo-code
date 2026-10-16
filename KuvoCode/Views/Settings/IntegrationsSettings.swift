@@ -41,7 +41,7 @@ struct IntegrationsSettings: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .task(id: config.settings) { await refresh() }
+        .modifier(LiveMCPServers(servers: $live, api: app.api, change: config.settings))
         #if DEBUG
         // KUVO_DEMO_ADD_INTEGRATION=<id>: added, as Connect does.
         .onAppear {
@@ -53,12 +53,6 @@ struct IntegrationsSettings: View {
             }
         }
         #endif
-        .task {
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(3))
-                live = (try? await app.api?.mcpServers()) ?? live
-            }
-        }
         .sheet(item: $signingIn) { ref in
             ConnectSheet(integrationID: ref.id, name: ref.service?.title, symbol: ref.service?.symbol, note: ref.service == nil ? "The agent can use it now." : "", highlights: highlights(ref.service)) {
                 signingIn = nil
@@ -217,8 +211,7 @@ struct IntegrationsSettings: View {
     }
 
     private func refresh() async {
-        try? await Task.sleep(for: .milliseconds(400))
-        live = (try? await app.api?.mcpServers()) ?? []
+        live = await MCPStatus.read(app.api) ?? []
     }
 }
 
