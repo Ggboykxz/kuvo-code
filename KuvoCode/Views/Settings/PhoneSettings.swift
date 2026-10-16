@@ -87,7 +87,7 @@ struct PhoneSettings: View {
         .confirmationDialog("Remove \(removing?.name ?? "this phone")?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), presenting: removing) { phone in
             Button("Remove", role: .destructive) { link.remove(phone) }
         } message: { _ in
-            Text("It won’t reach this Mac’s sessions any more.")
+            Text("It won’t reach this Mac or your machines any more. A machine that’s off drops it when it’s next connected.")
         }
     }
 

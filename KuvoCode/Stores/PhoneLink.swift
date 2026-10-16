@@ -89,17 +89,22 @@ final class PhoneLink {
     }
 
     private static func loadIdentity() -> (key: LinkKey, secret: RelaySecret) {
-        let key = keychain("key").flatMap { try? LinkKey(rawRepresentation: $0) } ?? {
-            let key = LinkKey()
-            setKeychain(key.rawRepresentation, for: "key")
-            return key
-        }()
-        let secret = keychain("secret").flatMap(RelaySecret.init(bytes:)) ?? {
-            let secret = RelaySecret()
-            setKeychain(secret.bytes, for: "secret")
-            return secret
-        }()
-        return (key, secret)
+        (kept("key", read: { try? LinkKey(rawRepresentation: $0) }, make: LinkKey.init, bytes: \.rawRepresentation),
+         kept("secret", read: RelaySecret.init(bytes:), make: RelaySecret.init, bytes: \.bytes))
+    }
+
+    /// One of them from the Keychain, made the first time. One the Keychain won't give out (you
+    /// said no when it asked) isn't replaced: phones won't reach this Mac until it's opened again.
+    private static func kept<T>(_ account: String, read: (Data) -> T?, make: () -> T, bytes: (T) -> Data) -> T {
+        do {
+            if let data = try keychain(account), let value = read(data) { return value }
+        } catch {
+            Logger(subsystem: "run.kuvo.code", category: "phone").error("Couldn’t read the phone link’s \(account, privacy: .public) from the Keychain: \(error.localizedDescription, privacy: .public)")
+            return make()
+        }
+        let value = make()
+        setKeychain(bytes(value), for: account)
+        return value
     }
 
     /// This Mac's name, as Sharing settings has it.
@@ -290,7 +295,8 @@ final class PhoneLink {
 
     private static var service: String { (Bundle.main.bundleIdentifier ?? "run.kuvo.code") + ".phone-link" }
 
-    private static func keychain(_ account: String) -> Data? {
+    /// The item, or nil when there's none; throws when the Keychain can't be read.
+    private static func keychain(_ account: String) throws -> Data? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -298,8 +304,12 @@ final class PhoneLink {
             kSecReturnData as String: true,
         ]
         var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess else { return nil }
-        return result as? Data
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        switch status {
+        case errSecSuccess: return result as? Data
+        case errSecItemNotFound: return nil
+        default: throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
+        }
     }
 
     private static func setKeychain(_ data: Data, for account: String) {
