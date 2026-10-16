@@ -62,6 +62,7 @@ The engine client and the usage tracker have tests:
 ```sh
 cd Packages/OpenCodeKit && swift test
 cd Packages/UsageKit && swift test
+cd Packages/KuvoLink && swift test && node --test Tests/Bridge/*.test.js
 ```
 
 Recorded engine responses in `Tests/OpenCodeKitTests/Fixtures` drive most of
@@ -77,6 +78,7 @@ install the engine in its `~/.kuvo-code`).
 | `KuvoCode/` | The app: views, stores and the design system |
 | `Packages/OpenCodeKit/` | The engine client: API, models, event stream, transcript reducer, engine installer |
 | `Packages/UsageKit/` | The usage tracker in the menu bar, a fork of [OpenUsage](https://github.com/robinebers/openusage) |
+| `Packages/KuvoLink/` | The phone link: its protocol (`PROTOCOL.md`), the Swift side and the machines' bridge |
 | `Config/App.xcconfig` | The app's name and bundle ID, and signing defaults |
 | `Licenses/` | License texts for code copied into this repository |
 
@@ -95,6 +97,18 @@ A machine's browser is Chrome for Testing's headless shell, with its libraries a
 
 `KEEPER` at its top goes up with every change to the host side, so a newer copy replaces one
 that's running; `BrowserAgent`'s page scripts are shared with this Mac's browser tools.
+
+### The phone link
+
+Kuvo Code for iPhone reaches this Mac's engine, and your machines', through a relay, encrypted
+end to end ([Noise](https://noiseprotocol.org), `Packages/KuvoLink/PROTOCOL.md`). The Mac side
+is `PhoneLink`; on a machine, `kuvo-link.js` (KuvoLink's resource) runs with the engine's
+runtime in `~/.kuvo-code/bin`, set up by the Mac with the phones you've paired. The Swift and
+JavaScript sides check against the same vectors in `Packages/KuvoLink/Vectors`.
+
+It's off until the iPhone app is out: `defaults write run.kuvo.code phoneLink -bool true` (or
+`KUVO_DEMO_PHONE=1`) turns it on, with Settings › Phone, and `phoneLink.relay` points it at a
+relay other than one on this Mac (`ws://127.0.0.1:8790`).
 
 ### Debug launch variables
 
