@@ -1,0 +1,235 @@
+import AppKit
+import OpenCodeKit
+import SwiftUI
+import WebKit
+
+/// What an agent made for you with show_widget: a page of its own (a chart, a diagram, a small
+/// app, a game, choices to click), live in the conversation, in place of the call. Its script can
+/// answer the agent for you, with `kuvo.send(text)`, when you click something in it.
+struct WidgetCard: View {
+    /// A call of show_widget, whichever engine's.
+    static func isWidget(_ call: Message.ToolCall) -> Bool {
+        call.name == "kuvo-browser_" + BrowserTools.showWidget
+    }
+
+    let call: Message.ToolCall
+    /// Sends what the page wrote back, as your message.
+    let send: (String) -> Void
+    @State private var height: CGFloat = 0
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.cardIsFocused) private var cardIsFocused
+
+    private static let shape = RoundedRectangle(cornerRadius: 12)
+
+    var body: some View {
+        switch call.state {
+        case .streaming:
+            HStack(spacing: 8) {
+                Spinner(size: 12)
+                ShimmerText(text: "Making something…")
+            }
+            .font(.callout)
+            .frame(maxWidth: .infinity, minHeight: 64)
+            .background(Surface.well(scheme), in: Self.shape)
+        case .running(let input, _), .completed(let input, _, _):
+            if let html = input["html"]?.string, !html.isEmpty {
+                card(html: html, title: input["title"]?.string)
+            }
+        case .failed:
+            ToolCallView(call: call, directory: "")
+        }
+    }
+
+    private func card(html: String, title: String?) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles.rectangle.stack")
+                    .foregroundStyle(.tint)
+                Text(title.flatMap { $0.isEmpty ? nil : $0 } ?? "Made for you")
+                    .fontWeight(.medium)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                CopyButton(text: html, help: "Copy Its HTML")
+            }
+            .font(.callout)
+            .padding(.leading, 12)
+            .padding(.trailing, 6)
+            .frame(height: 32)
+            Divider()
+            WidgetPage(html: html, accent: NSColor.controlAccentColor, height: $height, send: send)
+                .frame(height: max(height, 60))
+        }
+        .background(Surface.cardFill(scheme, focused: cardIsFocused), in: Self.shape)
+        .clipShape(Self.shape)
+        .recessedWell(Self.shape)
+    }
+}
+
+extension EnvironmentValues {
+    /// Sends text to the agent of the conversation in view, as your message (a widget's
+    /// `kuvo.send`).
+    @Entry var answerAgent: (String) -> Void = { _ in }
+}
+
+/// The page itself: a web view of its own, with nothing kept after it closes, reaching nothing
+/// but the usual places for libraries, its links opening in your browser. As tall as what's on
+/// it, up to a point, then it scrolls inside.
+private struct WidgetPage: NSViewRepresentable {
+    let html: String
+    let accent: NSColor
+    @Binding var height: CGFloat
+    let send: (String) -> Void
+
+    /// Taller than this, it scrolls inside.
+    static let tallest: CGFloat = 760
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> WidgetWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        let content = configuration.userContentController
+        content.add(WeakHandler(context.coordinator), name: "kuvo")
+        content.addUserScript(WKUserScript(source: Self.bridge, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        content.addUserScript(WKUserScript(source: Self.measure, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        let view = WidgetWebView(frame: .zero, configuration: configuration)
+        view.setValue(false, forKey: "drawsBackground")
+        view.navigationDelegate = context.coordinator
+        view.uiDelegate = context.coordinator
+        return view
+    }
+
+    func updateNSView(_ view: WidgetWebView, context: Context) {
+        let coordinator = context.coordinator
+        coordinator.height = $height
+        coordinator.send = send
+        coordinator.view = view
+        let page = Self.page(html, accent: accent)
+        guard coordinator.loaded != page else { return }
+        coordinator.loaded = page
+        view.loadHTMLString(page, baseURL: nil)
+    }
+
+    /// Libraries from the usual places, pictures from anywhere; nothing it can send to.
+    private static let policy = "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com; style-src 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com https://fonts.googleapis.com; font-src https://fonts.gstatic.com https://cdnjs.cloudflare.com https://cdn.jsdelivr.net data:; img-src data: blob: https:; media-src data: blob:; connect-src 'none'; frame-src 'none'; form-action 'none'"
+
+    /// `html` as a page: a fragment in a page of its own, or a whole page as it is; either way
+    /// with the policy above, and the window's look to start from.
+    static func page(_ html: String, accent: NSColor) -> String {
+        let hex = accent.usingColorSpace(.sRGB).map { String(format: "#%02X%02X%02X", Int($0.redComponent * 255), Int($0.greenComponent * 255), Int($0.blueComponent * 255)) } ?? "#0A84FF"
+        let head = """
+        <meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="\(policy)">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+        :root { color-scheme: light dark; --kuvo-accent: \(hex); }
+        html, body { margin: 0; background: transparent; }
+        body { font: 13px/1.45 -apple-system, BlinkMacSystemFont, sans-serif; color: CanvasText; padding: 12px; box-sizing: border-box; }
+        </style>
+        """
+        if let range = html.range(of: "<head>", options: .caseInsensitive) {
+            var page = html
+            page.insert(contentsOf: head, at: range.upperBound)
+            return page
+        }
+        if html.range(of: "<html", options: .caseInsensitive) != nil {
+            return head + html
+        }
+        return "<!doctype html><html><head>\(head)</head><body>\(html)</body></html>"
+    }
+
+    /// `kuvo.send(text)`: the page writes back to the agent as you, only from a click of yours.
+    private static let bridge = """
+    window.kuvo = {
+      send(text) {
+        if (navigator.userActivation && !navigator.userActivation.isActive) return false;
+        window.webkit.messageHandlers.kuvo.postMessage({ type: "send", text: String(text) });
+        return true;
+      },
+    };
+    """
+
+    /// Its height, whenever it changes.
+    private static let measure = """
+    (() => {
+      const report = () => window.webkit.messageHandlers.kuvo.postMessage({ type: "height", value: Math.ceil(document.documentElement.scrollHeight) });
+      new ResizeObserver(report).observe(document.documentElement);
+      report();
+    })();
+    """
+
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
+        var height: Binding<CGFloat>?
+        var send: (String) -> Void = { _ in }
+        weak var view: WidgetWebView?
+        var loaded: String?
+
+        func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard let body = message.body as? [String: Any] else { return }
+            switch body["type"] as? String {
+            case "height":
+                guard let value = body["value"] as? Double else { return }
+                let fits = CGFloat(value) <= WidgetPage.tallest
+                view?.fits = fits
+                let new = min(CGFloat(value), WidgetPage.tallest)
+                if abs((height?.wrappedValue ?? 0) - new) > 0.5 { height?.wrappedValue = new }
+            case "send":
+                guard let text = body["text"] as? String, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                send(String(text.prefix(4000)))
+            default:
+                break
+            }
+        }
+
+        #if DEBUG
+        /// KUVO_DEMO_WIDGET_SNAPSHOTS=<folder>: each page, once drawn, as a picture there (a
+        /// background copy's window doesn't draw web pages, so they can't be captured).
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            guard let folder = ProcessInfo.processInfo.environment["KUVO_DEMO_WIDGET_SNAPSHOTS"] else { return }
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(1.5))
+                let configuration = WKSnapshotConfiguration()
+                guard let image = try? await webView.takeSnapshot(configuration: configuration),
+                      let tiff = image.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { return }
+                let name = "widget-\(abs((loaded ?? "").hashValue) % 100_000).png"
+                try? png.write(to: URL(filePath: folder).appending(path: name))
+            }
+        }
+        #endif
+
+        /// Its own page loads; a link goes to your browser instead.
+        func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            if action.navigationType == .linkActivated || (action.targetFrame?.isMainFrame == true && action.request.url?.scheme.map(["http", "https"].contains) == true) {
+                if let url = action.request.url, ["http", "https"].contains(url.scheme ?? "") { NSWorkspace.shared.open(url) }
+                decisionHandler(.cancel)
+                return
+            }
+            decisionHandler(.allow)
+        }
+
+        /// A link meant for a new window, too.
+        func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+            if let url = action.request.url, ["http", "https"].contains(url.scheme ?? "") { NSWorkspace.shared.open(url) }
+            return nil
+        }
+    }
+}
+
+/// Scrolling over a page that fits goes on to the conversation around it.
+final class WidgetWebView: WKWebView {
+    var fits = true
+
+    override func scrollWheel(with event: NSEvent) {
+        if fits { nextResponder?.scrollWheel(with: event) } else { super.scrollWheel(with: event) }
+    }
+}
+
+/// Holds the page's handler without the page holding it back.
+private final class WeakHandler: NSObject, WKScriptMessageHandler {
+    weak var target: WKScriptMessageHandler?
+
+    init(_ target: WKScriptMessageHandler) { self.target = target }
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        target?.userContentController(controller, didReceive: message)
+    }
+}

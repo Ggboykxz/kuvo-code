@@ -1248,6 +1248,13 @@ async function tool(name, args) {
 
   // Not the browser's: Kuvo Code shows it in its panel when this says it goes ahead (it sees
   // the call), so it's only checked here.
+  // Drawn by Kuvo Code from the call, in the conversation.
+  if (name === "show_widget") {
+    const html = string("html");
+    if (!html || !html.trim()) throw new ToolError("Missing html.");
+    return text("Shown in the conversation, live. The user sees it now; what they click in it that calls kuvo.send comes to you as their message.");
+  }
+
   if (name === "show_in_panel") {
     const raw = string("path");
     if (!raw) throw new ToolError("Missing path.");
@@ -1528,7 +1535,7 @@ async function mcp() {
         return reply({ tools: CONFIG.tools });
       case "tools/call": {
         // Showing something in Kuvo Code's panel needs no browser, nor a turn in the line.
-        if (params.name === "show_in_panel") {
+        if (params.name === "show_in_panel" || params.name === "show_widget") {
           tool(params.name, params.arguments || {}).then(reply, (error) => reply(text(error instanceof ToolError ? error.message : String(error), true)));
           return;
         }

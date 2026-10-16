@@ -38,6 +38,8 @@ struct GroupChatView: View {
                     .transition(.opacity)
             }
         }
+        // What a bot's widget writes back goes to the group, as yours.
+        .environment(\.answerAgent) { text in groups.send(text, to: group.id) }
         .overlay {
             if messages.isEmpty && speaker == nil {
                 GroupIntro(group: group, members: members)
@@ -157,6 +159,7 @@ private struct GroupMessageRow: View, Equatable {
     let undo: () -> Void
     @State private var hovering = false
     @State private var confirmsUndo = false
+    @Environment(\.answerAgent) private var answerAgent
 
     /// Under the pointer; KUVO_DEMO_SHOW_HOVER shows every message's buttons, for screenshots.
     private var isHovering: Bool {
@@ -215,12 +218,18 @@ private struct GroupMessageRow: View, Equatable {
                         .animation(.easeOut(duration: 0.12), value: isHovering)
                     }
                     .frame(height: 20)
-                    // As a session shows them, at the detail you chose for steps.
-                    if let steps = message.steps, !steps.isEmpty {
+                    // As a session shows them, at the detail you chose for steps; what it made, after
+                    // its words.
+                    let steps = (message.steps ?? []).filter { !WidgetCard.isWidget($0) }
+                    if !steps.isEmpty {
                         StepsRow(blocks: steps.map(Message.Content.tool), isLive: false, directory: author?.directory ?? "")
                             .padding(.bottom, 2)
                     }
                     MarkdownText(text: message.text, mentions: members)
+                    ForEach((message.steps ?? []).filter(WidgetCard.isWidget)) { call in
+                        WidgetCard(call: call, send: answerAgent)
+                            .padding(.top, 6)
+                    }
                 }
             }
             .contentShape(.rect)

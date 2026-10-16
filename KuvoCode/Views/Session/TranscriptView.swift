@@ -60,6 +60,8 @@ struct TranscriptView: View {
                     .transition(Self.rowTransition)
             }
         }
+        // What a widget writes back goes to this conversation's agent, as yours.
+        .environment(\.answerAgent) { text in model.submit(text, files: [], for: nil, queue: false, commands: []) }
         .overlay {
             if model.isLoaded && rows.isEmpty {
                 EmptyConversationView(directory: model.session.location.directory) { text in
@@ -221,6 +223,10 @@ struct TranscriptView: View {
                         words.error = nil
                         words.retry = nil
                         rows.append(.assistant(words, showsError: false))
+                    case .tool(let call) where WidgetCard.isWidget(call):
+                        // Something it made shows on its own, in the conversation's flow.
+                        flushSteps(live: false)
+                        rows.append(.widget(call))
                     case .reasoning, .tool:
                         if steps.isEmpty { stepsID = "steps-" + assistant.id + "#\(part)" }
                         steps.append(block)
@@ -361,6 +367,8 @@ enum Row: Identifiable, Hashable {
     /// The agent's steps between its replies, summed up (`StepsDetail`); `isLive`, the last of
     /// them is under way.
     case steps(String, [Message.Content], isLive: Bool)
+    /// Something the agent made with show_widget, drawn in the conversation.
+    case widget(Message.ToolCall)
     /// `isLast`: the conversation ends here, so a failed run can be tried again.
     case turnEnd(Message.Idle, TurnStats, isLast: Bool)
     case notice(String, String, String)
@@ -386,6 +394,7 @@ enum Row: Identifiable, Hashable {
     /// Space above this row: steps of one reply sit close, a new message gets room.
     func spacing(after previous: Row) -> CGFloat {
         switch (previous, self) {
+        case (_, .widget), (.widget, _): 14
         case (.assistant, .assistant), (.assistant, .turnEnd), (.assistant, .working(_)),
              (.steps, .assistant), (.assistant, .steps), (.steps, .turnEnd), (.steps, .working(_)): 10
         case (_, .user), (_, .pending): 28
@@ -402,6 +411,7 @@ enum Row: Identifiable, Hashable {
         case .user(let m): m.id
         case .assistant(let m, _): m.id
         case .steps(let id, _, _): id
+        case .widget(let call): call.id
         case .turnEnd(let m, _, _): m.id
         case .notice(let id, _, _): id
         case .shell(let m): m.id
@@ -432,6 +442,7 @@ private struct RowView: View, Equatable {
     let buildPlan: (() -> Void)?
     /// Quotes a reply (or the part of it you selected) in the composer.
     let reply: (String) -> Void
+    @Environment(\.answerAgent) private var answerAgent
     @Environment(\.isOffline) private var isOffline
 
     static func sentAt(_ created: Milliseconds) -> String {
@@ -468,6 +479,8 @@ private struct RowView: View, Equatable {
             AssistantStepView(message: message, directory: directory, folders: folders, showsError: showsError)
         case .steps(_, let blocks, let isLive):
             StepsRow(blocks: blocks, isLive: isLive, directory: directory)
+        case .widget(let call):
+            WidgetCard(call: call, send: answerAgent)
         case .turnEnd(let idle, let stats, let isLast):
             TurnEndView(idle: idle, stats: stats, directory: directory, retry: isLast && !isOffline ? stats.message.map { message in { retry(message) } } : nil,
                         build: isLast && stats.agent == "plan" ? buildPlan : nil, reply: reply)

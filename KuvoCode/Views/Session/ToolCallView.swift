@@ -22,6 +22,17 @@ struct ToolCallView: View {
     }
 
     var body: some View {
+        // Something the agent made: drawn, not described.
+        if WidgetCard.isWidget(call) {
+            WidgetCard(call: call, send: answerAgent)
+        } else {
+            step
+        }
+    }
+
+    @Environment(\.answerAgent) private var answerAgent
+
+    @ViewBuilder private var step: some View {
         VStack(alignment: .leading, spacing: 0) {
             // A step with details opens like a button, and lights up like one; the rest are lines.
             Group {

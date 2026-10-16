@@ -133,6 +133,7 @@ final class BrowserToolServer {
             let caller = (params["_meta"] as? [String: Any])?["ai.opencode/sessionID"] as? String
             // Not the browser's: no page to serve it.
             if name == BrowserTools.showInPanel { return reply(BrowserTools.showInPanelCall(arguments, caller: caller)) }
+            if name == BrowserTools.showWidget { return reply(BrowserTools.showWidgetCall(arguments)) }
             return reply(await BrowserTools.call(name, arguments: arguments, agent: agent.serving(caller), caller: caller))
         default:
             return ["jsonrpc": "2.0", "id": id, "error": ["code": -32601, "message": "Unknown method \(method)"]]
@@ -185,6 +186,9 @@ enum BrowserTools {
              ["instruction": ["type": "string", "description": "What they should do, in a sentence."]], required: ["instruction"]),
         tool(showInPanel, "Show the user a file or folder in Kuvo Code's side panel, beside this conversation: a folder opens in the Files tab, open down to it; a file in a tab of its own (code, Markdown, pictures and PDFs show as they are). Use it whenever the user asks to see, open or find something, and to point them to what you made or found. Give its full path.",
              ["path": ["type": "string", "description": "The file's or folder's full path."]], required: ["path"]),
+        tool(showWidget, "Show the user something visual or interactive right in this conversation, drawn live where this call is: a chart or graph, a diagram or flow, a mockup, a table to sort, a small app, calculator or game, a timeline, a visual explanation, or choices for them to click. Use it whenever seeing or playing with something says it better than words, and be creative. Write the HTML: a fragment, or a whole page, with its CSS and JavaScript inline; libraries only from cdnjs.cloudflare.com, cdn.jsdelivr.net or unpkg.com (Chart.js, D3, Mermaid, Three.js, Leaflet won't load maps); it can't fetch or send anything. Follow light and dark with CSS (it starts transparent with color-scheme light dark, text in CanvasText, and --kuvo-accent as the accent). It's as tall as its content, up to about 760 points, then it scrolls. To hear back, call kuvo.send(text) from a click in it: that sends text to you as the user's message (a choice they made, values they set).",
+             ["html": ["type": "string", "description": "The HTML to show."],
+              "title": ["type": "string", "description": "A short name for it, shown above it."]], required: ["html"]),
     ]
 
     /// The folder a conversation works in, by its session (on this Mac).
@@ -193,6 +197,18 @@ enum BrowserTools {
     /// The tool that shows a file or folder in the panel; the window does it when the call
     /// succeeds (see `Workspace.onShowInPanel`), for a session here or on a machine alike.
     nonisolated static let showInPanel = "show_in_panel"
+
+    /// The tool that shows something the agent made, live in the conversation; the transcript
+    /// draws it from the call (see `WidgetCard`), for a session here or on a machine alike.
+    nonisolated static let showWidget = "show_widget"
+
+    /// Says it's shown; the conversation draws it.
+    nonisolated static func showWidgetCall(_ arguments: [String: Any]) -> [String: Any] {
+        guard let html = arguments["html"] as? String, !html.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return ["content": [["type": "text", "text": "Missing html."]], "isError": true]
+        }
+        return ["content": [["type": "text", "text": "Shown in the conversation, live. The user sees it now; what they click in it that calls kuvo.send comes to you as their message."]], "isError": false]
+    }
 
     /// What its call says when it goes ahead, which also tells a folder from a file.
     nonisolated static func shown(_ path: String, isFolder: Bool) -> String {
@@ -219,7 +235,7 @@ enum BrowserTools {
     /// What the engine tells the model about the tools.
     /// Where Kuvo Code's own docs are, for when you ask the agent how to do something in the app.
     /// Every session has these tools, so it hears it wherever it works.
-    nonisolated static let docs = "You're working inside Kuvo Code, the Mac app the user talks to you in: sessions in projects, a side panel with changes, files, terminals and a browser, bots, group chats and remote machines. When the user asks how to do something in Kuvo Code itself (where a setting is, what a button does, how bots, wake-ups or machines work, a shortcut), read its documentation with webfetch rather than guessing: start at https://www.kuvo.run/code/docs/, whose pages include sessions, changes, panel, browsing, machines, bots, integrations, customize, settings, usage, shortcuts, privacy and troubleshooting (each at https://www.kuvo.run/code/docs/<page>/). Answer from what it says, briefly, and say where in the app to find it. When the user names a service (Notion, Linear, GitHub, Slack, their mail or calendar…), look first for tools named after it, from an integration they connected (notion_search, say): those reach their account directly, signed in as them, so use them rather than its website. If such a tool says it needs signing in, tell the user to sign in under Settings › Integrations instead of switching to the website. Only for a service you have no tools for (their chats or social accounts, say), use the browser: the user is signed in to sites there, or can sign in when you ask. To show the user a file or folder (one they ask to see or open, or what you made), use show_in_panel: it opens in Kuvo Code's side panel, beside this conversation."
+    nonisolated static let docs = "You're working inside Kuvo Code, the Mac app the user talks to you in: sessions in projects, a side panel with changes, files, terminals and a browser, bots, group chats and remote machines. When the user asks how to do something in Kuvo Code itself (where a setting is, what a button does, how bots, wake-ups or machines work, a shortcut), read its documentation with webfetch rather than guessing: start at https://www.kuvo.run/code/docs/, whose pages include sessions, changes, panel, browsing, machines, bots, integrations, customize, settings, usage, shortcuts, privacy and troubleshooting (each at https://www.kuvo.run/code/docs/<page>/). Answer from what it says, briefly, and say where in the app to find it. When the user names a service (Notion, Linear, GitHub, Slack, their mail or calendar…), look first for tools named after it, from an integration they connected (notion_search, say): those reach their account directly, signed in as them, so use them rather than its website. If such a tool says it needs signing in, tell the user to sign in under Settings › Integrations instead of switching to the website. Only for a service you have no tools for (their chats or social accounts, say), use the browser: the user is signed in to sites there, or can sign in when you ask. To show the user a file or folder (one they ask to see or open, or what you made), use show_in_panel: it opens in Kuvo Code's side panel, beside this conversation. To show something visual or interactive (a chart, a diagram, a mockup, a small app or game, choices to click), use show_widget: it draws your HTML live in the conversation, so reach for it whenever a picture or something to play with helps more than words."
 
     nonisolated static func instructions(machine: Bool) -> String {
         let place = machine
