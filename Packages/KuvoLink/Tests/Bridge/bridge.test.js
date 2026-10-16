@@ -236,3 +236,40 @@ test("a session the host doesn't know is closed, and tampering ends one", async 
 test("the self-test passes here", () => {
   assert.ok(link.selftest());
 });
+
+test("setup keeps the machine's keys, starts the bridge, and stops it with no phones left", async () => {
+  const { spawnSync } = await import("node:child_process");
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), "kuvo-link-setup-"));
+  fs.mkdirSync(path.join(folder, "workspace"));
+  const script = new URL("../../Sources/KuvoLink/Resources/kuvo-link.js", import.meta.url).pathname;
+  const setup = input => {
+    const result = spawnSync(process.execPath, [script, "setup"], { input: JSON.stringify(input), env: { ...process.env, KUVO_HOME: folder }, encoding: "utf8" });
+    return JSON.parse(result.stdout);
+  };
+  const pidFile = path.join(folder, "run", "link.pid");
+  try {
+    // A relay nobody listens on: the bridge keeps trying, which is all this needs.
+    const first = setup({ relay: "ws://127.0.0.1:9", name: "test", phones: [{ key: "AAAA", name: "A" }] });
+    assert.match(first.address, /^[A-Za-z0-9_-]{22}$/);
+    for (let i = 0; i < 50 && !fs.existsSync(pidFile); i++) await new Promise(r => setTimeout(r, 50));
+    const pid = Number(fs.readFileSync(pidFile, "utf8"));
+    process.kill(pid, 0);
+
+    // Its keys stay; the phones are what the Mac says now; the same bridge carries on.
+    const second = setup({ relay: "ws://127.0.0.1:9", name: "test", phones: [{ key: "AAAA", name: "A" }, { key: "BBBB", name: "B" }] });
+    assert.deepEqual(second, first);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(folder, "run", "link.json"), "utf8")).phones.map(p => p.key), ["AAAA", "BBBB"]);
+    assert.equal(Number(fs.readFileSync(pidFile, "utf8")), pid);
+
+    assert.deepEqual(setup({ relay: "ws://127.0.0.1:9", phones: [] }), {});
+    assert.ok(!fs.existsSync(path.join(folder, "run", "link.json")));
+    let stopped = false;
+    for (let i = 0; i < 50 && !stopped; i++) {
+      try { process.kill(pid, 0); await new Promise(r => setTimeout(r, 50)); } catch { stopped = true; }
+    }
+    assert.ok(stopped);
+  } finally {
+    try { process.kill(Number(fs.readFileSync(pidFile, "utf8")), "SIGKILL"); } catch {}
+    fs.rmSync(folder, { recursive: true, force: true });
+  }
+});

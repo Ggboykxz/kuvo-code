@@ -3,6 +3,7 @@
 // engine's own runtime runs it, so the machine needs nothing else:
 //
 //   BUN_BE_BUN=1 opencode kuvo-link.js run             the bridge, started beside the engine
+//   BUN_BE_BUN=1 opencode kuvo-link.js setup           the Mac's phones and relay, as JSON on stdin
 //   BUN_BE_BUN=1 opencode kuvo-link.js pair [relay]    a link to pair a phone with this machine
 //   BUN_BE_BUN=1 opencode kuvo-link.js selftest        checks the runtime has what it needs
 //
@@ -15,6 +16,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 export const BRIDGE_VERSION = "0.1.0";
@@ -628,6 +630,65 @@ async function run() {
   }
 }
 
+function runningBridge() {
+  try {
+    const pid = Number(fs.readFileSync(PID_FILE, "utf8"));
+    return pid && alive(pid) ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+// Starts the bridge on its own, outliving this command, from the machine's workspace.
+function startBridge() {
+  const workspace = path.join(K, "workspace");
+  const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "run"], {
+    detached: true,
+    stdio: "ignore",
+    cwd: fs.existsSync(workspace) ? workspace : K,
+    env: process.env,
+  });
+  child.unref();
+}
+
+// What the Mac sends: the relay, this machine's name, and the phones you've paired with the Mac,
+// which may reach it directly. Keeps the machine's own keys (made the first time, and never
+// leaving it), starts the bridge or restarts it on another relay, and prints the machine's
+// address and public key for the Mac to tell your phones. No phones left: the bridge stops.
+async function setup() {
+  let input;
+  try {
+    const chunks = [];
+    for await (const chunk of process.stdin) chunks.push(chunk);
+    input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    console.error("setup takes JSON on stdin: {relay, name, phones: [{key, name}]}");
+    process.exit(2);
+  }
+  const phones = Array.isArray(input.phones) ? input.phones.filter(p => typeof p?.key === "string") : [];
+  const running = runningBridge();
+  if (!phones.length) {
+    try { fs.unlinkSync(LINK_FILE); } catch {}
+    if (running) process.kill(running, "SIGTERM");
+    console.log("{}");
+    return;
+  }
+  const old = readLink();
+  const link = old ?? { secret: crypto.randomBytes(32).toString("base64url"), key: newKey().toString("base64url"), phones: [] };
+  link.relay = String(input.relay);
+  link.name = String(input.name || link.name || os.hostname()).slice(0, 100);
+  const added = new Map((old?.phones ?? []).map(p => [p.key, p.added]));
+  link.phones = phones.map(p => ({ key: p.key, name: String(p.name ?? "").slice(0, 100), added: added.get(p.key) ?? Math.floor(Date.now() / 1000) }));
+  writeLink(link);
+  // A new relay or name needs a new connection.
+  if (running && (old?.relay !== link.relay || old?.name !== link.name)) process.kill(running, "SIGTERM");
+  if (!running || old?.relay !== link.relay || old?.name !== link.name) startBridge();
+  console.log(JSON.stringify({
+    address: addressOf(Buffer.from(link.secret, "base64url")).toString("base64url"),
+    key: publicOf(Buffer.from(link.key, "base64url")).toString("base64url"),
+  }));
+}
+
 function pair(relay) {
   const link = readLink() ?? { secret: crypto.randomBytes(32).toString("base64url"), key: newKey().toString("base64url"), name: os.hostname(), phones: [] };
   if (relay) link.relay = relay;
@@ -668,13 +729,14 @@ const main = process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpath
 if (main) {
   const [mode, argument] = process.argv.slice(2);
   if (mode === "run") await run();
+  else if (mode === "setup") await setup();
   else if (mode === "pair") pair(argument);
   else if (mode === "selftest") {
     const ok = selftest();
     console.log(ok ? "ok" : "failed");
     process.exit(ok ? 0 : 1);
   } else {
-    console.error("Usage: kuvo-link.js run | pair [relay] | selftest");
+    console.error("Usage: kuvo-link.js run | setup | pair [relay] | selftest");
     process.exit(2);
   }
 }
