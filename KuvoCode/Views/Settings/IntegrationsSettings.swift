@@ -9,25 +9,11 @@ struct IntegrationsSettings: View {
     @State private var live: [MCPServer] = []
     @State private var signingIn: IntegrationRef?
     @State private var addingKey: KeyRequest?
-    /// Saved keys reach the engine when it starts.
-    @State private var needsRestart = false
 
     private var config: EngineConfig { app.engineConfig }
 
     var body: some View {
         ScrollingSettingsForm {
-            if needsRestart {
-                Section {
-                    HStack {
-                        Text("The engine uses new keys once it restarts.")
-                        Spacer()
-                        Button("Restart Engine") {
-                            needsRestart = false
-                            Task { await app.restart() }
-                        }
-                    }
-                }
-            }
             ForEach(Integrations.Kind.allCases, id: \.self) { kind in
                 Section(kind.rawValue) {
                     ForEach(Integrations.all.filter { $0.kind == kind }) { service in
@@ -68,9 +54,8 @@ struct IntegrationsSettings: View {
                 addingKey = nil
                 guard saved else { return }
                 add(request.service)
-                // Nothing at work: restart now; otherwise when you say.
-                if app.workspace.running.isEmpty { Task { await app.restart() } } else { needsRestart = true }
-                renewMachines()
+                // Keys reach engines when they start: each starts again once nothing's at work in it.
+                app.renewEngines(mac: true)
             }
         }
     }
@@ -175,15 +160,8 @@ struct IntegrationsSettings: View {
         config.set(settings, at: MCPSettings.path + [service.id])
         Analytics.shared.track("integration_added", ["integration": service.id])
         // One that needs a key waits for it (saving it renews them).
-        if Integrations.keys(of: service.way).isEmpty, !Integrations.macOnly.contains(service.id) { renewMachines() }
-    }
-
-    /// Machines' engines take new keys when they start: those connected with nothing at work
-    /// connect again, and so start over with them (one at work does when it's next idle).
-    private func renewMachines() {
-        for engine in app.machines.engines.values where engine.isReady && !app.workspace.isRunning(on: engine.machine.id) {
-            app.reconnectNow(engine)
-        }
+        // Machines' engines take their settings when they start (this Mac's reads the file).
+        if Integrations.keys(of: service.way).isEmpty, !Integrations.macOnly.contains(service.id) { app.renewEngines(mac: false) }
     }
 
     /// Out of the engine's settings, with its keys, its sign-in and what its server kept.
@@ -200,7 +178,7 @@ struct IntegrationsSettings: View {
             Task.detached { _ = RemoteShell.run("rm -rf \(kept)", on: machine) }
         }
         if let signIn { app.forgetSignIn(signIn) }
-        if !Integrations.macOnly.contains(service.id) { renewMachines() }
+        if !Integrations.macOnly.contains(service.id) { app.renewEngines(mac: false) }
     }
 
     /// The site in the panel's browser, for you to sign in there; the agent then uses it as you.

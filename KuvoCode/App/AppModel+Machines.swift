@@ -86,6 +86,37 @@ extension AppModel {
         connect(engine)
     }
 
+    /// Starts engines again, so they take new settings (an integration's key, an integration a
+    /// machine gets only when its engine starts): this Mac's with `mac`, and the machines'
+    /// connected now. Each as soon as nothing's at work in it, now or when that's done, so no
+    /// one's work is cut off and nothing waits for you to remember.
+    func renewEngines(mac: Bool) {
+        if mac { renewals.insert("") }
+        for engine in machines.engines.values where engine.isReady { renewals.insert(engine.machine.id) }
+        guard renewing == nil else { return }
+        renewing = Task { [weak self] in
+            while let self, !self.renewals.isEmpty, !Task.isCancelled {
+                for id in self.renewals {
+                    if id.isEmpty {
+                        let busy = self.workspace.running.contains { session in !RemoteFolder.isRemote(self.workspace.session(session)?.location.directory ?? "") }
+                        guard !busy, self.api != nil else { continue }
+                        self.renewals.remove(id)
+                        await self.restart()
+                    } else if let engine = self.machines.engine(id) {
+                        guard !self.workspace.isRunning(on: id) else { continue }
+                        self.renewals.remove(id)
+                        // Not connected now: it takes them when it connects.
+                        if engine.isReady { self.reconnectNow(engine) }
+                    } else {
+                        self.renewals.remove(id)
+                    }
+                }
+                try? await Task.sleep(for: .seconds(3))
+            }
+            self?.renewing = nil
+        }
+    }
+
     /// Installs and starts a machine's engine over SSH, with what it gets from this Mac, and
     /// feeds its sessions into the workspace.
     func connect(_ engine: MachineEngine) {
