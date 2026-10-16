@@ -7,13 +7,9 @@ struct GroupChatView: View {
     let group: BotGroup
     @Environment(BotGroups.self) private var groups
     @Environment(Bots.self) private var bots
-    @State private var position = ScrollPosition(edge: .bottom)
-    @State private var followsEnd = true
+    @State private var scroller = ConversationScroller()
     /// Goes up to have the composer take the keyboard.
     @State private var composerFocus = 0
-    /// Scrolling now: a plain flag, so starting and stopping don't redraw the chat.
-    @State private var scrolling = ScrollingFlag()
-    @State private var endFollower = EndFollower()
 
     private var members: [Bot] { group.members.compactMap { bots.bot($0) } }
     private var draftKey: String { BotGroups.tabKey(group.id) }
@@ -21,51 +17,27 @@ struct GroupChatView: View {
     var body: some View {
         let messages = groups.messages(in: group.id)
         let speaker = groups.speaking[group.id].flatMap { bots.bot($0) }
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 18) {
-                ForEach(messages) { message in
-                    GroupMessageRow(message: message, author: message.author.flatMap { bots.bot($0) }, members: members,
-                                    reply: { reply(to: message) }) {
-                        undo(from: message)
-                    }
-                        .equatable()
-                        .id(message.id)
-                        .transition(.opacity.combined(with: .offset(y: 8)))
-                }
-                if let speaker {
-                    TypingRow(bot: speaker)
-                        .id("typing")
-                        .transition(.opacity)
-                }
-            }
-            .padding(.horizontal, Metrics.gutter)
-            .padding(.top, 16)
-            .padding(.bottom, 32)
-            .readableColumn()
-            .animation(.ui, value: messages.map(\.id))
-            .animation(.ui, value: speaker?.id)
-        }
-        .scrollPosition($position)
-        .defaultScrollAnchor(.bottom, for: .initialOffset)
         // What you select, to reply to (over the composer) or copy.
-        .modifier(SelectionMenu { text in
+        ConversationScroll(scroller: scroller, spacing: 18, change: [messages.last?.id, speaker?.id, String(messages.count)], quote: { text in
             Drafts.shared[draftKey].quote = text
             composerFocus += 1
             Analytics.shared.track("message_replied", ["group": true, "how": "selection"])
-        })
-        .onScrollPhaseChange { _, phase in scrolling.isOn = phase != .idle }
-        // As in a session: one watcher for both, the end followed as the chat settles too.
-        .onScrollGeometryChange(for: EndGeometry.self) { geometry in
-            EndGeometry(atEnd: geometry.visibleRect.maxY >= geometry.contentSize.height - 40, height: geometry.contentSize.height)
-        } action: { old, new in
-            if scrolling.isOn { followsEnd = new.atEnd }
-            guard followsEnd, !scrolling.isOn, new.height != old.height else { return }
-            endFollower.follow {
-                guard followsEnd, !scrolling.isOn else { return }
-                position.scrollTo(edge: .bottom)
+        }) {
+            ForEach(messages) { message in
+                GroupMessageRow(message: message, author: message.author.flatMap { bots.bot($0) }, members: members,
+                                reply: { reply(to: message) }) {
+                    undo(from: message)
+                }
+                    .equatable()
+                    .id(message.id)
+                    .transition(.opacity.combined(with: .offset(y: 8)))
+            }
+            if let speaker {
+                TypingRow(bot: speaker)
+                    .id("typing")
+                    .transition(.opacity)
             }
         }
-        .scrollEdgeEffectStyle(.soft, for: .all)
         .overlay {
             if messages.isEmpty && speaker == nil {
                 GroupIntro(group: group, members: members)
@@ -126,8 +98,7 @@ struct GroupChatView: View {
         groups.send(Quoting.message(quote: Drafts.shared[draftKey].quote, text: text), to: group.id)
         Drafts.shared[draftKey].text = ""
         Drafts.shared[draftKey].quote = nil
-        followsEnd = true
-        position.scrollTo(edge: .bottom)
+        scroller.toEnd()
     }
 }
 

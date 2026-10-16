@@ -7,11 +7,9 @@ import Textual
 /// scroll up to read.
 struct TranscriptView: View {
     #if DEBUG
-    private static let edgeStyle: ScrollEdgeEffectStyle? = Perf.noEdge ? nil : .soft
     private static let rowTransition: AnyTransition = Perf.noAnimation ? .identity : .opacity.combined(with: .offset(y: 8))
     private static let rowAnimation: Animation? = Perf.noAnimation ? nil : .ui
     #else
-    private static let edgeStyle: ScrollEdgeEffectStyle? = .soft
     private static let rowTransition: AnyTransition = .opacity.combined(with: .offset(y: 8))
     private static let rowAnimation: Animation? = .ui
     #endif
@@ -19,13 +17,7 @@ struct TranscriptView: View {
     @Environment(Workspace.self) private var workspace
     @Environment(\.isOffline) private var isOffline
     @AppStorage(StepsDetail.key) private var stepsDetail = StepsDetail.summary
-    @State private var position = ScrollPosition(edge: .bottom)
-    /// Whether to keep the newest text in view: true until you scroll up, true again
-    /// once you scroll back to the end.
-    @State private var followsEnd = true
-    /// Scrolling now: a plain flag, so starting and stopping don't redraw the conversation.
-    @State private var scrolling = ScrollingFlag()
-    @State private var endFollower = EndFollower()
+    @State private var scroller = ConversationScroller()
     @State private var rowCache = RowCache()
     /// Find in the conversation (⌘F): what's looked for, and which match is in view.
     @State private var isFinding = false
@@ -35,65 +27,26 @@ struct TranscriptView: View {
     var body: some View {
         let rows = rows
         let matches = isFinding ? Self.matches(of: query, in: rows) : []
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                    RowView(row: row, directory: model.session.location.directory, folders: model.folders, cancel: model.cancelPending, undo: model.undo(from:), redo: model.redo, fork: fork, retry: model.retry(_:), buildPlan: model.agent == "plan" && !isOffline ? { model.buildPlan() } as () -> Void : nil, reply: model.reply(to:))
-                        .equatable()
-                        .background {
-                            if matches.contains(row.id) {
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(Color.yellow.opacity(matches.indices.contains(matchIndex) && matches[matchIndex] == row.id ? 0.3 : 0.12))
-                                    .padding(-6)
-                            }
+        ConversationScroll(scroller: scroller, animation: rowCache.isBulk ? nil : Self.rowAnimation, change: RowCache.Change(count: rows.count, last: rows.last?.id),
+                           quote: { model.addQuote($0, how: "selection") }) {
+            ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                RowView(row: row, directory: model.session.location.directory, folders: model.folders, cancel: model.cancelPending, undo: model.undo(from:), redo: model.redo, fork: fork, retry: model.retry(_:), buildPlan: model.agent == "plan" && !isOffline ? { model.buildPlan() } as () -> Void : nil, reply: model.reply(to:))
+                    .equatable()
+                    .background {
+                        if matches.contains(row.id) {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.yellow.opacity(matches.indices.contains(matchIndex) && matches[matchIndex] == row.id ? 0.3 : 0.12))
+                                .padding(-6)
                         }
-                        .id(row.id)
-                        #if DEBUG
-                        .onAppear { ScrollFrameMonitor.rowsMade += 1 }
-                        #endif
-                        .padding(.top, index == 0 ? 0 : row.spacing(after: rows[index - 1]))
-                        .transition(Self.rowTransition)
-                }
-            }
-            .padding(.horizontal, Metrics.gutter)
-            // Room under the card's header, which the conversation scrolls beneath.
-            .padding(.top, 16)
-            // Room under the last reply, so it doesn't sit on the composer.
-            .padding(.bottom, 32)
-            .readableColumn()
-            .animation(rowCache.isBulk ? nil : Self.rowAnimation, value: RowCache.Change(count: rows.count, last: rows.last?.id))
-        }
-        .scrollPosition($position)
-        // What you select, to reply to or copy.
-        .modifier(SelectionMenu { text in model.addQuote(text, how: "selection") })
-        // Only where it starts. An anchor for size changes fought the rubber band: the lazy
-        // stack re-measures rows during a bounce, so the end kept moving and the bounce
-        // crawled, then snapped back. Following the end is done below, only while idle.
-        .defaultScrollAnchor(.bottom, for: .initialOffset)
-        .onScrollPhaseChange { _, phase in
-            scrolling.isOn = phase != .idle
-            #if DEBUG
-            ScrollFrameMonitor.shared.scrolling(phase != .idle)
-            #endif
-        }
-        // One watcher for both, as SwiftUI passes on only one change a frame from each.
-        .onScrollGeometryChange(for: EndGeometry.self) { geometry in
-            EndGeometry(atEnd: geometry.visibleRect.maxY >= geometry.contentSize.height - 40, height: geometry.contentSize.height)
-        } action: { old, new in
-            // Your scrolling decides; growth below the fold doesn't.
-            if scrolling.isOn { followsEnd = new.atEnd }
-            // Shrinking too: the lazy stack's first guess at the height can be too big, and a
-            // session would then open part of the way up.
-            guard followsEnd, !scrolling.isOn, new.height != old.height else { return }
-            endFollower.follow {
-                // Later, you may have started scrolling meanwhile.
-                guard followsEnd, !scrolling.isOn else { return }
-                position.scrollTo(edge: .bottom)
+                    }
+                    .id(row.id)
+                    #if DEBUG
+                    .onAppear { ScrollFrameMonitor.rowsMade += 1 }
+                    #endif
+                    .padding(.top, index == 0 ? 0 : row.spacing(after: rows[index - 1]))
+                    .transition(Self.rowTransition)
             }
         }
-        // Messages scroll on under the card's header and the composer, blurring away there
-        // instead of being cut at an edge.
-        .scrollEdgeEffectStyle(Self.edgeStyle, for: .all)
         .overlay {
             if model.isLoaded && rows.isEmpty {
                 EmptyConversationView(directory: model.session.location.directory) { text in
@@ -101,31 +54,12 @@ struct TranscriptView: View {
                 }
             }
         }
-        .overlay(alignment: .bottom) {
-            // Scrolled up: a way back to the newest, which also follows it again.
-            if !followsEnd, !rows.isEmpty {
-                Button {
-                    followsEnd = true
-                    withAnimation(.ui) { position.scrollTo(edge: .bottom) }
-                } label: {
-                    Image(systemName: "arrow.down")
-                        .font(.system(size: 13, weight: .semibold))
-                        .frame(width: 30, height: 30)
-                }
-                .buttonStyle(.glass)
-                .buttonBorderShape(.circle)
-                .help("Scroll to the End")
-                .padding(.bottom, 12)
-                .transition(.opacity.combined(with: .scale(scale: 0.8)))
-            }
-        }
-        .animation(.ui, value: followsEnd)
         .overlay(alignment: .top) {
             if isFinding {
                 FindBar(query: $query, current: matchIndex, count: matches.count) { step in
                     guard !matches.isEmpty else { return }
                     matchIndex = (matchIndex + step + matches.count) % matches.count
-                    reveal(matches[matchIndex])
+                    scroller.reveal(matches[matchIndex])
                 } close: {
                     withAnimation(.ui) { isFinding = false }
                 }
@@ -133,9 +67,11 @@ struct TranscriptView: View {
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
+        // What you send shows at the end, wherever you'd scrolled to.
+        .onChange(of: model.sent) { scroller.toEnd() }
         .onChange(of: query) {
             matchIndex = 0
-            if let first = Self.matches(of: query, in: self.rows).first { reveal(first) }
+            if let first = Self.matches(of: query, in: self.rows).first { scroller.reveal(first) }
         }
         #if DEBUG
         // KUVO_DEMO_SCROLL=<seconds>: that long after it opens, goes up through the conversation a
@@ -149,15 +85,13 @@ struct TranscriptView: View {
             var late = 0
             ParseClock.total = .zero
             ParseClock.count = 0
-            // As you scrolling up does: no following the end.
-            followsEnd = false
             // How tall it is, from AppKit's scroll view (SwiftUI doesn't pass on every change).
             func scrollViews(in view: NSView) -> [NSScrollView] { (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(scrollViews) }
             let height = NSApp.windows.compactMap(\.contentView).flatMap(scrollViews).map { $0.documentView?.frame.height ?? 0 }.max() ?? 0
             var y = height
             for _ in 0..<150 where y > 0 {
                 y -= 200
-                position.scrollTo(y: max(y, 0))
+                scroller.scroll(to: max(y, 0))
                 try? await Task.sleep(for: .milliseconds(16))
                 let now = ContinuousClock.now
                 let step = now - last
@@ -186,11 +120,6 @@ struct TranscriptView: View {
         let query = query.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty else { return [] }
         return rows.filter { $0.searchText.localizedStandardContains(query) }.map(\.id)
-    }
-
-    private func reveal(_ id: String) {
-        followsEnd = false
-        withAnimation(.ui) { position.scrollTo(id: id, anchor: .center) }
     }
 
     /// Messages, turned into what's drawn: notices are condensed, each finished
@@ -1196,7 +1125,7 @@ final class RowCache {
     }
 
     /// What changing animates: rows added or taken away at the end.
-    struct Change: Equatable {
+    struct Change: Hashable {
         var count: Int
         var last: String?
     }
@@ -1205,46 +1134,6 @@ final class RowCache {
     var rows: [Row] = []
     /// The last change came all at once.
     var isBulk = true
-}
-
-/// Set while you scroll, read by the handlers only.
-final class ScrollingFlag {
-    var isOn = false
-}
-
-/// Whether the end is in view, and how tall the conversation is.
-struct EndGeometry: Equatable {
-    var atEnd: Bool
-    var height: CGFloat
-}
-
-/// Keeps the end in view as the conversation grows. Scrolling makes the lazy stack make the rows
-/// it comes to, which measure taller or shorter than it guessed, so the height changes again in
-/// the same frame, and SwiftUI drops scroll geometry updates that come more than once a frame. A
-/// height that shrank and was dropped left it scrolled past the end: a blank conversation until
-/// something laid it out again (showing the panel). So each change scrolls at once (a
-/// conversation opens at its end), again on the next turn of the run loop for the changes after
-/// it, and once more when they've settled, for any that weren't passed on.
-final class EndFollower {
-    private var isBusy = false
-    private var settle: Task<Void, Never>?
-
-    func follow(_ scroll: @escaping () -> Void) {
-        if !isBusy {
-            isBusy = true
-            scroll()
-            DispatchQueue.main.async { [self] in
-                isBusy = false
-                scroll()
-            }
-        }
-        settle?.cancel()
-        settle = Task {
-            try? await Task.sleep(for: .milliseconds(200))
-            guard !Task.isCancelled else { return }
-            scroll()
-        }
-    }
 }
 
 /// The end of a message that's cut short, fading out.

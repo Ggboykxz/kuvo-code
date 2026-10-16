@@ -77,6 +77,8 @@ final class SessionModel {
     private(set) var composerFocus = 0
     /// Goes up to open the find bar on the conversation (⌘F).
     private(set) var findRequest = 0
+    /// Goes up with each message you send, so the conversation goes back to its end.
+    private(set) var sent = 0
     /// What the find bar should look for when it opens, from a search in the sidebar.
     var findPreset: String?
 
@@ -347,6 +349,7 @@ final class SessionModel {
 
     /// Sends what's in the composer: a message, or a command for "/name arguments".
     func submit(_ text: String, files: [URL], for model: Model?, queue: Bool, commands: [Command]) {
+        sent += 1
         if let command = Self.shellCommand(in: text) {
             runShell(command)
         } else if let (name, arguments) = SlashCommands.parse(text, commands: commands) {
