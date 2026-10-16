@@ -123,6 +123,8 @@ final class SessionModel {
     /// Its engine: a machine's changes with each connection to it.
     private var api: OpenCodeAPI
     private var reloadTask: Task<Void, Never>?
+    /// Reads in a row that found nothing where the copy has a conversation.
+    private var emptyReads = 0
     private var changesTask: Task<Void, Never>?
     private var drainTask: Task<Void, Never>?
     /// The last message on its way out; each waits for the one before, so the engine gets
@@ -251,6 +253,17 @@ final class SessionModel {
         async let active = api.activeSessions()
         do {
             let page = try await messages
+            // Nothing, where its copy has a conversation: an engine just started (a new version
+            // setting itself up) can answer that for a moment. The copy stays; read again soon.
+            if page.data.isEmpty, isCopy, !transcript.messages.isEmpty, emptyReads < 4 {
+                emptyReads += 1
+                Task {
+                    try? await Task.sleep(for: .seconds(3))
+                    await load()
+                }
+                return
+            }
+            emptyReads = 0
             // Earlier messages read as you scrolled up stay, ahead of the latest: only those this
             // read, not a saved copy's (whose start it doesn't know), and only when they reach the
             // latest page; after a gap (many messages while it was away), it starts again from it.
