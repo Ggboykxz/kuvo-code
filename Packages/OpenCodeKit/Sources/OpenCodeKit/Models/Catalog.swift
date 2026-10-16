@@ -199,6 +199,20 @@ public struct CredentialSecret: Decodable, Sendable {
     }
 }
 
+/// A stored credential as the engine keeps it, its value untouched (for an OAuth one: its
+/// method, access and refresh tokens, and when it expires), to store in another engine.
+public struct CredentialEntry: Decodable, Sendable {
+    public var id: String
+    public var integrationID: String
+    public var label: String
+    public var active: Bool
+    public var value: JSONValue
+
+    /// An OAuth sign-in's expiry, in milliseconds since 1970 (later is newer).
+    public var expires: Double { value["expires"]?.number ?? 0 }
+    public var isOAuth: Bool { value["type"]?.string == "oauth" }
+}
+
 /// A started OAuth sign-in. Open `url`; with `mode == .auto` the engine finishes
 /// on its own and the app polls for the result.
 public struct OAuthAttempt: Codable, Sendable, Hashable {

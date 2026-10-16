@@ -62,4 +62,42 @@ struct LiveServerTests {
         try await api.removeWorktree(project: location.project.id, directory: worktree, force: true)
         #expect(!FileManager.default.fileExists(atPath: worktree))
     }
+
+    /// A sign-in to an MCP server, copied whole from one engine to another (as the app does
+    /// between this Mac's and a machine's), is the other's active one.
+    @Test func copiesSignInsBetweenEngines() async throws {
+        let binary = URL(filePath: ProcessInfo.processInfo.environment["OPENCODE_TEST_BINARY"]!)
+        let root = FileManager.default.temporaryDirectory.appending(path: "opencodekit-signins-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        var environment = ProcessInfo.processInfo.environment
+        // Nothing listens there; it only has to need a sign-in.
+        environment["OPENCODE_CONFIG_CONTENT"] = #"{"mcp":{"service":{"type":"remote","url":"http://127.0.0.1:9/mcp"}}}"#
+        let one = try await ServerProcess.start(executable: binary, folders: EngineFolders(root: root.appending(path: "one")), environment: environment)
+        defer { one.stop() }
+        let other = try await ServerProcess.start(executable: binary, folders: EngineFolders(root: root.appending(path: "other")), environment: environment)
+        defer { other.stop() }
+        let from = OpenCodeAPI(endpoint: one.endpoint), to = OpenCodeAPI(endpoint: other.endpoint)
+        func integration(_ api: OpenCodeAPI) async throws -> String? {
+            for _ in 0..<100 {
+                if let id = try? await api.mcpServers().first(where: { $0.name == "service" })?.integrationID { return id }
+                try await Task.sleep(for: .milliseconds(100))
+            }
+            return nil
+        }
+        let source = try #require(try await integration(from)), target = try #require(try await integration(to))
+        // Named after the server, so the same on both (which signing out on both relies on).
+        #expect(source == target)
+
+        let made: JSONValue = .object([
+            "type": .string("oauth"), "methodID": .string("oauth"), "refresh": .string("test-refresh"), "access": .string("test-access"),
+            "expires": .number(4_102_444_800_000), "metadata": .object(["serverUrl": .string("http://127.0.0.1:9/mcp")]),
+        ])
+        try await from.storeCredential(CredentialEntry(id: "", integrationID: source, label: "service", active: true, value: made), for: source)
+        let entry = try #require(try await from.credentialEntries().first { $0.integrationID == source })
+        #expect(entry.isOAuth && entry.active && entry.expires == 4_102_444_800_000)
+
+        try await to.storeCredential(entry, for: target)
+        let copy = try #require(try await to.credentialEntries().first { $0.integrationID == target })
+        #expect(copy.active && copy.value["refresh"]?.string == "test-refresh" && copy.value["access"]?.string == "test-access" && copy.expires == entry.expires)
+    }
 }

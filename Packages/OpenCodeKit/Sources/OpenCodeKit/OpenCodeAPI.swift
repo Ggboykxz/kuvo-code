@@ -204,6 +204,23 @@ public struct OpenCodeAPI: Sendable {
         try await get("api/credential", as: DataEnvelope<[CredentialSecret]>.self).data
     }
 
+    /// Stored sign-ins whole (an OAuth one's refresh token too), to hand one to another engine
+    /// (a machine's) as it is. Keep the result in memory only.
+    public func credentialEntries() async throws -> [CredentialEntry] {
+        try await get("api/credential", as: DataEnvelope<[CredentialEntry]>.self).data
+    }
+
+    /// Stores a sign-in made elsewhere (another engine's), for `integration`, as its active one.
+    public func storeCredential(_ entry: CredentialEntry, for integration: String) async throws {
+        struct Body: Encodable {
+            var integrationID: String
+            var label: String
+            var value: JSONValue
+            var activate = true
+        }
+        try await send("POST", "api/credential", body: Body(integrationID: integration, label: entry.label, value: entry.value))
+    }
+
     public func activateCredential(_ id: String) async throws {
         try await send("POST", "api/credential/\(id.pathEscaped)/activate")
     }
