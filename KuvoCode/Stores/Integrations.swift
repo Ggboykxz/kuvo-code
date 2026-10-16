@@ -140,6 +140,12 @@ nonisolated enum Integrations {
         "microsoft-365": ["outlook.office.com", "outlook.office365.com"],
     ]
 
+    /// How to sign in to a service whose server signs in some way of its own, for the agent to
+    /// say (otherwise, under Settings › Integrations).
+    static let signInHow: [String: String] = [
+        "microsoft-365": "use its login tool, which gives the user a code to enter on Microsoft's page",
+    ]
+
     /// The integrations added in the engine's settings, by ID.
     @MainActor static func added(in config: EngineConfig) -> [String] {
         (config.value(at: MCPSettings.path)?.object ?? [:]).keys.filter { service($0) != nil }.sorted()
@@ -152,7 +158,8 @@ nonisolated enum Integrations {
             guard let url = URL(string: service.site), var host = url.host() else { return nil }
             for prefix in ["www.", "app."] where host.hasPrefix(prefix) { host.removeFirst(prefix.count) }
             let path = url.path().trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            let note = "\(service.title) is connected to Kuvo Code as an integration, so use its tools (their names start with \(service.id)_) rather than its website: they reach the user's account directly. If you don't see them, or they say they need signing in, tell the user to sign in to \(service.title) under Settings › Integrations (if it was just added, it may still be starting: try again in a moment). Only if the user asked for the website itself, call this again with the same address."
+            let signIn = signInHow[service.id] ?? "tell the user to sign in to \(service.title) under Settings › Integrations"
+            let note = "\(service.title) is connected to Kuvo Code as an integration, so use its tools (their names start with \(service.id)_) rather than its website: they reach the user's account directly. If you don't see them, or they say they need signing in, \(signIn) (if it was just added, it may still be starting: try again in a moment). Only if the user asked for the website itself, call this again with the same address."
             return Site(id: service.id, hosts: [host] + (moreHosts[service.id] ?? []), path: path.isEmpty ? nil : "/" + path, note: note)
         }
     }

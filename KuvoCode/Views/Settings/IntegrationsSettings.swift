@@ -9,6 +9,9 @@ struct IntegrationsSettings: View {
     @State private var live: [MCPServer] = []
     @State private var signingIn: IntegrationRef?
     @State private var addingKey: KeyRequest?
+    /// The sign-ins the engine keeps, by integration: a server can answer without one (Google's
+    /// do), then turn every call down.
+    @State private var signedIn: Set<String> = []
 
     private var config: EngineConfig { app.engineConfig }
 
@@ -28,6 +31,7 @@ struct IntegrationsSettings: View {
             }
         }
         .modifier(LiveMCPServers(servers: $live, api: { app.api }, change: config.settings))
+        .task(id: live) { await readSignIns() }
         #if DEBUG
         // KUVO_DEMO_ADD_INTEGRATION=<id>: added, as Connect does.
         .onAppear {
@@ -45,6 +49,7 @@ struct IntegrationsSettings: View {
                 Task {
                     for server in live where server.integrationID == ref.id { try? await app.api?.connectMCP(server.name) }
                     await refresh()
+                    await readSignIns()
                     app.syncSignIns()
                 }
             }
@@ -95,8 +100,16 @@ struct IntegrationsSettings: View {
                             Button("Connect") { add(service) }
                         }
                     } else {
-                        status(server)
-                        if let server, server.status.status == "needs_auth", let integrationID = server.integrationID {
+                        let unsigned = needsSignIn(service, server)
+                        if server?.status.status == "connected", waitsForCode(service) {
+                            Text("Not signed in yet")
+                                .font(.subheadline)
+                                .foregroundStyle(.orange)
+                                .help("Ask the agent to use \(service.title): the first time, it gives you a code to enter on Microsoft's page.")
+                        } else {
+                            status(server, unsigned: unsigned)
+                        }
+                        if let server, unsigned, let integrationID = server.integrationID {
                             Button("Sign In…") { signingIn = IntegrationRef(id: integrationID, service: service) }
                         } else if server?.status.status == "failed" {
                             Button("Try Again") {
@@ -127,8 +140,32 @@ struct IntegrationsSettings: View {
         return lines
     }
 
-    @ViewBuilder private func status(_ server: MCPServer?) -> some View {
-        let (title, color): (String, Color) = switch server?.status.status {
+    /// Whether it waits for you to sign in: as its server says, or, answering without a sign-in,
+    /// as there's none kept. Microsoft 365's server signs in by itself, with a code, when the
+    /// agent first uses it, and keeps the sign-in in its folder.
+    private func needsSignIn(_ service: Integrations.Service, _ server: MCPServer?) -> Bool {
+        guard let server else { return false }
+        if server.status.status == "needs_auth" { return true }
+        guard server.status.status == "connected", let integration = server.integrationID else { return false }
+        switch service.way {
+        case .official, .officialApp: return !signedIn.contains(integration)
+        default: return false
+        }
+    }
+
+    private func readSignIns() async {
+        guard let entries = try? await app.api?.credentialEntries() else { return }
+        signedIn = Set(entries.filter { $0.active && $0.isOAuth }.map(\.integrationID))
+    }
+
+    /// Microsoft 365, without its sign-in yet.
+    private func waitsForCode(_ service: Integrations.Service) -> Bool {
+        guard let files = Integrations.signInFiles[service.id], let first = files.first else { return false }
+        return !FileManager.default.fileExists(atPath: AppInfo.supportDirectory.appending(path: "integrations/\(service.id)/\(first)").path)
+    }
+
+    @ViewBuilder private func status(_ server: MCPServer?, unsigned: Bool = false) -> some View {
+        let (title, color): (String, Color) = switch unsigned ? "needs_auth" : server?.status.status {
         case "connected": ("Connected", .green)
         case "pending": ("Connecting…", .secondary)
         case "needs_auth": ("Needs sign-in", .orange)
