@@ -6,6 +6,7 @@ import UsageKit
 struct GeneralSettings: View {
     @AppStorage(TabBar.showsKey) private var showsTabBar = true
     @AppStorage(OpenWith.editorKey) private var editor = ""
+    @AppStorage(Awake.key) private var keepsAwake = true
     @Environment(Updates.self) private var updates
 
     var body: some View {
@@ -15,6 +16,13 @@ struct GeneralSettings: View {
                     Text("Show the tab bar")
                     Text("The row at the top, with the project, its branch and your sessions as tabs. Without it, switch sessions in the sidebar or with ⌘K.")
                 }
+            }
+            Section("While Agents Work") {
+                Toggle(isOn: $keepsAwake) {
+                    Text("Keep this Mac awake")
+                    Text("It doesn’t go to sleep on its own while an agent or a bot works on it; the display still can. Sessions on your machines run there either way.")
+                }
+                .onChange(of: keepsAwake) { Awake.shared.update() }
             }
             Section("Files") {
                 Picker(selection: $editor) {

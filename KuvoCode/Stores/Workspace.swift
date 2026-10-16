@@ -53,7 +53,10 @@ final class Workspace {
     }
 
     private(set) var sessions: [Session] = []
-    private(set) var running: Set<String> = []
+    private(set) var running: Set<String> = [] {
+        // While one runs on this Mac, it stays awake (unless you turned that off).
+        didSet { Awake.shared.agentsWork(running.contains { id in sessionMachines[id] == nil && !(session(id).map { RemoteFolder.isRemote($0.location.directory) } ?? false) }) }
+    }
     /// Folders the user opened, even before they have sessions.
     private(set) var folders: [String] = UserDefaults.standard.stringArray(forKey: "projectFolders") ?? []
     /// Names and other folders of projects, by their primary folder.
