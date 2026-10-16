@@ -71,6 +71,7 @@ struct LiveRemoteEngineTests {
 
     @Test func runsOnItsOwnAndIsFoundAgain() async throws {
         let cache = FileManager.default.temporaryDirectory.appending(path: "opencodekit-remote-cache")
+        defer { try? FileManager.default.removeItem(at: cache) }
         try await RemoteEngineInstaller(connection: connection, cache: cache).install()
         try await RemoteServer.stop(on: connection)
         #expect(try await RemoteServer.running(on: connection) == nil)
@@ -102,5 +103,9 @@ struct LiveRemoteEngineTests {
         #expect(try await RemoteServer.running(on: connection) == nil)
         let left = try await connection.run("ps -eo pid,args | grep '[o]pencode serve --port \(engine.port)' || true")
         #expect(left.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+        // Nothing of the test's stays on the machine: its watchdog, and its folder.
+        _ = try await connection.run("pkill -f '[/]\\.kuvo-code-test/run' || true; rm -rf \"$HOME/.kuvo-code-test\"")
+        #expect(try await connection.run("[ -e \"$HOME/.kuvo-code-test\" ] && echo left || true").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 }
