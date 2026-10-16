@@ -47,7 +47,7 @@ struct IntegrationsSettings: View {
             ConnectSheet(integrationID: ref.id, name: ref.service?.title, symbol: ref.service?.symbol, note: ref.service == nil ? "The agent can use it now." : "", highlights: highlights(ref.service)) {
                 signingIn = nil
                 Task {
-                    for server in live where server.integrationID == ref.id { try? await app.api?.connectMCP(server.name) }
+                    if let api = app.api { for server in live where server.integrationID == ref.id { await app.reconnect(server.name, api: api, machine: nil) } }
                     await refresh()
                     await readSignIns()
                     app.syncSignIns()
@@ -114,7 +114,7 @@ struct IntegrationsSettings: View {
                         } else if server?.status.status == "failed" {
                             Button("Try Again") {
                                 Task {
-                                    try? await app.api?.connectMCP(service.id)
+                                    if let api = app.api { await app.reconnect(service.id, api: api, machine: nil) }
                                     await refresh()
                                 }
                             }

@@ -76,8 +76,10 @@ public struct OpenCodeAPI: Sendable {
         try await get("api/mcp", directory: directory, as: LocatedEnvelope<[MCPServer]>.self).data
     }
 
-    public func connectMCP(_ name: String) async throws {
-        try await send("POST", "api/experimental/mcp/\(name.pathEscaped)/connect")
+    /// Connects `name` again, in `directory`'s instance (each folder the engine has open runs its
+    /// own servers), or the engine's own folder's.
+    public func connectMCP(_ name: String, directory: String? = nil) async throws {
+        try await send("POST", "api/experimental/mcp/\(name.pathEscaped)/connect", directory: directory)
     }
 
     public func disconnectMCP(_ name: String) async throws {

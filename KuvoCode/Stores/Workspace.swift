@@ -600,6 +600,13 @@ final class Workspace {
         isLoaded = true
     }
 
+    /// The folders of the sessions open or at work on `machine` (nil: this Mac): folders its
+    /// engine has open, each with its own MCP servers.
+    func openFolders(on machine: String?) -> Set<String> {
+        let ids = Set(models.keys).union(running)
+        return Set(ids.compactMap { session($0)?.location.directory }.filter { RemoteFolder.machine(of: $0) == machine })
+    }
+
     /// Whether a session on the machine is working (or waiting for an answer).
     func isRunning(on machine: String) -> Bool {
         running.contains { id in

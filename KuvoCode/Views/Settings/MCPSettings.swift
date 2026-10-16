@@ -95,7 +95,7 @@ struct MCPSettings: View {
             ConnectSheet(integrationID: ref.id, name: ref.service?.title, symbol: ref.service?.symbol, note: "The agent can use its tools now.") {
                 signingIn = nil
                 Task {
-                    for server in live where server.integrationID == ref.id { try? await app.api?.connectMCP(server.name) }
+                    if let api = app.api { for server in live where server.integrationID == ref.id { await app.reconnect(server.name, api: api, machine: nil) } }
                     await refresh()
                     app.syncSignIns()
                 }
@@ -140,7 +140,7 @@ struct MCPSettings: View {
                 } else if isOn, status?.status == "failed" {
                     Button("Try Again") {
                         Task {
-                            try? await app.api?.connectMCP(name)
+                            if let api = app.api { await app.reconnect(name, api: api, machine: nil) }
                             await refresh()
                         }
                     }

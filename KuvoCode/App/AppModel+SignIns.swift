@@ -20,14 +20,21 @@ extension AppModel {
             if mine.expires > (yours?.expires ?? -1) {
                 guard (try? await remote.storeCredential(mine, for: far)) != nil else { continue }
                 if let yours { try? await remote.removeCredential(yours.id) }
-                try? await remote.connectMCP(match.name)
+                await reconnect(match.name, api: remote, machine: engine.machine.id)
             } else if let yours, yours.expires > mine.expires {
                 // The machine's is newer (it refreshed): back to this Mac.
                 guard (try? await mac.storeCredential(yours, for: local)) != nil else { continue }
                 try? await mac.removeCredential(mine.id)
-                try? await mac.connectMCP(server.name)
+                await reconnect(server.name, api: mac, machine: nil)
             }
         }
+    }
+
+    /// Connects an integration's server again after a sign-in (or a Try Again), in every folder
+    /// its engine has open, as each runs its own: `machine`'s engine, or this Mac's for nil.
+    func reconnect(_ server: String, api: OpenCodeAPI, machine: String?) async {
+        try? await api.connectMCP(server)
+        for folder in workspace.openFolders(on: machine) { try? await api.connectMCP(server, directory: folder) }
     }
 
     /// Signs out of `integration` (a server's, which engines name alike), here and on every
