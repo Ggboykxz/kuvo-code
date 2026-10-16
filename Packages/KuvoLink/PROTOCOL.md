@@ -11,7 +11,7 @@ through a relay that can't read what passes through it.
   content. It also sends Apple push notifications, whose content it can't read either.
 
 Everything below is implemented twice, in Swift (`Sources/KuvoLink`, for the Mac app and
-the phone) and in JavaScript (`Bridge/kuvo-link.js`, for machines). `Vectors/` holds the
+the phone) and in JavaScript (`Sources/KuvoLink/Resources/kuvo-link.js`, for machines). `Vectors/` holds the
 test vectors both run against.
 
 ## Keys and addresses

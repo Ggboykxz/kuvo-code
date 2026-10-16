@@ -131,5 +131,107 @@
       "body": "",
       "bytes": "000c7b2274223a2270696e67227d"
     }
+  ],
+  "routes": [
+    {
+      "path": "api/session",
+      "allowed": true
+    },
+    {
+      "path": "api/session?limit=50&order=desc",
+      "allowed": true
+    },
+    {
+      "path": "api/session/ses_1/prompt",
+      "allowed": true
+    },
+    {
+      "path": "api/session/active",
+      "allowed": true
+    },
+    {
+      "path": "api/event",
+      "allowed": true
+    },
+    {
+      "path": "api/event?x=1",
+      "allowed": true
+    },
+    {
+      "path": "api/info",
+      "allowed": true
+    },
+    {
+      "path": "api/provider",
+      "allowed": true
+    },
+    {
+      "path": "api/model/default",
+      "allowed": true
+    },
+    {
+      "path": "api/permission/saved",
+      "allowed": true
+    },
+    {
+      "path": "api/form",
+      "allowed": true
+    },
+    {
+      "path": "api/experimental/session/ses_1/wait",
+      "allowed": true
+    },
+    {
+      "path": "api/experimental/session/ses_1/instructions/entries/k",
+      "allowed": false
+    },
+    {
+      "path": "api/credential",
+      "allowed": false
+    },
+    {
+      "path": "api/credential/anthropic",
+      "allowed": false
+    },
+    {
+      "path": "api/integration/github/connect/key",
+      "allowed": false
+    },
+    {
+      "path": "api/config",
+      "allowed": false
+    },
+    {
+      "path": "api/config/shell",
+      "allowed": false
+    },
+    {
+      "path": "api/mcp",
+      "allowed": false
+    },
+    {
+      "path": "api/plugin",
+      "allowed": false
+    },
+    {
+      "path": "api/sessions",
+      "allowed": false
+    },
+    {
+      "path": "api/eventual",
+      "allowed": false
+    },
+    {
+      "path": "api/session/../credential",
+      "allowed": false
+    },
+    {
+      "path": "kuvo/info",
+      "allowed": false
+    },
+    {
+      "path": "",
+      "allowed": false
+    }
   ]
 }

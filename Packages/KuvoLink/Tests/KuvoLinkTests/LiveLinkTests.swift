@@ -3,7 +3,7 @@ import Testing
 @testable import KuvoLink
 
 /// The whole way: this test as the phone, then a real relay, a machine's bridge
-/// (`Bridge/kuvo-link.js`) and a real engine. Skipped unless KUVO_TEST_PAIRING_LINK holds the
+/// (`Resources/kuvo-link.js`) and a real engine. Skipped unless KUVO_TEST_PAIRING_LINK holds the
 /// bridge's pairing link; kuvo-code-ios's `scripts/link-local.sh --test` sets everything up and
 /// runs it.
 @Suite(.enabled(if: ProcessInfo.processInfo.environment["KUVO_TEST_PAIRING_LINK"] != nil), .serialized)

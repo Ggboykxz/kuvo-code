@@ -46,6 +46,12 @@ import Testing
         }
     }
 
+    @Test func routes() {
+        for item in list("routes") {
+            #expect(EngineRoutes.allows(item["path"] as! String) == item["allowed"] as! Bool, "\(item["path"]!)")
+        }
+    }
+
     @Test func messages() throws {
         for item in list("messages") {
             let head = try JSONDecoder().decode(LinkMessage.Head.self, from: JSONSerialization.data(withJSONObject: item["head"]!))

@@ -368,3 +368,13 @@ private final class Ticket: @unchecked Sendable {
     func set(id: Int, session: UInt32) { lock.withLock { stored = (id, session) } }
     var value: (Int, UInt32)? { lock.withLock { stored } }
 }
+
+/// The machines' side of the link (`Resources/kuvo-link.js`): the script the Mac app puts in a
+/// machine's `~/.kuvo-code/bin` and the engine's runtime runs.
+public enum Bridge {
+    public static let fileName = "kuvo-link.js"
+
+    public static var script: Data {
+        get throws { try Data(contentsOf: Bundle.module.url(forResource: "kuvo-link", withExtension: "js")!) }
+    }
+}

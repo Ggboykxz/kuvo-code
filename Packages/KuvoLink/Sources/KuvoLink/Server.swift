@@ -1,7 +1,7 @@
 import Foundation
 
 /// A host's side: answers the phones it's paired with, over its relay connection. The Mac app
-/// runs one; machines run the same in JavaScript (`Bridge/kuvo-link.js`).
+/// runs one; machines run the same in JavaScript (`Resources/kuvo-link.js`).
 public actor LinkServer {
     public struct Phone: Sendable, Hashable {
         public var key: Data

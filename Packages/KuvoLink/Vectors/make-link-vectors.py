@@ -36,4 +36,15 @@ messages = [
     message({"t": "ping"}, b""),
 ]
 
-json.dump({"addresses": addresses, "relay": relay, "frames": frames, "messages": messages}, open("link.json", "w"), indent=2)
+# What a phone may ask an engine for, through a Mac or a machine: the same on both.
+routes = [{"path": p, "allowed": a} for p, a in [
+    ("api/session", True), ("api/session?limit=50&order=desc", True), ("api/session/ses_1/prompt", True),
+    ("api/session/active", True), ("api/event", True), ("api/event?x=1", True), ("api/info", True),
+    ("api/provider", True), ("api/model/default", True), ("api/permission/saved", True), ("api/form", True),
+    ("api/experimental/session/ses_1/wait", True), ("api/experimental/session/ses_1/instructions/entries/k", False),
+    ("api/credential", False), ("api/credential/anthropic", False), ("api/integration/github/connect/key", False),
+    ("api/config", False), ("api/config/shell", False), ("api/mcp", False), ("api/plugin", False),
+    ("api/sessions", False), ("api/eventual", False), ("api/session/../credential", False), ("kuvo/info", False), ("", False),
+]]
+
+json.dump({"addresses": addresses, "relay": relay, "frames": frames, "messages": messages, "routes": routes}, open("link.json", "w"), indent=2)

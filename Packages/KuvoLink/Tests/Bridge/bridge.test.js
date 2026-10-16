@@ -1,5 +1,5 @@
 // The bridge, checked against the shared vectors and against a phone and an engine in this
-// process. Run with `node --test Packages/KuvoLink/Bridge/test`.
+// process. Run with `node --test Packages/KuvoLink/Tests/Bridge/*.test.js`.
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -12,7 +12,7 @@ import { after, test } from "node:test";
 const home = fs.mkdtempSync(path.join(os.tmpdir(), "kuvo-link-test-"));
 process.env.KUVO_HOME = home;
 after(() => fs.rmSync(home, { recursive: true, force: true }));
-const link = await import("../kuvo-link.js");
+const link = await import("../../Sources/KuvoLink/Resources/kuvo-link.js");
 
 const vectors = name => JSON.parse(fs.readFileSync(new URL(`../../Vectors/${name}`, import.meta.url), "utf8"));
 const hex = s => Buffer.from(s, "hex");
@@ -68,6 +68,7 @@ test("addresses, relay messages, frames and messages match the vectors", () => {
     assert.equal(link.frame(f.kind, f.session, hex(f.body)).toString("hex"), f.bytes);
     assert.deepEqual(link.readFrame(hex(f.bytes)), { kind: f.kind, session: f.session, body: hex(f.body) });
   }
+  for (const r of v.routes) assert.equal(link.allowed(r.path), r.allowed, r.path);
   for (const m of v.messages) {
     assert.equal(link.encodeMessage(m.head, hex(m.body)).toString("hex"), m.bytes);
     assert.deepEqual(link.decodeMessage(hex(m.bytes)), { head: m.head, body: hex(m.body) });
