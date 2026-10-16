@@ -42,6 +42,8 @@ final class PhoneLink {
     private(set) var machineHosts: [String: MachineHost] = [:]
     /// The machines that are connected now, for putting the bridge on them; set by AppModel.
     @ObservationIgnored var readyMachines: () -> [MachineEngine] = { [] }
+    /// Your bots, for `kuvo/bots`: the phone draws each as the Mac does; set by AppModel.
+    @ObservationIgnored var bots: () -> [Bot] = { [] }
 
     struct MachineHost: Codable, Hashable {
         var name: String
@@ -264,6 +266,14 @@ final class PhoneLink {
         switch request.path {
         case "kuvo/info":
             return (200, (try? encoder.encode(Info(name: Self.computerName, app: AppInfo.version, engine: OpenCodeEngine.version))) ?? Data())
+        case "kuvo/bots":
+            // Each bot by its session (here or on a machine), with its name and look.
+            struct Bots: Encodable {
+                struct Entry: Encodable { var session: String; var name: String; var look: BotLook; var machine: String? }
+                var bots: [Entry]
+            }
+            let bots = bots().map { Bots.Entry(session: $0.sessionID, name: $0.name, look: $0.look, machine: $0.machine) }
+            return (200, (try? encoder.encode(Bots(bots: bots))) ?? Data())
         case "kuvo/hosts":
             let hosts = machineHosts.values.sorted { $0.name < $1.name }.map { Hosts.Host(name: $0.name, address: $0.address, key: $0.key, relay: relay.absoluteString) }
             return (200, (try? encoder.encode(Hosts(hosts: hosts))) ?? Data())
