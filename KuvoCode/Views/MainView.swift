@@ -306,6 +306,7 @@ struct MainView: View {
             showBotTabs()
         }
         .onChange(of: groupID) { showBotTabs() }
+        .onChange(of: groupID.flatMap { groups.group($0)?.members } ?? []) { showBotTabs() }
         .task(id: activeDirectory) {
             if let activeDirectory { await workspace.loadBranch(for: activeDirectory) }
         }

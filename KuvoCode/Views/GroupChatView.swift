@@ -109,7 +109,7 @@ private struct MeetingRow: View {
             Image(systemName: "calendar")
                 .foregroundStyle(.tint)
                 .frame(width: 16)
-            (Text("Meeting").fontWeight(.semibold).foregroundStyle(.primary) + Text("  ") + Text(topic).foregroundStyle(.secondary))
+            Text("\(Text("Meeting").fontWeight(.semibold).foregroundStyle(.primary))  \(Text(topic).foregroundStyle(.secondary))")
                 .lineLimit(3)
                 .textSelection(.enabled)
             Spacer(minLength: 8)

@@ -926,7 +926,7 @@ private struct WakeRow: View {
             Image(systemName: "alarm")
                 .foregroundStyle(.tint)
                 .frame(width: 16)
-            (Text("Woke up").fontWeight(.semibold).foregroundStyle(.primary) + Text("  ") + Text(note).foregroundStyle(.secondary))
+            Text("\(Text("Woke up").fontWeight(.semibold).foregroundStyle(.primary))  \(Text(note).foregroundStyle(.secondary))")
                 // Room for what a watch saw, after its note.
                 .lineLimit(6)
                 .textSelection(.enabled)

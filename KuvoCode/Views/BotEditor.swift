@@ -857,8 +857,7 @@ private struct WakeList: View {
                 } content: {
                     HStack(spacing: 10) {
                         VStack(alignment: .leading, spacing: 2) {
-                            (Text(wake.due, format: .dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute())
-                                + Text(wake.every.map { ", then \($0.words)" } ?? ""))
+                            Text("\(wake.due, format: .dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute())\(wake.every.map { ", then \($0.words)" } ?? "")")
                                 .font(.system(size: 13, weight: .medium))
                             Text(wake.note)
                                 .font(.callout)
