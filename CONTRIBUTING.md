@@ -135,6 +135,7 @@ without clicking, for trying a change or taking screenshots:
 | `KUVO_DEMO_IMPORT_BOT` | A shared bot's file: New Bot opens from it, as File › Import Bot… does |
 | `KUVO_DEMO_TRY_WATCH` | With `KUVO_DEMO_EDIT_BOT`: Check Now on the bot's first watch |
 | `KUVO_DEMO_QUOTE` | Replying to this text, over the composer of the session in view |
+| `KUVO_DEMO_ADD_INTEGRATION` | With Settings › Integrations open: adds that integration, as Connect does |
 | `KUVO_DEMO_TAKE_OVER` | Seconds: the panel's browser is taken over from the agent once it starts browsing, and handed back after that long |
 | `KUVO_DEMO_NEW_GROUP` | The New Group Chat editor, open |
 | `KUVO_DEMO_GROUP` | Make the group chat `<name>\|<bot>,<bot>,…` unless one has that name, open it, and send it `\|<message>` if one follows |

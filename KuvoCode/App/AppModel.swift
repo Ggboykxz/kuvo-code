@@ -137,9 +137,17 @@ final class AppModel {
             stage = "launch"
             var shell = await environment
             shellEnvironment = shell
-            // Bots' wake-up command, by name, and where their folders are.
+            // Bots' wake-up command, by name, and where their folders are; and the launcher
+            // integrations' servers run with.
+            try? Launcher.install(in: Bots.command.deletingLastPathComponent(), engine: binary)
             shell["PATH"] = Bots.command.deletingLastPathComponent().path + ":" + (shell["PATH"] ?? "/usr/bin:/bin")
             shell["KUVO_BOTS"] = Bots.root.path
+            // Keys you brought for integrations, which their settings name with {env:…}, and a
+            // folder for what their servers keep (a sign-in).
+            shell.merge(IntegrationKeys.environment) { _, key in key }
+            let integrations = AppInfo.supportDirectory.appending(path: "integrations")
+            try? FileManager.default.createDirectory(at: integrations, withIntermediateDirectories: true)
+            shell["KUVO_INTEGRATIONS"] = integrations.path
             // What some providers need until opencode handles it (see ProviderCompatibility).
             let compatibility = ProviderCompatibility.config
             if !compatibility.isEmpty { shell["OPENCODE_CONFIG_CONTENT"] = Self.merged(compatibility, into: shell["OPENCODE_CONFIG_CONTENT"]) }

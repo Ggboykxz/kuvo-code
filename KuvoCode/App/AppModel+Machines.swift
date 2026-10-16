@@ -181,8 +181,14 @@ extension AppModel {
         }
         if let data = try? Data(contentsOf: engineConfig.file),
            var settings = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
-            // A shell or a worktree folder on this Mac means nothing on the machine.
+            // A shell or a worktree folder on this Mac means nothing on the machine, nor do
+            // integrations that use this Mac's apps.
             for key in ["$schema", "shell", "worktree"] { settings.removeValue(forKey: key) }
+            if var mcp = settings["mcp"] as? [String: Any], var servers = mcp["servers"] as? [String: Any] {
+                for id in Integrations.macOnly { servers.removeValue(forKey: id) }
+                mcp["servers"] = servers
+                settings["mcp"] = mcp
+            }
             if let json = try? JSONSerialization.data(withJSONObject: settings) {
                 environment["OPENCODE_CONFIG_CONTENT"] = String(decoding: json, as: UTF8.self)
             }

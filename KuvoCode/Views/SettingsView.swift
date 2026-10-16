@@ -77,7 +77,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
 
     case general, appearance, notifications, shortcuts, privacy, storage
     case accounts, usage
-    case agents, permissions, commands, skills, mcp, engine
+    case agents, permissions, commands, skills, integrations, mcp, engine
     case git, worktrees, archived, machines
     case panel, browser, passwords
 
@@ -95,7 +95,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         switch self {
         case .general, .appearance, .notifications, .shortcuts, .privacy, .storage: .app
         case .accounts, .usage: .models
-        case .agents, .permissions, .commands, .skills, .mcp, .engine: .agent
+        case .agents, .permissions, .commands, .skills, .integrations, .mcp, .engine: .agent
         case .git, .worktrees, .archived, .machines: .projects
         case .panel, .browser, .passwords: .panel
         }
@@ -115,6 +115,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .permissions: "Permissions"
         case .commands: "Commands"
         case .skills: "Skills"
+        case .integrations: "Integrations"
         case .mcp: "MCP Servers"
         case .engine: "Engine"
         case .git: "Git"
@@ -141,6 +142,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .permissions: "checkmark.shield"
         case .commands: "slash.circle"
         case .skills: "graduationcap"
+        case .integrations: "square.grid.3x3.square"
         case .mcp: "puzzlepiece.extension"
         case .engine: "cpu"
         case .git: "arrow.triangle.branch"
@@ -168,6 +170,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .permissions: "What the agent may do without asking you first."
         case .commands: "Prompts you use often, run by typing / and their name."
         case .skills: "Instructions and scripts the agent loads when a task calls for them."
+        case .integrations: "Your mail, calendar, chats, socials and code tools, for the agent and your bots."
         case .mcp: "Programs and services that give the agent more tools."
         case .engine: nil
         case .git: "Branches, commits and pull requests made from Kuvo Code."
@@ -195,6 +198,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .permissions: "allow ask deny approve rules"
         case .commands: "slash prompts"
         case .skills: "skills github library"
+        case .integrations: "integrations gmail calendar slack github discord telegram mail chat social"
         case .mcp: "servers tools model context protocol"
         case .engine: "opencode shell web search plugins summarize formatter limits settings file"
         case .git: "branch prefix commit message pull request pr"
@@ -227,6 +231,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .permissions: PermissionsSettings()
         case .commands: CommandsSettings()
         case .skills: SkillsSettings()
+        case .integrations: IntegrationsSettings()
         case .mcp: MCPSettings()
         case .engine: EngineSettings()
         case .git: GitSettings()
