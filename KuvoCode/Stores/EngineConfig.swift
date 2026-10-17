@@ -21,12 +21,23 @@ final class EngineConfig {
     /// This Mac's, for the places that make a session's rules.
     static weak var current: EngineConfig?
 
-    /// What Kuvo Code gives every engine, unless the settings file sets it: web search through a
-    /// free provider, moving to another when one is rate limited. The engine has none chosen, and
-    /// every search the agent tried failed ("Web search provider is required").
-    static func defaults(over settings: [String: Any]) -> [String: Any] {
-        settings["websearch"] == nil ? ["websearch": ["provider": "random"]] : [:]
+    /// Reads the file again and adds what Kuvo Code starts every engine with, unless it sets it:
+    /// web search through a free provider, moving to another when one is rate limited. The engine
+    /// has none chosen, and every search the agent tried failed ("Web search provider is required").
+    ///
+    /// It goes in the file, so a choice made anywhere (here, in Settings, in a project's own
+    /// settings) wins over it, and only once: what you change or remove later stays as you left
+    /// it. A file Kuvo Code can't read is left alone; a new one (none yet, or deleted to start
+    /// over) gets it again.
+    func addDefaults() {
+        reload()
+        let isNew = !FileManager.default.fileExists(atPath: file.path)
+        guard problem == nil, isNew || !UserDefaults.standard.bool(forKey: Self.defaultsAddedKey) else { return }
+        if settings["websearch"] == nil { set(.object(["provider": .string("random")]), at: ["websearch"]) }
+        if problem == nil { UserDefaults.standard.set(true, forKey: Self.defaultsAddedKey) }
     }
+
+    private static let defaultsAddedKey = "engine.defaultsAdded"
 
     /// Settings › Permissions' rules, in their order: what every session and mode is held to.
     var permissionRules: [PermissionRule] {

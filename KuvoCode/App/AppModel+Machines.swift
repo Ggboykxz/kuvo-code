@@ -291,6 +291,8 @@ extension AppModel {
                 }
             }
         }
+        // Web search that works, as on this Mac, unless the file chose otherwise.
+        engineConfig.addDefaults()
         if let data = try? Data(contentsOf: engineConfig.file),
            var settings = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
             // A shell or a worktree folder on this Mac means nothing on the machine, nor do
@@ -311,11 +313,6 @@ extension AppModel {
         let here = Set(Integrations.macOnly.map { IntegrationKeys.variable($0, "") })
         let keys = await Task.detached { IntegrationKeys.environment }.value.filter { name, _ in !here.contains { name.hasPrefix($0) } }
         environment.merge(keys) { _, key in key }
-        // Web search that works, as on this Mac.
-        let defaults = EngineConfig.defaults(over: engineConfig.settings)
-        if !defaults.isEmpty {
-            environment["OPENCODE_CONFIG_CONTENT"] = AppModel.merged(defaults, into: environment["OPENCODE_CONFIG_CONTENT"])
-        }
         // What some providers need until opencode handles it, as on this Mac.
         let compatibility = ProviderCompatibility.config
         if !compatibility.isEmpty {
