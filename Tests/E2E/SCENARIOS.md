@@ -9,7 +9,7 @@ real open-source projects cloned into the run's folder. Status: ✅ passes, ⚠�
 
 | ID | Case | Status |
 | --- | --- | --- |
-| A1 | Open the app for the first time: the engine downloads, the window explains what to do next, and a free model is ready without an account | ⏳ |
+| A1 | Open the app for the first time: the engine downloads, the window explains what to do next, and a free model is ready without an account | ✅ fixed on the way: the model picker listed models you can't use (680ef6a) |
 | A2 | Start chatting right away with no account, from the first screen | ⏳ |
 | A3 | Look for how to connect Claude, ChatGPT or an API key, and find where each account's usage shows | ⏳ |
 | A4 | Bring over an existing opencode setup from Settings › General | ⏳ |
@@ -20,7 +20,7 @@ real open-source projects cloned into the run's folder. Status: ✅ passes, ⚠�
 
 | ID | Case | Status |
 | --- | --- | --- |
-| B1 | Open a project folder (drag it in, or New Project) and ask "what does this project do, and how is it organized?" | ⏳ |
+| B1 | Open a project folder (drag it in, or New Project) and ask "what does this project do, and how is it organized?" | ✅ GLM, slugify |
 | B2 | "Run the tests and tell me what fails" on a project with a failing test | ⏳ |
 | B3 | "Fix this bug: …" from a real issue's text, then check the fix | ⏳ |
 | B4 | "Add a --json flag to the CLI and a test for it" | ⏳ |
@@ -46,7 +46,7 @@ real open-source projects cloned into the run's folder. Status: ✅ passes, ⚠�
 | ID | Case | Status |
 | --- | --- | --- |
 | C1 | Attach a screenshot of a bug ("make it look like this") | ⏳ |
-| C2 | Attach a PDF or a CSV and ask about it | ⏳ |
+| C2 | Attach a PDF or a CSV and ask about it | ❌→✅ three .md reports vanished from the sent message and the agent didn't know where they were (b8aee60) |
 | C3 | Drop several files, paste a picture from the clipboard, remove one before sending | ⏳ |
 | C4 | Quote part of a reply and answer it | ⏳ |
 | C5 | Browse the project's files in the panel and open one | ⏳ |
@@ -69,15 +69,15 @@ real open-source projects cloned into the run's folder. Status: ✅ passes, ⚠�
 | E2 | "Fill in this form with …" on a real form page | ⏳ |
 | E3 | Upload a file to a website for you (a bot on this Mac) | ⏳ |
 | E4 | Download a file from a page and work with it | ⏳ |
-| E5 | A site that needs your sign-in: the card, Take Over, Hand Back | ⏳ |
+| E5 | A site that needs your sign-in: the card, Take Over, Hand Back | ⚠️ Google and X refused the headless shell; the machine browser is full Chrome now (a94a15b), sign-in to recheck with a real account |
 | E6 | Browse yourself in the panel: tabs, back, the new tab page, a page's dialog | ⏳ |
-| E7 | Upload a file to a website from a bot on a machine | ⏳ |
+| E7 | Upload a file to a website from a bot on a machine | ✅ upload from a session on a machine (full Chrome, the-internet.herokuapp.com); the same tools as a bot's |
 
 ## F. Bots
 
 | ID | Case | Status |
 | --- | --- | --- |
-| F1 | Make a bot from scratch: it asks what its purpose is, you tell it, it keeps it | ⏳ |
+| F1 | Make a bot from scratch: it asks what its purpose is, you tell it, it keeps it | ✅ the bot writes first: infers its job from its name or asks (f95ed69) |
 | F2 | Start from a template (the morning news digest) and send its job | ⏳ |
 | F3 | "Remind me in 2 minutes to stretch": a wake-up arrives on time | ⏳ |
 | F4 | "Every weekday at 9 …": a repeating wake-up, shown in Edit Bot, paused and resumed | ⏳ |
@@ -100,8 +100,8 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 | --- | --- | --- |
 | L1 | "Every morning, send me the top 5 tech news stories with links" (browsing several sources, deduplicating, a short digest) | ⏳ |
 | L2 | "Compare the price of the Sony WH-1000XM6 at three stores and tell me the cheapest" | ⏳ |
-| L3 | "Read this article (a URL) and give me the five key points" | ⏳ |
-| L4 | "What changed in the latest release of a GitHub project? Summarize its release notes" | ⏳ |
+| L3 | "Read this article (a URL) and give me the five key points" | ✅ GLM, Wikipedia via webfetch |
+| L4 | "What changed in the latest release of a GitHub project? Summarize its release notes" | ✅ GLM, through GitHub's API |
 | L5 | "Find three good libraries for X, compare them in a table, and recommend one" | ⏳ |
 | L6 | "Research a question and write the report to a file I can open" (sources, how sure it is) | ⏳ |
 | L7 | "Look up the opening hours and address of a place and put them in my notes file" | ⏳ |
@@ -122,10 +122,10 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 
 | ID | Job | Status |
 | --- | --- | --- |
-| L15 | "Remind me in 2 minutes to stand up" (a one-off, on time) | ⏳ |
+| L15 | "Remind me in 2 minutes to stand up" (a one-off, on time) | ✅ fired 43 s after the minute (wake-ups are checked each minute); the bot then reminded |
 | L16 | "Every weekday at 9" / "every Monday" / "every 2 hours" (repeats, listed, in the right time zone) | ⏳ |
 | L17 | "Move my morning reminder to 8:30" and "stop the hourly one" (changing and canceling by asking) | ⏳ |
-| L18 | "What do you have scheduled?" (it lists its wake-ups and watches) | ⏳ |
+| L18 | "What do you have scheduled?" (it lists its wake-ups and watches) | ✅ lists its wake-ups with kuvo-wake |
 | L19 | A wake-up due while Kuvo Code was closed: it runs when the app opens | ⏳ |
 
 ### Files and data
@@ -133,10 +133,10 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 | ID | Job | Status |
 | --- | --- | --- |
 | L20 | "Here's a CSV of my expenses: total by category and chart it" (an attached file, a widget) | ⏳ |
-| L21 | "Download the CSV on this page and tell me what's in it" | ⏳ |
+| L21 | "Download the CSV on this page and tell me what's in it" | ✅ downloaded with curl, counted 200 rows, averaged, opened it in the panel |
 | L22 | "Upload this file to this website's form" (a real upload page) | ⏳ |
 | L23 | "Rename the photos in this folder by date" (files in a folder you give it) | ⏳ |
-| L24 | "Turn this JSON into a spreadsheet-friendly CSV" | ⏳ |
+| L24 | "Turn this JSON into a spreadsheet-friendly CSV" | ✅ users.csv in its workspace, shown in the panel |
 | L25 | "Make me a one-page summary as a file I can share" | ⏳ |
 
 ### Code
@@ -158,7 +158,7 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 | L33 | A site that needs the user's sign-in (the card), then work behind it | ⏳ |
 | L34 | A one-time code from the user | ⏳ |
 | L35 | A table spread over several pages, or loaded as you scroll | ⏳ |
-| L36 | Take a screenshot of a page and show it to me | ⏳ |
+| L36 | Take a screenshot of a page and show it to me | ⚠️ the screenshot shows only inside the folded browser step; "show it to me" should show it in the reply |
 | L37 | A page's own dialog (alert, confirm) | ⏳ |
 
 ### People and other bots
@@ -174,10 +174,10 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 
 | ID | Job | Status |
 | --- | --- | --- |
-| L42 | "I'm vegetarian and live in Istanbul": it remembers next time, after a restart | ⏳ |
+| L42 | "I'm vegetarian and live in Istanbul": it remembers next time, after a restart | ✅ remembered across launches; ❌→✅ its web search failed: the engine had no search provider (2821561) |
 | L43 | A watch's last value kept between wake-ups, so it reports only what's new | ⏳ |
 | L44 | Its job grows ("also check the weekend weather") and the sidebar line follows | ⏳ |
-| L45 | It's asked to change its name or model: it says plainly it can't, and where you can | ⏳ |
+| L45 | It's asked to change its name or model: it says plainly it can't, and where you can | ⚠️ says it can't and points to Edit Bot, but suggests models you have no account for |
 
 ### On a machine, and when things go wrong
 
