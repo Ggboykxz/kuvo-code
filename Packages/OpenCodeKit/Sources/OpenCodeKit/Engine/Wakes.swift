@@ -426,8 +426,10 @@ public enum Wakes {
     fi
 
     bot=$1; command=$2
-    case "$bot" in */*) ;; ?*) bot="${KUVO_BOTS:-$HOME/.kuvo-code/bots}/$bot" ;; esac
-    if [ -z "$1" ] || [ ! -d "$bot" ]; then usage >&2; exit 2; fi
+    # A bot's ID is letters, digits, _ and -; a folder is named by its path.
+    case "$bot" in */*) ;; -*|*[!A-Za-z0-9_-]*) bot= ;; ?*) bot="${KUVO_BOTS:-$HOME/.kuvo-code/bots}/$bot" ;; esac
+    if [ -z "$bot" ] || [ ! -d "$bot" ]; then usage >&2; exit 2; fi
+    bot=$(CDPATH= cd -- "$bot" && pwd) || exit 2
     # The user's time zone, when the bot lives on a machine whose clock may be in another.
     if [ -s "$bot/timezone" ]; then TZ=$(cat "$bot/timezone"); export TZ; fi
     case "$command" in
@@ -478,12 +480,15 @@ public enum Wakes {
         done
         [ -n "$found" ] || echo "No wake-ups scheduled." ;;
       cancel)
-        # By its letters, which a repeating one keeps as its time moves on.
+        # By its letters, which a repeating one keeps as its time moves on: its ID as list shows
+        # it, or the letters alone. Nothing else, so it never names a folder outside the bot's.
         letters=${3#*-}; letters=${letters%%-*}; found=
+        case "$3" in -*|*[!A-Za-z0-9@-]*) letters= ;; esac
+        case "$letters" in *[!A-Za-z0-9]*) letters= ;; esac
         if [ -n "$letters" ]; then
           for f in "$bot"/wakes/*-"$letters" "$bot"/wakes/*-"$letters"-*; do [ -f "$f" ] && rm -f "$f" && found=1; done
           # Or a watch, by its letters alone.
-          [ -d "$bot/watches/$3" ] && rm -rf "$bot/watches/$3" && found=1
+          [ "$letters" = "$3" ] && [ -d "$bot/watches/$letters" ] && rm -rf "$bot/watches/$letters" && found=1
         fi
         [ -n "$found" ] || { echo "No wake-up \"$3\". See kuvo-wake $1 list." >&2; exit 2; }
         echo "Canceled $3." ;;

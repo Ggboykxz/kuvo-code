@@ -4,10 +4,13 @@ import Testing
 
 /// The `kuvo-wake` command, run with this Mac's sh, as a bot runs it.
 struct WakesTests {
+    /// This Mac's sh, and dash, a Linux machine's sh, where it's here too.
+    static let shells = ["/bin/sh", "/bin/dash"].filter { FileManager.default.isExecutableFile(atPath: $0) }
+
     /// Runs `script` with sh in a fresh folder, as `$K` for `installScript`, and returns its output.
-    private func sh(_ script: String, in folder: URL) throws -> (status: Int32, output: String) {
+    private func sh(_ script: String, in folder: URL, shell: String = "/bin/sh") throws -> (status: Int32, output: String) {
         let process = Process()
-        process.executableURL = URL(filePath: "/bin/sh")
+        process.executableURL = URL(filePath: shell)
         process.arguments = ["-c", script]
         process.currentDirectoryURL = folder
         process.environment = ["PATH": "/usr/bin:/bin", "K": folder.path]
@@ -69,6 +72,39 @@ struct WakesTests {
         let added = try sh("KUVO_BOTS=\"$K/bots\" \"$K/bin/kuvo-wake\" bot_x add +1d 'tomorrow'", in: k)
         #expect(added.status == 0)
         #expect(try sh("KUVO_BOTS=\"$K/bots\" \"$K/bin/kuvo-wake\" nobody list", in: k).status != 0)
+        // An ID is only letters, digits, _ and -: never the folder above.
+        try FileManager.default.createDirectory(at: k.appending(path: "wakes"), withIntermediateDirectories: true)
+        for name in ["..", ".", "-x", "bot_x .."] {
+            #expect(try sh("KUVO_BOTS=\"$K/bots\" \"$K/bin/kuvo-wake\" '\(name)' add +1d 'up there'", in: k).status != 0, "\(name)")
+        }
+        #expect(try FileManager.default.contentsOfDirectory(atPath: k.appending(path: "wakes").path).isEmpty)
+    }
+
+    @Test func cancelsOnlyInTheBotsOwnFolder() throws {
+        let k = try folder()
+        defer { try? FileManager.default.removeItem(at: k) }
+        #expect(try sh(Wakes.installScript, in: k).status == 0)
+        let other = k.appending(path: "bots/bot_y")
+        for folder in ["bots/bot_x/watches/AbCd12", "bots/bot_x/wakes", "bots/bot_y/watches/Zz9", "bots/bot_y/wakes", "app"] {
+            try FileManager.default.createDirectory(at: k.appending(path: folder), withIntermediateDirectories: true)
+        }
+        try "x".write(to: other.appending(path: "MEMORY.md"), atomically: true, encoding: .utf8)
+        try "note".write(to: other.appending(path: "wakes/1792080986-Zz9"), atomically: true, encoding: .utf8)
+        let cancel = { (id: String, shell: String) in try self.sh("KUVO_BOTS=\"$K/bots\" \(shell) \"$K/bin/kuvo-wake\" bot_x cancel '\(id)'", in: k) }
+        for id in ["../../bot_y", "../../../app", "..", ".", "../bot_y/watches/Zz9", "*", "1-../../bot_y", "1792080986-*", "", "-Zz9", "Zz9/.."] {
+            for shell in Self.shells {
+                let result = try cancel(id, shell)
+                #expect(result.status != 0, "\(id) in \(shell)")
+                #expect(!result.output.contains("Canceled"), "\(id) in \(shell)")
+            }
+        }
+        #expect(FileManager.default.fileExists(atPath: other.appending(path: "MEMORY.md").path))
+        #expect(FileManager.default.fileExists(atPath: other.appending(path: "watches/Zz9").path))
+        #expect(FileManager.default.fileExists(atPath: other.appending(path: "wakes/1792080986-Zz9").path))
+        #expect(FileManager.default.fileExists(atPath: k.appending(path: "app").path))
+        // Its own, by its letters, still goes.
+        #expect(try cancel("AbCd12", "/bin/sh").status == 0)
+        #expect(!FileManager.default.fileExists(atPath: k.appending(path: "bots/bot_x/watches/AbCd12").path))
     }
 
     @Test func schedulesOneThatRepeats() throws {
