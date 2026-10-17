@@ -3,20 +3,35 @@ import Foundation
 /// What a host's push tells the phone, sealed in a mail (PROTOCOL.md, "Notifications"): the
 /// notification the Mac shows, for the phone to show the same.
 public struct Notice: Codable, Equatable, Sendable {
-    /// What it's about, which the phone's buttons hang on.
-    public enum Category: String, Codable, Sendable {
+    /// What it's about, which the phone's buttons hang on. Any word decodes, so a phone takes
+    /// one from a newer host and shows it plainly.
+    public struct Category: RawRepresentable, Codable, Hashable, Sendable {
+        public let rawValue: String
+
+        public init(rawValue: String) { self.rawValue = rawValue }
+
+        public init(from decoder: Decoder) throws {
+            rawValue = try decoder.singleValueContainer().decode(String.self)
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.singleValueContainer()
+            try container.encode(rawValue)
+        }
+
         /// An agent asks to do something (`request` is the permission).
-        case permission
+        public static let permission = Category(rawValue: "permission")
         /// An agent asks a question or for a form filled in (`request` is the form).
-        case question
+        public static let question = Category(rawValue: "question")
         /// An agent browsing asks for a sign-in, a code or a step (`ask` is it).
-        case ask
+        public static let ask = Category(rawValue: "ask")
         /// A run finished, or stopped with an error.
-        case finished, failed
+        public static let finished = Category(rawValue: "finished")
+        public static let failed = Category(rawValue: "failed")
         /// A bot's news: a wake-up's or a watch's result.
-        case report
+        public static let report = Category(rawValue: "report")
         /// A group chat's message.
-        case message
+        public static let message = Category(rawValue: "message")
     }
 
     public var t = "notify"

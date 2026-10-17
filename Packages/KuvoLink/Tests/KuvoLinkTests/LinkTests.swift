@@ -328,6 +328,10 @@ private func collect(_ stream: LinkResponse) async throws -> (status: Int, heade
         // Short ones go as they are.
         let short = Notice(title: "Fixer", body: "Done.", category: .finished, thread: "ses_1", data: [:])
         #expect(try JSONDecoder().decode(Notice.self, from: short.encoded()) == short)
+        // A category from a newer host still decodes, to be shown plainly.
+        let newer = try JSONDecoder().decode(Notice.self, from: Data(#"{"t":"notify","title":"Fixer","body":"Hi","category":"reminder","thread":"ses_1","data":{}}"#.utf8))
+        #expect(newer.category.rawValue == "reminder")
+        #expect(String(decoding: try short.encoded(), as: UTF8.self).contains(#""category":"finished""#))
     }
 
     @Test func socketsCarryMessagesBothWaysUntilClosed() async throws {
