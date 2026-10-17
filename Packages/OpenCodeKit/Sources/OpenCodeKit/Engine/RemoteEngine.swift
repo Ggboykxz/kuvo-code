@@ -406,11 +406,17 @@ public final class RemoteServer: @unchecked Sendable {
 
     /// Stops the engine on the machine without waiting more than `timeout`, for when the app quits.
     /// With `unlessWaking`, an engine with bots' wake-ups waiting keeps running, to send them.
-    public static func stopNow(on connection: SSHConnection, timeout: TimeInterval = 3, unlessWaking: Bool = false) {
+    /// `first` runs before, either way.
+    public static func stopNow(on connection: SSHConnection, timeout: TimeInterval = 3, unlessWaking: Bool = false, first: String = "") {
+        let waiting = "{ ls \"$HOME/\(RemoteEngineInstaller.root)\"/bots/*/wakes/* || ls -d \"$HOME/\(RemoteEngineInstaller.root)\"/bots/*/watches/*/; } >/dev/null 2>&1 && exit 0\n"
+        runNow(first + (unlessWaking ? waiting : "") + stopScript, on: connection, timeout: timeout)
+    }
+
+    /// Runs `script` on the machine without waiting more than `timeout`, for when the app quits.
+    public static func runNow(_ script: String, on connection: SSHConnection, timeout: TimeInterval = 3) {
         let process = Process()
         process.executableURL = URL(filePath: "/usr/bin/ssh")
-        let waiting = "{ ls \"$HOME/\(RemoteEngineInstaller.root)\"/bots/*/wakes/* || ls -d \"$HOME/\(RemoteEngineInstaller.root)\"/bots/*/watches/*/; } >/dev/null 2>&1 && exit 0\n"
-        process.arguments = connection.arguments(running: (unlessWaking ? waiting : "") + stopScript)
+        process.arguments = connection.arguments(running: script)
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
@@ -418,6 +424,20 @@ public final class RemoteServer: @unchecked Sendable {
         let deadline = Date.now.addingTimeInterval(timeout)
         while process.isRunning, Date.now < deadline { usleep(50_000) }
         if process.isRunning { process.terminate() }
+    }
+
+    /// Tells the machine's phone link bridge that the Mac `mac` is here, telling your phones what
+    /// happens in the machine's sessions itself, so the bridge doesn't (KuvoLink's PROTOCOL.md,
+    /// "Notifications"). Good for a couple of minutes; said again each minute. False when it
+    /// couldn't be said.
+    @discardableResult
+    public static func markPresent(_ mac: String, on connection: SSHConnection) async -> Bool {
+        (try? await connection.run("mkdir -p \"\(run)/present\" && touch \"\(run)/present/\(mac)\"")) != nil
+    }
+
+    /// Takes the Mac `mac` out of the machine's present ones, as it quits: what `stopNow` runs first.
+    public static func leavingScript(_ mac: String) -> String {
+        "rm -f \"\(run)/present/\(mac)\"\n"
     }
 
     /// Tells the engine's watchdog the app is still around.

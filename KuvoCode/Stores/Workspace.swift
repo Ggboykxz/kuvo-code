@@ -1,4 +1,5 @@
 import Foundation
+import KuvoLink
 import OpenCodeKit
 import os
 
@@ -949,7 +950,8 @@ final class Workspace {
                         title: botName?(id) ?? session.title ?? "New Session",
                         subtitle: botName?(id) == nil ? projectName(session.location.directory) : nil,
                         body: failed ? "Stopped with an error." : reply ?? "Finished.",
-                        replies: true
+                        replies: true,
+                        push: .init(failed ? .failed : isBot ? .report : .finished, machine: sessionMachines[id])
                     )
                 }
             }
@@ -1067,7 +1069,7 @@ final class Workspace {
         case "permission.asked":
             guard let request = try? event.payload(as: PermissionRequest.self) else { return }
             asking[request.id] = request.sessionID
-            notifyAsk(request.sessionID, body: Self.describe(request), permission: request.id)
+            notifyAsk(request.sessionID, body: Self.describe(request), request: request.id, isPermission: true)
         case "permission.replied":
             if let reply = try? event.payload(as: EventPayload.PermissionReplied.self) {
                 asking[reply.requestID] = nil
@@ -1077,7 +1079,7 @@ final class Workspace {
             guard let form = try? event.payload(as: EventPayload.FormCreated.self).form else { return }
             asking[form.id] = form.sessionID
             let question = Self.question(in: form)
-            notifyAsk(form.sessionID, body: question?.text ?? (form.isQuestion ? "Has a question for you." : "Needs your answer."), question: question)
+            notifyAsk(form.sessionID, body: question?.text ?? (form.isQuestion ? "Has a question for you." : "Needs your answer."), request: form.id, question: question)
         case "form.replied", "form.cancelled":
             if let settled = try? event.payload(as: EventPayload.FormSettled.self) {
                 asking[settled.id] = nil
@@ -1133,8 +1135,8 @@ final class Workspace {
                                body: "Your reply didn’t go: \(failure) Open the conversation to send it again.")
     }
 
-    /// `permission` is the request, for a notification whose buttons answer it.
-    private func notifyAsk(_ id: String, body: String, permission: String? = nil, question: Notifier.Question? = nil) {
+    /// `request` is the permission or the form, for a notification whose buttons answer it.
+    private func notifyAsk(_ id: String, body: String, request: String, isPermission: Bool = false, question: Notifier.Question? = nil) {
         // A seat's requests are answered by its group chat.
         guard !seats.contains(id) else { return }
         Task {
@@ -1150,7 +1152,8 @@ final class Workspace {
             }
             Notifier.shared.notify(session: session?.id ?? id, title: session.flatMap { botName?($0.id) } ?? session?.title ?? AppInfo.name,
                                    subtitle: session.flatMap { botName?($0.id) == nil ? projectName($0.location.directory) : nil }, body: body,
-                                   permission: permission.map { (session: id, request: $0) }, question: question)
+                                   permission: isPermission ? (session: id, request: request) : nil, question: question,
+                                   push: .init(isPermission ? .permission : .question, request: (session: id, id: request), machine: sessionMachines[id]))
         }
     }
 
@@ -1257,7 +1260,7 @@ final class Workspace {
                           Transcript.isWaiting(on: server, in: page.data) else { continue }
                     sharedForms[form.id] = directory
                     asking[form.id] = id
-                    notifyAsk(id, body: form.message ?? "Needs your answer.", question: nil)
+                    notifyAsk(id, body: form.message ?? "Needs your answer.", request: form.id, question: nil)
                     return
                 }
             }
@@ -1278,7 +1281,7 @@ final class Workspace {
         asking[form.id] = model.id
         guard form.sessionID == FormRequest.anySession else { return }
         sharedForms[form.id] = model.session.location.directory
-        if isNew { notifyAsk(model.id, body: form.message ?? "Needs your answer.", question: nil) }
+        if isNew { notifyAsk(model.id, body: form.message ?? "Needs your answer.", request: form.id, question: nil) }
     }
 
     /// `form.created` carries its session inside the form.

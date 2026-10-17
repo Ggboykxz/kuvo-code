@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Foundation
+import KuvoLink
 
 /// What the agent asks you for while it browses: your sign-in for a site, a one-time code, or a
 /// step only you can do (a CAPTCHA, approving the sign-in on your phone). You answer in a card in
@@ -138,7 +139,7 @@ final class BrowserAsks {
         responders[ask.id] = respond
         withAnimation(.ui) { asks.append(ask) }
         changed()
-        Notifier.shared.notify(session: tab(ask) ?? "", title: title(ask), subtitle: ask.asker, body: body(ask))
+        Notifier.shared.notify(session: tab(ask) ?? "", title: title(ask), subtitle: ask.asker, body: body(ask), push: .init(.ask, ask: ask.id))
         #if DEBUG
         answerForDemo(ask)
         #endif

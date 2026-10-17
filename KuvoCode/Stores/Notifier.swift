@@ -1,10 +1,12 @@
 import AppKit
+import KuvoLink
 import UserNotifications
 
 /// Tells you when a session finishes or needs your answer while you're in another app, and
 /// counts the sessions waiting for you on the Dock icon. Clicking a notification opens the
 /// session; a permission request's buttons answer it, a question's its choices, and a finished
 /// one's Reply writes back, without opening the app. macOS asks for permission the first time there's something to tell.
+/// What's about a session or a chat goes to your paired phones too (see PhoneLink).
 final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     static let shared = Notifier()
     /// Settings › Notifications: notifications, their sound and the Dock badge, each on unless
@@ -35,6 +37,33 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     /// Answers a question from its notification: the question's session, the question, its field
     /// and the answer.
     var answerQuestion: ((String, String, String, String) -> Void)?
+    /// Sends a notification to your paired phones, about a session on the machine it names, if
+    /// one (set by AppModel).
+    var toPhones: ((Notice, String?) -> Void)?
+
+    /// What goes to your phones too, as their notification (KuvoLink's PROTOCOL.md,
+    /// "Notifications"): nil for what's only about this Mac.
+    struct Push {
+        var category: Notice.Category
+        /// A group chat's: its id, for the session's place.
+        var group: String?
+        /// The permission or form it asks you to answer, and the session asking (a subagent's,
+        /// maybe).
+        var request: (session: String, id: String)?
+        /// The browser ask.
+        var ask: String?
+        /// The machine whose engine it happened on, which tells your phones itself while this Mac
+        /// isn't there.
+        var machine: String?
+
+        init(_ category: Notice.Category, group: String? = nil, request: (session: String, id: String)? = nil, ask: String? = nil, machine: String? = nil) {
+            self.category = category
+            self.group = group
+            self.request = request
+            self.ask = ask
+            self.machine = machine
+        }
+    }
 
     /// A question asked with one field: its choices become the notification's buttons, and one
     /// you can answer in words gets a field for that.
@@ -102,9 +131,10 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     /// already show it) or notifications are off.
     /// A `permission` (its session, and the request) gets the buttons that answer it; one that
     /// `replies` gets Reply, to write back to the session from the notification; a `question`, its
-    /// choices.
+    /// choices. With `push`, it goes to your phones too, whether the Mac shows it or not.
     func notify(session: String, title: String, subtitle: String? = nil, body: String, permission: (session: String, request: String)? = nil,
-                question: Question? = nil, replies: Bool = false) {
+                question: Question? = nil, replies: Bool = false, push: Push? = nil) {
+        if let push { send(push, session: session, title: title, subtitle: subtitle, body: body) }
         guard Self.isEnabled, !NSApp.isActive else { return }
         Task {
             guard await authorize() else { return }
@@ -130,6 +160,18 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
             }
             try? await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
         }
+    }
+
+    private func send(_ push: Push, session: String, title: String, subtitle: String?, body: String) {
+        guard let toPhones else { return }
+        var data = push.group.map { ["group": $0] } ?? (session.isEmpty ? [:] : ["session": session])
+        if let request = push.request {
+            data["request"] = request.id
+            if request.session != session { data["requestSession"] = request.session }
+        }
+        if let ask = push.ask { data["ask"] = ask }
+        toPhones(Notice(title: title, subtitle: subtitle, body: body, category: push.category, thread: push.group ?? (session.isEmpty ? push.ask ?? "" : session), data: data),
+                 push.machine)
     }
 
     /// Takes a session's notifications away once you've looked at it.

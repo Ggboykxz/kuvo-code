@@ -1,3 +1,4 @@
+import AppKit
 import CryptoKit
 import Foundation
 import KuvoLink
@@ -29,6 +30,8 @@ final class PhoneLink {
         var key: String
         var name: String
         var added: Date
+        /// Its address on the relay, where its notifications go: learned as it comes in.
+        var address: String?
         var id: String { key }
     }
 
@@ -87,6 +90,12 @@ final class PhoneLink {
     private var secret: RelaySecret { identity.secret }
     @ObservationIgnored private var server: LinkServer?
     @ObservationIgnored private var running: Task<Void, Never>?
+    @ObservationIgnored private var presence: Task<Void, Never>?
+    /// When this Mac last told each machine's bridge it's here, by machine.
+    @ObservationIgnored private var markedPresent: [String: ContinuousClock.Instant] = [:]
+    /// How long that lets this Mac tell a machine's news: less than the bridge waits before it
+    /// tells it (`PRESENT_MS` in kuvo-link.js), so the two never both do, after a sleep say.
+    private static let presentFor: Duration = .seconds(120)
     @ObservationIgnored private var endpoint: ServerEndpoint?
     private let log = Logger(subsystem: "run.kuvo.code", category: "phone")
 
@@ -128,11 +137,14 @@ final class PhoneLink {
         guard Self.isEnabled, running == nil else { return }
         server = makeServer(endpoint: endpoint)
         running = Task { await run() }
+        keepPresent()
     }
 
     func stop() {
         running?.cancel()
         running = nil
+        presence?.cancel()
+        presence = nil
         server = nil
         status = .off
     }
@@ -188,13 +200,13 @@ final class PhoneLink {
                 """), input: scriptFile)
 
             struct Setup: Encodable {
-                struct Phone: Encodable { var key: String; var name: String }
+                struct Phone: Encodable { var key: String; var name: String; var address: String? }
                 var relay: String
                 var name: String
                 var phones: [Phone]
             }
             let settings = folder.appending(path: "setup.json")
-            try JSONEncoder().encode(Setup(relay: relay.absoluteString, name: machine.name, phones: phones.map { .init(key: $0.key, name: $0.name) })).write(to: settings)
+            try JSONEncoder().encode(Setup(relay: relay.absoluteString, name: machine.name, phones: phones.map { .init(key: $0.key, name: $0.name, address: $0.address) })).write(to: settings)
             let output = try await machine.connection.run(RemoteEngineInstaller.script("""
                 KUVO_HOME="$K" BUN_BE_BUN=1 BUN_RUNTIME_TRANSPILER_CACHE_PATH=0 "$E" "$K/bin/\(Bridge.fileName)" setup
                 """), input: settings)
@@ -206,9 +218,37 @@ final class PhoneLink {
                 machineHosts[machine.id] = nil
             }
             save()
+            // Here from the start, not from the next minute: the bridge leaves this machine's news to this Mac.
+            if status == .connected, phones.contains(where: { $0.address != nil }) { await markPresent(on: machine) }
         } catch {
             log.error("Couldn't set up the phone link on a machine: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    /// Tells each connected machine's bridge, every minute, that this Mac is here and tells your
+    /// phones what happens in the machine's sessions itself: the bridge does it only while no
+    /// Mac is (`RemoteServer.markPresent`), so nothing comes twice.
+    private func keepPresent() {
+        presence?.cancel()
+        presence = Task { [weak self] in
+            while !Task.isCancelled {
+                if let self, status == .connected, phones.contains(where: { $0.address != nil }) {
+                    for engine in readyMachines() where engine.isLive { await markPresent(on: engine.machine) }
+                }
+                try? await Task.sleep(for: .seconds(60))
+            }
+        }
+    }
+
+    /// The machines whose bridge may still think this Mac is here (`PRESENT_MS` in kuvo-link.js),
+    /// for telling them it's gone as it quits.
+    var presentOn: [String] {
+        markedPresent.filter { .now - $0.value < .seconds(150) }.map(\.key)
+    }
+
+    private func markPresent(on machine: Machine) async {
+        let at = ContinuousClock.now
+        if await RemoteServer.markPresent(MachineEngine.macID, on: machine.connection) { markedPresent[machine.id] = at }
     }
 
     /// A machine you removed: phones stop being told about it.
@@ -240,8 +280,9 @@ final class PhoneLink {
         let hello = HostHello(kind: .mac, name: Self.computerName, app: AppInfo.version, engine: OpenCodeEngine.version)
         let base = endpoint.url.absoluteString.hasSuffix("/") ? endpoint.url : URL(string: endpoint.url.absoluteString + "/")!
         let password = endpoint.password
-        return LinkServer(key: key, hello: hello) { [weak self] key, hello in
-            await self?.authorize(key, hello) ?? false
+        let log = log
+        return LinkServer(key: key, hello: hello) { [weak self] key, address, hello in
+            await self?.authorize(key, address, hello) ?? false
         } handle: { [weak self] request, _ in
             guard request.path.hasPrefix("kuvo/") else { return EngineRoutes.forward(request, to: base, password: password) }
             if request.path == "kuvo/asks/events" { return Self.following { self?.asksJSON() } }
@@ -259,22 +300,67 @@ final class PhoneLink {
         } connect: { request, _, input in
             // Terminals: the engine's, in a project's folder.
             EngineRoutes.connect(request, to: base, password: password, input: input)
+        } pushed: { _, status in
+            switch status {
+            case .sent: break
+            // Until the phone has registered for notifications, and asked for this Mac's.
+            case .noPhone: log.info("A push had no phone registered for it")
+            case .notAllowed: log.info("A push wasn't from one of the phone's hosts")
+            case .refused: log.error("Apple refused a push")
+            }
         }
     }
 
     /// Lets in a phone you've paired, or one showing the pairing link's token (once, in time).
-    private func authorize(_ key: Data, _ hello: PhoneHello) -> Bool {
+    private func authorize(_ key: Data, _ address: LinkAddress, _ hello: PhoneHello) -> Bool {
         let encoded = key.base64URL
-        if phones.contains(where: { $0.key == encoded }) { return true }
+        if let index = phones.firstIndex(where: { $0.key == encoded }) {
+            // Where its notifications go, for machines' bridges too.
+            if phones[index].address != address.text {
+                phones[index].address = address.text
+                save()
+                syncMachines()
+            }
+            return true
+        }
         guard let pairing, ContinuousClock.now < pairingEnds, let token = hello.pair.flatMap({ Data(base64URL: $0) }),
               token.count == pairing.token.count, zip(token, pairing.token).reduce(0, { $0 | ($1.0 ^ $1.1) }) == 0
         else { return false }
-        phones.append(Phone(key: encoded, name: String(hello.name.prefix(100)), added: .now))
+        phones.append(Phone(key: encoded, name: String(hello.name.prefix(100)), added: .now, address: address.text))
         save()
         self.pairing = nil
         syncMachines()
         log.info("Paired a phone")
         return true
+    }
+
+    // MARK: Notifications
+
+    /// Sends `notice` to your phones' notifications, while you're away from this Mac or have the
+    /// app open on a phone (which leaves out what's on its screen): at the Mac, its own
+    /// notifications are enough. News from `machine`'s engine goes only while that machine's
+    /// bridge knows this Mac is here; otherwise the bridge has told it.
+    func push(_ notice: Notice, from machine: String? = nil) {
+        guard Self.isEnabled, let server, let data = try? notice.encoded() else { return }
+        if let machine, !(markedPresent[machine].map { .now - $0 < Self.presentFor } ?? false) { return }
+        let phones = phones.compactMap { phone -> (key: Data, address: LinkAddress)? in
+            guard let key = Data(base64URL: phone.key), let address = phone.address.flatMap(LinkAddress.init(text:)) else { return nil }
+            return (key, address)
+        }
+        guard !phones.isEmpty else { return }
+        let away = Self.isAwayFromMac
+        Task {
+            let isOpen = await server.hasSessions
+            guard away || isOpen else { return }
+            await server.push(data, to: phones)
+        }
+    }
+
+    /// No one has used this Mac for two minutes, or its screen is locked.
+    private static var isAwayFromMac: Bool {
+        let idle = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
+        let locked = (CGSessionCopyCurrentDictionary() as? [String: Any])?["CGSSessionScreenIsLocked"] as? Bool ?? false
+        return idle >= 120 || locked
     }
 
     /// Kuvo's own routes, beside the engine's.

@@ -230,12 +230,25 @@ extension AppModel {
     }
 
     /// When the app quits: each machine's engine stops, unless a session there is still working,
-    /// which carries on there while this Mac is off, or a bot there has a wake-up waiting.
+    /// which carries on there while this Mac is off, or a bot there has a wake-up waiting. Its
+    /// phone link bridge tells your phones what happens there from now on.
     func stopMachines() {
+        let leaving = PhoneLink.isEnabled ? RemoteServer.leavingScript(MachineEngine.macID) : ""
+        var left = Set<String>()
         for engine in machines.engines.values where engine.isReady {
             let busy = workspace.isRunning(on: engine.machine.id)
             engine.disconnect()
-            if !busy { RemoteServer.stopNow(on: engine.machine.connection, unlessWaking: true) }
+            if !busy {
+                RemoteServer.stopNow(on: engine.machine.connection, unlessWaking: true, first: leaving)
+            } else if !leaving.isEmpty {
+                RemoteServer.runNow(leaving, on: engine.machine.connection)
+            }
+            left.insert(engine.machine.id)
+        }
+        // One reconnecting just now (after a sleep, say) that still takes this Mac to be there.
+        guard !leaving.isEmpty else { return }
+        for id in phoneLink.presentOn where !left.contains(id) {
+            RemoteServer.runNow(leaving, on: Machine(destination: id).connection, timeout: 2)
         }
     }
 

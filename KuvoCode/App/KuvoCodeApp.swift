@@ -43,6 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let group = BotGroups.groupID(fromTab: session) { model.groups.send(text, to: group) } else { Task { await model.workspace.send(text, to: session) } }
         }
         Notifier.shared.answerQuestion = { [model] session, form, field, answer in model.workspace.answerQuestion(form, in: session, field: field, with: answer) }
+        Notifier.shared.toPhones = { [model] notice, machine in model.phoneLink.push(notice, from: machine) }
         Analytics.shared.start()
         UsageMenuBar.shared.onPanelShown = { Analytics.shared.track("usage_panel_opened") }
         #if DEBUG

@@ -1,4 +1,5 @@
 import Foundation
+import KuvoLink
 import OpenCodeKit
 import os
 
@@ -400,7 +401,8 @@ final class BotGroups {
         // What was said since it began; no one could take part, it says so.
         let since = messages(in: id).drop { $0.id != start }.dropFirst()
         guard let last = since.last(where: { $0.author != nil && $0.kind != .note }) else {
-            Notifier.shared.notify(session: Self.tabKey(id), title: group.name, body: "The meeting came, but no one could take part.")
+            Notifier.shared.notify(session: Self.tabKey(id), title: group.name, body: "The meeting came, but no one could take part.",
+                                       push: .init(.message, group: id))
             return
         }
         let who = app?.bots.bot(last.author)?.name
@@ -409,7 +411,7 @@ final class BotGroups {
             .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespaces)
         Notifier.shared.notify(session: Self.tabKey(id), title: group.name, subtitle: who.map { last.kind == .wrapUp ? "\($0)’s wrap-up" : $0 },
-                               body: plain.count > 220 ? String(plain.prefix(219)) + "…" : plain, replies: true)
+                               body: plain.count > 220 ? String(plain.prefix(219)) + "…" : plain, replies: true, push: .init(.message, group: id))
     }
 
     /// Takes the chat back to before one of your messages: it and everything said after it leave
@@ -915,7 +917,7 @@ final class BotGroups {
                 let plain = text.replacingOccurrences(of: #"[*_`#>]+"#, with: "", options: .regularExpression)
                     .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression).trimmingCharacters(in: .whitespaces)
                 Notifier.shared.notify(session: Self.tabKey(id), title: group.name, subtitle: "\(bot.name) finished its part",
-                                       body: plain.count > 220 ? String(plain.prefix(219)) + "…" : plain, replies: true)
+                                       body: plain.count > 220 ? String(plain.prefix(219)) + "…" : plain, replies: true, push: .init(.message, group: id))
             }
             return
         }
