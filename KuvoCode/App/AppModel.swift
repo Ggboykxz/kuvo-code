@@ -226,6 +226,7 @@ final class AppModel {
             guard launch == self.launch else { return }
             self.api = api
             catalog.api = api
+            Analytics.shared.catalog = catalog
             workspace.api = api
             workspace.machineAPI = { [weak self] machine in self?.machines.engine(machine)?.api }
             bots.app = self

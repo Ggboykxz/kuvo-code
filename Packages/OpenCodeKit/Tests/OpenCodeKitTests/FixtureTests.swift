@@ -45,6 +45,7 @@ struct DecodingTests {
     @Test func decodesModelsAndAgents() throws {
         let models = try Fixture.decode("model.json", as: LocatedEnvelope<[Model]>.self).data
         #expect(models.contains { $0.id == "big-pickle" && $0.isFree })
+        #expect(models.allSatisfy { $0.modelID == $0.id })
         let agents = try Fixture.decode("agent.json", as: LocatedEnvelope<[Agent]>.self).data
         #expect(agents.filter(\.isPrimary).map(\.id) == ["build", "plan"])
     }

@@ -5,14 +5,16 @@ import UsageKit
 import os
 
 /// Anonymous usage, sent in small batches to Kuvo's analytics collector so it's known which
-/// features get used. On by default and off with Settings › General › Share Anonymous Usage.
+/// features get used. On by default and off with Settings › Privacy › Share anonymous usage.
 ///
 /// What goes out: a random ID made for this install, the app and macOS versions, the Mac's
-/// architecture and language, and events like "a session started with Anthropic's Claude
-/// Sonnet 5.5" or "the Changes tab opened". Never prompts, replies, code, file names, folders,
-/// account details or custom names: providers outside the public list and agents other than
-/// Build and Plan go out as "other" and "custom". Sizes and durations go out as ranges, and what
-/// went wrong as a kind ("rate limit", "network"), never its message.
+/// architecture, memory (as a range) and language, and events like "a session started with
+/// Anthropic's Claude Sonnet 5.5" or "the Changes tab opened". Also a run that ended without
+/// quitting, and the crashes and hangs macOS reports: their kind, never what was on the stack.
+/// Never prompts, replies, code, file names, folders, account details or custom names: providers
+/// outside the public list, models not in the public catalog and agents other than Build and Plan
+/// go out as "other" and "custom". Sizes and durations go out as ranges, and what went wrong as a
+/// kind ("rate limit", "network"), never its message.
 ///
 /// The developer's own Macs mark themselves internal, so the numbers can leave them out:
 /// `defaults write run.kuvo.code analytics.internal -bool true`.
@@ -306,11 +308,18 @@ final class Analytics {
         return publicProviders.contains(id) ? id : "other"
     }
 
-    /// The provider, and the model when it's one of a public provider's.
+    /// This Mac's engine's models, to tell the public catalog's from yours (set by the app).
+    @ObservationIgnored weak var catalog: Catalog?
+
+    /// The provider, and the model when it's one of a public provider's, by its name in the public
+    /// catalog; one set up by you (a deployment, an ARN, a fine-tune, a local model, a name of
+    /// your own for one) is "custom".
     static func model(provider id: String?, model: String?) -> [String: Any] {
         let provider = provider(id)
         guard provider != "other", provider != "none", let model else { return ["provider": provider] }
-        return ["provider": provider, "model": String(model.prefix(80))]
+        let known = shared.catalog?.models.first { $0.providerID == id && $0.id == model }
+        let yours = EngineConfig.current?.value(at: ["providers", provider, "models", model]) != nil
+        return ["provider": provider, "model": known?.isPublished == true && !yours ? String(model.prefix(80)) : "custom"]
     }
 
     /// What a permission was for, by kind.
@@ -416,6 +425,20 @@ final class Analytics {
         #else
         "x86_64"
         #endif
+    }
+}
+
+private extension Model {
+    /// As the public catalog (models.dev) has it, rather than set up by you. One of your own (in a
+    /// settings file, or found on a local server) has no release date or price there unless you
+    /// give it one; another name for a public one, and an Azure deployment, are sent to the
+    /// provider by a name of their own. The catalog's own variants of a model ("…-fast") keep
+    /// the model's name and add the mode's.
+    var isPublished: Bool {
+        guard time.released > 0, !cost.isEmpty, providerID != "azure" else { return false }
+        guard let modelID, modelID != id else { return true }
+        let mode = id.dropFirst(modelID.count + 1)
+        return id.hasPrefix(modelID + "-") && name.lowercased().hasSuffix(" " + mode.lowercased())
     }
 }
 

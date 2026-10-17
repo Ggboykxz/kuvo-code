@@ -4,6 +4,9 @@ import Foundation
 public struct Model: Codable, Sendable, Hashable, Identifiable {
     /// The engine's id, unique within its provider.
     public var id: String
+    /// The id the provider is sent, when the engine says: another than `id` for a model set up
+    /// under a name of its own (an Azure deployment, another name for a model).
+    public var modelID: String?
     public var providerID: String
     public var name: String
     public var family: String?
