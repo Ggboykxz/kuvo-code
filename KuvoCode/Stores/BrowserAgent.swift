@@ -267,16 +267,33 @@ final class BrowserAgent {
         let expanded = (path as NSString).expandingTildeInPath
         guard expanded.hasPrefix("/"), expanded.lowercased().hasSuffix(".pdf") else { return "Give a full path ending in .pdf." }
         let url = URL(filePath: expanded)
+        var isFolder: ObjCBool = false
+        if FileManager.default.fileExists(atPath: expanded, isDirectory: &isFolder), isFolder.boolValue { return "There's a folder at \(expanded). Give the path of a file to save." }
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         } catch {
             return "Can't make the folder for \(expanded): \(error.localizedDescription)"
         }
-        try? FileManager.default.removeItem(at: url)
+        // Printed in the app's temporary folder first: a file already there is only replaced once
+        // the new one is saved.
+        let folder = FileManager.default.temporaryDirectory.appending(path: "PDF/\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        } catch {
+            return "Couldn't save the page as a PDF: \(error.localizedDescription)"
+        }
+        let printed = folder.appending(path: url.lastPathComponent)
         // Backgrounds and colors as on screen; printing leaves them out otherwise.
         _ = try? await browser.webView.callAsyncJavaScript(Self.keepColorsScript, contentWorld: .page)
-        switch await PagePrinter.save(browser.webView, to: url) {
-        case .saved(let pages): return "Saved the page as a \(pages)-page PDF at \(expanded)."
+        switch await PagePrinter.save(browser.webView, to: printed) {
+        case .saved(let pages):
+            do {
+                try Data(contentsOf: printed).write(to: url, options: .atomic)
+            } catch {
+                return "Couldn't save the PDF at \(expanded): \(error.localizedDescription)"
+            }
+            return "Saved the page as a \(pages)-page PDF at \(expanded)."
         case .notShown: return "The page is out of view in a way it can't be printed from. Show it in the panel, then save it again."
         case .failed: return "Couldn't save the page as a PDF."
         }
