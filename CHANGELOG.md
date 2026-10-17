@@ -10,6 +10,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - The agent reads a long page or list in one step instead of scrolling through it a screen at a time: a job across ten pages took under a minute instead of five.
 - A bot asked to change its model points you to Edit Bot, which lists the models you can use, instead of suggesting ones you have no account for.
 - The agent can search the web again: every search failed, because the engine had no search service chosen. It now uses a free one, and moves to another when one is busy.
+- Long thinking and long replies stream and scroll smoothly. Opening the agent's thinking while it streamed, or scrolling through a long reply, could freeze the window for seconds at a time and keep your Mac busy after the reply was done. A code block is now colored once the agent has finished writing it, instead of flickering between plain and colored as it grows.
 - A new bot writes first. When its name says what it's for, like Social Media Manager, it says what it takes its job to be and asks what it needs to start; otherwise it asks what you'd like it to do.
 - Double-clicking an empty part of the title bar, or a card's header, zooms the window, or does what you chose in System Settings › Desktop & Dock. The tabs and project name there used to take the click.
 - Text reads lighter and cleaner, most of all light text in dark mode: Kuvo Code draws it as chat apps on the web do, without macOS thickening it.
