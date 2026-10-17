@@ -259,6 +259,37 @@ final class BrowserAgent {
         return bitmap.representation(using: .png, properties: [:])?.base64EncodedString()
     }
 
+    /// The page as a PDF at `path`, in pages on the paper this Mac prints on, with its colors.
+    func savePDF(to path: String) async -> String {
+        let browser = browser()
+        guard browser.url != nil else { return "The browser is empty. Open the page first: for a document, write it as an HTML file and open it (file:///…)." }
+        let expanded = (path as NSString).expandingTildeInPath
+        guard expanded.hasPrefix("/"), expanded.lowercased().hasSuffix(".pdf") else { return "Give a full path ending in .pdf." }
+        let url = URL(filePath: expanded)
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        } catch {
+            return "Can't make the folder for \(expanded): \(error.localizedDescription)"
+        }
+        try? FileManager.default.removeItem(at: url)
+        // Backgrounds and colors as on screen; printing leaves them out otherwise.
+        _ = try? await browser.webView.callAsyncJavaScript(Self.keepColorsScript, contentWorld: .page)
+        switch await PagePrinter.save(browser.webView, to: url) {
+        case .saved(let pages): return "Saved the page as a \(pages)-page PDF at \(expanded)."
+        case .notShown: return "The page is out of view in a way it can't be printed from. Show it in the panel, then save it again."
+        case .failed: return "Couldn't save the page as a PDF."
+        }
+    }
+
+    static let keepColorsScript = """
+        if (!document.getElementById('kuvo-keep-colors')) {
+          const style = document.createElement('style');
+          style.id = 'kuvo-keep-colors';
+          style.textContent = '* { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }';
+          (document.head || document.documentElement).appendChild(style);
+        }
+        """
+
     // MARK: Asking you
 
     /// Signs in with your username and password, which you type (or pick from your saved

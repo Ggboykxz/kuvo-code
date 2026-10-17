@@ -1,3 +1,4 @@
+import AppKit
 import CryptoKit
 import Foundation
 import OpenCodeKit
@@ -399,12 +400,17 @@ extension MachineBrowserInstaller {
         return ["mcp": ["servers": ["kuvo-browser": [
             "type": "local",
             "command": ["sh", "-c", command("mcp")],
-            "environment": ["KUVO_SEARCH": searchTemplate, "KUVO_INTEGRATION_SITES": encoded],
+            "environment": ["KUVO_SEARCH": searchTemplate, "KUVO_INTEGRATION_SITES": encoded, "KUVO_PAPER": paper],
             // Plain tools, so every model calls them directly.
             "codemode": false,
             // A tool that asks you (to sign in, for a code) waits for you.
             "timeout": ["execution": BrowserTools.executionTimeout],
         ] as [String: Any]]]]
+    }
+
+    /// The paper this Mac prints on, for PDFs a machine's browser saves: US Letter or A4.
+    static var paper: String {
+        NSPrintInfo.shared.paperSize.width < 600 ? "a4" : "letter"
     }
 
     /// The search engine chosen in Settings, with `%s` for the words.

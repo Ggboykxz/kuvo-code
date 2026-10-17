@@ -1589,6 +1589,23 @@ async function tool(name, args) {
       } catch {}
       return withNote(Promise.resolve(value.length > 30_000 ? value.slice(0, 30_000) + "\n… (cut)" : value || "(no text)"));
     }
+    case "browser_save_pdf": {
+      const file = string("path");
+      if (!file || !file.startsWith("/") || !file.toLowerCase().endsWith(".pdf")) return text("Give a full path ending in .pdf.", true);
+      if (isEmpty(await address(p))) return text("The browser is empty. Open the page first: for a document, write it as an HTML file and open it (file:///…).", true);
+      try {
+        // On the paper the Mac prints on, with the page's colors.
+        const paper = process.env.KUVO_PAPER === "letter" ? { paperWidth: 8.5, paperHeight: 11 } : { paperWidth: 8.27, paperHeight: 11.69 };
+        const { data } = await link.send("Page.printToPDF", { printBackground: true, preferCSSPageSize: true, marginTop: 0.5, marginBottom: 0.5, marginLeft: 0.5, marginRight: 0.5, ...paper }, p.session, 60_000);
+        const bytes = Buffer.from(data, "base64");
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, bytes);
+        const pages = (bytes.toString("latin1").match(/\/Type\s*\/Page[^s]/g) || []).length;
+        return withNote(Promise.resolve(`Saved the page as a ${pages ? pages + "-page " : ""}PDF at ${file}.`));
+      } catch (error) {
+        return text("Couldn't save the page as a PDF: " + (error.message || error), true);
+      }
+    }
     case "browser_screenshot": {
       try {
         return { content: [{ type: "image", data: await screenshot(p), mimeType: "image/png" }] };

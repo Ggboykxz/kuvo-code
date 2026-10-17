@@ -170,6 +170,8 @@ enum BrowserTools {
         tool("browser_forward", "Go forward a page."),
         tool("browser_text", "Read all the text on the current page at once: an article, docs, a list or a table, without scrolling through it."),
         tool("browser_screenshot", "See the visible part of the page as an image (for models that take images)."),
+        tool("browser_save_pdf", "Save the current page as a PDF file, in pages as printing it would, with its colors. To make a document someone can share (a report, a summary, an invoice), write it as an HTML file, open it with browser_navigate (file:///…), then save it here.",
+             ["path": ["type": "string", "description": "Where to save it: a full path ending in .pdf."]], required: ["path"]),
         tool("browser_wait", "Wait for the page, then read it again: until a text shows on it (up to 30 seconds), or for some seconds (up to 10).",
              ["seconds": ["type": "number"], "text": ["type": "string", "description": "Text to wait for, like a result's title or \"Saved\"."]]),
         tool("browser_hover", "Move the pointer over the element with this number, for menus and tips that open on hover.",
@@ -339,6 +341,9 @@ enum BrowserTools {
             return text(await agent.forward())
         case "browser_text":
             return text(await agent.text())
+        case "browser_save_pdf":
+            guard let path = string("path") else { return text("Missing path.", error: true) }
+            return text(await agent.savePDF(to: path))
         case "browser_screenshot":
             guard let png = await agent.screenshot() else { return text("Couldn't capture the page.", error: true) }
             return ["content": [["type": "image", "data": png, "mimeType": "image/png"]]]

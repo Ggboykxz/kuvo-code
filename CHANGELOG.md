@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- The agent and your bots can save a page as a PDF, so "make me a one-page summary as a PDF" gives you a real document, in pages and with its colors, on this Mac or a machine.
 - The agent reads a long page or list in one step instead of scrolling through it a screen at a time: a job across ten pages took under a minute instead of five.
 - A bot asked to change its model points you to Edit Bot, which lists the models you can use, instead of suggesting ones you have no account for.
 - The agent can search the web again: every search failed, because the engine had no search service chosen. It now uses a free one, and moves to another when one is busy.

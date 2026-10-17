@@ -177,7 +177,12 @@ final class BrowserSession: NSObject {
         guard let url = Self.url(from: input) else { return }
         // A question the page left open is turned down as you go elsewhere.
         if dialog != nil { answerDialog(accept: false) }
-        webView.load(URLRequest(url: url))
+        // A file on this Mac, with what's in its folder (its pictures, its styles).
+        if url.isFileURL {
+            webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+        } else {
+            webView.load(URLRequest(url: url))
+        }
     }
 
     func close() {
