@@ -108,6 +108,7 @@ function phoneFor(host, hostKey) {
   let transport;
   return {
     key,
+    address,
     async open(hello) {
       const initiator = new link.IKInitiator(key, link.publicOf(hostKey), link.PROLOGUE);
       await host.receive(address, link.frame(link.Frame.handshake1, session, initiator.writeMessage1(Buffer.from(JSON.stringify({ v: 1, name: "Test iPhone", app: "0", ...hello })))));
@@ -153,6 +154,8 @@ test("the host lets in a phone with the pairing token once, then by its key", as
   const saved = link.readLink();
   assert.equal(saved.pairing, undefined);
   assert.deepEqual(saved.phones.map(p => [p.key, p.name]), [[link.publicOf(phone.key).toString("base64url"), "Test iPhone"]]);
+  // Where its notifications go.
+  assert.equal(saved.phones[0].address, phone.address.toString("base64url"));
   assert.equal((fs.statSync(link.LINK_FILE).mode & 0o777).toString(8), "600");
 
   // The token is used up; the paired phone comes back without it.
@@ -357,6 +360,90 @@ test("setup keeps the machine's keys and its own phones, starts the bridge, and 
     assert.ok(stopped);
   } finally {
     try { process.kill(Number(fs.readFileSync(pidFile, "utf8")), "SIGKILL"); } catch {}
+    fs.rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+// ---- Notifications ----
+
+test("a notification fits a push, its body cut", () => {
+  const long = "Wörds and more words. ".repeat(400);
+  const json = link.noticeJSON({ title: "Fixer", subtitle: "kuvo-ai", body: long, category: "finished", thread: "ses_1", data: { session: "ses_1" } });
+  assert.ok(json.length <= link.NOTICE_LIMIT);
+  const notice = JSON.parse(json);
+  assert.equal(notice.t, "notify");
+  assert.ok(notice.body.endsWith("…"));
+  assert.ok(long.startsWith(notice.body.slice(0, -1)));
+  assert.ok(notice.body.length > 2000);
+  // Short ones go as they are, keys sorted as the Mac writes them.
+  assert.equal(link.noticeJSON({ title: "Fixer", body: "Done.", category: "report", thread: "ses_1", data: { session: "ses_1" } }).toString(),
+    '{"body":"Done.","category":"report","data":{"session":"ses_1"},"t":"notify","thread":"ses_1","title":"Fixer"}');
+});
+
+test("a push is sealed for the phone it goes to", () => {
+  const hostKey = link.newKey(), phoneKey = link.newKey();
+  const address = crypto.randomBytes(16);
+  const json = link.noticeJSON({ title: "Fixer", body: "Done.", category: "report", thread: "ses_1", data: {} });
+  const bytes = link.pushTo({ key: link.publicOf(phoneKey).toString("base64url"), address: address.toString("base64url") }, json, hostKey);
+  assert.equal(bytes[0], 5);
+  assert.deepEqual(bytes.subarray(1, 17), address);
+  const mail = link.readFrame(bytes.subarray(17));
+  assert.equal(mail.kind, link.Frame.mail);
+  assert.equal(mail.session, 0);
+  assert.deepEqual(link.openOneWay(mail.body, phoneKey, link.publicOf(hostKey)).payload, json);
+  assert.throws(() => link.openOneWay(mail.body, link.newKey(), link.publicOf(hostKey)));
+});
+
+test("engine events become notifications, as the Mac words them", async () => {
+  const sessions = {
+    ses_main: { id: "ses_main", title: "Fix the tests", location: { directory: "/home/me/kuvo-ai" } },
+    ses_sub: { id: "ses_sub", parentID: "ses_main", title: "Explore", location: { directory: "/home/me/kuvo-ai" } },
+    ses_bot: { id: "ses_bot", title: "Fixer", metadata: { kuvo: { bot: "bot_1" } }, location: { directory: "/home/me/.kuvo-code/bots/bot_1/workspace" } },
+  };
+  const messages = { data: [{ type: "assistant", content: [{ type: "text", text: "**All** green:\n 42 tests pass." }] }, { type: "user", content: [] }] };
+  const get = async route => {
+    if (route.endsWith("/message?limit=6&order=desc")) return messages;
+    const id = decodeURIComponent(route.split("/").pop());
+    if (!sessions[id]) throw new Error("404");
+    return { data: sessions[id] };
+  };
+
+  // A subagent's permission shows in the session that started it.
+  assert.deepEqual(await link.noticeFor({ type: "permission.asked", data: { id: "per_1", sessionID: "ses_sub", action: "shell", resources: ["npm test"] } }, get), {
+    title: "Fix the tests", subtitle: "kuvo-ai", body: "Wants to run a command: npm test", category: "permission", thread: "ses_main",
+    data: { session: "ses_main", request: "per_1", requestSession: "ses_sub" },
+  });
+  const question = { id: "frm_1", sessionID: "ses_main", title: "Pick", metadata: { kind: "question" }, fields: [{ key: "a", type: "string", description: "Which database?" }] };
+  const asked = await link.noticeFor({ type: "form.created", data: question }, get);
+  assert.equal(asked.category, "question");
+  assert.equal(asked.body, "Which database?");
+  assert.deepEqual(asked.data, { session: "ses_main", request: "frm_1" });
+
+  // A bot's run: its news, with what it said last, without its folder.
+  const report = await link.noticeFor({ type: "session.execution.succeeded", data: { sessionID: "ses_bot" } }, get);
+  assert.deepEqual(report, { title: "Fixer", subtitle: undefined, body: "All green: 42 tests pass.", category: "report", thread: "ses_bot", data: { session: "ses_bot" } });
+  assert.equal((await link.noticeFor({ type: "session.execution.succeeded", data: { sessionID: "ses_main" } }, get)).category, "finished");
+  const failed = await link.noticeFor({ type: "session.execution.failed", data: { sessionID: "ses_main" } }, get);
+  assert.equal(failed.category, "failed");
+  assert.equal(failed.body, "Stopped with an error.");
+
+  // A subagent's run is its parent's business; a stopped run and the rest aren't news.
+  assert.equal(await link.noticeFor({ type: "session.execution.succeeded", data: { sessionID: "ses_sub" } }, get), null);
+  assert.equal(await link.noticeFor({ type: "session.execution.interrupted", data: { sessionID: "ses_main" } }, get), null);
+  assert.equal(await link.noticeFor({ type: "session.text.delta", data: { sessionID: "ses_main" } }, get), null);
+});
+
+test("a Mac that said it's here in the last few minutes keeps the bridge quiet", () => {
+  const folder = fs.mkdtempSync(path.join(home, "present-"));
+  try {
+    assert.equal(link.macPresent(path.join(folder, "none")), false);
+    assert.equal(link.macPresent(folder), false);
+    fs.writeFileSync(path.join(folder, "mac-1"), "");
+    assert.equal(link.macPresent(folder), true);
+    const old = new Date(Date.now() - 10 * 60_000);
+    fs.utimesSync(path.join(folder, "mac-1"), old, old);
+    assert.equal(link.macPresent(folder), false);
+  } finally {
     fs.rmSync(folder, { recursive: true, force: true });
   }
 });

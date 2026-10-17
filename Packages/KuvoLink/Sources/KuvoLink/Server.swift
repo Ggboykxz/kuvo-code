@@ -9,8 +9,11 @@ public actor LinkServer {
         public var address: LinkAddress
     }
 
-    /// Whether to let a phone in: its static key, and what it said (`pair` holds a pairing token).
-    public typealias Authorize = @Sendable (_ key: Data, _ hello: PhoneHello) async -> Bool
+    /// Whether to let a phone in: its static key, its address on the relay (where its pushes go),
+    /// and what it said (`pair` holds a pairing token).
+    public typealias Authorize = @Sendable (_ key: Data, _ address: LinkAddress, _ hello: PhoneHello) async -> Bool
+    /// What the relay said of a push: to which phone, and how it went.
+    public typealias Pushed = @Sendable (_ to: LinkAddress, _ status: RelayMessage.PushStatus) -> Void
     /// Answers a request, in pieces.
     public typealias Handle = @Sendable (LinkRequest, Phone) -> AsyncThrowingStream<LinkResponsePart, Error>
     /// Opens a socket (PROTOCOL.md, "Sockets"): what the phone sends arrives on the input; what
@@ -22,6 +25,7 @@ public actor LinkServer {
     let authorize: Authorize
     let handle: Handle
     let connect: Connect?
+    let pushed: Pushed?
     private var relay: (any RelayTransport)?
     private var sessions: [SessionKey: Session] = [:]
 
@@ -46,12 +50,13 @@ public actor LinkServer {
         }
     }
 
-    public init(key: LinkKey, hello: HostHello, authorize: @escaping Authorize, handle: @escaping Handle, connect: Connect? = nil) {
+    public init(key: LinkKey, hello: HostHello, authorize: @escaping Authorize, handle: @escaping Handle, connect: Connect? = nil, pushed: Pushed? = nil) {
         self.key = key
         self.hello = hello
         self.authorize = authorize
         self.handle = handle
         self.connect = connect
+        self.pushed = pushed
     }
 
     /// Serves over `relay` until it closes. Sessions on an earlier connection end.
@@ -66,6 +71,8 @@ public actor LinkServer {
             case .unreachable(let address):
                 // The phone's gone (asleep, out of reach): nothing it asked for has anyone to go to.
                 for session in sessions.values where session.key.address == address { end(session, notify: false) }
+            case .pushed(let to, let status):
+                pushed?(to, status)
             default:
                 continue
             }
@@ -74,6 +81,21 @@ public actor LinkServer {
             self.relay = nil
             for session in sessions.values { end(session, notify: false) }
         }
+    }
+
+    /// Whether a phone has a session open: the app on its screen.
+    public var hasSessions: Bool { !sessions.isEmpty }
+
+    /// Sends `notice` (a `Notice`'s JSON) to each phone's notifications, sealed for it alone; the
+    /// relay pushes it to the phone through Apple. False with no relay connection to send it on.
+    @discardableResult
+    public func push(_ notice: Data, to phones: [(key: Data, address: LinkAddress)]) -> Bool {
+        guard let relay else { return false }
+        for phone in phones {
+            guard let mail = try? Mail.seal(notice, from: key, to: phone.key) else { continue }
+            relay.send(.push(to: phone.address, payload: mail))
+        }
+        return true
     }
 
     /// Ends the sessions of a phone that's no longer paired.
@@ -103,7 +125,7 @@ public actor LinkServer {
         var responder = IKResponder(staticKey: self.key, prologue: Link.prologue)
         guard let payload = try? responder.readMessage1(message),
               let phoneHello = try? JSONDecoder().decode(PhoneHello.self, from: payload), phoneHello.v == Link.version,
-              await authorize(responder.remoteStatic, phoneHello),
+              await authorize(responder.remoteStatic, key.address, phoneHello),
               let (reply, transport) = try? responder.writeMessage2(payload: JSONEncoder().encode(hello))
         else { return send(.close, key: key) }
         // One session per phone: a new one replaces what's left of the last.

@@ -8,9 +8,13 @@ final class MemoryRelay: @unchecked Sendable {
     private let lock = NSLock()
     private var connected: [LinkAddress: Connection] = [:]
     private var registered: [PushRegistration] = []
+    private var phones: [LinkAddress: PushRegistration] = [:]
+    private var pushed: [(to: LinkAddress, from: LinkAddress, payload: Data)] = []
 
     /// Each push registration a phone sent, in order.
     var registrations: [PushRegistration] { lock.withLock { registered } }
+    /// Each push that went to a phone, as Apple would have it.
+    var pushes: [(to: LinkAddress, from: LinkAddress, payload: Data)] { lock.withLock { pushed } }
 
     final class Connection: RelayTransport, @unchecked Sendable {
         let address: LinkAddress
@@ -45,7 +49,22 @@ final class MemoryRelay: @unchecked Sendable {
     }
 
     fileprivate func route(_ message: RelayMessage, from sender: Connection) {
-        if case .register(let registration) = message { lock.withLock { registered.append(registration) } }
+        if case .register(let registration) = message {
+            lock.withLock {
+                registered.append(registration)
+                phones[sender.address] = registration
+            }
+        }
+        if case .push(let to, let payload) = message {
+            // As the relay answers: sent, or why not.
+            let status: RelayMessage.PushStatus = lock.withLock {
+                guard let registration = phones[to] else { return .noPhone }
+                guard registration.senders.contains(sender.address.text) else { return .notAllowed }
+                pushed.append((to, sender.address, payload))
+                return .sent
+            }
+            sender.inbox.yield(.pushed(to: to, status: status))
+        }
         guard case .send(let to, let payload) = message else { return }
         let target = lock.withLock { connected[to] }
         if let target {
@@ -71,7 +90,7 @@ private struct TestHost {
     init(relay: MemoryRelay, handle: @escaping LinkServer.Handle, connect: LinkServer.Connect? = nil) {
         let paired = Paired()
         let token = self.token
-        server = LinkServer(key: key, hello: HostHello(kind: .mac, name: "Test Mac", app: "0.0.1", engine: "2.0.30"), authorize: { key, hello in
+        server = LinkServer(key: key, hello: HostHello(kind: .mac, name: "Test Mac", app: "0.0.1", engine: "2.0.30"), authorize: { key, _, hello in
             if paired.contains(key) { return true }
             guard hello.pair == token.base64URL else { return false }
             paired.insert(key)
@@ -88,6 +107,14 @@ private struct TestHost {
         func contains(_ key: Data) -> Bool { lock.withLock { keys.contains(key) } }
         func insert(_ key: Data) { _ = lock.withLock { keys.insert(key) } }
     }
+}
+
+/// Phones' addresses on the relay, by static key, as a host learns them.
+private final class Addresses: @unchecked Sendable {
+    private let lock = NSLock()
+    private var known: [Data: LinkAddress] = [:]
+    func insert(_ key: Data, _ address: LinkAddress) { lock.withLock { known[key] = address } }
+    func of(_ key: Data) -> LinkAddress? { lock.withLock { known[key] } }
 }
 
 private func phone(on relay: MemoryRelay) -> LinkClient {
@@ -250,6 +277,57 @@ private func collect(_ stream: LinkResponse) async throws -> (status: Int, heade
         try await Task.sleep(for: .milliseconds(50))
         _ = try await client.hostHello(paired)
         #expect(relay.registrations.count == 2)
+    }
+
+    @Test func aHostPushesToThePhonesItKnows() async throws {
+        let relay = MemoryRelay()
+        let statuses = AsyncStream.makeStream(of: RelayMessage.PushStatus.self)
+        let addresses = Addresses()
+        let key = LinkKey(), secret = RelaySecret(), token = randomBytes(16)
+        let server = LinkServer(key: key, hello: HostHello(kind: .mac, name: "Test Mac", app: "0.0.1", engine: "2.0.30"), authorize: { phone, address, _ in
+            addresses.insert(phone, address)
+            return true
+        }, handle: echo, pushed: { _, status in statuses.continuation.yield(status) })
+        let connection = relay.connect(secret)
+        Task { await server.serve(connection) }
+        let phoneKey = LinkKey(), phoneSecret = RelaySecret()
+        let client = LinkClient(relay: URL(string: "wss://relay.test")!, key: phoneKey, secret: phoneSecret, name: "Test iPhone", app: "0.0.1", connect: relay.connect)
+        _ = try await client.pair(PairingLink(relay: URL(string: "wss://relay.test")!, host: secret.address, key: key.publicBytes, token: token, name: "Test Mac"))
+        // Learned when the phone came in: where its pushes go.
+        let address = try #require(addresses.of(phoneKey.publicBytes))
+        #expect(address == phoneSecret.address)
+        #expect(await server.hasSessions)
+        let notice = Notice(title: "Fixer", body: "Done: the tests pass.", category: .report, thread: "ses_1", data: ["session": "ses_1"])
+        var heard = statuses.stream.makeAsyncIterator()
+
+        // Not registered yet: the relay says so.
+        #expect(await server.push(try notice.encoded(), to: [(phoneKey.publicBytes, address)]))
+        #expect(await heard.next() == .noPhone)
+
+        await client.register(PushRegistration(token: "a1b2", environment: "sandbox", topic: "run.kuvo.code.mobile", senders: [secret.address]))
+        try await Task.sleep(for: .milliseconds(20))
+        await server.push(try notice.encoded(), to: [(phoneKey.publicBytes, address)])
+        #expect(await heard.next() == .sent)
+        // Only the phone opens it, as from this host.
+        let push = try #require(relay.pushes.first)
+        #expect(push.from == secret.address)
+        let opened = try Mail.open(push.payload, to: phoneKey, from: key.publicBytes)
+        #expect(try JSONDecoder().decode(Notice.self, from: opened) == notice)
+        #expect(throws: (any Error).self) { try Mail.open(push.payload, to: LinkKey(), from: key.publicBytes) }
+    }
+
+    @Test func aLongNoticeIsCutToFit() throws {
+        let body = String(repeating: "Wörds and more words. ", count: 400)
+        let notice = Notice(title: "Fixer", subtitle: "kuvo-ai", body: body, category: .finished, thread: "ses_1", data: ["session": "ses_1"])
+        let data = try notice.encoded()
+        #expect(data.count <= Notice.limit)
+        let cut = try JSONDecoder().decode(Notice.self, from: data)
+        #expect(cut.body.hasSuffix("…"))
+        #expect(body.hasPrefix(String(cut.body.dropLast())))
+        #expect(cut.body.count > 2000)
+        // Short ones go as they are.
+        let short = Notice(title: "Fixer", body: "Done.", category: .finished, thread: "ses_1", data: [:])
+        #expect(try JSONDecoder().decode(Notice.self, from: short.encoded()) == short)
     }
 
     @Test func socketsCarryMessagesBothWaysUntilClosed() async throws {

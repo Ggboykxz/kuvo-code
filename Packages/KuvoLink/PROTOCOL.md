@@ -101,13 +101,54 @@ connection). Any message that doesn't decrypt ends the session.
 
 Pushes and other messages for a device that may not be connected use
 **Noise_K_25519_AESGCM_SHA256** (both static keys known), with the prologue
-`kuvo-link mail v1`: one handshake message carrying the payload, JSON:
+`kuvo-link mail v1`: one handshake message carrying the payload. A host's push carries a
+notification, below.
+
+## Notifications
+
+What the Mac shows as a notification goes to each paired phone too, as the relay's `push`
+with a mail frame, sealed with the sender's static key for the phone's. Its payload, JSON:
 
 ```json
-{"t": "notify", "title": "…", "body": "…", "category": "permission", "thread": "…", "data": {}}
+{"t": "notify", "title": "Fixer", "subtitle": "kuvo-ai", "body": "Wants to run a command: npm test",
+ "category": "permission", "thread": "ses_…", "data": {"session": "ses_…", "request": "per_…"}}
 ```
 
-An APNs push holds at most 4 KB, so a notification's mail stays under about 2.5 KB.
+| Field | Meaning |
+| --- | --- |
+| `title` | Who's telling: a bot's name, a session's title, a group chat's name. |
+| `subtitle` | Optional: the project, or who in a group chat. |
+| `body` | What the Mac shows: the request, the question, the last words of a reply. |
+| `category` | What it's about, below. |
+| `thread` | What it's grouped under: the session's id, or the group chat's. |
+| `data` | Where it opens: `session` or `group`; `request` for a permission or a form, with `requestSession` when the session asking isn't the one shown (a subagent's); `ask` for a browser ask. |
+
+| Category | When |
+| --- | --- |
+| `permission` | An agent asks to do something. `request` is the permission. |
+| `question` | An agent asks a question, or for a form filled in. `request` is the form. |
+| `ask` | An agent browsing asks for a sign-in, a code or a step. `ask` is it. |
+| `finished` | A run finished. |
+| `failed` | A run stopped with an error. |
+| `report` | A bot's run finished: a wake-up's or a watch's news. |
+| `message` | Something in a group chat. |
+
+A phone should ignore a category it doesn't know, and show the notification plainly.
+
+The payload stays under 2,500 bytes, so the push fits the 4 KB Apple takes: a body that
+doesn't fit is cut, ending in "…". Keys are sorted, as both sides write them.
+
+Who sends it:
+
+- **The Mac**, for its own sessions, its group chats and browser asks, and the sessions on
+  a machine it's connected to. Only while you're away from it (no input for two minutes, or
+  its screen locked), or while a phone has a session open (the phone leaves out what's on
+  its screen); at the Mac, its own notifications are enough.
+- **A machine's bridge**, for that machine's sessions (permissions, questions, runs finished
+  or failed, bots' news), while no Mac is connected to it. A Mac that's connected touches
+  `~/.kuvo-code/run/present/<its id>` each minute and removes it when it quits; the bridge
+  tells your phones only when none of those files is less than 150 seconds old. The Mac
+  tells them only for 120 seconds after it last touched its file, so the two never both do.
 
 ## Messages in a session
 
@@ -192,11 +233,12 @@ once.
 On a machine the bridge keeps its state in `~/.kuvo-code/run/link.json` (mode 600):
 
 ```json
-{"relay": "wss://…", "secret": "…", "key": "<static private key>", "phones": [{"key": "…", "name": "…", "added": 1760000000, "from": "mac"}]}
+{"relay": "wss://…", "secret": "…", "key": "<static private key>", "phones": [{"key": "…", "name": "…", "added": 1760000000, "from": "mac", "address": "…"}]}
 ```
 
 The Mac sets the phones paired with it (`"from": "mac"`), so they reach the machine too,
 and takes a phone off when you unpair; phones paired with the machine itself (`"pair"`)
-stay. The machine's keys stay when no phones are left, so pairing again gives the same
+stay. `address` is the phone's on the relay, where its notifications go: the Mac passes on
+what it knows, and the bridge notes it each time the phone comes in. The machine's keys stay when no phones are left, so pairing again gives the same
 address. The bridge reads the file every 30 seconds: a phone taken off loses its sessions,
 and with no phones and no pairing waiting the bridge stops.

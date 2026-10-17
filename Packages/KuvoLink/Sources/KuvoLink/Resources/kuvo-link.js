@@ -2,7 +2,9 @@
 // through the relay, so its sessions and bots work from the phone with the Mac closed. The
 // engine's own runtime runs it, so the machine needs nothing else:
 //
-//   BUN_BE_BUN=1 opencode kuvo-link.js run             the bridge, started beside the engine
+//   BUN_BE_BUN=1 opencode kuvo-link.js run             the bridge, started beside the engine, which
+//                                                      also tells your phones what happens in the
+//                                                      machine's sessions while no Mac does
 //   BUN_BE_BUN=1 opencode kuvo-link.js setup           the Mac's phones and relay, as JSON on stdin
 //   BUN_BE_BUN=1 opencode kuvo-link.js pair [relay]    a link to pair a phone with this machine
 //   BUN_BE_BUN=1 opencode kuvo-link.js selftest        checks the runtime has what it needs
@@ -20,7 +22,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 // Goes up with every change, so `setup` replaces a running bridge that's older.
-export const BRIDGE_VERSION = "0.4.1";
+export const BRIDGE_VERSION = "0.5.0";
 const K = process.env.KUVO_HOME || path.join(os.homedir(), ".kuvo-code");
 const RUN = path.join(K, "run");
 export const LINK_FILE = path.join(RUN, "link.json");
@@ -300,7 +302,7 @@ export function pieces(head, body, end) {
 // ---- The host: answers paired phones' sessions (the Mac app's LinkServer, in JavaScript) ----
 
 export class LinkHost {
-  // authorize(key, hello) → whether to let the phone in; handle(request, phone, signal) → an
+  // authorize(key, hello, address) → whether to let the phone in; handle(request, phone, signal) → an
   // async iterable of { head: { status, headers } } and { body }; connect(request, phone,
   // { open, text, binary, end }) → a socket's { send, close } (PROTOCOL.md, "Sockets");
   // send(bytes) → to the relay.
@@ -367,7 +369,7 @@ export class LinkHost {
     } catch {
       return refuse();
     }
-    if (hello?.v !== 1 || !(await this.authorize(responder.rs, hello))) return refuse();
+    if (hello?.v !== 1 || !(await this.authorize(responder.rs, hello, from))) return refuse();
     const { message, transport } = responder.writeMessage2(Buffer.from(JSON.stringify(this.hello)));
     // One session per phone: a new one replaces what's left of the last.
     for (const old of this.sessions.values()) if (old.from.equals(from)) this.end(old, false);
@@ -627,6 +629,195 @@ function touchAttached() {
   } catch {}
 }
 
+// ---- Notifications ----
+
+// While no Mac is telling your phones what happens in this machine's sessions, the bridge does:
+// a permission or a question asked, a run finished or failed, a bot's news (PROTOCOL.md,
+// "Notifications"). A Mac connected to the engine touches a file of its own in run/present
+// each minute, and tells your phones itself for two minutes after; the bridge waits longer.
+const PRESENT = path.join(RUN, "present");
+const PRESENT_MS = 150_000;
+export const NOTICE_LIMIT = 2500;
+
+export function macPresent(folder = PRESENT, now = Date.now()) {
+  let names;
+  try {
+    names = fs.readdirSync(folder);
+  } catch {
+    return false;
+  }
+  return names.some(name => {
+    try {
+      return now - fs.statSync(path.join(folder, name)).mtimeMs < PRESENT_MS;
+    } catch {
+      return false;
+    }
+  });
+}
+
+// The characters of `text` that fit in `bytes` of UTF-8.
+function prefixBytes(text, bytes) {
+  let out = "", count = 0;
+  for (const character of text) {
+    count += Buffer.byteLength(character);
+    if (count > bytes) break;
+    out += character;
+  }
+  return out;
+}
+
+const cut = (text, count) => text.length <= count ? text : text.slice(0, count - 1) + "…";
+
+// A notification's JSON, under NOTICE_LIMIT bytes: what doesn't fit of the body ends in "…".
+export function noticeJSON(notice) {
+  const value = { t: "notify", title: cut(String(notice.title ?? ""), 200), category: notice.category, thread: String(notice.thread ?? ""), data: notice.data ?? {} };
+  if (notice.subtitle) value.subtitle = cut(String(notice.subtitle), 200);
+  let body = String(notice.body ?? "");
+  while (true) {
+    const json = Buffer.from(sortedJSON({ ...value, body }));
+    if (json.length <= NOTICE_LIMIT || !body) return json;
+    const room = Buffer.byteLength(body) - (json.length - NOTICE_LIMIT) - Buffer.byteLength("…");
+    body = room <= 0 ? "" : prefixBytes(body, room).trimEnd() + "…";
+  }
+}
+
+// The relay's push of `json` to a phone ({key, address}, base64url), sealed for it alone.
+export function pushTo(phone, json, hostKey) {
+  const mail = frame(Frame.mail, 0, sealOneWay(json, hostKey, Buffer.from(phone.key, "base64url")).message);
+  return relayPush(Buffer.from(phone.address, "base64url"), mail);
+}
+
+const plain = text => String(text ?? "").replace(/[*_`#>]+/g, "").replace(/\s+/g, " ").trim();
+
+// "Wants to run a command: npm test", as the Mac says it.
+export function describePermission(request) {
+  const what = { edit: "edit files", write: "edit files", patch: "edit files", shell: "run a command", bash: "run a command", read: "read a file", external_directory: "work outside the project", webfetch: "open a web page" }[request.action] ?? request.action;
+  const resource = request.resources?.[0];
+  return !resource || resource === "*" ? `Wants to ${what}.` : `Wants to ${what}: ${resource}`;
+}
+
+// What a form asks, as the Mac's notification says it.
+export function describeForm(form) {
+  const kind = form.metadata?.kind;
+  if (kind === "mcp-elicitation") return form.metadata?.message || "Needs your answer.";
+  if (kind !== "question") return "Needs your answer.";
+  const fields = (form.fields ?? []).filter(field => !field.hidden && !field.when?.length);
+  if (fields.length === 1 && fields[0].type === "string") return fields[0].description || fields[0].title || form.title || "Has a question for you.";
+  return "Has a question for you.";
+}
+
+const isBot = session => Boolean(session.metadata?.kuvo?.bot) || /\/bots\/bot_[^/]+\//.test(`${session.location?.directory ?? ""}/`);
+
+// Asks the engine for `route` (a path under its API), as JSON.
+function engineGet(engine, route) {
+  return fetch(`http://127.0.0.1:${engine.port}/${route}`, { headers: { authorization: `Basic ${Buffer.from(`opencode:${engine.password}`).toString("base64")}` }, signal: AbortSignal.timeout(10_000) })
+    .then(response => response.ok ? response.json() : Promise.reject(new Error(`${response.status}`)));
+}
+
+// The notification for an engine event, or null for one that isn't news. `get(route)` asks the
+// engine.
+export async function noticeFor(event, get) {
+  const data = event.data ?? {};
+  const session = async id => (await get(`api/session/${encodeURIComponent(id)}`)).data;
+  // A subagent's request shows in the session that started it.
+  const shown = async id => {
+    let current = await session(id);
+    for (let step = 0; step < 5 && current.parentID; step++) current = await session(current.parentID);
+    return current;
+  };
+  const about = (shown, category, body, extra = {}) => {
+    const bot = isBot(shown);
+    const folder = shown.location?.directory ?? "";
+    return {
+      title: shown.title || "New Session",
+      subtitle: bot ? undefined : path.basename(folder) || undefined,
+      body,
+      category,
+      thread: shown.id,
+      data: { session: shown.id, ...extra },
+    };
+  };
+  switch (event.type) {
+    case "permission.asked": {
+      const where = await shown(data.sessionID);
+      return about(where, "permission", describePermission(data), { request: data.id, ...(where.id !== data.sessionID ? { requestSession: data.sessionID } : {}) });
+    }
+    case "form.created": {
+      const where = await shown(data.sessionID);
+      return about(where, "question", describeForm(data), { request: data.id, ...(where.id !== data.sessionID ? { requestSession: data.sessionID } : {}) });
+    }
+    case "session.execution.succeeded":
+    case "session.execution.failed": {
+      const id = data.sessionID;
+      const ended = await session(id);
+      // A subagent's run is part of its parent's.
+      if (ended.parentID) return null;
+      if (event.type === "session.execution.failed") return about(ended, "failed", "Stopped with an error.");
+      let reply = "";
+      try {
+        const page = await get(`api/session/${encodeURIComponent(id)}/message?limit=6&order=desc`);
+        for (const message of page.data ?? []) {
+          if (message.type !== "assistant") continue;
+          reply = plain((message.content ?? []).filter(part => part.type === "text").map(part => part.text).join(" "));
+          if (reply) break;
+        }
+      } catch {}
+      // What it said last, as long as the Mac shows it.
+      return about(ended, isBot(ended) ? "report" : "finished", reply ? cut(reply, 220) : "Finished.");
+    }
+    default:
+      return null;
+  }
+}
+
+// The events in a `text/event-stream` body, parsed.
+async function* serverEvents(body) {
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let data = [];
+  for await (const chunk of body) {
+    buffer += decoder.decode(chunk, { stream: true });
+    let end;
+    while ((end = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, end).replace(/\r$/, "");
+      buffer = buffer.slice(end + 1);
+      if (line === "") {
+        if (data.length) {
+          try { yield JSON.parse(data.join("\n")); } catch {}
+        }
+        data = [];
+      } else if (line.startsWith("data:")) {
+        data.push(line.slice(5).replace(/^ /, ""));
+      }
+    }
+  }
+}
+
+// The events that can be news.
+const NEWS = new Set(["permission.asked", "form.created", "session.execution.succeeded", "session.execution.failed"]);
+
+// Follows the engine's events for as long as the bridge runs, handing each one's notification to
+// `tell`, while no Mac is present.
+async function watchEngine(tell) {
+  let attempt = 0;
+  while (true) {
+    try {
+      const engine = readEngineFile();
+      const response = await fetch(`http://127.0.0.1:${engine.port}/api/event`, {
+        headers: { authorization: `Basic ${Buffer.from(`opencode:${engine.password}`).toString("base64")}`, accept: "text/event-stream" },
+      });
+      if (!response.ok || !response.body) throw new Error(`${response.status}`);
+      attempt = 0;
+      for await (const event of serverEvents(response.body)) {
+        if (!NEWS.has(event.type) || macPresent()) continue;
+        noticeFor(event, route => engineGet(engine, route)).then(notice => notice && tell(notice)).catch(() => {});
+      }
+    } catch {}
+    attempt += 1;
+    await sleep(Math.min(30_000, 1000 * 2 ** Math.min(attempt, 5)));
+  }
+}
+
 // ---- State ----
 
 export function readLink() {
@@ -644,18 +835,27 @@ export function writeLink(link) {
   fs.renameSync(temporary, LINK_FILE);
 }
 
-// Lets in phones in link.json, and a new one showing the pairing token (once, in time).
-export function authorizePhone(key, hello) {
+// Lets in phones in link.json, and a new one showing the pairing token (once, in time). Notes
+// where each one is on the relay, for its notifications.
+export function authorizePhone(key, hello, address) {
   const link = readLink();
   if (!link) return false;
   const encoded = key.toString("base64url");
-  if (link.phones?.some(phone => phone.key === encoded)) return true;
+  const where = address?.toString("base64url");
+  const known = link.phones?.find(phone => phone.key === encoded);
+  if (known) {
+    if (where && known.address !== where) {
+      known.address = where;
+      writeLink(link);
+    }
+    return true;
+  }
   const pairing = link.pairing;
   if (!pairing || !hello.pair || Date.now() > pairing.expires) return false;
   const given = Buffer.from(String(hello.pair), "base64url");
   const expected = Buffer.from(pairing.token, "base64url");
   if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) return false;
-  link.phones = [...(link.phones ?? []), { key: encoded, name: String(hello.name ?? "").slice(0, 100), added: Math.floor(Date.now() / 1000), from: "pair" }];
+  link.phones = [...(link.phones ?? []), { key: encoded, name: String(hello.name ?? "").slice(0, 100), added: Math.floor(Date.now() / 1000), from: "pair", address: where }];
   delete link.pairing;
   writeLink(link);
   return true;
@@ -763,6 +963,15 @@ async function run() {
     current?.keepOnly(new Set((link.phones ?? []).map(phone => phone.key)));
   }, 30_000);
 
+  // Your phones' notifications, on whichever relay connection is up.
+  watchEngine(notice => {
+    const link = readLink();
+    if (!current || !link?.key) return;
+    const json = noticeJSON(notice);
+    const key = Buffer.from(link.key, "base64url");
+    for (const phone of link.phones ?? []) if (phone.address) current.send(pushTo(phone, json, key));
+  });
+
   let attempt = 0;
   while (true) {
     const link = readLink();
@@ -817,7 +1026,7 @@ async function setup() {
     for await (const chunk of process.stdin) chunks.push(chunk);
     input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
   } catch {
-    console.error("setup takes JSON on stdin: {relay, name, phones: [{key, name}]}");
+    console.error("setup takes JSON on stdin: {relay, name, phones: [{key, name, address}]}");
     process.exit(2);
   }
   const phones = Array.isArray(input.phones) ? input.phones.filter(p => typeof p?.key === "string") : [];
@@ -833,8 +1042,15 @@ async function setup() {
   const link = old ?? { secret: crypto.randomBytes(32).toString("base64url"), key: newKey().toString("base64url"), phones: [] };
   link.relay = String(input.relay);
   link.name = String(input.name || link.name || os.hostname()).slice(0, 100);
-  const added = new Map((old?.phones ?? []).map(p => [p.key, p.added]));
-  const fromMac = phones.map(p => ({ key: p.key, name: String(p.name ?? "").slice(0, 100), added: added.get(p.key) ?? Math.floor(Date.now() / 1000), from: "mac" }));
+  const known = new Map((old?.phones ?? []).map(p => [p.key, p]));
+  const ADDRESS = /^[A-Za-z0-9_-]{22}$/;
+  const fromMac = phones.map(p => ({
+    key: p.key,
+    name: String(p.name ?? "").slice(0, 100),
+    added: known.get(p.key)?.added ?? Math.floor(Date.now() / 1000),
+    from: "mac",
+    address: ADDRESS.test(p.address ?? "") ? p.address : known.get(p.key)?.address,
+  }));
   link.phones = [...fromMac, ...own.filter(phone => !fromMac.some(p => p.key === phone.key))];
   writeLink(link);
   // A new relay or name needs a new connection, and a newer bridge replaces an older one.

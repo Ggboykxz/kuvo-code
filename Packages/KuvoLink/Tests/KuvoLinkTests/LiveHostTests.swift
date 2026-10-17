@@ -12,7 +12,7 @@ struct LiveHostTests {
         let relayURL = URL(string: environment["KUVO_TEST_HOST_RELAY"]!)!
         let key = LinkKey(), secret = RelaySecret()
         let link = PairingLink(relay: relayURL, host: secret.address, key: key.publicBytes, name: "Live host")
-        let server = LinkServer(key: key, hello: HostHello(kind: .mac, name: "Live host", app: "0", engine: nil)) { _, hello in
+        let server = LinkServer(key: key, hello: HostHello(kind: .mac, name: "Live host", app: "0", engine: nil)) { _, _, hello in
             hello.pair == link.token.base64URL
         } handle: { request, _ in
             AsyncThrowingStream { continuation in
