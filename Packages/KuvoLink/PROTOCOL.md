@@ -135,7 +135,8 @@ itself. A host serves:
   prompts, permissions, questions, events, providers, agents, commands, a project's files,
   terminals). Never accounts or keys.
 - `kuvo/info`: what the host is and runs; a Mac also names its folder of chats (conversations of
-  no project).
+  no project), and `integrations`, each integration's name by its MCP server's (`{"microsoft-365":
+  "Outlook and Microsoft 365", …}`), for a card when one asks something.
 - On a Mac, `kuvo/hosts`: the machines this phone may reach directly, with their addresses
   and static keys, so pairing once with the Mac reaches them all.
 - On a Mac, `kuvo/bots`: your bots by their session, wherever they live, with their name,

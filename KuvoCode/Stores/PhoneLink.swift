@@ -280,7 +280,11 @@ final class PhoneLink {
     /// Kuvo's own routes, beside the engine's.
     private func answer(_ request: LinkRequest) -> (Int, Data) {
         /// `chats`: the folder of conversations of no project, which the phone lists as Chats.
-        struct Info: Encodable { var kind = "mac"; var name: String; var app: String; var engine: String; var chats: String }
+        struct Info: Encodable {
+            var kind = "mac"; var name: String; var app: String; var engine: String; var chats: String
+            /// Integrations' names by their MCP server's, for what a server asks.
+            var integrations = Dictionary(uniqueKeysWithValues: Integrations.all.map { ($0.id, $0.title) })
+        }
         struct Hosts: Encodable {
             struct Host: Encodable { var kind = "machine"; var name: String; var address: String; var key: String; var relay: String }
             var hosts: [Host]
