@@ -207,7 +207,13 @@ private struct LineNumbers: View {
 /// A code block's language as people write it: "swift" is Swift, "ts" is TypeScript. One
 /// without a language is just code.
 enum CodeLanguage {
+    /// Before the language of a code block a reply is still writing, so the highlighter doesn't
+    /// know it and leaves it plain (it would color it again each time it grew). Once it's done,
+    /// its language changes, and Textual colors it then.
+    nonisolated static let writing = "kuvo-writing-"
+
     static func name(of hint: String?) -> String {
+        let hint = hint.map { $0.hasPrefix(writing) ? String($0.dropFirst(writing.count)) : $0 }
         guard let hint = hint?.trimmingCharacters(in: .whitespaces).lowercased(), !hint.isEmpty else { return "Code" }
         if let name = names[hint] { return name }
         // Unknown ones as written, capitalized: "elixir" is Elixir.

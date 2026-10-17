@@ -12,6 +12,7 @@ final class ScrollFrameMonitor: NSObject {
     /// Made since launch, counted as they appear.
     static var rowsMade = 0
     static var codeBlocksMade = 0
+    static var piecesMade = 0
 
     private var link: CADisplayLink?
     private var last: CFTimeInterval = 0

@@ -24,7 +24,9 @@ struct TranscriptView: View {
 
     var body: some View {
         let rows = rows
-        ConversationScroll(scroller: scroller, animation: rowCache.isBulk ? nil : Self.rowAnimation, change: RowCache.Change(count: rows.count, last: rows.last?.id),
+        // More of a reply, in a row of its own, carries on from the row before rather than coming in.
+        let added = rows.filter { !$0.continues }
+        ConversationScroll(scroller: scroller, animation: rowCache.isBulk ? nil : Self.rowAnimation, change: RowCache.Change(count: added.count, last: added.last?.id),
                            quote: { model.addQuote($0, how: "selection") }) {
             // Its top in view: the messages before, read and put ahead, the view staying put.
             if model.hasEarlier, !rows.isEmpty {
@@ -201,12 +203,17 @@ struct TranscriptView: View {
                     case .text(let text):
                         guard !text.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
                         flushSteps(live: false)
-                        var words = assistant
-                        words.id = assistant.id + "#\(part)"
-                        words.content = [block]
-                        words.error = nil
-                        words.retry = nil
-                        rows.append(.assistant(words, showsError: false))
+                        // A long reply in rows of its pieces (see MarkdownChunks): only those near
+                        // the view are made, and no row gets so tall that the conversation loses
+                        // its place.
+                        for (index, chunk) in MarkdownChunks.split(text.text).enumerated() {
+                            var words = assistant
+                            words.id = assistant.id + "#\(part)" + (index == 0 ? "" : ".\(index)")
+                            words.content = [.text(Message.Content.Text(text: String(chunk.text), time: text.time))]
+                            words.error = nil
+                            words.retry = nil
+                            rows.append(index == 0 ? .assistant(words, showsError: false) : .more(words, gap: chunk.gap))
+                        }
                     case .tool(let call) where WidgetCard.isWidget(call):
                         // Something it made shows on its own, in the conversation's flow.
                         flushSteps(live: false)
@@ -360,6 +367,8 @@ struct TurnStats: Hashable {
 enum Row: Identifiable, Hashable {
     case user(Message.User)
     case assistant(Message.Assistant, showsError: Bool)
+    /// More of a long reply, in a row of its own, this far below the row before it.
+    case more(Message.Assistant, gap: CGFloat)
     /// The agent's steps between its replies, summed up (`StepsDetail`); `isLive`, the last of
     /// them is under way.
     case steps(String, [Message.Content], isLive: Bool)
@@ -390,7 +399,7 @@ enum Row: Identifiable, Hashable {
             return UserBubble.findParts(UserBubble.words(of: text)).map(ConversationFind.Part.plain)
         case .pending(let item):
             return UserBubble.findParts(UserBubble.words(of: item.text)).map(ConversationFind.Part.plain)
-        case .assistant(let message, _):
+        case .assistant(let message, _), .more(let message, _):
             return message.content.compactMap { if case .text(let part) = $0 { .markdown(part.text) } else { nil } }
         case .shell(let shell):
             return [.plain(shell.command), .plain(ShellRow.output(of: shell))]
@@ -399,9 +408,17 @@ enum Row: Identifiable, Hashable {
         }
     }
 
+    /// More of a reply before it.
+    var continues: Bool {
+        if case .more = self { true } else { false }
+    }
+
     /// Space above this row: steps of one reply sit close, a new message gets room.
     func spacing(after previous: Row) -> CGFloat {
         switch (previous, self) {
+        // The space the Markdown style puts between those paragraphs.
+        case (_, .more(_, let gap)): gap
+        case (.more, .assistant), (.more, .turnEnd), (.more, .working(_)), (.more, .steps): 10
         case (_, .widget), (.widget, _), (_, .sent), (.sent, _): 14
         case (.assistant, .assistant), (.assistant, .turnEnd), (.assistant, .working(_)),
              (.steps, .assistant), (.assistant, .steps), (.steps, .turnEnd), (.steps, .working(_)): 10
@@ -417,7 +434,7 @@ enum Row: Identifiable, Hashable {
     var id: String {
         switch self {
         case .user(let m): m.id
-        case .assistant(let m, _): m.id
+        case .assistant(let m, _), .more(let m, _): m.id
         case .steps(let id, _, _): id
         case .widget(let call): call.id
         case .sent(let call): call.id
@@ -492,6 +509,8 @@ private struct RowView: View, Equatable {
                 .contextMenu { Button("Cancel", role: .destructive) { cancel(item) }.disabled(isOffline) }
         case .assistant(let message, let showsError):
             AssistantStepView(message: message, directory: directory, folders: folders, showsError: showsError)
+        case .more(let message, _):
+            AssistantStepView(message: message, directory: directory, folders: folders, showsError: false)
         case .steps(_, let blocks, let isLive):
             StepsRow(blocks: blocks, isLive: isLive, directory: directory)
         case .widget(let call):
@@ -702,7 +721,8 @@ private struct AssistantStepView: View {
                 Group {
                     switch block {
                     case .text(let text):
-                        MarkdownText(text: text.text, folders: folders)
+                        // The last of a step under way may still be writing a code block.
+                        MarkdownText(text: text.text, folders: folders, isWriting: message.time.completed == nil && index == message.content.count - 1)
                     case .reasoning(let reasoning):
                         ReasoningView(block: reasoning)
                     case .tool(let call):
@@ -733,18 +753,56 @@ struct MarkdownText: View {
     var folders: () -> [String] = { [] }
     /// In a group chat, its bots, for their mentions.
     var mentions: [Bot] = []
-    @Environment(AppModel.self) private var app
+    /// Still being written: a code block it ends in is colored once it's done.
+    var isWriting = false
     @Environment(\.findHighlight) private var highlight
 
     var body: some View {
         #if DEBUG
-        if Perf.plain { Text(text).transcriptFont().textSelection(.enabled) } else { structured }
+        if Perf.plain { Text(text).transcriptFont().textSelection(.enabled) } else { pieces }
         #else
-        structured
+        pieces
         #endif
     }
 
-    private var structured: some View {
+    /// A long reply in pieces (see `MarkdownChunks`), so that as it streams in, only its last
+    /// piece is read and laid out again.
+    private var pieces: some View {
+        let chunks = MarkdownChunks.split(text)
+        // Find's marks, each piece's own.
+        let marks = highlight.map { highlight in
+            guard chunks.count > 1 else { return [highlight] }
+            let folders = folders()
+            return highlight.spread(over: chunks.map { FindText.shown(markdown: String($0.text), folders: folders) })
+        }
+        // The same stack for one piece or several, so the first stays as it is when a reply
+        // grows long enough to be split.
+        return VStack(alignment: .leading, spacing: 0) {
+            ForEach(chunks.indices, id: \.self) { index in
+                // Code still being written is colored once it's done.
+                MarkdownPiece(text: isWriting ? MarkdownChunks.text(of: chunks[index], marking: CodeLanguage.writing) : String(chunks[index].text),
+                              folders: folders, mentions: mentions, highlight: marks?[index])
+                    .equatable()
+                    .padding(.top, chunks[index].gap)
+            }
+        }
+    }
+}
+
+/// Markdown, drawn by Textual. Equal when its words and marks are: a piece that's done isn't read
+/// again as the rest of its reply streams in.
+private struct MarkdownPiece: View, Equatable {
+    let text: String
+    let folders: () -> [String]
+    let mentions: [Bot]
+    let highlight: FindHighlight?
+    @Environment(AppModel.self) private var app
+
+    static func == (a: MarkdownPiece, b: MarkdownPiece) -> Bool {
+        a.text == b.text && a.highlight == b.highlight && a.mentions == b.mentions
+    }
+
+    var body: some View {
         StructuredText(text, parser: FileLinkingParser(folders: folders, mentions: mentions, highlight: highlight))
             // Textual reads it again only when the text changes: made again when the marks do.
             .id(highlight)
@@ -762,6 +820,9 @@ struct MarkdownText: View {
                 app.utilities.show(url)
                 return .handled
             })
+            #if DEBUG
+            .onAppear { ScrollFrameMonitor.piecesMade += 1 }
+            #endif
     }
 }
 
