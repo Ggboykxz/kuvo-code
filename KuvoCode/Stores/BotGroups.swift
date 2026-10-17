@@ -848,23 +848,62 @@ final class BotGroups {
         }
         if !proposed.isEmpty { Analytics.shared.track("group_work_started", ["parts": proposed.count]) }
         for task in proposed where (task.after ?? []).isEmpty {
-            Task { await hand(task.id, of: wrapUpID, in: id) }
+            handSoon(task.id, of: wrapUpID, in: id)
         }
         startReady(wrapUpID, in: id)
     }
 
     /// Parts waiting on others: once those are all done they start, with their reports; if one
-    /// of those couldn't finish, they don't.
+    /// of those couldn't finish, or they wait on each other, they don't. One part at a time, from
+    /// the parts as they are then, since one failing fails those after it.
     private func startReady(_ wrapUpID: String, in id: String) {
-        guard let tasks = messages(in: id).first(where: { $0.id == wrapUpID })?.tasks else { return }
-        for task in tasks where task.state == .waiting {
-            let first = tasks.filter { ($0.id != task.id) && (task.after ?? []).contains($0.bot) }
-            if let failed = first.first(where: { $0.state == .failed }) {
-                fail(task.id, of: wrapUpID, in: id, "\(app?.bots.bot(failed.bot)?.name ?? "the bot before it") couldn’t finish its part first")
-            } else if first.allSatisfy({ $0.state == .done }) {
-                changeTask(task.id, of: wrapUpID, in: id) { $0.state = .working }
-                Task { await hand(task.id, of: wrapUpID, in: id) }
+        while let tasks = messages(in: id).first(where: { $0.id == wrapUpID })?.tasks {
+            var changed = false
+            for task in tasks where task.state == .waiting {
+                let first = tasks.filter { ($0.id != task.id) && (task.after ?? []).contains($0.bot) }
+                if let failed = first.first(where: { $0.state == .failed }) {
+                    fail(task.id, of: wrapUpID, in: id, "\(app?.bots.bot(failed.bot)?.name ?? "the bot before it") couldn’t finish its part first", thenOthers: false)
+                } else if first.allSatisfy({ $0.state == .done }) {
+                    changeTask(task.id, of: wrapUpID, in: id) { $0.state = .working }
+                    handSoon(task.id, of: wrapUpID, in: id)
+                } else if let ring = Self.ring(through: task, in: tasks) {
+                    for part in ring { changeTask(part.id, of: wrapUpID, in: id) { $0.state = .failed; $0.finished = .now } }
+                    let names = ring.map { name(of: $0.bot) }.formatted(.list(type: .and))
+                    note("\(names) wait on each other’s parts, so \(ring.count == 2 ? "neither" : "none of them") could start.", in: id)
+                } else {
+                    continue
+                }
+                changed = true
+                break
             }
+            if !changed { return }
+        }
+    }
+
+    /// The parts waiting in a ring through `task`, each on the next and the last on `task`; nil
+    /// when its waits end somewhere.
+    static func ring(through task: GroupTask, in tasks: [GroupTask]) -> [GroupTask]? {
+        var seen: Set<String> = []
+        func path(from part: GroupTask) -> [GroupTask]? {
+            for next in tasks where next.state == .waiting && next.id != part.id && (part.after ?? []).contains(next.bot) {
+                if next.id == task.id { return [part] }
+                if seen.insert(next.id).inserted, let rest = path(from: next) { return [part] + rest }
+            }
+            return nil
+        }
+        return path(from: task)
+    }
+
+    /// Parts being handed to their bots or followed, so a restart of the engine doesn't follow
+    /// one twice (and report it twice).
+    @ObservationIgnored private var following: Set<String> = []
+
+    /// Hands a part over, counted as under way from now.
+    private func handSoon(_ taskID: String, of wrapUpID: String, in id: String) {
+        guard following.insert(taskID).inserted else { return }
+        Task {
+            await hand(taskID, of: wrapUpID, in: id)
+            following.remove(taskID)
         }
     }
 
@@ -887,15 +926,28 @@ final class BotGroups {
             try await api.prompt(session: bot.sessionID, id: promptID, text: GroupWork.compose(task, chat: group, wrapUp: wrapUp,
                                                                                                     from: name(of: wrapUp.author) + (wrapUp.kind == .wrapUp ? "'s wrap-up" : "'s last message"), before: before), delivery: .queue)
             changeTask(taskID, of: wrapUpID, in: id) { $0.prompt = promptID }
-            await follow(taskID, of: wrapUpID, in: id)
+            await awaitReport(taskID, of: wrapUpID, in: id)
         } catch {
             fail(taskID, of: wrapUpID, in: id, error.localizedDescription)
         }
     }
 
+    /// A part under way when the app last quit, or the engine restarted: followed again, unless
+    /// it already is.
+    private func follow(_ taskID: String, of wrapUpID: String, in id: String) async {
+        guard following.insert(taskID).inserted else { return }
+        defer { following.remove(taskID) }
+        await awaitReport(taskID, of: wrapUpID, in: id)
+    }
+
+    /// The part's state as it is now.
+    private func state(of taskID: String, of wrapUpID: String, in id: String) -> GroupTask.State? {
+        messages(in: id).first { $0.id == wrapUpID }?.tasks?.first { $0.id == taskID }?.state
+    }
+
     /// Until the bot's run on its part ends (however long it takes, waiting on you meanwhile if
     /// it asks something); then what it said, back in the chat as its report.
-    private func follow(_ taskID: String, of wrapUpID: String, in id: String) async {
+    private func awaitReport(_ taskID: String, of wrapUpID: String, in id: String) async {
         while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(3))
             guard let app, group(id) != nil, let task = messages(in: id).first(where: { $0.id == wrapUpID })?.tasks?.first(where: { $0.id == taskID }),
@@ -903,15 +955,16 @@ final class BotGroups {
             guard let bot = app.bots.bot(task.bot), let promptID = task.prompt else { return fail(taskID, of: wrapUpID, in: id, "the bot is gone") }
             // A machine that's away, or a run under way: later.
             guard let api = app.workspace.api(forFolder: bot.directory), !app.workspace.running.contains(bot.sessionID) else { continue }
-            guard let messages = try? await api.messages(session: bot.sessionID, limit: 80).data,
-                  let index = messages.firstIndex(where: { $0.id == promptID }) else { continue }
+            guard let conversation = await messages(from: promptID, in: bot.sessionID, since: task.started, api: api) else { continue }
             // Its answer, once it's done; the engine's word that the run ended, in case an event went missing.
-            let answered = messages[(index + 1)...].contains { message in
+            let answered = conversation.dropFirst().contains { message in
                 if case .assistant(let answer) = message { answer.time.completed != nil } else { false }
             }
             guard answered, let active = try? await api.activeSessions(), !active.contains(bot.sessionID) else { continue }
             let since = (task.started ?? .now).addingTimeInterval(-5)
             let (text, error, _) = (try? await reply(in: bot.sessionID, after: promptID, since: since, api: api)) ?? ("", nil, [])
+            // Reported meanwhile (or stopped), from elsewhere: not again.
+            guard state(of: taskID, of: wrapUpID, in: id) == .working else { return }
             if text.isEmpty { return fail(taskID, of: wrapUpID, in: id, error ?? "it stopped without saying what it did") }
             changeTask(taskID, of: wrapUpID, in: id) { $0.state = .done; $0.finished = .now }
             append(GroupMessage(id: Self.newID(), author: bot.id, text: text, time: .now, report: taskID), to: id)
@@ -927,20 +980,38 @@ final class BotGroups {
         }
     }
 
-    private func fail(_ taskID: String, of wrapUpID: String, in id: String, _ reason: String) {
+    /// The bot's conversation from `promptID` on, read further back while it's longer than a page
+    /// (a long run is many messages), but not past the part's start; nil while it isn't there.
+    private func messages(from promptID: String, in session: String, since started: Date?, api: OpenCodeAPI) async -> [Message]? {
+        guard var page = try? await api.messages(session: session, limit: 80) else { return nil }
+        var messages = page.data
+        let start = ((started ?? .distantPast).timeIntervalSince1970 - 5) * 1000
+        while !messages.contains(where: { $0.id == promptID }), let oldest = messages.first, oldest.created > start, messages.count < 2000,
+              let cursor = page.cursor?.next ?? page.cursor?.previous {
+            guard let older = try? await api.messages(session: session, limit: 200, before: cursor), !older.data.isEmpty,
+                  !messages.contains(where: { $0.id == older.data.last?.id }) else { break }
+            messages = older.data + messages
+            page = older
+        }
+        return messages.firstIndex { $0.id == promptID }.map { Array(messages[$0...]) }
+    }
+
+    /// `thenOthers`: parts that waited on it fail too (startReady goes on to them itself).
+    private func fail(_ taskID: String, of wrapUpID: String, in id: String, _ reason: String, thenOthers: Bool = true) {
         changeTask(taskID, of: wrapUpID, in: id) { $0.state = .failed; $0.finished = .now }
         let who = messages(in: id).first { $0.id == wrapUpID }?.tasks?.first { $0.id == taskID }.flatMap { app?.bots.bot($0.bot)?.name } ?? "A bot"
         let why = reason.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "."))
         note("\(who) couldn’t do its part: \(why).", in: id)
         // Parts that waited on it can't start.
-        startReady(wrapUpID, in: id)
+        if thenOthers { startReady(wrapUpID, in: id) }
     }
 
-    /// Parts under way when the app last quit: followed again, until their bots report.
+    /// Parts under way when the app last quit, or the engine restarted: followed again (unless
+    /// they still are), until their bots report.
     func resumeWork() {
         for group in list {
             for message in messages(in: group.id) {
-                for task in message.tasks ?? [] where task.state == .working {
+                for task in message.tasks ?? [] where task.state == .working && !following.contains(task.id) {
                     if task.prompt == nil {
                         fail(task.id, of: message.id, in: group.id, "Kuvo Code quit before it reached the bot")
                     } else {
