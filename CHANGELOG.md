@@ -6,6 +6,9 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Updating the browser on a machine no longer deletes the copy that's running when the home folder there is reached through a link. Two Macs on different versions of Kuvo Code no longer send the browser to a machine they share in turns, and a half-built browser download left on your Mac when Kuvo Code quit is cleaned up.
+- On a machine, while an agent waits for you to sign in, give a code or do a step, other sessions and bots there keep browsing; they used to wait with it, up to 15 minutes. A stopped agent's card closes and its leftover steps no longer run later, and if the page changed while you answered, nothing is filled in.
+- On a machine, an agent's browsing answers pop-up dialogs only in the page it's working in. It could answer, or even accept, one in a page you were using or had taken over while another agent browsed.
 - Every session is listed, however many you have. Only the newest 100 were, so older ones, pinned ones among them, and a quiet bot's conversation could go missing after a relaunch.
 - A session the engine didn't name is named after your first message, without the note on attached files or the header of a message from another agent. After a long first run it stayed "New Session", then took a later message's words.
 - After you disconnect an account, new sessions and bots start on a model you can still use, rather than on that account's and failing. Settings' model choices show such a model by name instead of a blank.
