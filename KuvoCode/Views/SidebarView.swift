@@ -1247,6 +1247,7 @@ private struct AccountsRow: View {
         submenu.addItem(ActionItem("Keyboard Shortcuts", image: Self.symbol("command")) { app.openSettings(.shortcuts) })
         submenu.addItem(ActionItem("What\u{2019}s New", image: Self.symbol("sparkles")) { NSWorkspace.shared.open(AppInfo.releases) })
         submenu.addItem(ActionItem("Report an Issue…", image: Self.symbol("exclamationmark.bubble")) { NSWorkspace.shared.open(AppInfo.newIssue) })
+        submenu.addItem(ActionItem("Contact Us…", image: Self.symbol("envelope")) { NSWorkspace.shared.open(AppInfo.contact) })
         if updates.isAvailable {
             submenu.addItem(.separator())
             let check = ActionItem("Check for Updates…") { updates.check() }

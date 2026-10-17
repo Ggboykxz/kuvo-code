@@ -27,6 +27,7 @@ or start with free models that need no account.
 [Download for macOS](https://github.com/serhatandic/kuvo-code/releases/latest/download/KuvoCode.dmg)
 · [Docs](https://kuvo.run/code/docs/)
 · [Report a bug](https://github.com/serhatandic/kuvo-code/issues/new/choose)
+· [Contact](mailto:info@kuvo.run)
 · [Build from source](#build-from-source)
 
 ## Features
@@ -128,7 +129,8 @@ building from Terminal, tests, and the debug launch variables.
 
 Bug reports and focused pull requests are welcome; read
 [CONTRIBUTING.md](CONTRIBUTING.md) first. Please report vulnerabilities
-privately, as described in the [security policy](SECURITY.md).
+privately, as described in the [security policy](SECURITY.md). For anything
+else, write to [info@kuvo.run](mailto:info@kuvo.run).
 
 ## License
 
@@ -136,7 +138,7 @@ Kuvo Code is source-available under the
 [PolyForm Noncommercial License 1.0.0](LICENSE). You may use, study, modify,
 and redistribute it for permitted noncommercial purposes. Commercial use,
 including monetizing a fork or derivative, requires a separate written license
-from the copyright holder. See [NOTICE](NOTICE) for the required copyright
+from the copyright holder: write to [info@kuvo.run](mailto:info@kuvo.run). See [NOTICE](NOTICE) for the required copyright
 notice and [THIRD_PARTY_LICENSES.txt](THIRD_PARTY_LICENSES.txt) for the
 licenses of included dependencies.
 

@@ -4,7 +4,8 @@
 
 Please do not open a public issue for a vulnerability. Use GitHub's
 [private vulnerability reporting](https://github.com/serhatandic/kuvo-code/security/advisories/new)
-so the report, reproduction steps, and any proposed fix remain private.
+so the report, reproduction steps, and any proposed fix remain private. If you
+can't use it, email [info@kuvo.run](mailto:info@kuvo.run) instead.
 
 Include the affected version and macOS version, the impact, and the smallest
 reproduction you can provide. Kuvo Code's sessions and logs can contain your
