@@ -762,10 +762,10 @@ struct MainView: View {
             }
         }
         .simultaneousGesture(TapGesture().onEnded { focus = .conversation })
-        // What you open last keeps its place when the window is short of room.
+        // What you open last keeps its place when the window is short of room (a split, from
+        // Open Beside: coming back to a tab that has one isn't opening it).
         .onChange(of: showsSidebar) { _, shows in if shows { keep(.sessions) } }
         .onChange(of: showsPanel) { _, shows in if shows { keep(.changes) } }
-        .onChange(of: splitSession) { _, session in if !session.isEmpty { keep(.split) } }
         // A session an agent started: beside the conversation that started it, if that's the one
         // in view; otherwise in a tab of its own, for you to find.
         .onChange(of: workspace.besideRequest) { _, request in
@@ -1263,7 +1263,7 @@ struct MainView: View {
         case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
         default: break
         }
-        if environment["KUVO_DEMO_CHANGES"] != nil { showsPanel = true }
+        if environment["KUVO_DEMO_CHANGES"] != nil { showPanel() }
         // KUVO_DEMO_PALETTE=<text>: the command palette, with that typed in it.
         if workspace.isLoaded, environment["KUVO_DEMO_PALETTE"] != nil { showsPalette = true }
         // KUVO_DEMO_WINDOW=WIDTHxHEIGHT resizes the window, for checking narrow layouts;
@@ -1337,7 +1337,7 @@ struct MainView: View {
                 }
             default: continue
             }
-            showsPanel = true
+            showPanel()
         }
         // KUVO_DEMO_IMPORT_BOT=<path>: New Bot, from that shared bot's file.
         if let path = environment["KUVO_DEMO_IMPORT_BOT"], let data = FileManager.default.contents(atPath: path),
