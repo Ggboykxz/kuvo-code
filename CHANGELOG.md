@@ -4,14 +4,24 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
-## Unreleased
+## 0.5.5
 
+- Two sessions side by side: right-click a tab or a session in the sidebar and choose Open Beside. The two show as one tab, and come back together when you return to it from another; drag the gap to resize, swap them, close the one beside (⇧⌘T brings it back beside), or choose Close Split View to give each a tab of its own. Stop, Find, the modes and the keys on its cards go to the half you clicked into, and the one beside counts as seen while it shows.
+- Two sessions side by side show as one tab in two halves, the tab's own half raised. Settings › General can show them as one tab with both names, or as the two tabs joined, as before.
+- An agent can start a session of its own for part of the work, in the same project or another folder: it opens beside the conversation that started it (or in a tab of its own, if asked), and the two can write to each other. Ask for a separate session, or let the agent decide.
+- Math in replies is drawn as formulas: `$…$` and `\(…\)` in a line, `$$…$$` and `\[…\]` centered on their own. It used to show as raw LaTeX, and a line of `=` under it turned the line above into a heading. Prices like $5 and code stay as they are.
+- Editors open in place instead of in pop-up windows. In Settings, an agent, command, MCP server, skill, key, sign-in or provider opens in the page, under a way back to it (Esc goes back too); New Project and Edit Project open in the window's main card, as a bot does; and Add a Machine opens inside what asked for it.
+- Renaming a session happens where its title is: in its row in the sidebar, or in its card's header from its tab or the command palette. A new branch is named right where the branch shows in the title bar.
+- A widget the agent makes opens larger over its conversation, as the side panel does over the window, instead of in a separate sheet; Esc brings the conversation back. While it's being made, it shows its name as soon as the agent has written it, or words that change, instead of "Making something… Zero KB".
+- Fields show everything written in them: an agent's or command's description, a skill's "Use it when", a project's run and setup commands, a group chat's name and purpose, and your answers grow as you type rather than cutting off.
+- A file dropped anywhere on the message box is attached, its text included. Dropped on the text, it used to go in as the file's path.
+- Each conversation's agent keeps to a browser tab of its own. Two sessions browsing at once used to move each other's pages, and one's click could land on the other's page.
+- The menu bar's usage panel shows Grok's weekly limit for a SuperGrok account you signed in to in Kuvo Code; it used to need the Grok CLI signed in too. That account comes first: an old or other Grok CLI login on your Mac no longer stands in for it.
 - Following the agent's thinking while it streams no longer leaves the conversation blank once the thinking is done and folds into its summary: it stays at the end. Code blocks are lighter to draw, and keep their size while Find marks them.
 - Kuvo Code no longer quits when a program on your Mac sends its browser tools a malformed request.
 - Showing a folder in the panel works when the agent gives its path with a slash at the end.
 - Saving a page as a PDF over an existing file keeps the old file if the save fails. It used to be deleted first.
 - An alert a page shows between the agent's steps no longer leaves the agent stuck until you dismiss it. While the agent waits for you to sign in or do something on the page, the page's own questions show for you to answer instead of being turned down.
-- Each conversation's agent keeps to a browser tab of its own. Two sessions browsing at once used to move each other's pages, and one's click could land on the other's page.
 - A password or code you give the agent goes in only if the page is still on the same site with the same fields. If it changed while you answered, nothing is filled in, and a password only ever goes into a password field. A sign-in card also goes away when the agent stops.
 - When the agent clicks or types by number, it acts on the element it read, also inside frames and shadow roots. It used to hit the wrong element in a frame, couldn't use elements in shadow roots, and could land on another element after the page added rows or banners above it. If the element is gone or changed, it reads the page again.
 - Repeating wake-ups and group meetings keep their time of day. A daily 2:30 no longer moves an hour for good after clocks go forward, one isn't skipped after clocks go back, and after a time-zone change they come at the same time there.
@@ -46,22 +56,12 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Agents no longer list sessions you archived among the ones they can write to.
 - New Session (⌘N) in a bot's conversation starts in your latest project. It used to make an empty project called "workspace", whose session was listed nowhere; one made that way is gone from Projects.
 - A file or folder an agent shows you while you're in another conversation opens in the side panel when you come back to that one. It used to be lost, while the agent was told it was open; now it's told whether you've seen it. The step names what it showed, and clicking it shows it again.
-- Math in replies is drawn as formulas: `$…$` and `\(…\)` in a line, `$$…$$` and `\[…\]` centered on their own. It used to show as raw LaTeX, and a line of `=` under it turned the line above into a heading. Prices like $5 and code stay as they are.
-- Editors open in place instead of in pop-up windows. In Settings, an agent, command, MCP server, skill, key, sign-in or provider opens in the page, under a way back to it (Esc goes back too); New Project and Edit Project open in the window's main card, as a bot does; and Add a Machine opens inside what asked for it.
-- Renaming a session happens where its title is: in its row in the sidebar, or in its card's header from its tab or the command palette. A new branch is named right where the branch shows in the title bar.
-- Fields show everything written in them: an agent's or command's description, a skill's "Use it when", a project's run and setup commands, a group chat's name and purpose, and your answers grow as you type rather than cutting off.
-- A file dropped anywhere on the message box is attached, its text included. Dropped on the text, it used to go in as the file's path.
 - A new bot no longer shows for a moment as a project called "workspace" in the sidebar while it's set up.
 - Creating a bot on a machine that's still connecting waits for it, showing what's under way beside the buttons, then makes the bot. It used to do nothing. If the machine can't be reached, it says so above the buttons.
 - Dropping a quote you were replying to no longer quits Kuvo Code. With the cursor in its answer, the app crashed.
-- A widget the agent makes opens larger over its conversation, as the side panel does over the window, instead of in a separate sheet; Esc brings the conversation back. While it's being made, it shows its name as soon as the agent has written it, or words that change, instead of "Making something… Zero KB".
-- An agent can start a session of its own for part of the work, in the same project or another folder: it opens beside the conversation that started it (or in a tab of its own, if asked), and the two can write to each other. Ask for a separate session, or let the agent decide.
-- Two sessions side by side: right-click a tab or a session in the sidebar and choose Open Beside. The two show as one tab, and come back together when you return to it from another; drag the gap to resize, swap them, close the one beside (⇧⌘T brings it back beside), or choose Close Split View to give each a tab of its own. Stop, Find, the modes and the keys on its cards go to the half you clicked into, and the one beside counts as seen while it shows.
-- The menu bar's usage panel shows Grok's weekly limit for a SuperGrok account you signed in to in Kuvo Code; it used to need the Grok CLI signed in too. That account comes first: an old or other Grok CLI login on your Mac no longer stands in for it.
 - While the agent thinks between steps, its thinking shows under the steps as it happens. It could be folded in with the finished steps, as if the agent had stopped.
 - With the side panel at its widest, it stays inside the window. Beside the bot editor it could run off the window's right edge; the editor's colors and faces now wrap onto another line when there's little room.
 - When the window hasn't room for the sidebar, the panel and a session beside, the one you opened last stays and the others make way; a session beside that you come back to makes way first. Showing the panel beside a split view used to do nothing, and its button needed a second press.
-- Two sessions side by side show as one tab in two halves, the tab's own half raised. Settings › General can show them as one tab with both names, or as the two tabs joined, as before.
 - When an agent on one of your machines starts browsing, the panel opens once its page is there to show. It used to open straight away on Changes, with nothing of the agent's in it.
 - Anonymous usage, while it's on, also says where a first run stops, how an update goes, how long a model takes to start answering, and what kind of trouble a failed run, sign-in, crash or hang was, so those can be fixed. As before, never your code, prompts, files or accounts, and it's off with Settings › Privacy.
 
