@@ -38,6 +38,7 @@ struct BotEditor: View {
     @State private var creating: Task<Void, Never>?
     @State private var waitsForMachine = false
     @State private var confirmsDelete = false
+    @State private var isDeleting = false
     /// The template a new bot started from.
     @State private var template: String?
     @State private var isHoveringAvatar = false
@@ -129,8 +130,22 @@ struct BotEditor: View {
         .alert("Delete \(bot?.name ?? "This Bot")?", isPresented: $confirmsDelete) {
             Button("Delete", role: .destructive) {
                 guard let bot else { return }
-                close()
-                Task { await bots.delete(bot) }
+                // A machine's bot goes once it's gone there too; what stops it shows above the buttons.
+                isWorking = true
+                isDeleting = true
+                failure = nil
+                Task {
+                    defer {
+                        isWorking = false
+                        isDeleting = false
+                    }
+                    do {
+                        try await bots.delete(bot)
+                        close()
+                    } catch {
+                        failure = error.localizedDescription
+                    }
+                }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -266,6 +281,7 @@ struct BotEditor: View {
                     if compact { Image(systemName: "trash") } else { Text("Delete Bot…") }
                 }
                 .buttonStyle(.glass)
+                .disabled(isWorking)
                 .help(compact ? "Delete Bot…" : "")
                 .accessibilityLabel("Delete Bot…")
                 Button { BotRecipe.export(bot) } label: {
@@ -278,7 +294,7 @@ struct BotEditor: View {
             if isWorking {
                 Spinner(size: 16)
                 if !compact {
-                    Text(waitingWords ?? (isNew ? "Setting it up…" : "Saving…"))
+                    Text(waitingWords ?? (isNew ? "Setting it up…" : isDeleting ? "Deleting…" : "Saving…"))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }

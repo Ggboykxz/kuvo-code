@@ -134,9 +134,11 @@ final class Bots {
         case tooSoon
         case tooMany
         case noWake
+        case stillOn(String)
         var errorDescription: String? {
             switch self {
             case .notConnected(let machine): "\(machine) isn’t connected. Connect to it, then try again."
+            case .stillOn(let machine): "\(machine) isn’t connected, and the bot would keep running there. Connect to it, then delete the bot."
             case .noFolder: "Couldn’t make the bot’s folder."
             case .tooSoon: "Pick a time at least a minute from now."
             case .tooMany: "This bot has \(Wakes.limit) wake-ups waiting. Cancel some first."
@@ -245,20 +247,26 @@ final class Bots {
     }
 
     /// Deletes a bot: its conversation, its folder and its wake-ups. A project it worked in stays.
-    func delete(_ bot: Bot) async {
+    /// A machine's bot goes only once its folder there has, which stops its wake-ups and watches,
+    /// so while the machine can't be reached it stays, and this says so. (One whose machine you
+    /// removed from Kuvo Code just leaves the list.)
+    func delete(_ bot: Bot) async throws {
+        if let machine = bot.machine, let engine = app?.machines.engine(machine) {
+            guard engine.isReady else { throw Failure.stillOn(machine) }
+            let folder = bot.folder
+            guard await Task.detached(operation: { RemoteShell.run("rm -rf \(SSHConnection.quoted(folder))", on: machine) }).value != nil else {
+                throw Failure.stillOn(machine)
+            }
+        }
         await app?.groups.remove(bot)
         list.removeAll { $0.id == bot.id }
         save()
         wakes[bot.id] = nil
+        watches[bot.id] = nil
         app?.utilities.closeTabs(of: bot.id)
         app?.workspace.botSessions = sessionIDs
         await app?.workspace.delete(bot.sessionID)
-        if let machine = bot.machine {
-            let folder = bot.folder
-            _ = await Task.detached { RemoteShell.run("rm -rf \(SSHConnection.quoted(folder))", on: machine) }.value
-        } else {
-            try? FileManager.default.removeItem(atPath: bot.folder)
-        }
+        if bot.machine == nil { try? FileManager.default.removeItem(atPath: bot.folder) }
         Analytics.shared.track("bot_deleted")
     }
 
