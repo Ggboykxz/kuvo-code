@@ -174,7 +174,10 @@ final class BrowserAgent {
         guard browser.url != nil else { return "The browser is empty. Use browser_navigate to open a page." }
         let script = Self.snapshotScript
         let id = UUID().uuidString
-        let result = try? await browser.webView.callAsyncJavaScript(script, arguments: ["kuvoSnapshot": id], contentWorld: .page) as? [String: Any]
+        // What the page set to run on a click, which only its own world sees, for the snapshot
+        // to count those elements as clickable too.
+        let handlers = (try? await browser.webView.callAsyncJavaScript(Self.handlersScript, contentWorld: .page)) as? [Any] ?? []
+        let result = try? await browser.webView.callAsyncJavaScript(script, arguments: ["kuvoSnapshot": id, "kuvoHandlers": handlers], contentWorld: Self.world) as? [String: Any]
         guard let result else { return "Couldn't read the page at \(browser.url?.absoluteString ?? "")." }
         // Its numbers are the ones this conversation's actions use, in this page only.
         if let caller { Self.snapshots[caller] = id }
@@ -502,17 +505,22 @@ final class BrowserAgent {
 
     /// Shows the pointer where the agent's about to act, and gives it a moment to get there.
     private func point(_ action: AgentPointer.Action, at index: Int, in browser: BrowserSession) async {
-        guard let json = try? await browser.webView.callAsyncJavaScript(Self.findElement + Self.rectScript, arguments: withSnapshot(["index": index]), contentWorld: .page) as? String,
+        guard let json = try? await browser.webView.callAsyncJavaScript(Self.findElement + Self.rectScript, arguments: withSnapshot(["index": index]), contentWorld: Self.world) as? String,
               let values = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Double],
               let x = values["x"], let y = values["y"], let width = values["width"], let height = values["height"] else { return }
         browser.showAgentStep(action, at: CGRect(x: x, y: y, width: width, height: height))
         try? await Task.sleep(for: .milliseconds(150))
     }
 
+    /// The agent's own world in each page: the element scripts run there, and the numbers they
+    /// keep stay there, where the page's own scripts can't read or change them. The DOM is the
+    /// same in both, so what they do to the page is the same.
+    static var world: WKContentWorld { .world(name: "kuvo-agent") }
+
     /// Runs one of the element scripts with the numbers from the last snapshot.
     private func run(_ body: String, _ arguments: [String: Any], in browser: BrowserSession) async -> String {
         do {
-            let result = try await browser.webView.callAsyncJavaScript(Self.findElement + body, arguments: withSnapshot(arguments), contentWorld: .page)
+            let result = try await browser.webView.callAsyncJavaScript(Self.findElement + body, arguments: withSnapshot(arguments), contentWorld: Self.world)
             return result as? String ?? "ok"
         } catch {
             return "The page refused that: \(error.localizedDescription)"
@@ -580,13 +588,64 @@ final class BrowserAgent {
 
     """
 
+    /// Every element, in the page, its open shadow roots and its frames, in an order the page's
+    /// world and the agent's walk alike: one names an element to the other by its place in it.
+    static let everyElementScript = """
+    const everyElement = (visit) => {
+      let place = 0;
+      (function walk(root) {
+        for (const element of root.querySelectorAll('*')) {
+          visit(element, place++);
+          if (element.shadowRoot) walk(element.shadowRoot);
+          if (element.localName === 'iframe' || element.localName === 'frame') {
+            try { if (element.contentDocument) walk(element.contentDocument); } catch {}
+          }
+        }
+      })(document);
+    };
+
+    """
+
+    /// Run in the page's own world: the elements the page set something to run on a click as a
+    /// property (`element.onclick = …`), which the agent's world can't see, as [place, tag, names].
+    static let handlersScript = """
+    \(everyElementScript)
+    const names = ['onclick', 'onmousedown', 'onmouseup', 'ondblclick'];
+    const found = [];
+    everyElement((element, place) => {
+      const set = names.filter((name) => typeof element[name] === 'function' && !element.hasAttribute(name));
+      if (set.length) found.push([place, element.localName, set]);
+    });
+    return found;
+    """
+
     /// Runs buildDomTree, keeps each numbered element (and what it was) for the actions, and
     /// writes the elements out the way browser-use shows them to a model. `kuvoSnapshot`, when
     /// given, names this snapshot, so actions can tell their numbers are from it.
+    /// `kuvoHandlers`, from `handlersScript`, are the page's click handlers, which buildDomTree
+    /// sees here only while it runs.
     static let snapshotScript = """
     document.getElementById('playwright-highlight-container')?.remove();
     const numbered = {};
-    const result = (\(domTree))({ doHighlightElements: false, focusHighlightIndex: -1, viewportExpansion: 0, debugMode: false, onIndex: (number, element) => { numbered[number] = element; } });
+    \(everyElementScript)
+    const lent = [];
+    if (typeof kuvoHandlers === 'object' && kuvoHandlers && kuvoHandlers.length) {
+      const handlers = new Map(kuvoHandlers.map((entry) => [entry[0], entry]));
+      everyElement((element, place) => {
+        const entry = handlers.get(place);
+        if (!entry || entry[1] !== element.localName) return;
+        for (const name of entry[2]) {
+          Object.defineProperty(element, name, { value: () => {}, configurable: true });
+          lent.push([element, name]);
+        }
+      });
+    }
+    let result;
+    try {
+      result = (\(domTree))({ doHighlightElements: false, focusHighlightIndex: -1, viewportExpansion: 0, debugMode: false, onIndex: (number, element) => { numbered[number] = element; } });
+    } finally {
+      for (const [element, name] of lent) delete element[name];
+    }
     \(fingerprintScript)
     const map = result.map || {};
     const ATTRIBUTES = ['title', 'type', 'checked', 'name', 'role', 'value', 'placeholder', 'alt', 'aria-label', 'aria-expanded', 'aria-checked', 'data-state', 'href'];
@@ -629,6 +688,7 @@ final class BrowserAgent {
       }
       (node.children || []).forEach((child) => walk(child, inside));
     })(result.rootId, false);
+    // In the agent's world (`BrowserAgent.world`, and a machine's), out of the page's reach.
     window.__kuvoIndex = { snapshot: typeof kuvoSnapshot === 'string' ? kuvoSnapshot : null, elements: index };
     // A page that asks to sign in (or for a one-time code) says what to do about it, where the
     // agent reads it: ask the user in Kuvo Code, not in the chat.
