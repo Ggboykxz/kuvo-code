@@ -758,8 +758,9 @@ final class SessionModel {
     func setApproval(_ approval: ToolApproval) {
         guard canReach else { return }
         // The rules for particular things (the project's folders, a bot's folder and its
-        // wake-ups) stay, after the approval rules.
-        let rules = approval.rules + (session.permissions ?? []).filter { $0.resource != "*" }
+        // wake-ups) stay, after the approval rules and what Settings › Permissions asks of them.
+        let settings = EngineConfig.current?.permissionRules ?? []
+        let rules = approval.rules(settings: settings) + (session.permissions ?? []).filter(ToolApproval.isParticular)
         session.permissions = rules
         Task {
             do { try await api.setPermissions(session: id, rules: rules) } catch { failure = error.localizedDescription }
@@ -772,7 +773,8 @@ final class SessionModel {
         // As the engine knows them: a machine's folders are plain paths there.
         let folders = projectFolders().map(api.enginePath)
         let current = session.permissions ?? []
-        let rules = ProjectFolders.permissions(current, folders: folders)
+        // Its approval with Settings › Permissions as they are now, too.
+        let rules = ProjectFolders.permissions(ToolApproval.refreshed(current, settings: EngineConfig.current?.permissionRules ?? []), folders: folders)
         guard rules != current else { return }
         do {
             try await api.setPermissions(session: id, rules: rules)

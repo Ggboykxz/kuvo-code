@@ -168,7 +168,7 @@ final class Bots {
         bot.personality = personality
         guard let api = app.workspace.api(forFolder: bot.directory) else { throw Failure.notConnected(machine ?? AppInfo.name) }
         let approval = UserDefaults.standard.string(forKey: ToolApproval.key).flatMap(ToolApproval.init) ?? .approveAll
-        let rules = approval.rules + Self.ownRules(for: bot)
+        let rules = approval.rules(settings: EngineConfig.current?.permissionRules ?? []) + Self.ownRules(for: bot)
         let catalog = machine.flatMap { app.machines.engine($0)?.catalog } ?? app.catalog
         // The one picked, if the engine where it lives has it; otherwise the last one used. Before
         // its models are known (just after launch), the one picked or last used, as it is.
@@ -651,7 +651,8 @@ final class Bots {
     /// project's were synced, and allowed every kuvo-wake command.
     private func repairRules(of bot: Bot, api: OpenCodeAPI) async {
         guard let rules = app?.workspace.session(bot.sessionID)?.permissions else { return }
-        let repaired = rules.filter { !Self.isOwnRule($0, of: bot) } + Self.ownRules(for: bot)
+        // Its approval with Settings › Permissions as they are now, as a conversation that's open gets it.
+        let repaired = ToolApproval.refreshed(rules.filter { !Self.isOwnRule($0, of: bot) }, settings: app?.engineConfig.permissionRules ?? []) + Self.ownRules(for: bot)
         guard repaired != rules else { return }
         try? await api.setPermissions(session: bot.sessionID, rules: repaired)
     }

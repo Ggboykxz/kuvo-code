@@ -15,6 +15,16 @@ final class EngineConfig {
     init(file: URL) {
         self.file = file
         reload()
+        Self.current = self
+    }
+
+    /// This Mac's, for the places that make a session's rules.
+    static weak var current: EngineConfig?
+
+    /// Settings › Permissions' rules, in their order: what every session and mode is held to.
+    var permissionRules: [PermissionRule] {
+        guard let value = settings["permissions"], let data = try? JSONEncoder().encode(value) else { return [] }
+        return (try? JSONDecoder().decode([PermissionRule].self, from: data)) ?? []
     }
 
     /// Reads the file again, after it was changed elsewhere.

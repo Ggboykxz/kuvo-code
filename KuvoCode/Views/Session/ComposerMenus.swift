@@ -25,12 +25,41 @@ enum ToolApproval: String, CaseIterable {
         }
     }
 
-    /// The session rules that give this behaviour.
+    /// The session rules that give this behaviour, on their own.
     var rules: [PermissionRule] {
         switch self {
         case .approveAll: []
         case .askFirst: ["edit", "write", "patch", "shell", "webfetch", "external_directory"].map { PermissionRule(action: $0, effect: .ask) }
         }
+    }
+
+    /// The session rules that give this behaviour beside Settings › Permissions' rules
+    /// (`settings`). A session's rules come after those, and the last one that matches wins, so
+    /// they're folded in: Approve All runs what Settings asks first about, without asking, and
+    /// both keep what Settings doesn't allow, which nothing overrides.
+    func rules(settings: [PermissionRule]) -> [PermissionRule] {
+        let denied = settings.filter { $0.effect == .deny }
+        switch self {
+        case .approveAll:
+            return settings.filter { $0.effect == .ask }.map { PermissionRule(action: $0.action, resource: $0.resource, effect: .allow) } + denied
+        case .askFirst:
+            return rules + denied
+        }
+    }
+
+    /// A rule a session has for something of its own, which neither its approval nor Settings
+    /// make: a folder it may work in (the project's others, a bot's), a bot's wake-up commands.
+    /// The rest are made again from its approval and Settings as they are now, so a rule taken
+    /// out of Settings goes from sessions too.
+    static func isParticular(_ rule: PermissionRule) -> Bool {
+        (rule.action == "external_directory" && rule.effect == .allow && rule.resource != "*")
+            || (rule.action == "shell" && rule.effect == .allow && rule.resource.contains("kuvo-wake"))
+    }
+
+    /// A session's rules made again from its approval and Settings › Permissions as they are now,
+    /// with its own particular ones after.
+    static func refreshed(_ current: [PermissionRule], settings: [PermissionRule]) -> [PermissionRule] {
+        ToolApproval(rules: current).rules(settings: settings) + current.filter(isParticular)
     }
 
     init(rules: [PermissionRule]?) {

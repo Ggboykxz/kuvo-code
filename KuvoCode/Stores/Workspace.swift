@@ -438,13 +438,20 @@ final class Workspace {
         }
     }
 
+    /// Settings › Permissions changed: open sessions' rules follow (the others' when they open).
+    func syncPermissions() {
+        for model in models.values {
+            Task { await model.syncFolders() }
+        }
+    }
+
     /// A new session in the project at `directory`, or with `worktree`, in a new worktree of it.
     func createSession(in directory: String, model: ModelRef?, agent: String?, approval: ToolApproval = .approveAll, worktree: Bool = false) async throws -> Session {
         guard let api = api(forFolder: directory) else { throw CancellationError() }
         addFolder(directory)
         let folder = worktree ? try await makeWorktree(of: directory) : directory
         let extra = settings[directory]?.folders ?? []
-        let rules = ProjectFolders.permissions(approval.rules, folders: extra)
+        let rules = ProjectFolders.permissions(approval.rules(settings: EngineConfig.current?.permissionRules ?? []), folders: extra)
         let session = try await api.createSession(directory: folder, agent: agent, model: model, permissions: rules.isEmpty ? nil : rules)
         if !extra.isEmpty {
             try? await api.setInstruction(session: session.id, key: ProjectFolders.instructionKey, text: ProjectFolders.instructions(primary: folder, folders: extra))

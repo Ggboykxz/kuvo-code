@@ -40,7 +40,7 @@ struct PermissionsSettings: View {
             } header: {
                 Text("When the Agent Wants To")
             } footer: {
-                Text("For every session and mode. These come after a mode's own rules, so Allow here also lets Plan mode do it. A session set to Ask First still asks.")
+                Text("For every session and mode, so Allow here also lets Plan mode do it. A session set to Approve All does what's set to Ask First here without asking, and one set to Ask First still asks; Don't Allow holds for all of them.")
                     .foregroundStyle(.secondary)
             }
 
@@ -106,6 +106,8 @@ struct PermissionsSettings: View {
             }
             await loadSaved()
         }
+        // Sessions' rules hold these too (see ToolApproval.rules(settings:)): open ones follow now.
+        .onChange(of: app.engineConfig.settings["permissions"]) { workspace.syncPermissions() }
     }
 
     static let policyKinds: [(id: String, title: String)] = [
