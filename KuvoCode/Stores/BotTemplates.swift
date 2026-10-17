@@ -65,16 +65,6 @@ struct BotTemplate: Identifiable {
             personality: "preset.pragmatist"
         ),
         BotTemplate(
-            id: "prices",
-            name: "Bargain",
-            job: "Tells you when prices drop",
-            instructions: """
-            Track the products I give you (links or names). Check their prices twice a day in the browser, keep each one's price history in your memory, and tell me when one drops below the price I named, or by more than 10% if I didn't name one. Include the link and the old and new price.
-            """,
-            look: BotLook(color: .lime, shape: .pebble, face: .bright),
-            personality: "preset.straight"
-        ),
-        BotTemplate(
             id: "research",
             name: "Sage",
             job: "Researches questions and writes them up",
@@ -93,6 +83,17 @@ struct BotTemplate: Identifiable {
             """,
             look: BotLook(color: .mint, shape: .squircle, face: .calm),
             personality: "preset.perfectionist",
+            wantsProject: true
+        ),
+        BotTemplate(
+            id: "review",
+            name: "Lens",
+            job: "Reviews changes before they ship",
+            instructions: """
+            Review this project's changes before they ship. When I ask, read what changed against the main branch (or a pull request, with gh if it's signed in), and check it for bugs, missing tests, security problems and anything that doesn't fit how the code around it is written. If gh is signed in, also set a watch on the project's open pull requests, so you wake up when a new one appears and review it. Report what you found, the most important first, each with its file and line and a fix to make, and say plainly when something looks good. Don't change the code yourself unless I ask.
+            """,
+            look: BotLook(color: .lime, shape: .pebble, face: .curious),
+            personality: "preset.mentor",
             wantsProject: true
         ),
         BotTemplate(
