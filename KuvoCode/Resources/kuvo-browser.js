@@ -1088,7 +1088,8 @@ async function snapshot(p) {
   return [
     `Page: ${result.title || ""}`,
     `URL: ${result.url || ""}`,
-    `Scroll: ${result.above || 0} px above, ${result.below || 0} px below`,
+    // Much more below: reading it all beats scrolling through it a screen at a time.
+    `Scroll: ${result.above || 0} px above, ${result.below || 0} px below` + ((result.below || 0) > 1200 ? " (browser_text reads all of it at once)" : ""),
     "Interactive elements are numbered like [3]; use the number with browser_click, browser_type and browser_select.",
     "",
     body || "(no visible content)",

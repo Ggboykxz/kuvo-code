@@ -168,7 +168,7 @@ enum BrowserTools {
              ["key": ["type": "string"], "accept_dialog": ["type": "boolean", "description": "Accept a confirmation or prompt the page shows on the way (they're declined otherwise)."]], required: ["key"]),
         tool("browser_back", "Go back a page."),
         tool("browser_forward", "Go forward a page."),
-        tool("browser_text", "Read all the text on the current page, for long articles or docs."),
+        tool("browser_text", "Read all the text on the current page at once: an article, docs, a list or a table, without scrolling through it."),
         tool("browser_screenshot", "See the visible part of the page as an image (for models that take images)."),
         tool("browser_wait", "Wait for the page, then read it again: until a text shows on it (up to 30 seconds), or for some seconds (up to 10).",
              ["seconds": ["type": "number"], "text": ["type": "string", "description": "Text to wait for, like a result's title or \"Saved\"."]]),

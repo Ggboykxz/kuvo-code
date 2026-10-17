@@ -168,7 +168,7 @@ final class BrowserAgent {
         return """
         Page: \(result["title"] as? String ?? "")
         URL: \(result["url"] as? String ?? "")
-        Scroll: \(above) px above, \(below) px below
+        Scroll: \(above) px above, \(below) px below\(below > 1200 ? " (browser_text reads all of it at once)" : "")
         Interactive elements are numbered like [3]; use the number with browser_click, browser_type and browser_select.
 
         \(body.isEmpty ? "(no visible content)" : body)
