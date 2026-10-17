@@ -48,13 +48,26 @@ private struct CopyableCodeBlock: View {
     }
 
     /// The first line is too long to share its row with the corner: the code starts below it,
-    /// so nothing is hidden under the language and Copy. (Measured as the code font sets it, a
-    /// little larger than the code, to be safe.)
+    /// so nothing is hidden under the language and Copy. Its width: the code's font is monospaced,
+    /// so its characters times the font's advance (wide ones, like Chinese or emoji, count twice),
+    /// a little larger than the code is set, to be safe. Not laid out as text: doing that here,
+    /// while SwiftUI lays the conversation out, could crash in CoreText.
     private var clearsCorner: Bool {
         guard let firstLine, !firstLine.isEmpty, codeWidth > 0 else { return false }
-        let width = (firstLine as NSString).size(withAttributes: [.font: NSFont.monospacedSystemFont(ofSize: font.size - 1.5, weight: .regular)]).width
+        let cells = firstLine.reduce(0) { $0 + ($1.unicodeScalars.first.map { $0.value >= 0x2E80 } == true ? 2 : 1) }
+        let width = CGFloat(cells) * Self.advance(font.size - 1.5)
         return 14 + width + 8 > codeWidth - cornerSize.width
     }
+
+    /// The monospaced system font's advance at `size`, from its metrics.
+    private static func advance(_ size: CGFloat) -> CGFloat {
+        if let known = advances[size] { return known }
+        let advance = NSFont.monospacedSystemFont(ofSize: size, weight: .regular).maximumAdvancement.width
+        advances[size] = advance
+        return advance
+    }
+
+    private static var advances: [CGFloat: CGFloat] = [:]
 
     /// The code with Find's marks in it, while Find has places there: drawn without its colors,
     /// as the highlighter colors it over the marks.
