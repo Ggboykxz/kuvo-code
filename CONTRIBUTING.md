@@ -76,6 +76,10 @@ install the engine in its `~/.kuvo-code-test`, and remove it after).
 OpenCode's free models, on real projects. Its README says how to run it, and
 `SCENARIOS.md` lists the cases and where each stands.
 
+`Tests/Perf` measures how smoothly a conversation streams and scrolls: a real run recorded once
+from a separate copy (`run.kuvo.code.perf`), played back into debug builds to compare them. Its
+README says how.
+
 ### Project layout
 
 | Path | What's there |
@@ -129,6 +133,8 @@ without clicking, for trying a change or taking screenshots:
 | `KUVO_DEMO_DRAFT` | With `KUVO_DEMO_FOLDER` and no prompt: a message typed, not sent, in the new session's composer |
 | `KUVO_DEMO_SHOW_IN_PANEL` | `<path>\|folder` or `<path>\|file`: as if the agent of the session in view showed that in the panel |
 | `KUVO_DEMO_SCROLL` | Seconds after the conversation in view opens: it scrolls up through it in steps and writes how long that took to `KUVO_PERF_LOG` (a file); `KUVO_PERF_NO_GLASS`, `KUVO_PERF_PLAIN`, `KUVO_PERF_NO_EDGE` and `KUVO_PERF_NO_ANIM` turn parts of the transcript off to compare. A window behind others draws less often, so compare runs alike. Debug builds also log real dropped frames as you scroll (`log show --predicate 'subsystem == "run.kuvo.code" AND category == "scroll"'`) |
+| `KUVO_DEMO_REPLAY` | With `KUVO_DEMO_FOLDER`: a run recorded from the engine (see `Tests/Perf`) played into a new session there at the pace it came, and how the app kept up written to `KUVO_PERF_LOG`; `KUVO_DEMO_REPLAY_SPEED` plays it that many times faster, `KUVO_DEMO_REPLAY_UNTIL` stops it that many milliseconds in, to look at it there, and `KUVO_DEMO_REPLAY_HOLD` measures that many seconds after it ends instead |
+| `KUVO_DEMO_WANDER` | Seconds after the conversation in view opens: it scrolls up and down a screen or two from the end, as a trackpad does, for `KUVO_DEMO_WANDER_FOR` seconds |
 | `KUVO_DEMO_TABS` | Open the project's sessions as tabs |
 | `KUVO_DEMO_SESSION` | Open the session with this ID in a tab (one on a machine shows its conversation as last seen until the machine connects) |
 | `KUVO_DEMO_QUEUE` | Messages to queue once that session's agent is working, separated by `\|` |
@@ -154,7 +160,7 @@ without clicking, for trying a change or taking screenshots:
 | `KUVO_DEMO_WELCOME` | No tabs, so the welcome card shows |
 | `KUVO_DEMO_NEW_BOT` | The New Bot editor, open |
 | `KUVO_DEMO_BOT`, `KUVO_DEMO_BOT_PROMPT` | Make the bot `<name>\|<job>\|<its details>[\|<machine>[\|<project folder>]]` unless one has that name (the job written in its memory, as the bot would; leave it empty for a bot that asks for one, and the machine empty for this Mac), open it, and give it this task |
-| `KUVO_DEMO_OPEN_STEPS` | Every step in the conversation shows its details, opened |
+| `KUVO_DEMO_OPEN_STEPS` | Every step in the conversation shows its details, opened, and so does the thinking |
 | `KUVO_DEMO_EDIT_BOT` | With `KUVO_DEMO_BOT`: that bot's editor, open (`bottom`: scrolled to its wake-ups and memory) |
 | `KUVO_DEMO_ADD_WAKE` | With `KUVO_DEMO_EDIT_BOT`: adding a wake-up, every day, with this note (`KUVO_DEMO_ADD_WAKE_NOW`: and adds it) |
 | `KUVO_DEMO_REPLY` | With `KUVO_DEMO_BOT`: sends this to the bot as a notification's Reply does |

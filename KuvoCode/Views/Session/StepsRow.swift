@@ -58,6 +58,10 @@ struct StepsRow: View {
             if let current { step(current) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        #if DEBUG
+        // KUVO_DEMO_OPEN_STEPS: each step shows, opened.
+        .onAppear { if ProcessInfo.processInfo.environment["KUVO_DEMO_OPEN_STEPS"] != nil { isExpanded = true } }
+        #endif
     }
 
     @ViewBuilder private func step(_ block: Message.Content) -> some View {

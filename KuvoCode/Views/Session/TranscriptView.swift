@@ -47,7 +47,10 @@ struct TranscriptView: View {
                     .environment(\.findHighlight, find.highlight(for: row.id))
                     .id(row.id)
                     #if DEBUG
-                    .onAppear { ScrollFrameMonitor.rowsMade += 1 }
+                    .onAppear {
+                        ScrollFrameMonitor.rowsMade += 1
+                        ScrollFrameMonitor.rowsMadeByID[row.id, default: 0] += 1
+                    }
                     #endif
                     .padding(.top, index == 0 ? 0 : row.spacing(after: rows[index - 1]))
                     .transition(Self.rowTransition)
@@ -104,6 +107,32 @@ struct TranscriptView: View {
             if let path = ProcessInfo.processInfo.environment["KUVO_PERF_LOG"] {
                 if let handle = FileHandle(forWritingAtPath: path) { handle.seekToEndOfFile(); handle.write(Data(line.utf8)); try? handle.close() } else { FileManager.default.createFile(atPath: path, contents: Data(line.utf8)) }
             }
+        }
+        // KUVO_DEMO_WANDER=<seconds>: that long after it opens, scrolls up a screen or two and back
+        // down, again and again, as you would reading what streams in, for KUVO_DEMO_WANDER_FOR
+        // seconds: scroll gestures, as a trackpad sends them, through AppKit.
+        .task {
+            let environment = ProcessInfo.processInfo.environment
+            guard let wait = environment["KUVO_DEMO_WANDER"].flatMap(Double.init) else { return }
+            try? await Task.sleep(for: .seconds(wait))
+            let end = ContinuousClock.now + .seconds(Double(environment["KUVO_DEMO_WANDER_FOR"] ?? "") ?? 30)
+            func scrollViews(in view: NSView) -> [NSScrollView] { (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(scrollViews) }
+            // The conversation's: the tallest.
+            guard let view = NSApp.windows.compactMap(\.contentView).flatMap(scrollViews).max(by: { ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0) }) else { return }
+            var step = 0
+            while ContinuousClock.now < end {
+                // 30 frames up, 30 down, 40 pt a frame, each way a gesture of its own.
+                let frame = step % 30
+                let phase: CGScrollPhase = frame == 0 ? .began : frame == 29 ? .ended : .changed
+                if let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: (step / 30) % 2 == 0 ? 40 : -40, wheel2: 0, wheel3: 0) {
+                    event.setIntegerValueField(.scrollWheelEventScrollPhase, value: Int64(phase.rawValue))
+                    event.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+                    if let scroll = NSEvent(cgEvent: event) { view.scrollWheel(with: scroll) }
+                }
+                step += 1
+                try? await Task.sleep(for: .milliseconds(16))
+            }
+            scroller.toEnd()
         }
         #endif
         .onChange(of: model.findRequest, initial: true) {
@@ -874,6 +903,10 @@ struct ReasoningView: View {
                     .transition(.opacity)
             }
         }
+        #if DEBUG
+        // KUVO_DEMO_OPEN_STEPS: the thinking shows, opened.
+        .onAppear { if ProcessInfo.processInfo.environment["KUVO_DEMO_OPEN_STEPS"] != nil { isExpanded = true } }
+        #endif
     }
 
     private var duration: String? {

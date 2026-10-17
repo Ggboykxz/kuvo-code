@@ -1124,7 +1124,7 @@ struct MainView: View {
             selection = nil
         }
         // The folder's new session first, so the panel's tools open in it.
-        if let folder = environment["KUVO_DEMO_FOLDER"], environment["KUVO_DEMO_PROMPT"] == nil { newSession(in: folder) }
+        if let folder = environment["KUVO_DEMO_FOLDER"], environment["KUVO_DEMO_PROMPT"] == nil, environment["KUVO_DEMO_REPLAY"] == nil { newSession(in: folder) }
         // KUVO_DEMO_PANEL: tools to open in the panel, comma-separated: terminal,
         // browser=<address>, machine=<machine>[=<address>] (a tab in its browser, with a session
         // there in view), files, file=<path>, changes, run (the project's run command), expand.
@@ -1420,6 +1420,16 @@ struct MainView: View {
             }
         }
         guard let folder = environment["KUVO_DEMO_FOLDER"] else { return }
+        // KUVO_DEMO_REPLAY=<file>: a recorded run, played into a new session there (see PerfReplay).
+        if let file = environment["KUVO_DEMO_REPLAY"] {
+            let catalog = catalog(for: folder)
+            guard let session = try? await workspace.createSession(in: folder, model: catalog.defaultModel?.ref, agent: nil) else { return }
+            openTab(session.id)
+            for _ in 0..<40 where workspace.model(for: session.id)?.isLoaded != true { try? await Task.sleep(for: .milliseconds(250)) }
+            try? await Task.sleep(for: .seconds(2))
+            await PerfReplay.play(file, into: session.id, workspace: workspace)
+            return
+        }
         // KUVO_DEMO_DRAFT: a message typed, not sent, in the new session's composer.
         if let draft = environment["KUVO_DEMO_DRAFT"] { Drafts.shared[SidebarView.draftTag(folder)].text = draft }
         guard let prompt = environment["KUVO_DEMO_PROMPT"] else { return newSession(in: folder) }

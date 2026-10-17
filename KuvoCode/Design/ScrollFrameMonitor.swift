@@ -13,6 +13,8 @@ final class ScrollFrameMonitor: NSObject {
     static var rowsMade = 0
     static var codeBlocksMade = 0
     static var piecesMade = 0
+    /// Rows made, by row.
+    static var rowsMadeByID: [String: Int] = [:]
 
     private var link: CADisplayLink?
     private var last: CFTimeInterval = 0
