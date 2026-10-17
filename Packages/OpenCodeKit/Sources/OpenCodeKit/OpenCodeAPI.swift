@@ -251,13 +251,36 @@ public struct OpenCodeAPI: Sendable {
 
     // MARK: Sessions
 
-    public func sessions(directory: String? = nil, roots: Bool = true, limit: Int = 100) async throws -> Page<Session> {
-        var query: [String: String?] = ["limit": String(limit), "order": "desc"]
-        if roots { query["parentID"] = "null" }
-        if let directory { query["directory"] = enginePath(directory) }
+    /// A page of sessions, newest first; the next one after `cursor` (a page's `cursor.next`,
+    /// which carries the filters along).
+    public func sessions(directory: String? = nil, roots: Bool = true, limit: Int = 100, after cursor: String? = nil) async throws -> Page<Session> {
+        var query: [String: String?] = ["limit": String(limit)]
+        if let cursor {
+            query["cursor"] = cursor
+        } else {
+            query["order"] = "desc"
+            if roots { query["parentID"] = "null" }
+            if let directory { query["directory"] = enginePath(directory) }
+        }
         var page: Page<Session> = try await get("api/session", query: query)
         page.data = page.data.map(appSession)
         return page
+    }
+
+    /// Every session (the root ones, unless `roots` is false), newest first, page after page.
+    public func allSessions(directory: String? = nil, roots: Bool = true) async throws -> [Session] {
+        let size = 100
+        var page = try await sessions(directory: directory, roots: roots, limit: size)
+        var all = page.data
+        var seen = Set(all.map(\.id))
+        // The last page is the short one; its cursor still points on.
+        while page.data.count == size, let next = page.cursor?.next {
+            page = try await sessions(limit: size, after: next)
+            let new = page.data.filter { seen.insert($0.id).inserted }
+            guard !new.isEmpty else { break }
+            all += new
+        }
+        return all
     }
 
     public func session(_ id: String) async throws -> Session {

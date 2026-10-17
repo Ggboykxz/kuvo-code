@@ -644,7 +644,7 @@ final class Workspace {
     func refresh() async {
         guard let api else { return }
         do {
-            let local = try await api.sessions().data.filter { !isHidden($0) }
+            let local = try await api.allSessions().filter { !isHidden($0) }
             sessions = local + sessions.filter { RemoteFolder.isRemote($0.location.directory) }
         } catch { log.error("sessions: \(String(describing: error), privacy: .public)") }
         do {
@@ -702,7 +702,7 @@ final class Workspace {
         // Still the connection it started with: a newer one (or none) takes over from here.
         let isCurrent = { engine.isReady && engine.api?.client.endpoint == api.client.endpoint }
         do {
-            let listed = try await api.sessions().data
+            let listed = try await api.allSessions()
             guard isCurrent() else { return true }
             // Its open conversations take this connection first, so nothing sent from them goes
             // to the old one.
