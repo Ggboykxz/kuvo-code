@@ -7,6 +7,7 @@ struct PermissionCard: View {
     let request: PermissionRequest
     let directory: String
     let reply: (PermissionRequest.Decision) -> Void
+    @Environment(\.takesCardKeys) private var takesKeys
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -41,13 +42,13 @@ struct PermissionCard: View {
 
             HStack(spacing: 8) {
                 Button("Deny", role: .cancel) { reply(.reject) }
-                    .keyboardShortcut(.cancelAction)
+                    .keyboardShortcut(takesKeys ? .cancelAction : nil)
                 Spacer()
                 Button("Always Allow") { reply(.always) }
                     .help(alwaysHelp)
                 Button("Allow") { reply(.once) }
                     .buttonStyle(.glassProminent)
-                    .keyboardShortcut(.defaultAction)
+                    .keyboardShortcut(takesKeys ? .defaultAction : nil)
             }
             .buttonStyle(.glass)
             .controlSize(.large)
@@ -283,7 +284,7 @@ private struct QuestionPager: View {
                 .help(isLast ? "Leave this one unanswered and send the rest" : "Leave this one unanswered")
             Button(isLast ? "Answer" : "Next") { next(field) }
                 .buttonStyle(.glassProminent)
-                .keyboardShortcut(.defaultAction)
+                .keyboardShortcut(takesKeys ? .defaultAction : nil)
                 .disabled(!isAnswered(field))
         }
         .controlSize(.large)
@@ -488,6 +489,7 @@ private struct FormCard: View {
     let dismiss: () -> Void
 
     @Environment(\.cardRoom) private var room
+    @Environment(\.takesCardKeys) private var takesKeys
     @State private var answers: FormAnswer = [:]
     @State private var fieldsHeight: CGFloat = 0
 
@@ -521,7 +523,7 @@ private struct FormCard: View {
                 Button("Answer") { submit(answers) }
                     .buttonStyle(.glassProminent)
                     .controlSize(.large)
-                    .keyboardShortcut(.defaultAction)
+                    .keyboardShortcut(takesKeys ? .defaultAction : nil)
                     .disabled(!FormFieldsView.isComplete(form.fields, answers))
             }
         }
@@ -542,6 +544,9 @@ extension EnvironmentValues {
     /// How tall what's in a card over the composer can be before it scrolls, so the card, the
     /// composer and some of the conversation fit in the window.
     @Entry var cardRoom: CGFloat = 360
+    /// Its cards answer Return, Esc and number keys: false in the half of a split you're not
+    /// working in, so the keys go to the one you are.
+    @Entry var takesCardKeys = true
 }
 
 

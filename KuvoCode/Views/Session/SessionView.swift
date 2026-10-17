@@ -77,6 +77,7 @@ private struct BottomStack: View {
     @Environment(Workspace.self) private var workspace
     @Environment(AppModel.self) private var app
     @AppStorage(ToolApproval.key) private var defaultApproval = ToolApproval.approveAll
+    @Environment(\.takesCardKeys) private var takesCardKeys
     @Namespace private var glass
 
     var body: some View {
@@ -92,7 +93,7 @@ private struct BottomStack: View {
                 }
                 ForEach(Array(forms.enumerated()), id: \.element.id) { index, form in
                     QuestionCard(form: form, progress: Binding(get: { model.questionProgress[form.id] ?? QuestionProgress() }, set: { model.questionProgress[form.id] = $0 }),
-                                 takesKeys: index == 0) { answer in
+                                 takesKeys: index == 0 && takesCardKeys) { answer in
                         model.answer(form, with: FormFieldsView.payload(form.fields, answer))
                     } dismiss: {
                         model.dismiss(form)

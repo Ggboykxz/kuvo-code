@@ -25,8 +25,9 @@ struct MainView: View {
     /// Goes up for ⌘F in the group chat in view.
     @State private var groupFind = 0
     @State private var panelExpanded = false
-    /// Out of room, the side cards give way in this order: the one opened last stays.
-    @State private var givesWay: [PaneLayout.Pane] = [.changes, .sessions, .split]
+    /// Out of room, the side cards give way in this order: the one opened last stays. A split you
+    /// didn't just open (one restored, or met again on its tab) goes first.
+    @State private var givesWay: [PaneLayout.Pane] = [.split, .changes, .sessions]
     /// The room the conversation and the panel share: what the panel takes, expanded.
     @State private var mainAreaWidth: CGFloat = 0
     @AppStorage("sessionsWidth") private var sessionsWidth = 280.0
@@ -62,9 +63,8 @@ struct MainView: View {
 
     /// Split views, as pairs: a tab and the session beside it, kept with the tab as a browser's split
     /// tabs are, one "<tab>=<session>" a line. Choosing another tab shows it alone; the pair comes
-    /// back with its tab.
-    static let splitKey = "splitPairs"
-    @AppStorage(MainView.splitKey) private var splitStorage = ""
+    /// back with its tab. Kept with the window's tabs, so the two never disagree.
+    @SceneStorage("splitPairs") private var splitStorage = ""
 
     private var splitPairs: [String: String] {
         get {
@@ -85,6 +85,10 @@ struct MainView: View {
     struct ClosedTab {
         var key: String
         var index: Int
+        /// The session that was beside it, back with it.
+        var beside: String?
+        /// The tab it was beside, which it goes back beside if it still can.
+        var besideOf: String?
     }
 
     private var tabs: [String] {
@@ -117,6 +121,30 @@ struct MainView: View {
         sessionID.flatMap(workspace.model(for:))
     }
 
+    /// The session you're working in: the one beside, once you've clicked into it. The menus'
+    /// commands (Stop, Find, the modes) go to it.
+    private var focusedModel: SessionModel? {
+        focus == .split ? splitModel ?? activeModel : activeModel
+    }
+
+    /// The sessions on screen: the tab's, and the one beside it.
+    private var sessionsInView: [String] {
+        [sessionID, besideID].compactMap(\.self)
+    }
+
+    /// The session beside the tab's, while it shows.
+    private var besideID: String? { splitModel?.id }
+
+    /// When the sessions on screen last finished.
+    private var idlesInView: [Milliseconds?] {
+        sessionsInView.map { workspace.session($0)?.time.idle }
+    }
+
+    /// The sessions on screen count as seen.
+    private func markViewed() {
+        for id in sessionsInView { workspace.markViewed(id) }
+    }
+
     /// The active tab's project folder.
     private var activeDirectory: String? {
         activeModel?.session.location.directory ?? draftDirectory
@@ -137,7 +165,8 @@ struct MainView: View {
         machine(for: folder)?.catalog ?? catalog
     }
 
-    var body: some View {
+    /// The cards, the title bar and what shows over them.
+    private var windowContent: some View {
         // Cards are sized from the room the window actually has, so they never spill
         // past its edges. The gaps between them are drag handles for resizing.
         GeometryReader { proxy in
@@ -334,18 +363,18 @@ struct MainView: View {
             }
         }
         .animation(.ui, value: showsPalette)
+    }
+
+    /// The window, following the sessions in view.
+    private var followingSessions: some View {
+        windowContent
         .focusedSceneValue(\.sessionActions, actions)
         // Viewed only while you're here: finished while you're in another app, it waits for you
-        // on the Dock icon, and counts as seen when you come back.
-        .onChange(of: sessionID) { _, id in
-            if let id, NSApp.isActive { workspace.markViewed(id) }
-        }
-        .onChange(of: workspace.session(sessionID)?.time.idle) {
-            if let sessionID, NSApp.isActive { workspace.markViewed(sessionID) }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            if let sessionID { workspace.markViewed(sessionID) }
-        }
+        // on the Dock icon, and counts as seen when you come back. The session beside the tab's
+        // is in view too.
+        .onChange(of: sessionsInView) { if NSApp.isActive { markViewed() } }
+        .onChange(of: idlesInView) { if NSApp.isActive { markViewed() } }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in markViewed() }
         // The panel's browser is that of the place the session in view runs: this Mac's, or its
         // machine's.
         .onChange(of: activeDirectory, initial: true) { _, directory in
@@ -356,6 +385,14 @@ struct MainView: View {
             utilities.sessionInView = id
             showBotTabs()
         }
+        // The one beside it shows you files in the panel too.
+        .onChange(of: besideID, initial: true) { _, id in utilities.besideInView = id }
+        // Another tab: you're back in its own conversation, not the one beside the last.
+        .onChange(of: selection) { if focus == .split { focus = .conversation } }
+    }
+
+    var body: some View {
+        followingSessions
         .onChange(of: groupID) { showBotTabs() }
         .onChange(of: groupID.flatMap { groups.group($0)?.members } ?? []) { showBotTabs() }
         .task(id: activeDirectory) {
@@ -420,7 +457,7 @@ struct MainView: View {
                 .frame(width: identityWidth, alignment: .leading)
                 .padding(.trailing, identityWidth == nil ? 16 : 0)
                 if !tabItems.isEmpty {
-                    TabStrip(tabs: tabItems, selection: $selection, close: { closeTab($0) }, closeAll: closeTabs(except:), openBeside: openBeside, closeBeside: closeBeside, swapBeside: swapBeside) { id in
+                    TabStrip(tabs: tabItems, selection: $selection, close: { closeTab($0) }, closeAll: closeTabs(except:), openBeside: besideOpener, closeBeside: closeBeside, closeBesideTab: closeBesideTab, swapBeside: swapBeside) { id in
                         guard let session = workspace.session(id) else { return }
                         // Renamed in its card's header: its tab comes forward for it.
                         selection = id
@@ -521,7 +558,7 @@ struct MainView: View {
         if workspace.needsAttention(session.id) { return .waiting }
         if workspace.running.contains(session.id) { return .working }
         if session.outcome == .failed { return .failed }
-        if session.isUnread, session.id != sessionID { return .unread }
+        if session.isUnread, !sessionsInView.contains(session.id) { return .unread }
         return .idle
     }
 
@@ -543,7 +580,7 @@ struct MainView: View {
                 newGroup: { openGroupEditor(group: nil) },
                 editGroup: { openGroupEditor(group: $0) },
                 stagedBots: stagedBots,
-                openBeside: openBeside
+                openBeside: besideOpener
             )
             // Room for the window's buttons above the first row, when they sit here.
             .padding(.top, showsTabBar ? 0 : Metrics.windowControlsHeight)
@@ -590,11 +627,20 @@ struct MainView: View {
         } content: {
             SessionView(model: model)
                 .environment(\.bot, bot)
+                // Return and Esc answer its cards once you've clicked into it.
+                .environment(\.takesCardKeys, focus == .split)
                 .largeWidgetHost()
         }
         .environment(catalog(for: directory))
         .id("split-" + id)
         .simultaneousGesture(TapGesture().onEnded { focus = .split })
+    }
+
+    /// Open Beside, while a session can open beside the tab in view: it's a session's (not a
+    /// draft or a group chat).
+    private var besideOpener: ((String) -> Void)? {
+        guard let sessionID, workspace.session(sessionID) != nil else { return nil }
+        return { openBeside($0) }
     }
 
     /// Shows `id` beside the tab in view, the two as one tab. Its own tab, if it had one, goes into
@@ -616,8 +662,22 @@ struct MainView: View {
         }
     }
 
-    /// Closes the session beside `tab`'s.
+    /// Close Split View: the two go back to tabs of their own, the one beside next to `tab`.
     private func closeBeside(_ tab: String) {
+        guard let beside = splitPairs[tab] else { return }
+        var tabs = tabs
+        if !tabs.contains(beside) { tabs.insert(beside, at: (tabs.firstIndex(of: tab) ?? tabs.count - 1) + 1) }
+        withAnimation(.ui) {
+            self.tabs = tabs
+            splitPairs[tab] = nil
+        }
+    }
+
+    /// Closes the session beside `tab`'s (its half of the tab): ⇧⌘T brings it back beside it.
+    private func closeBesideTab(_ tab: String) {
+        guard let beside = splitPairs[tab] else { return }
+        Analytics.shared.sessionEnded(beside)
+        rememberClosed([ClosedTab(key: beside, index: (tabs.firstIndex(of: tab) ?? tabs.count - 1) + 1, besideOf: tab)])
         withAnimation(.ui) { splitPairs[tab] = nil }
     }
 
@@ -627,7 +687,8 @@ struct MainView: View {
         var pairs = splitPairs
         pairs[tab] = nil
         pairs[other] = tab
-        var tabs = tabs
+        // One tab for the two: a tab of its own it had goes.
+        var tabs = tabs.filter { $0 != other }
         if let index = tabs.firstIndex(of: tab) { tabs[index] = other }
         self.tabs = tabs
         splitPairs = pairs
@@ -729,6 +790,7 @@ struct MainView: View {
                 } content: {
                     SessionView(model: model)
                         .environment(\.bot, bot)
+                        .environment(\.takesCardKeys, !(focus == .split && splitModel != nil))
                         .largeWidgetHost()
                 }
                 .environment(catalog(for: directory))
@@ -965,7 +1027,7 @@ struct MainView: View {
     /// Shows a session or draft, opening a tab for it next to the current one if needed.
     private func openTab(_ key: String) {
         // The session beside a tab: that tab, with it beside.
-        let key = splitPairs.first { $0.value == key }?.key ?? key
+        let key = splitPairs.first { $0.value == key && tabs.contains($0.key) }?.key ?? key
         var tabs = tabs
         if !tabs.contains(key) {
             let index = selection.flatMap { tabs.firstIndex(of: $0) }.map { $0 + 1 } ?? tabs.count
@@ -988,11 +1050,12 @@ struct MainView: View {
         guard let index = tabs.firstIndex(of: key) else { return }
         tabs.remove(at: index)
         Analytics.shared.sessionEnded(key)
-        if let beside = splitPairs[key] {
+        let beside = splitPairs[key]
+        if let beside {
             Analytics.shared.sessionEnded(beside)
             splitPairs[key] = nil
         }
-        if remember { rememberClosed([ClosedTab(key: key, index: index)]) }
+        if remember { rememberClosed([ClosedTab(key: key, index: index, beside: beside)]) }
         withAnimation(.ui) {
             self.tabs = tabs
             if selection == key {
@@ -1004,7 +1067,8 @@ struct MainView: View {
     /// Closes every tab but `key`, or all of them when it's nil.
     private func closeTabs(except key: String?) {
         // Reopened last first, so the leftmost comes back last.
-        rememberClosed(tabs.enumerated().filter { $0.element != key }.map { ClosedTab(key: $0.element, index: $0.offset) }.reversed())
+        let pairs = splitPairs
+        rememberClosed(tabs.enumerated().filter { $0.element != key }.map { ClosedTab(key: $0.element, index: $0.offset, beside: pairs[$0.element]) }.reversed())
         for closed in tabs where closed != key {
             Analytics.shared.sessionEnded(closed)
             if let beside = splitPairs[closed] { Analytics.shared.sessionEnded(beside) }
@@ -1021,21 +1085,37 @@ struct MainView: View {
         if closedTabs.count > 50 { closedTabs.removeFirst(closedTabs.count - 50) }
     }
 
+    /// In a tab, or beside one.
+    private func isOpen(_ key: String) -> Bool {
+        tabs.contains(key) || splitPairs.values.contains(key)
+    }
+
     /// Not open again already, and not a session deleted since.
     private func canReopen(_ closed: ClosedTab) -> Bool {
-        !tabs.contains(closed.key) && (SidebarView.draftDirectory(from: closed.key) != nil || workspace.session(closed.key) != nil
+        !isOpen(closed.key) && (SidebarView.draftDirectory(from: closed.key) != nil || workspace.session(closed.key) != nil
             || groups.group(BotGroups.groupID(fromTab: closed.key)) != nil)
     }
 
-    /// Opens the tab closed last, where it was, skipping sessions deleted since.
+    /// Opens the tab closed last, where it was, skipping sessions deleted since. A pair comes back
+    /// as a pair, and a session closed from beside a tab goes back beside it.
     private func reopenClosedTab() {
         while let closed = closedTabs.popLast() {
-            var tabs = tabs
             guard canReopen(closed) else { continue }
-            tabs.insert(closed.key, at: min(closed.index, tabs.count))
+            var tabs = tabs
+            var pairs = splitPairs
+            let shown: String
+            if let partner = closed.besideOf, tabs.contains(partner), pairs[partner] == nil {
+                pairs[partner] = closed.key
+                shown = partner
+            } else {
+                tabs.insert(closed.key, at: min(closed.index, tabs.count))
+                if let beside = closed.beside, !isOpen(beside), workspace.session(beside) != nil { pairs[closed.key] = beside }
+                shown = closed.key
+            }
             withAnimation(.ui) {
                 self.tabs = tabs
-                selection = closed.key
+                splitPairs = pairs
+                selection = shown
                 focus = .conversation
             }
             return
@@ -1103,16 +1183,29 @@ struct MainView: View {
         withAnimation(.ui) { selection = tabs[(index + offset + tabs.count) % tabs.count] }
     }
 
-    /// Deleted sessions lose their tabs.
+    /// Deleted sessions lose their tabs; the one beside a deleted tab's session takes its tab.
+    /// Pairs whose tab or session beside is gone end.
     private func dropClosedSessions(_ ids: [String]) {
         guard workspace.isLoaded else { return }
         let known = Set(ids)
         // A machine's sessions wait for it to connect.
-        for key in tabs where SidebarView.draftDirectory(from: key) == nil && !known.contains(key) && workspace.waitingMachine(for: key) == nil {
+        func isGone(_ key: String) -> Bool { !known.contains(key) && workspace.waitingMachine(for: key) == nil }
+        for key in tabs where SidebarView.draftDirectory(from: key) == nil && isGone(key) {
             // A group chat's tab stays as long as the chat does.
             if let id = BotGroups.groupID(fromTab: key), groups.group(id) != nil { continue }
+            if let beside = splitPairs[key], !isGone(beside), !tabs.contains(beside) {
+                splitPairs[key] = nil
+                var tabs = tabs
+                if let index = tabs.firstIndex(of: key) { tabs[index] = beside }
+                self.tabs = tabs
+                if selection == key { selection = beside }
+                continue
+            }
             closeTab(key, remember: false)
         }
+        let open = Set(tabs)
+        let pairs = splitPairs.filter { open.contains($0.key) && !open.contains($0.value) && !isGone($0.value) }
+        if pairs != splitPairs { splitPairs = pairs }
         // A selection that isn't one of the tabs (its session went while the app was closed)
         // shows nothing; show the last tab instead.
         if let selection, !tabs.contains(selection) { self.selection = tabs.last }
@@ -1121,7 +1214,7 @@ struct MainView: View {
     // MARK: Actions
 
     private var actions: SessionActions {
-        let model = activeModel
+        let model = focusedModel
         return SessionActions(
             hasSession: model != nil,
             hasProject: activeDirectory != nil,
@@ -1148,7 +1241,7 @@ struct MainView: View {
             closeTab: closeAnyTab,
             reopenTab: reopenClosedTab,
             find: {
-                if let model = activeModel { model.showFind() } else if selection.flatMap(BotGroups.groupID(fromTab:)) != nil { groupFind += 1 }
+                if let model { model.showFind() } else if selection.flatMap(BotGroups.groupID(fromTab:)) != nil { groupFind += 1 }
             },
             showTab: { number in
                 if app.showsSettings {
@@ -1219,7 +1312,7 @@ struct MainView: View {
                 openProjectEditor(ProjectEditorRequest(project: workspace.projects.first { $0.directory == primary } ?? Workspace.Project(directory: primary, sessions: [], settings: workspace.settings[primary] ?? .init())))
             }
         }
-        if let model = activeModel {
+        if let model = focusedModel {
             add("Build Mode", "hammer", "⌥⌘1") { actions.selectAgent("build") }
             add("Plan Mode", "list.bullet.clipboard", "⌥⌘2") { actions.selectAgent("plan") }
             add("Find in Conversation…", "magnifyingglass", "⌘F", actions.find)
@@ -1708,7 +1801,7 @@ struct PaneLayout {
     enum Pane { case sessions, changes, split }
 
     /// `givesWay`: out of room, the side cards go in this order.
-    init(available: Double, sessions wanted: Double?, changes wantedChanges: Double?, split wantedSplit: Double? = nil, givesWay: [Pane] = [.changes, .sessions, .split]) {
+    init(available: Double, sessions wanted: Double?, changes wantedChanges: Double?, split wantedSplit: Double? = nil, givesWay: [Pane] = [.split, .changes, .sessions]) {
         let gap = Double(Metrics.paneGap)
         var sessions = wanted.map { min(max($0, Self.sessionsRange.lowerBound), Self.sessionsRange.upperBound) }
         var changes = wantedChanges.map { min(max($0, Self.changesRange.lowerBound), Self.changesRange.upperBound) }
@@ -1723,7 +1816,25 @@ struct PaneLayout {
         }
         // Out of room: those that wouldn't fit even at their smallest go, in `givesWay`'s order;
         // then the rest shrink as far as they must, the panel first and the split last.
+        let wantedWidths = (sessions: sessions, changes: changes, split: split)
+        var dropped: [Pane] = []
         for pane in givesWay where overflow(smallest: true) > 0 {
+            switch pane {
+            case .sessions: sessions = nil
+            case .changes: changes = nil
+            case .split: split = nil
+            }
+            dropped.append(pane)
+        }
+        // One that went early comes back if a later one's going left room for it, the last to
+        // go first.
+        for pane in dropped.reversed() {
+            switch pane {
+            case .sessions: sessions = wantedWidths.sessions
+            case .changes: changes = wantedWidths.changes
+            case .split: split = wantedWidths.split
+            }
+            guard overflow(smallest: true) > 0 else { continue }
             switch pane {
             case .sessions: sessions = nil
             case .changes: changes = nil

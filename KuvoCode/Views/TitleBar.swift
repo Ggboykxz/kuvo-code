@@ -64,8 +64,10 @@ struct TabStrip: View {
     let closeAll: (_ except: String?) -> Void
     /// Shows a session beside the one in view (split view).
     var openBeside: ((String) -> Void)?
-    /// Closes the session beside a tab's, and swaps the two (by the tab's id).
+    /// Close Split View (the two go back to tabs of their own), closes the session beside a tab's
+    /// (its half's close button), and swaps the two, by the tab's id.
     var closeBeside: ((String) -> Void)?
+    var closeBesideTab: ((String) -> Void)?
     var swapBeside: ((String) -> Void)?
     /// Renames a session's tab (a new session's has no title to change yet).
     var rename: ((String) -> Void)?
@@ -120,7 +122,7 @@ struct TabStrip: View {
                 TabButton(tab: tab, isActive: isActive, close: { close(tab.id) }, select: select)
                     .rightClickMenu { menu(for: tab) }
                     .background { if isActive { ActivePill().matchedGeometryEffect(id: "pill", in: pill) } }
-                TabButton(tab: companion, isActive: false, close: { closeBeside?(tab.id) }, select: select)
+                TabButton(tab: companion, isActive: false, close: { closeBesideTab?(tab.id) }, select: select)
                     .rightClickMenu { besideMenu(for: tab) }
             }
             .background(Pressable.hoverFill, in: .capsule)
@@ -138,7 +140,7 @@ struct TabStrip: View {
                     Rectangle()
                         .fill(Surface.hairline(scheme))
                         .frame(width: 1, height: 16)
-                    TabButton(tab: companion, isActive: isActive, close: { closeBeside?(tab.id) }, select: select)
+                    TabButton(tab: companion, isActive: isActive, close: { closeBesideTab?(tab.id) }, select: select)
                         .rightClickMenu { besideMenu(for: tab) }
                 }
             }
@@ -204,7 +206,8 @@ private struct TabButton: View {
         HStack(spacing: 8) {
             ZStack(alignment: .leading) {
                 if let behind {
-                    TabIcon(logo: behind.logo, symbol: behind.symbol ?? "bubble.left", bot: behind.bot, botMood: behind.botMood, group: behind.group, status: .idle)
+                    // With its own status: working, or waiting for you, it shows here too.
+                    TabIcon(logo: behind.logo, symbol: behind.symbol ?? "bubble.left", bot: behind.bot, botMood: behind.botMood, group: behind.group, status: behind.status)
                         .scaleEffect(0.86)
                         .offset(x: 9, y: -3)
                         .opacity(0.9)

@@ -34,6 +34,7 @@ struct BrowserAskCard: View {
     /// More asks after this one.
     var waiting = 0
     @Environment(AppModel.self) private var app
+    @Environment(\.takesCardKeys) private var takesKeys
     @State private var username = ""
     @State private var password = ""
     @State private var code = ""
@@ -178,15 +179,15 @@ struct BrowserAskCard: View {
             switch ask.kind {
             case .signIn, .code:
                 Button("Not Now", role: .cancel) { app.browserAsks.answer(ask.id, .declined) }
-                    .keyboardShortcut(.cancelAction)
+                    .keyboardShortcut(takesKeys ? .cancelAction : nil)
                 Spacer()
                 Button(isSignIn ? "Sign In" : "Fill", action: send)
                     .buttonStyle(.glassProminent)
-                    .keyboardShortcut(.defaultAction)
+                    .keyboardShortcut(takesKeys ? .defaultAction : nil)
                     .disabled(isSignIn ? username.isEmpty && password.isEmpty : code.isEmpty)
             case .action:
                 Button("I Can’t", role: .cancel) { app.browserAsks.answer(ask.id, .declined) }
-                    .keyboardShortcut(.cancelAction)
+                    .keyboardShortcut(takesKeys ? .cancelAction : nil)
                 Spacer()
                 if inThread {
                     Button("Show Page") { app.utilities.revealBrowser(page: ask.page) }
@@ -194,7 +195,7 @@ struct BrowserAskCard: View {
                 }
                 Button("Done") { app.browserAsks.answer(ask.id, .done) }
                     .buttonStyle(.glassProminent)
-                    .keyboardShortcut(.defaultAction)
+                    .keyboardShortcut(takesKeys ? .defaultAction : nil)
             }
         }
         .buttonStyle(.glass)
