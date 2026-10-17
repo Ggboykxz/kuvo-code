@@ -363,8 +363,13 @@ struct BotEditor: View {
             defer { isWorking = false }
             do {
                 let bot = try await bots.create(name: trimmedName, look: look, personality: personality, model: model, machine: machine, project: project)
-                // Its job, typed in its conversation, from a template or a shared bot.
-                if !firstMessage.isEmpty { Drafts.shared[bot.sessionID].text = firstMessage }
+                // Its job, typed in its conversation, from a template or a shared bot; otherwise the
+                // bot writes first.
+                if !firstMessage.isEmpty {
+                    Drafts.shared[bot.sessionID].text = firstMessage
+                } else {
+                    Task { await bots.greet(bot) }
+                }
                 created(bot)
             } catch {
                 failure = error.localizedDescription

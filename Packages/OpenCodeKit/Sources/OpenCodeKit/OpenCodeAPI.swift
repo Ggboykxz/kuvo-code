@@ -371,6 +371,13 @@ public struct OpenCodeAPI: Sendable {
         try await send("POST", "api/session/\(session.pathEscaped)/prompt", body: body, as: Empty.self)
     }
 
+    /// Words from the app rather than from you, which the engine keeps apart from your messages, as
+    /// it does its own notes to the model; the agent then takes a turn on them.
+    public func addSynthetic(session: String, text: String, description: String? = nil) async throws {
+        struct Body: Encodable { var text: String; var description: String? }
+        try await send("POST", "api/session/\(session.pathEscaped)/synthetic", body: Body(text: text, description: description), as: Empty.self)
+    }
+
     /// Runs a slash command, with what follows its name, and files, as a message would carry them.
     public func runCommand(session: String, name: String, arguments: String, files: [PromptFile] = [], delivery: InboxItem.Delivery? = nil) async throws {
         struct Body: Encodable { var name: String; var text: String; var files: [PromptFile]?; var delivery: InboxItem.Delivery? }

@@ -199,6 +199,23 @@ final class Bots {
         return bot
     }
 
+    /// A new bot writes first: what it takes its job to be from its name, with what it needs to
+    /// know to start, or, for a name that doesn't say, what you'd like it to do. Asked in a note
+    /// the conversation doesn't show, so its first message is the bot's own.
+    func greet(_ bot: Bot) async {
+        guard let api = app?.workspace.api(forFolder: bot.directory) else { return }
+        try? await api.addSynthetic(session: bot.sessionID, text: Self.greeting, description: "A new bot's first message")
+    }
+
+    static let greeting = """
+        <system-reminder>
+        You were just made, and the person who made you hasn't written yet. Write them your first message, as yourself: short, warm, a few sentences at most.
+        - If your name says what you're for (like "Social Media Manager" or "Inbox Helper"), say in a sentence what you take your job to be, then ask the one or two things you need to know to start, like which accounts or sites, how often, or in what tone.
+        - If it doesn't, say hello and ask what they'd like you to do.
+        Don't use any tools, and don't write your job into your memory until they've answered.
+        </system-reminder>
+        """
+
     /// Saves a change to a bot, and tells its session about a new name, job or model; its group
     /// chats hear about them too.
     func update(_ bot: Bot) async {
