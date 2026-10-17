@@ -263,7 +263,7 @@ private struct QuestionPager: View {
                     set: { written[field.key] = $0 }
                 ), axis: .vertical)
                 .textFieldStyle(.plain)
-                .lineLimit(1...4)
+                .lineLimit(1...8)
                 .focused($isWriting)
                 // Focusing a field selects what's in it, and the next key would replace what
                 // was typed to get there: the cursor goes after it.

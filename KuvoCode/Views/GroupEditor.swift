@@ -131,18 +131,23 @@ struct GroupEditor: View {
                     WellRow(isActive: focus == .name) {
                         Image(systemName: "bubble.left.and.bubble.right")
                     } content: {
-                        TextField("Name", text: $name, prompt: Text("Name, like Release Planning"))
+                        // Both wrap, so a narrow card shows all of what's in them, prompts too.
+                        TextField("Name", text: $name, prompt: Text("Name, like Release Planning"), axis: .vertical)
                             .textFieldStyle(.plain)
                             .font(.system(size: 15, weight: .medium))
+                            .lineLimit(1...3)
                             .focused($focus, equals: .name)
+                            .padding(.vertical, 12)
                     }
                     WellDivider()
                     WellRow(isActive: focus == .purpose) {
                         Image(systemName: "target")
                     } content: {
-                        TextField("Purpose", text: $purpose, prompt: Text("What it's for, like Plan each week's release"))
+                        TextField("Purpose", text: $purpose, prompt: Text("What it's for, like Plan each week's release"), axis: .vertical)
                             .textFieldStyle(.plain)
+                            .lineLimit(1...6)
                             .focused($focus, equals: .purpose)
+                            .padding(.vertical, 12)
                     }
                 }
                 // The rows keep their height; the picture beside them is taller.
@@ -212,7 +217,7 @@ struct GroupEditor: View {
                 WellDivider()
                 TextField("Topic", text: $topic, prompt: Text("What to go over, like What changed since yesterday, and what’s in the way"), axis: .vertical)
                     .textFieldStyle(.plain)
-                    .lineLimit(1...4)
+                    .lineLimit(1...8)
                     .focused($focus, equals: .topic)
                     .padding(12)
             }

@@ -51,7 +51,7 @@ struct QuoteList: View {
                             TextField("Your answer to this…", text: response(to: quote.id), axis: .vertical)
                                 .textFieldStyle(.plain)
                                 .font(font)
-                                .lineLimit(1...6)
+                                .lineLimit(1...10)
                                 .focused(answering, equals: quote.id)
                                 .onSubmit(onSubmit)
                                 .padding(.leading, 12)
