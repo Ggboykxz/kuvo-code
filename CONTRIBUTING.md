@@ -89,7 +89,8 @@ OpenCode's free models, on real projects. Its README says how to run it, and
 
 ### The browser on a machine
 
-A machine's browser is Chrome for Testing's headless shell, with its libraries and fonts, in
+A machine's browser is Chrome for Testing, the full browser run in Chrome's own headless mode
+(the separate headless shell is one sites take for a bot), with its libraries and fonts, in
 `~/.kuvo-code/browser` there (`scripts/browser-runtime.py` lists what it brings). One script,
 `KuvoCode/Resources/kuvo-browser.js`, runs with the engine's own runtime in three ways:
 

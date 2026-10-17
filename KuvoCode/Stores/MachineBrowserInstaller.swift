@@ -3,7 +3,7 @@ import Foundation
 import OpenCodeKit
 
 /// The browser machines run, as `browser-runtime.json` pins it (`scripts/browser-runtime.py`):
-/// Chrome for Testing's headless shell for each Linux architecture, and the Enterprise Linux 8
+/// Chrome for Testing for each Linux architecture, run headless, and the Enterprise Linux 8
 /// packages that hold the libraries and fonts it needs, each with its checksum.
 nonisolated struct BrowserRuntime: Decodable, Sendable {
     struct Download: Decodable, Sendable {
@@ -119,7 +119,7 @@ nonisolated enum MachineBrowserInstaller {
         let output = try await connection.run("""
             B="\(folder)"
             current=$(readlink "$B/current" 2>/dev/null) || exit 0
-            [ -x "$B/$current/chrome-headless-shell" ] && echo "$current" || true
+            { [ -x "$B/$current/chrome" ] || [ -x "$B/$current/chrome-headless-shell" ]; } && echo "$current" || true
             """)
         let current = output.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !current.isEmpty else { return false }
@@ -146,7 +146,7 @@ nonisolated enum MachineBrowserInstaller {
               # Not `current` (a link to the new build), nor the new build, nor website data.
               [ -L "$old" ] || [ ! -d "$old" ] && continue
               [ "$name" = "\(runtime.id)" ] || [ "$name" = profile ] && continue
-              [ -e "$old/chrome-headless-shell" ] || continue
+              [ -e "$old/chrome" ] || [ -e "$old/chrome-headless-shell" ] || continue
               grep -qs -- "$B/$name/" /proc/[0-9]*/cmdline 2>/dev/null && continue
               rm -rf "$old"
             done
@@ -187,7 +187,7 @@ nonisolated enum MachineBrowserInstaller {
         let zip = try await download("Chromium", from: [chromium.url], sha256: chromium.sha256, into: staging, report: report)
         try run("/usr/bin/unzip", ["-q", zip.path, "-d", staging.appending(path: "chromium").path])
         try? fm.removeItem(at: zip)
-        guard let unpacked = try fm.contentsOfDirectory(at: staging.appending(path: "chromium"), includingPropertiesForKeys: nil).first(where: { $0.lastPathComponent.hasPrefix("chrome-headless-shell") }) else {
+        guard let unpacked = try fm.contentsOfDirectory(at: staging.appending(path: "chromium"), includingPropertiesForKeys: nil).first(where: { $0.lastPathComponent.hasPrefix("chrome-") }) else {
             throw MachineBrowserError.unpack("The Chromium download has no browser in it.")
         }
         for item in try fm.contentsOfDirectory(at: unpacked, includingPropertiesForKeys: nil) {

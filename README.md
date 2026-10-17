@@ -95,7 +95,7 @@ side panel and the usage menu.
   new port and token each launch. They read a page the way
   [browser-use](https://github.com/browser-use/browser-use) does, as numbered
   interactive elements, and every step happens in the browser you see.
-- **On a machine, the browser** is Chrome for Testing's headless Chromium,
+- **On a machine, the browser** is Chrome for Testing, run headless,
   sent from the Mac to `~/.kuvo-code/browser` with every library and font it
   needs (Enterprise Linux 8 builds, pinned with their checksums by
   `scripts/browser-runtime.py`), so nothing is installed on the system. A

@@ -47,7 +47,7 @@ const TAB_IDLE = Number(process.env.KUVO_BROWSER_TAB_IDLE || 12 * 3600) * 1000;
 
 // Goes up with every change to the keeper (host mode): a newer one replaces one that's running
 // (its pages close, its sign-ins stay), and an older one never replaces a newer.
-const KEEPER = 17;
+const KEEPER = 19;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -126,7 +126,7 @@ async function ensure() {
     if (running === null || running >= KEEPER) return null;
     await stopKeeper();
   }
-  if (!fs.existsSync(path.join(CURRENT, "chrome-headless-shell"))) {
+  if (!browserBinary(CURRENT)) {
     return { kind: "missing", message: "The browser isn't on this machine yet. Kuvo Code puts it there when it connects to the machine; try again in a minute." };
   }
   fs.mkdirSync(RUN, { recursive: true, mode: 0o700 });
@@ -261,9 +261,28 @@ function clearOldDownloads() {
   }
 }
 
+/// The browser in a build: Chrome itself, or the headless shell an earlier build had.
+function browserBinary(build) {
+  for (const name of ["chrome", "chrome-headless-shell"]) {
+    if (fs.existsSync(path.join(build, name))) return name;
+  }
+  return null;
+}
+
 /// Starts Chromium and waits until it answers on its pipe.
 async function launchChrome(sandbox) {
+  const binary = browserBinary(fs.realpathSync(CURRENT)) ?? "chrome-headless-shell";
   const args = [
+    // Chrome itself, without a window: the browser sites see from people, where the headless
+    // shell is one Google won't sign anyone in from ("This browser or app may not be secure").
+    // Its passwords in its profile, not a desktop keyring the server doesn't have.
+    ...(binary === "chrome" ? ["--headless", "--enable-unsafe-swiftshader", "--password-store=basic"] : []),
+    // A page nobody's looking at keeps going at full speed, as a bot's work in it needs.
+    "--disable-background-timer-throttling",
+    "--disable-renderer-backgrounding",
+    "--disable-backgrounding-occluded-windows",
+    // Not driven by WebDriver, so it doesn't say it is (navigator.webdriver).
+    "--disable-blink-features=AutomationControlled",
     "--remote-debugging-pipe",
     `--user-data-dir=${PROFILE}`,
     "--window-size=1280,800",
@@ -322,7 +341,7 @@ async function launchChrome(sandbox) {
   delete env.BUN_BE_BUN;
   const log = fs.openSync(LOGFILE, "a", 0o600);
   fs.writeSync(log, `--- ${new Date().toISOString()} starting${sandbox ? "" : " without the sandbox"}\n`);
-  const chrome = spawn(path.join(build, "chrome-headless-shell"), args, { stdio: ["ignore", log, log, "pipe", "pipe"], env, cwd: home });
+  const chrome = spawn(path.join(build, binary), args, { stdio: ["ignore", log, log, "pipe", "pipe"], env, cwd: home });
   fs.closeSync(log);
   let exited = null;
   chrome.on("exit", (code, signal) => (exited = { code, signal }));
@@ -691,7 +710,7 @@ async function host() {
   clearOldDownloads();
   internal("Browser.setDownloadBehavior", { behavior: "allowAndName", downloadPath: DOWNLOADS, eventsEnabled: true });
   if (reopen.length) {
-    for (const url of reopen) internal("Target.createTarget", { url });
+    for (const url of reopen) internal("Target.createTarget", { url, newWindow: true });
     // The blank page the browser starts with goes, once the others are there.
     setTimeout(() => {
       const url = addresses.get(firstPage);
@@ -958,7 +977,7 @@ async function page() {
   target ??= fallback && !held.has(fallback) ? fallback : null;
   if (target && caller && !(await c.send("Kuvo.claim", { targetId: target, session: caller })).ok) target = null;
   if (!target) {
-    target = (await c.send("Target.createTarget", { url: "about:blank" })).targetId;
+    target = (await c.send("Target.createTarget", { url: "about:blank", newWindow: true })).targetId;
     if (caller) await c.send("Kuvo.claim", { targetId: target, session: caller });
   }
   return use(target);
@@ -972,6 +991,8 @@ async function use(target) {
     sessions.set(target, session);
     await c.send("Page.enable", {}, session);
   }
+  // In front in its window: a site's new tab shares its opener's, and only the front one is drawn.
+  await c.send("Target.activateTarget", { targetId: target }).catch(() => {});
   if (active !== target) {
     active = target;
     c.notify("Kuvo.setActive", { targetId: target, by: "agent", ...(caller ? { session: caller } : {}) });
@@ -1487,7 +1508,7 @@ async function tool(name, args) {
   if (name === "browser_new_tab") {
     const c = await browser();
     const url = string("url");
-    const { targetId } = await c.send("Target.createTarget", { url: "about:blank" });
+    const { targetId } = await c.send("Target.createTarget", { url: "about:blank", newWindow: true });
     if (caller) await c.send("Kuvo.claim", { targetId, session: caller });
     const p = await use(targetId);
     return text(url ? await navigate(p, url) : await snapshot(p));

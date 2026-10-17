@@ -620,6 +620,8 @@ final class MachineBrowser {
                 return
             }
             session = id
+            // In front in its window: a tab behind another (a site's new tab) isn't drawn.
+            link.fire("Target.activateTarget", ["targetId": target])
             _ = try await link.send("Page.enable", session: id)
             // What a right-click lands on, for the Mac's own menu where the page has none.
             link.fire("Page.addScriptToEvaluateOnNewDocument", ["source": Self.menuRecorder], session: id)
@@ -747,7 +749,7 @@ final class MachineBrowser {
         // Blank first, then the address: a page opened at an address sends its first request
         // before the browser gives it its identity (Chrome, not headless), and sites that turn
         // headless browsers away (x.com) answer that one with an empty page.
-        guard let id = try? await link.send("Target.createTarget", ["url": "about:blank"])["targetId"] as? String else { return nil }
+        guard let id = try? await link.send("Target.createTarget", ["url": "about:blank", "newWindow": true])["targetId"] as? String else { return nil }
         let url = address.flatMap { BrowserSession.url(from: $0)?.absoluteString }
         if !pages.contains(where: { $0.id == id }) {
             pages.append(Page(id: id, title: "", url: url ?? "about:blank"))

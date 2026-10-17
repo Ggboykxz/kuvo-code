@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Pins the browser Kuvo Code runs on Linux machines, in KuvoCode/Resources/browser-runtime.json.
 
-The browser is Google's Chrome for Testing headless shell. It needs about forty shared libraries
-that servers often don't have, and fonts, which they often have none of. Rather than have anyone
+The browser is Google's Chrome for Testing, the full browser, run headless (Chrome's own headless
+mode, not the separate headless shell, which sites take for a bot: Google won't sign anyone in from
+it, and X limits it). It needs shared libraries that servers often don't have, and fonts, which
+they often have none of. Rather than have anyone
 install packages on their machine, the app brings them along, into ~/.kuvo-code/browser there,
 and points the browser at them: it uses nothing from the machine but the C library (glibc),
 which the engine needs too.
@@ -23,6 +25,7 @@ Run it to move to a newer Chromium or newer library updates, then build and try 
 import argparse
 import gzip
 import hashlib
+import http.client
 import io
 import json
 import os
@@ -36,7 +39,7 @@ import zipfile
 OUT = os.path.join(os.path.dirname(__file__), "..", "KuvoCode", "Resources", "browser-runtime.json")
 
 CFT = "https://storage.googleapis.com/chrome-for-testing-public"
-CHROMIUM_ZIPS = {"x86_64": "linux64/chrome-headless-shell-linux64.zip", "aarch64": "linux-arm64/chrome-headless-shell-linux-arm64.zip"}
+CHROMIUM_ZIPS = {"x86_64": "linux64/chrome-linux64.zip", "aarch64": "linux-arm64/chrome-linux-arm64.zip"}
 ROCKY = "https://dl.rockylinux.org/pub/rocky/8"
 REPOS = ["BaseOS", "AppStream"]
 
@@ -49,16 +52,23 @@ SKIP = {
     "glibc", "glibc-common", "glibc-minimal-langpack", "glibc-all-langpacks", "libgcc", "basesystem",
     "filesystem", "setup", "bash", "coreutils", "coreutils-single", "grep", "sed", "info", "shadow-utils",
     "systemd", "systemd-pam", "dbus", "dbus-daemon", "dbus-common", "dbus-tools", "dbus-broker",
-    "fontpackages-filesystem", "fontconfig", "liberation-fonts-common", "dejavu-fonts-common",
+    "fontpackages-filesystem", "liberation-fonts-common", "dejavu-fonts-common",
     "crypto-policies", "crypto-policies-scripts", "ca-certificates", "p11-kit-trust", "nss-sysinit",
     "libX11-common", "xkeyboard-config", "shared-mime-info", "gsettings-desktop-schemas",
     "tzdata", "chkconfig", "pkgconf-pkg-config", "python3-libs", "platform-python",
 }
 
 
-def fetch(url):
-    with urllib.request.urlopen(url, timeout=300) as response:
-        return response.read()
+def fetch(url, attempts=4):
+    # A connection that drops partway (a big file, a busy mirror) is tried again.
+    for attempt in range(attempts):
+        try:
+            with urllib.request.urlopen(url, timeout=300) as response:
+                return response.read()
+        except (OSError, http.client.HTTPException) as error:
+            if attempt == attempts - 1:
+                raise
+            print(f"  {url}: {error}; trying again", file=sys.stderr)
 
 
 def needed(elf):
@@ -164,7 +174,7 @@ def main():
         data = fetch(url)
         runtime["chromium"][arch] = {"url": url, "sha256": hashlib.sha256(data).hexdigest(), "size": len(data)}
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
-            binary = next(n for n in archive.namelist() if n.endswith("/chrome-headless-shell"))
+            binary = next(n for n in archive.namelist() if n.endswith("/chrome"))
             sonames = needed(archive.read(binary))
 
         found, provides = repository(arch)
