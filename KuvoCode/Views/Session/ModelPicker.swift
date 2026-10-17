@@ -369,7 +369,7 @@ struct ModelPicker: View {
     /// Opus, GPT Sol, Gemini Flash, …) from each provider, accounts you connected before the free
     /// OpenCode Zen models.
     private var shortList: [Model] {
-        let enabled = catalog.models.filter(\.enabled)
+        let enabled = catalog.offered
         let recent = recentStorage.split(separator: ",").compactMap { key in enabled.first { $0.key == key } }
         var newestByFamily: [String: Model] = [:]
         for model in enabled {

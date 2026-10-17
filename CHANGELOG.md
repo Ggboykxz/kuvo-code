@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- The model picker offers only models you can use: those of accounts you connected, and the free ones. Without an account it used to list paid and GitHub Copilot models too, which failed with "missing required Authorization header".
 - A code block whose first line is long starts below its language and Copy, instead of running in under them where its end was hidden.
 - With VoiceOver, the composer's round button reads Send or Stop (it read "Up"); each line of the changes offers Comment on This Line, and each of your messages Copy, New Session From Here and Undo From Here, which otherwise show only under the pointer.
 - Undo brings back the files the agent changed in a project opened through a link, like a Dropbox folder: it used to take back only the conversation. Projects you open from now on get this; one opened before keeps working as it did.

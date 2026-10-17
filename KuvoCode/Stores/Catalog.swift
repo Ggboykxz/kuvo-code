@@ -44,9 +44,24 @@ final class Catalog {
         return modes.isEmpty || modes.contains("build") ? "build" : modes[0]
     }
 
+    /// The models you can use now, offered in pickers: those of an account you connected,
+    /// OpenCode Zen's free ones (they need no account), and those of a provider with nothing to
+    /// sign in to (a local one). The engine lists every provider it knows, connected or not, and
+    /// one that isn't only fails ("missing required Authorization header"); its models show once
+    /// it's connected.
+    var offered: [Model] {
+        let byID = Dictionary(integrations.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return models.filter { model in
+            guard model.enabled else { return false }
+            if model.providerID == "opencode", model.isFree { return true }
+            guard let provider = byID[model.providerID] else { return true }
+            return provider.isConnected || provider.methods.isEmpty
+        }
+    }
+
     /// Models grouped by provider, providers in the order people tend to look for them.
     var modelsByProvider: [(provider: String, models: [Model])] {
-        let groups = Dictionary(grouping: models.filter(\.enabled), by: \.providerID)
+        let groups = Dictionary(grouping: offered, by: \.providerID)
         return groups.keys
             .sorted { (Self.featuredOrder[$0] ?? 99, $0) < (Self.featuredOrder[$1] ?? 99, $1) }
             .map { id in (providerName(id), groups[id]!.sorted { $0.time.released > $1.time.released }) }
