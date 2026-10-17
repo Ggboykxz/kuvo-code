@@ -30,6 +30,14 @@ struct YourMessage: View {
         return hovering
     }
 
+    /// What VoiceOver reads for it: its comments on the changes, what it says, and what's attached.
+    private var spoken: String {
+        let parts = comments.map { "Comment on \($0.location): \($0.text)" }
+            + [text].filter { !$0.isEmpty }
+            + (attachments.isEmpty ? [] : [attachments.count == 1 ? "1 attachment" : "\(attachments.count) attachments"])
+        return "You: " + parts.joined(separator: ". ")
+    }
+
     var body: some View {
         VStack(alignment: .trailing, spacing: 2) {
             UserBubble(text: text, style: style, attachments: attachments, comments: comments)
@@ -66,6 +74,15 @@ struct YourMessage: View {
             }
             Button("Undo From Here…") { confirmsUndo = true }
                 .disabled(isOffline)
+        }
+        // With VoiceOver: the message, read as one, with what shows under the pointer and in its
+        // menu as its actions.
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(spoken)
+        .accessibilityActions {
+            if !text.isEmpty { Button("Copy") { Clipboard.copy(text) } }
+            if let fork, !isOffline { Button("New Session From Here", action: fork) }
+            if !isOffline { Button("Undo From Here…") { confirmsUndo = true } }
         }
         .alert("Undo from this message?", isPresented: $confirmsUndo) {
             Button("Undo", action: undo)
