@@ -40,6 +40,7 @@ final class Utilities {
             if case .machinePage(let machine, let page?) = tab.kind { machineBrowser?(machine)?.handBack(page) }
         }
         selection = id
+        picked(id)
     }
 
     /// The page in view is one you took over: agents' steps elsewhere leave the panel on it.
@@ -183,9 +184,10 @@ final class Utilities {
     }
 
     /// A browser tab at `address`; or, given WebKit's configuration, a window a page opened, placed
-    /// right after the page's tab. When that window closes itself, its page's tab comes back.
+    /// right after the page's tab. When that window closes itself, its page's tab comes back. An
+    /// agent's tab that isn't `shown` opens behind the one in view.
     @discardableResult
-    func newBrowser(_ address: String? = nil, configuration: WKWebViewConfiguration? = nil, openedFrom opener: UUID? = nil, byAgent: Bool = false, owner: String? = nil) -> BrowserSession {
+    func newBrowser(_ address: String? = nil, configuration: WKWebViewConfiguration? = nil, openedFrom opener: UUID? = nil, byAgent: Bool = false, owner: String? = nil, shown: Bool = true) -> BrowserSession {
         // Yours only: not the agent's tabs, nor windows a page opened.
         if !byAgent, configuration == nil {
             Analytics.shared.track("panel_opened", ["tool": "browser"])
@@ -206,7 +208,15 @@ final class Utilities {
         }
         browsers[tab.id] = browser
         if let address { browser.load(address) }
-        add(tab, at: opener.flatMap { id in tabs.firstIndex { $0.id == id }.map { $0 + 1 } })
+        // A window a conversation's page opens is that conversation's too, and the agent goes on
+        // in it (a sign-in window); it comes forward if its page is in view, or its agent's
+        // browsing would bring it.
+        let claim = opener.flatMap { agentClaims[$0] }
+        if let claim { agentClaims[tab.id] = (claim.session, .now) }
+        let comesForward = shown && (opener == nil || opener == selection || claim.map { bringsForward($0.session) } ?? true)
+        add(tab, at: opener.flatMap { id in tabs.firstIndex { $0.id == id }.map { $0 + 1 } }, select: comesForward)
+        // One you opened yourself is the tab you're looking at now.
+        if !byAgent, configuration == nil { picked(tab.id) }
         return browser
     }
 
@@ -463,6 +473,69 @@ final class Utilities {
         browsers.first { $0.value === browser }?.key
     }
 
+    // MARK: Conversations' tabs
+
+    /// The conversation whose agent works in each of your tabs lately, and when: a tab one uses
+    /// isn't another's to take over (see `isFree`), so each keeps to its own page.
+    @ObservationIgnored private var agentClaims: [UUID: (session: String, at: Date)] = [:]
+    /// When you last picked one of your tabs with a conversation in view: its agent goes on there.
+    @ObservationIgnored private var picks: [String: Date] = [:]
+    /// How long a tab stays with the conversation whose agent used it last.
+    static let agentHold: TimeInterval = 90
+    /// Whether a session is one in the sidebar (not a subagent's). The window sets it.
+    @ObservationIgnored var isListedSession: (String) -> Bool = { _ in false }
+
+    /// The tab a conversation's agent works in: the one it worked in last, unless you picked
+    /// another for it since; else yours in view (or your latest), unless another conversation's
+    /// agent is using it or you took it over. Nil when it needs a tab of its own.
+    func agentBrowser(for session: String) -> BrowserSession? {
+        if let own = ownTab(of: session) { return browsers[own] }
+        guard let browser = activeBrowser, let id = id(of: browser), !browser.isHeld, isFree(id, for: session) else { return nil }
+        return browser
+    }
+
+    /// The tab a conversation's agent worked in last, while it's open and you haven't picked
+    /// another for it since.
+    func ownTab(of session: String) -> UUID? {
+        let mine = agentClaims.filter { $0.value.session == session && browsers[$0.key] != nil }.max { $0.value.at < $1.value.at }
+        guard let mine, (picks[session] ?? .distantPast) <= mine.value.at else { return nil }
+        return mine.key
+    }
+
+    /// Whether a conversation's agent may work in a tab: one no other conversation's agent has
+    /// used in the last moments, or whose conversation is in view.
+    func isFree(_ id: UUID, for session: String) -> Bool {
+        guard let claim = agentClaims[id], claim.session != session else { return true }
+        return Date.now.timeIntervalSince(claim.at) > Self.agentHold && claim.session != sessionInView
+    }
+
+    /// A conversation's agent works in `browser` now.
+    func agentWorks(_ session: String, in browser: BrowserSession) {
+        guard let id = id(of: browser) else { return }
+        // What happened there before was someone else's business.
+        if agentClaims[id]?.session != session { browser.agentNotes = [] }
+        agentClaims[id] = (session, .now)
+    }
+
+    /// The tabs a conversation's agent has worked in.
+    func agentTabs(of session: String) -> [BrowserSession] {
+        agentClaims.filter { $0.value.session == session }.compactMap { browsers[$0.key] }
+    }
+
+    /// Whether a conversation's browsing brings its tab forward: the one in view's, or a
+    /// subagent's (which shows in the conversation that started it), not another's behind it.
+    func bringsForward(_ session: String) -> Bool {
+        session == sessionInView || !isListedSession(session)
+    }
+
+    /// You picked one of your tabs with a conversation in view: its agent goes on in it, unless
+    /// another conversation's agent is using it.
+    private func picked(_ id: UUID) {
+        guard let session = sessionInView, let browser = browsers[id], tabs.first(where: { $0.id == id })?.owner == nil, isFree(id, for: session) else { return }
+        picks[session] = .now
+        agentWorks(session, in: browser)
+    }
+
     /// Your browser in view, or your most recent one (never a bot's).
     var activeBrowser: BrowserSession? {
         if let selected, selected.owner == nil, let browser = browsers[selected.id] { return browser }
@@ -510,6 +583,7 @@ final class Utilities {
         tabs.remove(at: index)
         terminals.removeValue(forKey: id)?.terminate()
         browsers.removeValue(forKey: id)?.close()
+        agentClaims[id] = nil
         if wasSelected {
             let rest = visibleTabs
             selection = at.flatMap { rest.indices.contains($0) ? rest[$0].id : nil } ?? rest.last?.id
@@ -526,6 +600,7 @@ final class Utilities {
         for browser in browsers.values { browser.close() }
         terminals = [:]
         browsers = [:]
+        agentClaims = [:]
         runs = [:]
         let place = place
         self.place = nil
@@ -533,9 +608,9 @@ final class Utilities {
         self.place = place
     }
 
-    private func add(_ tab: Tab, at index: Int? = nil) {
+    private func add(_ tab: Tab, at index: Int? = nil, select: Bool = true) {
         tabs.insert(tab, at: index ?? tabs.count)
         // A bot's tab out of view stays out of view.
-        if isVisible(tab) { selection = tab.id }
+        if select, isVisible(tab) { selection = tab.id }
     }
 }

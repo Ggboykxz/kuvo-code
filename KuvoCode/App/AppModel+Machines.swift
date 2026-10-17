@@ -57,6 +57,7 @@ extension AppModel {
             if let machine { machines.engine(machine)?.browser.expectAsk() }
         }
         utilities.machineBrowser = { [weak self] machine in self?.machines.engine(machine)?.browser }
+        utilities.isListedSession = { [weak self] session in self?.workspace.session(session) != nil }
         // A machine whose connection dropped while the Mac slept, and that gave up trying, gets
         // another go once it's awake and the network is back. (NSWorkspace says so on its own
         // notification center; watched once, though this runs with each start of the engine.)

@@ -11,7 +11,7 @@ final class BrowserAgent {
     private let utilities: Utilities
     private let asks: BrowserAsks
     /// The bot on this Mac this agent is, which browses in tabs of its own; nil for an agent in
-    /// your sessions, which uses yours.
+    /// your sessions, which uses yours (each conversation's its own, see `Utilities.agentBrowser`).
     let owner: String?
     /// The session whose tool call this agent serves, when the engine says.
     let caller: String?
@@ -38,7 +38,8 @@ final class BrowserAgent {
     /// it back, it says so, with the page as it is now, rather than doing its step. Nil when the
     /// page is the agent's to use.
     func waitForControl() async -> String? {
-        let page = owner.map { owner in use ?? utilities.botBrowser(owner) } ?? utilities.activeBrowser
+        let page = owner.map { owner in use ?? utilities.botBrowser(owner) }
+            ?? caller.map { utilities.agentBrowser(for: $0) } ?? utilities.activeBrowser
         guard let page, page.isHeld else { return nil }
         // Its badge shows while it waits; a closed page, or a stopped run, ends the wait.
         page.agentWorks(caller)
@@ -80,13 +81,15 @@ final class BrowserAgent {
     }
 
     func newTab(_ address: String?) async -> String {
-        let browser = utilities.newBrowser(address, byAgent: true, owner: owner)
-        // A bot's new tab is the one it goes on in.
+        let shows = owner == nil ? caller.map(utilities.bringsForward) ?? true : true
+        let browser = utilities.newBrowser(address, byAgent: true, owner: owner, shown: shows)
+        // A bot's new tab is the one it goes on in, and a conversation's.
         if owner != nil { use = browser }
+        if owner == nil, let caller { utilities.agentWorks(caller, in: browser) }
         Analytics.shared.trackOnce("agent_used_browser")
         Analytics.shared.trackOnce("browser_used", key: "agent.mac", ["by": "agent", "place": "mac"])
-        // Brought forward, unless it's a bot's out of view.
-        utilities.reveal(browser)
+        // Brought forward, unless it's a bot's out of view, or another conversation's than the one in view.
+        if shows { utilities.reveal(browser) }
         if address != nil { await settle(browser, expectNavigation: true) }
         return await snapshot()
     }
@@ -115,10 +118,11 @@ final class BrowserAgent {
         }
     }
 
-    /// What happened in the browser since the agent's last tool (a download), for its next result.
-    /// What happened in this agent's tabs (yours, or a bot's own) since: downloads, dialogs.
+    /// What happened in this agent's tabs (a bot's own, or the ones its conversation works in)
+    /// since its last tool, for its next result: downloads, dialogs.
     func takeNotes() -> String {
-        let notes = utilities.browserTabs(of: owner).map(\.browser).flatMap { browser in
+        let tabs = owner == nil ? caller.map(utilities.agentTabs) : nil
+        let notes = (tabs ?? utilities.browserTabs(of: owner).map(\.browser)).flatMap { browser in
             defer { browser.agentNotes = [] }
             return browser.agentNotes
         }
@@ -135,24 +139,32 @@ final class BrowserAgent {
     func tabs(_ action: String, tab number: Int?) async -> String {
         let open = utilities.browserTabs(of: owner)
         if action != "list" {
-            guard let number, open.indices.contains(number - 1) else { return "There's no tab [\(number ?? 0)]. " + Self.list(open.map(\.browser), inUse: utilities.activeBrowser) }
+            guard let number, open.indices.contains(number - 1) else { return "There's no tab [\(number ?? 0)]. " + list(open) }
             let chosen = open[number - 1]
+            // Another conversation's agent is at work there: not this one's to take or close.
+            if owner == nil, let caller, !utilities.isFree(chosen.id, for: caller) {
+                return "Another conversation's agent is using tab [\(number)]. Pick another, or open one with browser_new_tab."
+            }
             if action == "close" {
                 utilities.close(chosen.id)
-                return "Closed tab [\(number)]. " + Self.list(utilities.browserTabs(of: owner).map(\.browser), inUse: inUse)
+                return "Closed tab [\(number)]. " + list(utilities.browserTabs(of: owner))
             }
-            utilities.reveal(chosen.browser)
+            if chosen.browser.isHeld { return "The user took tab [\(number)] over and has it now. Pick another, or carry on without it." }
             if owner != nil { use = chosen.browser }
+            if owner == nil, let caller { utilities.agentWorks(caller, in: chosen.browser) }
+            if owner != nil || caller.map(utilities.bringsForward) ?? true { utilities.reveal(chosen.browser) }
             return await snapshot()
         }
-        return Self.list(open.map(\.browser), inUse: inUse)
+        return list(open)
     }
 
-    private static func list(_ browsers: [BrowserSession], inUse: BrowserSession?) -> String {
-        guard !browsers.isEmpty else { return "No tabs are open." }
-        return "Tabs:\n" + browsers.enumerated().map { index, browser in
-            let title = browser.title.isEmpty ? "(untitled)" : browser.title
-            return "[\(index + 1)] \(title) — \(browser.url?.absoluteString ?? "empty")" + (browser === inUse ? " (in use)" : "")
+    private func list(_ tabs: [(id: UUID, browser: BrowserSession)]) -> String {
+        guard !tabs.isEmpty else { return "No tabs are open." }
+        let inUse = inUse
+        return "Tabs:\n" + tabs.enumerated().map { index, tab in
+            let title = tab.browser.title.isEmpty ? "(untitled)" : tab.browser.title
+            let note = tab.browser === inUse ? " (in use)" : owner == nil && caller.map { !utilities.isFree(tab.id, for: $0) } == true ? " (another conversation's)" : ""
+            return "[\(index + 1)] \(title) — \(tab.browser.url?.absoluteString ?? "empty")" + note
         }.joined(separator: "\n")
     }
 
@@ -449,19 +461,26 @@ final class BrowserAgent {
 
     // MARK: Helpers
 
-    /// The browser in view, or a new one; either way the panel shows it. A bot on this Mac uses
-    /// its own tab, out of sight unless its conversation is in view.
+    /// The tab this agent works in, and the panel shows it. A bot on this Mac uses its own tab,
+    /// out of sight unless its conversation is in view. In your sessions, each conversation's agent
+    /// keeps to a tab of its own: the one in view, unless another conversation's agent is using
+    /// it, else a new one; another conversation's than the one in view stays behind it.
     private func browser() -> BrowserSession {
         let browser: BrowserSession
+        var shows = true
         if let owner {
             browser = use ?? utilities.botBrowser(owner) ?? utilities.newBrowser(byAgent: true, owner: owner)
             use = browser
+        } else if let caller {
+            shows = utilities.bringsForward(caller)
+            browser = utilities.agentBrowser(for: caller) ?? utilities.newBrowser(byAgent: true, shown: shows)
+            utilities.agentWorks(caller, in: browser)
         } else {
             browser = utilities.activeBrowser ?? utilities.newBrowser(byAgent: true)
         }
         Analytics.shared.trackOnce("agent_used_browser")
         Analytics.shared.trackOnce("browser_used", key: "agent.mac", ["by": "agent", "place": "mac"])
-        utilities.reveal(browser)
+        if shows { utilities.reveal(browser) }
         works(in: browser)
         return browser
     }
@@ -471,7 +490,9 @@ final class BrowserAgent {
 
     /// The tab in use, for the tab list.
     private var inUse: BrowserSession? {
-        owner.flatMap { utilities.botBrowser($0) } ?? utilities.activeBrowser
+        if let owner { return utilities.botBrowser(owner) }
+        if let caller { return utilities.agentBrowser(for: caller) }
+        return utilities.activeBrowser
     }
 
     /// Shows the pointer where the agent's about to act, and gives it a moment to get there.
