@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- A session the engine didn't name is named after your first message, without the note on attached files or the header of a message from another agent. After a long first run it stayed "New Session", then took a later message's words.
 - After you disconnect an account, new sessions and bots start on a model you can still use, rather than on that account's and failing. Settings' model choices show such a model by name instead of a blank.
 - A model whose name has a slash in it, like OpenRouter's, stays chosen for new sessions and bots; they used to start on the default model instead.
 - Agents no longer list sessions you archived among the ones they can write to.

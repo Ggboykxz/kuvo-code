@@ -929,7 +929,8 @@ final class Workspace {
             endedRuns[id, default: 0] += 1
             noteTurn(id, event)
             onRunEnded?(id)
-            if session(id)?.title?.isEmpty != false { nameIfUntitled(id) }
+            // A subagent's session has no row: the engine names those, and it's not to be renamed.
+            if let session = session(id), session.title?.isEmpty != false { nameIfUntitled(id) }
             // Picks up the new idle time (unread state) and outcome.
             Task {
                 await reload(id)
@@ -989,11 +990,15 @@ final class Workspace {
             defer { namingUntitled.remove(id) }
             // The engine names it a few seconds after the run, when it can.
             try? await Task.sleep(for: .seconds(15))
-            guard session(id)?.title?.isEmpty != false, let api = api(forSession: id),
-                  let page = try? await api.messages(session: id, limit: 40) else { return }
+            guard let session = session(id), session.parentID == nil, session.title?.isEmpty != false, let api = api(forSession: id),
+                  let page = try? await api.firstMessages(session: id, limit: 10) else { return }
+            // What you wrote first, as it shows in the conversation: a command as you typed it,
+            // without the note on attached files, and another agent's message without its header.
             let first = page.data.lazy.compactMap { message -> String? in
-                if case .user(let user) = message { return user.text }
-                return nil
+                guard case .user(let user) = message else { return nil }
+                let text = Attachments.split(CommandMessages.shared.text(of: user)).text
+                let words = AgentMail.parse(text)?.text ?? text
+                return words.isEmpty ? nil : words
             }.first
             guard let first, let title = Self.title(from: first) else { return }
             try? await api.renameSession(id, title: title)
@@ -1003,14 +1008,18 @@ final class Workspace {
     @ObservationIgnored private var namingUntitled: Set<String> = []
 
     /// A title from a message: its words without review comments or line breaks, up to the end
-    /// of its first sentence or about 48 characters, at a word.
+    /// of its first sentence or about 48 characters, at a word. A dot in a word (README.md, a web
+    /// address) doesn't end a sentence.
     nonisolated static func title(from message: String) -> String? {
         let split = ReviewComments.split(message)
         let words = (split.text.isEmpty ? split.comments.first?.text ?? "" : split.text)
             .split(whereSeparator: \.isWhitespace).joined(separator: " ")
         guard !words.isEmpty else { return nil }
         var title = words
-        if let end = title.firstIndex(where: { ".?!".contains($0) }), title.distance(from: title.startIndex, to: end) >= 12 {
+        let end = title.indices.first { index in
+            ".?!".contains(title[index]) && (title.index(after: index) == title.endIndex || title[title.index(after: index)] == " ")
+        }
+        if let end, title.distance(from: title.startIndex, to: end) >= 12 {
             title = String(title[...end])
         }
         if title.count > 48 {

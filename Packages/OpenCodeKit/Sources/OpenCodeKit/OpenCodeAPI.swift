@@ -344,6 +344,11 @@ public struct OpenCodeAPI: Sendable {
         return page
     }
 
+    /// The oldest messages, oldest first: how the conversation began.
+    public func firstMessages(session: String, limit: Int = 100) async throws -> Page<Message> {
+        try await get("api/session/\(session.pathEscaped)/message", query: ["limit": String(limit), "order": "asc"])
+    }
+
     public func inbox(session: String) async throws -> [InboxItem] {
         try await get("api/session/\(session.pathEscaped)/inbox", as: DataEnvelope<[InboxItem]>.self).data
     }
