@@ -4,9 +4,9 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
-## Unreleased
+## 0.5.2
 
-- Bots get their job from their conversation: Edit Bot has no job fields any more. A new bot asks "What's my purpose?", and what you tell it becomes its job, kept in its memory and changed as you tell it more; the sidebar shows it in a few words under its name. Starting from a ready-made or shared bot types its job in the conversation for you to send. Your bots' jobs move into their memory.
+- **Bots get their job from their conversation**: Edit Bot has no job fields any more. A new bot asks "What's my purpose?", and what you tell it becomes its job, kept in its memory and changed as you tell it more; the sidebar shows it in a few words under its name. Starting from a ready-made or shared bot types its job in the conversation for you to send. Your bots' jobs move into their memory.
 - Figma connects through Figma's own server: you sign in with your Figma account instead of pasting a token, and the agent gets Figma's own tools. If you'd added Figma, sign in to it once under Settings › Integrations; its token is removed.
 - Integrations' servers (Outlook, Apple Calendar, Figma and the others) take about half the memory they did and start faster: each runs on its own, without npx waiting beside it.
 - Kuvo Code uses much less memory after launch: it used to wake every bot's folder in the engine, each with its own copy of every integration's server, for an hour. With Outlook connected and a few bots, that was more than a gigabyte.
@@ -18,7 +18,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - New bots can start from Lens, a code reviewer: it reviews a project's changes before they ship (pull requests too, when gh is signed in) and reports what it found, file by file. It takes the place of Bargain, which watched prices.
 - A sign-in you give an agent is forgotten after a few minutes, as it's meant to be; it used to stay in memory until Kuvo Code quit. Settings › Keyboard Shortcuts lists New Chat and zooming a machine's page too.
 - Keys you give integrations are no longer in the engine's environment, where the agent's own commands (env, say) could print them and send them to the model. This Mac's engine reads them from files only you can read, which go when Kuvo Code quits.
-- Group chats hand out the work: after the discussion, the lead lists who does what, and each bot does its part in its own conversation, with all its tools, then reports back to the chat. It starts at once if you'd already said to go ahead, or when you click Start the Work; a part that needs another done first waits for it, and a part waiting on you shows Needs You. In the chat itself, bots only talk and look things up.
+- **Group chats hand out the work**: after the discussion, the lead lists who does what, and each bot does its part in its own conversation, with all its tools, then reports back to the chat. It starts at once if you'd already said to go ahead, or when you click Start the Work; a part that needs another done first waits for it, and a part waiting on you shows Needs You. In the chat itself, bots only talk and look things up.
 - Messages agents send each other, and a group chat's work handed to a bot, fold to one line in the conversation; click to open or fold one. Long ones start folded.
 - Approve All runs what Settings › Permissions sets to Ask First without asking, as its name says; it used to ask anyway. Don't Allow in Settings now holds in every session: one set to Ask First used to ask about it instead.
 - With Outlook and Microsoft 365 connected, every message used to carry all 196 of its tools, about 280,000 tokens, so sessions were slow and costly and small models ran out of room. Now the agent looks up the tool it needs, and each message is about 30 times smaller. Integrations you added earlier get this, and any newer version of their server, on their own.
