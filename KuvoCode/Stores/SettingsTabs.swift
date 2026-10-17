@@ -117,11 +117,12 @@ final class SettingsTabs {
     }
 
     /// What searching finds first: its tab, if it's open; else the tab searching opened, now on
-    /// this page; else a new one, which the next search changes in turn.
-    func preview(_ page: SettingsPage) {
+    /// this page, unless `isBusy` says it has something open in its page's place (an editor,
+    /// with what you typed), which stays; else a new one, which the next search changes in turn.
+    func preview(_ page: SettingsPage, isBusy: (String) -> Bool = { _ in false }) {
         if let open = tabs.first(where: { $0.page == page }) {
             select(open.id)
-        } else if let id = previewTab, let index = tabs.firstIndex(where: { $0.id == id && $0.page != nil }) {
+        } else if let id = previewTab, !isBusy(id), let index = tabs.firstIndex(where: { $0.id == id && $0.page != nil }) {
             tabs[index].kind = .page(page)
             select(id)
         } else {

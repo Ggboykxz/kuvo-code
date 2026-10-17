@@ -26,7 +26,8 @@ struct SettingsView: View {
             SettingsSidebar(selection: Binding(get: { tabs.page }, set: { page in withAnimation(.ui) { tabs.show(page) } }), search: $search) { page in
                 withAnimation(.ui) { tabs.show(page, inNewTab: true) }
             } preview: { page in
-                withAnimation(.ui) { tabs.preview(page) }
+                // A tab with an editor open keeps it, and what's typed in it.
+                withAnimation(.ui) { tabs.preview(page) { navigators[$0]?.detail != nil } }
             }
                 .padding(.top, topInset)
                 .frame(width: sidebarWidth)
@@ -38,7 +39,7 @@ struct SettingsView: View {
                     Group {
                         switch tab.kind {
                         case .page(let page):
-                            let navigator = navigators[tab.id]
+                            let navigator = navigators[tab.id, page]
                             VStack(alignment: .leading, spacing: 0) {
                                 SettingsPageHeader(page: page, navigator: navigator)
                                 page.content
@@ -60,6 +61,8 @@ struct SettingsView: View {
                     }
                     .opacity(isShown ? 1 : 0)
                     .allowsHitTesting(isShown)
+                    // Nor keys: Return is for the editor in view, not one in another tab.
+                    .disabled(!isShown)
                     .accessibilityHidden(!isShown)
                 }
             }
@@ -73,7 +76,7 @@ struct SettingsView: View {
         // Escape goes back: to the page, from what it opened in its place; else to the sessions.
         .background {
             Button("Back to Sessions") {
-                if !navigators[tabs.selectedID].back() { close() }
+                if navigators[tabs.selectedID]?.back() != true { close() }
             }
                 .keyboardShortcut(.escape, modifiers: [])
                 .opacity(0)
@@ -88,13 +91,20 @@ struct SettingsView: View {
 
 /// Each Settings tab's navigator, made the first time the tab's drawn.
 private final class SettingsNavigators {
-    private var byTab: [String: SettingsNavigator] = [:]
+    private var byTab: [String: (page: SettingsPage, navigator: SettingsNavigator)] = [:]
 
-    subscript(tab: String) -> SettingsNavigator {
-        if let navigator = byTab[tab] { return navigator }
+    /// The tab's navigator, for the page it's on: a tab that searching moves to another page
+    /// starts afresh, as its page does, with no way back to what the last page had open.
+    subscript(tab: String, page: SettingsPage) -> SettingsNavigator {
+        if let kept = byTab[tab], kept.page == page { return kept.navigator }
         let navigator = SettingsNavigator()
-        byTab[tab] = navigator
+        byTab[tab] = (page, navigator)
         return navigator
+    }
+
+    /// The tab's navigator, once it's been drawn.
+    subscript(tab: String) -> SettingsNavigator? {
+        byTab[tab]?.navigator
     }
 
     func keep(_ tabs: [String]) {
