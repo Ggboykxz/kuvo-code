@@ -12,42 +12,42 @@ struct CopyableCodeBlockStyle: StructuredText.CodeBlockStyle {
 
 private struct CopyableCodeBlock: View {
     let configuration: StructuredText.CodeBlockStyleConfiguration
+    /// The code, which Textual keeps private: read from the copy action's proxy, once; nil (no
+    /// numbers) if a Textual update moves it.
+    private let content: AttributedSubstring?
+    /// How many lines it has, for their numbers.
+    private let lineCount: Int?
+    private let firstLine: String?
     @State private var copied = false
     @State private var isHoveringCopy = false
-    /// The code's height, which the line numbers are spaced out over.
-    @State private var codeHeight: CGFloat = 0
-    /// What decides whether the first line would run in under the corner: its width, the code's
-    /// room, and the corner's size.
-    @State private var firstLineWidth: CGFloat = 0
+    /// What decides whether the first line would run in under the corner: the code's room, and
+    /// the corner's size.
     @State private var codeWidth: CGFloat = 0
     @State private var cornerSize: CGSize = .zero
     @Environment(\.colorScheme) private var scheme
     @Environment(\.cardIsFocused) private var cardIsFocused
     @Environment(\.findHighlight) private var highlight
+    @Environment(\.messageFont) private var font
 
     private static let shape = RoundedRectangle(cornerRadius: 10)
     /// The same room above and below the code.
     private static let inset: CGFloat = 12
 
-    /// How many lines the code has, for its numbers. Textual keeps the code itself private, so
-    /// this reads it from the copy action's proxy; nil (no numbers) if a Textual update moves it.
-    private var lineCount: Int? {
-        guard let content else { return nil }
-        return content.characters.reduce(1) { $1 == "\n" ? $0 + 1 : $0 }
-    }
-
-    private var content: AttributedSubstring? {
-        Mirror(reflecting: configuration.codeBlock).descendant("content") as? AttributedSubstring
-    }
-
-    private var firstLine: String? {
-        content.map { String(String($0.characters).prefix { $0 != "\n" }) }
+    init(configuration: StructuredText.CodeBlockStyleConfiguration) {
+        self.configuration = configuration
+        let content = Mirror(reflecting: configuration.codeBlock).descendant("content") as? AttributedSubstring
+        self.content = content
+        lineCount = content.map { $0.unicodeScalars.reduce(1) { $1 == "\n" ? $0 + 1 : $0 } }
+        firstLine = content.map { String($0.characters.prefix { $0 != "\n" }) }
     }
 
     /// The first line is too long to share its row with the corner: the code starts below it,
-    /// so nothing is hidden under the language and Copy.
+    /// so nothing is hidden under the language and Copy. (Measured as the code font sets it, a
+    /// little larger than the code, to be safe.)
     private var clearsCorner: Bool {
-        firstLineWidth > 0 && 14 + firstLineWidth + 8 > codeWidth - cornerSize.width
+        guard let firstLine, !firstLine.isEmpty, codeWidth > 0 else { return false }
+        let width = (firstLine as NSString).size(withAttributes: [.font: NSFont.monospacedSystemFont(ofSize: font.size - 1.5, weight: .regular)]).width
+        return 14 + width + 8 > codeWidth - cornerSize.width
     }
 
     /// The code with Find's marks in it, while Find has places there: drawn without its colors,
@@ -63,16 +63,17 @@ private struct CopyableCodeBlock: View {
         HStack(alignment: .top, spacing: 0) {
             // Beside the code, not in it: selecting and copying code never takes the numbers.
             if let lineCount, lineCount > 1 {
-                LineNumbers(count: lineCount, height: codeHeight)
+                LineNumbers(count: lineCount)
                     .padding(.leading, 12)
                     .padding(.vertical, Self.inset)
             }
             Overflow {
                 Group {
                     if let marked {
+                        // Set as the code is, so the numbers still line up.
                         Text(marked)
-                            .transcriptCodeFont()
-                            .lineSpacing(3)
+                            .font(.system(size: font.size * 0.85, design: .monospaced))
+                            .lineSpacing(font.size * 0.85 * 0.225)
                     } else {
                         configuration.label
                     }
@@ -81,16 +82,6 @@ private struct CopyableCodeBlock: View {
                     .textual.fontScale(0.85)
                     .fixedSize(horizontal: false, vertical: true)
                     .monospaced()
-                    .onGeometryChange(for: CGFloat.self, of: \.size.height) { codeHeight = $0 }
-                    .background(alignment: .topLeading) {
-                        if let firstLine {
-                            Text(firstLine)
-                                .transcriptCodeFont()
-                                .fixedSize()
-                                .hidden()
-                                .onGeometryChange(for: CGFloat.self, of: \.size.width) { firstLineWidth = $0 }
-                        }
-                    }
                     .padding(.horizontal, 14)
                     .padding(.vertical, Self.inset)
             }
@@ -176,31 +167,28 @@ private struct CornerButtonStyle: ButtonStyle {
     }
 }
 
-/// A code block's line numbers, one per line of the code beside it. Its lines never wrap (long
-/// ones scroll sideways), so each line's share of the code's height is where its number goes.
+/// A code block's line numbers, one per line of the code beside it, in one text set as the code
+/// is (its font at 0.85 of the messages' size, Textual's spacing of 0.225 of that between lines).
+/// The code's lines never wrap (long ones scroll sideways), so the numbers line up with them.
 private struct LineNumbers: View {
     let count: Int
-    let height: CGFloat
-
-    /// The code's size in the transcript: 14 points, scaled to 0.85.
-    private static let fontSize: CGFloat = 14 * 0.85
-    /// The space Textual puts between lines (0.225 of the font size), which the last line doesn't have.
-    private static let spacing: CGFloat = fontSize * 0.225
+    @Environment(\.messageFont) private var font
 
     var body: some View {
-        let pitch = count > 0 ? (height + Self.spacing) / CGFloat(count) : 0
-        VStack(alignment: .trailing, spacing: 0) {
-            ForEach(1...count, id: \.self) { number in
-                Text(verbatim: "\(number)")
-                    .frame(height: pitch, alignment: .top)
-            }
-        }
-        .font(.system(size: Self.fontSize, design: .monospaced))
-        .foregroundStyle(.tertiary)
-        .frame(height: height, alignment: .top)
-        .opacity(height > 0 ? 1 : 0)
-        .textSelection(.disabled)
-        .accessibilityHidden(true)
+        let size = font.size * 0.85
+        Text(verbatim: Self.numbers(count))
+            .font(.system(size: size, design: .monospaced))
+            .lineSpacing(size * 0.225)
+            .multilineTextAlignment(.trailing)
+            .foregroundStyle(.tertiary)
+            .fixedSize()
+            .textSelection(.disabled)
+            .accessibilityHidden(true)
+    }
+
+    /// "1\n2\n…\ncount".
+    private static func numbers(_ count: Int) -> String {
+        (1...max(count, 1)).map(String.init).joined(separator: "\n")
     }
 }
 
