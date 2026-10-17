@@ -76,6 +76,29 @@ public struct Transcript: Sendable, Equatable {
         pending.removeAll { $0.id == id }
     }
 
+    /// Events that carry a piece of something streaming in (words, thinking, a tool's input or
+    /// progress): many a second, each changing only the end of the transcript.
+    public static func isStreamed(_ type: String) -> Bool {
+        streamed.contains(type)
+    }
+
+    /// Whether an event of this type can change a transcript (`apply` ignores the rest).
+    public static func changes(with type: String) -> Bool {
+        streamed.contains(type) || applied.contains(type)
+    }
+
+    private static let streamed: Set<String> = ["session.text.delta", "session.reasoning.delta", "session.tool.input.delta", "session.tool.progress"]
+    private static let applied: Set<String> = [
+        "permission.asked", "permission.replied", "form.created", "form.replied", "form.cancelled",
+        "session.inbox.enqueued", "session.inbox.delivered", "session.inbox.cancelled", "session.inbox.delivery.changed",
+        "session.execution.started", "session.execution.succeeded", "session.execution.failed", "session.execution.interrupted",
+        "session.step.started", "session.step.streamed", "session.step.ended", "session.step.failed", "session.retry.scheduled",
+        "session.text.started", "session.text.ended", "session.reasoning.started", "session.reasoning.ended",
+        "session.tool.input.started", "session.tool.input.ended", "session.tool.called", "session.tool.success", "session.tool.failed",
+        "session.agent.selected", "session.model.selected", "session.synthetic", "session.shell.started", "session.shell.ended",
+        "session.compaction.started", "session.compaction.ended", "session.compaction.failed", "session.revert.committed",
+    ]
+
     /// Applies one event. Events for other sessions are ignored.
     public mutating func apply(_ event: ServerEvent) {
         do {
@@ -245,6 +268,7 @@ public struct Transcript: Sendable, Equatable {
             let delta = try event.payload(as: EventPayload.Delta.self)
             editAssistant(delta.assistantMessageID) { message in
                 if let index = message.content.lastIndex(where: \.isText), case .text(var block) = message.content[index] {
+                    message.content[index] = Self.emptyBlock
                     block.text += delta.delta
                     message.content[index] = .text(block)
                 }
@@ -265,6 +289,7 @@ public struct Transcript: Sendable, Equatable {
             let delta = try event.payload(as: EventPayload.Delta.self)
             editAssistant(delta.assistantMessageID) { message in
                 if let index = message.content.lastIndex(where: \.isOpenReasoning), case .reasoning(var block) = message.content[index] {
+                    message.content[index] = Self.emptyBlock
                     block.text += delta.delta
                     message.content[index] = .reasoning(block)
                 }
@@ -289,7 +314,10 @@ public struct Transcript: Sendable, Equatable {
         case "session.tool.input.delta":
             let delta = try event.payload(as: EventPayload.ToolInputDelta.self)
             editTool(delta.assistantMessageID, delta.id) { call in
-                if case .streaming(let input) = call.state { call.state = .streaming(input: input + delta.delta) }
+                guard case .streaming(var input) = call.state else { return }
+                call.state = .streaming(input: "")
+                input += delta.delta
+                call.state = .streaming(input: input)
             }
         case "session.tool.input.ended":
             let ended = try event.payload(as: EventPayload.ToolInputEnded.self)
@@ -381,14 +409,21 @@ public struct Transcript: Sendable, Equatable {
             isStale = true
             return
         }
+        // Out of the list while it's changed, so the change is made in place: a reply grows a
+        // few words at a time, and copying all of it for each would cost more the longer it got.
+        messages[index] = Self.emptyMessage
         edit(&message)
         messages[index] = .assistant(message)
     }
+
+    private static let emptyMessage = Message.other(id: "", type: "", created: 0)
+    private static let emptyBlock = Message.Content.other(type: "")
 
     private mutating func editTool(_ messageID: String, _ toolID: String, _ edit: (inout Message.ToolCall) -> Void) {
         editAssistant(messageID) { message in
             guard let index = message.content.lastIndex(where: { if case .tool(let call) = $0 { call.id == toolID } else { false } }),
                   case .tool(var call) = message.content[index] else { return }
+            message.content[index] = Self.emptyBlock
             edit(&call)
             message.content[index] = .tool(call)
         }

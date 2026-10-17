@@ -96,6 +96,34 @@ struct TranscriptTests {
         #expect(transcript.messages.map(Self.summary) == stored.map(Self.summary))
     }
 
+    /// The events said to change nothing don't: the app leaves them out.
+    @Test func leavesOutOnlyEventsThatChangeNothing() throws {
+        var all = Transcript(sessionID: Self.session)
+        var some = Transcript(sessionID: Self.session)
+        for event in try Fixture.events() {
+            all.apply(event)
+            if Transcript.changes(with: event.type) { some.apply(event) }
+            #expect(some == all, "after \(event.type)")
+        }
+        #expect(Transcript.isStreamed("session.text.delta") && Transcript.changes(with: "session.text.delta"))
+    }
+
+    /// Streaming words in, changed in place, leaves a copy taken before as it was.
+    @Test func keepsCopiesAsTheyWere() throws {
+        let events = try Fixture.events()
+        var transcript = Transcript(sessionID: Self.session)
+        var copies: [Transcript] = []
+        for event in events {
+            copies.append(transcript)
+            transcript.apply(event)
+        }
+        var again = Transcript(sessionID: Self.session)
+        for (event, copy) in zip(events, copies) {
+            #expect(again == copy, "before \(event.type)")
+            again.apply(event)
+        }
+    }
+
     /// A conversation saved and read back (the app's copy of a machine's) is the same one.
     @Test func messagesSurviveBeingSaved() throws {
         let stored = try Fixture.decode("messages.json", as: Page<Message>.self).data
