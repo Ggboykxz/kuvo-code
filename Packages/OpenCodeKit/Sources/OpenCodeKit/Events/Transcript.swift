@@ -227,6 +227,8 @@ public struct Transcript: Sendable, Equatable {
 
         // Steps
         case "session.step.started":
+            // At work: whatever said otherwise (a read that missed the run) was wrong.
+            isRunning = true
             let step = try event.payload(as: EventPayload.Step.self)
             if let index = assistantIndex(step.assistantMessageID), case .assistant(var message) = messages[index] {
                 message.retry = nil
@@ -262,6 +264,8 @@ public struct Transcript: Sendable, Equatable {
 
         // Text and reasoning
         case "session.text.started":
+            // At work: whatever said otherwise (a read that missed the run) was wrong.
+            isRunning = true
             let block = try event.payload(as: EventPayload.BlockStarted.self)
             editAssistant(block.assistantMessageID) { $0.content.append(.text(Message.Content.Text(text: ""))) }
         case "session.text.delta":
@@ -283,6 +287,8 @@ public struct Transcript: Sendable, Equatable {
                 }
             }
         case "session.reasoning.started":
+            // At work: whatever said otherwise (a read that missed the run) was wrong.
+            isRunning = true
             let block = try event.payload(as: EventPayload.BlockStarted.self)
             editAssistant(block.assistantMessageID) { $0.content.append(.reasoning(Message.Content.Text(text: "", time: Message.Time(created: now)))) }
         case "session.reasoning.delta":
@@ -306,6 +312,8 @@ public struct Transcript: Sendable, Equatable {
 
         // Tools
         case "session.tool.input.started":
+            // At work: whatever said otherwise (a read that missed the run) was wrong.
+            isRunning = true
             let started = try event.payload(as: EventPayload.ToolInputStarted.self)
             editAssistant(started.assistantMessageID) { message in
                 let call = Message.ToolCall(id: started.id, name: started.name, state: .streaming(input: ""), time: .init(created: now))

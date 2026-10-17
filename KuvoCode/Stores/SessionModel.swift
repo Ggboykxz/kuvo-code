@@ -320,7 +320,8 @@ final class SessionModel {
                 inbox: (try? await inbox) ?? [],
                 permissions: (try? await permissions) ?? [],
                 forms: ((try? await forms) ?? []) + ((try? await shared) ?? []),
-                isRunning: (try? await active)?.contains(id) ?? false
+                // Unknown (the engine didn't answer): as it was, not stopped.
+                isRunning: (try? await active).map { $0.contains(id) } ?? transcript.isRunning
             )
             // A queue left waiting (the app quit mid-run, say) waits for Resume rather than
             // starting on its own. Read again later (a reconnect), it carries on.

@@ -72,6 +72,19 @@ struct StepsRow: View {
         }
     }
 
+    /// A step still going: thinking that hasn't ended, a tool still being written or run.
+    static func isUnfinished(_ block: Message.Content?) -> Bool {
+        switch block {
+        case .reasoning(let reasoning): reasoning.time?.completed == nil
+        case .tool(let call):
+            switch call.state {
+            case .streaming, .running: true
+            case .completed, .failed: false
+            }
+        default: false
+        }
+    }
+
     /// "12 steps".
     static func count(_ blocks: [Message.Content]) -> String {
         blocks.count.counting("step")

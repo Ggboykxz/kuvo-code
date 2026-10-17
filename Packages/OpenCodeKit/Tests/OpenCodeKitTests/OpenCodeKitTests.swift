@@ -89,6 +89,18 @@ import Testing
     #expect(transcript.pending.isEmpty)
 }
 
+/// Read while it worked, a run can look stopped (the engine didn't say it was active); the next step
+/// it starts shows it at work again, so its thinking isn't folded away as if done.
+@Test func aStepStartingMeansItsRunning() throws {
+    func event(_ json: String) throws -> ServerEvent { try ServerEvent(json: Data(json.utf8)) }
+    var transcript = Transcript(sessionID: "ses_1")
+    transcript.load(messages: [], inbox: [], permissions: [], forms: [], isRunning: false)
+    transcript.apply(try event(#"""
+    {"id":"evt_1","created":1,"type":"session.step.started","data":{"sessionID":"ses_1","assistantMessageID":"msg_2","agent":"build","model":{"providerID":"opencode","id":"glm"}}}
+    """#))
+    #expect(transcript.isRunning)
+}
+
 /// A message you send keeps the files you attached once the engine takes it: the event that
 /// delivers it names only the message, and they used to vanish until the session was reloaded.
 @Test func keepsAMessagesFilesWhenItsDelivered() throws {

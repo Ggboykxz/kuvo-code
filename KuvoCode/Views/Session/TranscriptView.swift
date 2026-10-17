@@ -308,7 +308,8 @@ struct TranscriptView: View {
                 break
             }
         }
-        flushSteps(live: model.transcript.isRunning)
+        // A step still going at the end is under way, whatever the running state says.
+        flushSteps(live: model.transcript.isRunning || StepsRow.isUnfinished(steps.last))
         if let cut {
             let undone = all[cut...].count { if case .user = $0 { true } else { false } }
             rows.append(.undone(max(undone, 1)))
