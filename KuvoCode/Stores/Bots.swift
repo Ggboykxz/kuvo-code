@@ -703,6 +703,7 @@ final class Bots {
         of your memory file, under a "## Job" heading: first, on a line of its own, what you do in a few words, like "Keeps \
         the build green" (Kuvo Code shows it under your name); then, below it, the details: what to watch, what to make, what \
         never to do without asking. When the user gives you a job or changes it, update that section before anything else.
+
         \(job.isEmpty ? "You don't have a job yet: ask the user what they'd like you to do, if they haven't said." : "Your job, as your memory has it:\n\(job)")
 
         You can work on a schedule. Kuvo Code wakes you up at the times you choose, even while the user is away, so you can do \
