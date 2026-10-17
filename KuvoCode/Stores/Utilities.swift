@@ -506,7 +506,7 @@ final class Utilities {
     /// used in the last moments, or whose conversation is in view.
     func isFree(_ id: UUID, for session: String) -> Bool {
         guard let claim = agentClaims[id], claim.session != session else { return true }
-        return Date.now.timeIntervalSince(claim.at) > Self.agentHold && claim.session != sessionInView
+        return Date.now.timeIntervalSince(claim.at) > Self.agentHold && !isInView(claim.session)
     }
 
     /// A conversation's agent works in `browser` now.
@@ -522,10 +522,11 @@ final class Utilities {
         agentClaims.filter { $0.value.session == session }.compactMap { browsers[$0.key] }
     }
 
-    /// Whether a conversation's browsing brings its tab forward: the one in view's, or a
-    /// subagent's (which shows in the conversation that started it), not another's behind it.
+    /// Whether a conversation's browsing brings its tab forward: one in view's (beside the tab's
+    /// too), or a subagent's (which shows in the conversation that started it), not another's
+    /// behind it.
     func bringsForward(_ session: String) -> Bool {
-        session == sessionInView || !isListedSession(session)
+        isInView(session) || !isListedSession(session)
     }
 
     /// You picked one of your tabs with a conversation in view: its agent goes on in it, unless
