@@ -793,10 +793,8 @@ struct ReasoningView: View {
             .disabled(block.text.isEmpty)
 
             if isExpanded {
-                Text(block.text)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
+                // Thinking runs long, and grows as you read it.
+                LongText(text: block.text)
                     .padding(.leading, 24)
                     .overlay(alignment: .topLeading) {
                         // The line down from the icon, beside the thinking, as steps have.
