@@ -613,13 +613,14 @@ final class Workspace {
         let session = try await api.forkSession(id, before: message.id)
         upsert(session)
         let (withComments, paths) = Attachments.split(CommandMessages.shared.text(of: message))
-        // The engine's copy carries the attachments; one seen arrive live doesn't.
+        // The engine's copy carries the attachments; one seen arrive live has them as picked.
         let recent = (try? await api.messages(session: id, limit: 100).data) ?? []
         var stored = message
         for case .user(let user) in recent where user.id == message.id { stored = user }
         // What it replied to comes back over the composer, as you wrote it.
         let (quotes, text) = Quoting.draft(of: ReviewComments.split(withComments).text)
-        Drafts.shared[session.id] = Drafts.Draft(text: text, files: SessionModel.files(of: stored) + paths.map { URL(filePath: $0) }, quotes: quotes)
+        let files = Attachments.restored(SessionModel.files(of: message, stored: stored), noting: paths)
+        Drafts.shared[session.id] = Drafts.Draft(text: text, files: files, quotes: quotes)
         requestedTab = session.id
     }
 

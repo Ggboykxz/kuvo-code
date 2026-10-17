@@ -20,6 +20,8 @@ nonisolated enum Attachments {
         /// Where the files sent with their contents are, in the note too: the model gets what's in
         /// them, and their names, but not where they are, so it went looking for them.
         var included: [String] = []
+        /// Files that stayed on this Mac: they couldn't be read, or copied to the machine.
+        var unsent: [String] = []
     }
 
     /// Where pasted images and converted copies are kept.
@@ -94,26 +96,33 @@ nonisolated enum Attachments {
     /// The same, for an engine on `machine`, which can't read this Mac's files: what the model
     /// takes goes inline, as data (a folder as its listing, as the engine lists one); anything
     /// else is copied to the machine, into Kuvo Code's folder there, for the agent to open with
-    /// its tools. A file that can't be copied goes as a note that it's on the user's Mac. Where
-    /// the inline ones are on the Mac isn't said: the agent there couldn't open them.
+    /// its tools, each in a folder of its own (two can have the same name). A file that can't be
+    /// read or copied goes in the note as on the user's Mac. Where the inline ones are on the Mac
+    /// isn't said: the agent there couldn't open them.
     static func prepare(_ urls: [URL], for model: Model?, machine: String) -> Prepared {
         let here = prepare(urls, for: model)
         var prepared = Prepared()
-        for file in here.files {
-            guard let url = URL(string: file.uri), url.isFileURL else { continue }
-            if let inline = inlined(url) {
+        // Each file sent with its contents, with where it was picked.
+        for (file, picked) in zip(here.files, here.included) {
+            if let url = URL(string: file.uri), url.isFileURL, let inline = inlined(url) {
                 prepared.files.append(.init(uri: inline, name: file.name))
             } else {
-                prepared.paths.append(url.path)
+                prepared.unsent.append(picked)
             }
         }
-        let batch = String(UUID().uuidString.prefix(8)).lowercased()
         for path in here.paths {
-            prepared.paths.append(RemoteShell.upload(URL(filePath: path), into: "\(RemoteEngineInstaller.root)/attachments/\(batch)", on: machine)
-                ?? "\(path) (on the user's Mac: it couldn't be copied to this machine)")
+            let folder = "\(RemoteEngineInstaller.root)/\(machineFolder)/\(UUID().uuidString.prefix(8).lowercased())"
+            if let copy = RemoteShell.upload(URL(filePath: path), into: folder, on: machine) {
+                prepared.paths.append(copy)
+            } else {
+                prepared.unsent.append(path)
+            }
         }
         return prepared
     }
+
+    /// Where on a machine, in Kuvo Code's folder there, the files sent to it are copied.
+    private static let machineFolder = "attachments"
 
     /// A file as a data URI, or a folder as the engine lists one; nil when it can't be read.
     private static func inlined(_ url: URL) -> String? {
@@ -146,21 +155,25 @@ nonisolated enum Attachments {
 
     private static let includedHeading = "The attached files are on disk here (what's in them is in this message already):"
     private static let pathsHeading = "Open these attached files with your tools if you need them:"
-    private static let note = MessageBlock(start: "<attached-files>", end: "</attached-files>", headings: [includedHeading, pathsHeading])
+    private static let unsentHeading = "These attached files stayed on the user's Mac (they couldn't be read, or copied to this machine):"
+    private static let note = MessageBlock(start: "<attached-files>", end: "</attached-files>", headings: [includedHeading, pathsHeading, unsentHeading])
+    /// How a file that stayed on the Mac used to be listed, on its path's line.
+    private static let unsentSuffix = " (on the user's Mac: it couldn't be copied to this machine)"
 
-    /// The message text with the note: where the files sent with it are, and the files sent as
-    /// paths.
+    /// The message text with the note: where the files sent with it are, the files sent as
+    /// paths, and those that couldn't be sent.
     static func text(_ text: String, for prepared: Prepared) -> String {
         let text = note.escaping(text)
         var lines: [String] = []
         if !prepared.included.isEmpty { lines += [includedHeading] + prepared.included }
         if !prepared.paths.isEmpty { lines += [pathsHeading] + prepared.paths }
+        if !prepared.unsent.isEmpty { lines += [unsentHeading] + prepared.unsent }
         guard !lines.isEmpty else { return text }
         return (text.isEmpty ? "" : text + "\n\n") + ([note.start] + lines + [note.end]).joined(separator: "\n")
     }
 
     /// A message's text without the note that ends it, and the paths of the files it sent as
-    /// paths (the others are the message's own files).
+    /// paths or couldn't send (the others are the message's own files).
     static func split(_ text: String) -> (text: String, paths: [String]) {
         guard let (before, lines) = note.split(text) else { return (text, []) }
         var heading = ""
@@ -169,10 +182,43 @@ nonisolated enum Attachments {
             if note.headings.contains(line) {
                 heading = line
             } else if line.hasPrefix("/"), heading != includedHeading {
-                paths.append(line)
+                paths.append(line.hasSuffix(unsentSuffix) ? String(line.dropLast(unsentSuffix.count)) : line)
             }
         }
         return (before.trimmingCharacters(in: .whitespacesAndNewlines), paths)
+    }
+
+    /// The paths a message's note names that aren't among its own `files`: a message on its way
+    /// has every file as picked, and its note names those sent as paths too (on a machine, as
+    /// the copies there, by the same names).
+    static func paths(_ paths: [String], besides files: [URL]) -> [String] {
+        var own = files.filter(\.isFileURL)
+        return paths.filter { path in
+            let name = (path as NSString).lastPathComponent
+            let match = own.firstIndex { $0.path == path }
+                ?? (isMachineCopy(path) ? own.firstIndex { $0.lastPathComponent == name } : nil)
+            guard let match else { return true }
+            own.remove(at: match)
+            return false
+        }
+    }
+
+    /// The files to put back in the composer for a message: its own, then those its note names
+    /// that are on this Mac (a machine's copies aren't), each once.
+    static func restored(_ files: [URL], noting paths: [String]) -> [URL] {
+        let named = Self.paths(paths, besides: files)
+            .filter { FileManager.default.fileExists(atPath: $0) }
+            .map { URL(filePath: $0, directoryHint: .checkFileSystem) }
+        var seen: Set<String> = []
+        return (files + named).filter { seen.insert($0.path).inserted }
+    }
+
+    /// Where a file sent to a machine was copied, there: `…/attachments/<folder>/<name>`.
+    private static func isMachineCopy(_ path: String) -> Bool {
+        let parts = path.split(separator: "/")
+        guard parts.count >= 3, parts[parts.count - 3] == machineFolder else { return false }
+        let folder = parts[parts.count - 2]
+        return folder.count == 8 && folder.allSatisfy(\.isHexDigit)
     }
 
     // MARK: Files we write

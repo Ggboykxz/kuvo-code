@@ -138,7 +138,7 @@ private struct QueueRow: View {
         if let line = text.split(separator: "\n").first(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) {
             return String(line)
         }
-        let names = item.files.map(\.lastPathComponent) + paths.map { ($0 as NSString).lastPathComponent }
+        let names = item.files.map(\.lastPathComponent) + Attachments.paths(paths, besides: item.files).map { ($0 as NSString).lastPathComponent }
         if !names.isEmpty { return names.joined(separator: ", ") }
         return comments.isEmpty ? "" : comments.count.counting("comment")
     }

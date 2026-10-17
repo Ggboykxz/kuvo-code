@@ -683,15 +683,20 @@ final class SessionModel {
     }
 
     /// Puts a message back in the composer, ahead of anything already there: its text, its
-    /// attached files, its comments on the changes and what it replied to.
+    /// attached files (each once, and only those on this Mac), its comments on the changes and
+    /// what it replied to.
     private func restoreDraft(_ message: String, files picked: [URL] = []) {
         let (withComments, paths) = Attachments.split(message)
         let (quoted, comments) = ReviewComments.split(withComments)
         let (quotes, text) = Quoting.draft(of: quoted)
+        restore(text: text, files: Attachments.restored(picked, noting: paths), quotes: quotes, comments: comments)
+    }
+
+    /// Puts these in the composer, ahead of anything already there.
+    private func restore(text: String, files: [URL] = [], quotes: [Drafts.Quote] = [], comments: [ReviewComment] = []) {
         draftQuotes = quotes + draftQuotes
         draftText = [text, draftText].filter { !$0.isEmpty }.joined(separator: "\n\n")
-        let files = picked + paths.map { URL(filePath: $0) }
-        draftFiles = files + draftFiles.filter { !files.contains($0) }
+        draftFiles = files + draftFiles.filter { file in !files.contains { $0.path == file.path } }
         reviewComments = comments + reviewComments
         composerFocus += 1
     }
@@ -724,8 +729,14 @@ final class SessionModel {
         }
     }
 
-    /// The engine's copy of a message, with its attachments (a message seen arrive live
-    /// doesn't carry them).
+    /// The same, as they were picked when the message was seen going out, else as the engine
+    /// keeps them (`stored`): it has converted copies, or, from a machine, none on this Mac.
+    static func files(of message: Message.User, stored: Message.User) -> [URL] {
+        let picked = files(of: message)
+        return picked.isEmpty ? files(of: stored) : picked
+    }
+
+    /// The engine's copy of a message, with its attachments as the engine keeps them.
     private func stored(_ message: Message.User) async -> Message.User {
         let recent = (try? await api.messages(session: id, limit: 100).data) ?? []
         for case .user(let user) in recent where user.id == message.id { return user }
@@ -745,10 +756,10 @@ final class SessionModel {
                     try await api.interrupt(session: id)
                     try await api.wait(session: id)
                 }
-                let message = await stored(message)
-                session.revert = try await api.stageRevert(session: id, messageID: message.id)
+                let copy = await stored(message)
+                session.revert = try await api.stageRevert(session: id, messageID: copy.id)
                 let before = composerState
-                restoreDraft(CommandMessages.shared.text(of: message), files: Self.files(of: message))
+                restoreDraft(CommandMessages.shared.text(of: copy), files: Self.files(of: message, stored: copy))
                 undone = (before, composerState)
             } catch {
                 failure = error.localizedDescription
