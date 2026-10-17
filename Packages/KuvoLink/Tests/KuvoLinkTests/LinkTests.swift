@@ -316,6 +316,23 @@ private func collect(_ stream: LinkResponse) async throws -> (status: Int, heade
         #expect(throws: (any Error).self) { try Mail.open(push.payload, to: LinkKey(), from: key.publicBytes) }
     }
 
+    @Test func aCallbackCalledAgainIsLetGo() async {
+        // As URLSession's pong handler can be: an answer, then an error as the task closes, the
+        // second from another queue, a moment later.
+        let answered = await firstAnswer { (answer: @escaping @Sendable (Bool) -> Void) in
+            answer(true)
+            answer(false)
+            DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(20)) { answer(false) }
+        }
+        #expect(answered)
+        let later = await firstAnswer { (answer: @escaping @Sendable (Int) -> Void) in
+            DispatchQueue.global().async { answer(1) }
+            DispatchQueue.global().async { answer(2) }
+        }
+        #expect(later == 1 || later == 2)
+        try? await Task.sleep(for: .milliseconds(50))
+    }
+
     @Test func aLongNoticeIsCutToFit() throws {
         let body = String(repeating: "Wörds and more words. ", count: 400)
         let notice = Notice(title: "Fixer", subtitle: "kuvo-ai", body: body, category: .finished, thread: "ses_1", data: ["session": "ses_1"])

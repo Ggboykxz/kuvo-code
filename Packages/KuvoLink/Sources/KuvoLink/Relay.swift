@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// A device's connection to the relay: a WebSocket, or something in memory for tests.
 public protocol RelayTransport: AnyObject, Sendable {
@@ -64,9 +65,8 @@ public final class WebSocketRelay: RelayTransport, @unchecked Sendable {
         Task { [weak self, task] in
             while self != nil {
                 try? await Task.sleep(for: .seconds(25))
-                let answered = await withCheckedContinuation { done in
-                    task.sendPing { done.resume(returning: $0 == nil) }
-                }
+                // The pong's handler can be called again (with an error, as the task closes).
+                let answered = await firstAnswer { answer in task.sendPing { answer($0 == nil) } }
                 if !answered { task.cancel(with: .goingAway, reason: nil); break }
             }
         }
@@ -82,5 +82,20 @@ public final class WebSocketRelay: RelayTransport, @unchecked Sendable {
         task.cancel(with: .normalClosure, reason: nil)
         outbox.finish()
         inbox.finish()
+    }
+}
+
+/// What a callback API answers the first time: `start` is given the callback, which may be called
+/// again, from any queue; later calls are let go, where resuming twice would crash.
+func firstAnswer<Value: Sendable>(_ start: (@escaping @Sendable (Value) -> Void) -> Void) async -> Value {
+    await withCheckedContinuation { continuation in
+        let answered = OSAllocatedUnfairLock(initialState: false)
+        start { value in
+            let isFirst = answered.withLock { done in
+                defer { done = true }
+                return !done
+            }
+            if isFirst { continuation.resume(returning: value) }
+        }
     }
 }
