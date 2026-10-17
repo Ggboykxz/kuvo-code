@@ -204,6 +204,12 @@ final class Workspace {
         directory == chatsFolder
     }
 
+    /// A bot's own folder, on this Mac or a machine: what's there is the bot's, even before the
+    /// bot is listed (while it's being made), so it never shows as a project.
+    static func isBotFolder(_ directory: String) -> Bool {
+        directory.hasPrefix(Bots.root.path + "/") || directory.contains("/\(RemoteEngineInstaller.root)/bots/")
+    }
+
     /// Chats, newest first.
     var chats: [Session] {
         sessions.filter { Self.isChat($0.location.directory) && !Self.isArchived($0) && !botSessions.contains($0.id) }
@@ -229,7 +235,7 @@ final class Workspace {
 
     /// Projects with their sessions, most recently active first.
     var projects: [Project] {
-        let grouped = Dictionary(grouping: sessions.filter { !Self.isArchived($0) && !botSessions.contains($0.id) && !Self.isChat($0.location.directory) }, by: projectDirectory(of:))
+        let grouped = Dictionary(grouping: sessions.filter { !Self.isArchived($0) && !botSessions.contains($0.id) && !Self.isChat($0.location.directory) && !Self.isBotFolder($0.location.directory) }, by: projectDirectory(of:))
         let directories = Set(grouped.keys).union(folders).filter { RemoteFolder.machine(of: $0).map(machines.contains) ?? true }
         return directories.map { directory in
             Project(directory: directory, sessions: (grouped[directory] ?? []).sorted { $0.time.updated > $1.time.updated }, settings: settings[directory] ?? ProjectSettings())

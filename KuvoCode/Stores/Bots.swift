@@ -186,6 +186,8 @@ final class Bots {
         let wanted = [model, Self.lastModel].compactMap { $0 }
         bot.model = catalog.isLoaded ? wanted.first { catalog.model($0) != nil } : wanted.first
         let session = try await api.createSession(directory: bot.directory, title: name, model: bot.model, permissions: rules)
+        // The bot's from the start: not a project's session for the moment it takes to set up.
+        app.workspace.botSessions.insert(session.id)
         bot.sessionID = session.id
         try? await api.setMetadata(session: session.id, .object(["kuvo": .object(["bot": .string(id)])]))
         try await sendInstructions(of: bot, api: api)

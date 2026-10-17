@@ -452,7 +452,7 @@ final class SessionModel {
     /// Where a conversation is, for anonymous usage: a bot's own folder (here or on a machine), a
     /// chat, or a project.
     private static func place(of directory: String) -> String {
-        if directory.hasPrefix(Bots.root.path) || directory.contains("/.kuvo-code/bots/") { return "bot" }
+        if Workspace.isBotFolder(directory) { return "bot" }
         return Workspace.isChat(directory) ? "chat" : "project"
     }
 
