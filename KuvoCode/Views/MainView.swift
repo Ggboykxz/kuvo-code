@@ -731,6 +731,8 @@ struct MainView: View {
             })
         }
         .background(WindowXReader { settingsBarX = $0 })
+        // Its buttons each by their own name, not all by the first one's.
+        .accessibilityElement(children: .contain)
         // Room from the window, as the sessions' tabs have, so titles aren't squeezed.
         .frame(width: max(240, contentWidth - 150), alignment: .leading)
         .animation(.ui, value: app.settingsTabs.tabs.map(\.id))

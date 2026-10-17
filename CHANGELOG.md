@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- With VoiceOver, the tabs in the title bar are buttons read by their own names, with Close Tab as an action; in Settings they all read "Back to Sessions" and couldn't be switched.
 - On a machine, the browser is now Chrome itself, run without a window, instead of Chrome's stripped-down headless version, which sites like Google and X took for a bot and turned sign-ins away from. It downloads again once, the first time you use the browser there.
 - Signing in to a site on a machine no longer stays at "Opening…" when the browser was only just set up there.
 - A bot's turn that only kept its memory up to date says "Updated its memory" and opens it, instead of "Edited 1 file" with Show All Changes leading to an empty list. Show All Changes shows only when the files are ones the Changes panel lists.

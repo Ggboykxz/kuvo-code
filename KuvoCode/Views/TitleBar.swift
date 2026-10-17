@@ -171,6 +171,14 @@ private struct TabButton: View {
         .onTapGesture(perform: select)
         .onHover { hovering in withAnimation(.easeOut(duration: 0.12)) { isHovering = hovering } }
         .help(tab.status.help.map { "\(tab.title) — \($0)" } ?? tab.title)
+        // One button to VoiceOver and the keyboard, as it is to the pointer, with Close as an action.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(tab.status.help.map { "\(tab.title), \($0)" } ?? tab.title)
+        .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction { select() }
+        .accessibilityActions {
+            if tab.closes { Button("Close Tab", action: close) }
+        }
     }
 }
 
