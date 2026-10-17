@@ -121,6 +121,41 @@ import Testing
     #expect(message.files?.first?.mime == "text/markdown")
 }
 
+/// A photo sent from a phone comes in the message itself, as a `data:` URL: it stays on the message,
+/// with its type from the URL's header.
+@Test func keepsAFileSentInTheMessageItself() throws {
+    func event(_ json: String) throws -> ServerEvent { try ServerEvent(json: Data(json.utf8)) }
+    var transcript = Transcript(sessionID: "ses_1")
+    transcript.load(messages: [], inbox: [], permissions: [], forms: [], isRunning: false)
+    transcript.apply(try event(#"""
+    {"id":"evt_1","created":1,"type":"session.inbox.enqueued","data":{"sessionID":"ses_1","inboxID":"msg_1","item":{"type":"user","payload":{"text":"Look","files":[{"uri":"data:image/jpeg;base64,/9j/4AAQ","name":"IMG_0001.jpeg"}]},"delivery":"steer"}}}
+    """#))
+    transcript.apply(try event(#"""
+    {"id":"evt_2","created":2,"type":"session.inbox.delivered","data":{"sessionID":"ses_1","inboxID":"msg_1"}}
+    """#))
+    guard case .user(let message) = transcript.messages.first else { Issue.record("no message"); return }
+    #expect(message.files?.count == 1)
+    #expect(message.files?.first?.mime == "image/jpeg")
+    #expect(message.files?.first?.name == "IMG_0001.jpeg")
+    // Not among the files a queued message shows or gives back to the composer.
+    transcript.apply(try event(#"""
+    {"id":"evt_3","created":3,"type":"session.inbox.enqueued","data":{"sessionID":"ses_1","inboxID":"msg_2","item":{"type":"user","payload":{"text":"Again","files":[{"uri":"data:image/png;base64,AAAA"}]},"delivery":"queue"}}}
+    """#))
+    #expect(transcript.pending.first?.files == [])
+    #expect(transcript.pending.first?.inlineFiles.map(\.mime) == ["image/png"])
+
+    // Sent from a phone, its local copy has the photo as a data: URL: the type comes from that.
+    transcript.addLocal(id: "msg_3", text: "Photo", delivery: .steer, files: [URL(string: "data:image/heic;base64,AAAA")!])
+    transcript.apply(try event(#"""
+    {"id":"evt_4","created":4,"type":"session.inbox.enqueued","data":{"sessionID":"ses_1","inboxID":"msg_3","item":{"type":"user","payload":{"text":"Photo","files":[{"uri":"data:image/heic;base64,AAAA"}]},"delivery":"steer"}}}
+    """#))
+    transcript.apply(try event(#"""
+    {"id":"evt_5","created":5,"type":"session.inbox.delivered","data":{"sessionID":"ses_1","inboxID":"msg_3"}}
+    """#))
+    guard case .user(let photo) = transcript.messages.last else { Issue.record("no message"); return }
+    #expect(photo.files?.map(\.mime) == ["image/heic"])
+}
+
 /// What an MCP server asks belongs to no session in the engine; it shows in the conversation whose
 /// tool of that server is running, and goes once that tool is done.
 @Test func takesAnMCPServersFormWhileItsToolRuns() throws {

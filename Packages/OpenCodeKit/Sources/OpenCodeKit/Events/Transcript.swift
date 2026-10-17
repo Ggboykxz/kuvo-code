@@ -25,13 +25,17 @@ public struct Transcript: Sendable, Equatable {
         public var isLocal: Bool
         /// What was attached, for showing a local message before the server has it.
         public var files: [URL]
+        /// Files the message carries in itself (a photo sent from a phone), with no copy picked
+        /// here: they go on the message once it's delivered.
+        public var inlineFiles: [Message.User.Attachment]
 
-        public init(id: String, text: String, delivery: InboxItem.Delivery, isLocal: Bool, files: [URL] = []) {
+        public init(id: String, text: String, delivery: InboxItem.Delivery, isLocal: Bool, files: [URL] = [], inlineFiles: [Message.User.Attachment] = []) {
             self.id = id
             self.text = text
             self.delivery = delivery
             self.isLocal = isLocal
             self.files = files
+            self.inlineFiles = inlineFiles
         }
     }
 
@@ -47,8 +51,12 @@ public struct Transcript: Sendable, Equatable {
         // on this Mac (not one sent inline, to a machine), and none before any conversion.
         let picked = Dictionary(pending.map { ($0.id, $0.files) }, uniquingKeysWith: { first, _ in first })
         pending = inbox.filter { $0.type == "user" }.map { item in
-            let files = picked[item.id].flatMap { $0.isEmpty ? nil : $0 } ?? item.files
-            return Pending(id: item.id, text: item.text ?? "", delivery: item.delivery, isLocal: false, files: files)
+            // Those picked here were what it carries inline, if any.
+            if let files = picked[item.id], !files.isEmpty {
+                return Pending(id: item.id, text: item.text ?? "", delivery: item.delivery, isLocal: false, files: files)
+            }
+            return Pending(id: item.id, text: item.text ?? "", delivery: item.delivery, isLocal: false, files: item.files,
+                           inlineFiles: InboxItem.inlineFiles(in: item.payload))
         } + local
         self.permissions = permissions
         self.forms = forms.filter(isOurs)
@@ -183,10 +191,15 @@ public struct Transcript: Sendable, Equatable {
             guard enqueued.item.type == "user" else { return }
             // Delivered already: a read since has it as a message.
             guard !hasMessage(enqueued.inboxID) else { return }
-            var item = Pending(id: enqueued.inboxID, text: enqueued.item.payload["text"]?.string ?? "", delivery: enqueued.item.delivery, isLocal: false, files: InboxItem.files(in: enqueued.item.payload))
+            var item = Pending(id: enqueued.inboxID, text: enqueued.item.payload["text"]?.string ?? "", delivery: enqueued.item.delivery, isLocal: false,
+                               files: InboxItem.files(in: enqueued.item.payload), inlineFiles: InboxItem.inlineFiles(in: enqueued.item.payload))
             if let index = pending.firstIndex(where: { $0.id == item.id }) {
-                // A local copy knows the files as they were picked, before any conversion.
-                if !pending[index].files.isEmpty { item.files = pending[index].files }
+                // A local copy knows the files as they were picked, before any conversion: the
+                // same ones it carries inline, if it does.
+                if !pending[index].files.isEmpty {
+                    item.files = pending[index].files
+                    item.inlineFiles = []
+                }
                 pending[index] = item
             } else {
                 pending.append(item)
@@ -200,7 +213,8 @@ public struct Transcript: Sendable, Equatable {
             let item = pending.remove(at: index)
             // With the files it was sent with, as they were picked: the engine's copy has them,
             // but the event that delivers it doesn't, and they'd vanish from the message.
-            let files = item.files.map { Message.User.Attachment(mime: Self.mime(of: $0), name: $0.lastPathComponent, source: .uri($0.absoluteString)) }
+            let files = item.files.map { Message.User.Attachment(mime: Self.mime(of: $0), name: $0.isFileURL ? $0.lastPathComponent : nil, source: .uri($0.absoluteString)) }
+                + item.inlineFiles
             append(.user(Message.User(id: item.id, time: Message.Time(created: now), text: item.text, files: files.isEmpty ? nil : files)))
         case "session.inbox.cancelled":
             let id = try event.payload(as: EventPayload.InboxChanged.self).inboxID
@@ -512,8 +526,11 @@ public struct Transcript: Sendable, Equatable {
     }
 
     /// A picked file's type, as the engine names it.
+    /// A file's type: by its extension, or for one in the message itself, as its `data:` header
+    /// says ("data:image/jpeg;base64,…").
     private static func mime(of file: URL) -> String {
-        UTType(filenameExtension: file.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
+        if file.scheme == "data" { return InboxItem.dataType(file.absoluteString) }
+        return UTType(filenameExtension: file.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
     }
 
     private static func hasUnfinishedTool(_ message: Message) -> Bool {

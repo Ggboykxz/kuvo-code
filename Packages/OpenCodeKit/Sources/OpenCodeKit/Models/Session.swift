@@ -92,6 +92,20 @@ public struct InboxItem: Codable, Sendable, Hashable, Identifiable {
             file["uri"]?.string.flatMap(URL.init(string:)).flatMap { $0.isFileURL ? $0 : nil }
         }
     }
+
+    /// Files the input carries in itself (`data:`, like a photo sent from a phone).
+    static func inlineFiles(in payload: JSONValue) -> [Message.User.Attachment] {
+        (payload["files"]?.array ?? []).compactMap { file in
+            guard let uri = file["uri"]?.string, uri.hasPrefix("data:") else { return nil }
+            return Message.User.Attachment(mime: dataType(uri), name: file["name"]?.string, source: .uri(uri))
+        }
+    }
+
+    /// The type a `data:` URL's header names ("data:image/jpeg;base64,…"); plain text without one.
+    static func dataType(_ uri: String) -> String {
+        let type = uri.dropFirst("data:".count).prefix { $0 != "," && $0 != ";" }
+        return type.isEmpty ? "text/plain" : String(type)
+    }
 }
 
 /// What the agent is waiting for permission to do.
