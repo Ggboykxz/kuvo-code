@@ -80,6 +80,9 @@ struct ConversationScroll<Rows: View>: View {
     /// `change` does.
     var animation: Animation? = .ui
     let change: AnyHashable
+    /// Thinking under way, if any: once it's done, it folds into its steps' summary, and its row
+    /// gets much shorter.
+    var thinking: Thinking? = nil
     /// Text you selected, to answer in the composer.
     let quote: (String) -> Void
     @ViewBuilder let rows: Rows
@@ -89,6 +92,7 @@ struct ConversationScroll<Rows: View>: View {
     @State private var scrolling = ScrollingFlag()
     @State private var endFollower = EndFollower()
     @State private var spot = ScrollSpot()
+    @State private var fold = FoldWatch()
 
     var body: some View {
         ScrollView {
@@ -117,10 +121,34 @@ struct ConversationScroll<Rows: View>: View {
         }
         // One watcher for both, as SwiftUI passes on only one change a frame from each.
         .onScrollGeometryChange(for: EndGeometry.self) { geometry in
-            EndGeometry(atEnd: geometry.visibleRect.maxY >= geometry.contentSize.height - 40, height: geometry.contentSize.height,
-                        fits: geometry.contentSize.height <= geometry.containerSize.height + 1)
+            let end = max(-geometry.contentInsets.top, geometry.contentSize.height + geometry.contentInsets.bottom - geometry.containerSize.height)
+            return EndGeometry(atEnd: geometry.visibleRect.maxY >= geometry.contentSize.height - 40, height: geometry.contentSize.height,
+                               fits: geometry.contentSize.height <= geometry.containerSize.height + 1,
+                               visible: geometry.containerSize.height, isPastEnd: geometry.contentOffset.y > end + 1)
         } action: { old, new in
             scroller.fits = new.fits
+            // Thinking that was under way is done: for a moment, the conversation getting much
+            // shorter is it folding. (Seen here, as the layout that makes it shorter.)
+            if fold.thinking != thinking {
+                if let done = fold.thinking { fold.folded = (done.row, .now + .seconds(1)) }
+                fold.thinking = thinking
+            }
+            if endFollower.isSettling { return }
+            // A row that got much shorter (long thinking folding into its summary), seen from the
+            // end. The lazy stack re-measures only the rows it lays out in view: it goes on keeping
+            // the row's old room, and following "the bottom" lands below the rows, looking at
+            // nothing, each time a little less. So first to the row's top, which is where it's
+            // laid out, so the rows from there are measured, then to the end.
+            if let folded = fold.folded, folded.until > .now, !scrolling.isOn,
+               new.isPastEnd || (scroller.followsEnd && old.height - new.height > new.visible) {
+                fold.folded = nil
+                endFollower.settle {
+                    position.scrollTo(id: folded.row, anchor: .top)
+                } then: {
+                    position.scrollTo(edge: .bottom)
+                }
+                return
+            }
             // Your scrolling decides; growth below the fold doesn't. Set only when it changes: each
             // setting draws the conversation again, and this runs on every frame of a scroll.
             if scrolling.isOn { scroller.follow(new.atEnd) }
@@ -198,6 +226,18 @@ final class ScrollSpot {
     var geometry = Geometry()
 }
 
+/// Thinking under way: its row, and which of the row's steps it is.
+struct Thinking: Equatable {
+    var row: String
+    var step: Int
+}
+
+/// The thinking under way as last seen, and the row of thinking that just folded.
+final class FoldWatch {
+    var thinking: Thinking?
+    var folded: (row: String, until: ContinuousClock.Instant)?
+}
+
 /// Set while you scroll, read by the handlers only.
 final class ScrollingFlag {
     var isOn = false
@@ -208,6 +248,9 @@ struct EndGeometry: Equatable {
     var atEnd: Bool
     var height: CGFloat
     var fits = false
+    /// How tall the view of it is, and whether it's scrolled past its end.
+    var visible: CGFloat = 0
+    var isPastEnd = false
 }
 
 /// Keeps the end in view as the conversation grows. Scrolling makes the lazy stack make the rows
@@ -220,6 +263,20 @@ struct EndGeometry: Equatable {
 final class EndFollower {
     private var isBusy = false
     private var settle: Task<Void, Never>?
+    private(set) var isSettling = false
+
+    /// `first`, then, once the conversation has been laid out there, `then`; following the end
+    /// waits meanwhile, as it would undo `first`.
+    func settle(first: @escaping () -> Void, then: @escaping () -> Void) {
+        isSettling = true
+        settle?.cancel()
+        first()
+        settle = Task {
+            try? await Task.sleep(for: .milliseconds(150))
+            isSettling = false
+            then()
+        }
+    }
 
     func follow(_ scroll: @escaping () -> Void) {
         if !isBusy {

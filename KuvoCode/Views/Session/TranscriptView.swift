@@ -22,11 +22,21 @@ struct TranscriptView: View {
     /// Find in the conversation (⌘F).
     @State private var find = ConversationFind()
 
+    /// The thinking under way at the end, if any.
+    private static func thinking(in rows: [Row]) -> Thinking? {
+        for row in rows.reversed() {
+            guard case .steps(let id, let blocks, let isLive) = row else { continue }
+            guard isLive, case .reasoning = blocks.last else { return nil }
+            return Thinking(row: id, step: blocks.count)
+        }
+        return nil
+    }
+
     var body: some View {
         let rows = rows
         // More of a reply, in a row of its own, carries on from the row before rather than coming in.
         let added = rows.filter { !$0.continues }
-        ConversationScroll(scroller: scroller, animation: rowCache.isBulk ? nil : Self.rowAnimation, change: RowCache.Change(count: added.count, last: added.last?.id),
+        ConversationScroll(scroller: scroller, animation: rowCache.isBulk ? nil : Self.rowAnimation, change: RowCache.Change(count: added.count, last: added.last?.id), thinking: Self.thinking(in: rows),
                            quote: { model.addQuote($0, how: "selection") }) {
             // Its top in view: the messages before, read and put ahead, the view staying put.
             if model.hasEarlier, !rows.isEmpty {
