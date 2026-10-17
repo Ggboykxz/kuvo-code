@@ -5,19 +5,57 @@ import OpenCodeKit
 @Observable
 final class SessionModel {
     var session: Session
+    /// The conversation as it shows. Words stream in a few at a time: they gather in `live` and
+    /// show together, a few times a second (see `apply`), instead of the conversation being drawn
+    /// again for every few words.
     private(set) var transcript: Transcript {
-        didSet {
-            transcriptVersion &+= 1
-            // Answers in progress go once their question has (answered, or dismissed).
-            if !questionProgress.isEmpty {
-                let open = Set(transcript.forms.map(\.id))
-                questionProgress = questionProgress.filter { open.contains($0.key) }
-            }
-        }
+        didSet { transcriptChanged() }
     }
+    /// The transcript with what streamed in since it last showed, until it shows.
+    @ObservationIgnored private var live: Transcript?
+    @ObservationIgnored private var showsLive: Task<Void, Never>?
+    @ObservationIgnored private var lastShown = ContinuousClock.now
+    /// How often streamed words show, at most.
+    private static let streamInterval = Duration.milliseconds(50)
     /// Goes up with each change to the transcript, so what's made from it (the conversation's
     /// rows) is made again only then.
     private(set) var transcriptVersion = 0
+
+    // What the views around the conversation read (the composer, the queue, the cards over it,
+    // the sidebar and tabs), kept apart from the transcript so that streaming words don't draw
+    // them again: each changes only when it does.
+    private(set) var isRunning = false
+    private(set) var pending: [Transcript.Pending] = []
+    private(set) var permissions: [PermissionRequest] = []
+    private(set) var forms: [FormRequest] = []
+    /// How much of the context window the last step used.
+    private(set) var contextUsed: Int?
+
+    private func transcriptChanged() {
+        transcriptVersion &+= 1
+        if isRunning != transcript.isRunning { isRunning = transcript.isRunning }
+        if pending != transcript.pending { pending = transcript.pending }
+        if permissions != transcript.permissions { permissions = transcript.permissions }
+        if forms != transcript.forms { forms = transcript.forms }
+        let used = Self.contextUsed(in: transcript.messages)
+        if contextUsed != used { contextUsed = used }
+        // Answers in progress go once their question has (answered, or dismissed).
+        if !questionProgress.isEmpty {
+            let open = Set(forms.map(\.id))
+            let kept = questionProgress.filter { open.contains($0.key) }
+            if kept.count != questionProgress.count { questionProgress = kept }
+        }
+    }
+
+    /// What the last step sent and got back is what's in the window now.
+    private static func contextUsed(in messages: [Message]) -> Int? {
+        for message in messages.reversed() {
+            if case .assistant(let assistant) = message, let tokens = assistant.tokens {
+                return tokens.input + tokens.cache.read + tokens.cache.write + tokens.output
+            }
+        }
+        return nil
+    }
     private(set) var isLoaded = false
     /// Your answers to the agent's questions so far, by form: kept while you look elsewhere.
     var questionProgress: [String: QuestionProgress] = [:]
@@ -155,7 +193,6 @@ final class SessionModel {
     }
 
     var id: String { session.id }
-    var isRunning: Bool { transcript.isRunning }
 
     /// The agent and model the next message goes to.
     var agent: String { session.agent ?? "build" }
@@ -164,7 +201,7 @@ final class SessionModel {
     /// the queue. A message sent while it's idle goes straight to the transcript instead, and
     /// stays there while the run it starts gets going.
     var waiting: [Transcript.Pending] {
-        let pending = transcript.pending.filter { !starters.contains($0.id) }
+        let pending = pending.filter { !starters.contains($0.id) }
         return (isRunning ? pending.filter { $0.delivery == .steer } : []) + pending.filter { $0.delivery == .queue }
     }
 
@@ -185,6 +222,7 @@ final class SessionModel {
 
     /// Shows the conversation as last seen, until `load` reads the engine's.
     func show(_ copy: [Message]) {
+        discardLive()
         transcript.load(messages: copy, inbox: [], permissions: [], forms: [], isRunning: false)
         isCopy = true
         waitsForEngine = true
@@ -234,7 +272,7 @@ final class SessionModel {
             earlierCursor = nil
             return
         }
-        transcript.messages = older + transcript.messages
+        editTranscript { $0.messages = older + $0.messages }
         earlierCursor = Self.cursor(before: page)
     }
 
@@ -273,6 +311,8 @@ final class SessionModel {
             let reaches = page.data.first.map { first in earlier.last.map { $0.id >= first.id } ?? false } ?? false
             let kept = !isCopy && reaches ? page.data.first.map { first in earlier.filter { $0.id < first.id } } ?? [] : []
             if kept.isEmpty { earlierCursor = Self.cursor(before: page) }
+            // The engine's copy has what streamed in so far.
+            discardLive()
             transcript.load(
                 messages: kept + page.data,
                 inbox: (try? await inbox) ?? [],
@@ -302,7 +342,23 @@ final class SessionModel {
     }
 
     func apply(_ event: ServerEvent) {
-        transcript.apply(event)
+        if Transcript.isStreamed(event.type) {
+            // Gathered, to show with what comes in the next moment.
+            if live == nil { live = transcript }
+            live?.apply(event)
+            if live?.isStale == true { scheduleReload() }
+            showLiveSoon()
+            return
+        }
+        // Anything else shows at once, after what streamed in before it.
+        if Transcript.changes(with: event.type) {
+            if live != nil {
+                live?.apply(event)
+                showLive()
+            } else {
+                transcript.apply(event)
+            }
+        }
         if !runningCommands.isEmpty { noteCommandMessages() }
         if transcript.isStale { scheduleReload() }
         switch event.type {
@@ -339,6 +395,41 @@ final class SessionModel {
         if transcript.pending.isEmpty { isQueuePaused = false }
     }
 
+    /// Shows what streamed in: in a moment, with what comes meanwhile, or after `streamInterval`
+    /// since it last showed.
+    private func showLiveSoon() {
+        guard showsLive == nil else { return }
+        let due = lastShown + Self.streamInterval
+        showsLive = Task {
+            if due > .now { try? await Task.sleep(until: due) }
+            guard !Task.isCancelled else { return }
+            showLive()
+        }
+    }
+
+    /// What streamed in shows now.
+    private func showLive() {
+        showsLive?.cancel()
+        showsLive = nil
+        guard let shown = live else { return }
+        live = nil
+        transcript = shown
+        lastShown = .now
+    }
+
+    /// What streamed in won't show: the engine's copy, read again, replaces it.
+    private func discardLive() {
+        showsLive?.cancel()
+        showsLive = nil
+        live = nil
+    }
+
+    /// Changes the transcript once what streamed in has shown, so the change isn't lost under it.
+    private func editTranscript(_ change: (inout Transcript) -> Void) {
+        showLive()
+        change(&transcript)
+    }
+
     // MARK: Actions
 
     /// Sends a message with `files`, as `model` can take them (see `Attachments`). While the
@@ -368,7 +459,7 @@ final class SessionModel {
         if delivery == .steer { isQueuePaused = false }
         if delivery == .steer, !isBusy { starters.insert(id) }
         commitUndo()
-        transcript.addLocal(id: id, text: text, delivery: delivery, files: files)
+        editTranscript { $0.addLocal(id: id, text: text, delivery: delivery, files: files) }
         var props = Analytics.model(provider: model?.providerID ?? session.model?.providerID, model: model?.id ?? session.model?.id)
         props["mode"] = Analytics.mode(agent)
         props["queued"] = delivery == .queue
@@ -387,7 +478,7 @@ final class SessionModel {
                 await waitForTools()
                 try await api.prompt(session: self.id, id: id, text: message, files: prepared.files, delivery: delivery)
             } catch {
-                transcript.removeLocal(id: id)
+                editTranscript { $0.removeLocal(id: id) }
                 reviewComments = comments + reviewComments
                 // It didn't go: back in the composer, ahead of anything written since.
                 restoreDraft(written, files: files)
@@ -494,14 +585,14 @@ final class SessionModel {
 
     func cancelPending(_ item: Transcript.Pending) {
         guard canReach else { return }
-        if item.isLocal { transcript.removeLocal(id: item.id); return }
+        if item.isLocal { editTranscript { $0.removeLocal(id: item.id) }; return }
         Task { try? await api.cancelInbox(session: id, item: item.id) }
     }
 
     #if DEBUG
     /// KUVO_DEMO_WAITING: messages shown waiting, without sending them.
     func showWaiting(_ items: [Transcript.Pending]) {
-        transcript.pending = items
+        editTranscript { $0.pending = items }
     }
     #endif
 
@@ -659,7 +750,7 @@ final class SessionModel {
                 let id = Identifier.message()
                 sentIDs.insert(id)
                 starters.insert(id)
-                transcript.addLocal(id: id, text: user.text, delivery: .steer)
+                editTranscript { $0.addLocal(id: id, text: user.text, delivery: .steer) }
                 try await api.prompt(session: self.id, id: id, text: user.text, files: files)
             } catch {
                 failure = error.localizedDescription
@@ -671,7 +762,7 @@ final class SessionModel {
     /// message appears, rather than as the engine's word of it comes in.
     private func commitUndo() {
         guard let revert = session.revert else { return }
-        transcript.commitRevert(to: revert.messageID)
+        editTranscript { $0.commitRevert(to: revert.messageID) }
         session.revert = nil
         undone = nil
     }

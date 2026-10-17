@@ -82,7 +82,7 @@ private struct BottomStack: View {
     var body: some View {
         GlassEffectContainer(spacing: 12) {
             VStack(spacing: 12) {
-                ForEach(model.transcript.permissions) { request in
+                ForEach(model.permissions) { request in
                     PermissionCard(request: request, directory: model.session.location.directory) { decision in
                         model.reply(to: request, decision)
                     }
@@ -135,7 +135,7 @@ private struct BottomStack: View {
                     model: model.session.model ?? lastModel ?? catalog.defaultModel?.ref,
                     isRunning: model.isRunning,
                     hasQueue: !model.waiting.isEmpty,
-                    history: model.sentMessages,
+                    history: { model.sentMessages },
                     folders: [model.session.location.directory] + workspace.extraFolders(model.session.location.directory),
                     commands: catalog.commands(in: model.session.location.directory),
                     focusRequest: model.composerFocus,
@@ -160,8 +160,8 @@ private struct BottomStack: View {
                 .glassEffectID("composer", in: glass)
                 }
             }
-            .animation(.ui, value: model.transcript.permissions.map(\.id))
-            .animation(.ui, value: model.transcript.forms.map(\.id))
+            .animation(.ui, value: model.permissions.map(\.id))
+            .animation(.ui, value: model.forms.map(\.id))
             // A question came: the keyboard goes to it, after the composer takes it as it shows.
             .onChange(of: forms.first?.id, initial: true) { _, id in
                 guard id != nil else { return }
@@ -194,9 +194,9 @@ private struct BottomStack: View {
 
     private var forms: [FormRequest] {
         #if DEBUG
-        return model.transcript.forms + Self.demoForms
+        return model.forms + Self.demoForms
         #else
-        return model.transcript.forms
+        return model.forms
         #endif
     }
 

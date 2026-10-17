@@ -397,7 +397,7 @@ final class Workspace {
     func needsAttention(_ id: String) -> Bool {
         if askingInBrowser.contains(id) { return true }
         guard let model = models[id] else { return false }
-        return !model.transcript.permissions.isEmpty || !model.transcript.forms.isEmpty
+        return !model.permissions.isEmpty || !model.forms.isEmpty
     }
 
     // MARK: Changes
@@ -752,8 +752,8 @@ final class Workspace {
         for model in models.values {
             // A machine's are read when it's connected (see `refresh(_ engine:)`).
             if RemoteFolder.machine(of: model.session.location.directory).map(connectedMachines.contains) ?? true { await model.load() }
-            for request in model.transcript.permissions { asking[request.id] = request.sessionID }
-            for form in model.transcript.forms { note(form, in: model) }
+            for request in model.permissions { asking[request.id] = request.sessionID }
+            for form in model.forms { note(form, in: model) }
         }
     }
 
@@ -1171,7 +1171,7 @@ final class Workspace {
         switch event.type {
         case "form.created":
             guard let form = try? event.payload(as: EventPayload.FormCreated.self).form, let server = form.server else { return }
-            if let model = models.values.first(where: { $0.transcript.forms.contains { $0.id == form.id } }) {
+            if let model = models.values.first(where: { $0.forms.contains { $0.id == form.id } }) {
                 note(form, in: model)
                 return
             }

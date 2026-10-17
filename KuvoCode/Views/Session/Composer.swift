@@ -19,8 +19,9 @@ struct Composer: View {
     let isRunning: Bool
     /// Messages are waiting their turn, so ⌘Return adds to the queue even while idle.
     var hasQueue = false
-    /// Messages sent before, oldest first: ↑ and ↓ go through them, as in a shell.
-    var history: [String] = []
+    /// Messages sent before, oldest first: ↑ and ↓ go through them, as in a shell. Read when
+    /// they're used, so the composer isn't drawn again as the conversation changes.
+    var history: () -> [String] = { [] }
     /// The project's folders, the primary one first, for "@" mentions of their files.
     var folders: [String] = []
     /// What "/" at the start of a message can run.
@@ -201,7 +202,10 @@ struct Composer: View {
                 }
                 // Editing a recalled message makes it a new one; the arrows move the cursor again.
                 .onChange(of: text) { _, new in
-                    if let index = historyIndex, !history.indices.contains(index) || new != history[index] { historyIndex = nil }
+                    if let index = historyIndex {
+                        let history = history()
+                        if !history.indices.contains(index) || new != history[index] { historyIndex = nil }
+                    }
                     mentionTyped(in: new)
                     if SlashCommands.query(in: new) == nil {
                         commandIndex = 0
@@ -382,6 +386,7 @@ struct Composer: View {
     /// ↑ from an empty field, or from a recalled message left as it was, goes back a message;
     /// ↓ comes forward, and past the newest clears the field again.
     private func recall(_ step: Int) -> Bool {
+        let history = history()
         guard !history.isEmpty else { return false }
         guard let index = historyIndex else {
             guard step < 0, text.isEmpty, files.isEmpty else { return false }

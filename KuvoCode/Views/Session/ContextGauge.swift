@@ -48,14 +48,7 @@ struct ContextGauge: View {
     }
 
     /// What the last step sent and got back is what's in the window now.
-    private var used: Int? {
-        for message in model.transcript.messages.reversed() {
-            if case .assistant(let assistant) = message, let tokens = assistant.tokens {
-                return tokens.input + tokens.cache.read + tokens.cache.write + tokens.output
-            }
-        }
-        return nil
-    }
+    private var used: Int? { model.contextUsed }
 
     private var limit: Int? {
         catalog.model(model.session.model)?.limit.context
