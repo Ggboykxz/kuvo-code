@@ -449,6 +449,13 @@ final class SessionModel {
         await api.waitForTools(in: session.location.directory)
     }
 
+    /// Where a conversation is, for anonymous usage: a bot's own folder (here or on a machine), a
+    /// chat, or a project.
+    private static func place(of directory: String) -> String {
+        if directory.hasPrefix(Bots.root.path) || directory.contains("/.kuvo-code/bots/") { return "bot" }
+        return Workspace.isChat(directory) ? "chat" : "project"
+    }
+
     func send(_ text: String, files: [URL] = [], for model: Model?, queue: Bool = false) {
         let written = text
         let comments = reviewComments
@@ -469,6 +476,8 @@ final class SessionModel {
         props["files"] = !files.isEmpty
         props["comments"] = !comments.isEmpty
         Analytics.shared.track("message_sent", props)
+        Analytics.shared.noteMessage(in: session.id, chars: text.count)
+        Analytics.shared.messageSent(path: Self.place(of: session.location.directory))
         let previous = sending
         sending = Task {
             await previous?.value

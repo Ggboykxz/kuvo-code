@@ -502,6 +502,7 @@ final class Workspace {
         props["mode"] = Analytics.mode(agent)
         props["approval"] = approval == .approveAll ? "all" : "ask"
         props["worktree"] = worktree
+        if let since = Analytics.shared.sinceInstall { props["since_install"] = since }
         Analytics.shared.track("session_created", props)
         return session
     }
@@ -873,7 +874,10 @@ final class Workspace {
         noteShowInPanel(event, machine: machine)
         if event.type == "session.tool.input.started", let id = event.sessionID,
            let started = try? event.payload(as: EventPayload.ToolInputStarted.self), started.name.hasPrefix("kuvo-browser_browser_") {
-            if let machine { onMachineBrowsing?(machine, id) }
+            if let machine {
+                onMachineBrowsing?(machine, id)
+                Analytics.shared.trackOnce("browser_used", key: "agent.machine", ["by": "agent", "place": "machine"])
+            }
             if ["kuvo-browser_browser_sign_in", "kuvo-browser_browser_ask_code", "kuvo-browser_browser_ask_user"].contains(started.name) {
                 onBrowserAsk?(id, machine)
             }
@@ -888,6 +892,10 @@ final class Workspace {
         }
         noteQuestions(event)
         guard let id = event.sessionID else { return }
+        // A run's first words, thought or tool: how long the model took to start.
+        if runStarted[id] != nil, firstOutput[id] == nil, ["session.text.started", "session.reasoning.started", "session.tool.input.started"].contains(event.type) {
+            firstOutput[id] = .now
+        }
 
         switch event.type {
         case "session.created", "session.renamed", "session.moved", "session.metadata.updated", "session.revert.staged", "session.revert.cleared", "session.revert.committed":
@@ -904,6 +912,8 @@ final class Workspace {
         case "session.execution.started":
             running.insert(id)
             runStarted[id] = .now
+            firstOutput[id] = nil
+            if let session = session(id) { usageAtStart[id] = (Self.tokenCount(session.tokens), session.cost) }
             touch(id)
         case "session.execution.succeeded", "session.execution.failed", "session.execution.interrupted":
             running.remove(id)
@@ -952,6 +962,13 @@ final class Workspace {
     }
 
     @ObservationIgnored private var runStarted: [String: Date] = [:]
+    @ObservationIgnored private var firstOutput: [String: Date] = [:]
+    /// A session's tokens and cost as a run began, to tell what the run used.
+    @ObservationIgnored private var usageAtStart: [String: (tokens: Int, cost: Double)] = [:]
+
+    private static func tokenCount(_ tokens: TokenUsage) -> Int {
+        tokens.input + tokens.output + tokens.reasoning
+    }
 
     /// A session the engine didn't name after its run (its title model gave nothing back, as
     /// GLM-5.3 Flash's does): the start of its first message, as a chat app names one, so the
@@ -1008,12 +1025,22 @@ final class Workspace {
         }
         // A subagent's session has no row of its own.
         props["subagent"] = session == nil
-        if let started = runStarted.removeValue(forKey: id) { props["seconds"] = Int(Date.now.timeIntervalSince(started)) }
+        if let started = runStarted.removeValue(forKey: id) {
+            props["seconds"] = Int(Date.now.timeIntervalSince(started))
+            if let first = firstOutput.removeValue(forKey: id) { props["first_token_seconds"] = Int(first.timeIntervalSince(started)) }
+        }
+        if let start = usageAtStart.removeValue(forKey: id), let session {
+            props["tokens"] = Analytics.tokens(Double(max(0, Self.tokenCount(session.tokens) - start.tokens)))
+            props["cost"] = Analytics.cost(max(0, session.cost - start.cost))
+        }
         if event.type == "session.execution.failed", let error = ended?.error {
             props["error"] = String(error.type.lowercased().filter { $0.isLetter || $0 == "_" }.prefix(40))
             if let status = error.status { props["status"] = status }
+            // What kind of trouble, from its words, which stay here.
+            props["error_type"] = Analytics.trouble(status: error.status, error.type + " " + error.message)
         }
         Analytics.shared.track("turn_finished", props)
+        Analytics.shared.noteTurn(in: id)
     }
 
     /// Keeps `asking` current, and tells you about a new request while you're elsewhere.

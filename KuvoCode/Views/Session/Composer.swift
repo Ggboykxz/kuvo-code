@@ -333,7 +333,10 @@ struct Composer: View {
     }
 
     private func send() {
-        guard canSend else { return }
+        guard canSend else {
+            if isOffline, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { Analytics.shared.firstMessageBlocked("engine_offline") }
+            return
+        }
         onSend()
     }
 

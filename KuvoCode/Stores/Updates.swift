@@ -17,6 +17,7 @@ final class Updates {
 
     @ObservationIgnored private let controller: SPUStandardUpdaterController?
     @ObservationIgnored private var observation: NSKeyValueObservation?
+    @ObservationIgnored private let steps = UpdateSteps()
 
     init() {
         guard Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil else {
@@ -25,7 +26,7 @@ final class Updates {
             controller = nil
             return
         }
-        let controller = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+        let controller = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: steps, userDriverDelegate: nil)
         self.controller = controller
         isAvailable = true
         checksAutomatically = controller.updater.automaticallyChecksForUpdates
@@ -37,5 +38,76 @@ final class Updates {
 
     func check() {
         controller?.checkForUpdates(nil)
+    }
+}
+
+/// Each step of an update, for anonymous usage: checked, found, downloaded, installed, or where
+/// and why it failed (a kind, never the error's words).
+nonisolated private final class UpdateSteps: NSObject, SPUUpdaterDelegate {
+    func updater(_ updater: SPUUpdater, mayPerform updateCheck: SPUUpdateCheck) throws {
+        guard updateCheck != .updateInformation else { return }
+        let manual = updateCheck == .updates
+        track("update_checked") { ["manual": manual] }
+    }
+
+    func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+        let to = Self.version(item)
+        track("update_available") { ["from": AppInfo.version, "to": to] }
+    }
+
+    func updater(_ updater: SPUUpdater, didDownloadUpdate item: SUAppcastItem) {
+        let to = Self.version(item)
+        track("update_downloaded") { ["to": to] }
+    }
+
+    func updater(_ updater: SPUUpdater, failedToDownloadUpdate item: SUAppcastItem, error: any Error) {
+        let reason = Self.reason(error)
+        track("update_failed") { ["stage": "download", "reason": reason] }
+    }
+
+    func userDidCancelDownload(_ updater: SPUUpdater) {
+        track("update_failed") { ["stage": "download", "reason": "cancelled"] }
+    }
+
+    func updater(_ updater: SPUUpdater, willInstallUpdate item: SUAppcastItem) {
+        let to = Self.version(item)
+        track("update_installed") { ["from": AppInfo.version, "to": to] }
+        // It quits to install: what's queued goes now.
+        Task { @MainActor in Analytics.shared.flush() }
+    }
+
+    func updater(_ updater: SPUUpdater, didAbortWithError error: any Error) {
+        let error = error as NSError
+        // Finding no update isn't a failure.
+        guard error.domain != SUSparkleErrorDomain || error.code != Int(SUError.noUpdateError.rawValue) else { return }
+        let stage = switch error.code {
+        case 1000..<2000: "check"
+        case 2000..<3000: "download"
+        case 3000..<4000: "extract"
+        default: "install"
+        }
+        let reason = Self.reason(error)
+        track("update_failed") { ["stage": stage, "reason": reason] }
+    }
+
+    private func track(_ name: String, _ props: @escaping @MainActor @Sendable () -> [String: Any]) {
+        Task { @MainActor in Analytics.shared.track(name, props()) }
+    }
+
+    private static func version(_ item: SUAppcastItem) -> String {
+        String(item.displayVersionString.prefix(32))
+    }
+
+    private static func reason(_ error: any Error) -> String {
+        let error = error as NSError
+        if error.domain == NSURLErrorDomain || (error.userInfo[NSUnderlyingErrorKey] as? NSError)?.domain == NSURLErrorDomain { return "network" }
+        guard error.domain == SUSparkleErrorDomain else { return "other" }
+        return switch Int32(error.code) {
+        case SUError.signatureError.rawValue, SUError.validationError.rawValue, SUError.insufficientSigningError.rawValue: "signature"
+        case SUError.downloadError.rawValue, SUError.appcastError.rawValue: "network"
+        case SUError.temporaryDirectoryError.rawValue, SUError.fileCopyFailure.rawValue, SUError.installationWriteNoPermissionError.rawValue: "disk"
+        case SUError.installationCanceledError.rawValue, SUError.installationAuthorizeLaterError.rawValue: "cancelled"
+        default: "other"
+        }
     }
 }

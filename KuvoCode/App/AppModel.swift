@@ -55,6 +55,7 @@ final class AppModel {
     /// Shows Settings in the main window, on `page` if one is given (otherwise the last one open).
     func openSettings(_ page: SettingsPage? = nil) {
         if let page { settingsTabs.show(page) }
+        if page == .accounts { Analytics.shared.onboardingStep("accounts") }
         #if DEBUG
         let background = ProcessInfo.processInfo.environment["KUVO_DEMO_BACKGROUND"] != nil
         #else

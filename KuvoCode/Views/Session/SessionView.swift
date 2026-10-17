@@ -213,7 +213,10 @@ private struct BottomStack: View {
     #endif
 
     private func send(queue: Bool) {
-        guard offlineMachine == nil else { return }
+        guard offlineMachine == nil else {
+            Analytics.shared.firstMessageBlocked("machine_offline")
+            return
+        }
         model.failure = nil
         let commands = catalog.commands(in: model.session.location.directory)
         // A "!" or "/" command runs as typed; what you were replying to waits for a message.
@@ -309,6 +312,7 @@ struct DraftSessionView: View {
         }
         .navigationTitle("New Session")
         .task(id: directory) { await catalog.loadCommands(in: directory) }
+        .onAppear { Analytics.shared.onboardingStep("composer") }
     }
 
     private func send() {
@@ -329,6 +333,7 @@ struct DraftSessionView: View {
                 Drafts.shared.remove(draftKey)
                 for session in sessions { created(session, message, attachments) }
             } catch {
+                Analytics.shared.firstMessageBlocked("session_failed_" + Analytics.trouble(error))
                 failure = error.localizedDescription
                 isCreating = false
             }

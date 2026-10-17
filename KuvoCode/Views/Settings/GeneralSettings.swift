@@ -209,7 +209,7 @@ struct PrivacySettings: View {
                 @Bindable var analytics = Analytics.shared
                 Toggle(isOn: $analytics.isEnabled) {
                     Text("Share anonymous usage")
-                    Text("Which features you use and how often, with the app and macOS versions. Never your code, prompts, files or accounts.")
+                    Text("Which features you use and how often, and what kind of trouble you run into, with the app and macOS versions. Never your code, prompts, files or accounts.")
                 }
                 LabeledContent("What’s sent") {
                     Link("Privacy and Data", destination: URL(string: "https://www.kuvo.run/code/docs/privacy/")!)

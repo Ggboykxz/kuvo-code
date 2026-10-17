@@ -15,6 +15,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - When the window hasn't room for the sidebar, the panel and a session beside, the one you opened last stays and the others make way. Showing the panel beside a split view used to do nothing, and its button needed a second press.
 - Two sessions side by side show as one tab in two halves, the tab's own half raised. Settings › General can show them as one tab with both names, or as the two tabs joined, as before.
 - When an agent on one of your machines starts browsing, the panel opens once its page is there to show. It used to open straight away on Changes, with nothing of the agent's in it.
+- Anonymous usage, while it's on, also says where a first run stops, how an update goes, how long a model takes to start answering, and what kind of trouble a failed run, sign-in, crash or hang was, so those can be fixed. As before, never your code, prompts, files or accounts, and it's off with Settings › Privacy.
 
 ## 0.5.4
 

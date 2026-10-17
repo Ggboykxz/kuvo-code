@@ -84,7 +84,10 @@ struct ConnectView: View {
         .padding(32)
         .frame(maxWidth: .infinity)
         .animation(.ui, value: step)
-        .onAppear(perform: chooseOnlyMethod)
+        .onAppear {
+            Analytics.shared.onboardingStep("connect_account", ["provider": Analytics.provider(integrationID)])
+            chooseOnlyMethod()
+        }
         .onDisappear(perform: cancelAttempt)
     }
 
@@ -408,6 +411,7 @@ struct ConnectView: View {
                     break
                 }
             } catch {
+                noteFailure(method: Self.kind(of: method), Analytics.trouble(error))
                 step = .failed(error.localizedDescription)
             }
         }
@@ -425,6 +429,8 @@ struct ConnectView: View {
                 try await api.connectKey(integration: integrationID, key: trimmed, answer: answer.isEmpty ? nil : answer)
                 finish(method: "api_key")
             } catch {
+                let trouble = Analytics.trouble(error)
+                noteFailure(method: "key", trouble == "auth" || trouble == "other" ? "invalid_key" : trouble)
                 // Stay on the key, so it can be fixed rather than pasted again.
                 keyError = error.localizedDescription
             }
@@ -442,8 +448,14 @@ struct ConnectView: View {
                 switch status.status {
                 case .pending: continue
                 case .complete: finish(method: "oauth"); return
-                case .failed: step = .failed(status.message ?? "Signing in didn't work."); return
-                case .expired: step = .failed("The sign-in timed out. Try again."); return
+                case .failed:
+                    noteFailure(method: "oauth", Analytics.trouble(status: nil, status.message ?? ""))
+                    step = .failed(status.message ?? "Signing in didn't work.")
+                    return
+                case .expired:
+                    noteFailure(method: "oauth", "timeout")
+                    step = .failed("The sign-in timed out. Try again.")
+                    return
                 }
             }
         }
@@ -459,6 +471,7 @@ struct ConnectView: View {
                 try await api.completeOAuth(integration: integrationID, attempt: attempt.attemptID, code: code)
                 finish(method: "oauth")
             } catch {
+                noteFailure(method: "oauth", Analytics.trouble(error))
                 step = .failed(error.localizedDescription)
             }
         }
@@ -466,6 +479,7 @@ struct ConnectView: View {
 
     private func finish(method: String) {
         Analytics.shared.track("account_connected", ["provider": Analytics.provider(integrationID), "method": method])
+        Analytics.shared.accountConnected()
         pollTask?.cancel()
         pollTask = nil
         step = .connected
@@ -473,10 +487,24 @@ struct ConnectView: View {
         Task { await catalog.refresh() }
     }
 
+    /// A connection that didn't work, for anonymous usage: the kind of trouble, never its words.
+    private func noteFailure(method: String, _ reason: String) {
+        Analytics.shared.track("account_connect_failed", ["provider": Analytics.provider(integrationID), "method": method, "reason": reason])
+    }
+
+    private static func kind(of method: Integration.Method) -> String {
+        switch method {
+        case .oauth: "oauth"
+        case .key: "key"
+        default: "other"
+        }
+    }
+
     private func cancelAttempt() {
         pollTask?.cancel()
         pollTask = nil
         if case .waiting(let attempt) = step, let api = app.api {
+            noteFailure(method: "oauth", "cancelled")
             Task { try? await api.cancelOAuth(integration: integrationID, attempt: attempt.attemptID) }
         }
     }

@@ -201,6 +201,7 @@ final class MachineEngine {
             self.api = current
             catalog.api = current
             state = .ready
+            Analytics.shared.trackOnce("machine_connected")
             listen(to: current)
             keepAlive()
             // The browser, in the background: the first time, a download and an upload. A browser
@@ -368,6 +369,7 @@ final class Machines {
         let machine = Machine(destination: destination.trimmingCharacters(in: .whitespaces))
         if let engine = engines[machine.id] { return engine }
         list.append(machine)
+        Analytics.shared.track("machine_added")
         let engine = MachineEngine(machine: machine)
         engines[machine.id] = engine
         save()

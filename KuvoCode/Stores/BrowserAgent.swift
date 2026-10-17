@@ -84,6 +84,7 @@ final class BrowserAgent {
         // A bot's new tab is the one it goes on in.
         if owner != nil { use = browser }
         Analytics.shared.trackOnce("agent_used_browser")
+        Analytics.shared.trackOnce("browser_used", key: "agent.mac", ["by": "agent", "place": "mac"])
         // Brought forward, unless it's a bot's out of view.
         utilities.reveal(browser)
         if address != nil { await settle(browser, expectNavigation: true) }
@@ -417,6 +418,7 @@ final class BrowserAgent {
             browser = utilities.activeBrowser ?? utilities.newBrowser(byAgent: true)
         }
         Analytics.shared.trackOnce("agent_used_browser")
+        Analytics.shared.trackOnce("browser_used", key: "agent.mac", ["by": "agent", "place": "mac"])
         utilities.reveal(browser)
         works(in: browser)
         return browser

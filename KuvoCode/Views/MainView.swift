@@ -950,7 +950,11 @@ struct MainView: View {
         var tabs = tabs
         guard let index = tabs.firstIndex(of: key) else { return }
         tabs.remove(at: index)
-        if splitPairs[key] != nil { splitPairs[key] = nil }
+        Analytics.shared.sessionEnded(key)
+        if let beside = splitPairs[key] {
+            Analytics.shared.sessionEnded(beside)
+            splitPairs[key] = nil
+        }
         if remember { rememberClosed([ClosedTab(key: key, index: index)]) }
         withAnimation(.ui) {
             self.tabs = tabs
@@ -964,6 +968,10 @@ struct MainView: View {
     private func closeTabs(except key: String?) {
         // Reopened last first, so the leftmost comes back last.
         rememberClosed(tabs.enumerated().filter { $0.element != key }.map { ClosedTab(key: $0.element, index: $0.offset) }.reversed())
+        for closed in tabs where closed != key {
+            Analytics.shared.sessionEnded(closed)
+            if let beside = splitPairs[closed] { Analytics.shared.sessionEnded(beside) }
+        }
         withAnimation(.ui) {
             tabs = tabs.filter { $0 == key }
             splitPairs = splitPairs.filter { $0.key == key }
@@ -1224,6 +1232,7 @@ struct MainView: View {
         panel.canCreateDirectories = true
         panel.prompt = "Open"
         panel.message = "Choose a project folder for the agent to work in."
+        Analytics.shared.onboardingStep("pick_project")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         newSession(in: workspace.addFolder(url.path))
     }
@@ -1825,5 +1834,6 @@ struct WelcomeView: View {
         }
         .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear { Analytics.shared.onboardingStep("welcome") }
     }
 }

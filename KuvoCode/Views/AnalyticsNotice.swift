@@ -9,7 +9,7 @@ struct AnalyticsNotice: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Help improve Kuvo Code")
                 .font(.system(size: 13, weight: .semibold))
-            Text("Kuvo Code shares anonymous usage: which features you use, how often, and the app and macOS versions. Never your code, prompts, files or accounts.")
+            Text("Kuvo Code shares anonymous usage: which features you use, how often, what kind of trouble you run into, and the app and macOS versions. Never your code, prompts, files or accounts.")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

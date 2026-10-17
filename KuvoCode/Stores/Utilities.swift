@@ -176,7 +176,10 @@ final class Utilities {
     @discardableResult
     func newBrowser(_ address: String? = nil, configuration: WKWebViewConfiguration? = nil, openedFrom opener: UUID? = nil, byAgent: Bool = false, owner: String? = nil) -> BrowserSession {
         // Yours only: not the agent's tabs, nor windows a page opened.
-        if !byAgent, configuration == nil { Analytics.shared.track("panel_opened", ["tool": "browser"]) }
+        if !byAgent, configuration == nil {
+            Analytics.shared.track("panel_opened", ["tool": "browser"])
+            Analytics.shared.trackOnce("browser_used", key: "you.mac", ["by": "you", "place": "mac"])
+        }
         // A window a bot's page opens is the bot's too.
         let owner = owner ?? opener.flatMap { id in tabs.first { $0.id == id }?.owner }
         let tab = Tab(kind: .browser, owner: owner)
@@ -202,6 +205,7 @@ final class Utilities {
     /// `address` at once, if given).
     func newMachinePage(_ machine: String, address: String? = nil) {
         Analytics.shared.track("panel_opened", ["tool": "machine_browser"])
+        Analytics.shared.trackOnce("browser_used", key: "you.machine", ["by": "you", "place": "machine"])
         let tab = Tab(kind: .machinePage(machine, nil))
         add(tab)
         if let address { open(address, inTab: tab.id) }

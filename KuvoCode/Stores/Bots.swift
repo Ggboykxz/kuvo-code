@@ -417,6 +417,7 @@ final class Bots {
                     do {
                         try await api.prompt(session: bot.sessionID, id: Identifier.message(), text: Wakes.marker + message, delivery: .queue)
                         Wakes.watchDelivered(letters, inBot: bot.folder)
+                        Analytics.shared.track("bot_wakeup_ran", ["kind": "watch", "repeats": true])
                     } catch {
                         log.error("A watch's wake-up for \(bot.id, privacy: .public) didn't go: \(error.localizedDescription, privacy: .public)")
                     }
@@ -525,6 +526,7 @@ final class Bots {
             for wake in pending where wake.due <= .now {
                 do {
                     try await api.prompt(session: bot.sessionID, id: Identifier.message(), text: Wakes.marker + wake.note, delivery: .queue)
+                    Analytics.shared.track("bot_wakeup_ran", ["kind": "wake", "repeats": wake.every != nil])
                     // Sent: one that repeats comes back at its next time; others are done.
                     let folder = (bot.folder as NSString).appendingPathComponent("wakes") as NSString
                     if let next = wake.nextID() {
