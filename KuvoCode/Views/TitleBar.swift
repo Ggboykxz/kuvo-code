@@ -161,7 +161,8 @@ struct TabStrip: View {
         if let openBeside, tab.id != selection, SidebarView.draftDirectory(from: tab.id) == nil, BotGroups.groupID(fromTab: tab.id) == nil {
             items += [ActionItem("Open Beside") { openBeside(tab.id) }]
         }
-        if let rename, SidebarView.draftDirectory(from: tab.id) == nil {
+        // A bot or a group chat is renamed in its editor, not here.
+        if let rename, SidebarView.draftDirectory(from: tab.id) == nil, tab.bot == nil, BotGroups.groupID(fromTab: tab.id) == nil {
             items += [ActionItem("Rename…") { rename(tab.id) }, .separator()]
         }
         let others = ActionItem("Close Other Tabs") { closeAll(tab.id) }

@@ -1332,8 +1332,11 @@ struct MainView: View {
             add("Build Mode", "hammer", "⌥⌘1") { actions.selectAgent("build") }
             add("Plan Mode", "list.bullet.clipboard", "⌥⌘2") { actions.selectAgent("plan") }
             add("Find in Conversation…", "magnifyingglass", "⌘F", actions.find)
-            add("Rename Session…", "pencil") {
-                renaming = model.session
+            // A bot is renamed in Edit Bot.
+            if bots.bot(forSession: model.id) == nil {
+                add("Rename Session…", "pencil") {
+                    renaming = model.session
+                }
             }
         }
         if actions.canReopenTab {
