@@ -21,32 +21,33 @@ nonisolated struct ReviewComment: Identifiable, Hashable, Sendable {
 /// The block a message carries its comments in. It reads well for the model, and the
 /// transcript turns it back into cards.
 nonisolated enum ReviewComments {
-    private static let start = "<review-comments>"
-    private static let end = "</review-comments>"
     private static let intro = "Comments on lines of the current changes:"
+    private static let block = MessageBlock(start: "<review-comments>", end: "</review-comments>", headings: [intro])
 
     static func text(_ text: String, adding comments: [ReviewComment]) -> String {
+        let text = block.escaping(text)
         guard !comments.isEmpty else { return text }
-        var block = [start, intro]
+        var lines = [block.start, intro]
         for comment in comments {
-            block.append("")
-            block.append("[\(comment.location)]")
-            block.append("> " + comment.snippet)
-            block.append(comment.text)
+            lines.append("")
+            lines.append("[\(comment.location)]")
+            lines.append("> " + comment.snippet)
+            lines.append(comment.text)
         }
-        block.append(end)
-        return (text.isEmpty ? "" : text + "\n\n") + block.joined(separator: "\n")
+        lines.append(block.end)
+        return (text.isEmpty ? "" : text + "\n\n") + lines.joined(separator: "\n")
     }
 
-    /// The message without the block, and the comments in it.
+    /// The message without the block that ends it, and the comments in it.
     static func split(_ text: String) -> (text: String, comments: [ReviewComment]) {
-        guard let open = text.range(of: start),
-              let close = text.range(of: end, range: open.upperBound..<text.endIndex) else { return (text, []) }
+        guard let (before, lines) = block.split(text) else { return (text, []) }
         var comments: [ReviewComment] = []
         var current: ReviewComment?
-        for raw in text[open.upperBound..<close.lowerBound].split(separator: "\n", omittingEmptySubsequences: false) {
+        for (index, raw) in lines.enumerated().dropFirst() {
             let line = String(raw)
-            if let header = header(line) {
+            // A comment starts after a blank line, with its line of the changes under it; a line
+            // like "[b.swift:10]" in what you wrote is part of it.
+            if lines[index - 1].isEmpty, index + 1 < lines.count, lines[index + 1].hasPrefix("> "), let header = header(line) {
                 if let current { comments.append(current) }
                 current = ReviewComment(file: header.file, line: header.line, side: header.side, snippet: "", text: "")
             } else if var comment = current {
@@ -64,8 +65,7 @@ nonisolated enum ReviewComments {
             comment.text = comment.text.trimmingCharacters(in: .whitespacesAndNewlines)
             return comment
         }
-        let rest = (text[..<open.lowerBound] + text[close.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
-        return (rest, comments)
+        return (before.trimmingCharacters(in: .whitespacesAndNewlines), comments)
     }
 
     /// "[path/to/file.swift:124]" or "[notes.md:3 (removed)]".

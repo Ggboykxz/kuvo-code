@@ -144,37 +144,35 @@ nonisolated enum Attachments {
 
     // MARK: The note
 
-    private static let noteStart = "<attached-files>"
-    private static let noteEnd = "</attached-files>"
     private static let includedHeading = "The attached files are on disk here (what's in them is in this message already):"
     private static let pathsHeading = "Open these attached files with your tools if you need them:"
+    private static let note = MessageBlock(start: "<attached-files>", end: "</attached-files>", headings: [includedHeading, pathsHeading])
 
     /// The message text with the note: where the files sent with it are, and the files sent as
     /// paths.
     static func text(_ text: String, for prepared: Prepared) -> String {
-        var note: [String] = []
-        if !prepared.included.isEmpty { note += [includedHeading] + prepared.included }
-        if !prepared.paths.isEmpty { note += [pathsHeading] + prepared.paths }
-        guard !note.isEmpty else { return text }
-        return (text.isEmpty ? "" : text + "\n\n") + ([noteStart] + note + [noteEnd]).joined(separator: "\n")
+        let text = note.escaping(text)
+        var lines: [String] = []
+        if !prepared.included.isEmpty { lines += [includedHeading] + prepared.included }
+        if !prepared.paths.isEmpty { lines += [pathsHeading] + prepared.paths }
+        guard !lines.isEmpty else { return text }
+        return (text.isEmpty ? "" : text + "\n\n") + ([note.start] + lines + [note.end]).joined(separator: "\n")
     }
 
-    /// A message's text without the note, and the paths of the files it sent as paths (the
-    /// others are the message's own files).
+    /// A message's text without the note that ends it, and the paths of the files it sent as
+    /// paths (the others are the message's own files).
     static func split(_ text: String) -> (text: String, paths: [String]) {
-        guard let start = text.range(of: noteStart, options: .backwards),
-              let end = text.range(of: noteEnd, range: start.upperBound..<text.endIndex) else { return (text, []) }
-        var listsPaths = true
-        let paths = text[start.upperBound..<end.lowerBound]
-            .split(separator: "\n")
-            .map(String.init)
-            .filter { line in
-                if line == includedHeading { listsPaths = false }
-                if line == pathsHeading { listsPaths = true }
-                return listsPaths && line.hasPrefix("/")
+        guard let (before, lines) = note.split(text) else { return (text, []) }
+        var heading = ""
+        var paths: [String] = []
+        for line in lines.map(String.init) {
+            if note.headings.contains(line) {
+                heading = line
+            } else if line.hasPrefix("/"), heading != includedHeading {
+                paths.append(line)
             }
-        let rest = (text[..<start.lowerBound] + text[end.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
-        return (rest, paths)
+        }
+        return (before.trimmingCharacters(in: .whitespacesAndNewlines), paths)
     }
 
     // MARK: Files we write

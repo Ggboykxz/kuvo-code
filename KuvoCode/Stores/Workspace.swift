@@ -1011,11 +1011,11 @@ final class Workspace {
     }
     @ObservationIgnored private var namingUntitled: Set<String> = []
 
-    /// A title from a message: its words without review comments or line breaks, up to the end
-    /// of its first sentence or about 48 characters, at a word. A dot in a word (README.md, a web
-    /// address) doesn't end a sentence.
+    /// A title from a message: its words without review comments, the note of attached files or
+    /// line breaks, up to the end of its first sentence or about 48 characters, at a word. A dot in
+    /// a word (README.md, a web address) doesn't end a sentence.
     nonisolated static func title(from message: String) -> String? {
-        let split = ReviewComments.split(message)
+        let split = ReviewComments.split(Attachments.split(message).text)
         let words = (split.text.isEmpty ? split.comments.first?.text ?? "" : split.text)
             .split(whereSeparator: \.isWhitespace).joined(separator: " ")
         guard !words.isEmpty else { return nil }
