@@ -1064,17 +1064,39 @@ async function use(target) {
   return { target, session };
 }
 
-async function evaluate(p, expression, timeout = 30_000) {
-  const result = await link.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true, userGesture: true }, p.session, timeout);
+/// The agent's own world in the page: the browsing scripts run there, and the numbers they keep
+/// stay there, where the page's own scripts can't read or change them. The same name gives the
+/// same world (and a new document, a new one of it).
+async function world(p) {
+  const { frameTree } = await link.send("Page.getFrameTree", {}, p.session);
+  return (await link.send("Page.createIsolatedWorld", { frameId: frameTree.frame.id, worldName: "kuvo-agent" }, p.session)).executionContextId;
+}
+
+/// Runs `expression` in the page's own world, or with `inWorld` in the agent's.
+async function evaluate(p, expression, timeout = 30_000, inWorld = false) {
+  const contextId = inWorld ? await world(p) : undefined;
+  const result = await link.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true, userGesture: true, ...(contextId ? { contextId } : {}) }, p.session, timeout);
   if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text);
   return result.result?.value;
 }
 
-/// Runs one of the browsing scripts (a function body) with `args` as its named arguments.
+// Each conversation's latest snapshot: the numbers its actions use are that snapshot's, and not
+// another page's, or another conversation's in the same page.
+const snapshots = new Map();
+
+/// `args`, with the snapshot the calling conversation's numbers are from (none, if it hasn't read
+/// a page yet).
+function withSnapshot(args) {
+  return caller ? { ...args, kuvoSnapshot: snapshots.get(caller) ?? "none" } : args;
+}
+
+/// Runs one of the browsing scripts (a function body) in the agent's world, with `args` as its
+/// named arguments.
 async function run(p, body, args = {}) {
+  args = withSnapshot(args);
   const expression = `(async function({${Object.keys(args).join(", ")}}) {\n${body}\n})(${JSON.stringify(args)})`;
   try {
-    const value = await evaluate(p, expression);
+    const value = await evaluate(p, expression, 30_000, true);
     return typeof value === "string" ? value : "ok";
   } catch (error) {
     return "The page refused that: " + error.message;
@@ -1139,7 +1161,14 @@ async function snapshot(p) {
   if (isEmpty(await address(p))) return "The browser is empty. Use browser_navigate to open a page.";
   let result;
   try {
-    result = await evaluate(p, `(async function() {\n${CONFIG.scripts.snapshot}\n})()`);
+    // What the page set to run on a click, which only its own world sees, for the snapshot to
+    // count those elements as clickable too.
+    const handlers = await evaluate(p, `(function() {\n${CONFIG.scripts.handlers}\n})()`).catch(() => []);
+    const id = crypto.randomUUID();
+    const args = { kuvoSnapshot: id, kuvoHandlers: Array.isArray(handlers) ? handlers : [] };
+    result = await evaluate(p, `(async function({kuvoSnapshot, kuvoHandlers}) {\n${CONFIG.scripts.snapshot}\n})(${JSON.stringify(args)})`, 30_000, true);
+    // Its numbers are the ones this conversation's actions use, in this page only.
+    if (result && caller) snapshots.set(caller, id);
   } catch {}
   if (!result) return `Couldn't read the page at ${await address(p)}.`;
   const text = result.text || "";
@@ -1622,8 +1651,9 @@ async function tool(name, args) {
     const p = await page();
     // The file input the element stands for, as an object to hand the files to.
     const found = await link.send("Runtime.evaluate", {
-      expression: `(function({index}) {\n${scripts.find}\n${scripts.fileInput}\n})(${JSON.stringify({ index })})`,
+      expression: `(function({index, kuvoSnapshot}) {\n${scripts.find}\n${scripts.fileInput}\n})(${JSON.stringify(withSnapshot({ index }))})`,
       returnByValue: false,
+      contextId: await world(p),
     }, p.session);
     const value = found.result;
     if (value?.type === "string" && value.value === "missing") return text(`There's no element [${index}] on the page now. Take a fresh browser_snapshot.`);

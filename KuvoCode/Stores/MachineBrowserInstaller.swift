@@ -415,6 +415,7 @@ extension MachineBrowserInstaller {
         let config: [String: Any] = [
             "scripts": [
                 "snapshot": BrowserAgent.snapshotScript,
+                "handlers": BrowserAgent.handlersScript,
                 "find": BrowserAgent.findElement,
                 "click": BrowserAgent.clickScript,
                 "type": BrowserAgent.typeScript,
