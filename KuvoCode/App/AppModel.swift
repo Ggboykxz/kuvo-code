@@ -97,6 +97,9 @@ final class AppModel {
     private var server: ServerProcess?
     private var eventTask: Task<Void, Never>?
     private var isStopping = false
+    /// The engine running now, as launched: an earlier one's exit, coming in late as it stops,
+    /// isn't taken for this one's.
+    private var launch = UUID()
     private let log = Logger(subsystem: "run.kuvo.code", category: "engine")
 
     private var engineFolders: EngineFolders {
@@ -178,11 +181,13 @@ final class AppModel {
             } catch {
                 log.error("Browser tools didn't start: \(error.localizedDescription, privacy: .public)")
             }
+            let launch = UUID()
+            self.launch = launch
             let server = try await ServerProcess.start(
                 executable: binary,
                 folders: engineFolders,
                 environment: shell,
-                onExit: { status in Task { @MainActor in self.engineExited(status: status) } }
+                onExit: { status in Task { @MainActor in self.engineExited(status: status, launch: launch) } }
             )
             self.server = server
             stage = "connect"
@@ -303,8 +308,9 @@ final class AppModel {
         }
     }
 
-    private func engineExited(status: Int32) {
-        guard !isStopping else { return }
+    private func engineExited(status: Int32, launch: UUID) {
+        // One stopped for a restart exits a moment after the next one has started.
+        guard !isStopping, launch == self.launch else { return }
         let output = server?.recentOutput.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         log.error("Engine exited with status \(status): \(output, privacy: .public)")
         stop()

@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- The engine starting again (after you add an integration's key, say) no longer leaves it stopped: the one before, exiting a moment late, was taken for the new one.
 - New bots can start from Lens, a code reviewer: it reviews a project's changes before they ship (pull requests too, when gh is signed in) and reports what it found, file by file. It takes the place of Bargain, which watched prices.
 - A sign-in you give an agent is forgotten after a few minutes, as it's meant to be; it used to stay in memory until Kuvo Code quit. Settings › Keyboard Shortcuts lists New Chat and zooming a machine's page too.
 - Keys you give integrations are no longer in the engine's environment, where the agent's own commands (env, say) could print them and send them to the model. This Mac's engine reads them from files only you can read, which go when Kuvo Code quits.

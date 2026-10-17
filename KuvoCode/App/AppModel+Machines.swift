@@ -99,7 +99,10 @@ extension AppModel {
                 for id in self.renewals {
                     if id.isEmpty {
                         let busy = self.workspace.running.contains { session in !RemoteFolder.isRemote(self.workspace.session(session)?.location.directory ?? "") }
-                        guard !busy, self.api != nil else { continue }
+                        // One that stopped (it fell over reloading, say) starts again too; one
+                        // that's on its way up is waited for.
+                        let failed = if case .failed = self.engine { true } else { false }
+                        guard !busy, self.api != nil || failed else { continue }
                         self.renewals.remove(id)
                         await self.restart()
                     } else if let engine = self.machines.engine(id) {
