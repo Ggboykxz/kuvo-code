@@ -738,6 +738,9 @@ final class MachineBrowser {
             if case .failed = setup { return nil }
             if case .failed = state { return nil }
             if ContinuousClock.now > deadline { return nil }
+            // Set up only now (it was being installed, with nothing showing it yet, which is what
+            // has it connect): this page is what it's wanted for.
+            if setup == .ready, link == nil { connect() }
             try? await Task.sleep(for: .milliseconds(200))
         }
         guard let link else { return nil }
