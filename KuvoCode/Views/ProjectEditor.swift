@@ -21,6 +21,8 @@ struct ProjectEditor: View {
     /// git repository (and what the engine has for it).
     @State private var setup: String?
     @State private var savedSetup: String?
+    /// The primary folder `setup` was read for.
+    @State private var setupFolder: String?
     @State private var engineProject: String?
     @State private var run: String
     @FocusState private var isRunFocused: Bool
@@ -162,14 +164,20 @@ struct ProjectEditor: View {
 
     /// The engine keeps the setup command with its project (the repository).
     private func loadSetup() async {
+        // Back from Add a Machine with the same folder: what's typed stays.
+        guard folders.first != setupFolder else { return }
         setup = nil
+        setupFolder = nil
         guard let primary = folders.first, let api = workspace.api(forFolder: primary),
               await Task.detached(operation: { Git.run(["rev-parse", "--git-dir"], in: primary) != nil }).value,
               let project = try? await api.location(directory: primary).project else { return }
         let command = (try? await api.projects())?.first { $0.id == project.id }?.commands?.start ?? ""
+        // Another folder since, or the form went away: this one's read again when it's back.
+        guard !Task.isCancelled else { return }
         engineProject = project.id
         savedSetup = command
         setup = command
+        setupFolder = primary
     }
 
     private func saveSetup() {
