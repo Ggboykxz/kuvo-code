@@ -30,6 +30,7 @@ nonisolated enum Attachments {
     }
 
     static func kind(of url: URL) -> Kind {
+        let url = target(of: url)
         let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .contentTypeKey])
         if values?.isDirectory == true { return .folder }
         if let type = values?.contentType ?? UTType(filenameExtension: url.pathExtension) {
@@ -52,7 +53,7 @@ nonisolated enum Attachments {
     static func route(_ url: URL, for model: Model?) -> Route {
         let input = model?.capabilities.input
         let name = model?.name ?? "This model"
-        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+        let size = (try? target(of: url).resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
         let tooBig = Route.path(reason: "It's over 20 MB, so the agent gets its path and opens it with its tools.", isWarning: true)
         switch kind(of: url) {
         case .folder:
@@ -70,21 +71,29 @@ nonisolated enum Attachments {
         }
     }
 
-    /// Splits `urls` into files the engine gets and paths for the note, for `model`.
+    /// The file a symbolic link points to, or the file itself: a link's own type and size are
+    /// the link's.
+    private static func target(of url: URL) -> URL {
+        (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true ? url.resolvingSymlinksInPath() : url
+    }
+
+    /// Splits `urls` into files the engine gets and paths for the note, for `model`. The note
+    /// names each file where it was picked; the engine reads a link's file.
     static func prepare(_ urls: [URL], for model: Model?) -> Prepared {
         var prepared = Prepared()
         for url in urls {
+            let file = target(of: url)
             switch route(url, for: model) {
             case .content where kind(of: url) == .image:
-                let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
-                if let file = engineImage(from: url, size: size) {
-                    prepared.files.append(file)
+                let size = (try? file.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+                if let image = engineImage(from: file, named: url.lastPathComponent, size: size) {
+                    prepared.files.append(image)
                     prepared.included.append(url.path)
                 } else {
                     prepared.paths.append(url.path)
                 }
             case .content:
-                prepared.files.append(.init(uri: url.absoluteString, name: url.lastPathComponent))
+                prepared.files.append(.init(uri: file.absoluteString, name: url.lastPathComponent))
                 prepared.included.append(url.path)
             case .path:
                 prepared.paths.append(url.path)
@@ -141,14 +150,20 @@ nonisolated enum Attachments {
         return "data:\(mime);base64," + data.base64EncodedString()
     }
 
-    /// The image as a format and size the engine takes, converting it if needed.
-    private static func engineImage(from url: URL, size: Int) -> OpenCodeAPI.PromptFile? {
+    /// The image as a format and size the engine takes, converting it if needed; nil when it
+    /// can't be, so it goes as a path.
+    private static func engineImage(from url: URL, named name: String, size: Int) -> OpenCodeAPI.PromptFile? {
         let type = UTType(filenameExtension: url.pathExtension)
         if size <= maxBytes, let type, engineImageTypes.contains(where: { type.conforms(to: $0) }) {
-            return .init(uri: url.absoluteString, name: url.lastPathComponent)
+            return .init(uri: url.absoluteString, name: name)
         }
         guard let image = NSImage(contentsOf: url), let copy = save(image, named: url.deletingPathExtension().lastPathComponent) else { return nil }
-        return .init(uri: copy.absoluteString, name: url.lastPathComponent)
+        // Still too big (a large picture with transparency stays a PNG): the engine would drop it.
+        guard ((try? copy.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0) <= maxBytes else {
+            try? FileManager.default.removeItem(at: copy)
+            return nil
+        }
+        return .init(uri: copy.absoluteString, name: name)
     }
 
     // MARK: The note
