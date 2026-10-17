@@ -25,6 +25,8 @@ struct MainView: View {
     /// Goes up for ⌘F in the group chat in view.
     @State private var groupFind = 0
     @State private var panelExpanded = false
+    /// Out of room, the side cards give way in this order: the one opened last stays.
+    @State private var givesWay: [PaneLayout.Pane] = [.changes, .sessions, .split]
     /// The room the conversation and the panel share: what the panel takes, expanded.
     @State private var mainAreaWidth: CGFloat = 0
     @AppStorage("sessionsWidth") private var sessionsWidth = 280.0
@@ -140,12 +142,7 @@ struct MainView: View {
         GeometryReader { proxy in
             // Expanded, the panel grows over the conversation, which keeps its room (and its
             // layout) underneath for when it comes back.
-            let layout = PaneLayout(
-                available: proxy.size.width,
-                sessions: showsSidebar ? sessionsWidth : nil,
-                changes: showsPanel ? changesWidth : nil,
-                split: splitModel == nil ? nil : splitWidth
-            )
+            let layout = paneLayout(available: proxy.size.width)
             let expands = showsPanel && panelExpanded
             HStack(spacing: 0) {
                 if let width = layout.sessions {
@@ -247,7 +244,7 @@ struct MainView: View {
         // header row, so the panel can still be found.
         .overlay(alignment: .topTrailing) {
             if !showsTabBar && !app.showsSettings {
-                PanelToggle(showsPanel: $showsPanel)
+                PanelToggle(showsPanel: panelToggle)
                     .padding(.top, Metrics.paneGap + (Metrics.cardHeaderHeight - 28) / 2)
                     .padding(.trailing, Metrics.paneGap + 6)
                     .ignoresSafeArea(.container, edges: .top)
@@ -270,7 +267,7 @@ struct MainView: View {
             window.makeFirstResponder(nil)
         }
         // The agent started browsing: show it.
-        .onChange(of: utilities.revealRequest) { withAnimation(.ui) { showsPanel = true } }
+        .onChange(of: utilities.revealRequest) { withAnimation(.ui) { showPanel() } }
         // Hiding the tab bar takes the whole row away and the cards reach the top. The sidebar
         // button stays, so the window's buttons keep a toolbar's height, centered on the cards'
         // header row, and the sidebar is a click away. The panel is still ⌥⌘0, and sessions ⌘K.
@@ -283,7 +280,7 @@ struct MainView: View {
             } else if showsTabBar {
                 titleBar
             } else {
-                ToolbarItem(placement: .navigation) { SidebarToggle(showsSidebar: $showsSidebar) }
+                ToolbarItem(placement: .navigation) { SidebarToggle(showsSidebar: sidebarToggle) }
                     .sharedBackgroundVisibility(.hidden)
             }
         }
@@ -420,7 +417,7 @@ struct MainView: View {
                     directory: activeDirectory,
                     isWorktree: activeDirectory.map { workspace.worktrees[$0] != nil } ?? false,
                     environment: app.shellEnvironment,
-                    showsSidebar: $showsSidebar
+                    showsSidebar: sidebarToggle
                 ) {
                     if let activeDirectory { Task { await workspace.loadBranch(for: activeDirectory) } }
                 }
@@ -459,7 +456,7 @@ struct MainView: View {
             .sharedBackgroundVisibility(.hidden)
         }
 
-        ToolbarItem(placement: .primaryAction) { PanelToggle(showsPanel: $showsPanel).modifier(UnderImageViewer()) }
+        ToolbarItem(placement: .primaryAction) { PanelToggle(showsPanel: panelToggle).modifier(UnderImageViewer()) }
             .sharedBackgroundVisibility(.hidden)
     }
 
@@ -608,6 +605,7 @@ struct MainView: View {
         withAnimation(.ui) {
             self.tabs = tabs
             splitPairs = pairs
+            keep(.split)
         }
     }
 
@@ -764,6 +762,10 @@ struct MainView: View {
             }
         }
         .simultaneousGesture(TapGesture().onEnded { focus = .conversation })
+        // What you open last keeps its place when the window is short of room.
+        .onChange(of: showsSidebar) { _, shows in if shows { keep(.sessions) } }
+        .onChange(of: showsPanel) { _, shows in if shows { keep(.changes) } }
+        .onChange(of: splitSession) { _, session in if !session.isEmpty { keep(.split) } }
         // A session an agent started: beside the conversation that started it, if that's the one
         // in view; otherwise in a tab of its own, for you to find.
         .onChange(of: workspace.besideRequest) { _, request in
@@ -775,6 +777,45 @@ struct MainView: View {
                 tabs.append(request.session)
             }
         }
+    }
+
+    private func paneLayout(available: Double) -> PaneLayout {
+        PaneLayout(
+            available: available,
+            sessions: showsSidebar ? sessionsWidth : nil,
+            changes: showsPanel ? changesWidth : nil,
+            split: splitModel == nil ? nil : splitWidth,
+            givesWay: givesWay
+        )
+    }
+
+    /// Whether the panel and the sidebar are on screen: wanted, and with room for them.
+    private var panelOnScreen: Bool {
+        showsPanel && (panelExpanded || paneLayout(available: contentWidth).changes != nil)
+    }
+
+    private var sidebarOnScreen: Bool {
+        showsSidebar && paneLayout(available: contentWidth).sessions != nil
+    }
+
+    /// Showing one that's wanted but out of room makes room for it, as the one opened last.
+    private func showPanel(_ shows: Bool = true) {
+        showsPanel = shows
+        if shows { keep(.changes) }
+    }
+
+    private func showSidebar(_ shows: Bool) {
+        showsSidebar = shows
+        if shows { keep(.sessions) }
+    }
+
+    /// The panel's and the sidebar's buttons, which show what's on screen.
+    private var panelToggle: Binding<Bool> { Binding(get: { panelOnScreen }, set: { showPanel($0) }) }
+    private var sidebarToggle: Binding<Bool> { Binding(get: { sidebarOnScreen }, set: { showSidebar($0) }) }
+
+    private func keep(_ pane: PaneLayout.Pane) {
+        givesWay.removeAll { $0 == pane }
+        givesWay.append(pane)
     }
 
     private var utilitiesPane: some View {
@@ -795,7 +836,7 @@ struct MainView: View {
     private func showInPanel(_ open: () -> Void) {
         withAnimation(.ui) {
             open()
-            showsPanel = true
+            showPanel()
             app.showsSettings = false
         }
     }
@@ -1050,13 +1091,13 @@ struct MainView: View {
             newChat: { newSession(in: Workspace.chatsFolder) },
             stop: { model?.stop() },
             selectAgent: { model?.selectAgent($0) },
-            togglePanel: { withAnimation(.ui) { showsPanel.toggle() } },
+            togglePanel: { withAnimation(.ui) { showPanel(!panelOnScreen) } },
             showChanges: { showInPanel { utilities.showChanges() } },
             showFiles: { showInPanel { utilities.showFiles() } },
             newTerminal: { showInPanel { utilities.newTerminal(in: activeDirectory, environment: app.shellEnvironment) } },
             run: runProject,
             newBrowser: { showInPanel { utilities.newBrowser() } },
-            toggleSidebar: { withAnimation(.ui) { showsSidebar.toggle() } },
+            toggleSidebar: { withAnimation(.ui) { showSidebar(!sidebarOnScreen) } },
             nextTab: { cycleAnyTabs(by: 1) },
             previousTab: { cycleAnyTabs(by: -1) },
             closeTab: closeAnyTab,
@@ -1121,8 +1162,8 @@ struct MainView: View {
         }
         add("Accounts…", "person.crop.circle", "⇧⌘K", actions.showProviders)
         add("Show Files", "folder", "⌥⌘F", actions.showFiles)
-        add(showsPanel ? "Hide Panel" : "Show Panel", "sidebar.right", "⌥⌘0", actions.togglePanel)
-        add(showsSidebar ? "Hide Sessions" : "Show Sessions", "sidebar.left", "⌘0", actions.toggleSidebar)
+        add(panelOnScreen ? "Hide Panel" : "Show Panel", "sidebar.right", "⌥⌘0", actions.togglePanel)
+        add(sidebarOnScreen ? "Hide Sessions" : "Show Sessions", "sidebar.left", "⌘0", actions.toggleSidebar)
         add(showsTabBar ? "Hide Tab Bar" : "Show Tab Bar", "rectangle.topthird.inset.filled", "⌥⌘T") { showsTabBar.toggle() }
         add("New Project…", "folder.badge.plus", "⇧⌘N", actions.newProject)
         add("New Bot…", "face.smiling", nil) { openBotEditor(bot: nil) }
@@ -1616,21 +1657,34 @@ struct PaneLayout {
     let changesMax: Double
     let splitMax: Double
 
-    init(available: Double, sessions wanted: Double?, changes wantedChanges: Double?, split wantedSplit: Double? = nil) {
+    enum Pane { case sessions, changes, split }
+
+    /// `givesWay`: out of room, the side cards go in this order.
+    init(available: Double, sessions wanted: Double?, changes wantedChanges: Double?, split wantedSplit: Double? = nil, givesWay: [Pane] = [.changes, .sessions, .split]) {
         let gap = Double(Metrics.paneGap)
         var sessions = wanted.map { min(max($0, Self.sessionsRange.lowerBound), Self.sessionsRange.upperBound) }
         var changes = wantedChanges.map { min(max($0, Self.changesRange.lowerBound), Self.changesRange.upperBound) }
         var split = wantedSplit.map { min(max($0, Self.splitRange.lowerBound), Self.splitRange.upperBound) }
-        func overflow() -> Double {
-            (sessions.map { $0 + gap } ?? 0) + (changes.map { $0 + gap } ?? 0) + (split.map { $0 + gap } ?? 0) + Self.conversationMinimum - available
+        func overflow(smallest: Bool = false) -> Double {
+            let widths = [
+                sessions.map { smallest ? Self.sessionsRange.lowerBound : $0 },
+                changes.map { smallest ? Self.changesRange.lowerBound : $0 },
+                split.map { smallest ? Self.splitRange.lowerBound : $0 },
+            ]
+            return widths.compactMap { $0.map { $0 + gap } }.reduce(0, +) + Self.conversationMinimum - available
         }
-        // Out of room: the side cards shrink, then the split, then they go, the split last.
+        // Out of room: those that wouldn't fit even at their smallest go, in `givesWay`'s order;
+        // then the rest shrink as far as they must, the panel first and the split last.
+        for pane in givesWay where overflow(smallest: true) > 0 {
+            switch pane {
+            case .sessions: sessions = nil
+            case .changes: changes = nil
+            case .split: split = nil
+            }
+        }
         if let width = changes, overflow() > 0 { changes = max(Self.changesRange.lowerBound, width - overflow()) }
         if let width = sessions, overflow() > 0 { sessions = max(Self.sessionsRange.lowerBound, width - overflow()) }
         if let width = split, overflow() > 0 { split = max(Self.splitRange.lowerBound, width - overflow()) }
-        if changes != nil, overflow() > 0 { changes = nil }
-        if sessions != nil, overflow() > 0 { sessions = nil }
-        if split != nil, overflow() > 0 { split = nil }
         self.sessions = sessions
         self.changes = changes
         self.split = split

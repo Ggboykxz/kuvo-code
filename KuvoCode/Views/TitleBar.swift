@@ -514,6 +514,7 @@ struct SidebarToggle: View {
                 .font(.system(size: 14))
         }
         .buttonStyle(IconButtonStyle(width: 28, height: 28, cornerRadius: 7))
+        .accessibilityLabel(showsSidebar ? "Hide Sessions" : "Show Sessions")
         .help(showsSidebar ? "Hide Sessions (⌘0)" : "Show Sessions (⌘0)")
     }
 }
