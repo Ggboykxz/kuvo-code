@@ -902,9 +902,39 @@ private struct TurnFiles: View {
     let files: [TurnStats.TurnFile]
     let directory: String
     @Environment(AppModel.self) private var app
+    @Environment(\.bot) private var bot
     @State private var isShowing = false
 
+    /// A bot's own memory, which it keeps up to date as it works: not a change to its work.
+    private var onlyMemory: Bool {
+        guard let bot, !files.isEmpty else { return false }
+        let memory = RemoteFolder.parse(bot.memoryFile)?.path ?? bot.memoryFile
+        return files.allSatisfy { $0.file == memory || $0.file == bot.memoryFile }
+    }
+
+    /// Some of them are in the folder the Changes panel shows (files elsewhere, like a bot's
+    /// memory, aren't there).
+    private var inChanges: Bool {
+        let folder = (RemoteFolder.parse(directory)?.path ?? directory) + "/"
+        return files.contains { $0.file.hasPrefix(folder) || !$0.file.hasPrefix("/") }
+    }
+
     var body: some View {
+        if onlyMemory, let bot {
+            Button {
+                app.utilities.show(RemoteFolder.fileURL(bot.memoryFile, in: bot.directory))
+            } label: {
+                Label("Updated its memory", systemImage: "brain")
+                    .font(.caption)
+            }
+            .buttonStyle(TextButtonStyle(outset: true))
+            .help("Show \(bot.name)'s memory in the panel")
+        } else {
+            filesButton
+        }
+    }
+
+    private var filesButton: some View {
         Button {
             isShowing.toggle()
         } label: {
@@ -943,14 +973,16 @@ private struct TurnFiles: View {
                     .buttonStyle(.plain)
                     .help("Open in the Panel")
                 }
-                Divider().padding(.vertical, 4)
-                Button("Show All Changes") {
-                    isShowing = false
-                    app.utilities.revealChanges()
+                if inChanges {
+                    Divider().padding(.vertical, 4)
+                    Button("Show All Changes") {
+                        isShowing = false
+                        app.utilities.revealChanges()
+                    }
+                    .buttonStyle(.link)
+                    .font(.callout)
+                    .padding(.horizontal, 8)
                 }
-                .buttonStyle(.link)
-                .font(.callout)
-                .padding(.horizontal, 8)
             }
             .font(.callout)
             .padding(8)
