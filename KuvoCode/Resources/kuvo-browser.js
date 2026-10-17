@@ -1794,18 +1794,18 @@ async function tool(name, args) {
       }
       const answer = await askUser({ kind: "signIn", host, targetId: p.target, username: username !== null, password: password !== null });
       if (answer.type !== "signIn") return text(note() + noAnswer(answer, "sign in"));
+      const fields = [[username, answer.username, "the username", "text"], [password, answer.password, "the password", "password"]].filter(([index, value]) => index !== null && value);
+      if (!fields.length) return text(note() + "The user didn't give a sign-in for that.");
       // The page may have changed while you answered: a sign-in only goes into the fields it
       // was asked for, on the site you were told.
-      const changed = await backTo(p, host, [[password, "password"], [username, "text"]]);
+      const changed = await backTo(p, host, fields.map(([index, , , wanted]) => [index, wanted]));
       if (changed) return text(note() + changed + " Nothing was filled: take a fresh browser_snapshot, and ask again if it's still needed.");
       const filled = [];
-      for (const [index, value, what] of [[username, answer.username, "the username"], [password, answer.password, "the password"]]) {
-        if (index === null || !value) continue;
-        const outcome = await run(p, scripts.find + scripts.fill, { index, value });
+      for (const [index, value, what, wanted] of fields) {
+        const outcome = await run(p, scripts.find + scripts.fill, { index, value, wanted });
         if (outcome !== "ok") return text(note() + outcome);
         filled.push(what);
       }
-      if (!filled.length) return text(note() + "The user didn't give a sign-in for that.");
       await sleep(300);
       return withNote(snapshot(p).then((page) => `Filled ${filled.join(" and ")} for ${host} (you can't see them). Submit the form to sign in.\n\n` + page));
     }
@@ -1820,7 +1820,7 @@ async function tool(name, args) {
       if (answer.type !== "code" || !answer.code) return text(note() + noAnswer(answer, "give a code"));
       const changed = await backTo(p, host, [[index, "code"]]);
       if (changed) return text(note() + changed + " Nothing was filled: take a fresh browser_snapshot, and ask again if it's still needed.");
-      const outcome = await run(p, scripts.find + scripts.fill, { index, value: answer.code });
+      const outcome = await run(p, scripts.find + scripts.fill, { index, value: answer.code, wanted: "code" });
       if (outcome !== "ok") return text(note() + outcome);
       await sleep(300);
       return withNote(snapshot(p).then((page) => "Filled the code (you can't see it). Submit it if the page doesn't on its own.\n\n" + page));

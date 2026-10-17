@@ -321,20 +321,26 @@ final class BrowserAgent {
         guard let host = Self.site(of: browser.url) else { return "Open the sign-in page first." }
         guard username != nil || password != nil else { return "Name the username field, the password field, or both, by number." }
         if let problem = await checkFields(username: username, password: password, in: browser) { return problem }
-        switch await asks.ask(.signIn(username: username != nil, password: password != nil), host: host, session: caller) {
+        switch await ask(.signIn(username: username != nil, password: password != nil), host: host, in: browser, for: caller) {
         case .signIn(let user, let secret):
+            let username = user?.isEmpty == false ? username : nil
+            let password = secret?.isEmpty == false ? password : nil
+            guard username != nil || password != nil else { return "The user didn't give a sign-in for that." }
+            // The page may have moved on while you answered: the same site and fields still, or
+            // nothing goes in.
+            if let problem = stillOn(host, in: browser) { return problem }
+            if let problem = await checkFields(username: username, password: password, in: browser) { return Self.changed + problem }
             var filled: [String] = []
-            if let username, let user, !user.isEmpty {
-                let outcome = await run(Self.fillScript, ["index": username, "value": user], in: browser)
+            if let username, let user {
+                let outcome = await run(Self.fillScript, ["index": username, "value": user, "wanted": "text"], in: browser)
                 guard outcome == "ok" else { return outcome }
                 filled.append("the username")
             }
-            if let password, let secret, !secret.isEmpty {
-                let outcome = await run(Self.fillScript, ["index": password, "value": secret], in: browser)
+            if let password, let secret {
+                let outcome = await run(Self.fillScript, ["index": password, "value": secret, "wanted": "password"], in: browser)
                 guard outcome == "ok" else { return outcome }
                 filled.append("the password")
             }
-            guard !filled.isEmpty else { return "The user didn't give a sign-in for that." }
             try? await Task.sleep(for: .milliseconds(300))
             return "Filled \(filled.joined(separator: " and ")) for \(host) (you can't see them). Submit the form to sign in.\n\n" + (await snapshot())
         case .timedOut:
@@ -351,9 +357,10 @@ final class BrowserAgent {
         guard let host = Self.site(of: browser.url) else { return "Open the page that asks for the code first." }
         let kind = await run(Self.fieldKindScript, ["index": index], in: browser)
         guard kind == "text" || kind == "password" else { return kind == "missing" ? "There's no element [\(index)] on the page now. Take a fresh browser_snapshot." : "[\(index)] isn't a field to type a code into." }
-        switch await asks.ask(.code(prompt: prompt ?? ""), host: host, session: caller) {
+        switch await ask(.code(prompt: prompt ?? ""), host: host, in: browser, for: caller) {
         case .code(let code):
-            let outcome = await run(Self.fillScript, ["index": index, "value": code], in: browser)
+            if let problem = stillOn(host, in: browser) { return problem }
+            let outcome = await run(Self.fillScript, ["index": index, "value": code, "wanted": "code"], in: browser)
             guard outcome == "ok" else { return outcome }
             try? await Task.sleep(for: .milliseconds(300))
             return "Filled the code (you can't see it). Submit it if the page doesn't on its own.\n\n" + (await snapshot())
@@ -369,7 +376,7 @@ final class BrowserAgent {
     func askUser(_ instruction: String, for caller: String? = nil) async -> String {
         let browser = browser()
         let host = Self.site(of: browser.url) ?? "the page"
-        switch await asks.ask(.action(instruction: instruction), host: host, session: caller) {
+        switch await ask(.action(instruction: instruction), host: host, in: browser, for: caller) {
         case .done:
             await settle(browser, expectNavigation: false)
             return "The user says it's done.\n\n" + (await snapshot())
@@ -378,6 +385,21 @@ final class BrowserAgent {
         default:
             return "The user couldn't do it. Ask them in the chat how to go on."
         }
+    }
+
+    /// Asks you, in the conversation `caller`, about the page in `browser` (Show Page shows it).
+    private func ask(_ kind: BrowserAsks.Kind, host: String, in browser: BrowserSession, for caller: String?) async -> BrowserAsks.Answer {
+        await asks.ask(kind, host: host, session: caller, page: utilities.id(of: browser)?.uuidString)
+    }
+
+    static let changed = "The page changed while the user answered, so nothing was filled in. "
+
+    /// Nil if the page is still open on the site you were asked about, else why nothing goes in.
+    private func stillOn(_ host: String, in browser: BrowserSession) -> String? {
+        guard utilities.id(of: browser) != nil else { return "The page was closed while the user answered, so nothing was filled in." }
+        let now = Self.site(of: browser.url)
+        guard now == host else { return Self.changed + "It's on \(now ?? "another page") now, not \(host). Take a fresh browser_snapshot, and ask again on the page that asks." }
+        return nil
     }
 
     /// The site a page is on, as the ask names it and Passwords keeps it: its host, or for a page
@@ -789,10 +811,17 @@ final class BrowserAgent {
     """
 
     /// Puts what the user gave into [index], as typing would, and marks it so it stays out of
-    /// what the agent reads and sees.
+    /// what the agent reads and sees. Only into the field `wanted` as it is now: "password" only
+    /// into a password field, "text" (a username) only into a text field, "code" into either.
     static let fillScript = """
     const element = find(index);
     if (!element) return missing(index);
+    const kind = kindOf(element);
+    if (wanted === 'password' ? kind !== 'password' : wanted === 'code' ? kind === 'other' : kind !== 'text') {
+      return wanted === 'password'
+        ? `[${index}] isn't a password field now: a password only goes into one. Nothing was filled in. Take a fresh browser_snapshot and ask again.`
+        : `[${index}] isn't a field for that now. Nothing was filled in. Take a fresh browser_snapshot and ask again.`;
+    }
     element.scrollIntoView({ block: 'center' });
     element.focus();
     const view = viewOf(element);

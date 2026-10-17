@@ -92,13 +92,14 @@ final class BrowserToolServer {
         guard let body = try? JSONSerialization.jsonObject(with: request.body) else {
             return .json(["jsonrpc": "2.0", "id": NSNull(), "error": ["code": -32700, "message": "Parse error"]])
         }
+        let client = request.headers["mcp-session-id"]
         if let batch = body as? [[String: Any]] {
             var replies: [[String: Any]] = []
-            for message in batch { if let reply = await handle(message) { replies.append(reply) } }
+            for message in batch { if let reply = await handle(message, from: client) { replies.append(reply) } }
             return replies.isEmpty ? .init(status: 202) : .json(replies)
         }
         guard let message = body as? [String: Any] else { return .init(status: 400) }
-        guard let reply = await handle(message) else { return .init(status: 202) }
+        guard let reply = await handle(message, from: client) else { return .init(status: 202) }
         var response = HTTPResponse.json(reply)
         if message["method"] as? String == "initialize" { response.headers["Mcp-Session-Id"] = UUID().uuidString }
         return response
@@ -106,11 +107,23 @@ final class BrowserToolServer {
 
     // MARK: JSON-RPC
 
+    /// Tool calls under way, by client and request: one the client cancels stops (an ask it
+    /// waits on closes).
+    private var calls: [String: Task<CallResult, Never>] = [:]
+
+    /// What a tool call gives back, from the task that makes it.
+    private struct CallResult: @unchecked Sendable { let value: [String: Any] }
+
+    private static func key(_ id: Any, client: String?) -> String { (client ?? "") + "|" + String(describing: id) }
+
     /// The reply to one message, or nil for a notification.
-    private func handle(_ message: [String: Any]) async -> [String: Any]? {
+    private func handle(_ message: [String: Any], from client: String?) async -> [String: Any]? {
         guard let method = message["method"] as? String else { return nil }
-        guard let id = message["id"] else { return nil }
         let params = message["params"] as? [String: Any] ?? [:]
+        guard let id = message["id"] else {
+            if method == "notifications/cancelled", let request = params["requestId"] { calls[Self.key(request, client: client)]?.cancel() }
+            return nil
+        }
         func reply(_ result: [String: Any]) -> [String: Any] { ["jsonrpc": "2.0", "id": id, "result": result] }
         switch method {
         case "initialize":
@@ -138,7 +151,13 @@ final class BrowserToolServer {
                 let result = await BrowserTools.mail(name, arguments, caller)
                 return reply(["content": [["type": "text", "text": result.text]], "isError": result.isError])
             }
-            return reply(await BrowserTools.call(name, arguments: arguments, agent: agent.serving(caller), caller: caller))
+            let agent = agent.serving(caller)
+            let key = Self.key(id, client: client)
+            let call = Task { CallResult(value: await BrowserTools.call(name, arguments: arguments, agent: agent, caller: caller)) }
+            calls[key] = call
+            defer { if calls[key] == call { calls[key] = nil } }
+            // The connection closing stops it too.
+            return reply(await withTaskCancellationHandler { await call.value } onCancel: { call.cancel() }.value)
         default:
             return ["jsonrpc": "2.0", "id": id, "error": ["code": -32601, "message": "Unknown method \(method)"]]
         }
@@ -425,13 +444,17 @@ struct HTTPResponse {
     }
 }
 
-/// One client connection: reads requests (keep-alive), answers them one at a time.
+/// One client connection: reads requests (keep-alive), answers them one at a time. It keeps
+/// reading meanwhile, so a client that goes away stops what it asked for.
 @MainActor
 private final class HTTPConnection {
     private let connection: NWConnection
     private let handler: (HTTPRequest) async -> HTTPResponse
     private let closed: (ObjectIdentifier) -> Void
     private var buffer = Data()
+    /// The request being answered.
+    private var answering: Task<Void, Never>?
+    private var closing = false
 
     init(connection: NWConnection, handler: @escaping (HTTPRequest) async -> HTTPResponse, closed: @escaping (ObjectIdentifier) -> Void) {
         self.connection = connection
@@ -444,7 +467,10 @@ private final class HTTPConnection {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 switch state {
-                case .failed, .cancelled: self.closed(ObjectIdentifier(self))
+                case .failed, .cancelled:
+                    self.closing = true
+                    self.answering?.cancel()
+                    self.closed(ObjectIdentifier(self))
                 default: break
                 }
             }
@@ -456,12 +482,13 @@ private final class HTTPConnection {
     private func receive() {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) { [weak self] data, _, complete, error in
             MainActor.assumeIsolated {
-                guard let self else { return }
+                guard let self, !self.closing else { return }
                 if let data { self.buffer.append(data) }
-                if self.process() { return }
+                if self.answering == nil { self.process() }
                 if complete || error != nil {
+                    // Gone: what it asked stops.
                     self.connection.cancel()
-                } else {
+                } else if !self.closing {
                     self.receive()
                 }
             }
@@ -472,39 +499,42 @@ private final class HTTPConnection {
     static let maxHead = 64 * 1024
     static let maxBody = 16 * 1024 * 1024
 
-    /// Handles a complete request in the buffer, if there is one; true when it took over.
-    private func process() -> Bool {
+    /// Starts answering a complete request in the buffer, if there is one.
+    private func process() {
         guard let headerEnd = buffer.range(of: Data("\r\n\r\n".utf8)) else {
             // Headers that never end aren't a request.
-            if buffer.count > Self.maxHead { refuse(); return true }
-            return false
+            if buffer.count > Self.maxHead { refuse() }
+            return
         }
-        guard headerEnd.lowerBound - buffer.startIndex <= Self.maxHead else { refuse(); return true }
+        guard headerEnd.lowerBound - buffer.startIndex <= Self.maxHead else { return refuse() }
         let head = String(decoding: buffer[..<headerEnd.lowerBound], as: UTF8.self)
         var lines = head.components(separatedBy: "\r\n")
         let requestLine = lines.removeFirst().split(separator: " ")
-        guard requestLine.count >= 2 else { connection.cancel(); return true }
+        guard requestLine.count >= 2 else {
+            closing = true
+            return connection.cancel()
+        }
         var headers: [String: String] = [:]
         for line in lines {
             guard let colon = line.firstIndex(of: ":") else { continue }
             headers[line[..<colon].lowercased()] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
         }
         // A length that isn't one, below zero or too big is turned away before it's read.
-        guard let length = Int(headers["content-length"] ?? "0"), (0...Self.maxBody).contains(length) else { refuse(); return true }
+        guard let length = Int(headers["content-length"] ?? "0"), (0...Self.maxBody).contains(length) else { return refuse() }
         let bodyStart = headerEnd.upperBound
-        guard buffer.count - bodyStart >= length else { return false }
+        guard buffer.count - bodyStart >= length else { return }
         let body = buffer.subdata(in: bodyStart..<(bodyStart + length))
         buffer.removeSubrange(..<(bodyStart + length))
         let request = HTTPRequest(method: String(requestLine[0]), path: String(requestLine[1]), headers: headers, body: body)
-        Task {
+        answering = Task {
             let response = await handler(request)
             send(response)
         }
-        return true
     }
 
     /// A request it won't read: says so, and closes the connection.
     private func refuse() {
+        closing = true
         buffer = Data()
         let head = "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
         connection.send(content: Data(head.utf8), completion: .contentProcessed { [weak self] _ in
@@ -528,11 +558,13 @@ private final class HTTPConnection {
         headers["Connection"] = "keep-alive"
         for (name, value) in headers { head += "\(name): \(value)\r\n" }
         head += "\r\n"
+        guard !closing else { return }
         connection.send(content: Data(head.utf8) + response.body, completion: .contentProcessed { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self else { return }
+                guard let self, !self.closing else { return }
+                self.answering = nil
                 // The next request on this connection, if one came in meanwhile.
-                if !self.process() { self.receive() }
+                self.process()
             }
         })
     }

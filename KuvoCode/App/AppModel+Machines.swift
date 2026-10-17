@@ -34,7 +34,11 @@ extension AppModel {
         // connection that brings the ask here.
         browserAsks.onChange = { [weak self] sessions in self?.workspace.askingInBrowser = sessions }
         workspace.botName = { [weak self] session in self?.bots.bot(forSession: session)?.name }
-        workspace.onRunEnded = { [weak self] session in self?.bots.runEnded(session: session) }
+        workspace.onRunEnded = { [weak self] session in
+            self?.bots.runEnded(session: session)
+            // An ask its agent left in this Mac's browser has no one waiting for it now.
+            self?.browserAsks.runEnded(session)
+        }
         // A bot on this Mac browses in tabs of its own.
         BrowserAgent.botOwner = { [weak self] session in
             self?.bots.bot(actingAs: session).flatMap { $0.machine == nil ? $0.id : nil }

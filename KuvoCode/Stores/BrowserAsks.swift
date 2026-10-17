@@ -36,7 +36,7 @@ final class BrowserAsks {
         /// Who's asking, and their session, when the conversation says.
         var asker: String?
         var session: String?
-        /// The page it's about, on a machine (its target), for Show Page.
+        /// The page it's about, for Show Page: on a machine its target, on this Mac its tab.
         var page: String?
     }
 
@@ -98,16 +98,36 @@ final class BrowserAsks {
         return (first.name, first.session)
     }
 
-    /// For this Mac's browser: waits for your answer (or the agent's patience to run out).
-    func ask(_ kind: Kind, host: String, session: String? = nil) async -> Answer {
+    /// For this Mac's browser: waits for your answer (or the agent's patience to run out). When
+    /// the tool call that asks ends first (stopped, timed out), its card goes.
+    func ask(_ kind: Kind, host: String, session: String? = nil, page: String? = nil) async -> Answer {
         let id = UUID().uuidString
-        return await withCheckedContinuation { continuation in
-            add(Ask(id: id, kind: kind, host: host, machine: nil, session: session)) { continuation.resume(returning: $0) }
-            Task { [weak self] in
-                try? await Task.sleep(for: Self.patience)
-                self?.answer(id, .timedOut)
+        guard !Task.isCancelled else { return .declined }
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                add(Ask(id: id, kind: kind, host: host, machine: nil, session: session, page: page)) { continuation.resume(returning: $0) }
+                Task { [weak self] in
+                    try? await Task.sleep(for: Self.patience)
+                    self?.answer(id, .timedOut)
+                }
             }
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.end(id) }
         }
+    }
+
+    /// A conversation's run ended (done, stopped or failed): nothing of its waits for an answer on
+    /// this Mac any more, so its cards here go.
+    func runEnded(_ session: String) {
+        for ask in asks where ask.session == session && ask.machine == nil { end(ask.id) }
+    }
+
+    /// An ask on this Mac whose tool call has ended: its card goes, and the call hears no.
+    private func end(_ id: String) {
+        guard let respond = responders.removeValue(forKey: id) else { return }
+        withAnimation(.ui) { asks.removeAll { $0.id == id } }
+        changed()
+        respond(.declined)
     }
 
     /// An ask from a machine's browser; `respond` sends the answer back there.

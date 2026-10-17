@@ -320,17 +320,18 @@ final class Utilities {
     /// An agent on a machine that started browsing before its page had a tab here.
     @ObservationIgnored private var pendingReveal: (machine: String, session: String?, since: Date)?
 
-    /// Brings the panel into view on the browser of the place in view, at the page in use: you
-    /// asked to see it.
-    /// Shows the browser in the panel: on a machine, `page` if it's given (the page an ask is
-    /// about), else the one the agent used last.
+    /// Shows the browser in the panel: `page` if it's given (the page an ask is about: a machine's
+    /// page, or this Mac's tab), else the one the agent used last.
     func revealBrowser(page: String? = nil) {
         if let place {
             let tab = page.flatMap { page in tabs.first { $0.kind == .machinePage(place, page) } }
                 ?? tabs.first { $0.kind == .machinePage(place, machineBrowser?(place)?.activeID) }
                 ?? tabs.last { if case .machinePage(place, _) = $0.kind { true } else { false } }
             if let tab { selection = tab.id }
-        } else if let browser = botsInView.lazy.compactMap(botBrowser).first ?? activeBrowser, let id = browsers.first(where: { $0.value === browser })?.key {
+        } else if let id = page.flatMap(UUID.init(uuidString:)), browsers[id] != nil, let tab = tabs.first(where: { $0.id == id }), isVisible(tab) {
+            // The tab an ask here is about.
+            selection = id
+        } else if let browser = botsInView.lazy.compactMap(botBrowser).first ?? activeBrowser, let id = id(of: browser) {
             selection = id
         }
         revealRequest += 1
@@ -455,6 +456,11 @@ final class Utilities {
             selection = id
         }
         if PanelSettings.isOn(PanelSettings.revealsForAgent) { revealRequest += 1 }
+    }
+
+    /// The tab `browser` is in, while it's open.
+    func id(of browser: BrowserSession) -> UUID? {
+        browsers.first { $0.value === browser }?.key
     }
 
     /// Your browser in view, or your most recent one (never a bot's).
