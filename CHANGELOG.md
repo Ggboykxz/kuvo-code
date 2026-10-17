@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- New Session (⌘N) in a bot's conversation starts in your latest project. It used to make an empty project called "workspace", whose session was listed nowhere; one made that way is gone from Projects.
 - A file or folder an agent shows you while you're in another conversation opens in the side panel when you come back to that one. It used to be lost, while the agent was told it was open; now it's told whether you've seen it. The step names what it showed, and clicking it shows it again.
 - Math in replies is drawn as formulas: `$…$` and `\(…\)` in a line, `$$…$$` and `\[…\]` centered on their own. It used to show as raw LaTeX, and a line of `=` under it turned the line above into a heading. Prices like $5 and code stay as they are.
 - Editors open in place instead of in pop-up windows. In Settings, an agent, command, MCP server, skill, key, sign-in or provider opens in the page, under a way back to it (Esc goes back too); New Project and Edit Project open in the window's main card, as a bot does; and Add a Machine opens inside what asked for it.

@@ -215,7 +215,9 @@ final class AgentMail {
         }
         let workspace = app.workspace
         let parent = caller.flatMap { workspace.session($0) }
-        var folder = parent?.location.directory
+        // A bot's own folder is its own: a session it starts there would be listed nowhere, so
+        // it's a chat.
+        var folder = parent.map { Workspace.isBotFolder($0.location.directory) ? Workspace.chatsFolder : $0.location.directory }
         if let given = (arguments["folder"] as? String)?.trimmingCharacters(in: .whitespaces), !given.isEmpty {
             let path = (given as NSString).expandingTildeInPath
             var isFolder: ObjCBool = false

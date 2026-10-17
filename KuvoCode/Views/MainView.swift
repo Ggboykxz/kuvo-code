@@ -1349,9 +1349,10 @@ struct MainView: View {
 
     /// Starts a draft in `directory`, or in the current project (a worktree's, for a session in one).
     /// A new session in `directory`, or the project in view, or the latest one; with no project
-    /// at all, a chat.
+    /// at all, a chat. A bot's own folder isn't a project: from its conversation, the latest one.
     private func newSession(in directory: String?) {
-        let directory = directory ?? activeDirectory.map(workspace.projectDirectory) ?? workspace.projects.first?.directory ?? Workspace.chatsFolder
+        let inView = activeDirectory.map(workspace.projectDirectory).flatMap { Workspace.isBotFolder($0) ? nil : $0 }
+        let directory = directory ?? inView ?? workspace.projects.first?.directory ?? Workspace.chatsFolder
         openTab(SidebarView.draftTag(directory))
     }
 

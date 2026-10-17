@@ -94,7 +94,8 @@ final class Workspace {
         didSet { Awake.shared.agentsWork(running.contains { id in sessionMachines[id] == nil && !(session(id).map { RemoteFolder.isRemote($0.location.directory) } ?? false) }) }
     }
     /// Folders the user opened, even before they have sessions.
-    private(set) var folders: [String] = UserDefaults.standard.stringArray(forKey: "projectFolders") ?? []
+    /// A bot's own folder was kept as one by mistake once: it isn't one.
+    private(set) var folders: [String] = (UserDefaults.standard.stringArray(forKey: "projectFolders") ?? []).filter { !Workspace.isBotFolder($0) }
     /// Names and other folders of projects, by their primary folder.
     private(set) var settings: [String: ProjectSettings] = Workspace.loadSettings()
     /// Sessions' own git worktrees, by the folder their sessions run in.
@@ -432,8 +433,8 @@ final class Workspace {
     @discardableResult
     func addFolder(_ directory: String) -> String {
         let directory = folderPath(directory)
-        // Chats aren't a project.
-        guard !folders.contains(directory), !Self.isChat(directory) else { return directory }
+        // Chats aren't a project, nor is a bot's own folder.
+        guard !folders.contains(directory), !Self.isChat(directory), !Self.isBotFolder(directory) else { return directory }
         Analytics.shared.track("project_added", ["projects": folders.count + 1])
         folders.insert(directory, at: 0)
         UserDefaults.standard.set(folders, forKey: "projectFolders")
