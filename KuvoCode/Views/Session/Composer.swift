@@ -257,10 +257,11 @@ struct Composer: View {
                     .strokeBorder(.tint, lineWidth: 2)
             }
         }
-        .dropDestination(for: URL.self) { urls, _ in
-            attach(urls.filter(\.isFileURL))
-            return true
-        } isTargeted: { isTargeted = $0 }
+        // Files dropped anywhere on it are attached, on its text too (which would take them as
+        // their paths).
+        .overlay {
+            FileDropArea(isTargeted: { isTargeted = $0 }, drop: attach)
+        }
         .modifier(PasteAttachments(isActive: isFocused, attach: attach))
         .onChange(of: focusRequest) { focusAtEnd() }
         .onChange(of: blurRequest) {

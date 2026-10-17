@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- A file dropped anywhere on the message box is attached, its text included. Dropped on the text, it used to go in as the file's path.
 - A new bot no longer shows for a moment as a project called "workspace" in the sidebar while it's set up.
 - Creating a bot on a machine that's still connecting waits for it, showing what's under way beside the buttons, then makes the bot. It used to do nothing. If the machine can't be reached, it says so above the buttons.
 - Dropping a quote you were replying to no longer quits Kuvo Code. With the cursor in its answer, the app crashed.
