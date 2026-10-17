@@ -97,13 +97,13 @@ final class AppModel {
 
     private var server: ServerProcess?
     private var eventTask: Task<Void, Never>?
-    private var isStopping = false
     /// When the engine was last started again on its own, after stopping while it ran.
     private var automaticRestarts: [Date] = []
     /// The engine had been running when it failed (it stopped, rather than couldn't start).
     private(set) var engineStoppedWhileRunning = false
-    /// The engine running now, as launched: an earlier one's exit, coming in late as it stops,
-    /// isn't taken for this one's.
+    /// This start of the engine, new with each start and each stop: an earlier engine's exit,
+    /// coming in late as it stops, isn't taken for this one's, and a start that was stopped or
+    /// started over while it waited gives up.
     private var launch = UUID()
     private let log = Logger(subsystem: "run.kuvo.code", category: "engine")
 
@@ -131,8 +131,13 @@ final class AppModel {
 
     /// Downloads the engine if needed, starts it, and connects the stores.
     func start() async {
-        guard engine != .ready, engine != .starting else { return }
-        isStopping = false
+        // Already on its way (restart stops it first).
+        switch engine {
+        case .ready, .starting, .downloading: return
+        case .preparing, .failed: break
+        }
+        let launch = UUID()
+        self.launch = launch
         engineStoppedWhileRunning = false
         // How far it got, for analytics when it fails: the download, the launch, or the connection.
         var stage = "download"
@@ -154,11 +159,14 @@ final class AppModel {
                         if case .downloading = self.engine { self.engine = .downloading(progress: progress) }
                     }
                 }
+                // Stopped, or started over, while it waited: the newer start carries on.
+                guard launch == self.launch else { return }
             }
 
             engine = .starting
             stage = "launch"
             var shell = await environment
+            guard launch == self.launch else { return }
             shellEnvironment = shell
             // Bots' wake-up command, by name, and where their folders are; and the launcher
             // integrations' servers run with.
@@ -197,18 +205,23 @@ final class AppModel {
             } catch {
                 log.error("Browser tools didn't start: \(error.localizedDescription, privacy: .public)")
             }
-            let launch = UUID()
-            self.launch = launch
+            guard launch == self.launch else { return }
             let server = try await ServerProcess.start(
                 executable: binary,
                 folders: engineFolders,
                 environment: shell,
                 onExit: { status in Task { @MainActor in self.engineExited(status: status, launch: launch) } }
             )
+            guard launch == self.launch else {
+                server.stop()
+                return
+            }
             self.server = server
             stage = "connect"
             let api = OpenCodeAPI(endpoint: server.endpoint)
             try await waitUntilReady(api)
+            // It stopped (and said why), or was stopped, while it loaded.
+            guard launch == self.launch else { return }
             self.api = api
             catalog.api = api
             workspace.api = api
@@ -238,12 +251,15 @@ final class AppModel {
             // Machines start once this Mac's engine is up (they get its accounts and settings),
             // without waiting on its catalog.
             await workspaceLoaded
+            guard launch == self.launch else { return }
             startMachines()
             bots.startWaking()
             groups.startMeetings()
             groups.resumeWork()
             await catalogLoaded
         } catch {
+            // Stopped meanwhile (an engine that stopped on its own has said so already).
+            guard launch == self.launch else { return }
             log.error("Engine failed to start: \(error.localizedDescription, privacy: .public)")
             Analytics.shared.track("engine_failed", ["reason": stage])
             engine = .failed(error.localizedDescription)
@@ -275,7 +291,8 @@ final class AppModel {
     }
 
     func stop() {
-        isStopping = true
+        // A start still on its way gives up, and the stopped engine's exit is expected.
+        launch = UUID()
         #if DEBUG
         E2E.forget()
         #endif
@@ -331,8 +348,8 @@ final class AppModel {
     }
 
     private func engineExited(status: Int32, launch: UUID) {
-        // One stopped for a restart exits a moment after the next one has started.
-        guard !isStopping, launch == self.launch else { return }
+        // One stopped (for a restart, or as the app quits) exits a moment later, after the stop.
+        guard launch == self.launch else { return }
         let output = server?.recentOutput.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         log.error("Engine exited with status \(status): \(output, privacy: .public)")
         let wasRunning = engine == .ready
