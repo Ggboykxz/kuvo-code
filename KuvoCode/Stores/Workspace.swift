@@ -892,6 +892,7 @@ final class Workspace {
             endedRuns[id, default: 0] += 1
             noteTurn(id, event)
             onRunEnded?(id)
+            if session(id)?.title?.isEmpty != false { nameIfUntitled(id) }
             // Picks up the new idle time (unread state) and outcome.
             Task {
                 await reload(id)
@@ -933,6 +934,47 @@ final class Workspace {
     }
 
     @ObservationIgnored private var runStarted: [String: Date] = [:]
+
+    /// A session the engine didn't name after its run (its title model gave nothing back, as
+    /// GLM-5.3 Flash's does): the start of its first message, as a chat app names one, so the
+    /// sidebar isn't a column of "New Session". Saved in the engine, for every place that shows it.
+    private func nameIfUntitled(_ id: String) {
+        guard !seats.contains(id), !namingUntitled.contains(id) else { return }
+        namingUntitled.insert(id)
+        Task {
+            defer { namingUntitled.remove(id) }
+            // The engine names it a few seconds after the run, when it can.
+            try? await Task.sleep(for: .seconds(15))
+            guard session(id)?.title?.isEmpty != false, let api = api(forSession: id),
+                  let page = try? await api.messages(session: id, limit: 40) else { return }
+            let first = page.data.lazy.compactMap { message -> String? in
+                if case .user(let user) = message { return user.text }
+                return nil
+            }.first
+            guard let first, let title = Self.title(from: first) else { return }
+            try? await api.renameSession(id, title: title)
+            await reload(id)
+        }
+    }
+    @ObservationIgnored private var namingUntitled: Set<String> = []
+
+    /// A title from a message: its words without review comments or line breaks, up to the end
+    /// of its first sentence or about 48 characters, at a word.
+    nonisolated static func title(from message: String) -> String? {
+        let split = ReviewComments.split(message)
+        let words = (split.text.isEmpty ? split.comments.first?.text ?? "" : split.text)
+            .split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        guard !words.isEmpty else { return nil }
+        var title = words
+        if let end = title.firstIndex(where: { ".?!".contains($0) }), title.distance(from: title.startIndex, to: end) >= 12 {
+            title = String(title[...end])
+        }
+        if title.count > 48 {
+            let cut = title.prefix(48)
+            title = (cut.lastIndex(of: " ").map { String(cut[..<$0]) } ?? String(cut)) + "…"
+        }
+        return title.hasSuffix(".") ? String(title.dropLast()) : title
+    }
 
     /// How a run ended, for anonymous usage: the outcome, how long it took, with which model, and
     /// for a failure the engine's error type and status, never its message.

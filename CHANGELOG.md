@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- A session the model doesn't name (some free models leave it out) is named after the start of your first message, instead of staying "New Session" beside others like it.
 - In a machine's browser, a window a page opens, like Continue with Google's sign-in, shows where you are, in Settings' sign-in tab and in the side panel, and closing it brings back the page that opened it. It used to open out of sight, so the button seemed to do nothing.
 - The model picker offers only models you can use: those of accounts you connected, and the free ones. Without an account it used to list paid and GitHub Copilot models too, which failed with "missing required Authorization header".
 - A code block whose first line is long starts below its language and Copy, instead of running in under them where its end was hidden.
