@@ -338,15 +338,18 @@ final class Bots {
     }
 
     /// Cancels a wake-up by its letters, which a repeating one keeps as its time moves on (it may
-    /// have come back since it was listed).
-    func cancelWake(_ wake: Wakes.Pending, of bot: Bot) async {
+    /// have come back since it was listed). On a machine that can't be reached, it stays, and
+    /// this says so.
+    func cancelWake(_ wake: Wakes.Pending, of bot: Bot) async throws {
         let folder = (bot.folder as NSString).appendingPathComponent("wakes")
         let letters = wake.letters
         // As kuvo-wake names them; anything else isn't one of its wake-ups (or safe in a command).
         guard !letters.isEmpty, letters.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else { return }
         if let machine = bot.machine {
             let base = SSHConnection.quoted(folder)
-            _ = await Task.detached { RemoteShell.run("rm -f \(base)/*-\(letters) \(base)/*-\(letters)-*", on: machine) }.value
+            guard await Task.detached(operation: { RemoteShell.run("rm -f \(base)/*-\(letters) \(base)/*-\(letters)-*", on: machine) }).value != nil else {
+                throw Failure.notConnected(machine)
+            }
         } else {
             for name in (try? FileManager.default.contentsOfDirectory(atPath: folder)) ?? [] where Wakes.Pending(id: name, note: "")?.letters == letters {
                 try? FileManager.default.removeItem(atPath: (folder as NSString).appendingPathComponent(name))
@@ -355,13 +358,15 @@ final class Bots {
         wakes[bot.id]?.removeAll { $0.letters == letters }
     }
 
-    /// Stops a watch.
-    func cancelWatch(_ watch: Wakes.Watch, of bot: Bot) async {
+    /// Stops a watch. On a machine that can't be reached, it stays, and this says so.
+    func cancelWatch(_ watch: Wakes.Watch, of bot: Bot) async throws {
         let letters = watch.letters
         guard !letters.isEmpty, letters.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else { return }
         let folder = ((bot.folder as NSString).appendingPathComponent("watches") as NSString).appendingPathComponent(letters)
         if let machine = bot.machine {
-            _ = await Task.detached { RemoteShell.run("rm -rf \(SSHConnection.quoted(folder))", on: machine) }.value
+            guard await Task.detached(operation: { RemoteShell.run("rm -rf \(SSHConnection.quoted(folder))", on: machine) }).value != nil else {
+                throw Failure.notConnected(machine)
+            }
         } else {
             try? FileManager.default.removeItem(atPath: folder)
         }
@@ -471,14 +476,15 @@ final class Bots {
         (bot.folder as NSString).appendingPathComponent("paused")
     }
 
-    /// Holds a bot's wake-ups until you resume it; then those that came due meanwhile go.
-    func setPaused(_ pause: Bool, _ bot: Bot) async {
+    /// Holds a bot's wake-ups until you resume it; then those that came due meanwhile go. On a
+    /// machine that can't be reached, nothing changes, and this says so.
+    func setPaused(_ pause: Bool, _ bot: Bot) async throws {
         let file = Self.pauseFile(of: bot)
         if let machine = bot.machine {
             // A machine's kuvo-wake from before pausing would send them anyway.
             if pause, let engine = app?.machines.engine(machine) { try? await Wakes.install(on: engine.machine.connection) }
             let script = pause ? ": > \(SSHConnection.quoted(file))" : "rm -f \(SSHConnection.quoted(file))"
-            guard await Task.detached(operation: { RemoteShell.run(script, on: machine) }).value != nil else { return }
+            guard await Task.detached(operation: { RemoteShell.run(script, on: machine) }).value != nil else { throw Failure.notConnected(machine) }
         } else if pause {
             FileManager.default.createFile(atPath: file, contents: nil)
         } else {
@@ -498,8 +504,8 @@ final class Bots {
         guard let api = app?.workspace.api(forFolder: bot.directory) else { throw Failure.notConnected(bot.machine ?? "This Mac's engine") }
         await api.waitForTools(in: bot.directory)
         try await api.prompt(session: bot.sessionID, id: Identifier.message(), text: Wakes.marker + wake.note, delivery: .queue)
-        // One that repeats keeps its time.
-        if wake.every == nil { await cancelWake(wake, of: bot) }
+        // One that repeats keeps its time. (One whose machine went away since stays listed.)
+        if wake.every == nil { try? await cancelWake(wake, of: bot) }
     }
 
     /// Sends this Mac's bots' wake-ups as they come due, while the app runs; ones missed while it

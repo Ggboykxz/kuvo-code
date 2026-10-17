@@ -818,7 +818,15 @@ private struct WakeList: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             list
-            if draft != nil { form }
+            if draft != nil {
+                form
+            } else if let failure {
+                // Canceling or pausing on a machine that couldn't be reached (adding says so by its buttons).
+                Text(failure)
+                    .font(.callout)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .animation(.ui, value: draft == nil)
         #if DEBUG
@@ -843,7 +851,7 @@ private struct WakeList: View {
             WellRow {
                 Image(systemName: "pause.circle")
             } content: {
-                Toggle(isOn: Binding(get: { bots.paused.contains(bot.id) }, set: { pause in Task { await bots.setPaused(pause, bot) } })) {
+                Toggle(isOn: Binding(get: { bots.paused.contains(bot.id) }, set: { pause in attempt { try await bots.setPaused(pause, bot) } })) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Pause Wake-Ups")
                         Text("They wait until you turn this off; the ones that came due meanwhile go then.")
@@ -914,7 +922,7 @@ private struct WakeList: View {
                         .disabled(tried[watch.letters] == .some(nil))
                         .help("Run its check now and see what it prints; it doesn’t count as a run, nor wake the bot")
                         Button("Stop Watching", systemImage: "minus.circle.fill") {
-                            Task { await bots.cancelWatch(watch, of: bot) }
+                            attempt { try await bots.cancelWatch(watch, of: bot) }
                         }
                         .labelStyle(.iconOnly)
                         .buttonStyle(RemoveButtonStyle())
@@ -945,7 +953,7 @@ private struct WakeList: View {
                         .buttonStyle(TextButtonStyle())
                         .help(wake.every == nil ? "Send this wake-up now, to see the job run" : "Send this wake-up now, to see the job run; it still comes back at its time")
                         Button("Cancel Wake-Up", systemImage: "minus.circle.fill") {
-                            Task { await bots.cancelWake(wake, of: bot) }
+                            attempt { try await bots.cancelWake(wake, of: bot) }
                         }
                         .labelStyle(.iconOnly)
                         .buttonStyle(RemoveButtonStyle())
@@ -1015,6 +1023,14 @@ private struct WakeList: View {
             }
         }
         .transition(.opacity.combined(with: .offset(y: -6)))
+    }
+
+    /// A change to its wake-ups, and what went wrong if it didn't happen.
+    private func attempt(_ change: @escaping @MainActor () async throws -> Void) {
+        failure = nil
+        Task {
+            do { try await change() } catch { failure = error.localizedDescription }
+        }
     }
 
     private func add() {
