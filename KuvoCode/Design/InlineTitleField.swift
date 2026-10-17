@@ -3,11 +3,15 @@ import SwiftUI
 
 /// A title renamed where it's shown (a session's row in the sidebar, its card's header), all of it
 /// selected to type over; or a name for something new, typed where it'll show (a branch). Return
-/// or clicking away keeps it, as the Finder does; Escape leaves it as it was.
+/// or clicking away keeps it, as the Finder does, and so does the field going away (its row folded
+/// up, another tab chosen); Escape leaves it as it was.
 struct InlineTitleField: View {
     let original: String
     /// What goes in an empty field (a new one's).
     var prompt = "Title"
+    /// False for something made only on Return (a branch): clicking away, or the field going
+    /// away, leaves it unmade.
+    var keepsOnLeaving = true
     let commit: (String) -> Void
     let cancel: () -> Void
     @State private var text = ""
@@ -29,13 +33,16 @@ struct InlineTitleField: View {
                 finish(keeping: false)
                 return .handled
             }
-            .onChange(of: isFocused) { _, focused in if !focused { finish(keeping: true) } }
+            .onChange(of: isFocused) { _, focused in if !focused { finish(keeping: keepsOnLeaving) } }
             .onAppear {
                 text = original
                 isFocused = true
                 // All of it selected, to type a new one over it.
                 DispatchQueue.main.async { NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil) }
             }
+            // Gone without a word (its row folded up, another tab chosen): it ends here, so it
+            // doesn't come back later and take the keyboard.
+            .onDisappear { finish(keeping: keepsOnLeaving) }
             .accessibilityLabel(prompt)
     }
 

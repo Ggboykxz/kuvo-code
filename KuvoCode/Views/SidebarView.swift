@@ -249,6 +249,8 @@ struct SidebarView: View {
         #endif
         // Only the open session's place is remembered; picked elsewhere, it shows in its project.
         .onChange(of: selection) { pickedIn = pickedIn.filter { $0.key == selection } }
+        // Another session picked: a rename in another row ends, keeping what was typed.
+        .onChange(of: selection) { if renaming?.id != selection { renaming = nil } }
         // Titles match as you type; conversations once you pause.
         .task(id: search) {
             let query = search.trimmingCharacters(in: .whitespaces)

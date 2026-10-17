@@ -497,7 +497,8 @@ private struct BranchSwitcher: View {
                 Image(systemName: "arrow.triangle.branch")
                     .imageScale(.small)
                     .foregroundStyle(.secondary)
-                InlineTitleField(original: "", prompt: "New branch from \(branch)") { name in
+                // Made only on Return: clicking away makes no branch.
+                InlineTitleField(original: "", prompt: "New branch from \(branch)", keepsOnLeaving: false) { name in
                     isNaming = false
                     run(["switch", "-c", name], created: true)
                 } cancel: {
@@ -506,7 +507,7 @@ private struct BranchSwitcher: View {
                 .frame(minWidth: 100, maxWidth: 190)
             }
             .font(.system(size: 11))
-            .help("It starts from \(branch), and changes you haven't committed come along.")
+            .help("Return makes it. It starts from \(branch), and changes you haven't committed come along.")
         } else {
             menu
         }

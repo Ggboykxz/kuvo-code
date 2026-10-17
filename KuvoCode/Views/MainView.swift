@@ -438,6 +438,8 @@ struct MainView: View {
         }
         .onChange(of: workspace.waitingCount, initial: true) { Notifier.shared.setBadge(workspace.waitingCount) }
         .onChange(of: showsBadge) { Notifier.shared.setBadge(workspace.waitingCount) }
+        // Another tab: a rename in the last one's header ends, keeping what was typed.
+        .onChange(of: selection) { _, id in if renaming?.id != id { renaming = nil } }
         #if DEBUG
         .task(id: workspace.isLoaded) { await runDemoIfAsked() }
         #endif
