@@ -7,6 +7,10 @@ import Testing
 final class MemoryRelay: @unchecked Sendable {
     private let lock = NSLock()
     private var connected: [LinkAddress: Connection] = [:]
+    private var registered: [PushRegistration] = []
+
+    /// Each push registration a phone sent, in order.
+    var registrations: [PushRegistration] { lock.withLock { registered } }
 
     final class Connection: RelayTransport, @unchecked Sendable {
         let address: LinkAddress
@@ -41,6 +45,7 @@ final class MemoryRelay: @unchecked Sendable {
     }
 
     fileprivate func route(_ message: RelayMessage, from sender: Connection) {
+        if case .register(let registration) = message { lock.withLock { registered.append(registration) } }
         guard case .send(let to, let payload) = message else { return }
         let target = lock.withLock { connected[to] }
         if let target {
@@ -223,6 +228,28 @@ private func collect(_ stream: LinkResponse) async throws -> (status: Int, heade
         reading.cancel()
         var iterator = stopped.stream.makeAsyncIterator()
         _ = await iterator.next()
+    }
+
+    @Test func aPushRegistrationGoesAgainEachTimeThePhoneConnects() async throws {
+        let relay = MemoryRelay()
+        let host = TestHost(relay: relay, handle: echo)
+        let client = phone(on: relay)
+        let registration = PushRegistration(token: "a1b2", environment: "sandbox", topic: "run.kuvo.code.mobile", senders: [host.secret.address])
+        // Sent at once, connecting for it.
+        await client.register(registration)
+        #expect(relay.registrations == [registration])
+        // Woken up after the relay went: sent again with the new connection.
+        let paired = try await client.pair(host.link)
+        await client.dropRelayForTesting()
+        try await Task.sleep(for: .milliseconds(50))
+        _ = try await client.hostHello(paired)
+        #expect(relay.registrations == [registration, registration])
+        // Stopped: the next connection goes without it.
+        await client.register(nil)
+        await client.dropRelayForTesting()
+        try await Task.sleep(for: .milliseconds(50))
+        _ = try await client.hostHello(paired)
+        #expect(relay.registrations.count == 2)
     }
 
     @Test func socketsCarryMessagesBothWaysUntilClosed() async throws {

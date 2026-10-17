@@ -129,6 +129,7 @@ public actor LinkClient {
     private var relay: (any RelayTransport)?
     private var connecting: Task<any RelayTransport, Error>?
     private var sessions: [LinkAddress: Session] = [:]
+    private var registration: PushRegistration?
 
     private final class Session {
         let id = UInt32.random(in: 1...UInt32.max)
@@ -199,6 +200,20 @@ public actor LinkClient {
             }
         }
         return LinkSocket(events: events, write: { text in try await self.write(text, ticket: ticket, on: host) }, stop: stop)
+    }
+
+    /// Where the relay sends this phone's pushes, and from whom it takes them: sent now
+    /// (connecting to the relay if need be) and again each time the relay connection is made,
+    /// as the relay asks; nil stops sending it.
+    public func register(_ registration: PushRegistration?) async {
+        self.registration = registration
+        guard let registration else { return }
+        if let relay {
+            relay.send(.register(registration))
+        } else {
+            // Sends it once it's connected.
+            _ = try? await relayConnection()
+        }
     }
 
     #if DEBUG
@@ -343,6 +358,7 @@ public actor LinkClient {
         do {
             let relay = try await task.value
             self.relay = relay
+            if let registration { relay.send(.register(registration)) }
             Task { [weak self] in
                 for await message in relay.messages { await self?.receive(message) }
                 await self?.relayEnded(relay)
