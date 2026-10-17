@@ -400,8 +400,11 @@ final class BrowserAgent {
     }
 
     /// Asks you, in the conversation `caller`, about the page in `browser` (Show Page shows it).
+    /// While it waits, the page's dialogs (from what you do there) are yours to answer.
     private func ask(_ kind: BrowserAsks.Kind, host: String, in browser: BrowserSession, for caller: String?) async -> BrowserAsks.Answer {
-        await asks.ask(kind, host: host, session: caller, page: utilities.id(of: browser)?.uuidString)
+        browser.agentWaitsForYou(true)
+        defer { browser.agentWaitsForYou(false) }
+        return await asks.ask(kind, host: host, session: caller, page: utilities.id(of: browser)?.uuidString)
     }
 
     static let changed = "The page changed while the user answered, so nothing was filled in. "

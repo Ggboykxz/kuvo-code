@@ -40,13 +40,27 @@ final class BrowserSession: NSObject {
     /// any is, a dialog the page shows is answered at once (it would hold the page, and the step).
     @ObservationIgnored private var agentSteps = 0
     @ObservationIgnored private var acceptingSteps = 0
+    /// Of those steps, the ones waiting for you to answer the agent in Kuvo Code (a sign-in, a
+    /// code, something only you can do on the page): meanwhile the page's dialogs are yours.
+    @ObservationIgnored private var waitingSteps = 0
 
     /// An agent's step begins in this page.
     func agentStepBegan(_ session: String?, accepting: Bool) {
         agentSteps += 1
         if accepting { acceptingSteps += 1 }
         agentWorks(session)
+        answerWaitingDialog()
     }
+
+    /// The agent's step waits for you to answer it in Kuvo Code, or goes on once you have.
+    func agentWaitsForYou(_ waiting: Bool) {
+        waitingSteps = max(0, waitingSteps + (waiting ? 1 : -1))
+        if !waiting { answerWaitingDialog() }
+    }
+
+    /// A dialog the page shows now is answered for the agent: a step of its is at work, not
+    /// waiting for you, and you haven't taken the page over.
+    private var answersForAgent: Bool { agentSteps > waitingSteps && !isHeld }
 
     /// The step ended.
     func agentStepEnded(accepting: Bool) {
@@ -258,7 +272,8 @@ extension BrowserSession: WKUIDelegate {
 
     /// The page's alerts, confirmations and questions show in a bar over it. While the agent is
     /// at work they're answered at once: an alert accepted, the others declined unless the agent
-    /// said to accept them; the agent hears about it.
+    /// said to accept them; the agent hears about it. One left in the bar between its steps is
+    /// answered so when its next step begins. While it waits for you to answer it, they're yours.
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor () -> Void) {
         ask(PageDialog(kind: .alert, message: message)) { _, _ in completionHandler() }
     }
@@ -272,18 +287,30 @@ extension BrowserSession: WKUIDelegate {
     }
 
     private func ask(_ dialog: PageDialog, answer: @escaping (Bool, String?) -> Void) {
-        // While you have the page, it asks you, even with a step at work.
-        if agentSteps > 0, !isHeld {
-            let accept = dialog.kind == .alert || acceptingSteps > 0
-            answer(accept, dialog.defaultText)
-            let what = dialog.kind == .alert ? "an alert" : dialog.kind == .confirm ? "a confirmation" : "a question"
-            agentNotes.append("The page showed \(what): “\(dialog.message)” (\(accept ? "accepted" : "declined"))." + (accept ? "" : " If it should go ahead, do it again with accept_dialog: true."))
-            return
-        }
+        // While you have the page, or the agent waits for you, it asks you, even with a step at work.
+        if answersForAgent { return answerForAgent(dialog, answer) }
         // One at a time: an older one is turned down.
         dialogAnswer?(false, nil)
         dialogAnswer = answer
         withAnimation(.ui) { self.dialog = dialog }
+    }
+
+    /// Answers a dialog for the agent: an alert accepted, the others declined unless its step said
+    /// to accept them. The agent hears about it.
+    private func answerForAgent(_ dialog: PageDialog, _ answer: (Bool, String?) -> Void) {
+        let accept = dialog.kind == .alert || acceptingSteps > 0
+        answer(accept, dialog.defaultText)
+        let what = dialog.kind == .alert ? "an alert" : dialog.kind == .confirm ? "a confirmation" : "a question"
+        agentNotes.append("The page showed \(what): “\(dialog.message)” (\(accept ? "accepted" : "declined"))." + (accept ? "" : " If it should go ahead, do it again with accept_dialog: true."))
+    }
+
+    /// A dialog left in the bar (shown between the agent's steps, or while it waited for you) would
+    /// hold its next step: answered for it, as one shown during a step is.
+    private func answerWaitingDialog() {
+        guard let dialog, let answer = dialogAnswer, answersForAgent else { return }
+        dialogAnswer = nil
+        withAnimation(.ui) { self.dialog = nil }
+        answerForAgent(dialog, answer)
     }
 
     func answerDialog(accept: Bool, text: String? = nil) {
