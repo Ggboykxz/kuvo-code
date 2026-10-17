@@ -359,6 +359,36 @@ final class GrokProviderTests: XCTestCase {
     }
 
     /// The stock happy-path routes: the captured weekly credits config and the plan name.
+    func testHostSignInComesBeforeTheGrokCLILogin() async {
+        // Fork: a Grok CLI login (another account's, say) doesn't stand in for the one signed in
+        // to the host.
+        let httpClient = RecordingHTTPClient { Self.defaultRoutes($0) }
+        let provider = makeProvider(httpClient: httpClient, hostSecret: "host-token")
+
+        let snapshot = await provider.refresh()
+
+        XCTAssertEqual(progress(snapshot.lines, "Weekly limit")?.used, 99)
+        let creditsAuths = httpClient.requests.filter { $0.url == GrokUsageClient.creditsConfigURL }.map { $0.headers["Authorization"] }
+        XCTAssertEqual(creditsAuths, ["Bearer host-token"])
+    }
+
+    func testRejectedLoginGivesWayToTheNextOne() async {
+        // Fork: a login the server turns away doesn't end the search with an error.
+        let httpClient = RecordingHTTPClient { request in
+            if request.url == GrokUsageClient.creditsConfigURL, request.headers["Authorization"] == "Bearer host-token" {
+                return HTTPResponse(statusCode: 401, headers: [:], body: Data())
+            }
+            return Self.defaultRoutes(request)
+        }
+        let provider = makeProvider(httpClient: httpClient, hostSecret: "host-token")
+
+        let snapshot = await provider.refresh()
+
+        XCTAssertEqual(progress(snapshot.lines, "Weekly limit")?.used, 99)
+        let creditsAuths = httpClient.requests.filter { $0.url == GrokUsageClient.creditsConfigURL }.map { $0.headers["Authorization"] }
+        XCTAssertEqual(creditsAuths, ["Bearer host-token", "Bearer token"])
+    }
+
     private static func defaultRoutes(_ request: HTTPRequest) -> HTTPResponse {
         if request.url == GrokUsageClient.creditsConfigURL {
             return HTTPResponse(statusCode: 200, headers: [:], body: GrokCreditsFixtures.capturedResponseBody)
@@ -372,13 +402,14 @@ final class GrokProviderTests: XCTestCase {
     private func makeProvider(
         httpClient: RecordingHTTPClient,
         scanner: GrokLogUsageScanner? = nil,
-        now: Date = OpenUsageISO8601.date(from: "2026-06-18T12:00:00.000Z")!
+        now: Date = OpenUsageISO8601.date(from: "2026-06-18T12:00:00.000Z")!,
+        hostSecret: String? = nil
     ) -> GrokProvider {
         let files = FakeFiles([
             GrokAuthStore.authPath: #"{"https://auth.x.ai::client":{"key":"token","refresh_token":"refresh","expires_at":"2026-07-01T00:00:00.000Z"}}"#
         ])
         return GrokProvider(
-            authStore: GrokAuthStore(files: files, now: { now }),
+            authStore: GrokAuthStore(files: files, now: { now }, hostSecret: { hostSecret }),
             usageClient: GrokUsageClient(httpClient: httpClient),
             logUsageScanner: scanner ?? noLogScanner(),
             now: { now },

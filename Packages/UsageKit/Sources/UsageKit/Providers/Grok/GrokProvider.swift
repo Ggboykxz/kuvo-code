@@ -66,28 +66,38 @@ final class GrokProvider: ProviderRuntime {
         let candidates = try authStore.loadAuthCandidates()
         var sawExpiredCandidate = false
         var sawExpiredHost = false
+        // A login the server turns away doesn't hide the next one (fork change): an old Grok CLI
+        // login, say, after the host's sign-in.
+        var rejected: GrokAuthError?
 
         for var state in candidates {
-            // The host's: used as it is while it lasts, never refreshed here.
-            if state.entryKey == GrokAuthStore.hostEntryKey {
-                if authStore.isExpired(entry: state.entry, token: state.token) {
-                    sawExpiredHost = true
-                    continue
+            do {
+                // The host's: used as it is while it lasts, never refreshed here.
+                if state.entryKey == GrokAuthStore.hostEntryKey {
+                    if authStore.isExpired(entry: state.entry, token: state.token) {
+                        sawExpiredHost = true
+                        continue
+                    }
+                    return try await probe(state: &state, accessToken: state.token)
+                }
+                if authStore.needsRefresh(entry: state.entry, token: state.token) {
+                    if let refreshed = await refreshAccessToken(state: &state) {
+                        return try await probe(state: &state, accessToken: refreshed)
+                    }
+                    if authStore.isExpired(entry: state.entry, token: state.token) {
+                        sawExpiredCandidate = true
+                        continue
+                    }
                 }
                 return try await probe(state: &state, accessToken: state.token)
+            } catch let error as GrokAuthError where error == .expired || error == .hostExpired {
+                rejected = rejected ?? error
             }
-            if authStore.needsRefresh(entry: state.entry, token: state.token) {
-                if let refreshed = await refreshAccessToken(state: &state) {
-                    return try await probe(state: &state, accessToken: refreshed)
-                }
-                if authStore.isExpired(entry: state.entry, token: state.token) {
-                    sawExpiredCandidate = true
-                    continue
-                }
-            }
-            return try await probe(state: &state, accessToken: state.token)
         }
 
+        if let rejected {
+            throw rejected
+        }
         if sawExpiredHost {
             throw GrokAuthError.hostExpired
         }

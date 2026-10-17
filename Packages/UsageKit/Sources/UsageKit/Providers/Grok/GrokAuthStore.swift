@@ -56,13 +56,17 @@ struct GrokAuthStore: Sendable {
 
     var files: TextFileAccessing
     var now: @Sendable () -> Date
+    /// The host's SuperGrok token, if it's signed in (fork addition).
+    var hostSecret: @Sendable () -> String?
 
     init(
         files: TextFileAccessing = LocalTextFileAccessor(),
-        now: @escaping @Sendable () -> Date = Date.init
+        now: @escaping @Sendable () -> Date = Date.init,
+        hostSecret: @escaping @Sendable () -> String? = { HostAccounts.secret(for: ["xai"]) }
     ) {
         self.files = files
         self.now = now
+        self.hostSecret = hostSecret
     }
 
     /// The entry for the host's own SuperGrok sign-in (fork addition). Its engine keeps and renews
@@ -71,26 +75,28 @@ struct GrokAuthStore: Sendable {
     static let hostEntryKey = "kuvo-host"
 
     func loadAuthCandidates() throws -> [GrokAuthState] {
-        // The Grok CLI's own login first (it's refreshed here); then the host's sign-in.
-        var candidates: [GrokAuthState] = []
+        // The host's sign-in first, as for the other providers (fork change); then the Grok CLI's
+        // own login (it's refreshed here).
+        var candidates: [GrokAuthState] = hostCandidate().map { [$0] } ?? []
         var fileError: GrokAuthError = .notLoggedIn
         if files.exists(Self.authPath) {
+            var cli: [GrokAuthState] = []
             if let text = try? files.readText(Self.authPath), let auth = Self.parseAuth(text) {
-                candidates = auth.compactMap { entryKey, entry -> GrokAuthState? in
+                cli = auth.compactMap { entryKey, entry -> GrokAuthState? in
                     guard let token = trimmed(entry.key) else { return nil }
                     return GrokAuthState(auth: auth, entryKey: entryKey, entry: entry, token: token)
                 }
             }
-            if candidates.isEmpty { fileError = .invalidAuth }
+            if cli.isEmpty { fileError = .invalidAuth }
+            candidates += cli
         }
-        if let host = hostCandidate() { candidates.append(host) }
         guard !candidates.isEmpty else { throw fileError }
         return candidates
     }
 
     /// The host's SuperGrok sign-in, when it has one.
     func hostCandidate() -> GrokAuthState? {
-        guard let token = HostAccounts.secret(for: ["xai"]) else { return nil }
+        guard let token = hostSecret() else { return nil }
         return GrokAuthState(auth: [:], entryKey: Self.hostEntryKey, entry: GrokAuthEntry(key: token), token: token)
     }
 
