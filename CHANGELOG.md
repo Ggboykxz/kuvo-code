@@ -6,6 +6,20 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Repeating wake-ups and group meetings keep their time of day. A daily 2:30 no longer moves an hour for good after clocks go forward, one isn't skipped after clocks go back, and after a time-zone change they come at the same time there.
+- Canceling a wake-up or watch, or pausing a bot, on a machine that isn't connected says so and keeps it listed. It used to look done while the machine still ran it.
+- A watch no longer wakes its bot when its check fails for a moment, like right after your Mac wakes before Wi-Fi is back. A change counts once a second check a couple of minutes later sees it too, and a check that times out doesn't count.
+- Group chats: parts that wait on each other say so instead of waiting forever. A part that takes many steps is reported when it's done, and a report or a "couldn't do its part" note no longer shows twice.
+- A paused bot with a wake-up that came due, or a wake-up that keeps failing, no longer keeps Kuvo Code busy twice a second. One that fails is tried again in a minute, then less often.
+- Saving in Edit Bot no longer undoes a job the bot learned while the editor was open.
+- Deleting a bot on a machine that isn't connected says so and keeps the bot, instead of taking it off the list while it kept waking up and working on the machine.
+- A bot can no longer delete folders outside its own by canceling a wake-up with a path like `../`: `kuvo-wake` takes only a wake-up's ID or its letters.
+- An attached symlink is read as the file or folder it points to, instead of going to the agent as a path. A big image still over 20 MB after conversion goes as a path the agent can open; it used to be sent anyway and dropped.
+- What you write in a new session's message box while the session is being set up goes on to the new session. It used to be lost, and the message was sent as it was before your edit.
+- A `/command` or `!command` that fails, or can't run because its machine isn't connected, goes back to the message box with its files instead of disappearing. Files attached to a `!command` stay for your next message.
+- In a session on a machine, two attached files with the same name no longer overwrite each other there. After Edit, Undo or Branch, the composer gets back your own files, not the machine's copies or files that couldn't be copied.
+- A file sent to the agent as a path, like a .zip, a video or anything over 20 MB, shows once on your message and in the queue, and comes back once after Edit, Undo or ↑. It used to show twice.
+- Writing `<review-comments>` or `<attached-files>` in a message, or quoting a reply that does, no longer cuts words from your message, from ↑ history, or from what comes back after Edit or Undo. A comment with a line like `[file.swift:10]` stays one comment.
 - Anonymous usage sends a model's name only if it's in the public catalog. Models you set up yourself (deployments, ARNs, fine-tunes, local models) go out as "custom".
 - Turning web search off or picking a service, in the settings file or a project's own settings, is no longer overridden. The free web search is written into the settings file once, where Settings › Engine › Web Search shows it and you can change or remove it.
 - Remote machines that stopped trying to reconnect while your Mac slept try again when it wakes.
