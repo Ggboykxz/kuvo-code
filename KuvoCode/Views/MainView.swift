@@ -1307,7 +1307,9 @@ struct MainView: View {
                 while !engine.isReady { try? await Task.sleep(for: .seconds(1)) }
             }
             do {
-                bot = try await bots.create(name: name, job: parts.count > 1 ? parts[1] : "", instructions: parts.count > 2 ? parts[2] : "",
+                // Its job, as it would have written it in its memory.
+                let job = (line: parts.count > 1 ? parts[1] : "", details: parts.count > 2 ? parts[2] : "")
+                bot = try await bots.create(name: name, job: job.line.isEmpty && job.details.isEmpty ? nil : job,
                                             look: .random(), model: nil, machine: machine, project: parts.count > 4 && !parts[4].isEmpty ? parts[4] : nil)
             } catch {
                 print("KUVO_DEMO_BOT failed: \(error.localizedDescription)")

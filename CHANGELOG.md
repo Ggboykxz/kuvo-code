@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Bots get their job from their conversation: Edit Bot has no job fields any more. A new bot asks "What's my purpose?", and what you tell it becomes its job, kept in its memory and changed as you tell it more; the sidebar shows it in a few words under its name. Starting from a ready-made or shared bot types its job in the conversation for you to send. Your bots' jobs move into their memory.
 - Figma connects through Figma's own server: you sign in with your Figma account instead of pasting a token, and the agent gets Figma's own tools. If you'd added Figma, sign in to it once under Settings › Integrations; its token is removed.
 - Integrations' servers (Outlook, Apple Calendar, Figma and the others) take about half the memory they did and start faster: each runs on its own, without npx waiting beside it.
 - Kuvo Code uses much less memory after launch: it used to wake every bot's folder in the engine, each with its own copy of every integration's server, for an hour. With Outlook connected and a few bots, that was more than a gigabyte.

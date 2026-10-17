@@ -310,7 +310,7 @@ struct Composer: View {
 
     private var placeholder: String {
         if isRunning { return "Add to the task, or ⌘↩ to queue a follow-up…" }
-        if let bot { return "Message \(bot.name)…" }
+        if let bot { return bot.job.isEmpty ? "Tell \(bot.name) its job…" : "Message \(bot.name)…" }
         if folders.first.map(Workspace.isChat) == true { return "Ask anything…" }
         return agent == "plan" ? "Ask the agent to plan something…" : "Ask the agent to build, fix or explain something…"
     }

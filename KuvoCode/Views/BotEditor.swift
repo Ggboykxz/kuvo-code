@@ -24,8 +24,9 @@ struct BotEditor: View {
     /// How it talks.
     @State private var personality: String?
     @State private var name: String
-    @State private var job: String
-    @State private var instructions: String
+    /// What a template or a shared bot says its job is: typed in its new conversation, for you
+    /// to change and send (its job is what you tell it there).
+    @State private var firstMessage: String
     /// The machine it lives on; nil for this Mac.
     @State private var machine: String?
     /// The project it works in; nil for a folder of its own.
@@ -39,7 +40,7 @@ struct BotEditor: View {
     @State private var isHoveringAvatar = false
     @FocusState private var focus: Field?
 
-    private enum Field { case name, job, instructions }
+    private enum Field { case name }
 
     /// `recipe`: a shared bot that a new one starts from.
     init(bot: Bot?, recipe: BotRecipe? = nil, close: @escaping () -> Void, created: @escaping (Bot) -> Void = { _ in }) {
@@ -48,8 +49,7 @@ struct BotEditor: View {
         self.created = created
         _look = State(initialValue: bot?.look ?? recipe?.look ?? .random())
         _name = State(initialValue: bot?.name ?? recipe?.name ?? "")
-        _job = State(initialValue: bot?.job ?? recipe?.job ?? "")
-        _instructions = State(initialValue: bot?.instructions ?? recipe?.instructions ?? "")
+        _firstMessage = State(initialValue: recipe.map { BotTemplate.firstMessage(job: $0.job, instructions: $0.instructions) } ?? "")
         _machine = State(initialValue: bot?.machine)
         _project = State(initialValue: bot?.project)
         _model = State(initialValue: bot?.model)
@@ -116,7 +116,7 @@ struct BotEditor: View {
     private var form: some View {
             VStack(alignment: .leading, spacing: 20) {
                 if isNew {
-                    section("Start From", note: "Fills in a name, job and look to change as you like; or start from nothing.") {
+                    section("Start From", note: "Fills in a name, look and personality, and writes its job in its conversation for you to send; or start from nothing and tell it there.") {
                         TemplatePicker(selection: template) { use($0) }
                     }
                 }
@@ -129,16 +129,6 @@ struct BotEditor: View {
 
                 section("Personality", note: "How it talks, in its own conversation and in group chats.") {
                     PersonalityPicker(selection: $personality)
-                }
-
-                section("Job", note: "Bots act on this every time they work. Say what to watch, what to make, and what never to do without asking.") {
-                    WellGroup(isActive: focus == .instructions) {
-                        TextField("Instructions", text: $instructions, prompt: Text("Every morning, check the open issues labeled bug, reproduce the new ones and comment with what you found."), axis: .vertical)
-                            .textFieldStyle(.plain)
-                            .lineLimit(4...10)
-                            .focused($focus, equals: .instructions)
-                            .padding(12)
-                    }
                 }
 
                 section("Model", note: "It uses this in group chats, and in its own conversation unless you pick another there.") {
@@ -232,7 +222,7 @@ struct BotEditor: View {
                     .buttonStyle(.glass)
                 Button("Export…") { BotRecipe.export(bot) }
                     .buttonStyle(.glass)
-                    .help("Save a file to share \(bot.name): its look, job, instructions and personality")
+                    .help("Save a file to share \(bot.name): its look, personality and job")
             }
             if isWorking {
                 Spinner(size: 16)
@@ -275,23 +265,22 @@ struct BotEditor: View {
                 .help("A random look")
             }
             .frame(width: 92)
-            WellGroup(isActive: focus == .name || focus == .job) {
-                WellRow(isActive: focus == .name) {
-                    Image(systemName: "face.smiling")
-                } content: {
-                    TextField("Name", text: $name, prompt: Text("Name, like Scout"))
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 15, weight: .medium))
-                        .focused($focus, equals: .name)
+            VStack(alignment: .leading, spacing: 8) {
+                WellGroup(isActive: focus == .name) {
+                    WellRow(isActive: focus == .name) {
+                        Image(systemName: "face.smiling")
+                    } content: {
+                        TextField("Name", text: $name, prompt: Text("Name, like Scout"))
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 15, weight: .medium))
+                            .focused($focus, equals: .name)
+                    }
                 }
-                WellDivider()
-                WellRow(isActive: focus == .job) {
-                    Image(systemName: "briefcase")
-                } content: {
-                    TextField("Job", text: $job, prompt: Text("What it does, like Keeps CI green"))
-                        .textFieldStyle(.plain)
-                        .focused($focus, equals: .job)
-                }
+                Text(bot.map { $0.job.isEmpty ? "\($0.name)'s job is what you tell it in its conversation." : "Its job: \($0.job). It keeps its job in its memory, as you tell it in its conversation." }
+                     ?? "Its job is what you tell it in its conversation. It keeps it in its memory and works on it from then on.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -359,11 +348,8 @@ struct BotEditor: View {
 
     private func save() {
         guard !trimmedName.isEmpty, !isWorking else { return }
-        let job = job.trimmingCharacters(in: .whitespacesAndNewlines)
         if var bot {
             bot.name = trimmedName
-            bot.job = job
-            bot.instructions = instructions
             bot.look = look
             bot.model = model
             bot.personality = personality
@@ -376,7 +362,9 @@ struct BotEditor: View {
         Task {
             defer { isWorking = false }
             do {
-                let bot = try await bots.create(name: trimmedName, job: job, instructions: instructions, look: look, personality: personality, model: model, machine: machine, project: project)
+                let bot = try await bots.create(name: trimmedName, look: look, personality: personality, model: model, machine: machine, project: project)
+                // Its job, typed in its conversation, from a template or a shared bot.
+                if !firstMessage.isEmpty { Drafts.shared[bot.sessionID].text = firstMessage }
                 created(bot)
             } catch {
                 failure = error.localizedDescription
@@ -389,8 +377,7 @@ struct BotEditor: View {
         withAnimation(.ui) {
             self.template = template.id
             name = template.name
-            job = template.job
-            instructions = template.instructions.trimmingCharacters(in: .whitespacesAndNewlines)
+            firstMessage = BotTemplate.firstMessage(job: template.job, instructions: template.instructions)
             look = template.look
             personality = template.personality
         }

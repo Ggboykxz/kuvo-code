@@ -1297,19 +1297,23 @@ struct EmptyConversationView: View {
                 VStack(spacing: 4) {
                     Text(bot.name)
                         .font(.title2.weight(.semibold))
-                    if !bot.job.isEmpty {
+                    if bot.job.isEmpty {
+                        // No job yet: it asks for one, and your first message gives it.
+                        Text(Self.purposeQuestion)
+                            .font(.title3)
+                    } else {
                         Text(bot.job)
                             .foregroundStyle(.secondary)
                     }
                 }
-                Text(bot.instructions.isEmpty
-                    ? "Give \(bot.name) its first task. It keeps this conversation, remembers what it learns, and can wake itself up later to carry on."
-                    : "Start \(bot.name) on its job, or give it a task of your own. It keeps this conversation, remembers what it learns, and can wake itself up later to carry on.")
+                Text(bot.job.isEmpty
+                    ? "Tell me in a message what you'd like me to do, and I'll keep it as my job. You can change it any time by telling me."
+                    : "Start \(bot.name) on its job, or tell it more about it. It keeps its job in its memory, remembers what it learns, and can wake itself up later to carry on.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 340)
-                if !bot.instructions.isEmpty {
+                if !bot.job.isEmpty {
                     Button("Start Its Job") { send(Self.kickoff) }
                         .buttonStyle(.glassProminent)
                         .controlSize(.large)
@@ -1324,7 +1328,10 @@ struct EmptyConversationView: View {
     }
 
     /// A bot's first message: start on the job it was given.
-    static let kickoff = "Start on your job now: read your instructions and your memory, ask me for anything you need to get going (like what to watch or which topics), do the first round, and if your job repeats or keeps an eye on something, set that up (a repeating wake-up, or a watch)."
+    /// What a bot without a job asks you.
+    static let purposeQuestion = "What's my purpose?"
+
+    static let kickoff = "Start on your job now: read your job and the rest of your memory, ask me for anything you need to get going (like what to watch or which topics), do the first round, and if your job repeats or keeps an eye on something, set that up (a repeating wake-up, or a watch)."
 
     private var plain: some View {
         VStack(spacing: 10) {

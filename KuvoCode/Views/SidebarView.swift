@@ -963,7 +963,8 @@ private struct BotRow: View {
         } else if let watching = bots.watches[bot.id], !watching.isEmpty {
             Text(watching.count == 1 ? "Watching" : "Watching \(watching.count) things")
         } else {
-            Text(bot.job.isEmpty ? (bot.machine.map { "On \($0)" } ?? "On this Mac") : bot.job)
+            // No job yet: it asks for one, until your message gives it.
+            Text(bot.job.isEmpty ? EmptyConversationView.purposeQuestion : bot.job)
         }
     }
 }

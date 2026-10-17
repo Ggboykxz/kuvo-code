@@ -5,14 +5,20 @@ import os
 
 /// A bot: a teammate with a name, a look and one job. It keeps one conversation (an engine
 /// session) on this Mac or on one of your machines, remembers what it learns in a file of its own,
-/// and can schedule its own wake-ups to carry on later. You start its work by writing to it.
+/// and can schedule its own wake-ups to carry on later. You give it its job by writing to it: it
+/// keeps the job in its memory, under "## Job", and that's where its job is read from.
 struct Bot: Codable, Identifiable, Hashable {
     var id: String
     var name: String
-    /// What it does, in a few words, under its name: "Keeps CI green".
+    /// What it does, in a few words, under its name ("Keeps CI green"): the first line of the
+    /// job in its memory, as last read.
     var job: String
-    /// How to do the job: what to watch, what to make, what never to do.
+    /// Its job in full, as its memory has it (what to watch, what to make, what never to do), as
+    /// last read: it goes in the conversation's instructions.
     var instructions: String
+    /// Set once its job is kept in its memory. A bot made before had its job written in Edit Bot,
+    /// in the two fields above, which are then moved into its memory.
+    var jobInMemory: Bool?
     var look: BotLook
     /// The machine it lives on; nil for this Mac.
     var machine: String?
@@ -139,9 +145,11 @@ final class Bots {
         }
     }
 
-    /// Makes a bot: its folder where it lives, its session there with its job, and its place in
-    /// the list.
-    func create(name: String, job: String, instructions: String, look: BotLook, personality: String? = nil, model: ModelRef?, machine: String?, project: String?) async throws -> Bot {
+    /// Makes a bot: its folder where it lives, its session there, and its place in the list. Its
+    /// job comes from the conversation; `job` writes one in its memory from the start (for the
+    /// demo copy).
+    func create(name: String, job: (line: String, details: String)? = nil, look: BotLook, personality: String? = nil, model: ModelRef?, machine: String?, project: String?) async throws -> Bot {
+        let memory = job.map { Self.addingJob($0.line, details: $0.details, to: Self.blankMemory(name)) } ?? Self.blankMemory(name)
         guard let app else { throw CancellationError() }
         let id = "bot_" + String((0..<10).map { _ in "abcdefghijklmnopqrstuvwxyz0123456789".randomElement()! })
         let folder: String
@@ -151,7 +159,7 @@ final class Bots {
             let made = try await engine.machine.connection.run("""
                 B="$HOME/\(RemoteEngineInstaller.root)/bots/\(id)"
                 mkdir -p "$B/workspace" "$B/wakes" && cd "$B" || exit 1
-                [ -f MEMORY.md ] || printf '%s' \(SSHConnection.quoted(Self.blankMemory(name))) >MEMORY.md
+                [ -f MEMORY.md ] || printf '%s' \(SSHConnection.quoted(memory)) >MEMORY.md
                 pwd
                 """).trimmingCharacters(in: .whitespacesAndNewlines)
             guard made.hasPrefix("/") else { throw Failure.noFolder }
@@ -161,11 +169,13 @@ final class Bots {
             try FileManager.default.createDirectory(at: url.appending(path: "workspace"), withIntermediateDirectories: true)
             try FileManager.default.createDirectory(at: url.appending(path: "wakes"), withIntermediateDirectories: true)
             try Self.installCommand()
-            try Data(Self.blankMemory(name).utf8).write(to: url.appending(path: "MEMORY.md"))
+            try Data(memory.utf8).write(to: url.appending(path: "MEMORY.md"))
             folder = url.path
         }
 
-        var bot = Bot(id: id, name: name, job: job, instructions: instructions, look: look, machine: machine, project: project, folder: folder, sessionID: "", created: .now)
+        let kept = Self.job(inMemory: memory)
+        var bot = Bot(id: id, name: name, job: kept?.line ?? "", instructions: kept?.section ?? "", look: look, machine: machine, project: project, folder: folder, sessionID: "", created: .now)
+        bot.jobInMemory = true
         bot.personality = personality
         guard let api = app.workspace.api(forFolder: bot.directory) else { throw Failure.notConnected(machine ?? AppInfo.name) }
         let approval = UserDefaults.standard.string(forKey: ToolApproval.key).flatMap(ToolApproval.init) ?? .approveAll
@@ -477,6 +487,9 @@ final class Bots {
         }
         waking = Task { [weak self] in
             while !Task.isCancelled {
+                // A job changed in a Mac bot's memory (or, at launch, each one's), before its
+                // conversation's instructions are checked.
+                for id in self?.memoryChanged() ?? [] { await self?.syncJob(of: id) }
                 await self?.syncInstructions()
                 self?.watchDue()
                 await self?.wakeDue()
@@ -560,6 +573,117 @@ final class Bots {
         "# \(name)'s memory\n\nWhat \(name) keeps for next time: preferences, how things are set up, where ongoing work stands. Nothing yet.\n"
     }
 
+    // MARK: Its job, in its memory
+
+    /// The job in a memory file: its "## Job" section (any heading named Job), all of it, and its
+    /// first line in a few words, for under the bot's name. Nil when it has none.
+    static func job(inMemory text: String) -> (line: String, section: String)? {
+        let lines = text.components(separatedBy: "\n")
+        guard let start = lines.firstIndex(where: isJobHeading) else { return nil }
+        let rest = lines[(start + 1)...]
+        let end = rest.firstIndex { $0.hasPrefix("#") } ?? lines.endIndex
+        let section = lines[(start + 1)..<end].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        let first = section.components(separatedBy: "\n").lazy.map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty } ?? ""
+        var line = first
+        for mark in ["- ", "* ", "> "] where line.hasPrefix(mark) { line.removeFirst(mark.count) }
+        line = line.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "__", with: "")
+        if line.lowercased().hasPrefix("job:") { line = String(line.dropFirst(4)) }
+        line = line.trimmingCharacters(in: .whitespaces)
+        // A first line that goes on (the details written right after it): its first sentence.
+        if line.count > 48, let end = line.range(of: ". ") { line = String(line[..<end.lowerBound]) }
+        // A sentence's end, not a line's: "Keeps the build green." shows as "Keeps the build green".
+        if line.hasSuffix("."), !line.hasSuffix("..") { line.removeLast() }
+        return (line, section)
+    }
+
+    private static func isJobHeading(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("#") else { return false }
+        let title = trimmed.drop { $0 == "#" }.trimmingCharacters(in: .whitespaces).lowercased()
+        return title == "job" || title == "my job" || title == "the job" || title.hasPrefix("job:") || title.hasPrefix("job ")
+    }
+
+    /// A memory with a job section: the line, then the details, as its first section (after its
+    /// title and what's written under it, which a section would take in).
+    static func addingJob(_ line: String, details: String, to memory: String) -> String {
+        let body = [line, details].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }.joined(separator: "\n\n")
+        let section = ["## Job", body, ""]
+        var lines = memory.trimmingCharacters(in: .newlines).components(separatedBy: "\n")
+        let title = lines.firstIndex { $0.hasPrefix("# ") }
+        let first = lines.indices.first { $0 != title && lines[$0].hasPrefix("#") } ?? lines.endIndex
+        lines.insert(contentsOf: (first > 0 && !lines[first - 1].isEmpty ? [""] : []) + section, at: first)
+        return lines.joined(separator: "\n").trimmingCharacters(in: .newlines) + "\n"
+    }
+
+    /// Its memory file's text; nil when it can't be read (its machine isn't connected, say).
+    private func memory(of bot: Bot) async -> String? {
+        guard let machine = bot.machine else { return try? String(contentsOfFile: bot.memoryFile, encoding: .utf8) }
+        let file = SSHConnection.quoted(bot.memoryFile)
+        return await Task.detached { RemoteShell.run("cat \(file)", on: machine) }.value.map { String(decoding: $0, as: UTF8.self) }
+    }
+
+    private func write(memory text: String, of bot: Bot) async -> Bool {
+        guard let machine = bot.machine else { return (try? Data(text.utf8).write(to: URL(filePath: bot.memoryFile), options: .atomic)) != nil }
+        let script = "printf '%s' \(SSHConnection.quoted(text)) >\(SSHConnection.quoted(bot.memoryFile))"
+        return await Task.detached { RemoteShell.run(script, on: machine) }.value != nil
+    }
+
+    /// When each Mac bot's memory was last read, so it's read again only once it changes.
+    @ObservationIgnored private var memoryRead: [String: Date] = [:]
+
+    /// Reads its job from its memory, as the bot keeps it, and gives a changed one to its
+    /// conversation and its group chats. A bot whose job was written in Edit Bot first has it
+    /// moved into its memory, once.
+    func syncJob(of id: String) async {
+        guard let bot = bot(id), var text = await memory(of: bot) else { return }
+        var updated = bot
+        if bot.jobInMemory != true {
+            let old = [bot.job, bot.instructions].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            if !old.allSatisfy(\.isEmpty) {
+                if let kept = Self.job(inMemory: text) {
+                    // It wrote one of its own: what Edit Bot said goes under it, if it isn't there.
+                    let missing = old[1].isEmpty || Self.flat(kept.section).contains(Self.flat(old[1])) ? "" : old[1]
+                    if !missing.isEmpty { text = text.replacingOccurrences(of: kept.section, with: kept.section + "\n\n" + missing) }
+                } else {
+                    text = Self.addingJob(old[0], details: old[1], to: text)
+                }
+                guard await write(memory: text, of: bot) else { return }
+            }
+            updated.jobInMemory = true
+        }
+        let kept = Self.job(inMemory: text)
+        updated.job = kept?.line ?? ""
+        updated.instructions = kept?.section ?? ""
+        if bot.machine == nil { memoryRead[id] = (try? FileManager.default.attributesOfItem(atPath: bot.memoryFile)[.modificationDate]) as? Date }
+        guard updated != bot, let index = list.firstIndex(where: { $0.id == id }) else { return }
+        list[index] = updated
+        save()
+        guard updated.job != bot.job || updated.instructions != bot.instructions, let api = app?.workspace.api(forFolder: updated.directory) else { return }
+        try? await sendInstructions(of: updated, api: api)
+        await app?.groups.botChanged(updated)
+    }
+
+    /// Text compared without its spacing.
+    private static func flat(_ text: String) -> String {
+        text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
+
+    /// Mac bots whose memory changed since it was last read.
+    private func memoryChanged() -> [String] {
+        list.filter { bot in
+            guard bot.machine == nil else { return false }
+            let modified = (try? FileManager.default.attributesOfItem(atPath: bot.memoryFile)[.modificationDate]) as? Date
+            return modified != nil && modified != memoryRead[bot.id]
+        }.map(\.id)
+    }
+
+    /// A bot's run ended: its job may have changed in its memory (on a machine, where it can't be
+    /// seen changing).
+    func runEnded(session: String) {
+        guard let bot = bot(forSession: session), bot.machine != nil else { return }
+        Task { await syncJob(of: bot.id) }
+    }
+
     /// Whether a path is a bot's memory file.
     static func isMemory(_ path: String) -> Bool {
         path.hasSuffix("/MEMORY.md") && path.contains("/bots/bot_")
@@ -574,7 +698,13 @@ final class Bots {
         return """
         You are \(bot.name), one of the user's bots in Kuvo Code\(bot.job.isEmpty ? "" : ": \(bot.job)"). A bot is a teammate with one job, \
         who keeps working on it over time in this one conversation. You run on \(place).
-        \(Personalities.shared.personality(bot.personality).map { "\n\($0.instruction)\n" } ?? "")\(job.isEmpty ? "" : "\nYour job:\n\(job)\n")
+        \(Personalities.shared.personality(bot.personality).map { "\n\($0.instruction)\n" } ?? "")
+        Your job is what the user gives you in this conversation, and it changes as they tell you more. Keep it at the top \
+        of your memory file, under a "## Job" heading: first, on a line of its own, what you do in a few words, like "Keeps \
+        the build green" (Kuvo Code shows it under your name); then, below it, the details: what to watch, what to make, what \
+        never to do without asking. When the user gives you a job or changes it, update that section before anything else.
+        \(job.isEmpty ? "You don't have a job yet: ask the user what they'd like you to do, if they haven't said." : "Your job, as your memory has it:\n\(job)")
+
         You can work on a schedule. Kuvo Code wakes you up at the times you choose, even while the user is away, so you can do \
         things later ("in 2 hours", "tomorrow at 9") or again and again ("every 5 minutes", "every morning"). Never say you can't \
         run in the background, on a timer or on a schedule: schedule a wake-up instead.
@@ -622,9 +752,9 @@ final class Bots {
 
     /// Who sets what about a bot, so it doesn't claim to have changed them.
     static let identityNote = """
-        Your name, look, personality, job and model are set by the user in Kuvo Code, under Edit Bot. You can't change them, \
-        and writing a new name or job into your memory doesn't change them either. If you're asked to, say so plainly and \
-        suggest Edit Bot.
+        Your name, look, personality and model are set by the user in Kuvo Code, under Edit Bot. You can't change them, \
+        and writing a new name into your memory doesn't change it either. If you're asked to, say so plainly and suggest \
+        Edit Bot. Your job is yours to keep, in your memory, as the user gives it to you.
         """
 
     /// Gives each bot's session the current wording of its instructions, once a run of the app,
@@ -679,8 +809,11 @@ final class Bots {
 
     func syncInstructions() async {
         let sent = UserDefaults.standard.dictionary(forKey: Self.sentKey) as? [String: String] ?? [:]
-        for bot in list where !synced.contains(bot.id) {
-            guard let api = app?.workspace.api(forFolder: bot.directory) else { continue }
+        for listed in list where !synced.contains(listed.id) {
+            guard let api = app?.workspace.api(forFolder: listed.directory) else { continue }
+            // A machine's bot: its job as its memory there has it now.
+            if listed.machine != nil { await syncJob(of: listed.id) }
+            guard let bot = bot(listed.id) else { continue }
             if sent[bot.sessionID] != Self.digest(Self.instructions(for: bot)) {
                 guard (try? await sendInstructions(of: bot, api: api)) != nil else { continue }
             }

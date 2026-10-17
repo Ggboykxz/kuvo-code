@@ -1,7 +1,7 @@
 import Foundation
 
-/// Bots to start from when making one: a name, a job, instructions and a look that fit, all of
-/// which you can change before it's made.
+/// Bots to start from when making one: a name, a look and a personality that fit, and a job,
+/// typed in the new bot's conversation for you to change and send.
 struct BotTemplate: Identifiable {
     let id: String
     let name: String
@@ -12,6 +12,16 @@ struct BotTemplate: Identifiable {
     let personality: String?
     /// It works on a project's code, so it's best made in one.
     var wantsProject = false
+
+    /// A job as the first message to a new bot: what it does in a few words, then how.
+    static func firstMessage(job: String, instructions: String) -> String {
+        let job = job.trimmingCharacters(in: .whitespacesAndNewlines)
+        let instructions = instructions.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !job.isEmpty || !instructions.isEmpty else { return "" }
+        return [job.isEmpty ? "" : "Your job, in a few words: \(job).", instructions,
+                "Start now: ask me for anything you need first, do the first round, and if it repeats or keeps an eye on something, set that up."]
+            .filter { !$0.isEmpty }.joined(separator: "\n\n")
+    }
 
     static let all: [BotTemplate] = [
         BotTemplate(

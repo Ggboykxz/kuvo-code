@@ -789,6 +789,8 @@ final class Workspace {
     }
     /// A bot's name, by its session, for its notifications.
     @ObservationIgnored var botName: ((String) -> String?)?
+    /// A session's run ended (a bot's memory may have changed).
+    @ObservationIgnored var onRunEnded: ((String) -> Void)?
 
     /// The start of a bot's last reply, for its row in the sidebar while it's unread, as a chat
     /// list shows a message.
@@ -873,6 +875,7 @@ final class Workspace {
             running.remove(id)
             endedRuns[id, default: 0] += 1
             noteTurn(id, event)
+            onRunEnded?(id)
             // Picks up the new idle time (unread state) and outcome.
             Task {
                 await reload(id)

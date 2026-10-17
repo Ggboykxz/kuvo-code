@@ -1,13 +1,15 @@
 import AppKit
 import UniformTypeIdentifiers
 
-/// A bot to share: what makes it itself (its name, look, job, instructions and personality), in a
-/// file a teammate opens with File › Import Bot…, where it starts a new bot as a template does.
-/// Not its memory, wake-ups, model or where it lives: those are the new bot's own.
+/// A bot to share: what makes it itself (its name, look, personality, and its job as its memory
+/// has it), in a file a teammate opens with File › Import Bot…, where it starts a new bot as a
+/// template does: the job typed in its conversation. Not the rest of its memory, its wake-ups,
+/// model or where it lives: those are the new bot's own.
 struct BotRecipe: Codable, Equatable {
     var kind = "kuvo-bot"
     var version = 1
     var name: String
+    /// Its job in a few words, and in full.
     var job: String
     var instructions: String
     var look: BotLook
@@ -61,7 +63,7 @@ struct BotRecipe: Codable, Equatable {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [type]
         panel.nameFieldStringValue = bot.name + ".kuvobot"
-        panel.message = "A file to share \(bot.name): its look, job, instructions and personality. Its memory and wake-ups stay here."
+        panel.message = "A file to share \(bot.name): its look, personality and job. The rest of its memory and its wake-ups stay here."
         guard panel.runModal() == .OK, let url = panel.url else { return }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
