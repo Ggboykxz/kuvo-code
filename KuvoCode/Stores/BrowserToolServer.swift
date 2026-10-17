@@ -253,7 +253,10 @@ enum BrowserTools {
         // A relative one is in the folder the conversation works in.
         let expanded = (raw as NSString).expandingTildeInPath
         let base = caller.flatMap(sessionFolder) ?? FileManager.default.currentDirectoryPath
-        let full = (expanded.hasPrefix("/") ? URL(filePath: expanded) : URL(filePath: base).appending(path: expanded)).standardizedFileURL.path
+        // A full path is taken as given: standardizing would take /private off /private/var/…,
+        // where projects in the temporary folder are, and call the agent's own path wrong.
+        let clean = expanded.hasPrefix("/") && !expanded.split(separator: "/").contains { $0 == ".." || $0 == "." }
+        let full = clean ? expanded : (expanded.hasPrefix("/") ? URL(filePath: expanded) : URL(filePath: base).appending(path: expanded)).standardizedFileURL.path
         guard full == raw else { return text("Give the full path: \(full)", error: true) }
         var isFolder: ObjCBool = false
         guard FileManager.default.fileExists(atPath: full, isDirectory: &isFolder) else { return text("There's nothing at \(full).", error: true) }
