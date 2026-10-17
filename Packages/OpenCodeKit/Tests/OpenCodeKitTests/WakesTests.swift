@@ -135,6 +135,9 @@ struct WakesTests {
         utc.timeZone = TimeZone(identifier: "UTC")!
         #expect(utc.component(.weekday, from: monday.due) == 2)
         #expect(utc.component(.hour, from: monday.due) == 9)
+        // It keeps its time of day, for when clocks change.
+        #expect(monday.at == 9 * 60)
+        #expect(try sh("\"\(wake)\" \"\(bot.path)\" list", in: k).output.contains("(every weekdays)"))
 
         // Canceled by its letters, which it keeps as its time moves on.
         #expect(try sh("\"\(wake)\" \"\(bot.path)\" cancel \(monday.letters)", in: k).status == 0)
@@ -142,20 +145,22 @@ struct WakesTests {
 
         // On a machine, the times are in the user's time zone, which the bot's folder names.
         try "America/New_York".write(to: bot.appending(path: "timezone"), atomically: true, encoding: .utf8)
-        #expect(try sh("TZ=UTC \"\(wake)\" \"\(bot.path)\" add 2099-01-05T09:00 'in New York'", in: k).status == 0)
+        #expect(try sh("TZ=UTC \"\(wake)\" \"\(bot.path)\" add 2099-01-05T09:00 --every 1d 'in New York'", in: k).status == 0)
         let names = try FileManager.default.contentsOfDirectory(atPath: bot.appending(path: "wakes").path)
         let newYork = try #require(Wakes.Pending(id: names[0], note: ""))
         #expect(utc.component(.hour, from: newYork.due) == 14)
+        #expect(newYork.at == 9 * 60)
     }
 
-    @Test func watchesWakeOnlyWhenTheirCheckChanges() throws {
+    @Test(arguments: WakesTests.shells)
+    func watchesWakeOnlyWhenTheirCheckChanges(shell: String) throws {
         let k = try folder()
         defer { try? FileManager.default.removeItem(at: k) }
         #expect(try sh(Wakes.installScript, in: k).status == 0)
         let wake = k.appending(path: "bin/kuvo-wake").path
         let bot = k.appending(path: "bots/bot_test")
         try FileManager.default.createDirectory(at: bot, withIntermediateDirectories: true)
-        let run = { (command: String) in try self.sh("\"\(wake)\" \"\(bot.path)\" \(command)", in: k) }
+        let run = { (command: String) in try self.sh("\(shell) \"\(wake)\" \"\(bot.path)\" \(command)", in: k) }
 
         #expect(try run("watch 2m 'cat state.txt' 'too often'").status != 0)
         #expect(try run("watch 10m '' 'no check'").status != 0)
@@ -223,12 +228,12 @@ struct WakesTests {
         #expect(try FileManager.default.contentsOfDirectory(atPath: bot.appending(path: "watches").path).isEmpty)
     }
 
-    /// The script's next time for a repeat, from its own functions, at `now`.
-    private func scriptNext(_ due: Date, _ every: String, now: Date, zone: String) throws -> Date {
+    /// The script's next time for a repeat (as a wake-up's name has it), from its own functions, at `now`.
+    private func scriptNext(_ due: Date, _ every: String, now: Date, zone: String, shell: String = "/bin/sh") throws -> Date {
         let functions = try #require(Wakes.script.components(separatedBy: "if [ \"$1\" = fire ]").first)
         let k = try folder()
         defer { try? FileManager.default.removeItem(at: k) }
-        let run = try sh("export TZ=\(zone)\n" + functions + "\nnow=\(Int(now.timeIntervalSince1970))\nnext \(Int(due.timeIntervalSince1970)) \(every)", in: k)
+        let run = try sh("export TZ=\(zone)\n" + functions + "\nnow=\(Int(now.timeIntervalSince1970))\nnext \(Int(due.timeIntervalSince1970)) \(every)", in: k, shell: shell)
         return Date(timeIntervalSince1970: try #require(TimeInterval(run.output.trimmingCharacters(in: .whitespacesAndNewlines))))
     }
 
@@ -251,6 +256,58 @@ struct WakesTests {
         }
     }
 
+    @Test func aRepeatKeepsItsTimeOfDayAcrossDaylightSaving() throws {
+        var newYork = Calendar(identifier: .gregorian)
+        newYork.timeZone = TimeZone(identifier: "America/New_York")!
+        let at = { (month: Int, day: Int, hour: Int, minute: Int) in
+            newYork.date(from: DateComponents(year: 2026, month: month, day: day, hour: hour, minute: minute))!
+        }
+        // Clocks go forward on Sunday, March 8 (2:00 is 3:00) and back on Sunday, November 1
+        // (2:00 is 1:00 again).
+        let cases: [(due: Date, every: Wakes.Repeat, at: Int?, now: Date, next: Date)] = [
+            // 2:30 doesn't exist on March 8: 3:30 that day, and 2:30 again the day after.
+            (at(3, 7, 2, 30), .days(1), 150, at(3, 7, 2, 31), at(3, 8, 3, 30)),
+            (at(3, 8, 3, 30), .days(1), 150, at(3, 8, 3, 31), at(3, 9, 2, 30)),
+            (at(3, 6, 2, 30), .weekdays, 150, at(3, 6, 2, 31), at(3, 9, 2, 30)),
+            (at(3, 1, 2, 30), .weeks(1), 150, at(3, 1, 2, 31), at(3, 8, 3, 30)),
+            (at(3, 8, 9, 0), .days(1), 540, at(3, 8, 9, 1), at(3, 9, 9, 0)),
+            // 1:30 comes twice on November 1: the first.
+            (at(10, 31, 1, 30), .days(1), 90, at(10, 31, 1, 31), at(11, 1, 1, 30)),
+            // Due the day before, sent after clocks went back, before its time: still today's.
+            (at(10, 31, 9, 0), .days(1), 540, at(11, 1, 8, 30), at(11, 1, 9, 0)),
+            (at(10, 31, 9, 0), .weeks(1), 540, at(11, 7, 8, 30), at(11, 7, 9, 0)),
+            (at(10, 30, 9, 0), .weekdays, 540, at(11, 2, 8, 30), at(11, 2, 9, 0)),
+            // Several days missed.
+            (at(10, 28, 9, 0), .days(1), 540, at(11, 2, 10, 0), at(11, 3, 9, 0)),
+        ]
+        for test in cases {
+            #expect(test.every.next(after: test.due, now: test.now, at: test.at, calendar: newYork) == test.next, "\(test.every) from \(test.due)")
+            let text = Wakes.text(of: test.every, at: test.at)
+            for shell in Self.shells {
+                #expect(try scriptNext(test.due, text, now: test.now, zone: "America/New_York", shell: shell) == test.next, "\(text) from \(test.due) in \(shell)")
+            }
+        }
+        // One made before it kept its time of day: the time it was due at.
+        #expect(Wakes.Repeat.days(1).next(after: at(10, 31, 9, 0), now: at(10, 31, 9, 1), calendar: newYork) == at(11, 1, 9, 0))
+        #expect(try scriptNext(at(10, 31, 9, 0), "1d", now: at(10, 31, 9, 1), zone: "America/New_York") == at(11, 1, 9, 0))
+    }
+
+    @Test func aRepeatKeepsItsTimeOfDayInANewTimeZone() throws {
+        var istanbul = Calendar(identifier: .gregorian)
+        istanbul.timeZone = TimeZone(identifier: "Europe/Istanbul")!
+        var london = Calendar(identifier: .gregorian)
+        london.timeZone = TimeZone(identifier: "Europe/London")!
+        // Set for 9:00 in Istanbul, then the Mac moves to London: 9:00 there.
+        let due = istanbul.date(from: DateComponents(year: 2026, month: 11, day: 10, hour: 9))!
+        let wake = try #require(Wakes.Pending(id: Wakes.name(due: due, every: .days(1), calendar: istanbul), note: ""))
+        #expect(wake.at == 540)
+        let next = london.date(from: DateComponents(year: 2026, month: 11, day: 11, hour: 9))!
+        #expect(wake.nextID(after: due.addingTimeInterval(60), calendar: london)?.hasPrefix("\(Int(next.timeIntervalSince1970))-") == true)
+        for shell in Self.shells {
+            #expect(try scriptNext(due, "1d@0900", now: due.addingTimeInterval(60), zone: "Europe/London", shell: shell) == next, "\(shell)")
+        }
+    }
+
     @Test func readsARepeat() {
         #expect(Wakes.Repeat("30m") == .minutes(30))
         #expect(Wakes.Repeat("1w") == .weeks(1))
@@ -260,8 +317,16 @@ struct WakesTests {
         #expect(Wakes.Repeat("d") == nil)
         let wake = Wakes.Pending(id: "1792080986-CkytYD-1d", note: "hi")
         #expect(wake?.every == .days(1))
-        #expect(wake?.nextID()?.hasSuffix("-CkytYD-1d") == true)
+        #expect(wake?.at == nil)
+        #expect(wake?.nextID()?.contains("-CkytYD-1d@") == true, "keeps its time of day from then on")
         #expect(wake?.letters == "CkytYD")
+        let kept = Wakes.Pending(id: "1792080986-CkytYD-weekdays@0230", note: "hi")
+        #expect(kept?.every == .weekdays)
+        #expect(kept?.at == 150)
+        #expect(kept?.nextID()?.hasSuffix("-CkytYD-weekdays@0230") == true)
+        #expect(kept?.letters == "CkytYD")
+        #expect(Wakes.Pending(id: "1792080986-CkytYD-1d@2460", note: "")?.at == nil)
+        #expect(Wakes.Pending(id: "1792080986-CkytYD-2h", note: "")?.nextID()?.hasSuffix("-CkytYD-2h") == true)
         #expect(Wakes.Pending(id: "1792080986-CkytYD", note: "hi")?.nextID() == nil)
         let command = Wakes.command(in: #"kuvo-wake bot_abc add 2026-10-17T09:00 --every weekdays "standup""#)
         #expect(command == Wakes.Command(verb: .add, when: "2026-10-17T09:00", note: "standup", every: .weekdays))

@@ -35,6 +35,9 @@ struct BotGroup: Codable, Identifiable, Hashable {
         /// How often it comes back, as kuvo-wake writes it (1d, weekdays…); nil for once.
         var every: String?
         var topic: String
+        /// The time of day one that repeats by days keeps, in minutes, from its first time, so
+        /// daylight saving or a new time zone doesn't move it for good.
+        var at: Int?
 
         var repeats: Wakes.Repeat? { every.flatMap(Wakes.Repeat.init) }
     }
@@ -371,7 +374,8 @@ final class BotGroups {
             guard var meeting = group.meeting, meeting.next <= .now, let index = list.firstIndex(where: { $0.id == group.id }) else { continue }
             meet(group.id, about: meeting.topic)
             if let every = meeting.repeats {
-                meeting.next = every.next(after: meeting.next, now: .now)
+                if every.keepsTimeOfDay, meeting.at == nil { meeting.at = Wakes.minutes(of: meeting.next) }
+                meeting.next = every.next(after: meeting.next, now: .now, at: every.keepsTimeOfDay ? meeting.at : nil)
                 list[index].meeting = meeting
             } else {
                 list[index].meeting = nil

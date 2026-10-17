@@ -16,12 +16,16 @@ public enum Wakes {
     /// One waiting wake-up, from its file.
     public struct Pending: Sendable, Hashable, Identifiable {
         /// The file's name: the time it's due, in seconds, a dash and a few random letters, and for
-        /// one that repeats, a dash and its repeat.
+        /// one that repeats, a dash and its repeat; for days, weeks and weekdays, then "@" and the
+        /// time of day it keeps (1d@0900).
         public let id: String
         public let due: Date
         public let note: String
         /// How often it comes back, if it does.
         public let every: Repeat?
+        /// The time of day it keeps, in minutes, for one that repeats by days; nil for one made
+        /// before it kept it.
+        public let at: Int?
 
         public init?(id: String, note: String) {
             let parts = id.split(separator: "-", maxSplits: 2)
@@ -29,18 +33,22 @@ public enum Wakes {
             self.id = id
             due = Date(timeIntervalSince1970: seconds)
             self.note = note
-            every = parts.count > 2 ? Repeat(String(parts[2])) : nil
+            let repeating = parts.count > 2 ? parts[2].split(separator: "@", maxSplits: 1).map(String.init) : []
+            every = repeating.first.flatMap(Repeat.init)
+            at = repeating.count > 1 ? Wakes.minutes(repeating[1]) : nil
         }
 
         /// The letters that name it for good: a repeating one keeps them when it comes back.
         public var letters: String { String(id.split(separator: "-").dropFirst().first ?? "") }
 
-        /// The file's name for its next time, after it went at `now`, with the same letters; nil
-        /// if it doesn't repeat.
+        /// The file's name for its next time, after it went at `now`, with the same letters and
+        /// time of day (one made before it kept that, the one it was due at); nil if it doesn't
+        /// repeat.
         public func nextID(after now: Date = .now, calendar: Calendar = .current) -> String? {
             guard let every else { return nil }
-            let next = every.next(after: due, now: now, calendar: calendar)
-            return "\(Int(next.timeIntervalSince1970))-\(letters)-\(every.text)"
+            let at = every.keepsTimeOfDay ? at ?? Wakes.minutes(of: due, calendar: calendar) : nil
+            let next = every.next(after: due, now: now, at: at, calendar: calendar)
+            return "\(Int(next.timeIntervalSince1970))-\(letters)-" + Wakes.text(of: every, at: at)
         }
     }
 
@@ -72,31 +80,67 @@ public enum Wakes {
             }
         }
 
-        /// The first time after `now` it comes back, from when it was due: the same time of day for
-        /// days and weeks, across a daylight saving change too, and skipping weekends for weekdays.
-        public func next(after due: Date, now: Date, calendar: Calendar = .current) -> Date {
+        /// Whether it comes back at a time of day (days, weeks and weekdays) rather than after so long.
+        public var keepsTimeOfDay: Bool {
+            switch self {
+            case .minutes, .hours: false
+            case .days, .weeks, .weekdays: true
+            }
+        }
+
+        /// The first time after `now` it comes back, from when it was due. Days, weeks and
+        /// weekdays come back at `at` (minutes into the day; nil for the time of day it was due)
+        /// on `calendar`'s clock, whatever daylight saving or a new time zone did to the last
+        /// time: on the night clocks go forward, a time in the hour skipped is that much later
+        /// that day only. Weekdays skip weekends.
+        public func next(after due: Date, now: Date, at minutes: Int? = nil, calendar: Calendar = .current) -> Date {
             switch self {
             case .minutes(let n), .hours(let n):
                 let period = TimeInterval(n * (self == .hours(n) ? 3600 : 60))
                 return due.addingTimeInterval(((now.timeIntervalSince(due) / period).rounded(.down) + 1) * period)
             case .days, .weeks, .weekdays:
                 let days = switch self { case .days(let n): n; case .weeks(let n): n * 7; default: 1 }
-                var next = due
-                // Whole periods missed first, then one at a time.
-                let missed = Int(now.timeIntervalSince(due) / Double(days * 86_400))
-                if missed > 0 { next = calendar.date(byAdding: .day, value: missed * days, to: due) ?? next }
-                repeat {
-                    next = calendar.date(byAdding: .day, value: days, to: next) ?? next.addingTimeInterval(Double(days * 86_400))
-                } while next <= now || (self == .weekdays && calendar.isDateInWeekend(next))
-                return next
+                let minutes = minutes ?? Wakes.minutes(of: due, calendar: calendar)
+                let first = calendar.startOfDay(for: due)
+                // Whole periods missed first, but not one still to come today; then one at a time.
+                let missed = calendar.dateComponents([.day], from: first, to: calendar.startOfDay(for: now)).day ?? 0
+                var periods = max(1, missed / days)
+                for _ in 0..<400 {
+                    defer { periods += 1 }
+                    guard let day = calendar.date(byAdding: .day, value: periods * days, to: first) else { continue }
+                    var time = calendar.dateComponents([.year, .month, .day], from: day)
+                    time.hour = minutes / 60
+                    time.minute = minutes % 60
+                    if let next = calendar.date(from: time), next > now, self != .weekdays || !calendar.isDateInWeekend(next) { return next }
+                }
+                return now.addingTimeInterval(Double(days * 86_400))
             }
         }
     }
 
-    /// A wake-up's file name: its time, a few random letters, and its repeat if it has one.
-    public static func name(due: Date, every: Repeat?) -> String {
+    /// A wake-up's file name: its time, a few random letters, and its repeat if it has one, with
+    /// the time of day it keeps (from `due`, on `calendar`'s clock).
+    public static func name(due: Date, every: Repeat?, calendar: Calendar = .current) -> String {
         let letters = String((0..<6).map { _ in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789".randomElement()! })
-        return "\(Int(due.timeIntervalSince1970))-\(letters)" + (every.map { "-\($0.text)" } ?? "")
+        let repeating = every.map { "-" + text(of: $0, at: $0.keepsTimeOfDay ? minutes(of: due, calendar: calendar) : nil) } ?? ""
+        return "\(Int(due.timeIntervalSince1970))-\(letters)" + repeating
+    }
+
+    /// A repeat as a wake-up's name has it: 1d@0900 for every day at 9:00.
+    static func text(of every: Repeat, at minutes: Int?) -> String {
+        every.text + (minutes.map { "@" + String(format: "%02d%02d", $0 / 60, $0 % 60) } ?? "")
+    }
+
+    /// Minutes into the day, from 0900.
+    static func minutes(_ text: String) -> Int? {
+        guard text.count == 4, text.allSatisfy({ $0.isASCII && $0.isNumber }), let hhmm = Int(text), hhmm / 100 < 24, hhmm % 100 < 60 else { return nil }
+        return hhmm / 100 * 60 + hhmm % 100
+    }
+
+    /// Minutes into the day of a time, on `calendar`'s clock.
+    public static func minutes(of date: Date, calendar: Calendar = .current) -> Int {
+        let time = calendar.dateComponents([.hour, .minute], from: date)
+        return (time.hour ?? 0) * 60 + (time.minute ?? 0)
     }
 
     /// A watch: every so often its check (a shell command) runs, without the model, and when what
@@ -256,43 +300,71 @@ public enum Wakes {
     # A time (seconds) in a date format, with GNU's date or the BSD one.
     clock() { date -d "@$1" "+$2" 2>/dev/null || date -r "$1" "+$2"; }
 
-    # Minutes into the day of a time.
-    minutes() { set -- $(clock "$1" '%H %M'); echo $((${1#0} * 60 + ${2#0})); }
-
-    # The same time of day, $2 days after $1, across a daylight saving change too.
-    later() {
-      l_t=$(($1 + $2 * 86400))
-      l_d=$(($(minutes "$1") - $(minutes "$l_t")))
-      [ "$l_d" -gt 720 ] && l_d=$((l_d - 1440)); [ "$l_d" -lt -720 ] && l_d=$((l_d + 1440))
-      echo $((l_t + l_d * 60))
+    # How far this computer's clock is ahead of UTC at a time, in seconds.
+    offset() {
+      o_z=$(clock "$1" %z); case "$o_z" in [+-][0-9][0-9][0-9][0-9]) ;; *) echo 0; return ;; esac
+      o_h=${o_z#?}; o_m=${o_h#??}; o_h=${o_h%??}
+      o_s=$((${o_h#0} * 3600 + ${o_m#0} * 60))
+      case "$o_z" in -*) echo $((-o_s)) ;; *) echo "$o_s" ;; esac
     }
 
-    # Whether a repeat reads: 30m, 2h, 1d, 1w (at least 5m), or weekdays.
+    # The day of a time on this computer's clock, counted from January 1, 1970 (a Thursday).
+    day() { echo $((($1 + $(offset "$1")) / 86400)); }
+
+    # Whether a day is Monday to Friday.
+    weekday() { [ $((($1 + 3) % 7)) -lt 5 ]; }
+
+    # The time on day $1 at $2 (0900, on this computer's clock). When clocks go back, the first of
+    # the two; when they go forward, one in the hour skipped is that much later (2:30 is 3:30).
+    daytime() {
+      d_h=${2%??}; d_m=${2#??}
+      d_l=$(($1 * 86400 + ${d_h#0} * 3600 + ${d_m#0} * 60))
+      d_t=$((d_l - $(offset $((d_l - 86400)))))
+      if [ $((d_t + $(offset "$d_t"))) -ne "$d_l" ]; then
+        d_u=$((d_l - $(offset "$d_t")))
+        [ $((d_u + $(offset "$d_u"))) -ne "$d_l" ] || d_t=$d_u
+      fi
+      echo "$d_t"
+    }
+
+    # Whether a repeat reads: 30m, 2h, 1d, 1w (at least 5m), or weekdays; days, weeks and weekdays
+    # may say the time of day they keep (1d@0900).
     repeats() {
-      case "$1" in
+      r_e=${1%@*}
+      if [ "$r_e" != "$1" ]; then
+        case "$r_e" in *[dw]|weekdays) ;; *) return 1 ;; esac
+        case "${1#*@}" in [01][0-9][0-5][0-9]|2[0-3][0-5][0-9]) ;; *) return 1 ;; esac
+      fi
+      case "$r_e" in
         weekdays) return 0 ;;
-        *[mhdw]) r_n=${1%?}; case "$r_n" in ''|*[!0-9]*) return 1;; esac
+        *[mhdw]) r_n=${r_e%?}; case "$r_n" in ''|*[!0-9]*) return 1;; esac
           [ "$r_n" -gt 0 ] || return 1
-          case "$1" in *m) [ "$r_n" -ge 5 ] || return 1;; esac ;;
+          case "$r_e" in *m) [ "$r_n" -ge 5 ] || return 1;; esac ;;
         *) return 1 ;;
       esac
     }
 
-    # A repeating wake-up's next time after now: $1 the time it was due, $2 its repeat.
+    # A repeat as a wake-up's name has it, from its first time ($1): days, weeks and weekdays with
+    # the time of day they keep, whatever daylight saving or a new time zone does to the last.
+    kept() { case "$2" in *[dw]|weekdays) echo "$2@$(clock "$1" %H%M)" ;; *) echo "$2" ;; esac; }
+
+    # A repeating wake-up's next time after now: $1 the time it was due, $2 its repeat as its name
+    # has it (an older one without its time of day keeps the one it was due at).
     next() {
       case "$2" in
         *m|*h)
           n_p=${2%?}; case "$2" in *h) n_p=$((n_p * 3600));; *) n_p=$((n_p * 60));; esac
           echo $(($1 + (($now - $1) / n_p + 1) * n_p)) ;;
         *)
-          case "$2" in weekdays) n_days=1;; *w) n_days=$((${2%?} * 7));; *) n_days=${2%?};; esac
-          # Whole periods missed first, then one at a time.
-          n_skip=$((($now - $1) / (n_days * 86400)))
-          n_t=$1; [ "$n_skip" -gt 0 ] && n_t=$(later "$1" $((n_skip * n_days)))
+          n_e=${2%@*}; n_at=${2#*@}; [ "$n_e" != "$2" ] || n_at=$(clock "$1" %H%M)
+          case "$n_e" in weekdays) n_days=1;; *w) n_days=$((${n_e%?} * 7));; *) n_days=${n_e%?};; esac
+          n_day=$(day "$1")
+          # Whole periods missed first, but not one still to come today; then one at a time.
+          n_k=$((($(day "$now") - n_day) / n_days)); [ "$n_k" -ge 1 ] || n_k=1
           while :; do
-            n_t=$(later "$n_t" "$n_days")
-            [ "$n_t" -gt "$now" ] || continue
-            [ "$2" != weekdays ] || [ "$(clock "$n_t" %u)" -le 5 ] && break
+            n_t=$(daytime $((n_day + n_k * n_days)) "$n_at")
+            [ "$n_t" -gt "$now" ] && { [ "$n_e" != weekdays ] || weekday $((n_day + n_k)); } && break
+            n_k=$((n_k + 1))
           done
           echo "$n_t" ;;
       esac
@@ -408,11 +480,14 @@ public enum Wakes {
           case "$due" in ''|*[!0-9]*) continue;; esac
           [ "$due" -le "$now" ] || continue
           # Sent: a repeating one comes back at its next time (in the user's time zone, which the
-          # bot's folder names), keeping its letters; others are done.
+          # bot's folder names), keeping its letters and time of day (one made before it kept
+          # that, the one it was due at); others are done.
           if deliver "$(cat "$wake")"; then
             if [ -n "$every" ] && repeats "$every"; then
               tz=$(cat "${bot}timezone" 2>/dev/null)
-              mv -f "$wake" "${bot}wakes/$( [ -n "$tz" ] && export TZ="$tz"; next "$due" "$every")-$rest"
+              mv -f "$wake" "${bot}wakes/$( [ -n "$tz" ] && export TZ="$tz"
+                [ "${every%@*}" != "$every" ] || every=$(kept "$due" "$every")
+                echo "$(next "$due" "$every")-${rest%%-*}-$every" )"
             else
               rm -f "$wake"
             fi
@@ -449,9 +524,13 @@ public enum Wakes {
         shift 3; every=
         if [ "$1" = --every ]; then
           repeats "$2" || { echo "Couldn't read the repeat \"$2\". Use 30m, 2h, 1d, 1w (at least 5m), or weekdays." >&2; exit 2; }
-          every=$2; shift 2
-          # On weekdays: the first one too.
-          if [ "$every" = weekdays ]; then while [ "$(clock "$due" %u)" -gt 5 ]; do due=$(later "$due" 1); done; fi
+          every=${2%@*}; shift 2
+          # On weekdays: the first one too, at the same time of day.
+          if [ "$every" = weekdays ] && ! weekday "$(day "$due")"; then
+            a_day=$(day "$due"); a_at=$(clock "$due" %H%M)
+            while ! weekday "$a_day"; do a_day=$((a_day + 1)); done
+            due=$(daytime "$a_day" "$a_at")
+          fi
         fi
         note="$*"
         [ -n "$note" ] || { echo "Add a note for yourself: what to do when you wake up." >&2; exit 2; }
@@ -459,7 +538,7 @@ public enum Wakes {
         mkdir -p "$bot/wakes"
         count=$(ls "$bot/wakes" 2>/dev/null | wc -l)
         [ "$count" -lt 50 ] || { echo "You already have 50 wake-ups waiting. Cancel some first." >&2; exit 2; }
-        id=$(name "$due" "$every")
+        id=$(name "$due" "${every:+$(kept "$due" "$every")}")
         printf '%s' "$note" >"$bot/wakes/$id"
         echo "Scheduled $id for $(readable "$due")${every:+, then every $every until canceled}." ;;
       watch)
@@ -481,7 +560,7 @@ public enum Wakes {
         for wake in "$bot"/wakes/*; do
           [ -f "$wake" ] || continue
           found=1; id=${wake##*/}
-          every=${id#*-}; case "$every" in *-*) every=" (every ${every#*-})";; *) every=;; esac
+          every=${id#*-}; case "$every" in *-*) every=${every#*-}; every=" (every ${every%@*})";; *) every=;; esac
           echo "$id  $(readable "${id%%-*}")$every  $(head -n 1 "$wake")"
         done
         for w in "$bot"/watches/*/; do
