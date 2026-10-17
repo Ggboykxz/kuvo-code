@@ -6,6 +6,9 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Links written as `[text][1]`, with their addresses listed at the end of a long reply, work all the way through. They showed as plain brackets in every part of the reply but the last.
+- Opening a conversation while the agent is working shows all of it. It could show empty or out of date, or leave out the words being written or a step, until it was opened again.
+- After the connection to the engine or a machine comes back, a conversation shows each message, step and turn's end once. The last ones could show twice until you switched away and back.
 - Updating the browser on a machine no longer deletes the copy that's running when the home folder there is reached through a link. Two Macs on different versions of Kuvo Code no longer send the browser to a machine they share in turns, and a half-built browser download left on your Mac when Kuvo Code quit is cleaned up.
 - On a machine, while an agent waits for you to sign in, give a code or do a step, other sessions and bots there keep browsing; they used to wait with it, up to 15 minutes. A stopped agent's card closes and its leftover steps no longer run later, and if the page changed while you answered, nothing is filled in.
 - On a machine, an agent's browsing answers pop-up dialogs only in the page it's working in. It could answer, or even accept, one in a page you were using or had taken over while another agent browsed.
