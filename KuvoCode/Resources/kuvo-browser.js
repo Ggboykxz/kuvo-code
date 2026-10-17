@@ -857,8 +857,8 @@ class HeldError extends Error {}
 let link = null;
 let active = null;
 const sessions = new Map();
-// Dialogs a page opened while no tool was running, by session, and what the agent should hear
-// about the ones answered.
+// Dialogs a page opened that no tool has answered (none was at work in it), by session, and what
+// the agent should hear about the ones answered.
 const dialogs = new Map();
 const notes = [];
 const noteOnce = (note) => {
@@ -918,8 +918,10 @@ async function openLink() {
         for (const [target, session] of sessions) if (session === message.params.sessionId) sessions.delete(target);
         break;
       case "Page.javascriptDialogOpening":
-        // During a tool, at once: the page (and the script that opened it) waits on the answer.
-        if (busy) answer(message.sessionId, message.params);
+        // In the page the tool at work is in, at once: the page (and the script that opened it)
+        // waits on the answer. Any other page's waits for a tool there, or for you, as does one
+        // you took over.
+        if (busy && workingIn && sessions.get(workingIn) === message.sessionId && !held.has(workingIn)) answer(message.sessionId, message.params);
         else dialogs.set(message.sessionId, message.params);
         break;
       case "Kuvo.downloading":
@@ -1002,6 +1004,8 @@ async function use(target) {
     workingIn = target;
     c.notify("Kuvo.setStatus", { working: true, tool: currentTool, targetId: target, ...(caller ? { session: caller } : {}) });
   }
+  // A dialog it left waiting, first, unless you took the page over.
+  if (busy && dialogs.has(session) && !held.has(target)) answer(session, dialogs.get(session));
   return { target, session };
 }
 
@@ -1569,8 +1573,6 @@ async function tool(name, args) {
   }
 
   let p = await page();
-  // A dialog the page left waiting, first.
-  for (const [sessionId, dialog] of dialogs) answer(sessionId, dialog);
   const note = () => (notes.length ? notes.splice(0).join("\n") + "\n\n" : "");
   const withNote = async (promise) => {
     const result = await promise;
