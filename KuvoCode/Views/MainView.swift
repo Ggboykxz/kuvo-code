@@ -1293,7 +1293,7 @@ struct MainView: View {
         }
     }
 
-    /// KUVO_DEMO_BOT=<name>|<job>|<instructions>[|<machine>] makes that bot unless one has the
+    /// KUVO_DEMO_BOT=<name>|<job>|<instructions>[|<machine>[|<project>]] makes that bot unless one has the
     /// name, and opens it; KUVO_DEMO_BOT_PROMPT then gives it a task, and KUVO_DEMO_EDIT_BOT
     /// opens its Edit Bot sheet.
     private func runDemoBot(_ environment: [String: String]) async {
@@ -1302,12 +1302,13 @@ struct MainView: View {
         guard let name = parts.first, !name.isEmpty else { return }
         var bot = bots.list.first { $0.name == name }
         if bot == nil {
-            if parts.count > 3, let engine = app.machines.engine(parts[3]) {
+            let machine = parts.count > 3 && !parts[3].isEmpty ? parts[3] : nil
+            if let machine, let engine = app.machines.engine(machine) {
                 while !engine.isReady { try? await Task.sleep(for: .seconds(1)) }
             }
             do {
                 bot = try await bots.create(name: name, job: parts.count > 1 ? parts[1] : "", instructions: parts.count > 2 ? parts[2] : "",
-                                            look: .random(), model: nil, machine: parts.count > 3 ? parts[3] : nil, project: nil)
+                                            look: .random(), model: nil, machine: machine, project: parts.count > 4 && !parts[4].isEmpty ? parts[4] : nil)
             } catch {
                 print("KUVO_DEMO_BOT failed: \(error.localizedDescription)")
                 return

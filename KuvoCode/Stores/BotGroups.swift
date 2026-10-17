@@ -48,6 +48,11 @@ struct GroupMessage: Codable, Identifiable, Hashable {
     var kind: Kind = .message
     /// What the bot did on its turn before it wrote this: its searches, reads and commands.
     var steps: [Message.ToolCall]?
+    /// On a wrap-up: the work it split up, who does what. Each bot does its part in its own
+    /// conversation, once you say go (or straight away, if you already had).
+    var tasks: [GroupTask]?
+    /// On a bot's message: the part of the work it's reporting back on, from its own conversation.
+    var report: String?
 
     enum Kind: String, Codable {
         /// Said in the chat.
@@ -61,15 +66,128 @@ struct GroupMessage: Codable, Identifiable, Hashable {
     }
 }
 
+/// A part of the work a chat split up: who does it, what it is, and how it's going.
+struct GroupTask: Codable, Hashable, Identifiable {
+    var id: String
+    /// The bot doing it.
+    var bot: String
+    var task: String
+    var state: State = .proposed
+    /// Its message in the bot's own conversation, once it went there.
+    var prompt: String?
+    var started: Date?
+    var finished: Date?
+    /// The bots whose parts come first: it starts once theirs are done, with what they reported.
+    var after: [String]?
+
+    enum State: String, Codable {
+        /// In the wrap-up, waiting for you to say go.
+        case proposed
+        /// Started, but waiting for the parts it comes after.
+        case waiting
+        /// In the bot's own conversation, under way.
+        case working
+        /// The bot reported back.
+        case done
+        /// It couldn't be done: the bot's machine away, an error.
+        case failed
+    }
+}
+
+/// A part of a chat's work, as it reaches the bot's own conversation: which chat it's from and
+/// what the part is, then what was decided and how to report back (for the bot, not shown).
+enum GroupWork {
+    private static let opening = "[Work from "
+    private static let divider = "\n\n---\n"
+
+    /// `from`: whose words `wrapUp` is ("Pixel's wrap-up"); `before`: the parts that came first,
+    /// each bot's name with its report.
+    static func compose(_ task: GroupTask, chat: BotGroup, wrapUp: GroupMessage, from: String, before: [(name: String, report: String)] = []) -> String {
+        var text = opening + chat.name + " · " + chat.id + "]\n\n" + task.task + divider
+            + "The user agreed to this in the group chat \"\(chat.name)\", and this part is yours. What was decided (\(from)):\n\n"
+            + wrapUp.text
+        if !before.isEmpty {
+            text += "\n\nThe parts before yours are done. What they reported:\n" + before.map { "\n**\($0.name)**: \($0.report)" }.joined(separator: "\n")
+        }
+        return text + "\n\nDo your part here, with all your tools, as you would any task from the user. When it's done, end with a few lines on what you did and anything left over. That last message of yours goes to the chat as your report on its own, so don't send it anywhere; the others' parts start from it."
+    }
+
+    /// One bot's part, as the lead listed it: what it does, and whose parts come first.
+    struct Part: Equatable {
+        var name: String
+        var task: String
+        var after: [String] = []
+    }
+
+    /// Who does what in a lead's list of `@Name: task` lines, or `@Name (after @Other): task` for
+    /// a part that waits for another (bullets and bold allowed): one part for each name, several
+    /// lines for one going together as a list; and whether its GO or WAIT line said to go ahead.
+    /// Lines for anyone not in `names` are left out.
+    static func parts(in text: String, names: [String]) -> (parts: [Part], go: Bool) {
+        var parts: [Part] = []
+        var lines: [String: [String]] = [:]
+        var go = false
+        // The longest name first, so "Sam" doesn't take "Samantha"'s line.
+        let byLength = names.sorted { $0.count > $1.count }
+        for raw in text.split(whereSeparator: \.isNewline) {
+            let line = raw.replacingOccurrences(of: "**", with: "")
+                .replacingOccurrences(of: #"^[\s>*•·-]*(\d+[.)]\s*)?"#, with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespaces)
+            if line.range(of: #"^\W*GO\W*$"#, options: .regularExpression) != nil { go = true; continue }
+            if line.range(of: #"^\W*WAIT\W*$"#, options: .regularExpression) != nil { go = false; continue }
+            for name in byLength {
+                let pattern = "^@?" + NSRegularExpression.escapedPattern(for: name) + #"\s*(?:\(\s*(?:after|once)\s+([^)]*)\))?\s*[:—–-]\s*"#
+                guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+                      let match = regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
+                      let whole = Range(match.range, in: line) else { continue }
+                let task = line[whole.upperBound...].trimmingCharacters(in: .whitespaces)
+                if task.isEmpty { break }
+                let waitsFor = Range(match.range(at: 1), in: line).map { String(line[$0]) } ?? ""
+                let after = byLength.filter { other in
+                    other != name && waitsFor.range(of: #"(^|[^\p{L}\p{N}])@?"# + NSRegularExpression.escapedPattern(for: other) + #"($|[^\p{L}\p{N}])"#,
+                                                    options: [.regularExpression, .caseInsensitive]) != nil
+                }
+                if let index = parts.firstIndex(where: { $0.name == name }) {
+                    parts[index].after += after.filter { !parts[index].after.contains($0) }
+                } else {
+                    parts.append(Part(name: name, task: "", after: after))
+                }
+                lines[name, default: []].append(task)
+                break
+            }
+        }
+        for index in parts.indices {
+            let all = lines[parts[index].name] ?? []
+            parts[index].task = all.count == 1 ? all[0] : all.map { "- " + $0 }.joined(separator: "\n")
+        }
+        return (parts, go)
+    }
+
+    /// The chat a message came from and the part it hands over. Its first line is
+    /// "[Work from <name> · <chat>]", read from the end, as a name can hold anything.
+    static func parse(_ text: String) -> (chat: String, id: String, task: String)? {
+        guard text.hasPrefix(opening) else { return nil }
+        let first = text.prefix { $0 != "\n" }
+        guard first.hasSuffix("]"), let dot = first.range(of: " · ", options: .backwards), dot.lowerBound > first.index(first.startIndex, offsetBy: opening.count) else { return nil }
+        let name = String(first[first.index(first.startIndex, offsetBy: opening.count)..<dot.lowerBound])
+        let id = String(first[dot.upperBound..<first.index(before: first.endIndex)])
+        var task = String(text.dropFirst(first.count))
+        if let cut = task.range(of: divider) { task = String(task[..<cut.lowerBound]) }
+        return (name, id, task.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+}
+
 /// Your group chats, in `groups.json`, their messages in `groups/<id>.json`, and the discussions
 /// under way.
 ///
 /// A discussion starts with each message of yours. The lead speaks first, unless you named
 /// someone with @; then whoever the last message named, then the others in turn. A bot with
 /// nothing new to add passes. It ends when everyone else has passed, or at a limit of turns
-/// (Keep Going carries on), and the lead sums up one that went back and forth. A message you send
-/// while a bot is talking goes to that bot straight away, and to the others at their turns.
-/// Afterwards each bot remembers the chat in its own conversation, as you'd remember a meeting.
+/// (Keep Going carries on), and the lead sums up one that went back and forth, listing who does
+/// what. A message you send while a bot is talking goes to that bot straight away, and to the
+/// others at their turns. Once you say go, each bot takes its part to its own conversation, does
+/// it there with all its tools, and reports back to the chat. Afterwards each bot remembers the
+/// chat in its own conversation, as you'd remember a meeting.
 @Observable
 final class BotGroups {
     private(set) var list: [BotGroup] = []
@@ -94,6 +212,8 @@ final class BotGroups {
     @ObservationIgnored private var meeting: Task<Void, Never>?
     /// Requests from seats already turned down.
     @ObservationIgnored private var declined: Set<String> = []
+    /// Seats whose rules were brought up to date since launch.
+    @ObservationIgnored private var seatsChecked: Set<String> = []
     @ObservationIgnored private var syncs: [String: Task<Void, Never>] = [:]
     private let log = Logger(subsystem: "run.kuvo.code", category: "groups")
 
@@ -407,9 +527,19 @@ final class BotGroups {
         }
         // The lead sums up a discussion that went back and forth, or a meeting where more than one
         // spoke, unless you've written since.
-        guard !Task.isCancelled, said >= (meetingsUnderWay[id] != nil ? 2 : 3), asked[id, default: 0] == epoch, let group = group(id), group.members.count >= 2,
+        guard !Task.isCancelled, said > 0, asked[id, default: 0] == epoch, let group = group(id),
               let lead = group.lead, app?.bots.bot(lead) != nil else { return epoch }
-        _ = await turn(of: lead, in: id, wrapUp: true)
+        if said >= (meetingsUnderWay[id] != nil ? 2 : 3), group.members.count >= 2 {
+            let before = messages(in: id).last?.id
+            _ = await turn(of: lead, in: id, wrapUp: true)
+            // Who does what, from the lead, unless you've written since.
+            if let wrapUp = messages(in: id).last, wrapUp.id != before, wrapUp.kind == .wrapUp, !Task.isCancelled, asked[id, default: 0] == epoch {
+                await splitWork(of: wrapUp.id, in: id, lead: lead)
+            }
+        } else if let last = messages(in: id).last, last.author != nil, last.kind == .message, last.report == nil {
+            // A short exchange, with no wrap-up: the work, if there is any, under its last word.
+            await splitWork(of: last.id, in: id, lead: lead)
+        }
         return epoch
     }
 
@@ -618,16 +748,210 @@ final class BotGroups {
         return text
     }
 
-    private func name(of author: String?) -> String {
+    func name(of author: String?) -> String {
         author.map { app?.bots.bot($0)?.name ?? "A bot that left" } ?? "User"
     }
 
     /// Who said it, as the bots read it: a bot's wrap-up says so, and a meeting is the user's.
     private func label(of message: GroupMessage) -> String {
-        switch message.kind {
+        if message.report != nil { return name(of: message.author) + " (reporting back on its part of the work)" }
+        return switch message.kind {
         case .wrapUp: name(of: message.author) + " (wrap-up)"
         case .meeting: "Meeting the user scheduled, now"
         case .message, .note: name(of: message.author)
+        }
+    }
+
+    // MARK: Splitting the work
+
+    /// After a wrap-up: the lead lists who does what, for the app to hand out. Each part shows
+    /// under the wrap-up; if you'd already said to go ahead, each bot starts on its part at once,
+    /// in its own conversation, otherwise once you click Start the Work.
+    private func splitWork(of wrapUpID: String, in id: String, lead: String) async {
+        guard let app, let bot = app.bots.bot(lead), let api = app.workspace.api(forFolder: bot.directory),
+              let group = group(id), let seat = group.seats[lead] else { return }
+        let members = group.members.compactMap { app.bots.bot($0) }
+        // Yours since the wrap-up before this one: the discussion it sums up.
+        let all = messages(in: id)
+        let end = all.firstIndex { $0.id == wrapUpID } ?? all.endIndex
+        let begin = all[..<end].lastIndex { $0.kind == .wrapUp }.map { $0 + 1 } ?? all.startIndex
+        let said = all[begin..<end].filter { $0.author == nil && $0.kind == .message }.suffix(6).map { String(Quoting.words(of: $0.text).prefix(800)) }
+        let promptID = Identifier.message()
+        let ended = app.workspace.endedRuns[seat, default: 0]
+        let sent = Date.now
+        do {
+            try await api.prompt(session: seat, id: promptID, text: Self.splitText(members: members, said: said), delivery: .queue)
+            try await waitForRun(of: seat, after: ended, since: sent, api: api)
+            let (text, _, _) = try await reply(in: seat, after: promptID, since: sent, api: api)
+            let (tasks, go) = Self.tasks(in: text, members: members)
+            guard !tasks.isEmpty, !Task.isCancelled else { return }
+            change(wrapUpID, in: id) { $0.tasks = tasks }
+            Analytics.shared.track("group_work_split", ["parts": tasks.count, "go": go])
+            if go { startWork(wrapUpID, in: id) }
+        } catch {
+            guard !Task.isCancelled else { return }
+            log.error("Splitting the work in \(id, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// What the lead is asked after its wrap-up, for the app (its answer isn't posted), with
+    /// what you wrote in the discussion, so it can tell whether you said go.
+    static func splitText(members: [Bot], said: [String]) -> String {
+        var text = """
+        For the app, not the chat: list who does what next, from what was decided, one line for each bot with work, as
+        @Name: what they do, with what they need to know
+        If a part can only start once others are done, write it as @Name (after @Other): …; it then starts when theirs is done, with what they reported.
+        Only the bots in this chat (\(members.map { "@" + $0.name }.joined(separator: ", "))), and only work that was agreed on, not what's still open.
+        Then, on a line of its own, GO or WAIT: GO if the user told you to go ahead and do the work (like "go ahead", "do it", "get going", "do your parts"), WAIT if they only asked for a plan or haven't decided.
+        If there's no work to hand out, reply just NONE.
+        """
+        if !said.isEmpty {
+            text += "\n\nWhat the user wrote in this discussion:\n" + said.map { "\n> " + $0.replacingOccurrences(of: "\n", with: "\n> ") }.joined(separator: "\n")
+        }
+        return text
+    }
+
+    /// The parts of the work in the lead's list, one for each bot, and whether you'd already said
+    /// to go ahead.
+    static func tasks(in text: String, members: [Bot]) -> (tasks: [GroupTask], go: Bool) {
+        let (parts, go) = GroupWork.parts(in: text, names: members.map(\.name))
+        let ids = Dictionary(members.map { ($0.name, $0.id) }, uniquingKeysWith: { first, _ in first })
+        // Only waits on bots that have a part here.
+        let working = Set(parts.map(\.name))
+        let tasks = parts.compactMap { part in
+            ids[part.name].map { bot in
+                let after = part.after.filter(working.contains).compactMap { ids[$0] }
+                return GroupTask(id: "gt_" + UUID().uuidString.lowercased(), bot: bot, task: part.task, after: after.isEmpty ? nil : after)
+            }
+        }
+        return (tasks, go)
+    }
+
+    /// Hands each part of a wrap-up's work not yet started to its bot: in its own conversation,
+    /// with what was decided, to do with all its tools. Each reports back to the chat when it's done.
+    func startWork(_ wrapUpID: String, in id: String) {
+        guard let tasks = messages(in: id).first(where: { $0.id == wrapUpID })?.tasks else { return }
+        let proposed = tasks.filter { $0.state == .proposed }
+        for task in proposed {
+            changeTask(task.id, of: wrapUpID, in: id) { $0.state = ($0.after ?? []).isEmpty ? .working : .waiting; $0.started = .now }
+        }
+        if !proposed.isEmpty { Analytics.shared.track("group_work_started", ["parts": proposed.count]) }
+        for task in proposed where (task.after ?? []).isEmpty {
+            Task { await hand(task.id, of: wrapUpID, in: id) }
+        }
+        startReady(wrapUpID, in: id)
+    }
+
+    /// Parts waiting on others: once those are all done they start, with their reports; if one
+    /// of those couldn't finish, they don't.
+    private func startReady(_ wrapUpID: String, in id: String) {
+        guard let tasks = messages(in: id).first(where: { $0.id == wrapUpID })?.tasks else { return }
+        for task in tasks where task.state == .waiting {
+            let first = tasks.filter { ($0.id != task.id) && (task.after ?? []).contains($0.bot) }
+            if let failed = first.first(where: { $0.state == .failed }) {
+                fail(task.id, of: wrapUpID, in: id, "\(app?.bots.bot(failed.bot)?.name ?? "the bot before it") couldn’t finish its part first")
+            } else if first.allSatisfy({ $0.state == .done }) {
+                changeTask(task.id, of: wrapUpID, in: id) { $0.state = .working }
+                Task { await hand(task.id, of: wrapUpID, in: id) }
+            }
+        }
+    }
+
+    /// One part, to its bot's conversation; then it's followed until the bot reports.
+    private func hand(_ taskID: String, of wrapUpID: String, in id: String) async {
+        guard let app, let group = group(id), let wrapUp = messages(in: id).first(where: { $0.id == wrapUpID }),
+              let task = wrapUp.tasks?.first(where: { $0.id == taskID }) else { return }
+        guard let bot = app.bots.bot(task.bot) else { return fail(taskID, of: wrapUpID, in: id, "the bot is gone") }
+        if let machine = bot.machine, app.machines.engine(machine)?.isReady != true {
+            return fail(taskID, of: wrapUpID, in: id, "\(bot.name) is on \(machine), which isn’t connected")
+        }
+        guard let api = app.workspace.api(forFolder: bot.directory) else { return fail(taskID, of: wrapUpID, in: id, "the engine isn’t running") }
+        // What the parts before it reported.
+        let all = messages(in: id)
+        let before = (wrapUp.tasks ?? []).filter { (task.after ?? []).contains($0.bot) }.compactMap { first -> (name: String, report: String)? in
+            all.last { $0.report == first.id }.map { (name(of: first.bot), $0.text) }
+        }
+        let promptID = Identifier.message()
+        do {
+            try await api.prompt(session: bot.sessionID, id: promptID, text: GroupWork.compose(task, chat: group, wrapUp: wrapUp,
+                                                                                                    from: name(of: wrapUp.author) + (wrapUp.kind == .wrapUp ? "'s wrap-up" : "'s last message"), before: before), delivery: .queue)
+            changeTask(taskID, of: wrapUpID, in: id) { $0.prompt = promptID }
+            await follow(taskID, of: wrapUpID, in: id)
+        } catch {
+            fail(taskID, of: wrapUpID, in: id, error.localizedDescription)
+        }
+    }
+
+    /// Until the bot's run on its part ends (however long it takes, waiting on you meanwhile if
+    /// it asks something); then what it said, back in the chat as its report.
+    private func follow(_ taskID: String, of wrapUpID: String, in id: String) async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(3))
+            guard let app, group(id) != nil, let task = messages(in: id).first(where: { $0.id == wrapUpID })?.tasks?.first(where: { $0.id == taskID }),
+                  task.state == .working else { return }
+            guard let bot = app.bots.bot(task.bot), let promptID = task.prompt else { return fail(taskID, of: wrapUpID, in: id, "the bot is gone") }
+            // A machine that's away, or a run under way: later.
+            guard let api = app.workspace.api(forFolder: bot.directory), !app.workspace.running.contains(bot.sessionID) else { continue }
+            guard let messages = try? await api.messages(session: bot.sessionID, limit: 80).data,
+                  let index = messages.firstIndex(where: { $0.id == promptID }) else { continue }
+            // Its answer, once it's done; the engine's word that the run ended, in case an event went missing.
+            let answered = messages[(index + 1)...].contains { message in
+                if case .assistant(let answer) = message { answer.time.completed != nil } else { false }
+            }
+            guard answered, let active = try? await api.activeSessions(), !active.contains(bot.sessionID) else { continue }
+            let since = (task.started ?? .now).addingTimeInterval(-5)
+            let (text, error, _) = (try? await reply(in: bot.sessionID, after: promptID, since: since, api: api)) ?? ("", nil, [])
+            if text.isEmpty { return fail(taskID, of: wrapUpID, in: id, error ?? "it stopped without saying what it did") }
+            changeTask(taskID, of: wrapUpID, in: id) { $0.state = .done; $0.finished = .now }
+            append(GroupMessage(id: Self.newID(), author: bot.id, text: text, time: .now, report: taskID), to: id)
+            startReady(wrapUpID, in: id)
+            Analytics.shared.track("group_work_done")
+            if let group = group(id) {
+                let plain = text.replacingOccurrences(of: #"[*_`#>]+"#, with: "", options: .regularExpression)
+                    .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression).trimmingCharacters(in: .whitespaces)
+                Notifier.shared.notify(session: Self.tabKey(id), title: group.name, subtitle: "\(bot.name) finished its part",
+                                       body: plain.count > 220 ? String(plain.prefix(219)) + "…" : plain, replies: true)
+            }
+            return
+        }
+    }
+
+    private func fail(_ taskID: String, of wrapUpID: String, in id: String, _ reason: String) {
+        changeTask(taskID, of: wrapUpID, in: id) { $0.state = .failed; $0.finished = .now }
+        let who = messages(in: id).first { $0.id == wrapUpID }?.tasks?.first { $0.id == taskID }.flatMap { app?.bots.bot($0.bot)?.name } ?? "A bot"
+        let why = reason.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        note("\(who) couldn’t do its part: \(why).", in: id)
+        // Parts that waited on it can't start.
+        startReady(wrapUpID, in: id)
+    }
+
+    /// Parts under way when the app last quit: followed again, until their bots report.
+    func resumeWork() {
+        for group in list {
+            for message in messages(in: group.id) {
+                for task in message.tasks ?? [] where task.state == .working {
+                    if task.prompt == nil {
+                        fail(task.id, of: message.id, in: group.id, "Kuvo Code quit before it reached the bot")
+                    } else {
+                        Task { await follow(task.id, of: message.id, in: group.id) }
+                    }
+                }
+                if message.tasks?.contains(where: { $0.state == .waiting }) == true { startReady(message.id, in: group.id) }
+            }
+        }
+    }
+
+    private func change(_ messageID: String, in id: String, _ edit: (inout GroupMessage) -> Void) {
+        guard var messages = logs[id], let index = messages.firstIndex(where: { $0.id == messageID }) else { return }
+        edit(&messages[index])
+        logs[id] = messages
+        saveLog(id)
+    }
+
+    private func changeTask(_ taskID: String, of messageID: String, in id: String, _ edit: (inout GroupTask) -> Void) {
+        change(messageID, in: id) { message in
+            guard let index = message.tasks?.firstIndex(where: { $0.id == taskID }) else { return }
+            edit(&message.tasks![index])
         }
     }
 
@@ -635,7 +959,11 @@ final class BotGroups {
 
     /// The bot's seat in the chat, made the first time it's needed.
     private func seat(of bot: Bot, in id: String, api: OpenCodeAPI) async throws -> String {
-        if let seat = group(id)?.seats[bot.id] { return seat }
+        if let seat = group(id)?.seats[bot.id] {
+            // One an earlier version made: its rules as seats get them now, once a launch.
+            if seatsChecked.insert(seat).inserted { try? await api.setPermissions(session: seat, rules: Self.seatRules(for: bot)) }
+            return seat
+        }
         guard let group = group(id), let app else { throw CancellationError() }
         let model = bot.model ?? app.workspace.session(bot.sessionID)?.model
         let session = try await api.createSession(directory: bot.directory, title: "\(bot.name) in \(group.name)", model: model, permissions: Self.seatRules(for: bot))
@@ -649,14 +977,19 @@ final class BotGroups {
     }
 
     /// A seat talks and looks things up; it doesn't change anything, and never waits for answers.
+    /// No shell, subagents or messages to other agents either: a command can write a file however
+    /// it's allowed (`cat > file`), a subagent or a message to a bot's own conversation would start
+    /// the work out of sight (and wait on asks nobody answers here), and the work happens in each
+    /// bot's own conversation once you say go, handed out after the wrap-up.
     private static func seatRules(for bot: Bot) -> [PermissionRule] {
         let approval = UserDefaults.standard.string(forKey: ToolApproval.key).flatMap(ToolApproval.init) ?? .approveAll
-        var rules = ["edit", "write", "patch", "question", "external_directory"].map { PermissionRule(action: $0, effect: .deny) }
+        var rules = ["edit", "write", "patch", "question", "external_directory", "shell", "subagent", "kuvo-browser_send_message"].map { PermissionRule(action: $0, effect: .deny) }
         if approval == .askFirst {
-            rules += ["shell", "webfetch"].map { PermissionRule(action: $0, effect: .deny) }
+            rules.append(PermissionRule(action: "webfetch", effect: .deny))
         }
         rules.append(PermissionRule(action: "external_directory", resource: (bot.folder as NSString).appendingPathComponent("*"), effect: .allow))
-        return rules
+        // What Settings › Permissions doesn't allow, nothing here does either.
+        return rules + (EngineConfig.current?.permissionRules ?? []).filter { $0.effect == .deny }
     }
 
     private func seatInstructions(for bot: Bot, in group: BotGroup) -> String {
@@ -676,9 +1009,10 @@ final class BotGroups {
         chat. Add something new: build on what others said instead of repeating it, disagree when you do, and ask someone directly \
         with @Name. Write to the user as "you". If you have nothing new to add, reply with just PASS.
 
-        You can look things up before you answer (read files, search, run commands that don't change anything) when it helps. \
+        You can look things up before you answer (read and search files, search the web) when it helps; there are no commands, subagents or messages to other agents here. \
         Don't change files or start the work here: the chat is for talking it through. When something needs doing, say who should \
-        do it; the user will ask them in their own conversation.
+        do it. Once the user says go, each of you gets your part in your own conversation, does it there with all your tools, and \
+        reports back here: don't send anyone the work yourself, and don't wait on it in the chat.
 
         \(Bots.identityNote)
         """

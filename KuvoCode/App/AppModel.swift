@@ -216,6 +216,7 @@ final class AppModel {
             startMachines()
             bots.startWaking()
             groups.startMeetings()
+            groups.resumeWork()
             await catalogLoaded
         } catch {
             log.error("Engine failed to start: \(error.localizedDescription, privacy: .public)")

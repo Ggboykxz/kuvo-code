@@ -378,6 +378,7 @@ enum Row: Identifiable, Hashable {
             let text = CommandMessages.shared.text(of: message)
             if let mail = AgentMail.parse(text) { return [.markdown(mail.text)] }
             if text.hasPrefix(Wakes.marker) { return [.plain(String(text.dropFirst(Wakes.marker.count)))] }
+            if let work = GroupWork.parse(text) { return [.markdown(work.task)] }
             return UserBubble.findParts(UserBubble.words(of: text)).map(ConversationFind.Part.plain)
         case .pending(let item):
             return UserBubble.findParts(UserBubble.words(of: item.text)).map(ConversationFind.Part.plain)
@@ -461,7 +462,11 @@ private struct RowView: View, Equatable {
         switch row {
         case .user(let message) where AgentMail.parse(CommandMessages.shared.text(of: message)) != nil:
             if let mail = AgentMail.parse(CommandMessages.shared.text(of: message)) {
-                AgentMessageRow(from: mail.name, session: mail.session, text: mail.text, at: message.time.created)
+                AgentMessageRow(id: message.id, from: mail.name, session: mail.session, text: mail.text, at: message.time.created)
+            }
+        case .user(let message) where GroupWork.parse(CommandMessages.shared.text(of: message)) != nil:
+            if let work = GroupWork.parse(CommandMessages.shared.text(of: message)) {
+                GroupWorkRow(id: message.id, chat: work.chat, chatID: work.id, task: work.task, at: message.time.created)
             }
         case .user(let message) where CommandMessages.shared.text(of: message).hasPrefix(Wakes.marker):
             WakeRow(note: String(CommandMessages.shared.text(of: message).dropFirst(Wakes.marker.count)), at: message.time.created)
@@ -1033,9 +1038,8 @@ struct ErrorCard: View {
     }
 }
 
-/// A bot woke itself up, as it planned: its note to itself, in place of a message from you.
 /// What this agent wrote to another (send_message): to whom, what, and its answer when it
-/// waited for one; with a way to that agent's conversation.
+/// waited for one; with a way to that agent's conversation. It folds, as the others do.
 private struct AgentSentRow: View {
     let call: Message.ToolCall
     @Environment(AppModel.self) private var app
@@ -1056,36 +1060,36 @@ private struct AgentSentRow: View {
     var body: some View {
         let to = input?["to"]?.string ?? "another agent"
         let address = AgentMail.shared.directory().first { $0.session == to || $0.name.caseInsensitiveCompare(to) == .orderedSame }
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Image(systemName: "paperplane.fill")
-                    .foregroundStyle(.tint)
-                    .frame(width: 16)
-                Text("To \(Text(address?.name ?? to).fontWeight(.semibold).foregroundStyle(.primary))")
+        let text = input?["text"]?.string ?? ""
+        let answer = said.flatMap { said in said.range(of: " answered:\n\n").map { String(said[$0.upperBound...]) } }
+        FoldingCard(id: call.id, summary: text, startsOpen: FoldingCard<EmptyView, EmptyView, EmptyView>.isShort(text + (answer ?? "")), help: "A message this agent sent another") {
+            Image(systemName: "paperplane.fill")
+                .foregroundStyle(.tint)
+                .frame(width: 16)
+            Text("To \(Text(address?.name ?? to).fontWeight(.semibold).foregroundStyle(.primary))")
+                .foregroundStyle(.secondary)
+            if case .running = call.state, input?["wait"]?.bool == true {
+                Spinner(size: 11)
+                Text("Waiting for its answer")
                     .foregroundStyle(.secondary)
-                if case .running = call.state, input?["wait"]?.bool == true {
-                    Spinner(size: 11)
-                    Text("Waiting for its answer")
-                        .foregroundStyle(.secondary)
-                }
-                if case .failed = call.state {
-                    Text("Didn't go")
-                        .foregroundStyle(.orange)
-                }
-                Spacer(minLength: 8)
-                if let session = address?.session, app.workspace.session(session) != nil {
-                    Button("Open") { app.open(.session(session)) }
-                        .buttonStyle(TextButtonStyle())
-                        .help("Open \(address?.name ?? to)'s conversation")
-                }
             }
-            .font(.callout)
-            if let text = input?["text"]?.string {
+            if case .failed = call.state {
+                Text("Didn't go")
+                    .foregroundStyle(.orange)
+            }
+        } accessory: {
+            if let session = address?.session, app.workspace.session(session) != nil {
+                Button("Open") { app.open(.session(session)) }
+                    .buttonStyle(TextButtonStyle())
+                    .help("Open \(address?.name ?? to)'s conversation")
+            }
+        } content: {
+            if !text.isEmpty {
                 MarkdownText(text: text)
                     .padding(.leading, 24)
             }
             // What it answered, when it was waited for.
-            if let said, let answer = said.range(of: " answered:\n\n").map({ String(said[$0.upperBound...]) }) {
+            if let answer {
                 Divider().padding(.leading, 24)
                 Text("\(Text(address?.name ?? to).fontWeight(.semibold)) answered")
                     .font(.callout)
@@ -1095,17 +1099,93 @@ private struct AgentSentRow: View {
                     .padding(.leading, 24)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 9)
-        .recessedWell(RoundedRectangle(cornerRadius: 10))
-        .padding(.horizontal, -10)
-        .help("A message this agent sent another")
     }
 }
 
-/// What another agent wrote to this one (send_message): who from, and what, with a way to its
-/// conversation.
+/// Which of the agents' cards you folded or opened, while the app runs, so one drawn again (as
+/// you scroll) stays as you left it.
+@MainActor
+@Observable
+final class CardFolds {
+    static let shared = CardFolds()
+    private var choices: [String: Bool] = [:]
+
+    func isOpen(_ id: String, otherwise open: Bool) -> Bool { choices[id] ?? open }
+    func set(_ id: String, open: Bool) { choices[id] = open }
+}
+
+/// Words between agents, in a well: a header (what it is, from or to whom) whose click folds the
+/// words under it to their first line, and opens them again; what's at its end (the time, Open)
+/// stays out of the click. Long ones start folded.
+private struct FoldingCard<Header: View, Accessory: View, Content: View>: View {
+    let id: String
+    /// The words, of which the first line shows while it's folded.
+    let summary: String
+    let startsOpen: Bool
+    let help: String
+    @ViewBuilder var header: Header
+    @ViewBuilder var accessory: Accessory
+    @ViewBuilder var content: Content
+
+    /// A few lines at most: shown open from the start.
+    static func isShort(_ text: String) -> Bool {
+        text.count <= 320 && text.split(whereSeparator: \.isNewline).count <= 4
+    }
+
+    private var firstLine: String {
+        let line = summary.split(whereSeparator: \.isNewline).first { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? ""
+        // Markdown's marks out of it, but not underscores, which names and addresses have.
+        return line.replacingOccurrences(of: #"[*`]+"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"^[\s#>-]+"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces)
+    }
+
+    var body: some View {
+        let folds = CardFolds.shared
+        let open = folds.isOpen(id, otherwise: startsOpen)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Button {
+                    withAnimation(.ui) { folds.set(id, open: !open) }
+                } label: {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        header
+                        Image(systemName: "chevron.right")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .rotationEffect(.degrees(open ? 90 : 0))
+                        if !open, !firstLine.isEmpty {
+                            Text(firstLine)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+                    }
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .help(open ? "Fold it to its first line" : "Show all of it")
+                Spacer(minLength: 8)
+                accessory
+            }
+            .font(.callout)
+            if open {
+                content
+                    .transition(.opacity)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .recessedWell(RoundedRectangle(cornerRadius: 10))
+        // The well reaches past the column, so its icon and text line up with the steps'.
+        .padding(.horizontal, -10)
+        .help(help)
+    }
+}
+
+/// A message another agent sent this one: who from, and what; it folds, as the others do.
 private struct AgentMessageRow: View {
+    let id: String
     let from: String
     let session: String
     let text: String
@@ -1113,36 +1193,63 @@ private struct AgentMessageRow: View {
     @Environment(AppModel.self) private var app
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Image(systemName: "paperplane")
-                    .foregroundStyle(.tint)
-                    .frame(width: 16)
-                Text("From \(Text(from).fontWeight(.semibold).foregroundStyle(.primary))")
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: 8)
-                Text(Date(timeIntervalSince1970: at / 1000), format: .dateTime.hour().minute())
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                if app.workspace.session(session) != nil {
-                    Button("Open") { app.open(.session(session)) }
-                        .buttonStyle(TextButtonStyle())
-                        .help("Open \(from)'s conversation")
-                }
+        FoldingCard(id: id, summary: text, startsOpen: FoldingCard<EmptyView, EmptyView, EmptyView>.isShort(text), help: "A message another agent sent this one") {
+            Image(systemName: "paperplane")
+                .foregroundStyle(.tint)
+                .frame(width: 16)
+            Text("From \(Text(from).fontWeight(.semibold).foregroundStyle(.primary))")
+                .foregroundStyle(.secondary)
+        } accessory: {
+            Text(Date(timeIntervalSince1970: at / 1000), format: .dateTime.hour().minute())
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+            if app.workspace.session(session) != nil {
+                Button("Open") { app.open(.session(session)) }
+                    .buttonStyle(TextButtonStyle())
+                    .help("Open \(from)'s conversation")
             }
-            .font(.callout)
+        } content: {
             MarkdownText(text: text)
                 .padding(.leading, 24)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 9)
-        .recessedWell(RoundedRectangle(cornerRadius: 10))
-        // The well reaches past the column, so its icon and text line up with the steps'.
-        .padding(.horizontal, -10)
-        .help("A message another agent sent this one")
     }
 }
 
+/// A part of a group chat's work, handed to this bot: which chat it's from, and what to do; it
+/// folds, as the others do.
+private struct GroupWorkRow: View {
+    let id: String
+    let chat: String
+    let chatID: String
+    let task: String
+    let at: Milliseconds
+    @Environment(AppModel.self) private var app
+
+    var body: some View {
+        FoldingCard(id: id, summary: task, startsOpen: FoldingCard<EmptyView, EmptyView, EmptyView>.isShort(task),
+                    help: "This bot's part of the work agreed in a group chat; it reports back there when it's done") {
+            Image(systemName: "person.3")
+                .foregroundStyle(.tint)
+                .frame(width: 16)
+            Text("Work from \(Text(chat).fontWeight(.semibold).foregroundStyle(.primary))")
+                .foregroundStyle(.secondary)
+        } accessory: {
+            Text(Date(timeIntervalSince1970: at / 1000), format: .dateTime.hour().minute())
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+            if app.groups.group(chatID) != nil {
+                Button("Open") { app.open(.session(BotGroups.tabKey(chatID))) }
+                    .buttonStyle(TextButtonStyle())
+                    .help("Open \(chat)")
+            }
+        } content: {
+            MarkdownText(text: task)
+                .padding(.leading, 24)
+        }
+    }
+}
+
+/// A bot woke itself up, as it planned: its note to itself, in place of a message from you.
 private struct WakeRow: View {
     let note: String
     let at: Milliseconds

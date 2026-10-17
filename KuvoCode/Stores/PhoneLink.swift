@@ -521,8 +521,9 @@ final class PhoneLink {
     }
 
     /// What a phone does in a chat, as in the window: writes to it (`{"text"}`), stops it, lets it
-    /// keep going, looks at it, or takes a message of yours back (`{"message"}`, answering with
-    /// what was taken, for the phone's composer).
+    /// keep going, looks at it, takes a message of yours back (`{"message"}`, answering with
+    /// what was taken, for the phone's composer), or starts the work a wrap-up split up
+    /// (`{"message"}`, the wrap-up).
     private func answerGroup(_ path: String, with body: Data) -> (Int, Data) {
         let parts = path.split(separator: "/").map(String.init)
         guard let groups, let id = parts.first, groups.group(id) != nil else { return (404, Data()) }
@@ -541,6 +542,9 @@ final class PhoneLink {
         case "undo":
             guard let message = given?.message, let taken = groups.undo(from: message, in: id) else { return (404, Data()) }
             return (200, (try? JSONEncoder().encode(["text": taken])) ?? Data())
+        case "start":
+            guard let message = given?.message, groups.messages(in: id).contains(where: { $0.id == message && $0.tasks != nil }) else { return (404, Data()) }
+            groups.startWork(message, in: id)
         default:
             return (404, Data())
         }

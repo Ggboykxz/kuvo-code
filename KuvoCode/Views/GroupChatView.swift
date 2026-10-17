@@ -29,9 +29,8 @@ struct GroupChatView: View {
         }) {
             ForEach(messages) { message in
                 GroupMessageRow(message: message, author: message.author.flatMap { bots.bot($0) }, members: members,
-                                reply: { reply(to: message) }) {
-                    undo(from: message)
-                }
+                                reply: { reply(to: message) }, undo: { undo(from: message) },
+                                startWork: message.tasks?.contains { $0.state == .proposed } == true ? { groups.startWork(message.id, in: group.id) } : nil)
                     .equatable()
                     .environment(\.findHighlight, find.highlight(for: message.id))
                     .id(message.id)
@@ -164,6 +163,7 @@ private struct MeetingRow: View {
 private struct GroupMessageRow: View, Equatable {
     static func == (lhs: GroupMessageRow, rhs: GroupMessageRow) -> Bool {
         lhs.message == rhs.message && lhs.author == rhs.author && lhs.members == rhs.members && (lhs.reply == nil) == (rhs.reply == nil)
+            && (lhs.startWork == nil) == (rhs.startWork == nil)
     }
 
     let message: GroupMessage
@@ -174,9 +174,12 @@ private struct GroupMessageRow: View, Equatable {
     var reply: (() -> Void)?
     /// Takes the chat back to before this message of yours.
     let undo: () -> Void
+    /// On a wrap-up whose work waits for you: hands each part to its bot.
+    var startWork: (() -> Void)?
     @State private var hovering = false
     @State private var confirmsUndo = false
     @Environment(\.answerAgent) private var answerAgent
+    @Environment(AppModel.self) private var app
 
     /// Under the pointer; KUVO_DEMO_SHOW_HOVER shows every message's buttons, for screenshots.
     private var isHovering: Bool {
@@ -220,6 +223,14 @@ private struct GroupMessageRow: View, Equatable {
                                 .padding(.horizontal, 7)
                                 .padding(.vertical, 2)
                                 .recessedWell(Capsule())
+                        } else if message.report != nil {
+                            Label("Report", systemImage: "checkmark.circle")
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 2)
+                                .recessedWell(Capsule())
+                                .help("What \(author?.name ?? "the bot") did on its part, in its own conversation")
                         }
                         Text(message.time, format: .dateTime.hour().minute())
                             .font(.caption)
@@ -247,6 +258,9 @@ private struct GroupMessageRow: View, Equatable {
                         WidgetCard(call: call, send: answerAgent)
                             .padding(.top, 6)
                     }
+                    if let tasks = message.tasks, !tasks.isEmpty {
+                        WorkList(tasks: tasks, members: members, start: startWork)
+                    }
                 }
             }
             .contentShape(.rect)
@@ -254,12 +268,141 @@ private struct GroupMessageRow: View, Equatable {
             .contextMenu {
                 Button("Copy") { copy() }
                 if let reply { Button("Reply", action: reply) }
+                if message.report != nil, let author {
+                    Button("Open \(author.name)’s Conversation") { app.open(.session(author.sessionID)) }
+                }
             }
         }
     }
 
     private func copy() {
         Clipboard.copy(message.text)
+    }
+}
+
+/// Who does what, under a wrap-up: each part with its bot and how it's going (a click opens the
+/// bot's conversation, where it works on it), and, while they wait for you, Start the Work.
+private struct WorkList: View {
+    let tasks: [GroupTask]
+    let members: [Bot]
+    let start: (() -> Void)?
+    @Environment(AppModel.self) private var app
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(tasks) { task in
+                let bot = members.first { $0.id == task.bot } ?? app.bots.bot(task.bot)
+                let opens = bot != nil && task.state != .proposed
+                Button {
+                    if let bot, opens { app.open(.session(bot.sessionID)) }
+                } label: {
+                    HStack(alignment: .top, spacing: 10) {
+                        if let bot {
+                            BotAvatar(look: bot.look, size: 20, animates: false)
+                        } else {
+                            Image(systemName: "person.crop.circle.badge.questionmark")
+                                .foregroundStyle(.tertiary)
+                                .frame(width: 20, height: 20)
+                        }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(bot?.name ?? "A bot that left")
+                                .font(.callout.weight(.semibold))
+                            Text(Self.inline(task.task))
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(5)
+                                .multilineTextAlignment(.leading)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        WorkState(state: task.state, after: (task.after ?? []).map { id in members.first { $0.id == id }?.name ?? app.bots.bot(id)?.name ?? "another bot" },
+                                  needsYou: task.state == .working && bot.map { Self.waits(on: $0, in: app.workspace) } == true)
+                        if opens {
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                                .padding(.top, 3)
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .contentShape(.rect)
+                    .hoverHighlight(in: RoundedRectangle(cornerRadius: 8), mutesInk: true)
+                }
+                .buttonStyle(.plain)
+                .disabled(!opens)
+                .help(opens ? "Open \(bot?.name ?? "the bot")’s conversation, where it works on this" : "")
+            }
+            if let start {
+                HStack {
+                    Text("Each bot does its part in its own conversation, and reports back here.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 8)
+                    Button("Start the Work", systemImage: "play.fill", action: start)
+                        .buttonStyle(.glass)
+                        .help("Hand each bot its part")
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+            }
+        }
+        .padding(4)
+        .recessedWell(RoundedRectangle(cornerRadius: 12))
+        .padding(.top, 6)
+    }
+
+    /// Whether the bot is waiting on you in its conversation: a permission, a question, a sign-in.
+    private static func waits(on bot: Bot, in workspace: Workspace) -> Bool {
+        workspace.needsAttention(bot.sessionID) || workspace.asking.values.contains(bot.sessionID)
+    }
+
+    /// Its words as the lead wrote them: code, bold and links shown, on its own lines.
+    private static func inline(_ text: String) -> AttributedString {
+        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text)
+    }
+}
+
+/// How a part of the work is going.
+private struct WorkState: View {
+    let state: GroupTask.State
+    /// The bots whose parts come first.
+    var after: [String] = []
+    /// Under way, and waiting on you in the bot's conversation.
+    var needsYou = false
+
+    var body: some View {
+        Group {
+            switch state {
+            case .proposed:
+                if !after.isEmpty {
+                    Text("After \(ListFormatter.localizedString(byJoining: after))")
+                        .foregroundStyle(.tertiary)
+                }
+            case .waiting:
+                Label("After \(ListFormatter.localizedString(byJoining: after))", systemImage: "clock")
+                    .foregroundStyle(.secondary)
+                    .help("Starts once their parts are done, with what they report")
+            case .working where needsYou:
+                Label("Needs You", systemImage: "hand.raised.fill")
+                    .foregroundStyle(.orange)
+                    .help("It's waiting on you in its conversation: click to answer")
+            case .working:
+                HStack(spacing: 5) {
+                    Spinner(size: 10)
+                        .accessibilityHidden(true)
+                    Text("Working")
+                }
+                .foregroundStyle(.secondary)
+            case .done:
+                Label("Done", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+            case .failed:
+                Label("Didn’t Finish", systemImage: "exclamationmark.circle")
+                    .foregroundStyle(.orange)
+            }
+        }
+        .font(.caption.weight(.medium))
+        .padding(.top, 3)
     }
 }
 

@@ -154,7 +154,12 @@ itself. A host serves:
   streams that list as it changes, and `kuvo/groups/<id>/events` one chat's latest messages,
   the same way. `POST kuvo/groups/<id>` writes to it (`{"text"}`); `…/stop`, `…/keep-going`
   and `…/viewed` do what they say; `…/undo` (`{"message"}`) takes a message of yours back and
-  answers with what was taken. Times are seconds since 1970.
+  answers with what was taken. A wrap-up can carry `tasks`, who does what: each with `id`, `bot`,
+  `task`, `state` (`proposed`, `waiting`, `working`, `done` or `failed`), `started`/`finished`,
+  and `after` (the bots whose parts come first; it waits for them);
+  `…/start` (`{"message"}`, the wrap-up) hands each proposed part to its bot's own conversation.
+  A bot's message with `report` (a task's id) is it reporting back on its part. Times are
+  seconds since 1970.
 - On a Mac, `kuvo/usage`: the menu bar's usage panel as its Bars view lists it (each provider's
   name, plan, brand color, mark as a PNG to tint, notice, whether it's outdated, and its lines as
   UsageKit writes them), whether a refresh is under way and when the last one ended;
