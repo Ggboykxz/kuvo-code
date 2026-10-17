@@ -34,6 +34,9 @@ struct BotEditor: View {
     @State private var showsAddMachine = false
     @State private var isWorking = false
     @State private var failure: String?
+    /// Making it: waiting for its machine to connect first, if it's on its way.
+    @State private var creating: Task<Void, Never>?
+    @State private var waitsForMachine = false
     @State private var confirmsDelete = false
     /// The template a new bot started from.
     @State private var template: String?
@@ -91,8 +94,15 @@ struct BotEditor: View {
                 .padding(.bottom, 20)
                 .frame(maxWidth: .infinity)
         }
+        // Gone while it waited for its machine: it isn't made after all. (One being made is
+        // finished, so nothing's left half made.)
+        .onDisappear { if waitsForMachine { creating?.cancel() } }
         .onAppear {
             if isNew { focus = .name }
+            #if DEBUG
+            // KUVO_DEMO_NEW_BOT_MACHINE=<machine>: a new bot set to live on that machine.
+            if isNew, let machine = ProcessInfo.processInfo.environment["KUVO_DEMO_NEW_BOT_MACHINE"] { self.machine = machine }
+            #endif
             // A shared bot's personality, found here (or added) once, not at every redraw.
             if isNew, personality == nil, let recipe { personality = recipe.personalityHere() }
             // A bot made before bots had a model: the one its conversation uses.
@@ -161,6 +171,8 @@ struct BotEditor: View {
                             WellDivider()
                             folderMenu
                         }
+                        // Settled while it's being made (or waits for its machine).
+                        .disabled(isWorking)
                     }
                 } else if let bot {
                     // Where it lives stays where it was made.
@@ -204,23 +216,32 @@ struct BotEditor: View {
                         }
                     }
                 }
-
-                if let failure {
-                    Text(failure)
-                        .font(.callout)
-                        .foregroundStyle(.red)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
-                }
             }
     }
 
-    /// In a narrow card, Delete and Export are icons rather than words cut short.
+    /// In a narrow card, Delete and Export are icons rather than words cut short. What went wrong
+    /// shows above the buttons, where it's seen.
     private var footer: some View {
-        ViewThatFits(in: .horizontal) {
-            footerRow(compact: false)
-            footerRow(compact: true)
+        VStack(alignment: .leading, spacing: 10) {
+            if let failure {
+                Text(failure)
+                    .font(.callout)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            ViewThatFits(in: .horizontal) {
+                footerRow(compact: false)
+                footerRow(compact: true)
+            }
         }
+    }
+
+    /// The machine it'll live on, while it's still connecting: what's under way, in its words.
+    private var waitingWords: String? {
+        guard waitsForMachine, let engine = machine.flatMap({ app.machines.engine($0) }) else { return nil }
+        return engine.statusTitle
     }
 
     private func footerRow(compact: Bool) -> some View {
@@ -242,12 +263,16 @@ struct BotEditor: View {
             if isWorking {
                 Spinner(size: 16)
                 if !compact {
-                    Text(isNew ? "Setting it up…" : "Saving…")
+                    Text(waitingWords ?? (isNew ? "Setting it up…" : "Saving…"))
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
             }
             Spacer(minLength: 0)
-            Button("Cancel", role: .cancel, action: close)
+            Button("Cancel", role: .cancel) {
+                if waitsForMachine { creating?.cancel() }
+                close()
+            }
                 .keyboardShortcut(.cancelAction)
                 .buttonStyle(.glass)
             Button(isNew ? "Create Bot" : "Save", action: save)
@@ -376,9 +401,13 @@ struct BotEditor: View {
         }
         isWorking = true
         failure = nil
-        Task {
-            defer { isWorking = false }
+        creating = Task {
+            defer {
+                isWorking = false
+                waitsForMachine = false
+            }
             do {
+                try await waitForMachine()
                 let bot = try await bots.create(name: trimmedName, look: look, personality: personality, model: model, machine: machine, project: project)
                 // Its job, typed in its conversation, from a template or a shared bot; otherwise the
                 // bot writes first.
@@ -388,10 +417,28 @@ struct BotEditor: View {
                     Task { await bots.greet(bot) }
                 }
                 created(bot)
+            } catch is CancellationError {
             } catch {
                 failure = error.localizedDescription
             }
         }
+    }
+
+    /// A machine still connecting (or installing its engine) is waited for, with what's under way
+    /// beside the buttons; one that can't be reached says so.
+    private func waitForMachine() async throws {
+        guard let machine, let engine = app.machines.engine(machine), !engine.isReady else { return }
+        waitsForMachine = true
+        while !engine.isReady {
+            guard engine.connection.isUnderWay else { throw MachineUnreachable(title: engine.statusTitle) }
+            try await Task.sleep(for: .milliseconds(250))
+        }
+        waitsForMachine = false
+    }
+
+    private struct MachineUnreachable: LocalizedError {
+        let title: String
+        var errorDescription: String? { "\(title). Try again once it’s connected, or make the bot on This Mac." }
     }
 
     /// Fills the form from a template.
