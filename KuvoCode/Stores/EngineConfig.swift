@@ -57,6 +57,16 @@ final class EngineConfig {
         save()
     }
 
+    /// Several changes at once, in one write: the engine reloads its settings once, not after
+    /// each of them.
+    func set(_ changes: [(path: [String], value: JSONValue?)]) {
+        guard problem == nil else { return }
+        for change in changes where !change.path.isEmpty {
+            settings = Self.setting(change.value, at: change.path[...], in: settings)
+        }
+        save()
+    }
+
     private static func setting(_ value: JSONValue?, at path: ArraySlice<String>, in object: [String: JSONValue]) -> [String: JSONValue] {
         var object = object
         let key = path.first!

@@ -1,0 +1,252 @@
+import Foundation
+import OpenCodeKit
+
+/// What you set up in opencode itself, brought over to Kuvo Code's engine, which keeps its own
+/// settings and accounts apart: opencode's accounts, default model, MCP servers, agents,
+/// commands, plugins, permissions, instructions and providers, and its skills. opencode's files
+/// are only read, and nothing already set here is replaced. Its API keys come over; a sign-in
+/// (OAuth) doesn't, since two apps refreshing one sign-in can sign both out where a provider
+/// turns its refresh tokens over (ChatGPT's does): those are named, to sign in to here.
+///
+/// Its settings file is read by a private engine of Kuvo Code's own, which turns an older
+/// opencode's into its own form: it reads a copy, in a folder only you can read in Kuvo Code's
+/// temporary folder, and stops, and the folder goes, right after. (Not `opencode debug config`,
+/// which goes through, and starts, a background service that stays.) Its accounts (`auth.json`) are turned into the engine's
+/// as the engine's own import of them does, and stored through its API, in memory on the way.
+enum OpencodeImport {
+    /// What there is to bring over, as it would land here.
+    struct Plan {
+        /// Settings to add, in the engine's form, at the top level of its settings file.
+        var settings: [String: JSONValue] = [:]
+        /// API keys, by integration, in the engine's form.
+        var accounts: [(integration: String, label: String, value: JSONValue)] = []
+        /// Integrations opencode is signed in to and this engine isn't: to sign in to here.
+        var signIns: [String] = []
+        /// opencode's skills folders, for the engine to find skills in too.
+        var skillFolders: [String] = []
+
+        var isEmpty: Bool { settings.isEmpty && accounts.isEmpty && skillFolders.isEmpty }
+
+        /// What it brings, in a few words each, for you to look over first; `name` names a provider.
+        func lines(name: (String) -> String) -> [String] {
+            var lines: [String] = []
+            if !accounts.isEmpty { lines.append("API keys: " + accounts.map { name($0.integration) }.joined(separator: ", ")) }
+            if let model = settings["model"] { lines.append("Model for new sessions: " + OpencodeImport.modelName(model)) }
+            for (key, title) in [("mcp", "MCP servers"), ("agents", "Agents"), ("commands", "Commands"), ("providers", "Providers")] {
+                let names = key == "mcp" ? settings["mcp"]?["servers"]?.object?.keys.sorted() : settings[key]?.object?.keys.sorted()
+                if let names, !names.isEmpty { lines.append("\(title): " + names.joined(separator: ", ")) }
+            }
+            if let plugins = settings["plugins"]?.array, !plugins.isEmpty { lines.append("Plugins: " + plugins.compactMap(\.string).joined(separator: ", ")) }
+            if let rules = settings["permissions"]?.array, !rules.isEmpty { lines.append(rules.count == 1 ? "1 permission rule" : "\(rules.count) permission rules") }
+            if let instructions = settings["instructions"]?.array, !instructions.isEmpty { lines.append("Instructions: " + instructions.compactMap(\.string).map { ($0 as NSString).lastPathComponent }.joined(separator: ", ")) }
+            for folder in skillFolders {
+                let count = (try? FileManager.default.contentsOfDirectory(atPath: folder).filter { !$0.hasPrefix(".") }.count) ?? 0
+                lines.append("Skills in \((folder as NSString).abbreviatingWithTildeInPath)" + (count > 0 ? " (\(count))" : ""))
+            }
+            return lines
+        }
+    }
+
+    /// opencode's settings folder: `$XDG_CONFIG_HOME/opencode`, else `~/.config/opencode`.
+    static var configFolder: URL {
+        let base = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"].map { URL(filePath: $0) } ?? URL.homeDirectory.appending(path: ".config")
+        return base.appending(path: "opencode")
+    }
+
+    /// opencode's data folder, where it keeps its accounts.
+    static var dataFolder: URL {
+        let base = ProcessInfo.processInfo.environment["XDG_DATA_HOME"].map { URL(filePath: $0) } ?? URL.homeDirectory.appending(path: ".local/share")
+        return base.appending(path: "opencode")
+    }
+
+    private static let settingsFiles = ["opencode.json", "opencode.jsonc", "config.json"]
+    /// Folders of agents and commands written as Markdown, older names and newer.
+    private static let markdownFolders = ["agent", "agents", "command", "commands"]
+    private static let skillsFolders = ["skill", "skills"]
+
+    /// Whether this Mac has opencode set up, with anything to bring over.
+    static var isAvailable: Bool {
+        let manager = FileManager.default
+        return (settingsFiles.map { configFolder.appending(path: $0) } + [dataFolder.appending(path: "auth.json")]).contains { manager.fileExists(atPath: $0.path) }
+            || skillsFolders.contains { manager.fileExists(atPath: configFolder.appending(path: $0).path) }
+    }
+
+    // MARK: Reading
+
+    /// What there is to bring over that isn't here yet: settings `config` doesn't have, accounts
+    /// for integrations `connected` doesn't, skills folders the engine doesn't look in.
+    static func plan(engine: URL, config: [String: JSONValue], connected: Set<String>) async throws -> Plan {
+        var plan = Plan()
+        if let read = try await settings(engine: engine) {
+            plan.settings = missing(from: read, in: config)
+        }
+        let found = accounts().filter { !connected.contains($0.integration) }
+        plan.accounts = found.filter { $0.value["type"]?.string == "key" }
+        plan.signIns = found.filter { $0.value["type"]?.string == "oauth" }.map(\.integration)
+        let looked = Set((config["skills"]?.array ?? []).compactMap(\.string).map { ($0 as NSString).expandingTildeInPath })
+        plan.skillFolders = skillsFolders.map { configFolder.appending(path: $0).path }
+            .filter { FileManager.default.fileExists(atPath: $0) && !looked.contains($0) }
+        return plan
+    }
+
+    /// opencode's settings, as Kuvo Code's engine reads them: its settings files and its Markdown
+    /// agents and commands, copied into a folder of their own (not its plugins' packages).
+    private static func settings(engine: URL) async throws -> [String: JSONValue]? {
+        let manager = FileManager.default
+        let present = settingsFiles.filter { manager.fileExists(atPath: configFolder.appending(path: $0).path) }
+        let folders = markdownFolders.filter { manager.fileExists(atPath: configFolder.appending(path: $0).path) }
+        guard !present.isEmpty || !folders.isEmpty else { return nil }
+        let root = manager.temporaryDirectory.appending(path: Bundle.main.bundleIdentifier ?? "run.kuvo.code").appending(path: "opencode-import-\(UUID().uuidString)")
+        let copy = root.appending(path: "config/opencode")
+        try manager.createDirectory(at: copy, withIntermediateDirectories: true)
+        try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+        for name in present { try manager.copyItem(at: configFolder.appending(path: name), to: copy.appending(path: name)) }
+        for name in folders { try manager.copyItem(at: configFolder.appending(path: name), to: copy.appending(path: name)) }
+        let home = root.appending(path: "home")
+        try manager.createDirectory(at: home, withIntermediateDirectories: true)
+
+        let engineFolders = EngineFolders(root: root)
+        let server = try await ServerProcess.start(executable: engine, folders: engineFolders, environment: ["PATH": "/usr/bin:/bin", "HOME": home.path])
+        let sources = try? await OpenCodeAPI(endpoint: server.endpoint).configSources(directory: engineFolders.workspace.path)
+        // Its folder goes once it has stopped.
+        server.stop()
+        Task.detached {
+            for _ in 0..<40 where server.isRunning { try? await Task.sleep(for: .milliseconds(250)) }
+            try? FileManager.default.removeItem(at: root)
+        }
+        guard case .array(let sources)? = sources else { return nil }
+        // Each source's settings, later ones over earlier, as the engine layers them.
+        var merged: [String: JSONValue] = [:]
+        for source in sources {
+            guard let info = source["info"]?.object else { continue }
+            merged = deepMerged(merged, info)
+        }
+        return merged
+    }
+
+    private static func deepMerged(_ base: [String: JSONValue], _ over: [String: JSONValue]) -> [String: JSONValue] {
+        var result = base
+        for (key, value) in over {
+            if case .object(let inner) = value, case .object(let existing)? = result[key] {
+                result[key] = .object(deepMerged(existing, inner))
+            } else {
+                result[key] = value
+            }
+        }
+        return result
+    }
+
+    /// What `read` has that `config` doesn't: the settings that carry over (not its theme, key
+    /// bindings or updates, which are opencode's own), entry by entry, nothing replaced.
+    static func missing(from read: [String: JSONValue], in config: [String: JSONValue]) -> [String: JSONValue] {
+        var plan: [String: JSONValue] = [:]
+        if let model = read["model"], config["model"] == nil { plan["model"] = model }
+        for key in ["agents", "commands", "providers"] {
+            let theirs = read[key]?.object ?? [:]
+            let ours = config[key]?.object ?? [:]
+            let new = theirs.filter { ours[$0.key] == nil }
+            if !new.isEmpty { plan[key] = .object(new) }
+        }
+        let servers = (read["mcp"]?["servers"]?.object ?? [:]).filter { config["mcp"]?["servers"]?[$0.key] == nil }
+        if !servers.isEmpty { plan["mcp"] = .object(["servers": .object(servers)]) }
+        for key in ["plugins", "instructions", "permissions"] {
+            let ours = config[key]?.array ?? []
+            let new = (read[key]?.array ?? []).filter { !ours.contains($0) }
+            if !new.isEmpty { plan[key] = .array(new) }
+        }
+        return plan
+    }
+
+    /// opencode's sign-ins, as the engine's own import of them makes them: an API key as a key, a
+    /// sign-in with its method and the account it's for. Read when needed, kept in memory.
+    static func accounts() -> [(integration: String, label: String, value: JSONValue)] {
+        guard let data = try? Data(contentsOf: dataFolder.appending(path: "auth.json")),
+              case .object(let entries)? = try? JSONDecoder().decode(JSONValue.self, from: data) else { return [] }
+        var found: [(integration: String, label: String, value: JSONValue)] = []
+        for (name, entry) in entries.sorted(by: { $0.key < $1.key }) {
+            let integration = name.replacingOccurrences(of: #"/+$"#, with: "", options: .regularExpression)
+            guard !integration.isEmpty, let type = entry["type"]?.string else { continue }
+            switch type {
+            case "api":
+                guard let key = entry["key"]?.string else { continue }
+                var value: [String: JSONValue] = ["type": .string("key"), "key": .string(key)]
+                if let metadata = entry["metadata"], metadata.object != nil { value["metadata"] = metadata }
+                found.append((integration, "API key", .object(value)))
+            case "wellknown":
+                guard let token = entry["token"]?.string else { continue }
+                found.append((integration, "API key", .object(["type": .string("key"), "key": .string(token)])))
+            case "oauth":
+                guard let refresh = entry["refresh"]?.string, let access = entry["access"]?.string, let expires = entry["expires"]?.number else { continue }
+                var value: [String: JSONValue] = [
+                    "type": .string("oauth"), "methodID": .string(method(for: integration)),
+                    "refresh": .string(refresh), "access": .string(access), "expires": .number(expires),
+                ]
+                var metadata: [String: JSONValue] = [:]
+                if let account = entry["accountId"]?.string { metadata["accountID"] = .string(account) }
+                if let url = entry["enterpriseUrl"]?.string { metadata["enterpriseUrl"] = .string(url) }
+                if !metadata.isEmpty { value["metadata"] = .object(metadata) }
+                found.append((integration, "OAuth", .object(value)))
+            default:
+                continue
+            }
+        }
+        return found
+    }
+
+    /// The engine's sign-in method for an older opencode's sign-in to `integration`.
+    private static func method(for integration: String) -> String {
+        if integration == "openai" { return "chatgpt-browser" }
+        if ["github-copilot", "opencode", "xai"].contains(integration) { return "device" }
+        return "oauth"
+    }
+
+    static func modelName(_ model: JSONValue) -> String {
+        if let text = model.string { return text }
+        if let provider = model["providerID"]?.string, let id = model["model"]?.string ?? model["id"]?.string { return provider + "/" + id }
+        return "set"
+    }
+
+    // MARK: Bringing it over
+
+    /// Adds the plan's settings to `config` and its accounts to the engine behind `api`. Returns
+    /// how many things came over.
+    @MainActor
+    static func apply(_ plan: Plan, to config: EngineConfig, api: OpenCodeAPI) async -> Int {
+        var count = 0
+        // All in one write, so the engine reloads its settings once.
+        var changes: [(path: [String], value: JSONValue?)] = []
+        for (key, value) in plan.settings {
+            switch key {
+            case "model":
+                changes.append((["model"], value))
+                count += 1
+            case "mcp":
+                for (name, server) in value["servers"]?.object ?? [:] {
+                    changes.append((MCPSettings.path + [name], server))
+                    count += 1
+                }
+            case "plugins", "instructions", "permissions":
+                let ours = config.value(at: [key])?.array ?? []
+                let new = (value.array ?? []).filter { !ours.contains($0) }
+                if !new.isEmpty { changes.append(([key], .array(ours + new))) }
+                count += new.count
+            default:
+                for (name, entry) in value.object ?? [:] {
+                    changes.append(([key, name], entry))
+                    count += 1
+                }
+            }
+        }
+        if !plan.skillFolders.isEmpty {
+            let ours = config.value(at: ["skills"])?.array ?? []
+            changes.append((["skills"], .array(ours + plan.skillFolders.map(JSONValue.string))))
+            count += plan.skillFolders.count
+        }
+        if !changes.isEmpty { config.set(changes) }
+        for account in plan.accounts {
+            if (try? await api.storeCredential(value: account.value, label: account.label, for: account.integration)) != nil { count += 1 }
+        }
+        Analytics.shared.track("opencode_imported", ["things": count, "accounts": plan.accounts.count])
+        return count
+    }
+}

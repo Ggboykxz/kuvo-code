@@ -114,6 +114,12 @@ final class AppModel {
         }
     }
 
+    /// The engine this Mac runs (KUVO_OPENCODE_BINARY's, or the one installed), once there is one.
+    var engineBinary: URL? {
+        if let override = ProcessInfo.processInfo.environment["KUVO_OPENCODE_BINARY"] { return URL(filePath: override) }
+        return installer.installed()
+    }
+
     private var installer: EngineInstaller {
         EngineInstaller(root: AppInfo.supportDirectory.appending(path: "engine"))
     }

@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Settings › General brings over your opencode setup, when you have one: its API keys, model, MCP servers, agents, commands, plugins and skills. It shows what's new before anything changes and replaces nothing here; sign-ins (like ChatGPT's) are named for you to sign in to again, since sharing one between two apps can sign both out.
 - The engine starting again (after you add an integration's key, say) no longer leaves it stopped: the one before, exiting a moment late, was taken for the new one.
 - New bots can start from Lens, a code reviewer: it reviews a project's changes before they ship (pull requests too, when gh is signed in) and reports what it found, file by file. It takes the place of Bargain, which watched prices.
 - A sign-in you give an agent is forgotten after a few minutes, as it's meant to be; it used to stay in memory until Kuvo Code quit. Settings › Keyboard Shortcuts lists New Chat and zooming a machine's page too.

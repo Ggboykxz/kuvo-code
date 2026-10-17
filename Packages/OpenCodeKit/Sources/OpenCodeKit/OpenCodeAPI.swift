@@ -196,6 +196,12 @@ public struct OpenCodeAPI: Sendable {
         try await send("DELETE", "api/integration/\(integration.pathEscaped)/connect/oauth/\(attempt.pathEscaped)", directory: directory)
     }
 
+    /// Where the engine's settings come from, each with its settings as the engine reads them
+    /// (an older opencode's turned into its own form).
+    public func configSources(directory: String? = nil) async throws -> JSONValue {
+        try await get("api/config", directory: directory)
+    }
+
     public func credentials() async throws -> [Credential] {
         try await get("api/credential", as: DataEnvelope<[Credential]>.self).data
     }
@@ -221,6 +227,18 @@ public struct OpenCodeAPI: Sendable {
             var activate = true
         }
         try await send("POST", "api/credential", body: Body(integrationID: integration, label: entry.label, value: entry.value))
+    }
+
+    /// Stores a sign-in for `integration`, as its active one, in the engine's own form (a key,
+    /// or an OAuth sign-in with its method): one brought over from an older opencode.
+    public func storeCredential(value: JSONValue, label: String, for integration: String) async throws {
+        struct Body: Encodable {
+            var integrationID: String
+            var label: String
+            var value: JSONValue
+            var activate = true
+        }
+        try await send("POST", "api/credential", body: Body(integrationID: integration, label: label, value: value))
     }
 
     public func activateCredential(_ id: String) async throws {

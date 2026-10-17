@@ -1,4 +1,5 @@
 import AppKit
+import OpenCodeKit
 import SwiftUI
 import UsageKit
 
@@ -8,6 +9,12 @@ struct GeneralSettings: View {
     @AppStorage(OpenWith.editorKey) private var editor = ""
     @AppStorage(Awake.key) private var keepsAwake = true
     @Environment(Updates.self) private var updates
+    @Environment(AppModel.self) private var app
+    @Environment(Catalog.self) private var catalog
+    /// What opencode has that could come over, once you asked.
+    @State private var importing: ImportRequest?
+    @State private var reading = false
+    @State private var importNote: String?
 
     var body: some View {
         ScrollingSettingsForm {
@@ -36,6 +43,17 @@ struct GeneralSettings: View {
                     Text("For Open in the panel’s files and Open in Editor in Changes. Pictures and other files open in their own apps.")
                 }
             }
+            if OpencodeImport.isAvailable {
+                Section("opencode") {
+                    LabeledContent {
+                        Button("Bring Over…") { readOpencode() }
+                            .disabled(reading || app.api == nil)
+                    } label: {
+                        Text("Bring over your opencode setup")
+                        Text(importNote ?? "Its API keys, model, MCP servers, agents, commands, plugins and skills. opencode keeps its own; nothing here is replaced.")
+                    }
+                }
+            }
             Section("Updates") {
                 if updates.isAvailable {
                     @Bindable var updates = updates
@@ -52,6 +70,85 @@ struct GeneralSettings: View {
                 }
             }
         }
+        .sheet(item: $importing) { request in
+            OpencodeImportSheet(plan: request.plan, names: catalog.providerName) { bring in
+                importing = nil
+                guard bring else { return }
+                Task { await bringOver(request.plan) }
+            }
+        }
+    }
+
+    private struct ImportRequest: Identifiable {
+        let id = UUID()
+        let plan: OpencodeImport.Plan
+    }
+
+    private func readOpencode() {
+        guard let engine = app.engineBinary, let api = app.api else { return }
+        reading = true
+        Task {
+            defer { reading = false }
+            let connected = Set(((try? await api.credentials()) ?? []).map(\.integrationID))
+            do {
+                let plan = try await OpencodeImport.plan(engine: engine, config: app.engineConfig.settings, connected: connected)
+                if plan.isEmpty, plan.signIns.isEmpty {
+                    importNote = "Everything in your opencode setup is here already."
+                } else {
+                    importing = ImportRequest(plan: plan)
+                }
+            } catch {
+                importNote = "Couldn’t read your opencode setup: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func bringOver(_ plan: OpencodeImport.Plan) async {
+        guard let api = app.api else { return }
+        let count = await OpencodeImport.apply(plan, to: app.engineConfig, api: api)
+        importNote = count == 1 ? "Brought over 1 thing from opencode." : "Brought over \(count) things from opencode."
+        // Accounts and servers take effect as the engines start again, each once it's not at work.
+        app.renewEngines(mac: true)
+    }
+}
+
+/// What would come over from opencode, to look over before it does.
+private struct OpencodeImportSheet: View {
+    let plan: OpencodeImport.Plan
+    let names: (String) -> String
+    let done: (Bool) -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Form {
+                Section {
+                    ForEach(plan.lines(name: names), id: \.self) { line in
+                        Text(line)
+                            .lineLimit(3)
+                    }
+                } header: {
+                    Text("Bring Over from opencode")
+                } footer: {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("These aren’t in Kuvo Code yet; what it has already stays as it is. API keys are copied into Kuvo Code’s engine, and skills are found where opencode keeps them. The engine starts again to use them.")
+                        if !plan.signIns.isEmpty {
+                            Text("Sign in to \(ListFormatter.localizedString(byJoining: plan.signIns.map(names))) again in Settings › Accounts: a sign-in copied over would be refreshed by both apps, which can sign both out.")
+                        }
+                    }
+                    .foregroundStyle(.secondary)
+                }
+            }
+            .formStyle(.grouped)
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { done(false) }
+                    .keyboardShortcut(.cancelAction)
+                Button("Bring Over") { done(true) }
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(16)
+        }
+        .frame(width: SettingsView.sheetWidth, height: min(520, 220 + CGFloat(plan.lines(name: names).count) * 34))
     }
 }
 
