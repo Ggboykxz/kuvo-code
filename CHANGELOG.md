@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Double-clicking an empty part of the title bar, or a card's header, zooms the window, or does what you chose in System Settings › Desktop & Dock. The tabs and project name there used to take the click.
 - Text reads lighter and cleaner, most of all light text in dark mode: Kuvo Code draws it as chat apps on the web do, without macOS thickening it.
 - The model picker opens on one side of its button and stays there. It used to open above, then jump below when it grew, as you turned to the model list or More models.
 - The agent knows where the files you attach are on your Mac, so it can work with them. It used to get only what's in them, go looking for them, and sometimes say they weren't on disk.

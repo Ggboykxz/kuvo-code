@@ -108,8 +108,10 @@ struct Card<Icon: View, Actions: View, Content: View>: View {
         .padding(.leading, 14 + windowControlsInset)
         .padding(.trailing, 8 + windowControlsTrailingInset)
         .frame(height: Metrics.cardHeaderHeight)
-        // The whole bar takes clicks, so nothing scrolled under it is clicked by accident.
+        // The whole bar takes clicks, so nothing scrolled under it is clicked by accident; a
+        // double-click on it does what one on a title bar does, as the cards' tops are the window's.
         .contentShape(.rect)
+        .onTapGesture(count: 2) { TitleBarDoubleClick.perform() }
     }
 
     /// Soft elevation in place of a dark outline: a wide, faint shadow, a little deeper under
@@ -152,12 +154,29 @@ extension EnvironmentValues {
     @Entry var windowControlsTrailingInset: CGFloat = 0
 }
 
-/// Drags the window, where the title bar would be when the tab bar is hidden.
+/// Drags the window, and a double-click does what one on a title bar does: behind the title bar
+/// row's project and tabs, and where the title bar would be when the tab bar is hidden.
 struct WindowDragArea: View {
     var body: some View {
         Color.clear
             .contentShape(.rect)
+            .onTapGesture(count: 2) { TitleBarDoubleClick.perform() }
             .gesture(WindowDragGesture())
             .allowsWindowActivationEvents(true)
+    }
+}
+
+/// A double-click on a title bar, as System Settings › Desktop & Dock sets it: the window fills
+/// the screen (or zooms), minimizes, or nothing happens. Our title bar row is our own views,
+/// and they'd take the click before macOS saw it.
+enum TitleBarDoubleClick {
+    @MainActor static func perform() {
+        guard let window = NSApp.currentEvent?.window ?? NSApp.keyWindow else { return }
+        switch UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") {
+        case "Minimize": window.miniaturize(nil)
+        case "None": break
+        // Fill, Zoom ("Maximize"), or never changed.
+        default: window.zoom(nil)
+        }
     }
 }

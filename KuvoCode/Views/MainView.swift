@@ -398,6 +398,8 @@ struct MainView: View {
             // A width from the window (minus the traffic lights and the buttons on the right), so a
             // narrow window squeezes the tabs instead of pushing them into a » menu.
             .frame(width: max(240, contentWidth - (runCommand == nil ? 150 : 190)), alignment: .leading)
+            // Its empty parts are the title bar's: they drag the window, and a double-click zooms it.
+            .background { WindowDragArea() }
             .modifier(UnderImageViewer())
         }
         .sharedBackgroundVisibility(.hidden)
@@ -735,6 +737,8 @@ struct MainView: View {
         .accessibilityElement(children: .contain)
         // Room from the window, as the sessions' tabs have, so titles aren't squeezed.
         .frame(width: max(240, contentWidth - 150), alignment: .leading)
+        // Its empty parts are the title bar's: they drag the window, and a double-click zooms it.
+        .background { WindowDragArea() }
         .animation(.ui, value: app.settingsTabs.tabs.map(\.id))
     }
 
