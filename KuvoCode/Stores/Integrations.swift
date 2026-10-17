@@ -80,6 +80,14 @@ nonisolated enum Integrations {
         guard case .object(let servers) = config.value(at: MCPSettings.path) else { return }
         for (id, original) in servers {
             guard let service = service(id), case .object(var server) = original else { continue }
+            // One whose maker now runs its own server (Figma's): that server, signed in to, in
+            // place of the package, whose key goes.
+            if case .official = service.way, case .array(let old)? = server["command"], old.first?.string == Launcher.name,
+               let settings = settings(for: service) {
+                for variable in Self.keyNames(in: original) { IntegrationKeys.set(nil, for: variable) }
+                config.set(settings, at: MCPSettings.path + [id])
+                continue
+            }
             if server["codemode"] == nil { server["codemode"] = .bool(false) }
             // The same package through kuvo-npx, pinned or started differently: as it is now.
             if case .package(let command, _, _, _, _, _) = service.way, let package = command.first,
@@ -107,6 +115,18 @@ nonisolated enum Integrations {
         case .object(let object): return .object(object.mapValues(keyFiles))
         case .array(let array): return .array(array.map(keyFiles))
         default: return value
+        }
+    }
+
+    /// The keys a server's settings name (`KUVO_KEY_…`).
+    nonisolated static func keyNames(in value: JSONValue) -> [String] {
+        switch value {
+        case .string(let text):
+            guard let regex = try? NSRegularExpression(pattern: "KUVO_KEY_[A-Z0-9_]+") else { return [] }
+            return regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).map { (text as NSString).substring(with: $0.range) }
+        case .object(let object): return object.values.flatMap(keyNames)
+        case .array(let array): return array.flatMap(keyNames)
+        default: return []
         }
     }
 
@@ -301,7 +321,7 @@ nonisolated enum Integrations {
         Service(id: "calendly", title: "Calendly", summary: "Your event types, bookings and availability", kind: .work, symbol: "calendar.badge.plus", site: "https://calendly.com/app",
                 way: .official(url: "https://mcp.calendly.com")),
         Service(id: "figma", title: "Figma", summary: "Files and frames, to build designs from", kind: .work, symbol: "paintbrush", site: "https://www.figma.com",
-                way: .package(command: ["figma-developer-mcp@0.13.2", "--stdio"], keys: [Key(name: "FIGMA_API_KEY", label: "Personal access token", prompt: "figd_…")], help: "https://help.figma.com/hc/en-us/articles/8085703771159", by: "GLips's Figma-Context-MCP")),
+                way: .official(url: "https://mcp.figma.com/mcp")),
         Service(id: "asana", title: "Asana", summary: "Tasks and projects, through an app you register", kind: .work, symbol: "circle.grid.3x3", site: "https://app.asana.com",
                 way: .officialApp(url: "https://mcp.asana.com/v2/mcp", help: "https://developers.asana.com/docs/using-asanas-mcp-server")),
         Service(id: "zoom", title: "Zoom", summary: "Meetings, recordings and chat, through an app you register", kind: .work, symbol: "video", site: "https://zoom.us/meeting",

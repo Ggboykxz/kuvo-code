@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Figma connects through Figma's own server: you sign in with your Figma account instead of pasting a token, and the agent gets Figma's own tools. If you'd added Figma, sign in to it once under Settings › Integrations; its token is removed.
 - Integrations' servers (Outlook, Apple Calendar, Figma and the others) take about half the memory they did and start faster: each runs on its own, without npx waiting beside it.
 - Kuvo Code uses much less memory after launch: it used to wake every bot's folder in the engine, each with its own copy of every integration's server, for an hour. With Outlook connected and a few bots, that was more than a gigabyte.
 - When an integration or an MCP server needs something from you mid-task (which account or list, say), it asks in a card above the composer of the conversation waiting on it, and in a notification. It used to wait where you couldn't see it, and the agent stayed stuck until you stopped it.
