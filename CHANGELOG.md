@@ -6,6 +6,11 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Anonymous usage sends a model's name only if it's in the public catalog. Models you set up yourself (deployments, ARNs, fine-tunes, local models) go out as "custom".
+- Turning web search off or picking a service, in the settings file or a project's own settings, is no longer overridden. The free web search is written into the settings file once, where Settings › Engine › Web Search shows it and you can change or remove it.
+- Remote machines that stopped trying to reconnect while your Mac slept try again when it wakes.
+- The engine stops when Kuvo Code quits, even if something you left running from a panel terminal is still going.
+- After the engine restarts, a later crash is noticed and it starts again by itself. A restart could briefly show "couldn't start" and leave a crashed engine looking ready.
 - Links written as `[text][1]`, with their addresses listed at the end of a long reply, work all the way through. They showed as plain brackets in every part of the reply but the last.
 - Opening a conversation while the agent is working shows all of it. It could show empty or out of date, or leave out the words being written or a step, until it was opened again.
 - After the connection to the engine or a machine comes back, a conversation shows each message, step and turn's end once. The last ones could show twice until you switched away and back.
