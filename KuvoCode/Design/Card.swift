@@ -51,15 +51,17 @@ struct Card<Icon: View, Actions: View, Content: View>: View {
         if showsHeader {
             // The header's room is kept as safe area rather than given by a bar, so it's the
             // same whether or not the card reaches up into the window's title bar.
+            // Exactly the room it's given, whatever its content would like: content wider than
+            // that never pushes the cards beside it out of the window.
             content()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
                 .safeAreaPadding(.top, Metrics.cardHeaderHeight)
                 .overlay(alignment: .top) {
                     header.background(alignment: .top) { headerFade }
                 }
         } else {
             content()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
         }
     }
 

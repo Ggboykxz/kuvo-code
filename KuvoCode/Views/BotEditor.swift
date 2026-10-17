@@ -215,21 +215,38 @@ struct BotEditor: View {
             }
     }
 
+    /// In a narrow card, Delete and Export are icons rather than words cut short.
     private var footer: some View {
+        ViewThatFits(in: .horizontal) {
+            footerRow(compact: false)
+            footerRow(compact: true)
+        }
+    }
+
+    private func footerRow(compact: Bool) -> some View {
         HStack(spacing: 10) {
             if let bot {
-                Button("Delete Bot…", role: .destructive) { confirmsDelete = true }
-                    .buttonStyle(.glass)
-                Button("Export…") { BotRecipe.export(bot) }
-                    .buttonStyle(.glass)
-                    .help("Save a file to share \(bot.name): its look, personality and job")
+                Button(role: .destructive) { confirmsDelete = true } label: {
+                    if compact { Image(systemName: "trash") } else { Text("Delete Bot…") }
+                }
+                .buttonStyle(.glass)
+                .help(compact ? "Delete Bot…" : "")
+                .accessibilityLabel("Delete Bot…")
+                Button { BotRecipe.export(bot) } label: {
+                    if compact { Image(systemName: "square.and.arrow.up") } else { Text("Export…") }
+                }
+                .buttonStyle(.glass)
+                .help("Save a file to share \(bot.name): its look, personality and job")
+                .accessibilityLabel("Export…")
             }
             if isWorking {
                 Spinner(size: 16)
-                Text(isNew ? "Setting it up…" : "Saving…")
-                    .foregroundStyle(.secondary)
+                if !compact {
+                    Text(isNew ? "Setting it up…" : "Saving…")
+                        .foregroundStyle(.secondary)
+                }
             }
-            Spacer()
+            Spacer(minLength: 0)
             Button("Cancel", role: .cancel, action: close)
                 .keyboardShortcut(.cancelAction)
                 .buttonStyle(.glass)
@@ -502,15 +519,17 @@ private struct LookPicker: View {
         }
     }
 
+    /// The choices wrap onto another line when the card is narrow.
     private func row(_ title: String, @ViewBuilder choices: () -> some View) -> some View {
-        HStack(spacing: 0) {
+        HStack(alignment: .firstRowCenter, spacing: 0) {
             Text(title)
                 .foregroundStyle(.secondary)
                 .frame(width: 66, alignment: .leading)
                 .padding(.leading, 12)
-            HStack(spacing: 4) { choices() }
+            Flow(spacing: 4) { choices() }
             Spacer(minLength: 0)
         }
+        .padding(.vertical, 5)
         .frame(minHeight: 48)
     }
 

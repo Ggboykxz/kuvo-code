@@ -203,7 +203,7 @@ struct MessageAttachments: View {
         VStack(alignment: .trailing, spacing: 6) {
             let images = items.filter(\.isImage)
             if !images.isEmpty {
-                TrailingFlow(spacing: 6) {
+                Flow(alignment: .trailing, spacing: 6) {
                     ForEach(Array(images.enumerated()), id: \.element.id) { index, item in
                         AttachmentPicture(item: item, height: images.count == 1 ? 220 : 140) {
                             ImageViewer.shared.show(images, at: index)
@@ -338,50 +338,5 @@ private struct AttachmentMenu: View {
         Button("Open") { item.open() }
         Button("Show in Finder") { item.revealInFinder() }
             .disabled(item.fileURL == nil)
-    }
-}
-
-/// Lays views out in rows that wrap, aligned to the trailing edge (like a sent message).
-private struct TrailingFlow: Layout {
-    var spacing: CGFloat
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let rows = rows(for: subviews, width: proposal.width ?? .infinity)
-        let width = rows.map(\.width).max() ?? 0
-        let height = rows.map(\.height).reduce(0, +) + spacing * CGFloat(max(rows.count - 1, 0))
-        return CGSize(width: width, height: height)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var y = bounds.minY
-        for row in rows(for: subviews, width: bounds.width) {
-            var x = bounds.maxX - row.width
-            for index in row.indices {
-                let size = subviews[index].sizeThatFits(.unspecified)
-                subviews[index].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
-                x += size.width + spacing
-            }
-            y += row.height + spacing
-        }
-    }
-
-    private struct Row { var indices: [Int] = []; var width: CGFloat = 0; var height: CGFloat = 0 }
-
-    private func rows(for subviews: Subviews, width: CGFloat) -> [Row] {
-        var rows: [Row] = []
-        var current = Row()
-        for index in subviews.indices {
-            let size = subviews[index].sizeThatFits(.unspecified)
-            let next = current.indices.isEmpty ? size.width : current.width + spacing + size.width
-            if !current.indices.isEmpty, next > width {
-                rows.append(current)
-                current = Row()
-            }
-            current.width = current.indices.isEmpty ? size.width : current.width + spacing + size.width
-            current.height = max(current.height, size.height)
-            current.indices.append(index)
-        }
-        if !current.indices.isEmpty { rows.append(current) }
-        return rows
     }
 }
