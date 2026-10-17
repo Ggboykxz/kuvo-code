@@ -293,7 +293,7 @@ struct MainView: View {
         .modifier(RenameSession(session: $renaming))
         .sheet(item: $projectSheet) { request in
             ProjectSheet(project: request.project, folders: request.folders, focusesRun: request.focusesRun) { primary, settings in
-                workspace.saveProject(primary, settings: settings)
+                let primary = workspace.saveProject(primary, settings: settings)
                 if request.project == nil { newSession(in: primary) }
             }
         }
@@ -346,8 +346,7 @@ struct MainView: View {
             app.request = nil
             switch request {
             case .folder(let path):
-                workspace.addFolder(path)
-                newSession(in: path)
+                newSession(in: workspace.addFolder(path))
             case .session(let id):
                 openTab(id)
             case .newSession:
@@ -1033,8 +1032,7 @@ struct MainView: View {
         panel.prompt = "Open"
         panel.message = "Choose a project folder for the agent to work in."
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        workspace.addFolder(url.path)
-        newSession(in: url.path)
+        newSession(in: workspace.addFolder(url.path))
     }
 
     /// With nothing open, pick up where the user left off.

@@ -402,12 +402,26 @@ final class Workspace {
 
     // MARK: Changes
 
-    func addFolder(_ directory: String) {
+    /// Adds a project folder; the folder as it's kept (see `folderPath`).
+    @discardableResult
+    func addFolder(_ directory: String) -> String {
+        let directory = folderPath(directory)
         // Chats aren't a project.
-        guard !folders.contains(directory), !Self.isChat(directory) else { return }
+        guard !folders.contains(directory), !Self.isChat(directory) else { return directory }
         Analytics.shared.track("project_added", ["projects": folders.count + 1])
         folders.insert(directory, at: 0)
         UserDefaults.standard.set(folders, forKey: "projectFolders")
+        return directory
+    }
+
+    /// A project's folder as it's kept: one already a project as it is; a new one on this Mac by its
+    /// real path, links followed (/var/… is /private/var/…, a Dropbox folder is in
+    /// ~/Library/CloudStorage). The engine takes a session for outside its project when the two
+    /// paths differ, and keeps no snapshots of its changes then, so Undo couldn't bring files back.
+    func folderPath(_ directory: String) -> String {
+        guard !folders.contains(directory), !RemoteFolder.isRemote(directory), let resolved = realpath(directory, nil) else { return directory }
+        defer { free(resolved) }
+        return String(cString: resolved)
     }
 
     func removeFolder(_ directory: String) {
@@ -425,8 +439,9 @@ final class Workspace {
     }
 
     /// Adds a project, or updates one, and gives its open sessions the new folders.
-    func saveProject(_ directory: String, settings project: ProjectSettings) {
-        addFolder(directory)
+    @discardableResult
+    func saveProject(_ directory: String, settings project: ProjectSettings) -> String {
+        let directory = addFolder(directory)
         var project = project
         project.name = project.name?.trimmingCharacters(in: .whitespacesAndNewlines)
         if project.name?.isEmpty == true || project.name == (directory as NSString).lastPathComponent { project.name = nil }
@@ -439,6 +454,7 @@ final class Workspace {
         for model in models.values where projectDirectory(of: model.session) == directory {
             Task { await model.syncFolders() }
         }
+        return directory
     }
 
     /// Settings › Permissions changed: open sessions' rules follow (the others' when they open).
@@ -451,7 +467,7 @@ final class Workspace {
     /// A new session in the project at `directory`, or with `worktree`, in a new worktree of it.
     func createSession(in directory: String, model: ModelRef?, agent: String?, approval: ToolApproval = .approveAll, worktree: Bool = false) async throws -> Session {
         guard let api = api(forFolder: directory) else { throw CancellationError() }
-        addFolder(directory)
+        let directory = addFolder(directory)
         let folder = worktree ? try await makeWorktree(of: directory) : directory
         let extra = settings[directory]?.folders ?? []
         let rules = ProjectFolders.permissions(approval.rules(settings: EngineConfig.current?.permissionRules ?? []), folders: extra)
