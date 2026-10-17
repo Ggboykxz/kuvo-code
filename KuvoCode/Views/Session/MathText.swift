@@ -205,22 +205,44 @@ enum MathText {
 
     // MARK: Putting them back
 
-    /// Each mark in `text` swapped for its formula, drawn in the line.
+    /// Each mark in `text` swapped for its formula, drawn in the line. The marks are found in a
+    /// plain copy of the text's bytes, which is quick, rather than by walking its characters,
+    /// which works out where each one ends at every step (a long reply is read again with each
+    /// streamed word); and replaced last first, so the ones before keep their place.
     static func restore(_ text: inout AttributedString, _ formulas: [Formula]) {
         guard !formulas.isEmpty else { return }
-        var searchFrom = text.startIndex
-        while let start = text.characters[searchFrom...].firstIndex(of: open),
-              let end = text.characters[start...].firstIndex(of: close) {
-            let digits = String(text.characters[text.characters.index(after: start)..<end])
-            let after = text.characters.index(after: end)
-            guard let index = Int(digits), formulas.indices.contains(index) else {
-                searchFrom = after
-                continue
+        let opening = Array(String(open).utf8), closing = Array(String(close).utf8)
+        var marks: [(start: Int, end: Int, formula: Formula)] = []
+        var plain = String(text.characters)
+        plain.withUTF8 { bytes in
+            func matches(_ mark: [UInt8], at i: Int) -> Bool {
+                i + mark.count <= bytes.count && mark.indices.allSatisfy { bytes[i + $0] == mark[$0] }
             }
-            var formula = AttributedString("\u{FFFC}", attributes: text[start..<after].runs.first?.attributes ?? AttributeContainer())
-            formula.textual.attachment = AnyAttachment(InlineMath(latex: formulas[index].latex, isDisplay: formulas[index].isBlock))
-            text.replaceSubrange(start..<after, with: formula)
-            searchFrom = text.index(start, offsetByCharacters: 1)
+            var i = 0
+            while i < bytes.count {
+                guard bytes[i] == opening[0], matches(opening, at: i) else {
+                    i += 1
+                    continue
+                }
+                var j = i + opening.count, index = 0
+                while j < bytes.count, (0x30...0x39).contains(bytes[j]) {
+                    index = index * 10 + Int(bytes[j] - 0x30)
+                    j += 1
+                }
+                if j > i + opening.count, matches(closing, at: j), formulas.indices.contains(index) {
+                    marks.append((i, j + closing.count, formulas[index]))
+                    i = j + closing.count
+                } else {
+                    i += opening.count
+                }
+            }
+        }
+        for mark in marks.reversed() {
+            let start = text.utf8.index(text.startIndex, offsetBy: mark.start)
+            let end = text.utf8.index(start, offsetBy: mark.end - mark.start)
+            var formula = AttributedString("\u{FFFC}", attributes: text[start..<end].runs.first?.attributes ?? AttributeContainer())
+            formula.textual.attachment = AnyAttachment(InlineMath(latex: mark.formula.latex, isDisplay: mark.formula.isBlock))
+            text.replaceSubrange(start..<end, with: formula)
         }
     }
 
