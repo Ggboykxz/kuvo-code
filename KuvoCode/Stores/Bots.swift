@@ -218,11 +218,17 @@ final class Bots {
         </system-reminder>
         """
 
-    /// Saves a change to a bot, and tells its session about a new name, job or model; its group
-    /// chats hear about them too.
-    func update(_ bot: Bot) async {
-        guard let index = list.firstIndex(where: { $0.id == bot.id }) else { return }
+    /// Saves what Edit Bot changes (its name, look, model and personality), and tells its session
+    /// about a new name, personality or model; its group chats hear about them too. The rest is
+    /// kept as it is now: its job may have changed in its memory while Edit Bot was open.
+    func update(_ edited: Bot) async {
+        guard let index = list.firstIndex(where: { $0.id == edited.id }) else { return }
         let old = list[index]
+        var bot = old
+        bot.name = edited.name
+        bot.look = edited.look
+        bot.model = edited.model
+        bot.personality = edited.personality
         list[index] = bot
         save()
         guard let api = app?.workspace.api(forFolder: bot.directory) else { return }
