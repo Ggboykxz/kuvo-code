@@ -150,6 +150,8 @@ final class AgentMail {
             guard let text = arguments["text"] as? String, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return ("Say what to write (text).", true) }
             let sender = agent(caller)
             return await send(from: caller, name: sender?.name ?? "another agent", to: to, text: text, waits: (arguments["wait"] as? NSNumber)?.boolValue ?? false)
+        case "start_session":
+            return await start(arguments, caller: caller)
         default:
             return ("Unknown tool \(name).", true)
         }
@@ -195,6 +197,71 @@ final class AgentMail {
             return ("\(target.name) answered:\n\n" + reply, false)
         }
         return ("\(target.name) hasn't answered yet. It may still write back with send_message.", false)
+    }
+
+    // MARK: Starting another
+
+    /// Sessions an agent started lately, by the conversation that started them.
+    private var started: [String: [Date]] = [:]
+
+    /// A new session from the conversation `caller`: an agent of its own, in the caller's folder
+    /// (or the one given), on the caller's model, with your usual approval. It gets `task` as a
+    /// message from the caller, so it knows who to report to, and its metadata says who started it,
+    /// for the window to show it beside them.
+    func start(_ arguments: [String: Any], caller: String?) async -> (text: String, isError: Bool) {
+        guard let app else { return ("Kuvo Code isn't ready yet.", true) }
+        guard let task = (arguments["task"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !task.isEmpty else {
+            return ("Say what it's to do (task).", true)
+        }
+        let workspace = app.workspace
+        let parent = caller.flatMap { workspace.session($0) }
+        var folder = parent?.location.directory
+        if let given = (arguments["folder"] as? String)?.trimmingCharacters(in: .whitespaces), !given.isEmpty {
+            let path = (given as NSString).expandingTildeInPath
+            var isFolder: ObjCBool = false
+            guard path.hasPrefix("/"), FileManager.default.fileExists(atPath: path, isDirectory: &isFolder), isFolder.boolValue else {
+                return ("\(given) isn't a folder on this Mac. Give a full path to one.", true)
+            }
+            folder = path
+        }
+        guard let folder else { return ("Give the folder it works in (folder), as a full path.", true) }
+        // A few at a time: an agent shouldn't fill the window with sessions unattended.
+        let key = caller ?? "outside"
+        let lately = (started[key] ?? []).filter { $0.timeIntervalSinceNow > -600 }
+        guard lately.count < 6 else {
+            return ("You've started several sessions in the last few minutes. Write to those (send_message), or ask the user before starting more.", true)
+        }
+        started[key] = lately + [.now]
+        let approval = UserDefaults.standard.string(forKey: ToolApproval.key).flatMap(ToolApproval.init) ?? .approveAll
+        let session: Session
+        do {
+            session = try await workspace.createSession(in: folder, model: parent?.model, agent: nil, approval: approval)
+        } catch {
+            return ("Couldn't start a session in \(folder): \(error.localizedDescription)", true)
+        }
+        guard let api = workspace.api(forSession: session.id) else { return ("Couldn't reach the new session.", true) }
+        let title = (arguments["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let title, !title.isEmpty { try? await api.renameSession(session.id, title: title) }
+        let beside = (arguments["beside"] as? NSNumber)?.boolValue ?? true
+        try? await api.setMetadata(session: session.id, .object(["kuvo": .object(["startedBy": .string(caller ?? ""), "beside": .bool(beside)])]))
+        let waits = (arguments["wait"] as? NSNumber)?.boolValue ?? false
+        let id = Identifier.message()
+        do {
+            try await api.prompt(session: session.id, id: id, text: Self.compose(from: agent(caller)?.name ?? "another agent", session: caller ?? "unknown", text: task, waits: waits), delivery: .steer)
+        } catch {
+            return ("Started a session (\(session.id)), but the task didn't reach it: \(error.localizedDescription)", true)
+        }
+        Analytics.shared.track("agent_started_session", ["waits": waits, "beside": beside])
+        let name = title.flatMap { $0.isEmpty ? nil : "\"\($0)\"" } ?? "a new session"
+        let place = Workspace.isChat(folder) ? "" : " in \(workspace.projectName(folder))"
+        let shown = beside ? ", beside this conversation" : ", in a tab"
+        guard waits else {
+            return ("Started \(name)\(place)\(shown) (address \(session.id)). It's on it now. Write to it with send_message; it can write back to you the same way.", false)
+        }
+        if let reply = await reply(in: session.id, after: id, api: api) {
+            return ("Started \(name)\(place) (address \(session.id)). It answered:\n\n" + reply, false)
+        }
+        return ("Started \(name)\(place) (address \(session.id)). It hasn't answered yet; it may still write back with send_message.", false)
     }
 
     /// The answer in `session` to the message `id`: its words once it's done, ten minutes at most.

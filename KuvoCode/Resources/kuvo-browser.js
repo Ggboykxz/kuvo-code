@@ -1320,6 +1320,7 @@ async function mail(name, args, from) {
   const directory = readJSON(path.join(K, "run", "agents.json")) ?? { machine: null, agents: [] };
   const agents = directory.agents ?? [];
   const here = directory.machine ?? null;
+  if (name === "start_session") return startSession(args, from, agents, here);
   if (name === "list_agents") {
     if (!agents.length) return text("Kuvo Code on the Mac hasn't shared the list of agents with this machine yet. Write to a session here by its address (ses_…).");
     return text(describeAgents(agents, from, here));
@@ -1354,27 +1355,78 @@ async function mail(name, args, from) {
   const id = messageID();
   await engine("POST", `api/session/${encodeURIComponent(target.session)}/prompt`, { id, text: composeMail(sender, from ?? "unknown", words, waits), delivery: "steer" });
   if (!waits) return text(`Sent to ${target.name}. Its answer, if it writes one, comes to you as a message.`);
-  // Its words once it's done with ours, ten minutes at most.
+  const answer = await replyTo(target.session, id);
+  return text(answer ? `${target.name} answered:\n\n` + answer : `${target.name} hasn't answered yet. It may still write back with send_message.`);
+}
+
+const startedSessions = new Map();
+
+/// A new session on this machine, from the conversation `from`: an agent of its own, in the caller's
+/// folder (or the one given), with the caller's model and rules, given the task as a message from
+/// the caller. Its metadata says who started it, for Kuvo Code to show it beside them. The same as
+/// start_session on the Mac.
+async function startSession(args, from, agents, here) {
+  const task = typeof args.task === "string" ? args.task.trim() : "";
+  if (!task) return text("Say what it's to do (task).", true);
+  const parent = from ? (await engine("GET", `api/session/${encodeURIComponent(from)}`).catch(() => null))?.data : null;
+  let folder = parent?.location?.directory ?? null;
+  if (typeof args.folder === "string" && args.folder.trim()) {
+    const given = args.folder.trim().replace(/^~(?=$|\/)/, os.homedir());
+    let isFolder = false;
+    try {
+      isFolder = fs.statSync(given).isDirectory();
+    } catch {}
+    if (!given.startsWith("/") || !isFolder) return text(`${args.folder} isn't a folder on this machine. Give a full path to one.`, true);
+    folder = given;
+  }
+  if (!folder) return text("Give the folder it works in (folder), as a full path.", true);
+  const key = from ?? "outside";
+  const lately = (startedSessions.get(key) ?? []).filter((at) => Date.now() - at < 600_000);
+  if (lately.length >= 6) return text("You've started several sessions in the last few minutes. Write to those (send_message), or ask the user before starting more.", true);
+  startedSessions.set(key, [...lately, Date.now()]);
+  const title = typeof args.title === "string" && args.title.trim() ? args.title.trim() : undefined;
+  const beside = args.beside !== false;
+  const created = await engine("POST", "api/session", {
+    location: { directory: folder },
+    ...(title ? { title } : {}),
+    ...(parent?.model ? { model: parent.model } : {}),
+    ...(parent?.permissions ? { permissions: parent.permissions } : {}),
+  });
+  const session = created?.data?.id;
+  if (!session) return text("Couldn't start a session here.", true);
+  await engine("PATCH", `api/session/${encodeURIComponent(session)}`, { metadata: { kuvo: { startedBy: from ?? "", beside } } }).catch(() => {});
+  const waits = args.wait === true;
+  const sender = agents.find((agent) => agent.session === from)?.name ?? (here ? `an agent on ${here}` : "an agent on a machine");
+  const id = messageID();
+  await engine("POST", `api/session/${encodeURIComponent(session)}/prompt`, { id, text: composeMail(sender, from ?? "unknown", task, waits), delivery: "steer" });
+  const name = title ? `"${title}"` : "a new session";
+  if (!waits) return text(`Started ${name} on this machine${beside ? ", beside this conversation" : ", in a tab"} (address ${session}). It's on it now. Write to it with send_message; it can write back to you the same way.`);
+  const answer = await replyTo(session, id);
+  return text(`Started ${name} (address ${session}). ` + (answer ? `It answered:\n\n${answer}` : "It hasn't answered yet; it may still write back with send_message."));
+}
+
+/// The words in `session` after the message `id`, once its agent is done with it: ten minutes at most.
+async function replyTo(session, id) {
   const began = Date.now();
   let started = false;
   while (Date.now() - began < 600_000) {
     await sleep(2000);
     const active = (await engine("GET", "api/session/active").catch(() => null))?.data ?? {};
-    if (active[target.session]) {
+    if (Array.isArray(active) ? active.includes(session) : active[session]) {
       started = true;
       continue;
     }
     if (!started && Date.now() - began < 6000) continue;
-    const page = await engine("GET", `api/session/${encodeURIComponent(target.session)}/message?limit=20&order=desc`).catch(() => null);
+    const page = await engine("GET", `api/session/${encodeURIComponent(session)}/message?limit=20&order=desc`).catch(() => null);
     const replies = (page?.data ?? [])
       .filter((message) => message.type === "assistant" && message.id > id)
       .reverse()
       .map((message) => (message.content ?? []).filter((part) => part.type === "text").map((part) => part.text).join("\n"))
       .filter(Boolean);
-    if (replies.length) return text(`${target.name} answered:\n\n` + replies.join("\n\n").slice(0, 8000));
+    if (replies.length) return replies.join("\n\n").slice(0, 8000);
     if (started) break;
   }
-  return text(`${target.name} hasn't answered yet. It may still write back with send_message.`);
+  return null;
 }
 
 /// While you have the page a conversation works in, its tool call waits, up to ten minutes,
@@ -1720,7 +1772,7 @@ async function mcp() {
       case "tools/call": {
         // Showing something in Kuvo Code's panel needs no browser, nor a turn in the line.
         // Nor does writing to another agent.
-        if (params.name === "list_agents" || params.name === "send_message") {
+        if (params.name === "list_agents" || params.name === "send_message" || params.name === "start_session") {
           mail(params.name, params.arguments || {}, params._meta?.["ai.opencode/sessionID"] ?? null).then(reply, (error) => reply(text(error instanceof ToolError ? error.message : String(error), true)));
           return;
         }

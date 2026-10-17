@@ -47,6 +47,8 @@ struct TabStrip: View {
     let close: (String) -> Void
     /// Closes every tab except the given one, or all of them when it's nil.
     let closeAll: (_ except: String?) -> Void
+    /// Shows a session beside the one in view (split view).
+    var openBeside: ((String) -> Void)?
     /// Renames a session's tab (a new session's has no title to change yet).
     var rename: ((String) -> Void)?
 
@@ -92,6 +94,9 @@ struct TabStrip: View {
 
     private func menu(for tab: TabItem) -> [NSMenuItem] {
         var items: [NSMenuItem] = []
+        if let openBeside, tab.id != selection, SidebarView.draftDirectory(from: tab.id) == nil, BotGroups.groupID(fromTab: tab.id) == nil {
+            items += [ActionItem("Open Beside") { openBeside(tab.id) }]
+        }
         if let rename, SidebarView.draftDirectory(from: tab.id) == nil {
             items += [ActionItem("Rename…") { rename(tab.id) }, .separator()]
         }

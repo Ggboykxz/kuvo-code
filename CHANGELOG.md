@@ -6,6 +6,8 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- An agent can start a session of its own for part of the work, in the same project or another folder: it opens beside the conversation that started it, and the two can write to each other. Ask for a separate session, or let the agent decide.
+- Two sessions side by side: right-click a tab or a session in the sidebar and choose Open Beside. Drag the gap to resize, swap them, or close the one beside.
 - The menu bar's usage panel shows Grok's weekly limit for a SuperGrok account you signed in to in Kuvo Code; it used to need the Grok CLI signed in too.
 - While the agent thinks between steps, its thinking shows under the steps as it happens. It could be folded in with the finished steps, as if the agent had stopped.
 ## 0.5.4

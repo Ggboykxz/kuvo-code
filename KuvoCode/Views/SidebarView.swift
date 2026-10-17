@@ -27,6 +27,8 @@ struct SidebarView: View {
     @State private var deletingGroup: BotGroup?
 
     /// Folders the user closed, by path (newline-separated).
+    /// The session in split view, beside the one in view (MainView).
+    @AppStorage(MainView.splitKey) private var splitSession = ""
     @AppStorage("collapsedProjects") private var collapsedStorage = ""
     /// Sections the user folded away: "pinned", "bots", "chats", "projects", "recents" (newline-separated).
     @AppStorage("collapsedSections") private var foldedStorage = ""
@@ -550,6 +552,9 @@ struct SidebarView: View {
             } else {
                 Button("Pin") { Task { await workspace.setPinned(session.id, true) } }
             }
+        }
+        if session.id != selection {
+            Button("Open Beside") { withAnimation(.ui) { splitSession = session.id } }
         }
         Button("Rename…") {
             renaming = session

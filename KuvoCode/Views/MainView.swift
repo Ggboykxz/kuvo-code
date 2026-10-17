@@ -55,7 +55,12 @@ struct MainView: View {
     @State private var titleBarX: CGFloat = 0
     @State private var settingsBarX: CGFloat = 0
 
-    enum Pane { case sessions, conversation, changes }
+    enum Pane { case sessions, conversation, split, changes }
+
+    /// The session shown beside the one in view (split view), or empty.
+    static let splitKey = "splitSession"
+    @AppStorage(MainView.splitKey) private var splitSession = ""
+    @AppStorage("splitWidth") private var splitWidth = 560.0
 
     struct ClosedTab {
         var key: String
@@ -121,7 +126,8 @@ struct MainView: View {
             let layout = PaneLayout(
                 available: proxy.size.width,
                 sessions: showsSidebar ? sessionsWidth : nil,
-                changes: showsPanel ? changesWidth : nil
+                changes: showsPanel ? changesWidth : nil,
+                split: splitModel == nil ? nil : splitWidth
             )
             let expands = showsPanel && panelExpanded
             HStack(spacing: 0) {
@@ -149,13 +155,31 @@ struct MainView: View {
                             .transaction(value: showsSidebar) { $0.animation = nil }
                             .environment(\.windowControlsInset, controlsInset)
                             // With the tab bar hidden, the panel button sits over the rightmost card.
-                            .environment(\.windowControlsTrailingInset, !showsTabBar && layout.changes == nil ? 36 : 0)
+                            .environment(\.windowControlsTrailingInset, !showsTabBar && layout.changes == nil && layout.split == nil ? 36 : 0)
                             .onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .global).minX }) { mainPaneX = $0 }
                             // Under the expanded panel: out of reach, keys too (a card's Return
                             // or Esc), until it's back.
                             .disabled(expands)
                             .allowsHitTesting(!expands)
                             .accessibilityHidden(expands)
+                        // Split view: another session beside it, sized like the side cards.
+                        if let width = layout.split, let model = splitModel {
+                            PaneResizer(
+                                width: Binding(get: { width }, set: { splitWidth = $0 }),
+                                range: PaneLayout.splitRange.lowerBound...max(PaneLayout.splitRange.lowerBound, layout.splitMax),
+                                side: .trailing
+                            )
+                            .allowsHitTesting(!expands)
+                            splitCard(model)
+                                .frame(width: width)
+                                .environment(\.windowControlsTrailingInset, !showsTabBar && layout.changes == nil ? 36 : 0)
+                                .transaction(value: showsPanel) { $0.animation = nil }
+                                .transaction(value: showsSidebar) { $0.animation = nil }
+                                .disabled(expands)
+                                .allowsHitTesting(!expands)
+                                .accessibilityHidden(expands)
+                                .transition(.move(edge: .trailing).combined(with: .opacity))
+                        }
                         if let width = layout.changes {
                             PaneResizer(
                                 width: Binding(get: { width }, set: { changesWidth = $0 }),
@@ -388,7 +412,7 @@ struct MainView: View {
                 .frame(width: identityWidth, alignment: .leading)
                 .padding(.trailing, identityWidth == nil ? 16 : 0)
                 if !tabItems.isEmpty {
-                    TabStrip(tabs: tabItems, selection: $selection, close: { closeTab($0) }, closeAll: closeTabs(except:)) { id in
+                    TabStrip(tabs: tabItems, selection: $selection, close: { closeTab($0) }, closeAll: closeTabs(except:), openBeside: openBeside) { id in
                         guard let session = workspace.session(id) else { return }
                         renaming = session
                     }
@@ -508,6 +532,51 @@ struct MainView: View {
             if !showsTabBar { WindowDragArea().frame(height: Metrics.windowControlsHeight) }
         }
         .simultaneousGesture(TapGesture().onEnded { focus = .sessions })
+    }
+
+    /// The session in split view, while it's another than the one in view.
+    private var splitModel: SessionModel? {
+        guard !splitSession.isEmpty, splitSession != sessionID, workspace.session(splitSession) != nil else { return nil }
+        return workspace.model(for: splitSession)
+    }
+
+    /// The session beside the one in view: the same as its own card, with a way to swap the two
+    /// and to close the split.
+    private func splitCard(_ model: SessionModel) -> some View {
+        let id = model.id
+        let directory = model.session.location.directory
+        let bot = bots.bot(forSession: id)
+        return Card(title: bot?.name ?? model.session.title ?? "New Session", detail: bot == nil ? workspace.projectName(directory) : nil, isFocused: focus == .split) {
+            if let bot {
+                BotAvatar(look: bot.look, size: 18, mood: bots.mood(of: bot, in: workspace), animates: false)
+            } else if let logo = logo(for: model.session.model, in: directory) { ProviderLogo(id: logo, size: 14) } else { Image(systemName: "bubble.left") }
+        } actions: {
+            ContextGauge(model: model)
+            Button("Swap", systemImage: "arrow.left.arrow.right") { swapSplit() }
+                .help("Swap the two sessions")
+            Button("Close Split View", systemImage: "xmark") { withAnimation(.ui) { splitSession = "" } }
+                .help("Close Split View")
+        } content: {
+            SessionView(model: model)
+                .environment(\.bot, bot)
+        }
+        .environment(catalog(for: directory))
+        .id("split-" + id)
+        .simultaneousGesture(TapGesture().onEnded { focus = .split })
+    }
+
+    /// Shows `id` beside the session in view.
+    private func openBeside(_ id: String) {
+        guard id != selection, workspace.session(id) != nil else { return }
+        withAnimation(.ui) { splitSession = id }
+    }
+
+    /// The session beside goes in view, and the one in view beside it.
+    private func swapSplit() {
+        guard let main = sessionID, !splitSession.isEmpty else { return }
+        let other = splitSession
+        splitSession = main
+        openTab(other)
     }
 
     @ViewBuilder private var conversationCard: some View {
@@ -639,6 +708,21 @@ struct MainView: View {
             }
         }
         .simultaneousGesture(TapGesture().onEnded { focus = .conversation })
+        // A session an agent started: beside the conversation that started it, if that's the one
+        // in view; otherwise in a tab of its own, for you to find.
+        .onChange(of: workspace.besideRequest) { _, request in
+            guard let request else { return }
+            workspace.besideRequest = nil
+            if request.startedBy == sessionID {
+                withAnimation(.ui) { splitSession = request.session }
+            } else if !tabs.contains(request.session) {
+                tabs.append(request.session)
+            }
+        }
+        // The session beside, brought into view, is no longer beside it.
+        .onChange(of: selection) { _, id in
+            if id == splitSession { splitSession = "" }
+        }
     }
 
     private var utilitiesPane: some View {
@@ -1464,31 +1548,40 @@ struct MainView: View {
 struct PaneLayout {
     static let sessionsRange = 220.0...440.0
     static let changesRange = 300.0...900.0
+    static let splitRange = 380.0...1200.0
     static let conversationMinimum = 380.0
 
-    /// Widths of the side cards; nil when hidden (by choice, or for lack of room).
+    /// Widths of the side cards and the split; nil when hidden (by choice, or for lack of room).
     let sessions: Double?
     let changes: Double?
-    /// How wide each side card may be dragged right now.
+    let split: Double?
+    /// How wide each may be dragged right now.
     let sessionsMax: Double
     let changesMax: Double
+    let splitMax: Double
 
-    init(available: Double, sessions wanted: Double?, changes wantedChanges: Double?) {
+    init(available: Double, sessions wanted: Double?, changes wantedChanges: Double?, split wantedSplit: Double? = nil) {
         let gap = Double(Metrics.paneGap)
         var sessions = wanted.map { min(max($0, Self.sessionsRange.lowerBound), Self.sessionsRange.upperBound) }
         var changes = wantedChanges.map { min(max($0, Self.changesRange.lowerBound), Self.changesRange.upperBound) }
+        var split = wantedSplit.map { min(max($0, Self.splitRange.lowerBound), Self.splitRange.upperBound) }
         func overflow() -> Double {
-            (sessions.map { $0 + gap } ?? 0) + (changes.map { $0 + gap } ?? 0) + Self.conversationMinimum - available
+            (sessions.map { $0 + gap } ?? 0) + (changes.map { $0 + gap } ?? 0) + (split.map { $0 + gap } ?? 0) + Self.conversationMinimum - available
         }
+        // Out of room: the side cards shrink, then the split, then they go, the split last.
         if let width = changes, overflow() > 0 { changes = max(Self.changesRange.lowerBound, width - overflow()) }
         if let width = sessions, overflow() > 0 { sessions = max(Self.sessionsRange.lowerBound, width - overflow()) }
+        if let width = split, overflow() > 0 { split = max(Self.splitRange.lowerBound, width - overflow()) }
         if changes != nil, overflow() > 0 { changes = nil }
         if sessions != nil, overflow() > 0 { sessions = nil }
+        if split != nil, overflow() > 0 { split = nil }
         self.sessions = sessions
         self.changes = changes
+        self.split = split
         let room = available - Self.conversationMinimum
-        sessionsMax = min(Self.sessionsRange.upperBound, room - gap - (changes.map { $0 + gap } ?? 0))
-        changesMax = min(Self.changesRange.upperBound, room - gap - (sessions.map { $0 + gap } ?? 0))
+        sessionsMax = min(Self.sessionsRange.upperBound, room - gap - (changes.map { $0 + gap } ?? 0) - (split.map { $0 + gap } ?? 0))
+        changesMax = min(Self.changesRange.upperBound, room - gap - (sessions.map { $0 + gap } ?? 0) - (split.map { $0 + gap } ?? 0))
+        splitMax = min(Self.splitRange.upperBound, room - gap - (sessions.map { $0 + gap } ?? 0) - (changes.map { $0 + gap } ?? 0))
     }
 }
 

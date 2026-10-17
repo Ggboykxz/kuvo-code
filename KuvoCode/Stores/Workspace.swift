@@ -17,6 +17,16 @@ final class Workspace {
             for model in models.values where !RemoteFolder.isRemote(model.session.location.directory) { model.reconnect(api) }
         }
     }
+    /// A session an agent started (its start_session tool) to show beside the conversation that
+    /// started it, as its metadata says (`kuvo.startedBy`, `kuvo.beside`): asked once, as it's first
+    /// seen, wherever it runs.
+    struct BesideRequest: Equatable {
+        var session: String
+        var startedBy: String
+    }
+    var besideRequest: BesideRequest?
+    @ObservationIgnored private var askedBeside: Set<String> = []
+
     /// A machine's engine, by its name, for projects on it (folders written `ssh://machine/path`).
     @ObservationIgnored var machineAPI: (String) -> OpenCodeAPI? = { _ in nil }
     /// The machine each session's events came from, for sessions without a row (a subagent's).
@@ -1142,12 +1152,23 @@ final class Workspace {
         upsert(session)
     }
 
+    /// Asks for an agent's new session to show beside the one that started it, the first time
+    /// it's seen, while it's new.
+    private func noteBeside(_ session: Session) {
+        guard let kuvo = session.metadata?["kuvo"], kuvo["beside"]?.bool == true,
+              let starter = kuvo["startedBy"]?.string, !starter.isEmpty,
+              Date.now.timeIntervalSince1970 * 1000 - session.time.created < 120_000,
+              askedBeside.insert(session.id).inserted else { return }
+        besideRequest = BesideRequest(session: session.id, startedBy: starter)
+    }
+
     private func upsert(_ session: Session) {
         guard !isHidden(session) else {
             sessions.removeAll { $0.id == session.id }
             return
         }
         nameBranch(of: session)
+        noteBeside(session)
         if let index = sessions.firstIndex(where: { $0.id == session.id }) {
             sessions[index] = session
         } else {
