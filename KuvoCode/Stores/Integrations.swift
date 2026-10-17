@@ -250,11 +250,11 @@ nonisolated enum Integrations {
     static let all: [Service] = [
         // Mail and calendar
         Service(id: "apple-calendar", title: "Apple Calendar and Reminders", summary: "Events and reminders in your Mac's Calendar and Reminders, with every account you have there", kind: .mail, symbol: "calendar", site: "https://www.icloud.com/calendar",
-                way: .package(command: ["mcp-server-apple-events@1.6.0"], keys: [], help: nil, by: "FradSer's mcp-server-apple-events", macOnly: true)),
+                way: .package(command: ["mcp-server-apple-events@1.6.1"], keys: [], help: nil, by: "FradSer's mcp-server-apple-events", macOnly: true)),
         Service(id: "microsoft-365", title: "Outlook and Microsoft 365", summary: "Mail, calendar, contacts and files; you sign in with a code the first time", kind: .mail, symbol: "envelope", site: "https://outlook.live.com",
                 // --discovery: its own way of keeping its 196 tools (about 280k tokens) out of every
                 // request; the agent searches them and runs the one it needs.
-                way: .package(command: ["@softeria/ms-365-mcp-server@0.168.0", "--discovery"], keys: [], help: nil, by: "Softeria's ms-365-mcp-server", environment: [
+                way: .package(command: ["@softeria/ms-365-mcp-server@0.170.0", "--discovery"], keys: [], help: nil, by: "Softeria's ms-365-mcp-server", environment: [
                     // Its sign-in, chosen account and logs in a folder of its own, not the home folder or the keychain.
                     "MS365_MCP_TOKEN_CACHE_PATH": "{env:KUVO_INTEGRATIONS}/microsoft-365/token-cache.json",
                     "MS365_MCP_SELECTED_ACCOUNT_PATH": "{env:KUVO_INTEGRATIONS}/microsoft-365/selected-account.json",
