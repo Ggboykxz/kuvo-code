@@ -97,6 +97,11 @@ struct MainView: View {
         activeModel?.session.location.directory ?? draftDirectory
     }
 
+    /// A bot's workspace: the folder of its own it works in when it has no project.
+    private func isBotsOwnFolder(_ directory: String) -> Bool {
+        bots.list.contains { $0.project == nil && $0.directory == directory }
+    }
+
     /// The machine a folder is on, for a project there; nil for this Mac's.
     private func machine(for folder: String?) -> MachineEngine? {
         app.machines.engine(folder.flatMap(RemoteFolder.machine(of:)))
@@ -368,8 +373,9 @@ struct MainView: View {
         ToolbarItem(placement: .navigation) {
             HStack(spacing: 0) {
                 ProjectIdentity(
-                    name: activeDirectory.map(workspace.projectName),
-                    branch: activeDirectory.flatMap { workspace.branches[$0] },
+                    // A bot in a folder of its own has no project to name (its card names it).
+                    name: activeDirectory.flatMap { directory in isBotsOwnFolder(directory) ? nil : workspace.projectName(directory) },
+                    branch: activeDirectory.flatMap { directory in isBotsOwnFolder(directory) ? nil : workspace.branches[directory] },
                     directory: activeDirectory,
                     isWorktree: activeDirectory.map { workspace.worktrees[$0] != nil } ?? false,
                     environment: app.shellEnvironment,
