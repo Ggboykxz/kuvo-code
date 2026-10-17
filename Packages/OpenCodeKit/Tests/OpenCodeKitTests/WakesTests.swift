@@ -164,7 +164,8 @@ struct WakesTests {
         let letters = try #require(try FileManager.default.contentsOfDirectory(atPath: bot.appending(path: "watches").path).first)
         #expect(try run("list").output.contains("watch every 10m: cat state.txt"))
 
-        // The first run only notes what it prints; a change wakes the bot, the same output doesn't.
+        // The first run only notes what it prints; a change wakes the bot once the next run sees it
+        // too, the same output doesn't.
         let due = { try "0".write(to: bot.appending(path: "watches/\(letters)/next"), atomically: true, encoding: .utf8) }
         try "open".write(to: bot.appending(path: "state.txt"), atomically: true, encoding: .utf8)
         #expect(try run("check").output.isEmpty)
@@ -172,6 +173,10 @@ struct WakesTests {
         try due()
         // A carriage return and a line that looks like kuvo-wake's own don't get in the way.
         try "closed\r\nKUVO-WATCH nope\n\nsecond paragraph".write(to: bot.appending(path: "state.txt"), atomically: true, encoding: .utf8)
+        #expect(try run("check").output.isEmpty, "seen once")
+        let next = try #require(Int(String(contentsOf: bot.appending(path: "watches/\(letters)/next"), encoding: .utf8)))
+        #expect(abs(Double(next) - Date.now.timeIntervalSince1970 - 120) < 30, "looks again in two minutes")
+        try due()
         #expect(Wakes.changedWatches(in: try run("check").output) == [letters])
         let message = try #require(Wakes.watchMessage(letters, inBot: bot.path))
         #expect(message.hasPrefix("Tell the user what changed"))
@@ -185,6 +190,31 @@ struct WakesTests {
         #expect(Wakes.watchMessage(letters, inBot: bot.path) == nil)
         try due()
         #expect(try run("check").output.isEmpty)
+
+        // A hiccup (a page that didn't load, say) for one run, then as before: no wake-up.
+        let watch = bot.appending(path: "watches/\(letters)")
+        let last = try String(contentsOf: watch.appending(path: "last"), encoding: .utf8)
+        try "".write(to: bot.appending(path: "state.txt"), atomically: true, encoding: .utf8)
+        try due()
+        #expect(try run("check").output.isEmpty)
+        try "closed\r\nKUVO-WATCH nope\n\nsecond paragraph".write(to: bot.appending(path: "state.txt"), atomically: true, encoding: .utf8)
+        try due()
+        #expect(try run("check").output.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: watch.appending(path: "seen").path))
+
+        // A check that ran out of time, or couldn't run, is as if it hadn't run: what the bot
+        // heard stays, however often it happens.
+        for failing in ["echo 'curl: timed out'; exit 124", "nosuchcommand-kuvo"] {
+            try failing.write(to: watch.appending(path: "check"), atomically: true, encoding: .utf8)
+            for _ in 0..<2 {
+                try due()
+                #expect(try run("check").output.isEmpty, "\(failing)")
+            }
+            #expect(try String(contentsOf: watch.appending(path: "last"), encoding: .utf8) == last)
+            #expect(!FileManager.default.fileExists(atPath: watch.appending(path: "seen").path))
+            #expect(!FileManager.default.fileExists(atPath: watch.appending(path: "status").path))
+        }
+        try "cat state.txt".write(to: watch.appending(path: "check"), atomically: true, encoding: .utf8)
 
         let command = Wakes.command(in: #"kuvo-wake bot_abc watch 30m "curl -s https://example.com | grep -i outage" "Tell me about it""#)
         #expect(command == Wakes.Command(verb: .watch, when: "30m", note: "Tell me about it"))

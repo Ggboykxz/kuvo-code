@@ -317,9 +317,10 @@ public enum Wakes {
     }
 
     # A bot's watches that are due ($1, its folder): each runs its check, in the folder the bot
-    # works in. One whose output changed since what the bot last heard (not its first run) writes
-    # its wake-up to its `message`, the new output's sum to `pending`, and prints
-    # "KUVO-WATCH <letters>"; once the wake-up is delivered, `delivered` makes it what the bot heard.
+    # works in. One whose output changed since what the bot last heard (not its first run), and
+    # still has at the run after (`seen`), writes its wake-up to its `message`, the new output's
+    # sum to `pending`, and prints "KUVO-WATCH <letters>"; once the wake-up is delivered,
+    # `delivered` makes it what the bot heard.
     checks() {
       for w in "$1"/watches/*/; do
         [ -f "${w}check" ] || continue
@@ -328,12 +329,22 @@ public enum Wakes {
         c_period=$(period "$(cat "${w}every" 2>/dev/null)") || continue
         printf '%s' $((now + c_period)) >"${w}next"
         c_dir=$(cat "$1/directory" 2>/dev/null); [ -d "$c_dir" ] || c_dir=$1
-        c_out=$(cd "$c_dir" && limited "$(cat "${w}check")" 2>&1 </dev/null | head -c 4000)
+        c_check=$(cat "${w}check"); rm -f "${w}status"
+        c_out=$(cd "$c_dir" && { limited "$c_check" 2>&1 </dev/null; echo "$?" >"${w}status"; } | head -c 4000)
+        c_status=$(cat "${w}status" 2>/dev/null); rm -f "${w}status"
+        # Out of time, or it couldn't run (141 is only its output cut short): as if it hadn't run.
+        case "$c_status" in ''|*[!0-9]*) continue ;; esac
+        [ "$c_status" -lt 124 ] || [ "$c_status" -eq 141 ] || continue
         c_sum=$(printf '%s' "$c_out" | cksum)
         c_last=$(cat "${w}last" 2>/dev/null)
         # The first run is what it starts from.
         if [ -z "$c_last" ]; then printf '%s' "$c_sum" >"${w}last"; continue; fi
-        [ "$c_last" != "$c_sum" ] || { rm -f "${w}pending" "${w}message"; continue; }
+        [ "$c_last" != "$c_sum" ] || { rm -f "${w}pending" "${w}message" "${w}seen"; continue; }
+        # A change counts once the next run, two minutes on, sees it too: a page that didn't load,
+        # or a network not back yet after sleep, doesn't wake the bot.
+        if [ "$(cat "${w}seen" 2>/dev/null)" != "$c_sum" ]; then
+          printf '%s' "$c_sum" >"${w}seen"; printf '%s' $((now + 120)) >"${w}next"; continue
+        fi
         c_letters=${w%/}; c_letters=${c_letters##*/}
         printf '%s\n\nYour watch (%s, every %s) saw a change. Its check, %s, now prints:\n%s\n' \
           "$(cat "${w}note")" "$c_letters" "$(cat "${w}every")" "$(head -n 1 "${w}check")" "$c_out" >"${w}message"
