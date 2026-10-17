@@ -16,6 +16,11 @@ private struct CopyableCodeBlock: View {
     @State private var isHoveringCopy = false
     /// The code's height, which the line numbers are spaced out over.
     @State private var codeHeight: CGFloat = 0
+    /// What decides whether the first line would run in under the corner: its width, the code's
+    /// room, and the corner's size.
+    @State private var firstLineWidth: CGFloat = 0
+    @State private var codeWidth: CGFloat = 0
+    @State private var cornerSize: CGSize = .zero
     @Environment(\.colorScheme) private var scheme
     @Environment(\.cardIsFocused) private var cardIsFocused
     @Environment(\.findHighlight) private var highlight
@@ -33,6 +38,16 @@ private struct CopyableCodeBlock: View {
 
     private var content: AttributedSubstring? {
         Mirror(reflecting: configuration.codeBlock).descendant("content") as? AttributedSubstring
+    }
+
+    private var firstLine: String? {
+        content.map { String(String($0.characters).prefix { $0 != "\n" }) }
+    }
+
+    /// The first line is too long to share its row with the corner: the code starts below it,
+    /// so nothing is hidden under the language and Copy.
+    private var clearsCorner: Bool {
+        firstLineWidth > 0 && 14 + firstLineWidth + 8 > codeWidth - cornerSize.width
     }
 
     /// The code with Find's marks in it, while Find has places there: drawn without its colors,
@@ -67,17 +82,30 @@ private struct CopyableCodeBlock: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .monospaced()
                     .onGeometryChange(for: CGFloat.self, of: \.size.height) { codeHeight = $0 }
+                    .background(alignment: .topLeading) {
+                        if let firstLine {
+                            Text(firstLine)
+                                .transcriptCodeFont()
+                                .fixedSize()
+                                .hidden()
+                                .onGeometryChange(for: CGFloat.self, of: \.size.width) { firstLineWidth = $0 }
+                        }
+                    }
                     .padding(.horizontal, 14)
                     .padding(.vertical, Self.inset)
             }
+            .onGeometryChange(for: CGFloat.self, of: \.size.width) { codeWidth = $0 }
         }
+        // Room above the code for the corner, when its first line would reach in under it.
+        .padding(.top, clearsCorner ? max(0, cornerSize.height - Self.inset + 2) : 0)
         // Outside the scrolling code, so they stay in the corner when long lines scroll sideways.
-        // They float over the first line; a long one runs in under them.
+        // They float over the first line's end, or above a first line that would reach them.
         .overlay(alignment: .topTrailing) {
             corner
                 .padding(.leading, 28)
                 .padding(.trailing, 6)
                 .padding(.vertical, 6)
+                .onGeometryChange(for: CGSize.self, of: \.size) { cornerSize = $0 }
                 .background { cornerBackdrop }
         }
         .clipShape(Self.shape)
