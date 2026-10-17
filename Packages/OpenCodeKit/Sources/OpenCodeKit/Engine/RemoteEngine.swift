@@ -120,12 +120,15 @@ public struct RemoteEngineInstaller: Sendable {
 
     /// Gives the engine folders of its own in `~/.kuvo-code` (`$K`), for everything it runs there,
     /// so it never touches the machine's own opencode, if it has one.
-    static let folders = """
+    /// Worked out each time, never kept, so a `root` set later is the one it names.
+    static var folders: String {
+        """
         K="$HOME/\(root)"
         export XDG_DATA_HOME="$K/data" XDG_CONFIG_HOME="$K/config" XDG_STATE_HOME="$K/state" XDG_CACHE_HOME="$K/cache" npm_config_cache="$K/cache/npm" BUN_INSTALL="$K/cache/bun" KUVO_INTEGRATIONS="$K/integrations" TMPDIR="$K/tmp"
         mkdir -p "$K/data" "$K/config" "$K/state" "$K/cache" "$K/workspace" "$K/integrations" "$K/tmp"
         find "$K/tmp" -mindepth 1 -maxdepth 1 -mtime +3 -exec rm -rf {} + 2>/dev/null
         """
+    }
 
     /// `command` as the engine's own helpers run on the machine: with its folders in `$K` (and
     /// the XDG folders pointed there), from its workspace, its runtime at `$E`.
