@@ -59,6 +59,7 @@ struct Composer: View {
     @Environment(\.bot) private var bot
     @FocusState private var isFocused: Bool
     @FocusState private var answering: UUID?
+    @Environment(\.composerFocused) private var composerFocused
     @State private var isTargeted = false
     /// The sent message showing in the field, while going through them.
     @State private var historyIndex: Int?
@@ -269,6 +270,8 @@ struct Composer: View {
             answering = nil
         }
         .onChange(of: quoteFocus) { _, id in answering = id }
+        // Where you type is where you work: the window's commands follow.
+        .onChange(of: isFocused || answering != nil) { _, focused in if focused { composerFocused?() } }
         .onAppear {
             focusAtEnd()
             #if DEBUG
@@ -690,4 +693,9 @@ private struct ShellModeLabel: View {
         .frame(height: 28)
         .help("Runs the command in the project’s folder, without the agent. It and its output join the conversation, and the agent sees them with your next message. Delete the ! to talk to the agent again.")
     }
+}
+
+extension EnvironmentValues {
+    /// Called when the composer, or an answer to a quote in it, takes the keyboard.
+    @Entry var composerFocused: (() -> Void)? = nil
 }

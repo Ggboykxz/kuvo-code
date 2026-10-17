@@ -28,6 +28,9 @@ struct MainView: View {
     /// Out of room, the side cards give way in this order: the one opened last stays. A split you
     /// didn't just open (one restored, or met again on its tab) goes first.
     @State private var givesWay: [PaneLayout.Pane] = [.split, .changes, .sessions]
+    /// The tab whose split you opened (or swapped) last: there it keeps its place in `givesWay`;
+    /// another tab's, met again, gives way first.
+    @State private var keptSplit: String?
     /// The room the conversation and the panel share: what the panel takes, expanded.
     @State private var mainAreaWidth: CGFloat = 0
     @AppStorage("sessionsWidth") private var sessionsWidth = 280.0
@@ -627,8 +630,9 @@ struct MainView: View {
         } content: {
             SessionView(model: model)
                 .environment(\.bot, bot)
-                // Return and Esc answer its cards once you've clicked into it.
+                // Return and Esc answer its cards once you've clicked or typed into it.
                 .environment(\.takesCardKeys, focus == .split)
+                .environment(\.composerFocused) { focus = .split }
                 .largeWidgetHost()
         }
         .environment(catalog(for: directory))
@@ -659,7 +663,10 @@ struct MainView: View {
             self.tabs = tabs
             splitPairs = pairs
             keep(.split)
+            keptSplit = main
         }
+        // Its composer takes the keyboard: the menus' commands go to it.
+        focus = .split
     }
 
     /// Close Split View: the two go back to tabs of their own, the one beside next to `tab`.
@@ -692,6 +699,7 @@ struct MainView: View {
         if let index = tabs.firstIndex(of: tab) { tabs[index] = other }
         self.tabs = tabs
         splitPairs = pairs
+        if keptSplit == tab { keptSplit = other }
         if selection == tab { selection = other }
     }
 
@@ -791,6 +799,8 @@ struct MainView: View {
                     SessionView(model: model)
                         .environment(\.bot, bot)
                         .environment(\.takesCardKeys, !(focus == .split && splitModel != nil))
+                        // Typing here is working here, however the keyboard got here.
+                        .environment(\.composerFocused) { focus = .conversation }
                         .largeWidgetHost()
                 }
                 .environment(catalog(for: directory))
@@ -869,7 +879,7 @@ struct MainView: View {
             sessions: showsSidebar ? sessionsWidth : nil,
             changes: showsPanel ? changesWidth : nil,
             split: splitModel == nil ? nil : splitWidth,
-            givesWay: givesWay
+            givesWay: selection != nil && selection == keptSplit ? givesWay : [.split] + givesWay.filter { $0 != .split }
         )
     }
 
