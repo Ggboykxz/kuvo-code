@@ -1017,9 +1017,9 @@ final class MachineBrowserLink {
     }
 
     func start() throws {
-        let input = Pipe()
-        let output = Pipe()
-        let errors = Pipe()
+        let input = Pipe.unshared()
+        let output = Pipe.unshared()
+        let errors = Pipe.unshared()
         process.standardInput = input
         process.standardOutput = output
         process.standardError = errors

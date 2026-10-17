@@ -347,7 +347,7 @@ public final class RemoteServer: @unchecked Sendable {
         process.arguments = SSHConnection.options + SSHConnection.separate + forwards + [connection.destination]
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
-        let stderr = Pipe()
+        let stderr = Pipe.unshared()
         process.standardError = stderr
         let log = LogTail()
         stderr.fileHandleForReading.readabilityHandler = { handle in

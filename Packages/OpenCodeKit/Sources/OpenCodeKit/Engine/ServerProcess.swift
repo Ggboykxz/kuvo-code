@@ -123,9 +123,11 @@ public final class ServerProcess: @unchecked Sendable {
         process.arguments = ["serve", "--stdio", "--port", "0"]
         process.environment = environment
         process.currentDirectoryURL = folders.workspace
-        let stdin = Pipe()
-        let stdout = Pipe()
-        let stderr = Pipe()
+        // Its own: a terminal's shell started meanwhile mustn't hold stdin open after the app
+        // has gone.
+        let stdin = Pipe.unshared()
+        let stdout = Pipe.unshared()
+        let stderr = Pipe.unshared()
         process.standardInput = stdin
         process.standardOutput = stdout
         process.standardError = stderr
@@ -199,6 +201,20 @@ public final class ServerProcess: @unchecked Sendable {
             .replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "=", with: "")
+    }
+}
+
+extension Pipe {
+    /// A pipe only the process it's handed to gets. A `Process` passes on just the ends it's
+    /// given, but a program started another way, like a terminal's shell (forkpty, then exec),
+    /// would get a copy of both ends unless they close on exec, and keep the pipe open after the
+    /// app has gone.
+    public static func unshared() -> Pipe {
+        let pipe = Pipe()
+        for descriptor in [pipe.fileHandleForReading.fileDescriptor, pipe.fileHandleForWriting.fileDescriptor] {
+            _ = fcntl(descriptor, F_SETFD, fcntl(descriptor, F_GETFD) | FD_CLOEXEC)
+        }
+        return pipe
     }
 }
 
