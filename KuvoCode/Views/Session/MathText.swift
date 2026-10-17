@@ -308,25 +308,35 @@ struct InlineMath: Attachment {
 
 /// A formula of its own, in the code block a reply's `$$…$$` became: centered at the size of the
 /// text around it, and scrolling sideways when it's wider than the reply.
+///
+/// It's centered on a whole pixel: centered between two, its edges are rounded to pixels and it's
+/// drawn a pixel narrower or wider than it measured, which SwiftUIMath sets again to fit, breaking
+/// it onto a second line its height has no room for.
 struct MathBlockView: View {
     let latex: String
     @Environment(\.messageFont) private var font
+    @Environment(\.displayScale) private var displayScale
+    @State private var room: CGFloat = 0
 
     var body: some View {
+        let size = MathText.drawingSize(for: latex, near: font.size * MathText.scale, display: true)
+        let width = Math.typographicBounds(for: latex, fitting: .unspecified, font: .init(name: .latinModern, size: size), style: .display).width
         let formula = Math(latex)
-            .mathFont(.init(name: .latinModern, size: MathText.drawingSize(for: latex, near: font.size * MathText.scale, display: true)))
+            .mathFont(.init(name: .latinModern, size: size))
             .mathTypesettingStyle(.display)
             .mathRenderingMode(.monochrome)
             .fixedSize()
             .accessibilityLabel(latex)
         ViewThatFits(in: .horizontal) {
             formula
-                .frame(maxWidth: .infinity)
+                .padding(.leading, (max(0, room - width) / 2 * displayScale).rounded(.down) / displayScale)
+                .frame(maxWidth: .infinity, alignment: .leading)
             ScrollView(.horizontal) {
                 formula
             }
             .scrollIndicators(.automatic)
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { room = $0 }
         .padding(.vertical, 6)
     }
 }
