@@ -6,6 +6,13 @@ import UsageKit
 struct KuvoCodeApp: App {
     @NSApplicationDelegateAdaptor private var delegate: AppDelegate
 
+    init() {
+        // Text drawn as the reference chat apps draw theirs, without macOS thickening it (its
+        // "font smoothing"): light text on the dark cards read too bold. Set before anything is
+        // drawn; a value set for the app, or for every app, still wins.
+        UserDefaults.standard.register(defaults: ["AppleFontSmoothing": 0])
+    }
+
     var body: some Scene {
         Window(AppInfo.name, id: "main") {
             RootView()
