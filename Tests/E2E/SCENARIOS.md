@@ -67,7 +67,7 @@ real open-source projects cloned into the run's folder. Status: ✅ passes, ⚠�
 | --- | --- | --- |
 | E1 | "Find the latest release of X and what changed" (the agent browses and reads) | ⏳ |
 | E2 | "Fill in this form with …" on a real form page | ✅ httpbin's pizza form: seven fields, submitted, the echo matches |
-| E3 | Upload a file to a website for you (a bot on this Mac) | ⏳ |
+| E3 | Upload a file to a website for you (a bot on this Mac) | ✅ see L22 |
 | E4 | Download a file from a page and work with it | ✅ downloaded through the browser and read; the e2e copy now downloads into its run's folder |
 | E5 | A site that needs your sign-in: the card, Take Over, Hand Back | ⚠️ Google and X refused the headless shell; the machine browser is full Chrome now (a94a15b), sign-in to recheck with a real account |
 | E6 | Browse yourself in the panel: tabs, back, the new tab page, a page's dialog | ⏳ |
@@ -99,23 +99,23 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 | ID | Job | Status |
 | --- | --- | --- |
 | L1 | "Every morning, send me the top 5 tech news stories with links" (browsing several sources, deduplicating, a short digest) | ⏳ |
-| L2 | "Compare the price of the Sony WH-1000XM6 at three stores and tell me the cheapest" | ⏳ |
+| L2 | "Compare the price of the Sony WH-1000XM6 at three stores and tell me the cheapest" | ⚠️ an answer with links, but 50 steps and 5 minutes (it pressed Tab through Amazon's page) |
 | L3 | "Read this article (a URL) and give me the five key points" | ✅ GLM, Wikipedia via webfetch |
 | L4 | "What changed in the latest release of a GitHub project? Summarize its release notes" | ✅ GLM, through GitHub's API |
-| L5 | "Find three good libraries for X, compare them in a table, and recommend one" | ⏳ |
-| L6 | "Research a question and write the report to a file I can open" (sources, how sure it is) | ⏳ |
-| L7 | "Look up the opening hours and address of a place and put them in my notes file" | ⏳ |
+| L5 | "Find three good libraries for X, compare them in a table, and recommend one" | ✅ three libraries in a table, one recommended, 29 s |
+| L6 | "Research a question and write the report to a file I can open" (sources, how sure it is) | ✅ a sourced report with how sure it is, opened in the panel |
+| L7 | "Look up the opening hours and address of a place and put them in my notes file" | ✅ official hours and address, in notes.md, opened in the panel |
 
 ### Watching for changes
 
 | ID | Job | Status |
 | --- | --- | --- |
 | L8 | "Tell me if this website goes down" (status code) | ✅ a 5-minute watch on the status code, wakes only on a change |
-| L9 | "Tell me when this product's price drops below €X" | ⏳ |
+| L9 | "Tell me when this product's price drops below €X" | ✅ asked which book it meant (a question card) before watching |
 | L10 | "Tell me when a new issue is opened on this GitHub repository" | ✅ a 30-minute watch on GitHub's API, with the newest issue as its baseline |
 | L11 | "Watch this RSS feed and send me new posts" | ✅ a 5-minute watch on the feed; posts already there kept as seen |
 | L12 | "Tell me when this file in my project changes" | ⏳ |
-| L13 | "Warn me 30 days before this domain's certificate expires" | ⏳ |
+| L13 | "Warn me 30 days before this domain's certificate expires" | ✅ a warning 30 days before, and a daily watch in case the certificate changes |
 | L14 | "Check my CI every hour and tell me when it fails" | ⏳ |
 
 ### Schedules
@@ -134,10 +134,10 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 | --- | --- | --- |
 | L20 | "Here's a CSV of my expenses: total by category and chart it" (an attached file, a widget) | ⏳ |
 | L21 | "Download the CSV on this page and tell me what's in it" | ✅ downloaded with curl, counted 200 rows, averaged, opened it in the panel |
-| L22 | "Upload this file to this website's form" (a real upload page) | ⏳ |
-| L23 | "Rename the photos in this folder by date" (files in a folder you give it) | ⏳ |
+| L22 | "Upload this file to this website's form" (a real upload page) | ✅ a bot on this Mac made notes.txt and uploaded it (the-internet.herokuapp.com) |
+| L23 | "Rename the photos in this folder by date" (files in a folder you give it) | ✅ renamed by date |
 | L24 | "Turn this JSON into a spreadsheet-friendly CSV" | ✅ users.csv in its workspace, shown in the panel |
-| L25 | "Make me a one-page summary as a file I can share" | ⏳ |
+| L25 | "Make me a one-page summary as a file I can share" | ❌→✅ no way to make a PDF (it drove Microsoft Edge from a shell); browser_save_pdf now (569e34c), a designed one-pager saved; GLM can still take several minutes to write a long document |
 
 ### Code
 
@@ -147,7 +147,7 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 | L27 | "Review the changes on this branch before I merge" (Lens) | ⏳ |
 | L28 | "Check every week whether this project's dependencies are out of date" | ⏳ |
 | L29 | "Write the release notes from the commits since the last tag" | ⏳ |
-| L30 | "Find the TODOs in this project and list them by priority" | ⏳ |
+| L30 | "Find the TODOs in this project and list them by priority" | ✅ five TODOs across three files, sorted by priority |
 
 ### The web, by hand
 
@@ -165,7 +165,7 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 
 | ID | Job | Status |
 | --- | --- | --- |
-| L38 | It needs a decision: it asks plainly and stops, and carries on when you answer | ⏳ |
+| L38 | It needs a decision: it asks plainly and stops, and carries on when you answer | ✅ asks what it needs (a question card) before booking |
 | L39 | "Ask Sage to research X and tell me what it finds" (bot to bot, and the answer back) | ✅ asked Reader and relayed its answer (Reader's answer itself was wrong: a model mistake) |
 | L40 | A bot reports back to the session that asked it for something | ⏳ |
 | L41 | It finishes while you're in another app: a notification you can answer | ⏳ |
@@ -176,7 +176,7 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 | --- | --- | --- |
 | L42 | "I'm vegetarian and live in Istanbul": it remembers next time, after a restart | ✅ remembered across launches; ❌→✅ its web search failed: the engine had no search provider (2821561) |
 | L43 | A watch's last value kept between wake-ups, so it reports only what's new | ⏳ |
-| L44 | Its job grows ("also check the weekend weather") and the sidebar line follows | ⏳ |
+| L44 | Its job grows ("also check the weekend weather") and the sidebar line follows | ✅ the new Friday wake-up added, the sidebar line follows |
 | L45 | It's asked to change its name or model: it says plainly it can't, and where you can | ❌→✅ said it can't and pointed to Edit Bot, but suggested models you have no account for; now it leaves the choice to Edit Bot's list |
 
 ### On a machine, and when things go wrong
