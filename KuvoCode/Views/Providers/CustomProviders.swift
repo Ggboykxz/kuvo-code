@@ -7,12 +7,11 @@ import SwiftUI
 struct CustomProvidersSection: View {
     /// Opens a provider's sign-in, to add its key.
     let connect: (Integration) -> Void
+    /// Opens a provider's settings in the page's place; nil for a new one.
+    let edit: (String?) -> Void
     @Environment(AppModel.self) private var app
     @Environment(Catalog.self) private var catalog
     @Environment(\.colorScheme) private var scheme
-    @State private var editing: ProviderEdit?
-    /// What to remove once its sheet has closed (and its fields are done saving).
-    @State private var removal: [String]?
 
     static let path = ["providers"]
 
@@ -23,7 +22,7 @@ struct CustomProvidersSection: View {
             HStack(alignment: .firstTextBaseline) {
                 Text("Your Own").font(.headline)
                 Spacer()
-                Button("Add Provider…") { editing = ProviderEdit(id: nil) }
+                Button("Add Provider…") { edit(nil) }
                     .buttonStyle(.glass)
             }
             if ids.isEmpty {
@@ -55,7 +54,7 @@ struct CustomProvidersSection: View {
                                         .buttonStyle(.glass)
                                 }
                             }
-                            Button("Edit…") { editing = ProviderEdit(id: id) }
+                            Button("Edit…") { edit(id) }
                                 .buttonStyle(.glass)
                         }
                         .padding(.horizontal, 14)
@@ -67,22 +66,10 @@ struct CustomProvidersSection: View {
                 .specularRim(RoundedRectangle(cornerRadius: Metrics.cardRadius))
             }
         }
-        .sheet(item: $editing, onDismiss: removePending) { edit in
-            CustomProviderEditor(id: edit.providerID) { editing = nil } remove: { path in
-                removal = path
-                editing = nil
-            }
-        }
-    }
-
-    private func removePending() {
-        guard let removal else { return }
-        app.engineConfig.set(nil, at: removal)
-        self.removal = nil
     }
 }
 
-private struct ProviderEdit: Identifiable {
+struct ProviderEdit: Identifiable {
     /// Nil for a new one.
     var providerID: String?
 
@@ -91,12 +78,12 @@ private struct ProviderEdit: Identifiable {
     var id: String { providerID ?? "new" }
 }
 
-/// One provider's settings. A new one is named first; after that, changes are saved as you
-/// make them.
-private struct CustomProviderEditor: View {
+/// One provider's settings, in the Accounts page's place. A new one is named first; after that,
+/// changes are saved as you make them.
+struct CustomProviderEditor: View {
     @State var id: String?
     let done: () -> Void
-    /// Removes this entry, once the sheet has closed.
+    /// Removes this entry, once it's closed.
     let remove: ([String]) -> Void
     @Environment(AppModel.self) private var app
     @Environment(Catalog.self) private var catalog
@@ -115,26 +102,24 @@ private struct CustomProviderEditor: View {
     ]
 
     var body: some View {
-        VStack(spacing: 0) {
-            Text(id.flatMap { config.value(at: CustomProvidersSection.path + [$0, "name"])?.string } ?? "New Provider")
-                .font(.headline)
-                .padding(.top, 16)
+        SettingsDetailPage {
             if let id {
                 editor(id)
             } else {
-                Form {
-                    TextField("Name", text: $name, prompt: Text("Like My Company or Local Server"))
+                Section {
+                    TextField("Name", text: $name, prompt: Text("My Company, or Local Server"))
                         .onSubmit(create)
+                } footer: {
                     if let problem {
                         Text(problem).foregroundStyle(.red)
                     }
                 }
-                .formStyle(.grouped)
             }
-            EditorSheetButtons(create: id == nil ? "Create" : nil, canCreate: !name.trimmingCharacters(in: .whitespaces).isEmpty, onCreate: create,
-                               remove: "Remove Provider…", onRemove: { confirmsRemoval = true }, done: done)
+        } footer: {
+            SettingsEditorButtons(create: id == nil ? "Create" : nil, canCreate: !name.trimmingCharacters(in: .whitespaces).isEmpty, onCreate: create,
+                                  remove: "Remove Provider…", onRemove: { confirmsRemoval = true }, done: done)
         }
-        .frame(width: SettingsView.sheetWidth, height: id == nil ? 220 : SettingsView.sheetHeight)
+        .settingsDetailTitle(id.flatMap { config.value(at: CustomProvidersSection.path + [$0, "name"])?.string } ?? "New Provider")
         .confirmationDialog("Remove this provider?", isPresented: $confirmsRemoval) {
             Button("Remove", role: .destructive) {
                 remove(CustomProvidersSection.path + [id ?? ""])
@@ -146,7 +131,7 @@ private struct CustomProviderEditor: View {
 
     @ViewBuilder private func editor(_ id: String) -> some View {
         let path = CustomProvidersSection.path + [id]
-        Form {
+        Group {
             Section {
                 ConfigTextField(title: "Name", path: path + ["name"], prompt: id)
                 Picker("API", selection: Binding(
@@ -183,12 +168,12 @@ private struct CustomProviderEditor: View {
                 }
                 ForEach(models, id: \.self) { model in
                     HStack {
+                        // A long ID wraps, all of it in view.
                         Text(model)
                             .fontDesign(.monospaced)
                             .frame(width: 170, alignment: .leading)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .help(model)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .textSelection(.enabled)
                         ConfigTextField(title: "Name", path: path + ["models", model, "name"], prompt: "Name")
                             .labelsHidden()
                         ConfigNumberField(title: "Context", path: path + ["models", model, "limit", "context"], prompt: "Context")
@@ -207,7 +192,7 @@ private struct CustomProviderEditor: View {
                     }
                 }
                 HStack {
-                    TextField("Model ID", text: $newModel, prompt: Text("A model's ID, as the service names it"))
+                    TextField("Model ID", text: $newModel, prompt: Text("A model ID, as the service names it"))
                         .labelsHidden()
                         .onSubmit(addModel)
                     Button("Add", action: addModel)
@@ -228,7 +213,6 @@ private struct CustomProviderEditor: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .formStyle(.grouped)
     }
 
     private func create() {

@@ -98,14 +98,14 @@ struct MCPSettings: View {
             }
         }
         .modifier(LiveMCPServers(servers: $live, api: { app.api }, change: config.settings))
-        .sheet(item: $editing, onDismiss: removePending) { edit in
+        .settingsDetail(item: $editing, title: { $0.name ?? "Add Server" }, onDismiss: removePending) { edit in
             ServerEditor(name: edit.name, taken: Set(live.map(\.name))) { editing = nil } remove: { path in
                 removal = path
                 editing = nil
             }
         }
-        .sheet(item: $signingIn) { ref in
-            ConnectSheet(integrationID: ref.id, name: ref.service?.title, symbol: ref.service?.symbol, note: "The agent can use its tools now.") {
+        .settingsDetail(item: $signingIn, title: { _ in nil }) { ref in
+            ConnectDetail(integrationID: ref.id, name: ref.service?.title, symbol: ref.service?.symbol, note: "The agent can use its tools now.") {
                 signingIn = nil
                 Task {
                     if let api = app.api { for server in live where server.integrationID == ref.id { await app.reconnect(server.name, api: api, machine: nil) } }
@@ -226,15 +226,15 @@ private struct StatusLabel: View {
     }
 }
 
-/// One server's settings. A new one is named first; after that, changes are saved as you
-/// make them.
+/// One server's settings, in the page's place. A new one is named first; after that, changes
+/// are saved as you make them.
 private struct ServerEditor: View {
     /// Nil for a new one, until it's named.
     @State var name: String?
     /// The servers the engine has, from anywhere: a new one can't take their names.
     let taken: Set<String>
     let done: () -> Void
-    /// Removes this entry, once the sheet has closed.
+    /// Removes this entry, once it's closed.
     let remove: ([String]) -> Void
     @Environment(AppModel.self) private var app
     @State private var newName = ""
@@ -274,20 +274,18 @@ private struct ServerEditor: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            Text(name ?? "Add Server")
-                .font(.headline)
-                .padding(.top, 16)
+        SettingsDetailPage {
             if let name {
                 editor(MCPSettings.path + [name])
             } else {
                 naming
             }
-            EditorSheetButtons(create: name == nil ? "Add Server" : nil, canCreate: !newID.isEmpty && problem == nil, onCreate: add,
-                               remove: "Remove Server…", onRemove: { confirmsRemoval = true },
-                               done: { if let name { close(MCPSettings.path + [name]) } else { done() } })
+        } footer: {
+            SettingsEditorButtons(create: name == nil ? "Add Server" : nil, canCreate: !newID.isEmpty && problem == nil, onCreate: add,
+                                  remove: "Remove Server…", onRemove: { confirmsRemoval = true },
+                                  done: { if let name { close(MCPSettings.path + [name]) } else { done() } })
         }
-        .frame(width: SettingsView.sheetWidth, height: name == nil ? 220 : SettingsView.sheetHeight)
+        .settingsDetailTitle(name ?? "Add Server")
         .confirmationDialog("Remove \(name ?? "")?", isPresented: $confirmsRemoval) {
             Button("Remove", role: .destructive) {
                 if let name { remove(MCPSettings.path + [name]) }
@@ -300,26 +298,23 @@ private struct ServerEditor: View {
     /// A new server's name, before anything is written: what's wrong with it, or what it'll
     /// be called when that isn't quite what you typed.
     private var naming: some View {
-        Form {
-            Section {
-                TextField("Name", text: $newName, prompt: Text("github"))
-                    .onSubmit(add)
-            } footer: {
-                if let problem {
-                    Text(problem).foregroundStyle(.red)
-                } else if !newID.isEmpty, newID != newName.trimmingCharacters(in: .whitespaces) {
-                    Text(verbatim: "It'll be called \(newID).").foregroundStyle(.secondary)
-                } else {
-                    Text("A short name without spaces. The server's tools are named after it.").foregroundStyle(.secondary)
-                }
+        Section {
+            TextField("Name", text: $newName, prompt: Text("github"))
+                .onSubmit(add)
+        } footer: {
+            if let problem {
+                Text(problem).foregroundStyle(.red)
+            } else if !newID.isEmpty, newID != newName.trimmingCharacters(in: .whitespaces) {
+                Text(verbatim: "It'll be called \(newID).").foregroundStyle(.secondary)
+            } else {
+                Text("A short name without spaces. The server's tools are named after it.").foregroundStyle(.secondary)
             }
         }
-        .formStyle(.grouped)
     }
 
     @ViewBuilder private func editor(_ path: [String]) -> some View {
         let isRemote = config.value(at: path + ["type"])?.string == "remote"
-        Form {
+        Group {
             Section {
                 Picker("Runs", selection: Binding(
                     get: { isRemote ? "remote" : "local" },
@@ -347,7 +342,7 @@ private struct ServerEditor: View {
                         Text("Command").font(.body)
                     }
                     .font(.body.monospaced())
-                    .lineLimit(1...4)
+                    .lineLimit(1...8)
                     .onSubmit { saveCommand(path) }
                     .onDisappear { saveCommand(path) }
                     ConfigTextField(title: "Working folder", path: path + ["cwd"], prompt: "The project's folder")
@@ -375,7 +370,6 @@ private struct ServerEditor: View {
                 }
             }
         }
-        .formStyle(.grouped)
         .onAppear {
             command = Self.commandLine(config.value(at: path + ["command"]))
             shownCommand = command

@@ -169,8 +169,8 @@ struct EngineSettings: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .sheet(item: $addingKey) { ref in
-            ConnectSheet(integrationID: ref.id, note: "The agent can search the web with it now.") { addingKey = nil }
+        .settingsDetail(item: $addingKey, title: { _ in nil }) { ref in
+            ConnectDetail(integrationID: ref.id, note: "The agent can search the web with it now.") { addingKey = nil }
         }
         .task {
             guard let api = app.api else { return }

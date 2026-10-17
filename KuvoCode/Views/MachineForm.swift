@@ -1,12 +1,17 @@
 import OpenCodeKit
 import SwiftUI
 
-/// Adding a machine: an SSH host this Mac can reach with its keys, checked before it's kept.
-struct MachineSheet: View {
+/// Adding a machine: an SSH host this Mac can reach with its keys, checked before it's kept. In a
+/// Settings page's place it's a grouped form, as Settings are; in an editor in the window (a bot's,
+/// a project's), wells, as the editor's are.
+struct MachineForm: View {
+    enum Style { case settings, editor }
+
+    var style: Style = .editor
     /// Called with the machine once it's added and connecting.
     var added: (String) -> Void = { _ in }
+    let cancel: () -> Void
 
-    @Environment(\.dismiss) private var dismiss
     @Environment(AppModel.self) private var app
     @State private var destination = ""
     @State private var hosts: [String] = []
@@ -14,16 +19,52 @@ struct MachineSheet: View {
     @State private var failure: String?
     @FocusState private var isFocused: Bool
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Add Machine")
-                    .font(.title2.weight(.bold))
-                Text("A Linux server you reach with SSH, like a home server or a VPS. Its projects open next to this Mac’s, and their sessions run there.")
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+    static let about = "A Linux server you reach with SSH, like a home server or a VPS. Its projects open next to this Mac’s, and their sessions run there."
+    private static let how = "Kuvo Code connects with your SSH keys and agent, and installs its engine in ~/.kuvo-code there."
 
+    var body: some View {
+        Group {
+            switch style {
+            case .settings: settingsForm
+            case .editor: editorForm
+            }
+        }
+        .onAppear { isFocused = true }
+        .task { hosts = await Task.detached { SSHConfig.hosts() }.value }
+        .onChange(of: destination) { failure = nil }
+    }
+
+    private var settingsForm: some View {
+        SettingsDetailPage {
+            Section {
+                TextField("SSH host", text: $destination, prompt: Text(verbatim: "my-server or user@host"))
+                    .autocorrectionDisabled()
+                    .focused($isFocused)
+                    .onSubmit(add)
+                ForEach(suggestions, id: \.self) { host in
+                    Button { destination = host } label: {
+                        Label(host, systemImage: "arrow.turn.down.right")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .contentShape(.rect)
+                    }
+                    .buttonStyle(ListRowButtonStyle(isSelected: false))
+                    .padding(.horizontal, -6)
+                }
+            } footer: {
+                note
+            }
+        } footer: {
+            buttons(escapes: false)
+        }
+    }
+
+    private var editorForm: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text(Self.about)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             VStack(alignment: .leading, spacing: 8) {
                 WellGroup(isActive: isFocused) {
                     WellRow(isActive: isFocused) {
@@ -50,43 +91,31 @@ struct MachineSheet: View {
                     }
                 }
                 .font(.system(size: 15))
-
-                if let failure {
-                    Text(failure)
-                        .font(.callout)
-                        .foregroundStyle(.red)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
-                } else {
-                    Text("Kuvo Code connects with your SSH keys and agent, and installs its engine in ~/.kuvo-code there.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                note
+                    .font(.callout)
             }
-
-            HStack(spacing: 10) {
-                if isChecking {
-                    Spinner(size: 16)
-                    Text("Connecting…")
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("Cancel", role: .cancel) { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-                    .buttonStyle(.glass)
-                Button("Add Machine", action: add)
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.glassProminent)
-                    .disabled(trimmed.isEmpty || isChecking)
-            }
-            .controlSize(.large)
+            buttons(escapes: true)
         }
-        .padding(28)
-        .frame(width: 520)
-        .onAppear { isFocused = true }
-        .task { hosts = await Task.detached { SSHConfig.hosts() }.value }
-        .onChange(of: destination) { failure = nil }
+    }
+
+    /// Why it couldn't connect, or how it will.
+    @ViewBuilder private var note: some View {
+        if let failure {
+            Text(failure)
+                .foregroundStyle(.red)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        } else {
+            Text(Self.how)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// In an editor in the window, Escape is its Cancel; in Settings, it's the page's way back.
+    private func buttons(escapes: Bool) -> some View {
+        EditorFooter(primary: "Add Machine", canDoPrimary: !trimmed.isEmpty, onPrimary: add, onCancel: cancel, cancelsOnEscape: escapes,
+                     working: isChecking ? "Connecting…" : nil)
     }
 
     private var trimmed: String { destination.trimmingCharacters(in: .whitespaces) }
@@ -103,7 +132,6 @@ struct MachineSheet: View {
         guard !destination.isEmpty, !isChecking else { return }
         if app.machines.engine(destination) != nil {
             added(destination)
-            dismiss()
             return
         }
         isChecking = true
@@ -118,7 +146,6 @@ struct MachineSheet: View {
             }
             app.addMachine(destination)
             added(destination)
-            dismiss()
         }
     }
 }

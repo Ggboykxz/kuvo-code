@@ -38,7 +38,8 @@ struct SidebarView: View {
     /// the row you clicked is highlighted (both open the same tab). The one you leave keeps its
     /// place until the selection has moved, so its highlight doesn't jump to its project first.
     @State private var pickedIn: [String: Place] = [:]
-    @State private var renaming: Session?
+    /// A session being renamed, in its row where Rename was chosen.
+    @State private var renaming: RenameTarget?
     /// The session waiting for the user to confirm its deletion.
     @State private var deleting: Session?
     /// A session in a worktree being archived, while the user decides about its worktree.
@@ -47,6 +48,11 @@ struct SidebarView: View {
     @State private var worktreeIsDirty = false
 
     private enum Place { case pinned, project, chats, recents }
+
+    private struct RenameTarget: Equatable {
+        let id: String
+        let place: Place
+    }
     /// Sessions whose title or project has this, instead of the usual lists.
     @State private var search = ""
     /// Sessions whose conversations have the search, with the words around it.
@@ -232,6 +238,14 @@ struct SidebarView: View {
         #if DEBUG
         // KUVO_DEMO_SEARCH: text in the sidebar's search field.
         .onAppear { if let text = ProcessInfo.processInfo.environment["KUVO_DEMO_SEARCH"] { search = text } }
+        // KUVO_DEMO_RENAME=sidebar: the session in view, renamed in its row.
+        .task {
+            guard ProcessInfo.processInfo.environment["KUVO_DEMO_RENAME"] == "sidebar" else { return }
+            try? await Task.sleep(for: .seconds(2))
+            if let selection, let session = workspace.session(selection) {
+                renaming = RenameTarget(id: selection, place: Workspace.isChat(session.location.directory) ? .chats : .project)
+            }
+        }
         #endif
         // Only the open session's place is remembered; picked elsewhere, it shows in its project.
         .onChange(of: selection) { pickedIn = pickedIn.filter { $0.key == selection } }
@@ -261,7 +275,6 @@ struct SidebarView: View {
         } message: {
             Text("Its messages are deleted, and its bots stop remembering it. This can’t be undone.")
         }
-        .modifier(RenameSession(session: $renaming))
         .alert(
             deleting.flatMap(\.title).map { "Delete “\($0)”?" } ?? "Delete This Session?",
             isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })
@@ -488,15 +501,24 @@ struct SidebarView: View {
     }
 
     private func sessionRow(_ session: Session, in place: Place) -> some View {
-        SidebarRow(isSelected: isHighlighted(session, in: place), indented: place == .project, action: {
+        SidebarRow(isSelected: isHighlighted(session, in: place), indented: place == .project, isEditing: renaming == RenameTarget(id: session.id, place: place), action: {
             pickedIn[session.id] = place
             selection = session.id
         }) {
             EmptyView()
         } title: {
-            Text(session.title ?? "New Session")
-                .fontWeight(session.isUnread ? .semibold : .regular)
-                .foregroundStyle(Workspace.isArchived(session) ? .secondary : .primary)
+            if renaming == RenameTarget(id: session.id, place: place) {
+                InlineTitleField(original: session.title ?? "") { title in
+                    Task { await workspace.rename(session.id, to: title) }
+                    renaming = nil
+                } cancel: {
+                    renaming = nil
+                }
+            } else {
+                Text(session.title ?? "New Session")
+                    .fontWeight(session.isUnread ? .semibold : .regular)
+                    .foregroundStyle(Workspace.isArchived(session) ? .secondary : .primary)
+            }
         } accessory: {
             if Workspace.isArchived(session) {
                 Text("Archived")
@@ -514,7 +536,7 @@ struct SidebarView: View {
                 }
             }
         }
-        .contextMenu { menu(for: session) }
+        .contextMenu { menu(for: session, in: place) }
     }
 
     /// Saves the conversation as a Markdown file where you choose.
@@ -532,7 +554,9 @@ struct SidebarView: View {
         }
     }
 
-    @ViewBuilder private func menu(for session: Session) -> some View {
+    /// `place`: where the row is, for renaming it there; nil for a row that can't show it (a
+    /// conversation search result).
+    @ViewBuilder private func menu(for session: Session, in place: Place? = nil) -> some View {
         // On a machine that's away, the session is as last seen: what it does waits for it.
         if let engine = app.machines.engine(workspace.waitingMachine(for: session.id)) {
             Text("\(engine.machine.name) isn’t connected")
@@ -541,11 +565,11 @@ struct SidebarView: View {
             default: Button("Connect Now") { app.reconnectNow(engine) }
             }
         } else {
-            liveMenu(for: session)
+            liveMenu(for: session, in: place)
         }
     }
 
-    @ViewBuilder private func liveMenu(for session: Session) -> some View {
+    @ViewBuilder private func liveMenu(for session: Session, in place: Place?) -> some View {
         if !Workspace.isArchived(session) {
             if Workspace.isPinned(session) {
                 Button("Unpin") { Task { await workspace.setPinned(session.id, false) } }
@@ -556,8 +580,10 @@ struct SidebarView: View {
         if let openBeside, session.id != selection {
             Button("Open Beside") { openBeside(session.id) }
         }
-        Button("Rename…") {
-            renaming = session
+        if let place {
+            Button("Rename…") {
+                renaming = RenameTarget(id: session.id, place: place)
+            }
         }
         if Workspace.isChat(session.location.directory) {
             MoveToProjectMenu(session: session)
@@ -720,34 +746,42 @@ struct RowHighlight: ViewModifier {
 private struct SidebarRow<Icon: View, Title: View, Accessory: View>: View {
     var isSelected: Bool
     var indented = false
+    /// Its title is being typed (renamed): not a button meanwhile, so the field takes the keys.
+    var isEditing = false
     let action: () -> Void
     @ViewBuilder var icon: () -> Icon
     @ViewBuilder var title: () -> Title
     @ViewBuilder var accessory: () -> Accessory
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                if Icon.self != EmptyView.self {
-                    icon()
-                        .font(.system(size: 14))
-                        .foregroundStyle(.secondary)
-                        .frame(width: SidebarMetrics.iconWidth)
-                } else if indented {
-                    Color.clear.frame(width: SidebarMetrics.iconWidth, height: 1)
-                }
-                title()
-                    .font(.system(size: 14))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Spacer(minLength: 6)
-                accessory()
-            }
-            .padding(.horizontal, 10)
-            .frame(height: SidebarMetrics.rowHeight)
-            .modifier(RowHighlight(isSelected: isSelected))
+        if isEditing {
+            row
+        } else {
+            Button(action: action) { row }
+                .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
+    }
+
+    private var row: some View {
+        HStack(spacing: 10) {
+            if Icon.self != EmptyView.self {
+                icon()
+                    .font(.system(size: 14))
+                    .foregroundStyle(.secondary)
+                    .frame(width: SidebarMetrics.iconWidth)
+            } else if indented {
+                Color.clear.frame(width: SidebarMetrics.iconWidth, height: 1)
+            }
+            title()
+                .font(.system(size: 14))
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 6)
+            accessory()
+        }
+        .padding(.horizontal, 10)
+        .frame(height: SidebarMetrics.rowHeight)
+        .modifier(RowHighlight(isSelected: isSelected))
     }
 }
 

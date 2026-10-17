@@ -6,6 +6,9 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Editors open in place instead of in pop-up windows. In Settings, an agent, command, MCP server, skill, key, sign-in or provider opens in the page, under a way back to it (Esc goes back too); New Project and Edit Project open in the window's main card, as a bot does; and Add a Machine opens inside what asked for it.
+- Renaming a session happens where its title is: in its row in the sidebar, or in its card's header from its tab or the command palette. A new branch is named right where the branch shows in the title bar.
+- Fields show everything written in them: an agent's or command's description, a skill's "Use it when", a project's run and setup commands, a group chat's name and purpose, and your answers grow as you type rather than cutting off.
 - A file dropped anywhere on the message box is attached, its text included. Dropped on the text, it used to go in as the file's path.
 - A new bot no longer shows for a moment as a project called "workspace" in the sidebar while it's set up.
 - Creating a bot on a machine that's still connecting waits for it, showing what's under way beside the buttons, then makes the bot. It used to do nothing. If the machine can't be reached, it says so above the buttons.

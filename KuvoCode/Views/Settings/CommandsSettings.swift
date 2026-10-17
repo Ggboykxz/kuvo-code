@@ -101,7 +101,7 @@ struct CommandsSettings: View {
             }
         }
         .task { claudeCommands = await Task.detached { ClaudeCommands.load() }.value }
-        .sheet(item: $editing, onDismiss: removePending) { edit in
+        .settingsDetail(item: $editing, title: { $0.name.map { "/" + $0 } ?? "New Command" }, onDismiss: removePending) { edit in
             CommandEditor(name: edit.name) { editing = nil } remove: { path in
                 removal = path
                 editing = nil
@@ -122,13 +122,13 @@ private struct CommandEdit: Identifiable {
     var id: String { name ?? "" }
 }
 
-/// One command's settings. A new one is named first; after that, changes are saved as you
-/// make them.
+/// One command's settings, in the page's place. A new one is named first; after that, changes
+/// are saved as you make them.
 private struct CommandEditor: View {
     /// Nil for a new one, until it's named.
     @State var name: String?
     let done: () -> Void
-    /// Removes this entry, once the sheet has closed.
+    /// Removes this entry, once it's closed.
     let remove: ([String]) -> Void
     @Environment(AppModel.self) private var app
     @Environment(Catalog.self) private var catalog
@@ -161,19 +161,17 @@ private struct CommandEditor: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            Text(title)
-                .font(.headline)
-                .padding(.top, 16)
+        SettingsDetailPage {
             if let name {
                 editor(name)
             } else {
                 naming
             }
-            EditorSheetButtons(create: name == nil ? "Create Command" : nil, canCreate: !newID.isEmpty && problem == nil, onCreate: create,
-                               remove: "Delete Command…", onRemove: { confirmsRemoval = true }, done: done)
+        } footer: {
+            SettingsEditorButtons(create: name == nil ? "Create Command" : nil, canCreate: !newID.isEmpty && problem == nil, onCreate: create,
+                                  remove: "Delete Command…", onRemove: { confirmsRemoval = true }, done: done)
         }
-        .frame(width: SettingsView.sheetWidth, height: name == nil ? 220 : SettingsView.sheetHeight)
+        .settingsDetailTitle(title)
         .confirmationDialog("Delete \(title)?", isPresented: $confirmsRemoval) {
             Button("Delete", role: .destructive) {
                 if let name { remove(CommandsSettings.path + [name]) }
@@ -186,28 +184,25 @@ private struct CommandEditor: View {
     /// A new command's name, before anything is written: what's wrong with it, or what it'll
     /// be called when that isn't quite what you typed.
     private var naming: some View {
-        Form {
-            Section {
-                TextField("Name", text: $newName, prompt: Text("test"))
-                    .onSubmit(create)
-            } footer: {
-                if let problem {
-                    Text(problem).foregroundStyle(.red)
-                } else if !newID.isEmpty, newID != typedName {
-                    Text(verbatim: "It'll be called /\(newID).").foregroundStyle(.secondary)
-                } else {
-                    Text("A short name without spaces: you'll type / and this name.").foregroundStyle(.secondary)
-                }
+        Section {
+            TextField("Name", text: $newName, prompt: Text("test"))
+                .onSubmit(create)
+        } footer: {
+            if let problem {
+                Text(problem).foregroundStyle(.red)
+            } else if !newID.isEmpty, newID != typedName {
+                Text(verbatim: "It'll be called /\(newID).").foregroundStyle(.secondary)
+            } else {
+                Text("A short name without spaces: you'll type / and this name.").foregroundStyle(.secondary)
             }
         }
-        .formStyle(.grouped)
     }
 
     @ViewBuilder private func editor(_ name: String) -> some View {
         let path = CommandsSettings.path + [name]
-        Form {
+        Group {
             Section {
-                ConfigTextField(title: "Description", path: path + ["description"], prompt: "Shown in the list when you type /")
+                ConfigTextField(title: "Description", path: path + ["description"], prompt: "Shown in the list when you type /", multiline: true)
                 Picker("Agent", selection: config.string(path + ["agent"])) {
                     Text("The session's agent").tag(String?.none)
                     ForEach(catalog.agents.filter { !$0.hidden }) { Text($0.name).tag(Optional($0.id)) }
@@ -231,7 +226,6 @@ private struct CommandEditor: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .formStyle(.grouped)
     }
 
     private func create() {

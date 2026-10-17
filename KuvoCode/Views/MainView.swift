@@ -33,7 +33,8 @@ struct MainView: View {
     @AppStorage("changesWidth") private var changesWidth = 420.0
     @AppStorage(Notifier.badgeKey) private var showsBadge = true
     /// The New Project or Edit Project sheet, while it's open.
-    @State private var projectSheet: ProjectSheetRequest?
+    /// New Project or Edit Project, in the main card.
+    @State private var projectEditor: ProjectEditorRequest?
     /// Making or changing a bot, in the main card while it's open.
     @State private var botEditor: BotEditorRequest?
     /// Making or changing a group chat, the same way.
@@ -333,13 +334,6 @@ struct MainView: View {
             }
         }
         .animation(.ui, value: showsPalette)
-        .modifier(RenameSession(session: $renaming))
-        .sheet(item: $projectSheet) { request in
-            ProjectSheet(project: request.project, folders: request.folders, focusesRun: request.focusesRun) { primary, settings in
-                let primary = workspace.saveProject(primary, settings: settings)
-                if request.project == nil { newSession(in: primary) }
-            }
-        }
         .focusedSceneValue(\.sessionActions, actions)
         // Viewed only while you're here: finished while you're in another app, it waits for you
         // on the Dock icon, and counts as seen when you come back.
@@ -428,6 +422,8 @@ struct MainView: View {
                 if !tabItems.isEmpty {
                     TabStrip(tabs: tabItems, selection: $selection, close: { closeTab($0) }, closeAll: closeTabs(except:), openBeside: openBeside, closeBeside: closeBeside, swapBeside: swapBeside) { id in
                         guard let session = workspace.session(id) else { return }
+                        // Renamed in its card's header: its tab comes forward for it.
+                        selection = id
                         renaming = session
                     }
                 }
@@ -539,8 +535,8 @@ struct MainView: View {
             SidebarView(
                 selection: Binding(get: { selection }, set: { id in if let id { openTab(id) } }),
                 newSession: newSession,
-                newProject: { projectSheet = ProjectSheetRequest(project: nil) },
-                editProject: { projectSheet = ProjectSheetRequest(project: $0) },
+                newProject: { openProjectEditor(ProjectEditorRequest(project: nil)) },
+                editProject: { openProjectEditor(ProjectEditorRequest(project: $0)) },
                 showProviders: { app.openSettings(.accounts) },
                 newBot: { openBotEditor(bot: nil) },
                 editBot: { openBotEditor(bot: $0) },
@@ -564,13 +560,24 @@ struct MainView: View {
         return workspace.model(for: splitSession)
     }
 
+    /// The session's title, renamed in its card's header, while it's the one being renamed.
+    private func rename(_ session: Session) -> CardRename? {
+        guard renaming?.id == session.id else { return nil }
+        return CardRename(original: session.title ?? "") { title in
+            Task { await workspace.rename(session.id, to: title) }
+            renaming = nil
+        } cancel: {
+            renaming = nil
+        }
+    }
+
     /// The session beside the one in view: the same as its own card, with a way to swap the two
     /// and to close the split.
     private func splitCard(_ model: SessionModel) -> some View {
         let id = model.id
         let directory = model.session.location.directory
         let bot = bots.bot(forSession: id)
-        return Card(title: bot?.name ?? model.session.title ?? "New Session", detail: bot == nil ? workspace.projectName(directory) : nil, isFocused: focus == .split) {
+        return Card(title: bot?.name ?? model.session.title ?? "New Session", detail: bot == nil ? workspace.projectName(directory) : nil, isFocused: focus == .split, rename: bot == nil ? rename(model.session) : nil) {
             if let bot {
                 BotAvatar(look: bot.look, size: 18, mood: bots.mood(of: bot, in: workspace), animates: false)
             } else if let logo = logo(for: model.session.model, in: directory) { ProviderLogo(id: logo, size: 14) } else { Image(systemName: "bubble.left") }
@@ -647,6 +654,21 @@ struct MainView: View {
                     }
                 }
                 .id(request.id)
+            } else if let request = projectEditor {
+                Card(title: request.project.map { "Edit \($0.name)" } ?? "New Project", isFocused: focus == .conversation) {
+                    Image(systemName: "folder")
+                } actions: {
+                    Button("Close", systemImage: "xmark") { withAnimation(.ui) { projectEditor = nil } }
+                        .help("Close")
+                } content: {
+                    ProjectEditor(project: request.project, folders: request.folders, focusesRun: request.focusesRun) { primary, settings in
+                        let primary = workspace.saveProject(primary, settings: settings)
+                        if request.project == nil { newSession(in: primary) }
+                    } close: {
+                        withAnimation(.ui) { projectEditor = nil }
+                    }
+                }
+                .id(request.id)
             } else if let request = botEditor {
                 Card(title: request.bot.map { "Edit \($0.name)" } ?? "New Bot", isFocused: focus == .conversation) {
                     if let bot = request.bot { BotAvatar(look: bot.look, size: 18, animates: false) } else { Image(systemName: "face.smiling") }
@@ -679,7 +701,7 @@ struct MainView: View {
                 let machine = machine(for: directory)
                 let bot = bots.bot(forSession: id)
                 // A bot's card has its name only: its avatar shows where it lives.
-                Card(title: bot?.name ?? model.session.title ?? "New Session", detail: bot == nil ? workspace.projectName(directory) : nil, isFocused: focus == .conversation) {
+                Card(title: bot?.name ?? model.session.title ?? "New Session", detail: bot == nil ? workspace.projectName(directory) : nil, isFocused: focus == .conversation, rename: bot == nil ? rename(model.session) : nil) {
                     if let bot {
                         // Still: in view, the bot moves in its conversation.
                         BotAvatar(look: bot.look, size: 18, mood: bots.mood(of: bot, in: workspace), animates: false)
@@ -847,7 +869,20 @@ struct MainView: View {
             panelExpanded = false
             app.showsSettings = false
             groupEditor = nil
+            projectEditor = nil
             botEditor = BotEditorRequest(bot: bot, recipe: recipe)
+        }
+        focus = .conversation
+    }
+
+    /// Makes a project, or changes one, in the main card.
+    private func openProjectEditor(_ request: ProjectEditorRequest) {
+        withAnimation(.ui) {
+            panelExpanded = false
+            app.showsSettings = false
+            botEditor = nil
+            groupEditor = nil
+            projectEditor = request
         }
         focus = .conversation
     }
@@ -858,6 +893,7 @@ struct MainView: View {
             panelExpanded = false
             app.showsSettings = false
             botEditor = nil
+            projectEditor = nil
             groupEditor = GroupEditorRequest(group: group)
         }
         focus = .conversation
@@ -942,6 +978,7 @@ struct MainView: View {
             app.showsSettings = false
             botEditor = nil
             groupEditor = nil
+            projectEditor = nil
         }
     }
 
@@ -1092,7 +1129,7 @@ struct MainView: View {
             canReopenTab: closedTabs.contains(where: canReopen),
             newSession: { newSession(in: nil) },
             openFolder: openFolder,
-            newProject: { projectSheet = ProjectSheetRequest(project: nil) },
+            newProject: { openProjectEditor(ProjectEditorRequest(project: nil)) },
             newBot: { openBotEditor(bot: nil) },
             importBot: { if let recipe = BotRecipe.pick() { openBotEditor(bot: nil, recipe: recipe) } },
             newGroup: { openGroupEditor(group: nil) },
@@ -1179,7 +1216,7 @@ struct MainView: View {
         if let directory = activeDirectory {
             let primary = workspace.projectDirectory(directory)
             add("Edit Project…", "slider.horizontal.3", detail: workspace.projectName(primary)) {
-                projectSheet = ProjectSheetRequest(project: workspace.projects.first { $0.directory == primary } ?? Workspace.Project(directory: primary, sessions: [], settings: workspace.settings[primary] ?? .init()))
+                openProjectEditor(ProjectEditorRequest(project: workspace.projects.first { $0.directory == primary } ?? Workspace.Project(directory: primary, sessions: [], settings: workspace.settings[primary] ?? .init())))
             }
         }
         if let model = activeModel {
@@ -1211,7 +1248,7 @@ struct MainView: View {
         guard let command = runCommand else {
             let primary = workspace.projectDirectory(directory)
             let project = workspace.projects.first { $0.directory == primary } ?? Workspace.Project(directory: primary, sessions: [], settings: workspace.settings[primary] ?? .init())
-            projectSheet = ProjectSheetRequest(project: project, focusesRun: true)
+            openProjectEditor(ProjectEditorRequest(project: project, focusesRun: true))
             return
         }
         showInPanel { utilities.run(command, in: directory, environment: app.shellEnvironment) }
@@ -1275,6 +1312,8 @@ struct MainView: View {
         if environment["KUVO_DEMO_CHANGES"] != nil { showPanel() }
         // KUVO_DEMO_PALETTE=<text>: the command palette, with that typed in it.
         if workspace.isLoaded, environment["KUVO_DEMO_PALETTE"] != nil { showsPalette = true }
+        // KUVO_DEMO_RENAME=header: the session in view, renamed in its card's header.
+        if workspace.isLoaded, environment["KUVO_DEMO_RENAME"] == "header", let session = activeModel?.session { renaming = session }
         // KUVO_DEMO_WINDOW=WIDTHxHEIGHT resizes the window, for checking narrow layouts;
         // KUVO_DEMO_OFFSCREEN puts it past the screen's edge, where the pointer can't hover over it.
         if let size = environment["KUVO_DEMO_WINDOW"]?.split(separator: "x").compactMap({ Double($0) }), size.count == 2,
@@ -1292,7 +1331,7 @@ struct MainView: View {
         if workspace.isLoaded, environment["KUVO_DEMO_PROVIDERS"] != nil { app.openSettings(.accounts) }
         // KUVO_DEMO_NEW_PROJECT=<folder>,<folder>: the New Project sheet with these folders.
         if workspace.isLoaded, let list = environment["KUVO_DEMO_NEW_PROJECT"] {
-            projectSheet = ProjectSheetRequest(project: nil, folders: list.split(separator: ",").map(String.init))
+            openProjectEditor(ProjectEditorRequest(project: nil, folders: list.split(separator: ",").map(String.init)))
         }
         // KUVO_DEMO_SETTINGS=<page> opens Settings on that page, by its SettingsPage name: general,
         // appearance, storage, accounts, agents, mcp, git, browser, passwords and so on.
@@ -1777,7 +1816,7 @@ struct GroupEditorRequest: Identifiable {
     let group: BotGroup?
 }
 
-struct ProjectSheetRequest: Identifiable {
+struct ProjectEditorRequest: Identifiable {
     let id = UUID()
     let project: Workspace.Project?
     /// Folders a new project starts with.

@@ -58,14 +58,14 @@ struct IntegrationsSettings: View {
             if let id = ProcessInfo.processInfo.environment["KUVO_DEMO_SIGN_IN_SITE"], let service = Integrations.service(id) {
                 app.settingsTabs.open(service)
             }
-            // KUVO_DEMO_CONNECTED=<id>: its sign-in sheet, on its last step.
+            // KUVO_DEMO_CONNECTED=<id>: its sign-in, on its last step.
             if let id = ProcessInfo.processInfo.environment["KUVO_DEMO_CONNECTED"], let service = Integrations.service(id) {
                 signingIn = IntegrationRef(id: "mcp_demo", service: service)
             }
         }
         #endif
-        .sheet(item: $signingIn) { ref in
-            ConnectSheet(integrationID: ref.id, name: ref.service?.title, symbol: ref.service?.symbol, note: ref.service == nil ? "The agent can use it now." : "", highlights: highlights(ref.service)) {
+        .settingsDetail(item: $signingIn, title: { _ in nil }) { ref in
+            ConnectDetail(integrationID: ref.id, name: ref.service?.title, symbol: ref.service?.symbol, note: ref.service == nil ? "The agent can use it now." : "", highlights: highlights(ref.service)) {
                 signingIn = nil
                 Task {
                     if let api = app.api { for server in live where server.integrationID == ref.id { await app.reconnect(server.name, api: api, machine: nil) } }
@@ -75,8 +75,8 @@ struct IntegrationsSettings: View {
                 }
             }
         }
-        .sheet(item: $addingKey) { request in
-            KeySheet(service: request.service) { saved in
+        .settingsDetail(item: $addingKey, title: { "Connect \($0.service.title)" }) { request in
+            KeyEntry(service: request.service) { saved in
                 addingKey = nil
                 guard saved else { return }
                 add(request.service)
@@ -388,8 +388,8 @@ private struct KeyRequest: Identifiable {
     var id: String { service.id }
 }
 
-/// The keys an integration needs, typed or pasted, for your Keychain.
-private struct KeySheet: View {
+/// The keys an integration needs, typed or pasted, for your Keychain: in the page's place.
+private struct KeyEntry: View {
     let service: Integrations.Service
     let done: (Bool) -> Void
     @State private var values: [String: String] = [:]
@@ -424,41 +424,29 @@ private struct KeySheet: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            Form {
-                Section {
-                    ForEach(keys, id: \.name) { key in
-                        SecureField(key.label, text: Binding(get: { values[key.name] ?? "" }, set: { values[key.name] = $0 }), prompt: Text(key.prompt))
+        SettingsDetailPage {
+            Section {
+                ForEach(keys, id: \.name) { key in
+                    SecureField(key.label, text: Binding(get: { values[key.name] ?? "" }, set: { values[key.name] = $0 }), prompt: Text(key.prompt))
+                }
+            } footer: {
+                VStack(alignment: .leading, spacing: 6) {
+                    if failed {
+                        Text("Couldn’t save it in your Keychain. Try again, or check Keychain Access.")
+                            .foregroundStyle(.red)
                     }
-                } header: {
-                    Text("Connect \(service.title)")
-                } footer: {
-                    VStack(alignment: .leading, spacing: 6) {
-                        if failed {
-                            Text("Couldn’t save it in your Keychain. Try again, or check Keychain Access.")
-                                .foregroundStyle(.red)
-                        }
-                        Text(explanation)
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                        if let help, let url = URL(string: help) {
-                            Link("Where to get one", destination: url)
-                        }
+                    Text(explanation)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let help, let url = URL(string: help) {
+                        Link("Where to get one", destination: url)
                     }
                 }
             }
-            .formStyle(.grouped)
-            HStack {
-                Spacer()
-                Button("Cancel", role: .cancel) { done(false) }
-                    .keyboardShortcut(.cancelAction)
-                Button("Save") { save() }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!isComplete)
-            }
-            .padding(16)
+        } footer: {
+            EditorFooter(primary: "Save", canDoPrimary: isComplete, onPrimary: save, onCancel: { done(false) })
         }
-        .frame(width: SettingsView.sheetWidth, height: 230 + CGFloat(keys.count) * 30)
         .onAppear {
             for key in keys { values[key.name] = IntegrationKeys.value(IntegrationKeys.variable(service.id, key.name)) ?? "" }
         }

@@ -16,6 +16,8 @@ struct Card<Icon: View, Actions: View, Content: View>: View {
     var showsHeader = true
     /// False draws no card at all (no fill, edge or shadow): the content sits on the window's glass.
     var showsSurface = true
+    /// The title being renamed, in place, in the header.
+    var rename: CardRename? = nil
     @ViewBuilder var icon: () -> Icon
     @ViewBuilder var actions: () -> Actions
     @ViewBuilder var content: () -> Content
@@ -92,7 +94,13 @@ struct Card<Icon: View, Actions: View, Content: View>: View {
                 .frame(width: 16, height: 16)
                 .foregroundStyle(isFocused ? .primary : .secondary)
             HStack(spacing: 0) {
-                Text(title)
+                if let rename {
+                    InlineTitleField(original: rename.original, commit: rename.commit, cancel: rename.cancel)
+                        .frame(maxWidth: 360)
+                        .padding(.trailing, 6)
+                } else {
+                    Text(title)
+                }
                 if let detail {
                     Text(" | " + detail)
                 }
@@ -129,6 +137,13 @@ extension Card where Actions == EmptyView {
     init(title: String, detail: String? = nil, isFocused: Bool = true, showsHeader: Bool = true, showsSurface: Bool = true, @ViewBuilder icon: @escaping () -> Icon, @ViewBuilder content: @escaping () -> Content) {
         self.init(title: title, detail: detail, isFocused: isFocused, showsHeader: showsHeader, showsSurface: showsSurface, icon: icon, actions: { EmptyView() }, content: content)
     }
+}
+
+/// A card's title, renamed in its header: what it was, and what's done once it's renamed or left.
+struct CardRename {
+    let original: String
+    let commit: (String) -> Void
+    let cancel: () -> Void
 }
 
 /// The quiet glyph buttons in a card header (split, expand, close).

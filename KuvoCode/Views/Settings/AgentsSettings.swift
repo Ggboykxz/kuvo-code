@@ -119,7 +119,7 @@ struct AgentsSettings: View {
             }
         }
         .task { claudeAgents = await Task.detached { ClaudeAgents.load() }.value }
-        .sheet(item: $editing, onDismiss: removePending) { edit in
+        .settingsDetail(item: $editing, title: { $0.agentID ?? "New Agent" }, onDismiss: removePending) { edit in
             AgentEditor(id: edit.agentID, isBuiltIn: edit.isBuiltIn) { editing = nil } remove: { path in
                 removal = path
                 editing = nil
@@ -155,14 +155,14 @@ private struct AgentEdit: Identifiable {
     var id: String { agentID ?? "" }
 }
 
-/// One agent's settings. A new one is named first; after that, changes are saved as you make
-/// them.
+/// One agent's settings, in the page's place. A new one is named first; after that, changes are
+/// saved as you make them.
 private struct AgentEditor: View {
     /// Nil for a new one, until it's named.
     @State var id: String?
     let isBuiltIn: Bool
     let done: () -> Void
-    /// Removes this entry, once the sheet has closed.
+    /// Removes this entry, once it's closed.
     let remove: ([String]) -> Void
     @Environment(AppModel.self) private var app
     @Environment(Catalog.self) private var catalog
@@ -195,20 +195,18 @@ private struct AgentEditor: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            Text(name)
-                .font(.headline)
-                .padding(.top, 16)
+        SettingsDetailPage {
             if let id {
                 editor(id)
             } else {
                 naming
             }
-            EditorSheetButtons(create: id == nil ? "Create Agent" : nil, canCreate: !newID.isEmpty && problem == nil, onCreate: create,
-                               remove: id.flatMap { config.value(at: ["agents", $0]) } != nil ? (isBuiltIn ? "Reset to Built-In…" : "Delete Agent…") : nil,
-                               onRemove: { confirmsRemoval = true }, done: done)
+        } footer: {
+            SettingsEditorButtons(create: id == nil ? "Create Agent" : nil, canCreate: !newID.isEmpty && problem == nil, onCreate: create,
+                                  remove: id.flatMap { config.value(at: ["agents", $0]) } != nil ? (isBuiltIn ? "Reset to Built-In…" : "Delete Agent…") : nil,
+                                  onRemove: { confirmsRemoval = true }, done: done)
         }
-        .frame(width: SettingsView.sheetWidth, height: id == nil ? 220 : SettingsView.sheetHeight)
+        .settingsDetailTitle(name)
         .confirmationDialog(isBuiltIn ? "Reset \(name) to how it's built in?" : "Delete \(name)?", isPresented: $confirmsRemoval) {
             Button(isBuiltIn ? "Reset" : "Delete", role: .destructive) {
                 if let id { remove(["agents", id]) }
@@ -221,30 +219,27 @@ private struct AgentEditor: View {
     /// A new agent's name, before anything is written: what's wrong with it, or what it'll be
     /// called when that isn't quite what you typed.
     private var naming: some View {
-        Form {
-            Section {
-                TextField("Name", text: $newName, prompt: Text("reviewer"))
-                    .onSubmit(create)
-            } footer: {
-                if let problem {
-                    Text(problem).foregroundStyle(.red)
-                } else if !newID.isEmpty, newID != newName.trimmingCharacters(in: .whitespaces) {
-                    Text(verbatim: "It'll be called \(newID).").foregroundStyle(.secondary)
-                } else {
-                    Text("A short name without spaces. It's how the agent is chosen.").foregroundStyle(.secondary)
-                }
+        Section {
+            TextField("Name", text: $newName, prompt: Text("reviewer"))
+                .onSubmit(create)
+        } footer: {
+            if let problem {
+                Text(problem).foregroundStyle(.red)
+            } else if !newID.isEmpty, newID != newName.trimmingCharacters(in: .whitespaces) {
+                Text(verbatim: "It'll be called \(newID).").foregroundStyle(.secondary)
+            } else {
+                Text("A short name without spaces. It's how the agent is chosen.").foregroundStyle(.secondary)
             }
         }
-        .formStyle(.grouped)
     }
 
     @ViewBuilder private func editor(_ id: String) -> some View {
         let path = ["agents", id]
         // A built-in agent's own description, shown until you write another.
         let builtInDescription = isBuiltIn ? catalog.agents.first(where: { $0.id == id })?.description : nil
-        Form {
+        Group {
             Section {
-                ConfigTextField(title: "Description", path: path + ["description"], prompt: builtInDescription ?? "What it's for, so the agent knows when to use it")
+                ConfigTextField(title: "Description", path: path + ["description"], prompt: builtInDescription ?? "What it's for, so the agent knows when to use it", multiline: true)
                 Picker("Use as", selection: Binding(
                     get: { config.value(at: path + ["mode"])?.string ?? catalog.agents.first { $0.id == id }?.mode ?? "primary" },
                     set: { config.set(.string($0), at: path + ["mode"]) }
@@ -279,7 +274,6 @@ private struct AgentEditor: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .formStyle(.grouped)
     }
 
     private func create() {

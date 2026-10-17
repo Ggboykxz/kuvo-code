@@ -125,13 +125,13 @@ struct SkillsSettings: View {
             }
         }
         .task(id: config.settings) { await refresh() }
-        .sheet(item: $writing) { draft in
+        .settingsDetail(item: $writing, title: { $0.name ?? "New Skill" }) { draft in
             SkillEditor(name: draft.name, folder: folder, taken: Set((skills ?? []).map(\.id))) {
                 writing = nil
                 Task { await refresh() }
             }
         }
-        .sheet(item: $browsing) { repository in
+        .settingsDetail(item: $browsing, title: { $0.title }) { repository in
             RepositorySkills(repository: repository, folder: folder) {
                 Task { await refresh() }
             } done: {
@@ -204,8 +204,9 @@ private struct SkillDraft: Identifiable {
     var id: String { name ?? "" }
 }
 
-/// Writing a skill of your own: its name, when the agent should use it, and its instructions, in
-/// a SKILL.md in its own folder (where scripts and other files it needs can go too).
+/// Writing a skill of your own, in the page's place: its name, when the agent should use it, and
+/// its instructions, in a SKILL.md in its own folder (where scripts and other files it needs can
+/// go too).
 private struct SkillEditor: View {
     /// Nil for a new skill.
     let name: String?
@@ -237,56 +238,53 @@ private struct SkillEditor: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            Text(name ?? "New Skill")
-                .font(.headline)
-                .padding(.top, 16)
-            Form {
-                if name == nil {
-                    Section {
-                        TextField("Name", text: $newName, prompt: Text("release-notes"))
-                    } footer: {
-                        Text(nameNote.text)
-                            .foregroundStyle(nameNote.isProblem ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+        SettingsDetailPage {
+            if name == nil {
+                Section {
+                    TextField("Name", text: $newName, prompt: Text("release-notes"))
+                } footer: {
+                    Text(nameNote.text)
+                        .foregroundStyle(nameNote.isProblem ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                }
+            }
+            Section {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Use it when")
+                    TextField("Use it when", text: $summary, prompt: Text("Writing release notes from the commits since the last tag"), axis: .vertical)
+                        .labelsHidden()
+                        .lineLimit(1...10)
+                }
+            } footer: {
+                Text("The agent reads this to decide when the skill is needed, and loads the instructions only then.")
+                    .foregroundStyle(.secondary)
+            }
+            Section {
+                TextEditor(text: $instructions)
+                    .font(.system(.body, design: .monospaced))
+                    .frame(minHeight: 260)
+            } header: {
+                Text("Instructions")
+            } footer: {
+                Text("Markdown. Scripts and other files can go in the skill's folder; mention them here so the agent knows to use them.")
+                    .foregroundStyle(.secondary)
+            }
+        } footer: {
+            VStack(alignment: .leading, spacing: 10) {
+                if let failure {
+                    Text(failure)
+                        .font(.callout)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                EditorFooter(primary: name == nil ? "Create Skill" : "Save", canDoPrimary: canSave, onPrimary: save, onCancel: done) {
+                    if name != nil {
+                        EditorFooterRemove(title: "Delete Skill…") { confirmsRemoval = true }
+                        Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([file]) }
+                            .buttonStyle(.glass)
                     }
                 }
-                Section {
-                    TextField("Use it when", text: $summary, prompt: Text("Writing release notes from the commits since the last tag"), axis: .vertical)
-                        .lineLimit(1...3)
-                } footer: {
-                    Text("The agent reads this to decide when the skill is needed, and loads the instructions only then.")
-                        .foregroundStyle(.secondary)
-                }
-                Section {
-                    TextEditor(text: $instructions)
-                        .font(.system(.body, design: .monospaced))
-                        .frame(minHeight: 220)
-                } header: {
-                    Text("Instructions")
-                } footer: {
-                    Text("Markdown. Scripts and other files can go in the skill's folder; mention them here so the agent knows to use them.")
-                        .foregroundStyle(.secondary)
-                }
-                if let failure {
-                    Text(failure).foregroundStyle(.red)
-                }
             }
-            .formStyle(.grouped)
-            HStack {
-                if name != nil {
-                    Button("Delete Skill…", role: .destructive) { confirmsRemoval = true }
-                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([file]) }
-                }
-                Spacer()
-                Button("Cancel", role: .cancel, action: done)
-                    .keyboardShortcut(.cancelAction)
-                Button(name == nil ? "Create Skill" : "Save", action: save)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!canSave)
-            }
-            .padding(16)
         }
-        .frame(width: SettingsView.sheetWidth, height: SettingsView.sheetHeight)
         .onAppear(perform: load)
         .confirmationDialog("Delete \(id)?", isPresented: $confirmsRemoval) {
             Button("Delete", role: .destructive, action: delete)
@@ -402,58 +400,58 @@ private struct RepositorySkills: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            VStack(spacing: 4) {
-                Text(repository.title).font(.headline)
-                Link(repository.id, destination: repository.webURL).font(.callout)
-            }
-            .padding(.top, 16)
-            .padding(.bottom, 8)
-            // Return here does nothing: Done is the cancel action (Escape), not the default one.
-            SearchField(text: $query, prompt: "Filter skills")
-                .padding(.horizontal, 20)
-            Group {
-                if let failure {
-                    ContentUnavailableView("Couldn't Load the Skills", systemImage: "exclamationmark.triangle", description: Text(failure))
-                } else if skills == nil {
-                    Spinner(size: 24).frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if shown.isEmpty {
-                    if search.isEmpty {
-                        ContentUnavailableView("No Skills", systemImage: "graduationcap", description: Text("This repository doesn't have any skills."))
-                    } else {
-                        ContentUnavailableView.search(text: search)
-                    }
-                } else {
-                    Form {
-                        Section {
-                            ForEach(shown) { skill in
-                                RemoteSkillRow(skill: skill, installed: installed[skill.name], isWorking: working == skill.id) {
-                                    confirming = skill
-                                } remove: {
-                                    try? FileManager.default.trashItem(at: folder.appending(path: skill.name), resultingItemURL: nil)
-                                    reload()
-                                }
-                            }
-                        } footer: {
-                            if isPartial {
-                                Text("This collection is too big for GitHub to list in full, so some of its skills aren't here.")
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                    .formStyle(.grouped)
+        SettingsDetailPage {
+            Section {
+                LabeledContent("On GitHub") {
+                    Link(repository.id, destination: repository.webURL)
                 }
             }
-            .frame(maxHeight: .infinity)
-            HStack {
-                Spacer()
-                Button("Done", action: done)
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.cancelAction)
+            Section {
+                if let failure {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Couldn’t load the skills")
+                            Text(failure)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle")
+                    }
+                } else if skills == nil {
+                    HStack {
+                        Spacer()
+                        Spinner(size: 20)
+                        Spacer()
+                    }
+                    .padding(.vertical, 16)
+                } else {
+                    SettingsSearchRow(text: $query, prompt: "Filter skills")
+                    if shown.isEmpty {
+                        Text(search.isEmpty ? "This repository doesn’t have any skills." : "No skills match “\(search)”.")
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(shown) { skill in
+                        RemoteSkillRow(skill: skill, installed: installed[skill.name], isWorking: working == skill.id) {
+                            confirming = skill
+                        } remove: {
+                            try? FileManager.default.trashItem(at: folder.appending(path: skill.name), resultingItemURL: nil)
+                            reload()
+                        }
+                    }
+                }
+            } header: {
+                Text("Skills")
+            } footer: {
+                if isPartial {
+                    Text("This collection is too big for GitHub to list in full, so some of its skills aren't here.")
+                        .foregroundStyle(.secondary)
+                }
             }
-            .padding(16)
+        } footer: {
+            EditorFooter(primary: "Done", onPrimary: done)
         }
-        .frame(width: SettingsView.sheetWidth, height: SettingsView.sheetHeight)
         .task {
             reload()
             do {

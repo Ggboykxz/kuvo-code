@@ -3,40 +3,33 @@ import SwiftUI
 
 /// Accounts, a page of Settings: what's connected, the popular providers, and every other one
 /// the engine knows. The list comes from the engine, so it grows without app updates. Signing
-/// in to a provider replaces the list, with a back button.
+/// in to a provider, or setting up one of your own, opens in the page's place.
 struct ProvidersView: View {
     @Environment(Catalog.self) private var catalog
     @Environment(AppModel.self) private var app
     @Environment(\.colorScheme) private var scheme
     @Environment(\.settingsInset) private var inset
     @State private var connecting: Integration?
+    /// One of your own providers, open in the page's place.
+    @State private var editing: ProviderEdit?
+    /// What to remove once its editor has closed (and its fields are done saving).
+    @State private var removal: [String]?
     @State private var search = ""
 
     var body: some View {
-        Group {
-            if let connecting {
-                VStack(alignment: .leading, spacing: 0) {
-                    Button {
-                        withAnimation(.ui) { self.connecting = nil }
-                    } label: {
-                        Label("Accounts", systemImage: "chevron.left")
-                            .font(.body.weight(.medium))
-                    }
-                    .buttonStyle(TextButtonStyle(outset: true))
-                    .padding(.horizontal, 20)
-                    .padding(.top, 16)
-                    // The back button above is the way out, so no Cancel in the steps.
-                    ConnectView(integrationID: connecting.id, onDone: {
-                        withAnimation(.ui) { self.connecting = nil }
-                    })
-                }
-                .transition(.move(edge: .trailing).combined(with: .opacity))
-            } else {
-                list
-                    .transition(.move(edge: .leading).combined(with: .opacity))
+        list
+            // The page's way back is the way out, so no Cancel in the steps.
+            .settingsDetail(item: $connecting, title: { _ in nil }) { integration in
+                ConnectView(integrationID: integration.id, onDone: {
+                    withAnimation(.ui) { connecting = nil }
+                })
             }
-        }
-        .animation(.ui, value: connecting?.id)
+            .settingsDetail(item: $editing, title: { _ in "New Provider" }, onDismiss: removePending) { edit in
+                CustomProviderEditor(id: edit.providerID) { editing = nil } remove: { path in
+                    removal = path
+                    editing = nil
+                }
+            }
         #if DEBUG
         .task {
             if let id = ProcessInfo.processInfo.environment["KUVO_DEMO_PROVIDERS"], let provider = catalog.providers.first(where: { $0.id == id }) {
@@ -44,6 +37,12 @@ struct ProvidersView: View {
             }
         }
         #endif
+    }
+
+    private func removePending() {
+        guard let removal else { return }
+        app.engineConfig.set(nil, at: removal)
+        self.removal = nil
     }
 
     private var list: some View {
@@ -77,7 +76,7 @@ struct ProvidersView: View {
                 }
 
                 if search.isEmpty {
-                    CustomProvidersSection { connecting = $0 }
+                    CustomProvidersSection { connecting = $0 } edit: { id in editing = ProviderEdit(id: id) }
                 }
 
                 if others.isEmpty, !search.isEmpty {

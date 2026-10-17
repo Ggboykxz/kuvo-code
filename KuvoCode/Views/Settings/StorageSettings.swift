@@ -109,8 +109,8 @@ struct StorageSettings: View {
             }
         }
         .task { await load() }
-        .sheet(isPresented: $cleaningUp, onDismiss: { Task { await load() } }) {
-            OldSessionsSheet()
+        .settingsDetail(isPresented: $cleaningUp, title: "Clean Up Old Sessions", onDismiss: { Task { await load() } }) {
+            OldSessions { cleaningUp = false }
         }
         .confirmationDialog("Delete the logs?", isPresented: $confirmingLogs) {
             Button("Delete", role: .destructive) {
@@ -288,9 +288,10 @@ nonisolated struct StorageReport: Sendable {
     }
 }
 
-/// Picking sessions to delete by how long they've gone unused, with what that would take.
-private struct OldSessionsSheet: View {
-    @Environment(\.dismiss) private var dismiss
+/// Picking sessions to delete by how long they've gone unused, with what that would take: in the
+/// page's place.
+private struct OldSessions: View {
+    let done: () -> Void
     @Environment(Workspace.self) private var workspace
     @State private var days = 90
     @State private var keepsPinned = true
@@ -305,51 +306,45 @@ private struct OldSessionsSheet: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Clean Up Old Sessions")
-                .font(.title2.weight(.bold))
-            Form {
+        SettingsDetailPage {
+            Section {
                 Picker("Unused for more than", selection: $days) {
                     ForEach([30, 90, 180, 365], id: \.self) { Text($0 == 365 ? "a year" : "\($0) days").tag($0) }
                 }
                 Toggle("Keep pinned sessions", isOn: $keepsPinned)
-                Section {
-                    if old.isEmpty {
-                        Text("None.").foregroundStyle(.secondary)
-                    }
-                    ForEach(old.prefix(200)) { session in
-                        LabeledContent {
-                            Text(Date(timeIntervalSince1970: session.time.updated / 1000), format: .relative(presentation: .named))
-                                .foregroundStyle(.secondary)
-                        } label: {
-                            Text(session.title ?? "New Session")
-                            Text(workspace.projectName(session.location.directory))
-                        }
-                    }
-                } header: {
-                    Text(old.isEmpty ? "Sessions" : old.count.counting("Session"))
-                }
             }
-            .formStyle(.grouped)
-            HStack {
+            Section {
+                if old.isEmpty {
+                    Text("None unused for that long.").foregroundStyle(.secondary)
+                }
+                ForEach(old.prefix(200)) { session in
+                    LabeledContent {
+                        Text(Date(timeIntervalSince1970: session.time.updated / 1000), format: .relative(presentation: .named))
+                            .foregroundStyle(.secondary)
+                    } label: {
+                        Text(session.title ?? "New Session")
+                        Text(workspace.projectName(session.location.directory))
+                    }
+                }
+            } header: {
+                Text(old.isEmpty ? "Sessions" : old.count.counting("Session"))
+            } footer: {
                 Text("Deleting can’t be undone.")
                     .foregroundStyle(.secondary)
-                Spacer()
-                Button("Cancel", role: .cancel) { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-                Button("Delete " + old.count.counting("Session"), role: .destructive) {
-                    isDeleting = true
-                    let ids = old.map(\.id)
-                    Task {
-                        for id in ids { await workspace.delete(id) }
-                        dismiss()
-                    }
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(old.isEmpty || isDeleting)
             }
+        } footer: {
+            EditorFooter(primary: old.isEmpty ? "Delete Sessions" : "Delete " + old.count.counting("Session"), canDoPrimary: !old.isEmpty, onPrimary: delete, isDestructive: true,
+                         onCancel: done, working: isDeleting ? "Deleting…" : nil)
         }
-        .padding(24)
-        .frame(width: SettingsView.sheetWidth, height: SettingsView.sheetHeight)
+    }
+
+    private func delete() {
+        isDeleting = true
+        let ids = old.map(\.id)
+        Task {
+            for id in ids { await workspace.delete(id) }
+            isDeleting = false
+            done()
+        }
     }
 }

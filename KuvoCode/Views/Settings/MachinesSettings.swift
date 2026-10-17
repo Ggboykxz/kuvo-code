@@ -37,9 +37,11 @@ struct MachinesSettings: View {
                 Text("Accounts")
             }
         }
-        .sheet(isPresented: $showsAdd) { MachineSheet() }
+        .settingsDetail(isPresented: $showsAdd, title: "Add a Machine") {
+            MachineForm(style: .settings, added: { _ in showsAdd = false }, cancel: { showsAdd = false })
+        }
         #if DEBUG
-        // KUVO_DEMO_ADD_MACHINE: the Add Machine sheet, open.
+        // KUVO_DEMO_ADD_MACHINE: Add a Machine, open.
         .task {
             if ProcessInfo.processInfo.environment["KUVO_DEMO_ADD_MACHINE"] != nil {
                 try? await Task.sleep(for: .seconds(1))

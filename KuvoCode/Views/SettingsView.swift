@@ -6,11 +6,6 @@ import SwiftUI
 /// search field, on the window's glass where the sessions' sidebar was, and the open page in a
 /// card beside it, under its title, the way a session shows.
 struct SettingsView: View {
-    /// Every sheet a page opens (an agent, a server, a command, a skill, a sign-in) is this
-    /// wide, and this tall unless it's short.
-    static let sheetWidth: CGFloat = 620
-    static let sheetHeight: CGFloat = 600
-
     /// The sessions' sidebar width, so the window keeps its shape.
     var sidebarWidth: CGFloat = 280
     /// Room above the sidebar's first row for the window's buttons, when they sit there.
@@ -19,6 +14,8 @@ struct SettingsView: View {
     let close: () -> Void
 
     @State private var search = ""
+    /// Each tab's way back from what its page opened in its place.
+    @State private var navigators = SettingsNavigators()
     @Environment(\.colorScheme) private var scheme
     @Environment(AppModel.self) private var app
 
@@ -41,10 +38,12 @@ struct SettingsView: View {
                     Group {
                         switch tab.kind {
                         case .page(let page):
+                            let navigator = navigators[tab.id]
                             VStack(alignment: .leading, spacing: 0) {
-                                SettingsPageHeader(page: page)
+                                SettingsPageHeader(page: page, navigator: navigator)
                                 page.content
                                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                                    .environment(\.settingsNavigator, navigator)
                             }
                             .frame(maxWidth: SettingsMetrics.columnWidth)
                             .modifier(SettingsColumnInset())
@@ -71,15 +70,35 @@ struct SettingsView: View {
             .specularRim(RoundedRectangle(cornerRadius: Metrics.cardRadius))
             .shadow(color: .black.opacity(scheme == .dark ? 0.3 : 0.06), radius: 6, y: 1)
         }
-        // Escape goes back to the sessions, from anywhere on the page; a sheet takes its own.
+        // Escape goes back: to the page, from what it opened in its place; else to the sessions.
         .background {
-            Button("Back to Sessions", action: close)
+            Button("Back to Sessions") {
+                if !navigators[tabs.selectedID].back() { close() }
+            }
                 .keyboardShortcut(.escape, modifiers: [])
                 .opacity(0)
                 .frame(width: 0, height: 0)
                 .accessibilityHidden(true)
         }
         .onAppear { Analytics.shared.track("settings_opened", ["tab": tabs.page.rawValue]) }
+        // A closed tab's way back goes with it.
+        .onChange(of: tabs.tabs.map(\.id)) { _, ids in navigators.keep(ids) }
+    }
+}
+
+/// Each Settings tab's navigator, made the first time the tab's drawn.
+private final class SettingsNavigators {
+    private var byTab: [String: SettingsNavigator] = [:]
+
+    subscript(tab: String) -> SettingsNavigator {
+        if let navigator = byTab[tab] { return navigator }
+        let navigator = SettingsNavigator()
+        byTab[tab] = navigator
+        return navigator
+    }
+
+    func keep(_ tabs: [String]) {
+        byTab = byTab.filter { tabs.contains($0.key) }
     }
 }
 
@@ -359,20 +378,39 @@ private struct SettingsSidebar: View {
     }
 }
 
-/// A page's title, large, and the line under it.
+/// A page's title, large, and the line under it; or, for something the page opened in its
+/// place, its name under the way back to the page.
 private struct SettingsPageHeader: View {
     let page: SettingsPage
+    let navigator: SettingsNavigator
     @Environment(\.settingsInset) private var inset
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(page.title)
-                .font(.system(size: 26, weight: .bold))
-            if let subtitle = page.subtitle {
-                Text(subtitle)
-                    .font(.system(size: 14))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            if let detail = navigator.detail {
+                Button {
+                    navigator.back()
+                } label: {
+                    Label(page.title, systemImage: "chevron.backward")
+                        .font(.system(size: 14, weight: .medium))
+                }
+                .buttonStyle(TextButtonStyle(outset: true))
+                .help("Back to \(page.title) (Esc)")
+                if let title = detail.title {
+                    Text(title)
+                        .font(.system(size: 26, weight: .bold))
+                        .lineLimit(2)
+                        .transition(.opacity)
+                }
+            } else {
+                Text(page.title)
+                    .font(.system(size: 26, weight: .bold))
+                if let subtitle = page.subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

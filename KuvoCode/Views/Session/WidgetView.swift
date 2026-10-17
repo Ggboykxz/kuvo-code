@@ -34,20 +34,13 @@ struct WidgetCard: View {
         self.send = send
         _height = State(initialValue: Self.heights[call.id] ?? 0)
     }
-    /// Shown larger, over the window.
-    @State private var isLarge = false
     @Environment(\.colorScheme) private var scheme
     @Environment(\.cardIsFocused) private var cardIsFocused
     @Environment(\.showWidgetLarge) private var showLarge
 
-    /// Over its conversation's card, as the panel grows over the window; in a sheet where there's
-    /// no card to cover.
+    /// Over its conversation's card, as the panel grows over the window.
     private func openLarge(html: String, title: String?) {
-        if let showLarge {
-            showLarge(LargeWidget(id: call.id, html: html, title: title, send: send))
-        } else {
-            isLarge = true
-        }
+        showLarge?(LargeWidget(id: call.id, html: html, title: title, send: send))
     }
 
     private static let shape = RoundedRectangle(cornerRadius: 12)
@@ -147,8 +140,11 @@ struct WidgetCard: View {
                             .monospacedDigit()
                     }
                 } else {
-                    MessageActionButton(symbol: "arrow.up.left.and.arrow.down.right", help: "Open Larger") { openLarge(html: html, title: title) }
-                        .accessibilityLabel("Open Larger")
+                    // Only where there's a card for it to cover.
+                    if showLarge != nil {
+                        MessageActionButton(symbol: "arrow.up.left.and.arrow.down.right", help: "Open Larger") { openLarge(html: html, title: title) }
+                            .accessibilityLabel("Open Larger")
+                    }
                     CopyButton(text: html, help: "Copy Its HTML")
                 }
             }
@@ -175,25 +171,6 @@ struct WidgetCard: View {
             }
         }
         #endif
-        .sheet(isPresented: $isLarge) {
-            VStack(spacing: 0) {
-                HStack {
-                    Text(title.flatMap { $0.isEmpty ? nil : $0 } ?? "Made for you")
-                        .font(.headline)
-                    Spacer()
-                    Button("Done") { isLarge = false }
-                        .keyboardShortcut(.defaultAction)
-                }
-                .padding(14)
-                Divider()
-                // Its own room, scrolling inside; what it writes back goes on, then it closes.
-                WidgetPage(html: html, accent: NSColor.controlAccentColor, height: .constant(0), scrollsInside: true) { text in
-                    isLarge = false
-                    send(text)
-                }
-            }
-            .frame(width: 960, height: 720)
-        }
     }
 }
 

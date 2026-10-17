@@ -30,13 +30,29 @@ struct ConfigTextField: View {
     let title: String
     let path: [String]
     var prompt = ""
+    /// For a few sentences (a description): its name above it, and the field as tall as what's
+    /// written in it, so all of it shows.
+    var multiline = false
     @Environment(AppModel.self) private var app
     @State private var field = SettingField()
     @FocusState private var isFocused: Bool
 
     var body: some View {
+        if multiline {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                text
+                    .labelsHidden()
+                    .lineLimit(1...10)
+            }
+        } else {
+            text
+        }
+    }
+
+    private var text: some View {
         let stored = app.engineConfig.value(at: path)?.string ?? ""
-        TextField(title, text: $field.text, prompt: Text(prompt))
+        return TextField(title, text: $field.text, prompt: Text(prompt), axis: multiline ? .vertical : .horizontal)
             .focused($isFocused)
             .onSubmit(commit)
             .onChange(of: isFocused) { if !isFocused { commit() } }
@@ -349,9 +365,10 @@ struct ScrollingSettingsForm<Content: View>: View {
     }
 }
 
-/// Signing in to something from Settings (an MCP server, a web search service): the same
-/// steps as in Accounts, in a sheet, each with a Cancel beside its own buttons.
-struct ConnectSheet: View {
+/// Signing in to something from a Settings page (an MCP server, a web search service), in the
+/// page's place: the same steps as in Accounts, under the service's mark, with the page's way
+/// back as the way out.
+struct ConnectDetail: View {
     let integrationID: String
     var name: String? = nil
     var symbol: String? = nil
@@ -361,10 +378,7 @@ struct ConnectSheet: View {
     let done: () -> Void
 
     var body: some View {
-        // As tall as the step it's on.
-        ConnectView(integrationID: integrationID, name: name, symbol: symbol, connectedNote: note, highlights: highlights, onDone: done, onCancel: done)
-            .frame(width: SettingsView.sheetWidth)
-            .fixedSize(horizontal: false, vertical: true)
+        ConnectView(integrationID: integrationID, name: name, symbol: symbol, connectedNote: note, highlights: highlights, onDone: done)
     }
 }
 
@@ -399,11 +413,10 @@ enum MCPStatus {
     }
 }
 
-/// The buttons along the bottom of a sheet that makes or edits something in Settings (an agent,
-/// a command, an MCP server, a provider). Making one: Cancel and the button that makes it. Editing
-/// one, which is saved as you go: Done, which Escape presses too; and its Remove or Delete at the
-/// leading edge.
-struct EditorSheetButtons: View {
+/// The buttons along the bottom of an editor a Settings page opens in its place (an agent, a
+/// command, an MCP server, a provider). Making one: Cancel and the button that makes it. Editing
+/// one, which is saved as you go: Done, the way back; and its Remove or Delete at the leading edge.
+struct SettingsEditorButtons: View {
     /// What makes a new one ("Create Agent"); nil while editing one.
     let create: String?
     var canCreate = true
@@ -414,33 +427,15 @@ struct EditorSheetButtons: View {
     let done: () -> Void
 
     var body: some View {
-        HStack {
+        EditorFooter(primary: create ?? "Done", canDoPrimary: create == nil || canCreate, onPrimary: create == nil ? done : onCreate, onCancel: create == nil ? nil : done) {
             if create == nil, let remove {
-                Button(remove, role: .destructive, action: onRemove)
-            }
-            Spacer()
-            if let create {
-                Button("Cancel", role: .cancel, action: done)
-                    .keyboardShortcut(.cancelAction)
-                Button(create, action: onCreate)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!canCreate)
-            } else {
-                Button("Done", action: done)
-                    .keyboardShortcut(.defaultAction)
-                    .background {
-                        Button("Close", action: done)
-                            .keyboardShortcut(.cancelAction)
-                            .opacity(0)
-                            .accessibilityHidden(true)
-                    }
+                EditorFooterRemove(title: remove, action: onRemove)
             }
         }
-        .padding(16)
     }
 }
 
-/// An integration, by its ID, for a sheet; with what you know it as, when that's another name.
+/// An integration, by its ID, for a sign-in; with what you know it as, when that's another name.
 struct IntegrationRef: Identifiable {
     let id: String
     var service: Integrations.Service? = nil

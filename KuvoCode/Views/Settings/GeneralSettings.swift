@@ -80,8 +80,8 @@ struct GeneralSettings: View {
                 }
             }
         }
-        .sheet(item: $importing) { request in
-            OpencodeImportSheet(plan: request.plan, names: catalog.providerName) { bring in
+        .settingsDetail(item: $importing, title: { _ in "Bring Over from opencode" }) { request in
+            OpencodeImportReview(plan: request.plan, names: catalog.providerName) { bring in
                 importing = nil
                 guard bring else { return }
                 Task { await bringOver(request.plan) }
@@ -122,43 +122,32 @@ struct GeneralSettings: View {
     }
 }
 
-/// What would come over from opencode, to look over before it does.
-private struct OpencodeImportSheet: View {
+/// What would come over from opencode, to look over before it does: in the page's place.
+private struct OpencodeImportReview: View {
     let plan: OpencodeImport.Plan
     let names: (String) -> String
     let done: (Bool) -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            Form {
-                Section {
-                    ForEach(plan.lines(name: names), id: \.self) { line in
-                        Text(line)
-                            .lineLimit(3)
-                    }
-                } header: {
-                    Text("Bring Over from opencode")
-                } footer: {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("These aren’t in Kuvo Code yet; what it has already stays as it is. API keys are copied into Kuvo Code’s engine, and skills are found where opencode keeps them. The engine starts again to use them.")
-                        if !plan.signIns.isEmpty {
-                            Text("Sign in to \(ListFormatter.localizedString(byJoining: plan.signIns.map(names))) again in Settings › Accounts: a sign-in copied over would be refreshed by both apps, which can sign both out.")
-                        }
-                    }
-                    .foregroundStyle(.secondary)
+        SettingsDetailPage {
+            Section {
+                ForEach(plan.lines(name: names), id: \.self) { line in
+                    Text(line)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
+            } footer: {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("These aren’t in Kuvo Code yet; what it has already stays as it is. API keys are copied into Kuvo Code’s engine, and skills are found where opencode keeps them. The engine starts again to use them.")
+                    if !plan.signIns.isEmpty {
+                        Text("Sign in to \(ListFormatter.localizedString(byJoining: plan.signIns.map(names))) again in Settings › Accounts: a sign-in copied over would be refreshed by both apps, which can sign both out.")
+                    }
+                }
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             }
-            .formStyle(.grouped)
-            HStack {
-                Spacer()
-                Button("Cancel", role: .cancel) { done(false) }
-                    .keyboardShortcut(.cancelAction)
-                Button("Bring Over") { done(true) }
-                    .keyboardShortcut(.defaultAction)
-            }
-            .padding(16)
+        } footer: {
+            EditorFooter(primary: "Bring Over", onPrimary: { done(true) }, onCancel: { done(false) })
         }
-        .frame(width: SettingsView.sheetWidth, height: min(520, 220 + CGFloat(plan.lines(name: names).count) * 34))
     }
 }
 

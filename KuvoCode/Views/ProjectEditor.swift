@@ -3,15 +3,16 @@ import OpenCodeKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Creating a project, or changing one: its name and its folders. Sessions run in the primary
-/// folder, and the agent can work in the others too. An existing project keeps its primary
-/// folder, since its sessions live there.
-struct ProjectSheet: View {
+/// Creating a project, or changing one, in the window's main card: its name and its folders.
+/// Sessions run in the primary folder, and the agent can work in the others too. An existing
+/// project keeps its primary folder, since its sessions live there.
+struct ProjectEditor: View {
     /// The project being edited; nil for a new one.
     let project: Workspace.Project?
     let save: (_ primary: String, _ settings: Workspace.ProjectSettings) -> Void
+    /// Back to what was there before.
+    let close: () -> Void
 
-    @Environment(\.dismiss) private var dismiss
     @Environment(AppModel.self) private var app
     @Environment(Workspace.self) private var workspace
     @Environment(\.colorScheme) private var scheme
@@ -37,9 +38,10 @@ struct ProjectSheet: View {
     @State private var folderFailure: String?
     @FocusState private var isFolderFocused: Bool
 
-    init(project: Workspace.Project?, folders: [String] = [], focusesRun: Bool = false, save: @escaping (String, Workspace.ProjectSettings) -> Void) {
+    init(project: Workspace.Project?, folders: [String] = [], focusesRun: Bool = false, save: @escaping (String, Workspace.ProjectSettings) -> Void, close: @escaping () -> Void) {
         self.project = project
         self.save = save
+        self.close = close
         self.focusesRun = focusesRun
         _name = State(initialValue: project?.settings.name ?? "")
         _run = State(initialValue: project?.settings.run ?? "")
@@ -50,10 +52,56 @@ struct ProjectSheet: View {
     private var isNew: Bool { project == nil }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Text(isNew ? "New Project" : "Edit Project")
-                .font(.title2.weight(.bold))
+        if showsAddMachine {
+            // A machine for its folders, added right here: the form is as it was on coming back.
+            EditorDetail(back: isNew ? "New Project" : "Edit Project", title: "Add a Machine", onBack: { withAnimation(.ui) { showsAddMachine = false } }) {
+                MachineForm(added: { added in
+                    withAnimation(.ui) {
+                        choose(added)
+                        showsAddMachine = false
+                    }
+                }, cancel: { withAnimation(.ui) { showsAddMachine = false } })
+            }
+            .transition(.opacity)
+        } else {
+            editor
+        }
+    }
 
+    private var editor: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                form
+                    .frame(maxWidth: 600)
+                    .padding(.horizontal, Metrics.gutter + 8)
+                    .padding(.top, 24)
+                    .padding(.bottom, 8)
+                    .frame(maxWidth: .infinity)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .scrollEdgeEffectStyle(.soft, for: .bottom)
+            EditorFooter(primary: isNew ? "Create Project" : "Save", canDoPrimary: !folders.isEmpty, onPrimary: saveProject, onCancel: close, cancelsOnEscape: true)
+                .frame(maxWidth: 600)
+                .padding(.horizontal, Metrics.gutter + 8)
+                .padding(.top, 12)
+                .padding(.bottom, 20)
+                .frame(maxWidth: .infinity)
+        }
+        .onAppear { if focusesRun { isRunFocused = true } else { isNameFocused = true } }
+        .task(id: folders.first) { await loadSetup() }
+        #if DEBUG
+        // KUVO_DEMO_ADD_MACHINE: Add a Machine, open in its place.
+        .task {
+            if isNew, ProcessInfo.processInfo.environment["KUVO_DEMO_ADD_MACHINE"] != nil {
+                try? await Task.sleep(for: .seconds(1))
+                showsAddMachine = true
+            }
+        }
+        #endif
+    }
+
+    private var form: some View {
+        VStack(alignment: .leading, spacing: 20) {
             nameField
 
             if isNew {
@@ -72,10 +120,13 @@ struct ProjectSheet: View {
                         Image(systemName: "play.fill")
                             .font(.system(size: 13))
                     } content: {
-                        TextField("Run", text: $run, prompt: Text(verbatim: "npm run dev"))
+                        // A command can be long: it wraps, all of it in view.
+                        TextField("Run", text: $run, prompt: Text(verbatim: "npm run dev"), axis: .vertical)
                             .textFieldStyle(.plain)
                             .font(.system(size: 14, design: .monospaced))
+                            .lineLimit(1...8)
                             .focused($isRunFocused)
+                            .padding(.vertical, 12)
                     }
                 }
             }
@@ -90,47 +141,21 @@ struct ProjectSheet: View {
                             TextField("Worktree setup", text: Binding(get: { setup ?? "" }, set: { setup = $0 }), prompt: Text(verbatim: "npm install && cp \"$OPENCODE_WORKTREE_BASE/.env\" ."), axis: .vertical)
                                 .textFieldStyle(.plain)
                                 .font(.system(size: 14, design: .monospaced))
-                                .lineLimit(1...4)
+                                .lineLimit(1...8)
                                 .focused($isSetupFocused)
                                 .padding(.vertical, 12)
                         }
                     }
                 }
             }
+        }
+    }
 
-            HStack(spacing: 10) {
-                Spacer()
-                Button("Cancel", role: .cancel) { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-                    .buttonStyle(.glass)
-                Button(isNew ? "Create Project" : "Save") {
-                    guard let primary = folders.first else { return }
-                    save(primary, Workspace.ProjectSettings(name: name, folders: Array(folders.dropFirst()), run: run))
-                    saveSetup()
-                    dismiss()
-                }
-                .keyboardShortcut(.defaultAction)
-                .buttonStyle(.glassProminent)
-                .disabled(folders.isEmpty)
-            }
-            .controlSize(.large)
-        }
-        .padding(28)
-        .frame(width: 560)
-        .onAppear { if focusesRun { isRunFocused = true } else { isNameFocused = true } }
-        .task(id: folders.first) { await loadSetup() }
-        .sheet(isPresented: $showsAddMachine) {
-            MachineSheet { choose($0) }
-        }
-        #if DEBUG
-        // KUVO_DEMO_ADD_MACHINE: the Add Machine sheet, open over it.
-        .task {
-            if isNew, ProcessInfo.processInfo.environment["KUVO_DEMO_ADD_MACHINE"] != nil {
-                try? await Task.sleep(for: .seconds(1))
-                showsAddMachine = true
-            }
-        }
-        #endif
+    private func saveProject() {
+        guard let primary = folders.first else { return }
+        save(primary, Workspace.ProjectSettings(name: name, folders: Array(folders.dropFirst()), run: run))
+        saveSetup()
+        close()
     }
 
     // MARK: Worktree setup
@@ -153,7 +178,7 @@ struct ProjectSheet: View {
         Task { try? await api.setSetupCommand(project: engineProject, command.isEmpty ? nil : command) }
     }
 
-    /// A titled part of the sheet, and a line under it when it needs one. (Run and worktree
+    /// A titled part of the form, and a line under it when it needs one. (Run and worktree
     /// setup don't explain themselves here; the docs do.)
     private func section(_ title: String, note: String? = nil, isFailure: Bool = false, @ViewBuilder content: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: 8) {

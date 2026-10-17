@@ -72,6 +72,24 @@ struct BotEditor: View {
     private var trimmedName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     var body: some View {
+        if showsAddMachine {
+            // A machine to live on, added right here: the bot's form is as it was on coming back.
+            EditorDetail(back: isNew ? "New Bot" : "Edit \(trimmedName)", title: "Add a Machine", onBack: { withAnimation(.ui) { showsAddMachine = false } }) {
+                MachineForm(added: { added in
+                    withAnimation(.ui) {
+                        machine = added
+                        project = nil
+                        showsAddMachine = false
+                    }
+                }, cancel: { withAnimation(.ui) { showsAddMachine = false } })
+            }
+            .transition(.opacity)
+        } else {
+            editor
+        }
+    }
+
+    private var editor: some View {
         VStack(spacing: 0) {
             ScrollView {
                 form
@@ -107,9 +125,6 @@ struct BotEditor: View {
             if isNew, personality == nil, let recipe { personality = recipe.personalityHere() }
             // A bot made before bots had a model: the one its conversation uses.
             if model == nil { model = bot.flatMap { workspace.session($0.sessionID)?.model } ?? lastModel ?? placeCatalog.defaultModel?.ref }
-        }
-        .sheet(isPresented: $showsAddMachine) {
-            MachineSheet { machine = $0; project = nil }
         }
         .alert("Delete \(bot?.name ?? "This Bot")?", isPresented: $confirmsDelete) {
             Button("Delete", role: .destructive) {
@@ -689,7 +704,7 @@ private struct PersonalityPicker: View {
                 TextField("How it talks", text: Binding(get: { draft?.description ?? "" }, set: { draft?.description = $0 }),
                           prompt: Text("How it talks, like Quiet and precise. Explains with examples, and asks before assuming."), axis: .vertical)
                     .textFieldStyle(.plain)
-                    .lineLimit(2...6)
+                    .lineLimit(2...10)
                     .focused($draftFocus, equals: .description)
                     .padding(12)
             }
@@ -981,7 +996,7 @@ private struct WakeList: View {
                 TextField("What to do", text: Binding(get: { draft?.note ?? "" }, set: { draft?.note = $0 }),
                           prompt: Text("What \(bot.name) does then, like Send me the morning digest"), axis: .vertical)
                     .textFieldStyle(.plain)
-                    .lineLimit(2...5)
+                    .lineLimit(2...10)
                     .focused($noteFocused)
                     .padding(12)
             }

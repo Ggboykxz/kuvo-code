@@ -477,18 +477,39 @@ private struct BranchLabel: View {
 }
 
 /// The branch under the project's name, as a menu: switch to another of the repository's
-/// branches (the latest first), or start a new one.
+/// branches (the latest first), or start a new one, named right there.
 private struct BranchSwitcher: View {
     let branch: String
     let directory: String
     let environment: [String: String]
     let switched: () -> Void
     @State private var branches: [String] = []
+    /// A new branch's name being typed, where the branch shows.
     @State private var isNaming = false
-    @State private var newName = ""
     @State private var failure: String?
 
     var body: some View {
+        if isNaming {
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.triangle.branch")
+                    .imageScale(.small)
+                    .foregroundStyle(.secondary)
+                InlineTitleField(original: "", prompt: "New branch from \(branch)") { name in
+                    isNaming = false
+                    run(["switch", "-c", name], created: true)
+                } cancel: {
+                    isNaming = false
+                }
+                .frame(minWidth: 100, maxWidth: 190)
+            }
+            .font(.system(size: 11))
+            .help("It starts from \(branch), and changes you haven't committed come along.")
+        } else {
+            menu
+        }
+    }
+
+    private var menu: some View {
         Menu {
             if branches.count > 1 {
                 Section("Switch To") {
@@ -498,7 +519,6 @@ private struct BranchSwitcher: View {
                 }
             }
             Button("New Branch…") {
-                newName = ""
                 isNaming = true
             }
         } label: {
@@ -513,13 +533,6 @@ private struct BranchSwitcher: View {
         .task(id: directory + "\n" + branch) { await load() }
         // Branches made elsewhere show up the next time the pointer comes by.
         .onHover { if $0 { Task { await load() } } }
-        .alert("New Branch", isPresented: $isNaming) {
-            TextField("Name", text: $newName)
-            Button("Create") { run(["switch", "-c", newName.trimmingCharacters(in: .whitespaces)], created: true) }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("It starts from \(branch), and changes you haven't committed come along.")
-        }
         .alert("Couldn't Switch Branches", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
             Button("OK") {}
         } message: {
