@@ -16,7 +16,7 @@ final class ConversationScroller {
     }
 
     /// Whether to keep the newest in view: true until you scroll up, true again once you scroll
-    /// back to the end.
+    /// back to the end. Set only when it changes (`follow`): each setting draws the conversation again.
     var followsEnd = true
     /// All of it fits in view: nothing to scroll. (Not until it's known.)
     @ObservationIgnored fileprivate(set) var fits = false
@@ -26,20 +26,20 @@ final class ConversationScroller {
 
     /// To the end, following it again (you sent something).
     func toEnd(animated: Bool = false) {
-        followsEnd = true
+        follow(true)
         ask(.end(animated: animated))
     }
 
     /// `id`'s row in the middle, and no following the end meanwhile.
     func reveal(_ id: String) {
-        followsEnd = false
+        follow(false)
         ask(.row(id))
     }
 
     /// The place `fraction` of the way down `id`'s row in the middle, and no following the end
     /// meanwhile.
     func reveal(_ id: String, at fraction: CGFloat) {
-        followsEnd = false
+        follow(false)
         ask(.place(id, min(max(fraction, 0), 1)))
     }
 
@@ -49,8 +49,12 @@ final class ConversationScroller {
     }
 
     func scroll(to offset: CGFloat) {
-        followsEnd = false
+        follow(false)
         ask(.offset(offset))
+    }
+
+    fileprivate func follow(_ follows: Bool) {
+        if followsEnd != follows { followsEnd = follows }
     }
 
     private func ask(_ request: Request) {
@@ -117,8 +121,9 @@ struct ConversationScroll<Rows: View>: View {
                         fits: geometry.contentSize.height <= geometry.containerSize.height + 1)
         } action: { old, new in
             scroller.fits = new.fits
-            // Your scrolling decides; growth below the fold doesn't.
-            if scrolling.isOn { scroller.followsEnd = new.atEnd }
+            // Your scrolling decides; growth below the fold doesn't. Set only when it changes: each
+            // setting draws the conversation again, and this runs on every frame of a scroll.
+            if scrolling.isOn { scroller.follow(new.atEnd) }
             // Shrinking too: the lazy stack's first guess at the height can be too big, and a
             // conversation would then open part of the way up.
             guard scroller.followsEnd, !scrolling.isOn, new.height != old.height else { return }

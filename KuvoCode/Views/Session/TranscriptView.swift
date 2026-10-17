@@ -174,6 +174,13 @@ struct TranscriptView: View {
         // Summed up: the agent's steps between its replies, gathered into one row.
         var steps: [Message.Content] = []
         var stepsID = ""
+        // The end of each message's turn, found in one pass rather than looked for from each.
+        var turnEnds: [Message.Idle?] = Array(repeating: nil, count: messages.count)
+        var following: Message.Idle?
+        for index in messages.indices.reversed() {
+            turnEnds[index] = following
+            if case .idle(let idle) = messages[index] { following = idle }
+        }
         func flushSteps(live: Bool) {
             guard !steps.isEmpty else { return }
             rows.append(.steps(stepsID, steps, isLive: live))
@@ -189,7 +196,7 @@ struct TranscriptView: View {
                 turn.add(assistant)
                 // The run's error shows once, at the end of the turn. A step you stopped isn't an
                 // error: the turn's end says "Stopped".
-                let nextIdle = messages[(index + 1)...].lazy.compactMap { if case .idle(let idle) = $0 { idle } else { nil } }.first
+                let nextIdle = turnEnds[index]
                 let showsError = assistant.error.map { !$0.isInterruption } == true && assistant.error?.message != nextIdle?.error?.message
                 if stepsDetail == .each {
                     if !assistant.content.isEmpty || showsError || assistant.retry != nil {
