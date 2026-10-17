@@ -161,8 +161,11 @@ final class BrowserAgent {
         let browser = browser()
         guard browser.url != nil else { return "The browser is empty. Use browser_navigate to open a page." }
         let script = Self.snapshotScript
-        let result = try? await browser.webView.callAsyncJavaScript(script, contentWorld: .page) as? [String: Any]
+        let id = UUID().uuidString
+        let result = try? await browser.webView.callAsyncJavaScript(script, arguments: ["kuvoSnapshot": id], contentWorld: .page) as? [String: Any]
         guard let result else { return "Couldn't read the page at \(browser.url?.absoluteString ?? "")." }
+        // Its numbers are the ones this conversation's actions use, in this page only.
+        if let caller { Self.snapshots[caller] = id }
         let text = result["text"] as? String ?? ""
         let above = result["above"] as? Int ?? 0, below = result["below"] as? Int ?? 0
         let body = text.count > 18_000 ? String(text.prefix(18_000)) + "\n… (cut; scroll or use browser_text for more)" : text
@@ -451,21 +454,31 @@ final class BrowserAgent {
 
     /// Shows the pointer where the agent's about to act, and gives it a moment to get there.
     private func point(_ action: AgentPointer.Action, at index: Int, in browser: BrowserSession) async {
-        guard let json = try? await browser.webView.callAsyncJavaScript(Self.findElement + Self.rectScript, arguments: ["index": index], contentWorld: .page) as? String,
+        guard let json = try? await browser.webView.callAsyncJavaScript(Self.findElement + Self.rectScript, arguments: withSnapshot(["index": index]), contentWorld: .page) as? String,
               let values = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Double],
               let x = values["x"], let y = values["y"], let width = values["width"], let height = values["height"] else { return }
         browser.showAgentStep(action, at: CGRect(x: x, y: y, width: width, height: height))
         try? await Task.sleep(for: .milliseconds(150))
     }
 
-    /// Runs one of the element scripts with the index map from the last snapshot.
+    /// Runs one of the element scripts with the numbers from the last snapshot.
     private func run(_ body: String, _ arguments: [String: Any], in browser: BrowserSession) async -> String {
         do {
-            let result = try await browser.webView.callAsyncJavaScript(Self.findElement + body, arguments: arguments, contentWorld: .page)
+            let result = try await browser.webView.callAsyncJavaScript(Self.findElement + body, arguments: withSnapshot(arguments), contentWorld: .page)
             return result as? String ?? "ok"
         } catch {
             return "The page refused that: \(error.localizedDescription)"
         }
+    }
+
+    /// Each conversation's latest snapshot: the numbers its actions use are that snapshot's, and
+    /// not another page's, or another conversation's in the same page.
+    private static var snapshots: [String: String] = [:]
+
+    private func withSnapshot(_ arguments: [String: Any]) -> [String: Any] {
+        guard let caller else { return arguments }
+        // One that hasn't read a page yet has no numbers of its own.
+        return arguments.merging(["kuvoSnapshot": Self.snapshots[caller] ?? "none"]) { old, _ in old }
     }
 
     /// A click may start a navigation a beat later: wait up to a second for the address to
@@ -496,14 +509,36 @@ final class BrowserAgent {
         // The file is one arrow function ending in ";", which can't sit inside parentheses.
         var function = source.trimmingCharacters(in: .whitespacesAndNewlines)
         while function.hasSuffix(";") { function.removeLast() }
-        return function
+        // Each element as it's numbered, handed to `onIndex`: the actions use that very element,
+        // in a frame or a shadow root too, where the path it keeps leads nowhere or elsewhere. The
+        // file itself stays as browser-use has it.
+        let numbered = "nodeData.highlightIndex = highlightIndex++;"
+        assert(function.contains(numbered), "buildDomTree.js no longer numbers elements where onIndex hooks in")
+        return function.replacingOccurrences(of: numbered, with: numbered + " if (args.onIndex) args.onIndex(nodeData.highlightIndex, node);")
     }()
 
-    /// Runs buildDomTree, keeps index → XPath for the actions, and writes the elements out
-    /// the way browser-use shows them to a model.
+    /// What an element is, to tell later it's still the one numbered: its kind, and how its text
+    /// starts, digits aside (counters and times change on their own).
+    static let fingerprintScript = """
+    const fingerprint = (element) => {
+      let text = '';
+      const walker = element.ownerDocument.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      while (text.length < 200 && walker.nextNode()) text += walker.currentNode.data + ' ';
+      const attribute = (name) => element.getAttribute(name) || '';
+      return [element.localName, attribute('type'), attribute('name'), attribute('role'), attribute('href'),
+        text.replace(/\\s+/g, ' ').trim().slice(0, 80).replace(/\\d+/g, '#')].join('|');
+    };
+
+    """
+
+    /// Runs buildDomTree, keeps each numbered element (and what it was) for the actions, and
+    /// writes the elements out the way browser-use shows them to a model. `kuvoSnapshot`, when
+    /// given, names this snapshot, so actions can tell their numbers are from it.
     static let snapshotScript = """
     document.getElementById('playwright-highlight-container')?.remove();
-    const result = (\(domTree))({ doHighlightElements: false, focusHighlightIndex: -1, viewportExpansion: 0, debugMode: false });
+    const numbered = {};
+    const result = (\(domTree))({ doHighlightElements: false, focusHighlightIndex: -1, viewportExpansion: 0, debugMode: false, onIndex: (number, element) => { numbered[number] = element; } });
+    \(fingerprintScript)
     const map = result.map || {};
     const ATTRIBUTES = ['title', 'type', 'checked', 'name', 'role', 'value', 'placeholder', 'alt', 'aria-label', 'aria-expanded', 'aria-checked', 'data-state', 'href'];
     const index = {};
@@ -529,7 +564,8 @@ final class BrowserAgent {
       }
       let inside = insideClickable;
       if (node.highlightIndex !== undefined && node.highlightIndex !== null) {
-        index[node.highlightIndex] = node.xpath;
+        const element = numbered[node.highlightIndex];
+        if (element) index[node.highlightIndex] = { element, print: fingerprint(element) };
         const attributes = ATTRIBUTES
           .filter((name) => node.attributes && node.attributes[name])
           // A password field's value never goes to the model.
@@ -544,7 +580,7 @@ final class BrowserAgent {
       }
       (node.children || []).forEach((child) => walk(child, inside));
     })(result.rootId, false);
-    window.__kuvoIndex = index;
+    window.__kuvoIndex = { snapshot: typeof kuvoSnapshot === 'string' ? kuvoSnapshot : null, elements: index };
     // A page that asks to sign in (or for a one-time code) says what to do about it, where the
     // agent reads it: ask the user in Kuvo Code, not in the chat.
     const shown = (field) => !field.disabled && field.getClientRects().length > 0 && getComputedStyle(field).visibility !== 'hidden';
@@ -566,14 +602,48 @@ final class BrowserAgent {
     };
     """
 
+    /// What the element scripts start with: `find(number)` gives the element numbered in the latest
+    /// snapshot while it's on the page as it was (in a frame or a shadow root too), else null, and
+    /// `missing(number)` says why. With `kuvoSnapshot`, the numbers must be from that snapshot.
     static let findElement = """
-    const find = (number) => {
-      const xpath = (window.__kuvoIndex || {})[number];
-      if (!xpath) return null;
-      const path = xpath.startsWith('/') ? xpath : '/' + xpath;
-      return document.evaluate(path, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+    \(fingerprintScript)
+    let lost = 'none';
+    // On the page now: in its document, and that document still in its frame, out to the page's own.
+    const attached = (element) => {
+      for (let node = element; node;) {
+        if (!node.isConnected) return false;
+        const doc = node.ownerDocument;
+        if (doc === document) return true;
+        const frame = doc.defaultView && doc.defaultView.frameElement;
+        if (!frame || frame.contentDocument !== doc) return false;
+        node = frame;
+      }
+      return false;
     };
-    const missing = (number) => `There's no element [${number}] on the page now. Take a fresh browser_snapshot.`;
+    const find = (number) => {
+      const map = window.__kuvoIndex;
+      const entry = map && map.elements ? map.elements[number] : null;
+      if (!entry) { lost = 'none'; return null; }
+      if (typeof kuvoSnapshot === 'string' && map.snapshot !== kuvoSnapshot) { lost = 'other'; return null; }
+      if (!attached(entry.element) || fingerprint(entry.element) !== entry.print) { lost = 'changed'; return null; }
+      return entry.element;
+    };
+    const missing = (number) => lost === 'changed'
+      ? `The page changed since the snapshot: [${number}] is gone or isn't what it was. Take a fresh browser_snapshot.`
+      : lost === 'other'
+        ? `[${number}] is from a snapshot of another page or tab. Take a fresh browser_snapshot of this one.`
+        : `There's no element [${number}] on the page now. Take a fresh browser_snapshot.`;
+    // The window an element is in (its frame's), whose events and types it takes.
+    const viewOf = (element) => element.ownerDocument.defaultView || window;
+    // What kind of field an element is: "password", "text" (a username, an email, a code) or "other".
+    const kindOf = (element) => {
+      if (element.localName === 'input') {
+        const type = (element.type || 'text').toLowerCase();
+        if (type === 'password') return 'password';
+        return ['text', 'email', 'tel', 'number', 'search', 'url'].includes(type) ? 'text' : 'other';
+      }
+      return element.localName === 'textarea' ? 'text' : 'other';
+    };
 
     """
 
@@ -584,7 +654,14 @@ final class BrowserAgent {
     if (!element) return '';
     element.scrollIntoView({ block: 'center', inline: 'nearest' });
     const r = element.getBoundingClientRect();
-    return JSON.stringify({ x: r.left, y: r.top, width: r.width, height: r.height });
+    let x = r.left, y = r.top;
+    // In a frame: plus where the frame's content is, out to the page's own window.
+    for (let view = viewOf(element); view !== window && view.frameElement; view = view.parent) {
+      const frame = view.frameElement, box = frame.getBoundingClientRect(), style = view.parent.getComputedStyle(frame);
+      x += box.left + frame.clientLeft + (parseFloat(style.paddingLeft) || 0);
+      y += box.top + frame.clientTop + (parseFloat(style.paddingTop) || 0);
+    }
+    return JSON.stringify({ x, y, width: r.width, height: r.height });
     """
 
     /// What the page hears when the pointer comes over [index].
@@ -592,11 +669,12 @@ final class BrowserAgent {
     const element = find(index);
     if (!element) return missing(index);
     element.scrollIntoView({ block: 'center', inline: 'nearest' });
+    const view = viewOf(element);
     const rect = element.getBoundingClientRect();
-    const options = { bubbles: true, cancelable: true, view: window, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 };
+    const options = { bubbles: true, cancelable: true, composed: true, view, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 };
     for (const type of ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'pointermove', 'mousemove']) {
       const bubbles = !type.endsWith('enter');
-      element.dispatchEvent(type.startsWith('pointer') ? new PointerEvent(type, { ...options, bubbles }) : new MouseEvent(type, { ...options, bubbles }));
+      element.dispatchEvent(type.startsWith('pointer') ? new view.PointerEvent(type, { ...options, bubbles }) : new view.MouseEvent(type, { ...options, bubbles }));
     }
     return 'ok';
     """
@@ -606,10 +684,11 @@ final class BrowserAgent {
     if (!element) return missing(index);
     document.getElementById('playwright-highlight-container')?.remove();
     element.scrollIntoView({ block: 'center', inline: 'nearest' });
+    const view = viewOf(element);
     const rect = element.getBoundingClientRect();
-    const options = { bubbles: true, cancelable: true, view: window, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2, button: 0 };
+    const options = { bubbles: true, cancelable: true, composed: true, view, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2, button: 0 };
     for (const type of ['pointerover', 'pointerdown', 'mousedown', 'pointerup', 'mouseup']) {
-      element.dispatchEvent(type.startsWith('pointer') ? new PointerEvent(type, options) : new MouseEvent(type, options));
+      element.dispatchEvent(type.startsWith('pointer') ? new view.PointerEvent(type, options) : new view.MouseEvent(type, options));
     }
     if (typeof element.focus === 'function') element.focus();
     element.click();
@@ -622,23 +701,25 @@ final class BrowserAgent {
     document.getElementById('playwright-highlight-container')?.remove();
     element.scrollIntoView({ block: 'center' });
     element.focus();
+    const view = viewOf(element);
     if (element.isContentEditable) {
-      if (clear) { document.execCommand('selectAll', false); document.execCommand('delete', false); }
-      document.execCommand('insertText', false, text);
-    } else if ('value' in element) {
-      const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const doc = element.ownerDocument;
+      if (clear) { doc.execCommand('selectAll', false); doc.execCommand('delete', false); }
+      doc.execCommand('insertText', false, text);
+    } else if (element.localName === 'input' || element.localName === 'textarea') {
+      const prototype = element.localName === 'textarea' ? view.HTMLTextAreaElement.prototype : view.HTMLInputElement.prototype;
       const setter = Object.getOwnPropertyDescriptor(prototype, 'value').set;
       setter.call(element, (clear ? '' : element.value) + text);
-      element.dispatchEvent(new Event('input', { bubbles: true }));
-      element.dispatchEvent(new Event('change', { bubbles: true }));
+      element.dispatchEvent(new view.Event('input', { bubbles: true, composed: true }));
+      element.dispatchEvent(new view.Event('change', { bubbles: true }));
     } else {
       return `[${index}] doesn't take text. Click it first, or pick an input.`;
     }
     if (submit) {
-      const init = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true };
-      const proceed = element.dispatchEvent(new KeyboardEvent('keydown', init));
-      element.dispatchEvent(new KeyboardEvent('keypress', init));
-      element.dispatchEvent(new KeyboardEvent('keyup', init));
+      const init = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true, composed: true };
+      const proceed = element.dispatchEvent(new view.KeyboardEvent('keydown', init));
+      element.dispatchEvent(new view.KeyboardEvent('keypress', init));
+      element.dispatchEvent(new view.KeyboardEvent('keyup', init));
       if (proceed && element.form) element.form.requestSubmit ? element.form.requestSubmit() : element.form.submit();
     }
     return 'ok';
@@ -647,23 +728,24 @@ final class BrowserAgent {
     static let selectScript = """
     const element = find(index);
     if (!element) return missing(index);
-    if (!(element instanceof HTMLSelectElement)) return `[${index}] isn't a list to select from.`;
+    if (element.localName !== 'select') return `[${index}] isn't a list to select from.`;
+    const view = viewOf(element);
     const wanted = option.toLowerCase();
     const match = Array.from(element.options).find((item) => item.text.trim().toLowerCase() === wanted || item.value.toLowerCase() === wanted);
     if (!match) return `No option “${option}” in [${index}]. Options: ` + Array.from(element.options).map((item) => item.text.trim()).join(', ');
     element.value = match.value;
-    element.dispatchEvent(new Event('input', { bubbles: true }));
-    element.dispatchEvent(new Event('change', { bubbles: true }));
+    element.dispatchEvent(new view.Event('input', { bubbles: true, composed: true }));
+    element.dispatchEvent(new view.Event('change', { bubbles: true }));
     return 'ok';
     """
 
     /// The file input [index] stands for: itself, one inside it or that its label is for, the
-    /// nearest one around it (an upload button beside its hidden input), or the page's only one;
-    /// else "missing" or "none".
+    /// nearest one around it (an upload button beside its hidden input), or the only one where it
+    /// is (its shadow root, else its page); else "missing" or "none".
     static let fileInputScript = """
     const element = find(index);
     if (!element) return 'missing';
-    const isFile = (node) => node instanceof HTMLInputElement && node.type === 'file';
+    const isFile = (node) => !!node && node.localName === 'input' && node.type === 'file';
     let input = isFile(element) ? element : element.querySelector && element.querySelector('input[type=file]');
     const label = element.closest && element.closest('label');
     if (!input && label && isFile(label.control)) input = label.control;
@@ -671,8 +753,9 @@ final class BrowserAgent {
       const inside = around.querySelectorAll('input[type=file]');
       if (inside.length === 1) input = inside[0];
     }
-    if (!input) {
-      const all = [...document.querySelectorAll('input[type=file]')];
+    for (const root of new Set([element.getRootNode(), element.ownerDocument])) {
+      if (input || !root.querySelectorAll) continue;
+      const all = [...root.querySelectorAll('input[type=file]')];
       if (all.length === 1) input = all[0];
     }
     return input || 'none';
@@ -685,14 +768,15 @@ final class BrowserAgent {
     \(fileInputScript)
     })();
     if (typeof input === 'string') return input;
-    const transfer = new DataTransfer();
+    const view = viewOf(input);
+    const transfer = new view.DataTransfer();
     for (const file of files) {
       const bytes = Uint8Array.from(atob(file.data), (c) => c.charCodeAt(0));
-      transfer.items.add(new File([bytes], file.name, { type: file.type }));
+      transfer.items.add(new view.File([bytes], file.name, { type: file.type }));
     }
     input.files = transfer.files;
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    input.dispatchEvent(new Event('change', { bubbles: true }));
+    input.dispatchEvent(new view.Event('input', { bubbles: true, composed: true }));
+    input.dispatchEvent(new view.Event('change', { bubbles: true }));
     return 'ok';
     """
 
@@ -701,12 +785,7 @@ final class BrowserAgent {
     static let fieldKindScript = """
     const element = find(index);
     if (!element) return 'missing';
-    if (element instanceof HTMLInputElement) {
-      const type = (element.type || 'text').toLowerCase();
-      if (type === 'password') return 'password';
-      return ['text', 'email', 'tel', 'number', 'search', 'url'].includes(type) ? 'text' : 'other';
-    }
-    return element instanceof HTMLTextAreaElement ? 'text' : 'other';
+    return kindOf(element);
     """
 
     /// Puts what the user gave into [index], as typing would, and marks it so it stays out of
@@ -716,37 +795,66 @@ final class BrowserAgent {
     if (!element) return missing(index);
     element.scrollIntoView({ block: 'center' });
     element.focus();
-    const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const view = viewOf(element);
+    const prototype = element.localName === 'textarea' ? view.HTMLTextAreaElement.prototype : view.HTMLInputElement.prototype;
     Object.getOwnPropertyDescriptor(prototype, 'value').set.call(element, value);
-    element.dispatchEvent(new Event('input', { bubbles: true }));
-    element.dispatchEvent(new Event('change', { bubbles: true }));
+    element.dispatchEvent(new view.Event('input', { bubbles: true, composed: true }));
+    element.dispatchEvent(new view.Event('change', { bubbles: true }));
     element.setAttribute('data-kuvo-secret', '');
     return 'ok';
     """
 
+    /// The page's documents and shadow roots that hold something the user filled in: the page's
+    /// own, its frames' and those inside them, for the mask to reach.
+    static let secretRootsScript = """
+    const roots = [];
+    (function collect(root) {
+      roots.push(root);
+      for (const element of root.querySelectorAll('*')) {
+        if (element.shadowRoot) collect(element.shadowRoot);
+        if (element.localName === 'iframe' || element.localName === 'frame') {
+          try { if (element.contentDocument) collect(element.contentDocument); } catch {}
+        }
+      }
+    })(document);
+
+    """
+
     /// Hides what the user filled in, for a screenshot, and shows it again.
     static let maskScript = """
-    if (!document.getElementById('kuvo-secret-mask')) {
-      const style = document.createElement('style');
+    \(secretRootsScript)
+    for (const root of roots) {
+      if (!root.querySelector('[data-kuvo-secret]') || root.getElementById('kuvo-secret-mask')) continue;
+      const doc = root.ownerDocument || root;
+      const style = doc.createElement('style');
       style.id = 'kuvo-secret-mask';
       style.textContent = '[data-kuvo-secret]{color:transparent!important;-webkit-text-fill-color:transparent!important;text-shadow:none!important}';
-      (document.head || document.documentElement).appendChild(style);
+      (root.head || root.documentElement || root).appendChild(style);
     }
     return 'ok';
     """
 
     static let unmaskScript = """
-    document.getElementById('kuvo-secret-mask')?.remove();
+    \(secretRootsScript)
+    for (const root of roots) root.getElementById('kuvo-secret-mask')?.remove();
     return 'ok';
     """
 
+    /// Presses `key` on the element with the focus, inside frames and shadow roots too.
     static let pressScript = """
-    const target = document.activeElement || document.body;
+    let target = document.activeElement || document.body;
+    for (;;) {
+      const frame = (target.localName === 'iframe' || target.localName === 'frame') && target.contentDocument;
+      const inner = target.shadowRoot ? target.shadowRoot.activeElement : frame ? frame.activeElement : null;
+      if (!inner || inner === target) break;
+      target = inner;
+    }
+    const view = target.ownerDocument.defaultView || window;
     const codes = { Enter: 13, Escape: 27, Tab: 9, Backspace: 8, ArrowUp: 38, ArrowDown: 40, ArrowLeft: 37, ArrowRight: 39, ' ': 32 };
-    const init = { key: key, code: key, keyCode: codes[key] || 0, which: codes[key] || 0, bubbles: true, cancelable: true };
-    const proceed = target.dispatchEvent(new KeyboardEvent('keydown', init));
-    if (key === 'Enter') target.dispatchEvent(new KeyboardEvent('keypress', init));
-    target.dispatchEvent(new KeyboardEvent('keyup', init));
+    const init = { key: key, code: key, keyCode: codes[key] || 0, which: codes[key] || 0, bubbles: true, cancelable: true, composed: true };
+    const proceed = target.dispatchEvent(new view.KeyboardEvent('keydown', init));
+    if (key === 'Enter') target.dispatchEvent(new view.KeyboardEvent('keypress', init));
+    target.dispatchEvent(new view.KeyboardEvent('keyup', init));
     if (key === 'Enter' && proceed && target.form) target.form.requestSubmit ? target.form.requestSubmit() : target.form.submit();
     if (key === 'Escape' && typeof target.blur === 'function') target.blur();
     return 'ok';
