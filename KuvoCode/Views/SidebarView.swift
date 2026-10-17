@@ -21,14 +21,14 @@ struct SidebarView: View {
     let editGroup: (BotGroup) -> Void
     /// Bots moving in the main card; their rows hold still.
     var stagedBots: Set<String> = []
+    /// Shows a session beside the one in view (split view).
+    var openBeside: ((String) -> Void)?
     @Environment(Bots.self) private var bots
     @Environment(BotGroups.self) private var groups
     /// The group chat waiting for the user to confirm its deletion.
     @State private var deletingGroup: BotGroup?
 
     /// Folders the user closed, by path (newline-separated).
-    /// The session in split view, beside the one in view (MainView).
-    @AppStorage(MainView.splitKey) private var splitSession = ""
     @AppStorage("collapsedProjects") private var collapsedStorage = ""
     /// Sections the user folded away: "pinned", "bots", "chats", "projects", "recents" (newline-separated).
     @AppStorage("collapsedSections") private var foldedStorage = ""
@@ -553,8 +553,8 @@ struct SidebarView: View {
                 Button("Pin") { Task { await workspace.setPinned(session.id, true) } }
             }
         }
-        if session.id != selection {
-            Button("Open Beside") { withAnimation(.ui) { splitSession = session.id } }
+        if let openBeside, session.id != selection {
+            Button("Open Beside") { openBeside(session.id) }
         }
         Button("Rename…") {
             renaming = session

@@ -23,6 +23,8 @@ struct TabItem: Identifiable, Equatable {
     var symbol: String?
     /// One that stays (Settings' page) has no close button.
     var closes = true
+    /// The session beside it in split view, shown with it as one tab (none, or one).
+    var companion: [TabItem] = []
 
     enum Status {
         case idle, working, waiting, failed, unread
@@ -49,6 +51,9 @@ struct TabStrip: View {
     let closeAll: (_ except: String?) -> Void
     /// Shows a session beside the one in view (split view).
     var openBeside: ((String) -> Void)?
+    /// Closes the session beside a tab's, and swaps the two (by the tab's id).
+    var closeBeside: ((String) -> Void)?
+    var swapBeside: ((String) -> Void)?
     /// Renames a session's tab (a new session's has no title to change yet).
     var rename: ((String) -> Void)?
 
@@ -59,14 +64,29 @@ struct TabStrip: View {
         HStack(spacing: 0) {
             ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
                 let isActive = tab.id == selection
-                TabButton(tab: tab, isActive: isActive, close: { close(tab.id) }) {
-                    withAnimation(.ui) { selection = tab.id }
+                HStack(spacing: 0) {
+                    TabButton(tab: tab, isActive: isActive, close: { close(tab.id) }) {
+                        withAnimation(.ui) { selection = tab.id }
+                    }
+                    .rightClickMenu { menu(for: tab) }
+                    // The session beside it, in the same tab: a crease between the two.
+                    if let companion = tab.companion.first {
+                        Rectangle()
+                            .fill(Surface.hairline(scheme))
+                            .frame(width: 1, height: 16)
+                        TabButton(tab: companion, isActive: isActive, close: { closeBeside?(tab.id) }) {
+                            withAnimation(.ui) { selection = tab.id }
+                        }
+                        .rightClickMenu { besideMenu(for: tab) }
+                    }
                 }
-                .rightClickMenu { menu(for: tab) }
                 .background {
                     if isActive {
                         ActivePill()
                             .matchedGeometryEffect(id: "pill", in: pill)
+                    } else if !tab.companion.isEmpty {
+                        // Two sessions in one tab read as one, even out of view.
+                        Capsule().strokeBorder(Surface.hairline(scheme))
                     }
                 }
                 // Hairlines between inactive neighbours, like Rex; none next to the pill. They
@@ -90,6 +110,14 @@ struct TabStrip: View {
         .padding(3)
         .glassEffect(.regular, in: .capsule)
         .animation(.ui, value: tabs.map(\.id))
+    }
+
+    /// The session beside a tab's, in its half of the tab.
+    private func besideMenu(for tab: TabItem) -> [NSMenuItem] {
+        var items: [NSMenuItem] = []
+        if let swapBeside { items.append(ActionItem("Swap") { swapBeside(tab.id) }) }
+        if let closeBeside { items.append(ActionItem("Close Split View") { closeBeside(tab.id) }) }
+        return items
     }
 
     private func menu(for tab: TabItem) -> [NSMenuItem] {

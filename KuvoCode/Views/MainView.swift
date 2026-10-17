@@ -57,9 +57,26 @@ struct MainView: View {
 
     enum Pane { case sessions, conversation, split, changes }
 
-    /// The session shown beside the one in view (split view), or empty.
-    static let splitKey = "splitSession"
-    @AppStorage(MainView.splitKey) private var splitSession = ""
+    /// Split views, as pairs: a tab and the session beside it, kept with the tab as a browser's split
+    /// tabs are, one "<tab>=<session>" a line. Choosing another tab shows it alone; the pair comes
+    /// back with its tab.
+    static let splitKey = "splitPairs"
+    @AppStorage(MainView.splitKey) private var splitStorage = ""
+
+    private var splitPairs: [String: String] {
+        get {
+            Dictionary(splitStorage.split(separator: "\n").compactMap { line in
+                let parts = line.split(separator: "=", maxSplits: 1).map(String.init)
+                return parts.count == 2 ? (parts[0], parts[1]) : nil
+            }, uniquingKeysWith: { first, _ in first })
+        }
+        nonmutating set {
+            splitStorage = newValue.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "\n")
+        }
+    }
+
+    /// The session beside the tab in view, or empty.
+    private var splitSession: String { selection.flatMap { splitPairs[$0] } ?? "" }
     @AppStorage("splitWidth") private var splitWidth = 560.0
 
     struct ClosedTab {
@@ -412,7 +429,7 @@ struct MainView: View {
                 .frame(width: identityWidth, alignment: .leading)
                 .padding(.trailing, identityWidth == nil ? 16 : 0)
                 if !tabItems.isEmpty {
-                    TabStrip(tabs: tabItems, selection: $selection, close: { closeTab($0) }, closeAll: closeTabs(except:), openBeside: openBeside) { id in
+                    TabStrip(tabs: tabItems, selection: $selection, close: { closeTab($0) }, closeAll: closeTabs(except:), openBeside: openBeside, closeBeside: closeBeside, swapBeside: swapBeside) { id in
                         guard let session = workspace.session(id) else { return }
                         renaming = session
                     }
@@ -454,7 +471,16 @@ struct MainView: View {
     }
 
     private var tabItems: [TabItem] {
-        tabs.compactMap { key in
+        let pairs = splitPairs
+        return tabs.compactMap { key in
+            guard var item = tabItem(for: key) else { return nil }
+            if let beside = pairs[key], let other = tabItem(for: beside) { item.companion = [other] }
+            return item
+        }
+    }
+
+    private func tabItem(for key: String) -> TabItem? {
+        do {
             if let directory = SidebarView.draftDirectory(from: key) {
                 return TabItem(id: key, title: Workspace.isChat(directory) ? "New Chat" : "New Session", logo: nil, status: .idle)
             }
@@ -523,7 +549,8 @@ struct MainView: View {
                 editBot: { openBotEditor(bot: $0) },
                 newGroup: { openGroupEditor(group: nil) },
                 editGroup: { openGroupEditor(group: $0) },
-                stagedBots: stagedBots
+                stagedBots: stagedBots,
+                openBeside: openBeside
             )
             // Room for the window's buttons above the first row, when they sit here.
             .padding(.top, showsTabBar ? 0 : Metrics.windowControlsHeight)
@@ -554,7 +581,7 @@ struct MainView: View {
             ContextGauge(model: model)
             Button("Swap", systemImage: "arrow.left.arrow.right") { swapSplit() }
                 .help("Swap the two sessions")
-            Button("Close Split View", systemImage: "xmark") { withAnimation(.ui) { splitSession = "" } }
+            Button("Close Split View", systemImage: "xmark") { if let selection { closeBeside(selection) } }
                 .help("Close Split View")
         } content: {
             SessionView(model: model)
@@ -566,18 +593,44 @@ struct MainView: View {
         .simultaneousGesture(TapGesture().onEnded { focus = .split })
     }
 
-    /// Shows `id` beside the session in view.
+    /// Shows `id` beside the tab in view, the two as one tab. Its own tab, if it had one, goes into
+    /// the pair; one beside before gets its tab back, next to it.
     private func openBeside(_ id: String) {
-        guard id != selection, workspace.session(id) != nil else { return }
-        withAnimation(.ui) { splitSession = id }
+        guard let main = selection, main != id, workspace.session(main) != nil, workspace.session(id) != nil else { return }
+        var pairs = splitPairs
+        var tabs = tabs
+        // It's in no other pair, nor has one of its own.
+        if let other = pairs.removeValue(forKey: id), !tabs.contains(other) { tabs.insert(other, at: (tabs.firstIndex(of: id) ?? tabs.count - 1) + 1) }
+        for (key, value) in pairs where value == id { pairs[key] = nil }
+        if let previous = pairs[main], !tabs.contains(previous) { tabs.insert(previous, at: (tabs.firstIndex(of: main) ?? tabs.count - 1) + 1) }
+        tabs.removeAll { $0 == id }
+        pairs[main] = id
+        withAnimation(.ui) {
+            self.tabs = tabs
+            splitPairs = pairs
+        }
     }
 
-    /// The session beside goes in view, and the one in view beside it.
+    /// Closes the session beside `tab`'s.
+    private func closeBeside(_ tab: String) {
+        withAnimation(.ui) { splitPairs[tab] = nil }
+    }
+
+    /// The two in `tab`'s pair trade places, the tab staying where it is.
+    private func swapBeside(_ tab: String) {
+        guard let other = splitPairs[tab] else { return }
+        var pairs = splitPairs
+        pairs[tab] = nil
+        pairs[other] = tab
+        var tabs = tabs
+        if let index = tabs.firstIndex(of: tab) { tabs[index] = other }
+        self.tabs = tabs
+        splitPairs = pairs
+        if selection == tab { selection = other }
+    }
+
     private func swapSplit() {
-        guard let main = sessionID, !splitSession.isEmpty else { return }
-        let other = splitSession
-        splitSession = main
-        openTab(other)
+        if let selection { swapBeside(selection) }
     }
 
     @ViewBuilder private var conversationCard: some View {
@@ -717,14 +770,10 @@ struct MainView: View {
             guard let request else { return }
             workspace.besideRequest = nil
             if request.startedBy == sessionID {
-                withAnimation(.ui) { splitSession = request.session }
-            } else if !tabs.contains(request.session) {
+                openBeside(request.session)
+            } else if !tabs.contains(request.session), !splitPairs.values.contains(request.session) {
                 tabs.append(request.session)
             }
-        }
-        // The session beside, brought into view, is no longer beside it.
-        .onChange(of: selection) { _, id in
-            if id == splitSession { splitSession = "" }
         }
     }
 
@@ -838,6 +887,8 @@ struct MainView: View {
 
     /// Shows a session or draft, opening a tab for it next to the current one if needed.
     private func openTab(_ key: String) {
+        // The session beside a tab: that tab, with it beside.
+        let key = splitPairs.first { $0.value == key }?.key ?? key
         var tabs = tabs
         if !tabs.contains(key) {
             let index = selection.flatMap { tabs.firstIndex(of: $0) }.map { $0 + 1 } ?? tabs.count
@@ -858,6 +909,7 @@ struct MainView: View {
         var tabs = tabs
         guard let index = tabs.firstIndex(of: key) else { return }
         tabs.remove(at: index)
+        if splitPairs[key] != nil { splitPairs[key] = nil }
         if remember { rememberClosed([ClosedTab(key: key, index: index)]) }
         withAnimation(.ui) {
             self.tabs = tabs
@@ -873,6 +925,7 @@ struct MainView: View {
         rememberClosed(tabs.enumerated().filter { $0.element != key }.map { ClosedTab(key: $0.element, index: $0.offset) }.reversed())
         withAnimation(.ui) {
             tabs = tabs.filter { $0 == key }
+            splitPairs = splitPairs.filter { $0.key == key }
             selection = key
         }
     }
