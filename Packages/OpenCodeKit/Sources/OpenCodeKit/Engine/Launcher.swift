@@ -1,12 +1,15 @@
 import Foundation
 
 /// `kuvo-npx`, in the `bin` folder beside `kuvo-wake`: runs an npm package's command for an MCP
-/// server (an integration's), with Node's npx when the computer has it, else the engine's own Bun
-/// (`bun x`), so such a server needs nothing installed. What either downloads stays in the
-/// engine's cache (`npm_config_cache`, `BUN_INSTALL`). The server gets its own keys under their
-/// own names (its settings say which); every integration's `KUVO_KEY_…` is taken away first.
-/// With Bun, a `node` beside it (in `runtime`) runs the engine's Bun too: a package's command
-/// starts with `node`, and without one Bun makes its own in `/tmp`, whatever `TMPDIR` says.
+/// server (an integration's), with Node when the computer has it, else the engine's own Bun
+/// (`bun x`), so such a server needs nothing installed. With Node, each version is installed once
+/// in the engine's cache (`kuvo-npx/<package>@<version>`, its other versions removed) and its
+/// command run by Node itself: `npx` would stay running beside every server, about as big as it
+/// (npx is what's left when that can't be done). What's downloaded stays in the engine's cache
+/// (`npm_config_cache`, `BUN_INSTALL`). The server gets its own keys under their own names (its
+/// settings say which); every integration's `KUVO_KEY_…` is taken away first. With Bun, a `node`
+/// beside it (in `runtime`) runs the engine's Bun too: a package's command starts with `node`, and
+/// without one Bun makes its own in `/tmp`, whatever `TMPDIR` says.
 public enum Launcher {
     public static let name = "kuvo-npx"
     /// The folder beside it with `node`.
@@ -19,6 +22,36 @@ public enum Launcher {
         #!/bin/sh
         # Kuvo Code: runs an npm package's command for an MCP server.
         for v in $(env | sed 's/=.*//' | grep '^KUVO_KEY_'); do unset "$v" 2>/dev/null; done
+        if [ -n "$XDG_CACHE_HOME" ] && command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
+          spec=$1; shift
+          case ${spec#?} in *@*) name=${spec%@*} ;; *) name=$spec ;; esac
+          folder="$XDG_CACHE_HOME/kuvo-npx/$(printf '%s' "$spec" | tr '/' '+')"
+          if [ ! -s "$folder/.main" ]; then
+            mkdir -p "$XDG_CACHE_HOME/kuvo-npx"
+            # One install at a time: another start waits for it (one left by a crash, for 5 minutes).
+            i=0
+            until mkdir "$folder.lock" 2>/dev/null; do
+              [ -s "$folder/.main" ] && break
+              [ -n "$(find "$folder.lock" -maxdepth 0 -mmin +5 2>/dev/null)" ] && rmdir "$folder.lock" 2>/dev/null
+              [ $i -ge 600 ] && break
+              sleep 0.5; i=$((i + 1))
+            done
+            if [ ! -s "$folder/.main" ]; then
+              rm -rf "$folder"
+              # Its output to stderr: stdout is the server's, to the engine.
+              npm install --prefix "$folder" --no-save --no-package-lock --no-audit --no-fund --loglevel=error "$spec" >&2 &&
+                node -e 'const [dir, short] = process.argv.slice(1); const bin = JSON.parse(require("fs").readFileSync(dir + "/package.json", "utf8")).bin; const main = typeof bin === "string" ? bin : bin && (bin[short] || Object.values(bin)[0]); if (main) console.log(main)' "$folder/node_modules/$name" "${name##*/}" >"$folder/.main"
+              if [ -s "$folder/.main" ] && [ "$name" != "$spec" ]; then
+                for other in "${folder%@*}"@*; do
+                  case $other in "$folder" | *.lock) ;; *) rm -rf "$other" ;; esac
+                done
+              fi
+            fi
+            rmdir "$folder.lock" 2>/dev/null
+          fi
+          [ -s "$folder/.main" ] && exec node "$folder/node_modules/$name/$(cat "$folder/.main")" "$@"
+          exec npx -y "$spec" "$@"
+        fi
         if command -v npx >/dev/null 2>&1; then exec npx -y "$@"; fi
         PATH="$(dirname "$0")/\(runtime):$PATH" BUN_BE_BUN=1 exec \(engine) x "$@"
         """

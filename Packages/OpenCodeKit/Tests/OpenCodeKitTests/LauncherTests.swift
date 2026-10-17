@@ -5,11 +5,12 @@ import Testing
 /// `kuvo-npx`, run with this Mac's sh as the engine runs an integration's server.
 struct LauncherTests {
     /// Runs `kuvo-npx` with `arguments` and only `path` to find commands in.
-    private func run(_ launcher: URL, _ arguments: [String], path: String) throws -> String {
+    private func run(_ launcher: URL, _ arguments: [String], path: String, cache: URL? = nil) throws -> String {
         let process = Process()
         process.executableURL = launcher
         process.arguments = arguments
         process.environment = ["PATH": path, "KUVO_KEY_OTHER_TOKEN": "secret", "FIGMA_API_KEY": "mine"]
+            .merging(cache.map { ["XDG_CACHE_HOME": $0.path] } ?? [:]) { $1 }
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
@@ -43,5 +44,44 @@ struct LauncherTests {
         #expect(try run(bunNode, ["server.js"], path: "/bin:/usr/bin") == "engine BUN_BE_BUN=1 server.js secretmine")
         try fake(node.appending(path: "npx"), says: "npx")
         #expect(try run(launcher, ["some-mcp@1.0.0"], path: node.path + ":/bin:/usr/bin") == "npx BUN_BE_BUN= -y some-mcp@1.0.0 mine")
+    }
+
+    /// With Node, a package is installed once in the engine's cache and its command run by Node
+    /// itself, with no npx left running beside it; a new version replaces the one before.
+    @Test func installsOnceAndRunsWithNode() throws {
+        let path = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map(String.init) + ["/opt/homebrew/bin", "/usr/local/bin"]
+        guard let node = path.map({ $0 + "/node" }).first(where: FileManager.default.isExecutableFile(atPath:)) else { return }
+        let folder = FileManager.default.temporaryDirectory.appending(path: "launcher-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let bin = folder.appending(path: "bin"), tools = folder.appending(path: "tools"), cache = folder.appending(path: "cache")
+        try FileManager.default.createDirectory(at: tools, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: tools.appending(path: "node"), withDestinationURL: URL(filePath: node))
+        try fake(tools.appending(path: "npx"), says: "npx")
+        // npm "installs" the package: a command that says how it was run.
+        let npm = tools.appending(path: "npm")
+        try #"""
+        #!/bin/sh
+        echo "added 1 package"
+        while [ $# -gt 1 ]; do [ "$1" = --prefix ] && prefix=$2; shift; done
+        name=${1%@*}; mkdir -p "$prefix/node_modules/$name"
+        echo installed >>"$(dirname "$0")/installs"
+        printf '{"name":"%s","bin":{"other":"other.js","%s":"cli.js"}}' "$name" "${name##*/}" >"$prefix/node_modules/$name/package.json"
+        echo 'console.log("node", process.argv.slice(2).join(" "), process.env.KUVO_KEY_OTHER_TOKEN || "", process.env.FIGMA_API_KEY)' >"$prefix/node_modules/$name/cli.js"
+        """#.write(to: npm, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: npm.path)
+        try Launcher.install(in: bin, engine: folder.appending(path: "engine"))
+        let launcher = bin.appending(path: Launcher.name)
+        let tried = tools.path + ":/bin:/usr/bin"
+
+        // Installing (npm's words go to stderr, here with the rest), then from the install.
+        #expect(try run(launcher, ["@kuvo/some-mcp@1.0.0", "--stdio"], path: tried, cache: cache) == "added 1 package\nnode --stdio  mine")
+        #expect(try run(launcher, ["@kuvo/some-mcp@1.0.0", "--stdio"], path: tried, cache: cache) == "node --stdio  mine")
+        let installs = { (try? String(contentsOf: tools.appending(path: "installs"), encoding: .utf8))?.split(separator: "\n").count ?? 0 }
+        #expect(installs() == 1)
+        let packages = cache.appending(path: "kuvo-npx")
+        #expect(try run(launcher, ["@kuvo/some-mcp@1.1.0"], path: tried, cache: cache).hasSuffix("\nnode   mine"))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: packages.path) == ["@kuvo+some-mcp@1.1.0"])
+        // Without the engine's cache, npx as before.
+        #expect(try run(launcher, ["some-mcp@1.0.0"], path: tried) == "npx BUN_BE_BUN= -y some-mcp@1.0.0 mine")
     }
 }
