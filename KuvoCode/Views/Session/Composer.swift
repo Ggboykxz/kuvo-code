@@ -127,6 +127,7 @@ struct Composer: View {
             }
             TextField(placeholder, text: $text, axis: .vertical)
                 .textFieldStyle(.plain)
+                .accessibilityIdentifier("composer")
                 .font(isShell ? .system(size: messageFont.size - 0.5, design: .monospaced) : messageFont.body)
                 .lineLimit(1...12)
                 .focused($isFocused)
@@ -439,6 +440,8 @@ struct SendStopButton<Menu: View>: View {
                 .glassEffect(.regular, in: .circle)
                 .glassEffectID("action", in: glass)
                 .help(stopHelp)
+                .accessibilityLabel("Stop")
+                .accessibilityIdentifier("stop")
             } else {
                 Button(action: send) {
                     Image(systemName: "arrow.up")
@@ -449,6 +452,8 @@ struct SendStopButton<Menu: View>: View {
                 .disabled(!canSend)
                 .glassEffectID("action", in: glass)
                 .help(sendHelp)
+                .accessibilityLabel("Send")
+                .accessibilityIdentifier("send")
                 .contextMenu { menu }
             }
         }

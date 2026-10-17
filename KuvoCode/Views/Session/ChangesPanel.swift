@@ -938,6 +938,9 @@ struct DiffLineRow: View {
         }
         .contentShape(.rect)
         .onHover { isHovering = $0 }
+        // The + shows under the pointer; with VoiceOver, the line offers the same.
+        .accessibilityElement(children: .combine)
+        .accessibilityAction(named: "Comment on This Line") { comment?() }
     }
 
     private var code: Text {
