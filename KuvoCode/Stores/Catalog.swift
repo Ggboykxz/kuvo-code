@@ -72,6 +72,24 @@ final class Catalog {
         return models.first { $0.id == ref.id && $0.providerID == ref.providerID }
     }
 
+    /// The model, if it's one you can use now (see `offered`).
+    func offeredModel(_ ref: ModelRef?) -> Model? {
+        guard let ref else { return nil }
+        return offered.first { $0.id == ref.id && $0.providerID == ref.providerID }
+    }
+
+    /// The model a new session or bot starts on: the first of `wanted` (the one picked, the one
+    /// picked last) you can use now; else the engine's default, if you can; else the first model
+    /// you can use. A model whose account you signed out of would only fail. Before the models are
+    /// known (just after launch), the first of `wanted` as it is.
+    func startingModel(_ wanted: ModelRef?...) -> ModelRef? {
+        let wanted = wanted.compactMap(\.self)
+        guard isLoaded else { return wanted.first ?? defaultModel?.ref }
+        if let ref = wanted.first(where: { offeredModel($0) != nil }) { return ref }
+        if let model = offeredModel(defaultModel?.ref) { return model.ref }
+        return modelsByProvider.first?.models.first?.ref
+    }
+
     func providerName(_ id: String) -> String {
         if id == "opencode" { return "OpenCode Zen" }
         return integrations.first { $0.id == id }?.name ?? id

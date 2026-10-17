@@ -164,9 +164,10 @@ struct ConfigModelPicker: View {
                     }
                 }
             }
-            // One set by hand that the catalog doesn't have.
+            // One set by hand, or one the pickers don't offer (its account isn't connected here),
+            // as it's written.
             if let current = app.engineConfig.value(at: path)?.string,
-               !catalog.models.contains(where: { "\($0.providerID)/\($0.id)" == current }) {
+               !catalog.offered.contains(where: { "\($0.providerID)/\($0.id)" == current }) {
                 Text(current).tag(Optional(current))
             }
         }

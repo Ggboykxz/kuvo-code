@@ -124,7 +124,7 @@ struct BotEditor: View {
             // A shared bot's personality, found here (or added) once, not at every redraw.
             if isNew, personality == nil, let recipe { personality = recipe.personalityHere() }
             // A bot made before bots had a model: the one its conversation uses.
-            if model == nil { model = bot.flatMap { workspace.session($0.sessionID)?.model } ?? lastModel ?? placeCatalog.defaultModel?.ref }
+            if model == nil { model = bot.flatMap { workspace.session($0.sessionID)?.model } ?? placeCatalog.startingModel(lastModel) }
         }
         .alert("Delete \(bot?.name ?? "This Bot")?", isPresented: $confirmsDelete) {
             Button("Delete", role: .destructive) {

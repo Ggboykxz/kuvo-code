@@ -133,7 +133,7 @@ private struct BottomStack: View {
                     quoteFocus: model.quoteFocus,
                     agent: model.agent,
                     approval: model.approval,
-                    model: model.session.model ?? lastModel ?? catalog.defaultModel?.ref,
+                    model: model.session.model ?? catalog.startingModel(lastModel),
                     isRunning: model.isRunning,
                     hasQueue: !model.waiting.isEmpty,
                     history: { model.sentMessages },
@@ -259,11 +259,10 @@ struct DraftSessionView: View {
     @State private var failure: String?
     @LastModel private var lastModel
 
-    /// The model picked last, when this engine has it (a machine may not have every account),
-    /// or its default.
+    /// The model picked last, when you can use it on this engine (a machine may not have every
+    /// account), or its default.
     private var startingModel: ModelRef? {
-        if let lastModel, catalog.model(lastModel) != nil { return lastModel }
-        return catalog.defaultModel?.ref
+        catalog.startingModel(lastModel)
     }
 
     var body: some View {
@@ -342,20 +341,33 @@ struct DraftSessionView: View {
     }
 }
 
-/// The model picked last, so new sessions start with it.
+/// The model picked last, so new sessions start with it. Kept whole, as JSON: a model's ID can
+/// have slashes in it (OpenRouter's "anthropic/claude-sonnet-4.5").
 @propertyWrapper
 struct LastModel: DynamicProperty {
-    @AppStorage("lastModel") private var stored = ""
+    static let key = "lastModelRef"
+    @AppStorage(LastModel.key) private var stored = ""
 
     var wrappedValue: ModelRef? {
-        get {
-            let parts = stored.split(separator: "/", maxSplits: 2).map(String.init)
-            guard parts.count >= 2 else { return nil }
-            return ModelRef(id: parts[1], providerID: parts[0], variant: parts.count > 2 ? parts[2] : nil)
-        }
+        get { Self.decode(stored) }
         nonmutating set {
-            stored = newValue.map { [$0.providerID, $0.id, $0.variant].compactMap { $0 }.joined(separator: "/") } ?? ""
+            stored = newValue.flatMap { try? JSONEncoder().encode($0) }.map { String(decoding: $0, as: UTF8.self) } ?? ""
+            UserDefaults.standard.removeObject(forKey: "lastModel")
         }
+    }
+
+    /// The model picked last, outside a view.
+    static var current: ModelRef? {
+        decode(UserDefaults.standard.string(forKey: key) ?? "")
+    }
+
+    private static func decode(_ stored: String) -> ModelRef? {
+        if let ref = try? JSONDecoder().decode(ModelRef.self, from: Data(stored.utf8)) { return ref }
+        guard stored.isEmpty else { return nil }
+        // One picked before it was kept whole: "provider/model/variant".
+        let parts = (UserDefaults.standard.string(forKey: "lastModel") ?? "").split(separator: "/", maxSplits: 2).map(String.init)
+        guard parts.count >= 2 else { return nil }
+        return ModelRef(id: parts[1], providerID: parts[0], variant: parts.count > 2 ? parts[2] : nil)
     }
 
     var projectedValue: Binding<ModelRef?> {

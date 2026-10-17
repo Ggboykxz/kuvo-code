@@ -6,6 +6,8 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- After you disconnect an account, new sessions and bots start on a model you can still use, rather than on that account's and failing. Settings' model choices show such a model by name instead of a blank.
+- A model whose name has a slash in it, like OpenRouter's, stays chosen for new sessions and bots; they used to start on the default model instead.
 - Agents no longer list sessions you archived among the ones they can write to.
 - New Session (⌘N) in a bot's conversation starts in your latest project. It used to make an empty project called "workspace", whose session was listed nowhere; one made that way is gone from Projects.
 - A file or folder an agent shows you while you're in another conversation opens in the side panel when you come back to that one. It used to be lost, while the agent was told it was open; now it's told whether you've seen it. The step names what it showed, and clicking it shows it again.

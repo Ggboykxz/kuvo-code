@@ -181,10 +181,10 @@ final class Bots {
         let approval = UserDefaults.standard.string(forKey: ToolApproval.key).flatMap(ToolApproval.init) ?? .approveAll
         let rules = approval.rules(settings: EngineConfig.current?.permissionRules ?? []) + Self.ownRules(for: bot)
         let catalog = machine.flatMap { app.machines.engine($0)?.catalog } ?? app.catalog
-        // The one picked, if the engine where it lives has it; otherwise the last one used. Before
-        // its models are known (just after launch), the one picked or last used, as it is.
-        let wanted = [model, Self.lastModel].compactMap { $0 }
-        bot.model = catalog.isLoaded ? wanted.first { catalog.model($0) != nil } : wanted.first
+        // The one picked, if you can use it where it lives; otherwise the last one used, or that
+        // engine's default. Before its models are known (just after launch), the one picked or
+        // last used, as it is.
+        bot.model = catalog.startingModel(model, LastModel.current)
         let session = try await api.createSession(directory: bot.directory, title: name, model: bot.model, permissions: rules)
         // The bot's from the start: not a project's session for the moment it takes to set up.
         app.workspace.botSessions.insert(session.id)
@@ -853,12 +853,6 @@ final class Bots {
     }
 
     // MARK: Storage
-
-    static var lastModel: ModelRef? {
-        let parts = (UserDefaults.standard.string(forKey: "lastModel") ?? "").split(separator: "/", maxSplits: 2).map(String.init)
-        guard parts.count >= 2 else { return nil }
-        return ModelRef(id: parts[1], providerID: parts[0], variant: parts.count > 2 ? parts[2] : nil)
-    }
 
     private static func load() -> [Bot] {
         JSONFile.read([Bot].self, from: file, isoDates: true) ?? []
