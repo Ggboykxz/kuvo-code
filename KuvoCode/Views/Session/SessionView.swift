@@ -223,10 +223,12 @@ private struct BottomStack: View {
         // A "!" or "/" command runs as typed; what you were replying to waits for a message.
         let isCommand = SessionModel.shellCommand(in: model.draftText) != nil || SlashCommands.parse(model.draftText, commands: commands) != nil
         let text = isCommand ? model.draftText : Quoting.message(quotes: model.draftQuotes, text: model.draftText)
-        model.submit(text, files: model.draftFiles, for: catalog.model(model.session.model), queue: queue, commands: commands)
+        let files = model.draftFiles
+        // Emptied first: what can't be sent comes back to it.
         model.draftText = ""
         model.draftFiles = []
         if !isCommand { model.draftQuotes = [] }
+        model.submit(text, files: files, for: catalog.model(model.session.model), queue: queue, commands: commands)
     }
 }
 
@@ -318,8 +320,10 @@ struct DraftSessionView: View {
     private func send() {
         guard !isCreating else { return }
         isCreating = true
-        let message = Drafts.shared[draftKey].text
-        let attachments = Drafts.shared[draftKey].files
+        // On its way: the composer empties, as it does for a message. What's written while the
+        // session is made goes on to its composer; if it can't be made, the message comes back.
+        let sent = Drafts.shared[draftKey]
+        Drafts.shared.remove(draftKey)
         let inWorktrees = isRepository && worktree
         let count = inWorktrees ? attempts : 1
         Task {
@@ -330,10 +334,18 @@ struct DraftSessionView: View {
                     sessions.append(try await workspace.createSession(in: directory, model: startingModel, agent: agent, approval: approval, worktree: inWorktrees))
                 }
                 if count > 1 { Analytics.shared.track("attempts_started", ["count": count]) }
+                let since = Drafts.shared[draftKey]
                 Drafts.shared.remove(draftKey)
-                for session in sessions { created(session, message, attachments) }
+                if let first = sessions.first, !since.isEmpty { Drafts.shared[first.id] = since }
+                for session in sessions { created(session, sent.text, sent.files) }
             } catch {
                 Analytics.shared.firstMessageBlocked("session_failed_" + Analytics.trouble(error))
+                let since = Drafts.shared[draftKey]
+                Drafts.shared[draftKey] = Drafts.Draft(
+                    text: [sent.text, since.text].filter { !$0.isEmpty }.joined(separator: "\n\n"),
+                    files: sent.files + since.files.filter { !sent.files.contains($0) },
+                    quotes: sent.quotes + since.quotes
+                )
                 failure = error.localizedDescription
                 isCreating = false
             }

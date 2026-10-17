@@ -506,21 +506,24 @@ final class SessionModel {
                 try await api.prompt(session: self.id, id: id, text: message, files: prepared.files, delivery: delivery)
             } catch {
                 editTranscript { $0.removeLocal(id: id) }
-                reviewComments = comments + reviewComments
-                // It didn't go: back in the composer, ahead of anything written since.
-                restoreDraft(written, files: files)
+                // It didn't go: back in the composer as it was, ahead of anything written since.
+                let (quotes, text) = Quoting.draft(of: written)
+                restore(text: text, files: files, quotes: quotes, comments: comments)
                 failure = error.localizedDescription
             }
         }
     }
 
-    /// Sends what's in the composer: a message, or a command for "/name arguments".
+    /// Sends what's in the composer: a message, or a command for "/name arguments". What can't
+    /// be sent goes back there.
     func submit(_ text: String, files: [URL], for model: Model?, queue: Bool, commands: [Command]) {
         sent += 1
         if let command = Self.shellCommand(in: text) {
-            runShell(command)
+            // A "!" command takes no files: they wait in the composer for a message.
+            if !files.isEmpty { draftFiles = files + draftFiles.filter { file in !files.contains { $0.path == file.path } } }
+            runShell(command, written: text)
         } else if let (name, arguments) = SlashCommands.parse(text, commands: commands) {
-            runCommand(name, arguments: arguments, files: files, for: model, queue: queue)
+            runCommand(name, arguments: arguments, files: files, for: model, queue: queue, written: text)
         } else {
             send(text, files: files, for: model, queue: queue)
         }
@@ -535,21 +538,23 @@ final class SessionModel {
 
     /// Runs a command in the session's folder (on its machine, for a project on one) as you,
     /// right away, without waking the agent; it and its output join the conversation, and the
-    /// agent gets them with your next message.
-    func runShell(_ command: String) {
-        guard canReach else { return }
+    /// agent gets them with your next message. `written` is what the composer had: it goes back
+    /// there if the command can't run.
+    func runShell(_ command: String, written: String? = nil) {
+        guard canReach else { return notRun(written) }
         Analytics.shared.track("shell_run")
         let previous = sending
         sending = Task {
             await previous?.value
-            do { try await api.runShell(session: id, command: command) } catch { failure = error.localizedDescription }
+            do { try await api.runShell(session: id, command: command) } catch { notRun(written, because: error) }
         }
     }
 
     /// Runs a command, with files as a message would carry them. With `queue`, it waits for the
-    /// run, as a queued message does.
-    func runCommand(_ name: String, arguments: String, files: [URL] = [], for model: Model? = nil, queue: Bool = false) {
-        guard canReach else { return }
+    /// run, as a queued message does. `written` is what the composer had: it goes back there,
+    /// with the files, if the command can't run.
+    func runCommand(_ name: String, arguments: String, files: [URL] = [], for model: Model? = nil, queue: Bool = false, written: String? = nil) {
+        guard canReach else { return notRun(written, files: files) }
         let running = RunningCommand(
             command: arguments.isEmpty ? "/\(name)" : "/\(name) \(arguments)",
             started: Date(),
@@ -568,8 +573,19 @@ final class SessionModel {
                 try await api.runCommand(session: id, name: name, arguments: Attachments.text(arguments, for: prepared), files: prepared.files, delivery: delivery)
             } catch {
                 runningCommands.removeAll { $0.id == running.id }
-                failure = error.localizedDescription
+                notRun(written, files: files, because: error)
             }
+        }
+    }
+
+    /// A command from the composer that didn't run goes back there as you wrote it, ahead of
+    /// anything written since, and says why. One from elsewhere (Retry) only says why.
+    private func notRun(_ written: String?, files: [URL] = [], because error: Error? = nil) {
+        if let written { restore(text: written, files: files) }
+        if let error {
+            failure = error.localizedDescription
+        } else if written != nil {
+            failure = "It didn't run: this session's machine can't be reached now."
         }
     }
 
