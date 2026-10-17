@@ -441,15 +441,17 @@ final class BrowserAgent {
         return await snapshot()
     }
 
-    /// Until `wanted` shows on the page, for 30 seconds at most.
+    /// Until `wanted` shows on the page, for 30 seconds at most, or until the call's stopped.
     func wait(for wanted: String) async -> String {
         let browser = browser()
         let deadline = ContinuousClock.now + .seconds(30)
-        while ContinuousClock.now < deadline {
+        while ContinuousClock.now < deadline, !Task.isCancelled {
             let found = try? await browser.webView.callAsyncJavaScript("return (document.body ? document.body.innerText : '').toLowerCase().includes(wanted.toLowerCase())", arguments: ["wanted": wanted], contentWorld: .page) as? Bool
             if found == true { return "“\(wanted)” is on the page.\n\n" + (await snapshot()) }
             try? await Task.sleep(for: .milliseconds(500))
         }
+        // Stopped: nobody's waiting for the page any more.
+        guard !Task.isCancelled else { return "Stopped waiting for “\(wanted)”." }
         return "“\(wanted)” didn't show up in 30 seconds.\n\n" + (await snapshot())
     }
 
@@ -528,10 +530,11 @@ final class BrowserAgent {
     }
 
     /// A click may start a navigation a beat later: wait up to a second for the address to
-    /// change or loading to begin, then for it to finish.
+    /// change or loading to begin, then for it to finish. A stopped call stops waiting (its sleeps
+    /// end at once, so the loops would only spin).
     private func settleAfterClick(_ browser: BrowserSession, from before: URL?) async {
         let start = ContinuousClock.now
-        while ContinuousClock.now < start + .seconds(1), !browser.isLoading, browser.url == before {
+        while ContinuousClock.now < start + .seconds(1), !browser.isLoading, browser.url == before, !Task.isCancelled {
             try? await Task.sleep(for: .milliseconds(100))
         }
         await settle(browser, expectNavigation: browser.isLoading || browser.url != before)
@@ -541,7 +544,7 @@ final class BrowserAgent {
     private func settle(_ browser: BrowserSession, expectNavigation: Bool) async {
         if expectNavigation { try? await Task.sleep(for: .milliseconds(250)) }
         let deadline = ContinuousClock.now + .seconds(10)
-        while browser.isLoading, ContinuousClock.now < deadline {
+        while browser.isLoading, ContinuousClock.now < deadline, !Task.isCancelled {
             try? await Task.sleep(for: .milliseconds(150))
         }
         try? await Task.sleep(for: .milliseconds(expectNavigation ? 500 : 350))
