@@ -743,8 +743,10 @@ export async function noticeFor(event, get) {
       return about(where, "permission", describePermission(data), { request: data.id, ...(where.id !== data.sessionID ? { requestSession: data.sessionID } : {}) });
     }
     case "form.created": {
-      const where = await shown(data.sessionID);
-      return about(where, "question", describeForm(data), { request: data.id, ...(where.id !== data.sessionID ? { requestSession: data.sessionID } : {}) });
+      // The form comes under `form`, with its session.
+      const form = data.form ?? data;
+      const where = await shown(form.sessionID);
+      return about(where, "question", describeForm(form), { request: form.id, ...(where.id !== form.sessionID ? { requestSession: form.sessionID } : {}) });
     }
     case "session.execution.succeeded":
     case "session.execution.failed": {

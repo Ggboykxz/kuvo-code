@@ -414,7 +414,8 @@ test("engine events become notifications, as the Mac words them", async () => {
     data: { session: "ses_main", request: "per_1", requestSession: "ses_sub" },
   });
   const question = { id: "frm_1", sessionID: "ses_main", title: "Pick", metadata: { kind: "question" }, fields: [{ key: "a", type: "string", description: "Which database?" }] };
-  const asked = await link.noticeFor({ type: "form.created", data: question }, get);
+  // As the engine sends it: the form under `form`.
+  const asked = await link.noticeFor({ type: "form.created", data: { form: question } }, get);
   assert.equal(asked.category, "question");
   assert.equal(asked.body, "Which database?");
   assert.deepEqual(asked.data, { session: "ses_main", request: "frm_1" });
