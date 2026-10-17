@@ -136,22 +136,38 @@ nonisolated enum MachineBrowserInstaller {
             set -e
             B="\(folder)"
             mkdir -p "$B"
+            \(builds)
             rm -rf "$B/.staging"
             mkdir -p "$B/.staging"
             tar xzf - -C "$B/.staging"
-            rm -rf "$B/\(runtime.id)"
-            mv "$B/.staging" "$B/\(runtime.id)"
+            # The same build, already running (another Mac put it there meanwhile), stays as it is.
+            if running "\(runtime.id)"; then rm -rf "$B/.staging"; else rm -rf "$B/\(runtime.id)"; mv "$B/.staging" "$B/\(runtime.id)"; fi
             ln -sfn "\(runtime.id)" "$B/current"
-            for old in "$B"/*; do
-              name=$(basename "$old")
-              # Not `current` (a link to the new build), nor the new build, nor website data.
-              [ -L "$old" ] || [ ! -d "$old" ] && continue
-              [ "$name" = "\(runtime.id)" ] || [ "$name" = profile ] && continue
-              [ -e "$old/chrome" ] || [ -e "$old/chrome-headless-shell" ] || continue
-              grep -qs -- "$B/$name/" /proc/[0-9]*/cmdline 2>/dev/null && continue
-              rm -rf "$old"
-            done
+            \(clearOldBuilds(keeping: runtime.id))
             """, input: bundle)
+    }
+
+    /// Shell for the builds in `$B`: `running <build>` says whether a browser runs from it, by its
+    /// real path, which is how the browser starts, and which differs from `$B`'s where a folder on
+    /// the way is a link (a home moved to another disk, say).
+    private static let builds = """
+        R=$(cd "$B" && pwd -P)
+        running() { grep -qsF -e "$B/$1/" -e "$R/$1/" /proc/[0-9]*/cmdline 2>/dev/null; }
+        """
+
+    /// Shell that removes the builds in `$B` other than `id`, unless a browser still runs from one.
+    private static func clearOldBuilds(keeping id: String) -> String {
+        """
+        for old in "$B"/*; do
+          name=$(basename "$old")
+          # Not `current` (a link to the new build), nor the new build, nor website data.
+          [ -L "$old" ] || [ ! -d "$old" ] && continue
+          [ "$name" = "\(id)" ] || [ "$name" = profile ] && continue
+          [ -e "$old/chrome" ] || [ -e "$old/chrome-headless-shell" ] || continue
+          running "$name" && continue
+          rm -rf "$old"
+        done
+        """
     }
 
     // MARK: The bundle
