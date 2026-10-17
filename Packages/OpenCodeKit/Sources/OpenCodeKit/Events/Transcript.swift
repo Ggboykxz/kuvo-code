@@ -50,7 +50,7 @@ public struct Transcript: Sendable, Equatable {
             return Pending(id: item.id, text: item.text ?? "", delivery: item.delivery, isLocal: false, files: files)
         } + local
         self.permissions = permissions
-        self.forms = forms
+        self.forms = forms.filter(isOurs)
         self.isRunning = isRunning
         isStale = false
     }
@@ -83,6 +83,41 @@ public struct Transcript: Sendable, Equatable {
             // A payload this version can't read: the server's copy is the truth.
             isStale = true
         }
+        // What an MCP server asked goes once nothing here waits on it: its tool finished.
+        if forms.contains(where: { $0.sessionID != sessionID }) { forms = forms.filter(isOurs) }
+    }
+
+    /// Whether a tool of MCP server `server` is running here, so what it asks is this
+    /// conversation's. One run through Code Mode counts when its code names the server.
+    public func isWaiting(on server: String) -> Bool {
+        Self.isWaiting(on: server, in: messages)
+    }
+
+    /// The same, for messages read from the engine.
+    public static func isWaiting(on server: String, in messages: [Message]) -> Bool {
+        let name = toolName(server)
+        // A running tool is in the latest steps.
+        for message in messages.suffix(8) {
+            guard case .assistant(let step) = message else { continue }
+            for case .tool(let call) in step.content {
+                guard case .running(let input, _) = call.state else { continue }
+                if call.name.hasPrefix(name + "_") { return true }
+                if call.name == "execute", input["code"]?.string?.contains(server) == true { return true }
+            }
+        }
+        return false
+    }
+
+    /// A server's name as its tools start: what a tool's name can't have becomes `_`.
+    private static func toolName(_ server: String) -> String {
+        String(server.map { $0.isLetter || $0.isNumber || $0 == "_" || $0 == "-" ? $0 : "_" })
+    }
+
+    /// This session's own forms, and what an MCP server asks while a tool of it runs here.
+    private func isOurs(_ form: FormRequest) -> Bool {
+        if form.sessionID == sessionID { return true }
+        guard form.sessionID == FormRequest.anySession, let server = form.server else { return false }
+        return isWaiting(on: server)
     }
 
     private mutating func reduce(_ event: ServerEvent) throws {
@@ -102,7 +137,7 @@ public struct Transcript: Sendable, Equatable {
             return
         case "form.created":
             let form = try event.payload(as: EventPayload.FormCreated.self).form
-            guard form.sessionID == sessionID else { return }
+            guard isOurs(form) else { return }
             forms.removeAll { $0.id == form.id }
             forms.append(form)
             return

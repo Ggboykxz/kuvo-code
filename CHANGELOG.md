@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- When an integration or an MCP server needs something from you mid-task (which account or list, say), it asks in a card above the composer of the conversation waiting on it, and in a notification. It used to wait where you couldn't see it, and the agent stayed stuck until you stopped it.
 - Apple Reminders and Calendar can add and change things again: their server asked for a confirmation before each change that Kuvo Code had no place to show, so the change never happened.
 - Kuvo Code runs opencode 2.0.32, with the latest list of models, and Gemini replies that come back garbled are tried again instead of ending the turn.
 - Settings › General brings over your opencode setup, when you have one: its API keys, model, MCP servers, agents, commands, plugins and skills. It shows what's new before anything changes and replaces nothing here; sign-ins (like ChatGPT's) are named for you to sign in to again, since sharing one between two apps can sign both out.

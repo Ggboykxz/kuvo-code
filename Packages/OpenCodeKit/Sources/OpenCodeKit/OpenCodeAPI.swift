@@ -449,18 +449,20 @@ public struct OpenCodeAPI: Sendable {
         try await send("POST", "api/session/\(session.pathEscaped)/permission/\(permission.pathEscaped)/reply", body: Body(decision: decision, message: message))
     }
 
-    public func forms(session: String) async throws -> [FormRequest] {
-        try await get("api/session/\(session.pathEscaped)/form", as: DataEnvelope<[FormRequest]>.self).data
+    /// A session's forms; `directory` with ``FormRequest/anySession`` for what MCP servers ask
+    /// in that project folder.
+    public func forms(session: String, directory: String? = nil) async throws -> [FormRequest] {
+        try await get("api/session/\(session.pathEscaped)/form", directory: directory, as: DataEnvelope<[FormRequest]>.self).data
     }
 
-    public func reply(session: String, form: String, answer: FormAnswer) async throws {
+    public func reply(session: String, form: String, answer: FormAnswer, directory: String? = nil) async throws {
         struct Body: Encodable { var answer: FormAnswer }
-        try await send("POST", "api/session/\(session.pathEscaped)/form/\(form.pathEscaped)/reply", body: Body(answer: answer))
+        try await send("POST", "api/session/\(session.pathEscaped)/form/\(form.pathEscaped)/reply", directory: directory, body: Body(answer: answer))
     }
 
     /// Declines a question. With a message, the agent reads it as feedback.
-    public func dismiss(session: String, form: String, message: String? = nil) async throws {
-        try await send("DELETE", "api/session/\(session.pathEscaped)/form/\(form.pathEscaped)", query: ["message": message])
+    public func dismiss(session: String, form: String, message: String? = nil, directory: String? = nil) async throws {
+        try await send("DELETE", "api/session/\(session.pathEscaped)/form/\(form.pathEscaped)", query: ["message": message], directory: directory)
     }
 
     // MARK: Plumbing

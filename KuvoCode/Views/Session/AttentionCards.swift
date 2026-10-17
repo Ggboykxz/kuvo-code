@@ -497,12 +497,18 @@ private struct FormCard: View {
                 Image(systemName: "questionmark.bubble.fill")
                     .font(.title3)
                     .foregroundStyle(.tint)
-                Text(form.isQuestion ? "The agent has a question" : form.title)
+                Text(title)
                     .font(.headline)
                 Spacer()
                 Button(action: dismiss) { Image(systemName: "xmark") }
                     .buttonStyle(IconButtonStyle())
                     .help("Dismiss: the agent carries on without an answer")
+            }
+            if let message = form.message, !message.isEmpty {
+                Text(message)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             ScrollView {
                 FormFieldsView(fields: form.fields, answers: $answers, style: .question)
@@ -521,6 +527,14 @@ private struct FormCard: View {
         }
         .padding(16)
         .onAppear { answers = FormFieldsView.defaults(for: form.fields) }
+    }
+
+    /// An integration's forms go by its name ("Outlook and Microsoft 365 needs an answer"); your
+    /// own MCP servers' by theirs.
+    private var title: String {
+        if form.isQuestion { return "The agent has a question" }
+        guard let server = form.server else { return form.title }
+        return "\(Integrations.service(server)?.title ?? server) needs an answer"
     }
 }
 

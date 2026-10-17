@@ -12,6 +12,17 @@ public struct FormRequest: Codable, Sendable, Hashable, Identifiable {
     /// Set when the agent's question tool asked it.
     public var isQuestion: Bool { metadata?["kind"]?.string == "question" }
 
+    /// Where the engine files what MCP servers ask: a server can't say which session it's
+    /// answering, so its forms belong to no session, only to the project folder. Listing and
+    /// answering them takes that folder.
+    public static let anySession = "global"
+
+    /// The MCP server asking, for a form one asked for.
+    public var server: String? { metadata?["kind"]?.string == "mcp-elicitation" ? metadata?["server"]?.string : nil }
+
+    /// What the server says with its form.
+    public var message: String? { server == nil ? nil : metadata?["message"]?.string }
+
     /// What the agent's question asks, when it asks one thing with an answer in words or one of
     /// its choices (a notification can take that); nil for anything more.
     public var single: Single? {

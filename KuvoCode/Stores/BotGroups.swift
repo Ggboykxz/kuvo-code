@@ -664,6 +664,11 @@ final class BotGroups {
         for form in (try? await api.forms(session: seat)) ?? [] where declined.insert(form.id).inserted {
             try? await api.dismiss(session: seat, form: form.id, message: "Ask the group in your reply instead.")
         }
+        // What an MCP server asked while the seat ran its tool, filed under its folder.
+        for (form, session) in app?.workspace.asking ?? [:] where session == seat {
+            guard let folder = app?.workspace.sharedForms[form], declined.insert(form).inserted else { continue }
+            try? await api.dismiss(session: FormRequest.anySession, form: form, directory: folder)
+        }
     }
 
     /// What the seat said since `promptID`, for the chat: its last words before each message it

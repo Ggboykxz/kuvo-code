@@ -88,3 +88,32 @@ import Testing
     #expect(transcript.messages.map(\.id) == ["msg_1", "msg_3"])
     #expect(transcript.pending.isEmpty)
 }
+
+/// What an MCP server asks belongs to no session in the engine; it shows in the conversation whose
+/// tool of that server is running, and goes once that tool is done.
+@Test func takesAnMCPServersFormWhileItsToolRuns() throws {
+    func event(_ json: String) throws -> ServerEvent { try ServerEvent(json: Data(json.utf8)) }
+    func step(_ state: String) throws -> Message {
+        try HTTPClient.decoder.decode(Message.self, from: Data(#"""
+        {"type":"assistant","id":"msg_2","time":{"created":2},"agent":"build","model":{"providerID":"opencode","id":"glm"},
+         "content":[{"type":"tool","id":"call_1","name":"apple-events_reminders_tasks","state":\#(state)}]}
+        """#.utf8))
+    }
+    func form(_ id: String, server: String) -> String {
+        #"{"id":"\#(id)","sessionID":"global","title":"\#(server) is requesting input","metadata":{"kind":"mcp-elicitation","server":"\#(server)","message":"Which list?"},"fields":[{"key":"list","type":"string"}]}"#
+    }
+    var transcript = Transcript(sessionID: "ses_1")
+    transcript.load(messages: [try step(#"{"status":"running","input":{}}"#)], inbox: [], permissions: [], forms: [], isRunning: true)
+    #expect(transcript.isWaiting(on: "apple-events"))
+
+    transcript.apply(try event(#"{"id":"evt_1","created":3,"type":"form.created","data":{"form":\#(form("frm_1", server: "apple-events"))}}"#))
+    transcript.apply(try event(#"{"id":"evt_2","created":4,"type":"form.created","data":{"form":\#(form("frm_2", server: "notion"))}}"#))
+    #expect(transcript.forms.map(\.id) == ["frm_1"])
+    #expect(transcript.forms.first?.server == "apple-events")
+    #expect(transcript.forms.first?.message == "Which list?")
+
+    // Read again once the tool is done: the form isn't this conversation's any more.
+    let open = try HTTPClient.decoder.decode([FormRequest].self, from: Data("[\(form("frm_1", server: "apple-events"))]".utf8))
+    transcript.load(messages: [try step(#"{"status":"completed","input":{},"content":[]}"#)], inbox: [], permissions: [], forms: open, isRunning: false)
+    #expect(transcript.forms.isEmpty)
+}

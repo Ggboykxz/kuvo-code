@@ -88,6 +88,9 @@ final class Workspace {
     private(set) var defaultBranches: [String: String] = [:]
     /// Open permission requests and questions, by ID, with the session they're for.
     private(set) var asking: [String: String] = [:]
+    /// What MCP servers ask (in `asking` with the session waiting on it), by form: the folder
+    /// the engine files each under, which answering it takes.
+    @ObservationIgnored private(set) var sharedForms: [String: String] = [:]
     /// Sessions whose agent asks you for something in its browser (a sign-in, a code, a step).
     var askingInBrowser: Set<String> = []
 
@@ -734,7 +737,7 @@ final class Workspace {
             // A machine's are read when it's connected (see `refresh(_ engine:)`).
             if RemoteFolder.machine(of: model.session.location.directory).map(connectedMachines.contains) ?? true { await model.load() }
             for request in model.transcript.permissions { asking[request.id] = request.sessionID }
-            for form in model.transcript.forms { asking[form.id] = form.sessionID }
+            for form in model.transcript.forms { note(form, in: model) }
         }
     }
 
@@ -825,6 +828,11 @@ final class Workspace {
             log.notice("event \(event.type, privacy: .public) \(String(decoding: event.raw.prefix(300), as: UTF8.self), privacy: .public)")
         }
         #endif
+        // What an MCP server asks (and its answer): for the conversations of its folder there.
+        if (event.sessionID ?? Self.formSessionID(event)) == FormRequest.anySession {
+            handleShared(event, machine: machine)
+            return
+        }
         if let machine, let id = event.sessionID { sessionMachines[id] = machine }
         noteShowInPanel(event, machine: machine)
         if event.type == "session.tool.input.started", let id = event.sessionID,
@@ -1088,6 +1096,55 @@ final class Workspace {
     private func touch(_ id: String) {
         guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
         sessions[index].time.updated = Date().timeIntervalSince1970 * 1000
+    }
+
+    /// What an MCP server asks belongs to no session: each conversation of its folder on that
+    /// engine sees it, and takes it if a tool of that server is running there. Asked, it's noted
+    /// for the conversation waiting on it, open or not.
+    private func handleShared(_ event: ServerEvent, machine: String?) {
+        let folder = event.location.map { location in machine.map { RemoteFolder.folder(location.directory, on: $0) } ?? location.directory }
+        for model in models.values where RemoteFolder.machine(of: model.session.location.directory) == machine
+            && (folder == nil || model.session.location.directory == folder) {
+            model.apply(event)
+        }
+        switch event.type {
+        case "form.created":
+            guard let form = try? event.payload(as: EventPayload.FormCreated.self).form, let server = form.server else { return }
+            if let model = models.values.first(where: { $0.transcript.forms.contains { $0.id == form.id } }) {
+                note(form, in: model)
+                return
+            }
+            // A conversation that isn't open: the running one of that folder with that server's
+            // tool going.
+            Task {
+                for id in running where sessionMachines[id] == machine {
+                    guard let directory = session(id)?.location.directory ?? folder, folder == nil || directory == folder,
+                          let api = api(forSession: id), let page = try? await api.messages(session: id, limit: 8),
+                          Transcript.isWaiting(on: server, in: page.data) else { continue }
+                    sharedForms[form.id] = directory
+                    asking[form.id] = id
+                    notifyAsk(id, body: form.message ?? "Needs your answer.", question: nil)
+                    return
+                }
+            }
+        case "form.replied", "form.cancelled":
+            guard let settled = try? event.payload(as: EventPayload.FormSettled.self) else { return }
+            asking[settled.id] = nil
+            sharedForms[settled.id] = nil
+            Notifier.shared.clear(request: settled.id)
+        default:
+            break
+        }
+    }
+
+    /// A form `model`'s conversation shows, as one it's asking.
+    private func note(_ form: FormRequest, in model: SessionModel) {
+        // Told once, not again with each read after a reconnect.
+        let isNew = sharedForms[form.id] == nil
+        asking[form.id] = model.id
+        guard form.sessionID == FormRequest.anySession else { return }
+        sharedForms[form.id] = model.session.location.directory
+        if isNew { notifyAsk(model.id, body: form.message ?? "Needs your answer.", question: nil) }
     }
 
     /// `form.created` carries its session inside the form.

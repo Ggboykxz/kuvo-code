@@ -250,6 +250,8 @@ final class SessionModel {
         async let inbox = api.inbox(session: id)
         async let permissions = api.permissions(session: id)
         async let forms = api.forms(session: id)
+        // What MCP servers ask here: the transcript takes those its tools are waiting on.
+        async let shared = api.forms(session: FormRequest.anySession, directory: session.location.directory)
         async let active = api.activeSessions()
         do {
             let page = try await messages
@@ -275,7 +277,7 @@ final class SessionModel {
                 messages: kept + page.data,
                 inbox: (try? await inbox) ?? [],
                 permissions: (try? await permissions) ?? [],
-                forms: (try? await forms) ?? [],
+                forms: ((try? await forms) ?? []) + ((try? await shared) ?? []),
                 isRunning: (try? await active)?.contains(id) ?? false
             )
             // A queue left waiting (the app quit mid-run, say) waits for Resume rather than
@@ -810,14 +812,19 @@ final class SessionModel {
         guard canReach else { return }
         Analytics.shared.track("question_answered", ["kind": form.isQuestion ? "question" : "form"])
         Task {
-            do { try await api.reply(session: id, form: form.id, answer: answer) } catch { failure = error.localizedDescription }
+            do { try await api.reply(session: form.sessionID, form: form.id, answer: answer, directory: folder(of: form)) } catch { failure = error.localizedDescription }
         }
+    }
+
+    /// The folder an MCP server's form is filed under; nil for this session's own.
+    private func folder(of form: FormRequest) -> String? {
+        form.sessionID == FormRequest.anySession ? session.location.directory : nil
     }
 
     func dismiss(_ form: FormRequest, message: String? = nil) {
         guard canReach else { return }
         Analytics.shared.track("question_dismissed", ["kind": form.isQuestion ? "question" : "form"])
-        Task { try? await api.dismiss(session: id, form: form.id, message: message) }
+        Task { try? await api.dismiss(session: form.sessionID, form: form.id, message: message, directory: folder(of: form)) }
     }
 
     // MARK: Background refreshes
