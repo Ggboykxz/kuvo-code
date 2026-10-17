@@ -559,6 +559,7 @@ struct MainView: View {
         } content: {
             SessionView(model: model)
                 .environment(\.bot, bot)
+                .largeWidgetHost()
         }
         .environment(catalog(for: directory))
         .id("split-" + id)
@@ -619,6 +620,7 @@ struct MainView: View {
                         .help("Close Tab")
                 } content: {
                     GroupChatView(group: group, findRequest: groupFind)
+                        .largeWidgetHost()
                 }
                 .id(BotGroups.tabKey(id))
             } else if let id = sessionID, let model = workspace.model(for: id) {
@@ -654,6 +656,7 @@ struct MainView: View {
                 } content: {
                     SessionView(model: model)
                         .environment(\.bot, bot)
+                        .largeWidgetHost()
                 }
                 .environment(catalog(for: directory))
                 .id(id)

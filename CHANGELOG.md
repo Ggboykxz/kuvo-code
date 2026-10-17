@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- A widget the agent makes opens larger over its conversation, as the side panel does over the window, instead of in a separate sheet; Esc brings the conversation back. While it's being made, it shows its name as soon as the agent has written it, or words that change, instead of "Making something… Zero KB".
 - An agent can start a session of its own for part of the work, in the same project or another folder: it opens beside the conversation that started it, and the two can write to each other. Ask for a separate session, or let the agent decide.
 - Two sessions side by side: right-click a tab or a session in the sidebar and choose Open Beside. Drag the gap to resize, swap them, or close the one beside.
 - The menu bar's usage panel shows Grok's weekly limit for a SuperGrok account you signed in to in Kuvo Code; it used to need the Grok CLI signed in too.

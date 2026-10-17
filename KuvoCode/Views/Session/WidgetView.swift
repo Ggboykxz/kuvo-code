@@ -38,6 +38,17 @@ struct WidgetCard: View {
     @State private var isLarge = false
     @Environment(\.colorScheme) private var scheme
     @Environment(\.cardIsFocused) private var cardIsFocused
+    @Environment(\.showWidgetLarge) private var showLarge
+
+    /// Over its conversation's card, as the panel grows over the window; in a sheet where there's
+    /// no card to cover.
+    private func openLarge(html: String, title: String?) {
+        if let showLarge {
+            showLarge(LargeWidget(id: call.id, html: html, title: title, send: send))
+        } else {
+            isLarge = true
+        }
+    }
 
     private static let shape = RoundedRectangle(cornerRadius: 12)
     #if DEBUG
@@ -53,15 +64,27 @@ struct WidgetCard: View {
         } else if case .streaming(let input) = call.state {
             HStack(spacing: 8) {
                 Spinner(size: 12)
-                ShimmerText(text: Self.title(inPartial: input).map { "Making “\($0)”…" } ?? "Making something…")
-                Text(ByteCountFormatter.string(fromByteCount: Int64(input.utf8.count), countStyle: .file))
-                    .foregroundStyle(.tertiary)
-                    .monospacedDigit()
+                // Its name once the agent has written it; till then, words of its own.
+                if let title = Self.title(inPartial: input) {
+                    ShimmerText(text: "Making “\(title)”…")
+                } else {
+                    MakingWords()
+                }
+                if let size = Self.written(input.utf8.count) {
+                    Text(size)
+                        .foregroundStyle(.tertiary)
+                        .monospacedDigit()
+                }
             }
             .font(.callout)
             .frame(maxWidth: .infinity, minHeight: 64)
             .background(Surface.well(scheme), in: Self.shape)
         }
+    }
+
+    /// How much is written, once there's something to count ("12 KB"): nothing for the first bytes.
+    static func written(_ bytes: Int) -> String? {
+        bytes < 1024 ? nil : ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
     }
 
     /// What there is to show: while it's written, what's come so far (once there's something to
@@ -118,11 +141,14 @@ struct WidgetCard: View {
                 Spacer(minLength: 8)
                 if let draft {
                     Spinner(size: 11)
-                    Text(ByteCountFormatter.string(fromByteCount: Int64(draft), countStyle: .file))
-                        .foregroundStyle(.tertiary)
-                        .monospacedDigit()
+                    if let size = Self.written(draft) {
+                        Text(size)
+                            .foregroundStyle(.tertiary)
+                            .monospacedDigit()
+                    }
                 } else {
-                    MessageActionButton(symbol: "arrow.up.left.and.arrow.down.right", help: "Open Larger") { isLarge = true }
+                    MessageActionButton(symbol: "arrow.up.left.and.arrow.down.right", help: "Open Larger") { openLarge(html: html, title: title) }
+                        .accessibilityLabel("Open Larger")
                     CopyButton(text: html, help: "Copy Its HTML")
                 }
             }
@@ -145,7 +171,7 @@ struct WidgetCard: View {
             Self.openedLarge = true
             Task {
                 try? await Task.sleep(for: .seconds(2))
-                isLarge = true
+                openLarge(html: html, title: title)
             }
         }
         #endif
@@ -175,6 +201,102 @@ extension EnvironmentValues {
     /// Sends text to the agent of the conversation in view, as your message (a widget's
     /// `kuvo.send`).
     @Entry var answerAgent: (String) -> Void = { _ in }
+    /// Shows a widget large, over the card of the conversation it's in (`largeWidgetHost`).
+    @Entry var showWidgetLarge: ((LargeWidget) -> Void)? = nil
+}
+
+/// A widget shown large, over its conversation.
+struct LargeWidget: Equatable {
+    let id: String
+    let html: String
+    let title: String?
+    let send: (String) -> Void
+
+    static func == (a: LargeWidget, b: LargeWidget) -> Bool { a.id == b.id && a.html == b.html }
+}
+
+extension View {
+    /// Where a widget opened larger shows: over this, the conversation's part of its card.
+    func largeWidgetHost() -> some View {
+        modifier(LargeWidgetHost())
+    }
+}
+
+private struct LargeWidgetHost: ViewModifier {
+    @State private var large: LargeWidget?
+
+    func body(content: Content) -> some View {
+        content
+            .environment(\.showWidgetLarge) { widget in withAnimation(.ui) { large = widget } }
+            .overlay {
+                if let large {
+                    LargeWidgetView(widget: large) { withAnimation(.ui) { self.large = nil } }
+                        .transition(.opacity.combined(with: .scale(0.985)))
+                }
+            }
+    }
+}
+
+/// The widget over the whole conversation, with its name, a way back, and its HTML to copy. What
+/// it writes back goes to the agent, and the conversation comes back to show it.
+private struct LargeWidgetView: View {
+    let widget: LargeWidget
+    let close: () -> Void
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles.rectangle.stack")
+                    .foregroundStyle(.tint)
+                Text(widget.title.flatMap { $0.isEmpty ? nil : $0 } ?? "Made for you")
+                    .fontWeight(.medium)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                CopyButton(text: widget.html, help: "Copy Its HTML")
+                MessageActionButton(symbol: "arrow.down.right.and.arrow.up.left", help: "Back to the Conversation (Esc)", action: close)
+                    .accessibilityLabel("Back to the Conversation")
+            }
+            .font(.callout)
+            .padding(.leading, 14)
+            .padding(.trailing, 8)
+            .frame(height: 36)
+            Divider()
+            WidgetPage(html: widget.html, accent: NSColor.controlAccentColor, height: .constant(0), scrollsInside: true) { text in
+                close()
+                widget.send(text)
+            }
+        }
+        .background(Surface.cardFill(scheme, focused: true))
+        .background {
+            Button("Back to the Conversation", action: close)
+                .keyboardShortcut(.cancelAction)
+                .opacity(0)
+                .frame(width: 0, height: 0)
+                .accessibilityHidden(true)
+        }
+    }
+}
+
+/// Words that change while a widget is on its way and its name isn't written yet.
+private struct MakingWords: View {
+    static let words = [
+        "Sketching", "Tinkering", "Doodling", "Conjuring", "Noodling", "Assembling", "Whittling",
+        "Concocting", "Fiddling", "Brewing", "Daydreaming", "Arranging", "Polishing", "Rigging",
+    ]
+    @State private var index = Int.random(in: 0..<MakingWords.words.count)
+
+    var body: some View {
+        ShimmerText(text: Self.words[index] + "…")
+            .id(index)
+            .transition(.opacity)
+            .task {
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(2.6))
+                    withAnimation(.easeInOut(duration: 0.35)) { index = (index + 1) % Self.words.count }
+                }
+            }
+    }
 }
 
 /// The page itself: a web view of its own, with nothing kept after it closes, reaching nothing
