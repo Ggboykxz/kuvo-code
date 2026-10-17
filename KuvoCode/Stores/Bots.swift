@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import OpenCodeKit
 import os
 
@@ -177,7 +178,7 @@ final class Bots {
         let session = try await api.createSession(directory: bot.directory, title: name, model: bot.model, permissions: rules)
         bot.sessionID = session.id
         try? await api.setMetadata(session: session.id, .object(["kuvo": .object(["bot": .string(id)])]))
-        try await api.setInstruction(session: session.id, key: Self.instructionKey, text: Self.instructions(for: bot))
+        try await sendInstructions(of: bot, api: api)
         try await writeSession(of: bot)
 
         list.append(bot)
@@ -197,7 +198,7 @@ final class Bots {
         save()
         guard let api = app?.workspace.api(forFolder: bot.directory) else { return }
         if old.name != bot.name || old.job != bot.job || old.instructions != bot.instructions || old.personality != bot.personality {
-            try? await api.setInstruction(session: bot.sessionID, key: Self.instructionKey, text: Self.instructions(for: bot))
+            try? await sendInstructions(of: bot, api: api)
             if old.name != bot.name { try? await api.renameSession(bot.sessionID, title: bot.name) }
             await app?.groups.botChanged(bot)
         }
@@ -235,7 +236,7 @@ final class Bots {
             if let index = list.firstIndex(where: { $0.id == bot.id }) { list[index] = bot }
             save()
             guard let api = app?.workspace.api(forFolder: bot.directory) else { continue }
-            try? await api.setInstruction(session: bot.sessionID, key: Self.instructionKey, text: Self.instructions(for: bot))
+            try? await sendInstructions(of: bot, api: api)
             await app?.groups.botChanged(bot)
         }
     }
@@ -657,18 +658,39 @@ final class Bots {
         try? await api.setPermissions(session: bot.sessionID, rules: repaired)
     }
 
+    /// What each bot's conversation was last given as its instructions, by session. The engine
+    /// keeps them; giving them again opens the bot's folder there, with a copy of every MCP server
+    /// it has, for an hour, so a launch gives only those that changed.
+    private static let sentKey = "botInstructions"
+
+    private func sendInstructions(of bot: Bot, api: OpenCodeAPI) async throws {
+        let text = Self.instructions(for: bot)
+        try await api.setInstruction(session: bot.sessionID, key: Self.instructionKey, text: text)
+        var sent = UserDefaults.standard.dictionary(forKey: Self.sentKey) as? [String: String] ?? [:]
+        sent[bot.sessionID] = Self.digest(text)
+        // Only conversations that are still bots'.
+        sent = sent.filter { id, _ in list.contains { $0.sessionID == id } }
+        UserDefaults.standard.set(sent, forKey: Self.sentKey)
+    }
+
+    private static func digest(_ text: String) -> String {
+        SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
     func syncInstructions() async {
+        let sent = UserDefaults.standard.dictionary(forKey: Self.sentKey) as? [String: String] ?? [:]
         for bot in list where !synced.contains(bot.id) {
             guard let api = app?.workspace.api(forFolder: bot.directory) else { continue }
-            if (try? await api.setInstruction(session: bot.sessionID, key: Self.instructionKey, text: Self.instructions(for: bot))) != nil {
-                synced.insert(bot.id)
-                await repairRules(of: bot, api: api)
-                try? await writeSession(of: bot)
-                if let machine = bot.machine {
-                    // Its kuvo-wake as the instructions describe it, for an engine started before.
-                    if wakeInstalled.insert(machine).inserted, let engine = app?.machines.engine(machine) {
-                        try? await Wakes.install(on: engine.machine.connection)
-                    }
+            if sent[bot.sessionID] != Self.digest(Self.instructions(for: bot)) {
+                guard (try? await sendInstructions(of: bot, api: api)) != nil else { continue }
+            }
+            synced.insert(bot.id)
+            await repairRules(of: bot, api: api)
+            try? await writeSession(of: bot)
+            if let machine = bot.machine {
+                // Its kuvo-wake as the instructions describe it, for an engine started before.
+                if wakeInstalled.insert(machine).inserted, let engine = app?.machines.engine(machine) {
+                    try? await Wakes.install(on: engine.machine.connection)
                 }
             }
         }
