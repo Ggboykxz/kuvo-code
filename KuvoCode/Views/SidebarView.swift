@@ -298,7 +298,7 @@ struct SidebarView: View {
 
     private func worktreeNote(_ session: Session) -> String {
         let branch = workspace.worktrees[session.location.directory]?.branch ?? "its branch"
-        return "Its worktree is a copy of the project on \(branch). Removing it keeps the branch and its commits"
+        return "Its worktree is a copy of the project on \(branch). Removing it keeps the branch and its commits (a branch that's merged already goes, its commits kept where it was merged)"
             + (worktreeIsDirty ? ", but throws away the changes that aren't committed." : ".")
     }
 

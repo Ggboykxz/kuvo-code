@@ -42,8 +42,19 @@ final class BrowserAsks {
 
     @ObservationIgnored private var responders: [String: (Answer) -> Void] = [:]
     /// Sign-ins you gave in the last few minutes, by machine and site, with the conversation they
-    /// were for.
+    /// were for; each is forgotten once those minutes are up.
     @ObservationIgnored private var remembered: [String: (username: String?, password: String?, at: Date, session: String?)] = [:]
+    private static let remembering: TimeInterval = 300
+
+    /// Keeps a sign-in for the page after its username's, and drops it once that can't come.
+    private func remember(_ key: String, username: String?, password: String?, session: String?) {
+        let at = Date.now
+        remembered[key] = (username, password, at, session)
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.remembering))
+            if self?.remembered[key]?.at == at { self?.remembered[key] = nil }
+        }
+    }
     /// Sessions whose agent started asking, by machine ("" for this Mac), oldest first: the asks
     /// that arrive go to them in that order.
     @ObservationIgnored private var askers: [String: [(name: String, session: String, at: Date)]] = [:]
@@ -110,7 +121,7 @@ final class BrowserAsks {
         // A site you let agents sign in to on their own: its saved password, without asking.
         if case .signIn = ask.kind, Passwords.agentSites.contains(ask.host), let login = Passwords.logins(for: ask.host).first,
            let password = Passwords.password(for: login) {
-            remembered[key(ask)] = (login.account.isEmpty ? nil : login.account, password, .now, ask.session)
+            remember(key(ask), username: login.account.isEmpty ? nil : login.account, password: password, session: ask.session)
             respond(.signIn(username: login.account.isEmpty ? nil : login.account, password: password))
             Notifier.shared.notify(session: tab(ask) ?? "", title: "Signed in to \(ask.host)", subtitle: ask.asker, body: "With your saved password, as you allowed for this site.")
             return
@@ -118,7 +129,7 @@ final class BrowserAsks {
         // The rest of a sign-in you just gave the same conversation (its password, on the page
         // after the username's).
         if case .signIn(let needsUsername, let needsPassword) = ask.kind, let saved = remembered[key(ask)], saved.session == ask.session,
-           Date.now.timeIntervalSince(saved.at) < 300, !needsUsername || saved.username != nil, !needsPassword || saved.password != nil {
+           Date.now.timeIntervalSince(saved.at) < Self.remembering, !needsUsername || saved.username != nil, !needsPassword || saved.password != nil {
             respond(.signIn(username: saved.username, password: saved.password))
             return
         }
@@ -135,7 +146,7 @@ final class BrowserAsks {
     func answer(_ id: String, _ answer: Answer) {
         guard let respond = responders.removeValue(forKey: id) else { return }
         if case .signIn(let username, let password) = answer, let ask = asks.first(where: { $0.id == id }) {
-            remembered[key(ask)] = (username, password, .now, ask.session)
+            remember(key(ask), username: username, password: password, session: ask.session)
         }
         withAnimation(.ui) { asks.removeAll { $0.id == id } }
         changed()

@@ -14,6 +14,7 @@ struct ShortcutsSettings: View {
         ("General", [
             Shortcut(keys: ["⌘", "K"], title: "Command palette"),
             Shortcut(keys: ["⌘", "N"], title: "New session"),
+            Shortcut(keys: ["⌥", "⌘", "N"], title: "New chat"),
             Shortcut(keys: ["⇧", "⌘", "N"], title: "New project"),
             Shortcut(keys: ["⌘", "O"], title: "Open a folder as a project"),
             Shortcut(keys: ["⇧", "⌘", "O"], title: "Open Quickly: a project file by name"),
@@ -44,6 +45,7 @@ struct ShortcutsSettings: View {
             Shortcut(keys: ["⌃", "`"], title: "New terminal"),
             Shortcut(keys: ["⌘", "R"], title: "Run the project’s run command"),
             Shortcut(keys: ["⌥", "⌘", "B"], title: "New browser tab"),
+            Shortcut(keys: ["⌘", "+ / −"], title: "Zoom a machine's page in or out"),
         ]),
         ("Composer", [
             Shortcut(keys: ["Return"], title: "Send"),

@@ -26,7 +26,7 @@ struct PanelSettingsView: View {
             Section("New Tab Page") {
                 Toggle(isOn: $showsTools) {
                     Text("Tools")
-                    Text("Files, Changes, Terminal and Run, as tiles to open.")
+                    Text("Changes, Terminal and Files, as tiles to open, and a way here.")
                 }
                 Toggle(isOn: $showsSuggestions) {
                     Text("Suggested sites")
