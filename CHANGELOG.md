@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Dropping a quote you were replying to no longer quits Kuvo Code. With the cursor in its answer, the app crashed.
 - A widget the agent makes opens larger over its conversation, as the side panel does over the window, instead of in a separate sheet; Esc brings the conversation back. While it's being made, it shows its name as soon as the agent has written it, or words that change, instead of "Making something… Zero KB".
 - An agent can start a session of its own for part of the work, in the same project or another folder: it opens beside the conversation that started it, and the two can write to each other. Ask for a separate session, or let the agent decide.
 - Two sessions side by side: right-click a tab or a session in the sidebar and choose Open Beside. The two show as one tab, and come back together when you return to it from another; drag the gap to resize, swap them, or close the one beside.

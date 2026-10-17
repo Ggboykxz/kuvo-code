@@ -15,6 +15,18 @@ struct QuoteList: View {
 
     private static let tallest: CGFloat = 260
 
+    /// Your answer to a quote, found by its ID each time: a field on its way out (the quote was
+    /// just dropped) reads nothing rather than a place in the list that's gone, which crashed.
+    private func response(to id: UUID) -> Binding<String> {
+        Binding(
+            get: { quotes.first { $0.id == id }?.response ?? "" },
+            set: { text in
+                guard let index = quotes.firstIndex(where: { $0.id == id }) else { return }
+                quotes[index].response = text
+            }
+        )
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             if quotes.count > 2 {
@@ -30,13 +42,13 @@ struct QuoteList: View {
             }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 6) {
-                    ForEach($quotes) { $quote in
+                    ForEach(quotes) { quote in
                         VStack(alignment: .leading, spacing: 6) {
                             QuoteCard(text: quote.text) {
                                 let id = quote.id
                                 withAnimation(.ui) { quotes.removeAll { $0.id == id } }
                             }
-                            TextField("Your answer to this…", text: $quote.response, axis: .vertical)
+                            TextField("Your answer to this…", text: response(to: quote.id), axis: .vertical)
                                 .textFieldStyle(.plain)
                                 .font(font)
                                 .lineLimit(1...6)
