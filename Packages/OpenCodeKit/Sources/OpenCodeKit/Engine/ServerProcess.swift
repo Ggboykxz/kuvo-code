@@ -100,6 +100,9 @@ public final class ServerProcess: @unchecked Sendable {
     /// The last lines the server wrote to stderr, for error reports.
     public var recentOutput: String { log.text }
 
+    /// Its exit code, once it has stopped.
+    public var exitStatus: Int32? { process.isRunning ? nil : process.terminationStatus }
+
     /// Starts the server and waits until it's listening.
     public static func start(
         executable: URL,

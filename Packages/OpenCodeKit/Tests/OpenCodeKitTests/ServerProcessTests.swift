@@ -55,4 +55,38 @@ struct ServerProcessTests {
         }
         #expect(status == 0)
     }
+
+    /// An engine that stops before it's listening says why, with what it wrote; one that stops
+    /// after has its exit code.
+    @Test func stoppingWhileStartingKeepsTheReason() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "opencodekit-server-\(UUID().uuidString)")
+        let folders = EngineFolders(root: root.appending(path: "folders"))
+        let temporary = folders.temporary.deletingLastPathComponent()
+        let hadTemporary = FileManager.default.fileExists(atPath: temporary.path)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            if !hadTemporary { try? FileManager.default.removeItem(at: temporary) }
+        }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        func engine(_ name: String, _ script: String) throws -> URL {
+            let file = root.appending(path: name)
+            try "#!/bin/sh\n\(script)\n".write(to: file, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
+            return file
+        }
+
+        do {
+            _ = try await ServerProcess.start(executable: try engine("failing", "echo 'Error: config is invalid' >&2; exit 3"), folders: folders, environment: [:])
+            Issue.record("It started.")
+        } catch let error as ServerProcessError {
+            guard case .exited(let status, let output) = error else { Issue.record("\(error)"); return }
+            #expect(status == 3)
+            #expect(output.contains("config is invalid"))
+        }
+
+        let server = try await ServerProcess.start(executable: try engine("short", "echo '{\"url\":\"http://127.0.0.1:9\"}'; echo 'Error: gone' >&2; exit 4"), folders: folders, environment: [:])
+        for _ in 0..<100 where server.exitStatus == nil || !server.recentOutput.contains("gone") { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(server.exitStatus == 4)
+        #expect(server.recentOutput.contains("gone"))
+    }
 }

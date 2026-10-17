@@ -261,11 +261,27 @@ final class AppModel {
             groups.resumeWork()
             await catalogLoaded
         } catch {
-            // Stopped meanwhile (an engine that stopped on its own has said so already).
+            // Stopped, or started over, meanwhile.
             guard launch == self.launch else { return }
-            log.error("Engine failed to start: \(error.localizedDescription, privacy: .public)")
+            // One that stopped while it loaded says so, with what it wrote, rather than that it
+            // can't be reached.
+            var reason = error.localizedDescription
+            if let server {
+                let output = String(server.recentOutput.trimmingCharacters(in: .whitespacesAndNewlines).suffix(600))
+                if let status = server.exitStatus {
+                    reason = ServerProcessError.exited(status: status, output: output).localizedDescription
+                } else if !output.isEmpty {
+                    reason += "\n\n" + output
+                }
+            }
+            log.error("Engine failed to start: \(reason, privacy: .public)")
             Analytics.shared.track("engine_failed", ["reason": stage])
-            engine = .failed(error.localizedDescription)
+            // Nothing is left running (a server that never got ready is stopped). A start after an
+            // automatic restart failing means the engine stopped.
+            stop()
+            automaticRestarts.removeAll { $0 < .now.addingTimeInterval(-300) }
+            engineStoppedWhileRunning = !automaticRestarts.isEmpty
+            engine = .failed(reason)
         }
     }
 
@@ -353,20 +369,22 @@ final class AppModel {
     private func engineExited(status: Int32, launch: UUID) {
         // One stopped (for a restart, or as the app quits) exits a moment later, after the stop.
         guard launch == self.launch else { return }
+        // One still starting fails `start` as it stops (its handshake or first call does), which
+        // says why with what it wrote.
+        guard engine == .ready else { return }
         let output = server?.recentOutput.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         log.error("Engine exited with status \(status): \(output, privacy: .public)")
-        let wasRunning = engine == .ready
         stop()
-        // One that was running is started again, as it was, unless it has stopped like this a few
-        // times in the last minutes: then it's for you to see why.
+        // It's started again, as it was, unless it has stopped like this a few times in the last
+        // minutes: then it's for you to see why.
         automaticRestarts.removeAll { $0 < .now.addingTimeInterval(-300) }
-        if wasRunning, automaticRestarts.count < 3 {
+        if automaticRestarts.count < 3 {
             automaticRestarts.append(.now)
             Task { await restart() }
             return
         }
-        engineStoppedWhileRunning = wasRunning || !automaticRestarts.isEmpty
-        engine = .failed("It stopped unexpectedly (exit code \(status))\(engineStoppedWhileRunning ? ", and again after starting over" : "").\(output.isEmpty ? "" : "\n\n" + String(output.suffix(600)))")
+        engineStoppedWhileRunning = true
+        engine = .failed("It stopped unexpectedly (exit code \(status)), and again after starting over.\(output.isEmpty ? "" : "\n\n" + String(output.suffix(600)))")
     }
 }
 
