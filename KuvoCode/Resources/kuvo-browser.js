@@ -1595,7 +1595,8 @@ async function tool(name, args) {
     const raw = string("path");
     if (!raw) throw new ToolError("Missing path.");
     const full = path.resolve(raw.replace(/^~(?=$|\/)/, os.homedir()));
-    if (full !== raw) return text(`Give the full path: ${full}`, true);
+    // A folder's path may end in "/", which resolving drops.
+    if (full !== (raw.replace(/\/+$/, "") || "/")) return text(`Give the full path: ${full}`, true);
     let isFolder;
     try {
       isFolder = fs.statSync(full).isDirectory();

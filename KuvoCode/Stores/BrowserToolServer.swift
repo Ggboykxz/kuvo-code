@@ -286,7 +286,10 @@ enum BrowserTools {
         // where projects in the temporary folder are, and call the agent's own path wrong.
         let clean = expanded.hasPrefix("/") && !expanded.split(separator: "/").contains { $0 == ".." || $0 == "." }
         let full = clean ? expanded : (expanded.hasPrefix("/") ? URL(filePath: expanded) : URL(filePath: base).appending(path: expanded)).standardizedFileURL.path
-        guard full == raw else { return text("Give the full path: \(full)", error: true) }
+        // A folder's path may end in "/", which expanding drops.
+        var given = raw
+        while given.count > 1, given.hasSuffix("/") { given.removeLast() }
+        guard full == given else { return text("Give the full path: \(full)", error: true) }
         var isFolder: ObjCBool = false
         guard FileManager.default.fileExists(atPath: full, isDirectory: &isFolder) else { return text("There's nothing at \(full).", error: true) }
         return text(shown(full, isFolder: isFolder.boolValue, inView: caller.map(isInView)))
