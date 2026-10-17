@@ -465,9 +465,18 @@ private final class HTTPConnection {
         }
     }
 
+    /// The most a request's headers and body may take: far more than a tool call needs.
+    static let maxHead = 64 * 1024
+    static let maxBody = 16 * 1024 * 1024
+
     /// Handles a complete request in the buffer, if there is one; true when it took over.
     private func process() -> Bool {
-        guard let headerEnd = buffer.range(of: Data("\r\n\r\n".utf8)) else { return false }
+        guard let headerEnd = buffer.range(of: Data("\r\n\r\n".utf8)) else {
+            // Headers that never end aren't a request.
+            if buffer.count > Self.maxHead { refuse(); return true }
+            return false
+        }
+        guard headerEnd.lowerBound - buffer.startIndex <= Self.maxHead else { refuse(); return true }
         let head = String(decoding: buffer[..<headerEnd.lowerBound], as: UTF8.self)
         var lines = head.components(separatedBy: "\r\n")
         let requestLine = lines.removeFirst().split(separator: " ")
@@ -477,7 +486,8 @@ private final class HTTPConnection {
             guard let colon = line.firstIndex(of: ":") else { continue }
             headers[line[..<colon].lowercased()] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
         }
-        let length = Int(headers["content-length"] ?? "0") ?? 0
+        // A length that isn't one, below zero or too big is turned away before it's read.
+        guard let length = Int(headers["content-length"] ?? "0"), (0...Self.maxBody).contains(length) else { refuse(); return true }
         let bodyStart = headerEnd.upperBound
         guard buffer.count - bodyStart >= length else { return false }
         let body = buffer.subdata(in: bodyStart..<(bodyStart + length))
@@ -488,6 +498,15 @@ private final class HTTPConnection {
             send(response)
         }
         return true
+    }
+
+    /// A request it won't read: says so, and closes the connection.
+    private func refuse() {
+        buffer = Data()
+        let head = "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        connection.send(content: Data(head.utf8), completion: .contentProcessed { [weak self] _ in
+            MainActor.assumeIsolated { self?.connection.cancel() }
+        })
     }
 
     private func send(_ response: HTTPResponse) {
