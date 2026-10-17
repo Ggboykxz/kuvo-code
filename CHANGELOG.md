@@ -14,6 +14,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - With the side panel at its widest, it stays inside the window. Beside the bot editor it could run off the window's right edge; the editor's colors and faces now wrap onto another line when there's little room.
 - When the window hasn't room for the sidebar, the panel and a session beside, the one you opened last stays and the others make way. Showing the panel beside a split view used to do nothing, and its button needed a second press.
 - Two sessions side by side show as one tab in two halves, the tab's own half raised. Settings › General can show them as one tab with both names, or as the two tabs joined, as before.
+- When an agent on one of your machines starts browsing, the panel opens once its page is there to show. It used to open straight away on Changes, with nothing of the agent's in it.
 
 ## 0.5.4
 

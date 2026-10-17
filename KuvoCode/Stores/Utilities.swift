@@ -121,6 +121,7 @@ final class Utilities {
     /// Another place in view: its browser tabs in the strip, and the tab you had there.
     private func placeChanged(from old: String?) {
         chosen[old ?? ""] = selection
+        pendingReveal = nil
         if let old { machineBrowser?(old)?.keep(false) }
         if let place, let browser = machineBrowser?(place) {
             browser.keep(true)
@@ -257,6 +258,12 @@ final class Utilities {
                 if case .machinePage(machine, opener)? = shown?.kind { show(tab, on: machine) }
             }
         }
+        // The page an agent started browsing in has its tab now: show it.
+        if let pending = pendingReveal, pending.machine == machine, Date.now.timeIntervalSince(pending.since) < 120,
+           tabs.contains(where: { if case .machinePage(machine, _?) = $0.kind { true } else { false } }) {
+            pendingReveal = nil
+            revealMachineBrowser(machine, for: pending.session)
+        }
     }
 
     /// The page each machine window was opened by, by page.
@@ -279,15 +286,24 @@ final class Utilities {
     }
 
     /// An agent on a machine started browsing: with a session there in view, the panel shows the
-    /// page it uses.
+    /// page it uses. Until the page has a tab here, the panel waits for it, rather than opening
+    /// on another tool with nothing of the agent's to see.
     func revealMachineBrowser(_ machine: String, for session: String? = nil) {
         guard place == machine, session == nil || session == sessionInView else { return }
         let browser = machineBrowser?(machine)
         let tab = tabs.first { $0.kind == .machinePage(machine, browser?.activeID) }
-            ?? tabs.last { if case .machinePage(machine, _) = $0.kind { true } else { false } }
-        if let tab { selection = tab.id }
+            ?? tabs.last { if case .machinePage(machine, _?) = $0.kind { true } else { false } }
+        guard let tab else {
+            pendingReveal = (machine, session, .now)
+            return
+        }
+        pendingReveal = nil
+        selection = tab.id
         if PanelSettings.isOn(PanelSettings.revealsForAgent) { revealRequest += 1 }
     }
+
+    /// An agent on a machine that started browsing before its page had a tab here.
+    @ObservationIgnored private var pendingReveal: (machine: String, session: String?, since: Date)?
 
     /// Brings the panel into view on the browser of the place in view, at the page in use: you
     /// asked to see it.
