@@ -83,7 +83,11 @@ final class AgentMail {
         guard let close = after.firstIndex(of: "]") else { return nil }
         let session = after[..<close]
         guard session.hasPrefix("ses_") || session == "unknown", !session.contains(" ") else { return nil }
-        let name = first[first.index(first.startIndex, offsetBy: opening.count)..<dot.lowerBound]
+        // No name ("[Message from · ses_1]"): the " · " is the opening's own space, before where a
+        // name would start.
+        let nameStart = first.index(first.startIndex, offsetBy: opening.count)
+        guard dot.lowerBound >= nameStart else { return nil }
+        let name = first[nameStart..<dot.lowerBound]
         let rest = message[first.endIndex...]
         let text = rest.range(of: "\n\n").map { String(rest[$0.upperBound...]) } ?? String(rest.drop { $0 == "\n" })
         return (String(name), String(session), text)
