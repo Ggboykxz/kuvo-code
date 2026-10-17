@@ -44,7 +44,11 @@ final class Updates {
 /// Each step of an update, for anonymous usage: checked, found, downloaded, installed, or where
 /// and why it failed (a kind, never the error's words).
 nonisolated private final class UpdateSteps: NSObject, SPUUpdaterDelegate {
+    /// A download that failed was just counted: Sparkle then ends the update with the same error.
+    private var downloadFailed = false
+
     func updater(_ updater: SPUUpdater, mayPerform updateCheck: SPUUpdateCheck) throws {
+        downloadFailed = false
         guard updateCheck != .updateInformation else { return }
         let manual = updateCheck == .updates
         track("update_checked") { ["manual": manual] }
@@ -61,6 +65,7 @@ nonisolated private final class UpdateSteps: NSObject, SPUUpdaterDelegate {
     }
 
     func updater(_ updater: SPUUpdater, failedToDownloadUpdate item: SUAppcastItem, error: any Error) {
+        downloadFailed = true
         let reason = Self.reason(error)
         track("update_failed") { ["stage": "download", "reason": reason] }
     }
@@ -78,10 +83,16 @@ nonisolated private final class UpdateSteps: NSObject, SPUUpdaterDelegate {
 
     func updater(_ updater: SPUUpdater, didAbortWithError error: any Error) {
         let error = error as NSError
-        // Finding no update isn't a failure.
+        // Finding no update isn't a failure, and a failed download was counted as it failed.
         guard error.domain != SUSparkleErrorDomain || error.code != Int(SUError.noUpdateError.rawValue) else { return }
+        guard !downloadFailed else {
+            downloadFailed = false
+            return
+        }
         let stage = switch error.code {
         case 1000..<2000: "check"
+        // Without a failed download, it's the update feed that couldn't be fetched.
+        case Int(SUError.downloadError.rawValue): "check"
         case 2000..<3000: "download"
         case 3000..<4000: "extract"
         default: "install"
