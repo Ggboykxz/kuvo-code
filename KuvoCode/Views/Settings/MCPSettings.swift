@@ -17,6 +17,19 @@ struct MCPSettings: View {
     /// The app's own browser tools: not yours to change.
     static let builtIn: Set = ["kuvo-browser"]
 
+    /// Servers start with their tools as plain tools, as integrations' do: the agent sees each one,
+    /// where behind Code Mode a smaller model often doesn't find them. One that never had a say
+    /// (added before, from the catalog or opencode's settings, or in the file) gets the same; one
+    /// you turned Code Mode on for keeps it.
+    @MainActor static func upgrade(_ config: EngineConfig) {
+        guard case .object(let servers) = config.value(at: path) else { return }
+        let changes: [(path: [String], value: JSONValue?)] = servers.compactMap { id, server in
+            guard !builtIn.contains(id), case .object(let settings) = server, settings["codemode"] == nil else { return nil }
+            return (path + [id, "codemode"], .bool(false))
+        }
+        if !changes.isEmpty { config.set(changes) }
+    }
+
     private var names: [String] {
         let configured = config.value(at: Self.path)?.object?.keys.map { $0 } ?? []
         return Set(configured + live.map(\.name)).subtracting(Self.builtIn).sorted()
@@ -171,7 +184,12 @@ struct MCPSettings: View {
     }
 
     private func add(_ server: MCPCatalog.Server) {
-        config.set(server.settings, at: Self.path + [server.id])
+        var settings = server.settings
+        if case .object(var object) = settings, object["codemode"] == nil {
+            object["codemode"] = .bool(false)
+            settings = .object(object)
+        }
+        config.set(settings, at: Self.path + [server.id])
         Analytics.shared.track("mcp_server_added", ["catalog": server.id])
     }
 
@@ -336,7 +354,7 @@ private struct ServerEditor: View {
                 }
                 Toggle(isOn: config.bool(path + ["codemode"], default: true)) {
                     Text("Let the agent call its tools from code")
-                    Text("Code Mode: the agent can combine several of this server's tools in one step.")
+                    Text("Code Mode: the agent looks up this server's tools and combines several in one step, which keeps each message small for a server with many tools. Smaller models may not find its tools this way.")
                 }
             }
             if isRemote {
@@ -373,7 +391,7 @@ private struct ServerEditor: View {
     private func add() {
         guard !newID.isEmpty, problem == nil else { return }
         // Off until it has a command or URL, so the engine doesn't try to start an empty one.
-        config.set(.object(["type": .string("local"), "command": .array([]), "disabled": .bool(true)]), at: MCPSettings.path + [newID])
+        config.set(.object(["type": .string("local"), "command": .array([]), "disabled": .bool(true), "codemode": .bool(false)]), at: MCPSettings.path + [newID])
         Analytics.shared.track("mcp_server_added")
         name = newID
     }
