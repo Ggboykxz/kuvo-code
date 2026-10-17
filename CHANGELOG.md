@@ -4,6 +4,10 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
+## Unreleased
+
+- In the sidebar, a bot's next wake-up, its watches and its pause stand apart from what it said, each with its sign: the wake-up and watches in your accent color, a pause in grey. "Needs you" is in orange.
+
 ## 0.5.5
 
 - Two sessions side by side: right-click a tab or a session in the sidebar and choose Open Beside. The two show as one tab, and come back together when you return to it from another; drag the gap to resize, swap them, close the one beside (⇧⌘T brings it back beside), or choose Close Split View to give each a tab of its own. Stop, Find, the modes and the keys on its cards go to the half you clicked into, and the one beside counts as seen while it shows.

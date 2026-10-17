@@ -978,10 +978,12 @@ private struct BotRow: View {
     private var hasNews: Bool { bots.mood(of: bot, in: workspace) == .news }
 
     /// What it's up to: working, waiting for you, what it said that you haven't read, when it
-    /// wakes next, or its job.
+    /// wakes next, or its job. What it's set to do (wake up, watch) and how it's set (paused)
+    /// stand apart from what it said, with their sign.
     @ViewBuilder private var status: some View {
         if workspace.needsAttention(bot.sessionID) {
             Text("Needs you")
+                .foregroundStyle(.orange)
         } else if workspace.running.contains(bot.sessionID) {
             ShimmerText(text: "Working…")
         } else if let machine = bot.machine, app.machines.engine(machine)?.isReady != true {
@@ -989,22 +991,43 @@ private struct BotRow: View {
         } else if hasNews, let reply = workspace.replyPreviews[bot.sessionID] {
             Text(reply)
         } else if bots.paused.contains(bot.id) {
-            Text("Paused")
+            BotState(systemImage: "pause.circle", isSet: false) { Text("Paused") }
         } else if let wakes = bots.wakes[bot.id], !wakes.isEmpty {
             // Kept current: "in 2 minutes", then, once it's due and on its way, "Waking up…".
             TimelineView(.periodic(from: .now, by: 5)) { context in
-                if let next = wakes.first(where: { $0.due > context.date }) {
-                    Text("Wakes " + next.due.formatted(Date.RelativeFormatStyle(presentation: .named, unitsStyle: .wide)))
-                } else {
-                    ShimmerText(text: "Waking up…")
+                BotState(systemImage: "alarm") {
+                    if let next = wakes.first(where: { $0.due > context.date }) {
+                        Text("Wakes " + next.due.formatted(Date.RelativeFormatStyle(presentation: .named, unitsStyle: .wide)))
+                    } else {
+                        ShimmerText(text: "Waking up…")
+                    }
                 }
             }
         } else if let watching = bots.watches[bot.id], !watching.isEmpty {
-            Text(watching.count == 1 ? "Watching" : "Watching \(watching.count) things")
+            BotState(systemImage: "eye") { Text(watching.count == 1 ? "Watching" : "Watching \(watching.count) things") }
         } else {
             // No job yet: it asks for one, until your message gives it.
             Text(bot.job.isEmpty ? EmptyConversationView.purposeQuestion : bot.job)
         }
+    }
+}
+
+/// A bot's state in its row, rather than something it said: its sign before it, and, for what
+/// it's set to do (wake up, watch), the accent.
+private struct BotState<Content: View>: View {
+    let systemImage: String
+    /// It's set to do something: in the accent. Paused, in the row's grey.
+    var isSet = true
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: systemImage)
+                .font(.system(size: 10, weight: .semibold))
+            content
+        }
+        .fontWeight(.medium)
+        .foregroundStyle(isSet ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
     }
 }
 
