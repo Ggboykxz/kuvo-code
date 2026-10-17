@@ -13,7 +13,7 @@ public enum Launcher {
     public static let runtime = "runtime"
 
     /// The script, running the engine at `engine` for Bun (a path, or a shell word like
-    /// "$K/engine/2.0.31/opencode").
+    /// "$K/engine/2.0.32/opencode").
     public static func script(engine: String) -> String {
         """
         #!/bin/sh
