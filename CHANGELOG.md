@@ -6,6 +6,13 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Kuvo Code no longer quits when a program on your Mac sends its browser tools a malformed request.
+- Showing a folder in the panel works when the agent gives its path with a slash at the end.
+- Saving a page as a PDF over an existing file keeps the old file if the save fails. It used to be deleted first.
+- An alert a page shows between the agent's steps no longer leaves the agent stuck until you dismiss it. While the agent waits for you to sign in or do something on the page, the page's own questions show for you to answer instead of being turned down.
+- Each conversation's agent keeps to a browser tab of its own. Two sessions browsing at once used to move each other's pages, and one's click could land on the other's page.
+- A password or code you give the agent goes in only if the page is still on the same site with the same fields. If it changed while you answered, nothing is filled in, and a password only ever goes into a password field. A sign-in card also goes away when the agent stops.
+- When the agent clicks or types by number, it acts on the element it read, also inside frames and shadow roots. It used to hit the wrong element in a frame, couldn't use elements in shadow roots, and could land on another element after the page added rows or banners above it. If the element is gone or changed, it reads the page again.
 - Repeating wake-ups and group meetings keep their time of day. A daily 2:30 no longer moves an hour for good after clocks go forward, one isn't skipped after clocks go back, and after a time-zone change they come at the same time there.
 - Canceling a wake-up or watch, or pausing a bot, on a machine that isn't connected says so and keeps it listed. It used to look done while the machine still ran it.
 - A watch no longer wakes its bot when its check fails for a moment, like right after your Mac wakes before Wi-Fi is back. A change counts once a second check a couple of minutes later sees it too, and a check that times out doesn't count.
