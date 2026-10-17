@@ -320,10 +320,10 @@ struct DraftSessionView: View {
     private func send() {
         guard !isCreating else { return }
         isCreating = true
-        // On its way: the composer empties, as it does for a message. What's written while the
+        // On its way: the composer empties, as it does for a message, and the message is kept
+        // until the session has it (a quit meanwhile puts it back). What's written while the
         // session is made goes on to its composer; if it can't be made, the message comes back.
-        let sent = Drafts.shared[draftKey]
-        Drafts.shared.remove(draftKey)
+        let (sending, sent) = Drafts.shared.takeOut(draftKey)
         let inWorktrees = isRepository && worktree
         let count = inWorktrees ? attempts : 1
         Task {
@@ -338,14 +338,10 @@ struct DraftSessionView: View {
                 Drafts.shared.remove(draftKey)
                 if let first = sessions.first, !since.isEmpty { Drafts.shared[first.id] = since }
                 for session in sessions { created(session, sent.text, sent.files) }
+                Drafts.shared.sent(sending)
             } catch {
                 Analytics.shared.firstMessageBlocked("session_failed_" + Analytics.trouble(error))
-                let since = Drafts.shared[draftKey]
-                Drafts.shared[draftKey] = Drafts.Draft(
-                    text: [sent.text, since.text].filter { !$0.isEmpty }.joined(separator: "\n\n"),
-                    files: sent.files + since.files.filter { !sent.files.contains($0) },
-                    quotes: sent.quotes + since.quotes
-                )
+                Drafts.shared.putBack(sending)
                 failure = error.localizedDescription
                 isCreating = false
             }

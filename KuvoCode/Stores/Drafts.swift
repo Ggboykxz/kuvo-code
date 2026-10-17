@@ -41,12 +41,25 @@ final class Drafts {
         var response = ""
     }
 
+    /// A draft on its way, taken out of its composer while its session is made.
+    private struct Sending: Codable {
+        /// The composer it came from.
+        let key: String
+        let draft: Draft
+        let at: Date
+    }
+
     private var drafts: [String: Draft]
+    /// The drafts on their way, by an ID of their own: kept on disk until their session has them,
+    /// so a quit or crash meanwhile doesn't lose them.
+    @ObservationIgnored private var sending: [String: Sending] = [:]
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     private static let key = "composerDrafts"
+    private static let sendingKey = "composerDraftsSending"
 
     private init() {
-        let stored = UserDefaults.standard.data(forKey: Self.key).flatMap { try? JSONDecoder().decode([String: Draft].self, from: $0) } ?? [:]
+        let defaults = UserDefaults.standard
+        let stored = defaults.data(forKey: Self.key).flatMap { try? JSONDecoder().decode([String: Draft].self, from: $0) } ?? [:]
         drafts = Dictionary(uniqueKeysWithValues: stored.map { key, draft in
             var draft = draft
             draft.files = draft.files.filter { FileManager.default.fileExists(atPath: $0.path) }
@@ -57,10 +70,56 @@ final class Drafts {
             }
             return (key, draft)
         })
+        // What was on its way when the app last quit, or crashed: back in its composer.
+        let unsent = defaults.data(forKey: Self.sendingKey).flatMap { try? JSONDecoder().decode([String: Sending].self, from: $0) } ?? [:]
+        if !unsent.isEmpty {
+            // The latest first, so the earliest ends up first.
+            for message in unsent.values.sorted(by: { $0.at > $1.at }) {
+                var draft = message.draft
+                draft.files = draft.files.filter { FileManager.default.fileExists(atPath: $0.path) }
+                putBack(draft, in: message.key)
+            }
+            save()
+        }
         // Typing saves after a pause; quitting right after shouldn't lose the last words.
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { Drafts.shared.save() }
         }
+    }
+
+    /// Takes `key`'s draft out of its composer, to send: it stays on disk, under the ID given,
+    /// until it's `sent`; if the app quits first, it's back in the composer the next time.
+    func takeOut(_ key: String) -> (id: String, draft: Draft) {
+        let id = UUID().uuidString
+        let draft = self[key]
+        sending[id] = Sending(key: key, draft: draft, at: .now)
+        drafts[key] = nil
+        saveNow()
+        return (id, draft)
+    }
+
+    /// The draft taken out as `id` has gone: nothing of it is kept.
+    func sent(_ id: String) {
+        guard sending.removeValue(forKey: id) != nil else { return }
+        saveNow()
+    }
+
+    /// The draft taken out as `id` didn't go: it's back in its composer, before what's been
+    /// written there since.
+    func putBack(_ id: String) {
+        guard let message = sending.removeValue(forKey: id) else { return }
+        putBack(message.draft, in: message.key)
+        saveNow()
+    }
+
+    private func putBack(_ sent: Draft, in key: String) {
+        let since = drafts[key] ?? Draft()
+        let draft = Draft(
+            text: [sent.text, since.text].filter { !$0.isEmpty }.joined(separator: "\n\n"),
+            files: sent.files + since.files.filter { !sent.files.contains($0) },
+            quotes: sent.quotes + since.quotes
+        )
+        drafts[key] = draft.isEmpty ? nil : draft
     }
 
     /// Adds a quote to answer to `key`'s draft, after those there are; one already there isn't
@@ -99,7 +158,18 @@ final class Drafts {
         }
     }
 
+    private func saveNow() {
+        saveTask?.cancel()
+        save()
+    }
+
     private func save() {
-        UserDefaults.standard.set(try? JSONEncoder().encode(drafts), forKey: Self.key)
+        let defaults = UserDefaults.standard
+        defaults.set(try? JSONEncoder().encode(drafts), forKey: Self.key)
+        if sending.isEmpty {
+            defaults.removeObject(forKey: Self.sendingKey)
+        } else {
+            defaults.set(try? JSONEncoder().encode(sending), forKey: Self.sendingKey)
+        }
     }
 }
