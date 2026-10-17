@@ -75,7 +75,18 @@ final class Utilities {
 
     /// The session in view; an agent elsewhere browsing doesn't bring its page forward. The window
     /// sets it.
-    var sessionInView: String?
+    var sessionInView: String? {
+        didSet { if sessionInView != oldValue { showKept() } }
+    }
+    /// The session beside it in split view, in view too. The window sets it.
+    var besideInView: String? {
+        didSet { if besideInView != oldValue { showKept() } }
+    }
+
+    /// On screen: the tab's session, or the one beside it.
+    func isInView(_ session: String) -> Bool {
+        session == sessionInView || session == besideInView
+    }
     /// The bots on this Mac whose conversation is in view (one, or a group chat's): their tabs
     /// show beside yours. The window sets it.
     var botsInView: Set<String> = [] {
@@ -280,7 +291,7 @@ final class Utilities {
     /// The agent on a machine went to another page (or opened one): its tab comes forward, as the
     /// panel's browser does for the agent here.
     func machinePageActive(_ machine: String, page: String, byAgent: Bool, session: String? = nil) {
-        guard byAgent, session == nil || session == sessionInView, let tab = tabs.first(where: { $0.kind == .machinePage(machine, page) }) else { return }
+        guard byAgent, session.map(isInView) ?? true, let tab = tabs.first(where: { $0.kind == .machinePage(machine, page) }) else { return }
         if place == machine {
             selection = tab.id
             if PanelSettings.isOn(PanelSettings.revealsForAgent) { revealRequest += 1 }
@@ -293,7 +304,7 @@ final class Utilities {
     /// page it uses. Until the page has a tab here, the panel waits for it, rather than opening
     /// on another tool with nothing of the agent's to see.
     func revealMachineBrowser(_ machine: String, for session: String? = nil) {
-        guard place == machine, session == nil || session == sessionInView else { return }
+        guard place == machine, session.map(isInView) ?? true else { return }
         let browser = machineBrowser?(machine)
         let tab = tabs.first { $0.kind == .machinePage(machine, browser?.activeID) }
             ?? tabs.last { if case .machinePage(machine, _?) = $0.kind { true } else { false } }
@@ -390,11 +401,25 @@ final class Utilities {
     /// The tree opened down to it.
     func revealed() { treeReveal = nil }
 
-    /// An agent showing you a file or folder, in its conversation (the one in view): a folder in
-    /// the Files tab, open down to it; a file in a tab of its own (not over the one you have open),
-    /// with the tree open to it too.
+    /// What agents showed you while you were in another conversation, by session: the latest of
+    /// each, shown when you come back to it.
+    @ObservationIgnored private var kept: [String: (url: URL, isFolder: Bool)] = [:]
+
+    /// An agent showing you a file or folder, in its conversation: a folder in the Files tab, open
+    /// down to it; a file in a tab of its own (not over the one you have open), with the tree open
+    /// to it too. With its conversation out of view, it waits for you to come back to it.
     func showInPanel(_ url: URL, isFolder: Bool, for session: String) {
-        guard sessionInView == session else { return }
+        guard isInView(session) else {
+            kept[session] = (url, isFolder)
+            return
+        }
+        kept[session] = nil
+        show(url, isFolder: isFolder)
+    }
+
+    /// A folder in the Files tab, open down to it, or a file in a tab of its own, and the panel in
+    /// view: what an agent showed you, again from its step in the conversation.
+    func show(_ url: URL, isFolder: Bool) {
         if isFolder {
             showFiles()
         } else if let tab = tabs.first(where: { $0.kind == .file(url) }) {
@@ -404,6 +429,15 @@ final class Utilities {
         }
         treeReveal = url
         revealRequest += 1
+    }
+
+    /// What was kept for the conversations now in view, unless it's gone since.
+    private func showKept() {
+        for session in [sessionInView, besideInView].compactMap(\.self) {
+            guard let shown = kept.removeValue(forKey: session) else { continue }
+            if shown.url.isFileURL, !FileManager.default.fileExists(atPath: shown.url.path) { continue }
+            showInPanel(shown.url, isFolder: shown.isFolder, for: session)
+        }
     }
 
     /// Opens `url` in a file tab and brings the panel into view: you asked to see it.

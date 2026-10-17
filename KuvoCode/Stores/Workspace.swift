@@ -817,8 +817,8 @@ final class Workspace {
             }
             guard let done = try? event.payload(as: EventPayload.ToolSucceeded.self), let path = panelCalls.removeValue(forKey: done.id), !path.isEmpty else { return }
             let said = done.content.compactMap { if case .text(let text) = $0 { text } else { nil } }.joined()
-            guard said.hasPrefix("Showing the ") else { return }
-            onShowInPanel?(session, machine, path, said.hasPrefix("Showing the folder "))
+            guard let isFolder = BrowserTools.shownFolder(in: said) else { return }
+            onShowInPanel?(session, machine, path, isFolder)
         case "session.tool.failed":
             if let failed = try? event.payload(as: EventPayload.ToolFailed.self) {
                 panelCalls[failed.id] = nil

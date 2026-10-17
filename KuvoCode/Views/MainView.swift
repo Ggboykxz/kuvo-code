@@ -1576,7 +1576,7 @@ struct MainView: View {
                 try? await Task.sleep(for: .seconds(18))
                 guard let id = sessionID, let session = workspace.session(id), parts.count == 2 else { return }
                 let machine = RemoteFolder.machine(of: session.location.directory)
-                let said = BrowserTools.shown(parts[0], isFolder: parts[1] == "folder")
+                let said = BrowserTools.shown(parts[0], isFolder: parts[1] == "folder", inView: true)
                 for (type, data) in [
                     ("session.tool.input.started", #""name":"kuvo-browser_show_in_panel""#),
                     ("session.tool.called", #""input":{"path":\#(String(decoding: try! JSONEncoder().encode(parts[0]), as: UTF8.self))}"#),

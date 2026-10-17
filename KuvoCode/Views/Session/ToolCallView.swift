@@ -43,6 +43,15 @@ struct ToolCallView: View {
                         header
                     }
                     .buttonStyle(TextButtonStyle(outset: true))
+                } else if let shown = shownInPanel {
+                    // What the agent showed you in the panel: a click shows it again.
+                    Button {
+                        app.utilities.show(shown.url, isFolder: shown.isFolder)
+                    } label: {
+                        header
+                    }
+                    .buttonStyle(TextButtonStyle(outset: true))
+                    .help("Show it in the panel")
                 } else {
                     header.foregroundStyle(.secondary)
                 }
@@ -221,6 +230,8 @@ struct ToolCallView: View {
             let to = string("to") ?? "another agent"
             if input?["wait"]?.bool == true { return (isActive ? "Asking " : "Asked ") + to }
             return (isActive ? "Writing to " : "Wrote to ") + to
+        case "show_in_panel": return (isActive ? "Showing " : "Showed ") + (relative(string("path")) ?? "a file")
+        case "start_session": return (isActive ? "Starting a session" : "Started a session") + (string("title").map { ": \($0)" } ?? "")
         default: return "Used the browser"
         }
     }
@@ -305,6 +316,7 @@ struct ToolCallView: View {
         case "browser_ask_user": "hand.raised"
         case "list_agents": "person.2"
         case "send_message": "paperplane"
+        case "show_in_panel": "sidebar.right"
         default: "safari"
         }
     }
@@ -325,6 +337,13 @@ struct ToolCallView: View {
         case .failed(_, let error, let output, _): ([error.message] + (output ?? []).compactMap(\.text)).joined(separator: "\n")
         default: ""
         }
+    }
+
+    /// What a show_in_panel step showed, and whether it's a folder.
+    private var shownInPanel: (url: URL, isFolder: Bool)? {
+        guard call.name == "kuvo-browser_" + BrowserTools.showInPanel, case .completed = call.state, let path = string("path"),
+              let isFolder = BrowserTools.shownFolder(in: outputText) else { return nil }
+        return (RemoteFolder.fileURL(path, in: directory), isFolder)
     }
 
     /// The session a subagent works in, once it has started.

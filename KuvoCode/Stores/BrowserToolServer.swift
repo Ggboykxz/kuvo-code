@@ -210,6 +210,8 @@ enum BrowserTools {
 
     /// The folder a conversation works in, by its session (on this Mac).
     static var sessionFolder: (String) -> String? = { _ in nil }
+    /// Whether a conversation is on screen, so show_in_panel can say whether the user sees it now.
+    static var isInView: (String) -> Bool = { _ in false }
 
     /// The tool that shows a file or folder in the panel; the window does it when the call
     /// succeeds (see `Workspace.onShowInPanel`), for a session here or on a machine alike.
@@ -249,12 +251,31 @@ enum BrowserTools {
         return ["content": [["type": "text", "text": "Shown in the conversation, live. The user sees it now; what they click in it that calls kuvo.send comes to you as their message."]], "isError": false]
     }
 
-    /// What its call says when it goes ahead, which also tells a folder from a file.
-    nonisolated static func shown(_ path: String, isFolder: Bool) -> String {
-        "Showing the \(isFolder ? "folder" : "file") \(path) in Kuvo Code's side panel."
+    /// What its call says when it goes ahead: shown now, or kept until the user comes back to the
+    /// conversation (`inView` nil: on a machine, which can't tell). It also tells a folder from a
+    /// file (see `shownFolder`).
+    nonisolated static func shown(_ path: String, isFolder: Bool, inView: Bool?) -> String {
+        let what = "the \(isFolder ? "folder" : "file") \(path)"
+        switch inView {
+        case true?: return "Shown: \(what) is open in Kuvo Code's side panel, beside this conversation."
+        case false?: return "Kept for later: \(what) opens in Kuvo Code's side panel when the user comes back to this conversation. They're in another one right now, so don't say it's open."
+        case nil: return "Sent: \(what) opens in Kuvo Code's side panel beside this conversation, at once if the user is looking at it, or else when they come back to it."
+        }
     }
 
-    /// Checks the path, here, and says it's shown.
+    /// Whether a call's answer says it went ahead, and with a folder: nil for an error. Machines
+    /// that haven't taken the new script yet answer "Showing the file …".
+    nonisolated static func shownFolder(in said: String) -> Bool? {
+        for prefix in ["Shown: ", "Kept for later: ", "Sent: ", "Showing "] where said.hasPrefix(prefix) {
+            let rest = said.dropFirst(prefix.count)
+            if rest.hasPrefix("the folder ") { return true }
+            if rest.hasPrefix("the file ") { return false }
+        }
+        return nil
+    }
+
+    /// Checks the path, here, and says whether the user sees it now. The window shows it once the
+    /// call succeeds (see `Workspace.onShowInPanel`).
     static func showInPanelCall(_ arguments: [String: Any], caller: String?) -> [String: Any] {
         func text(_ value: String, error: Bool = false) -> [String: Any] { ["content": [["type": "text", "text": value]], "isError": error] }
         guard let raw = arguments["path"] as? String, !raw.isEmpty else { return text("Missing path.", error: true) }
@@ -268,7 +289,7 @@ enum BrowserTools {
         guard full == raw else { return text("Give the full path: \(full)", error: true) }
         var isFolder: ObjCBool = false
         guard FileManager.default.fileExists(atPath: full, isDirectory: &isFolder) else { return text("There's nothing at \(full).", error: true) }
-        return text(shown(full, isFolder: isFolder.boolValue))
+        return text(shown(full, isFolder: isFolder.boolValue, inView: caller.map(isInView)))
     }
 
     /// How long the engine lets a tool run: longer than the agent waits for the user.

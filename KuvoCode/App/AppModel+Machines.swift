@@ -14,6 +14,7 @@ extension AppModel {
         // shows its own browser for an agent here.
         workspace.onMachineBrowsing = { [weak self] machine, session in self?.utilities.revealMachineBrowser(machine, for: session) }
         BrowserTools.sessionFolder = { [weak self] session in self?.workspace.session(session)?.location.directory }
+        BrowserTools.isInView = { [weak self] session in self?.utilities.isInView(session) ?? false }
         // Agents writing to each other, here and on machines.
         AgentMail.shared.app = self
         BrowserTools.mail = { name, arguments, caller in await AgentMail.shared.call(name, arguments: arguments, caller: caller) }

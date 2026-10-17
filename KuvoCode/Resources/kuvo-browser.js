@@ -1466,7 +1466,8 @@ async function tool(name, args) {
   const scripts = CONFIG.scripts;
 
   // Not the browser's: Kuvo Code shows it in its panel when this says it goes ahead (it sees
-  // the call), so it's only checked here.
+  // the call), so it's only checked here. It can't tell whether the user is looking at the
+  // conversation; the Mac shows it then, or when they come back to it.
   // Drawn by Kuvo Code from the call, in the conversation.
   if (name === "show_widget") {
     const html = string("html");
@@ -1485,7 +1486,7 @@ async function tool(name, args) {
     } catch {
       return text(`There's nothing at ${full}.`, true);
     }
-    return text(`Showing the ${isFolder ? "folder" : "file"} ${full} in Kuvo Code's side panel.`);
+    return text(`Sent: the ${isFolder ? "folder" : "file"} ${full} opens in Kuvo Code's side panel beside this conversation, at once if the user is looking at it, or else when they come back to it.`);
   }
 
   if (name === "browser_upload") {
