@@ -6,24 +6,32 @@ import SwiftUI
 @Observable
 final class SettingsNavigator {
     struct Detail {
+        /// What opened it: one of the page's `settingsDetail`s.
+        let owner: UUID
         /// Nil for one that names itself (a sign-in, with the service's mark): just the way back.
         var title: String?
         let back: () -> Void
     }
 
-    private(set) var detail: Detail?
+    /// What's open, the one in view last: one that closes gives way to the one under it, never
+    /// to the page while that one's still open.
+    private var opened: [Detail] = []
 
-    func open(title: String?, back: @escaping () -> Void) {
-        detail = Detail(title: title, back: back)
+    /// What's in view.
+    var detail: Detail? { opened.last }
+
+    func open(_ owner: UUID, title: String?, back: @escaping () -> Void) {
+        let detail = Detail(owner: owner, title: title, back: back)
+        if let index = opened.firstIndex(where: { $0.owner == owner }) { opened[index] = detail } else { opened.append(detail) }
     }
 
     /// What's open is called something else now (a new agent, once it's named).
-    func retitle(_ title: String) {
-        detail?.title = title
+    func retitle(_ owner: UUID, _ title: String) {
+        if let index = opened.firstIndex(where: { $0.owner == owner }) { opened[index].title = title }
     }
 
-    func closed() {
-        detail = nil
+    func closed(_ owner: UUID) {
+        opened.removeAll { $0.owner == owner }
     }
 
     /// Back to the page; false when it's there already.
@@ -36,6 +44,8 @@ final class SettingsNavigator {
 
 extension EnvironmentValues {
     @Entry var settingsNavigator: SettingsNavigator?
+    /// The `settingsDetail` something's open in, for it to name itself.
+    @Entry var settingsDetailOwner: UUID?
 }
 
 extension View {
@@ -81,24 +91,28 @@ private struct SettingsDetailModifier<Item: Identifiable, Detail: View>: ViewMod
     let onDismiss: (() -> Void)?
     @ViewBuilder let detail: (Item) -> Detail
     @Environment(\.settingsNavigator) private var navigator
+    @State private var owner = UUID()
 
     func body(content: Content) -> some View {
         ZStack(alignment: .top) {
+            // Underneath, it takes no keys either (another editor's Return, under this one).
             content
                 .opacity(item == nil ? 1 : 0)
                 .allowsHitTesting(item == nil)
+                .disabled(item != nil)
                 .accessibilityHidden(item != nil)
             if let item {
                 detail(item)
+                    .environment(\.settingsDetailOwner, owner)
                     .transition(.opacity)
             }
         }
         .onChange(of: item?.id, initial: true) { old, _ in
             if let item {
                 let binding = $item
-                navigator?.open(title: title(item)) { withAnimation(.ui) { binding.wrappedValue = nil } }
+                navigator?.open(owner, title: title(item)) { withAnimation(.ui) { binding.wrappedValue = nil } }
             } else if old != nil {
-                navigator?.closed()
+                navigator?.closed(owner)
                 onDismiss?()
             }
         }
@@ -108,9 +122,10 @@ private struct SettingsDetailModifier<Item: Identifiable, Detail: View>: ViewMod
 private struct SettingsDetailTitle: ViewModifier {
     let title: String
     @Environment(\.settingsNavigator) private var navigator
+    @Environment(\.settingsDetailOwner) private var owner
 
     func body(content: Content) -> some View {
-        content.onChange(of: title, initial: true) { navigator?.retitle(title) }
+        content.onChange(of: title, initial: true) { if let owner { navigator?.retitle(owner, title) } }
     }
 }
 

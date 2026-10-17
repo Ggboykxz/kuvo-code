@@ -189,7 +189,10 @@ struct SkillsSettings: View {
         Task {
             defer { isOpening = false }
             do {
-                browsing = try await SkillLibrary.repository(named: name)
+                let repository = try await SkillLibrary.repository(named: name)
+                // A skill you started writing meanwhile stays in view, and the name stays typed.
+                guard writing == nil else { return }
+                browsing = repository
                 repositoryName = ""
             } catch {
                 failure = error.localizedDescription
