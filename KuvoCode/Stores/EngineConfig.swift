@@ -21,6 +21,13 @@ final class EngineConfig {
     /// This Mac's, for the places that make a session's rules.
     static weak var current: EngineConfig?
 
+    /// What Kuvo Code gives every engine, unless the settings file sets it: web search through a
+    /// free provider, moving to another when one is rate limited. The engine has none chosen, and
+    /// every search the agent tried failed ("Web search provider is required").
+    static func defaults(over settings: [String: Any]) -> [String: Any] {
+        settings["websearch"] == nil ? ["websearch": ["provider": "random"]] : [:]
+    }
+
     /// Settings › Permissions' rules, in their order: what every session and mode is held to.
     var permissionRules: [PermissionRule] {
         guard let value = settings["permissions"], let data = try? JSONEncoder().encode(value) else { return [] }

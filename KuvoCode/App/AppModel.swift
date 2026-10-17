@@ -177,6 +177,9 @@ final class AppModel {
             shell["KUVO_INTEGRATIONS"] = integrations.path
             Integrations.upgrade(engineConfig)
             MCPSettings.upgrade(engineConfig)
+            // Web search that works, unless the settings file chose otherwise.
+            let defaults = EngineConfig.defaults(over: engineConfig.settings)
+            if !defaults.isEmpty { shell["OPENCODE_CONFIG_CONTENT"] = Self.merged(defaults, into: shell["OPENCODE_CONFIG_CONTENT"]) }
             // What some providers need until opencode handles it (see ProviderCompatibility).
             let compatibility = ProviderCompatibility.config
             if !compatibility.isEmpty { shell["OPENCODE_CONFIG_CONTENT"] = Self.merged(compatibility, into: shell["OPENCODE_CONFIG_CONTENT"]) }
