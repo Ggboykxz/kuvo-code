@@ -26,17 +26,54 @@ struct ModelPicker: View {
     var startsExpanded = false
     /// On the model list rather than the effort (KUVO_DEMO_MENU=list).
     var startsOnList = false
+    /// The room it has on the side it opened on: its lists scroll within it. Growing past it, its
+    /// popover would jump to the chip's other side.
+    var maxHeight: CGFloat = .infinity
     @AppStorage("recentModels") private var recentStorage = ""
     /// What you've picked, until the card closes.
     @State private var picked: ModelRef?
-    @State private var page = Page.models
+    /// The page you turned to; until then, the one it opens on.
+    @State private var turnedTo: Page?
     @State private var query = ""
     /// The row under the pointer or the arrow keys.
     @State private var highlight: String?
     @FocusState private var focus: Focus?
 
     private enum Page { case models, all, effort }
+
+    /// Which side of its chip the card opens on, and how tall it may be there. It opens on the side
+    /// it's meant to when its longest page fits there, else on the side with more room; either
+    /// way it stays there, whatever page you turn to.
+    struct Placement {
+        var below = false
+        var height: CGFloat = .infinity
+
+        /// The longest page: More models' search and list.
+        static let tallest: CGFloat = 401
+        /// The arrow, and a little air from the screen's edge.
+        private static let margin: CGFloat = 24
+
+        init() {}
+
+        init(room: (above: CGFloat, below: CGFloat)?, prefersBelow: Bool) {
+            guard let room else {
+                below = prefersBelow
+                return
+            }
+            let preferred = prefersBelow ? room.below : room.above
+            let other = prefersBelow ? room.above : room.below
+            below = preferred - Self.margin >= Self.tallest || preferred >= other ? prefersBelow : !prefersBelow
+            height = (below ? room.below : room.above) - Self.margin
+        }
+    }
     private enum Focus { case card, search }
+
+    /// The page in view: the effort first, for a model that has levels, else the list. Right from
+    /// the first frame: turning to it once open changed the card's size, and its popover would
+    /// open above the chip, then jump below it.
+    private var page: Page {
+        turnedTo ?? (startsExpanded ? .all : (startsOnList || current?.variants.isEmpty != false ? .models : .effort))
+    }
 
     private var choice: ModelRef? { picked ?? selection }
     private var current: Model? { catalog.model(choice) ?? catalog.defaultModel }
@@ -56,8 +93,8 @@ struct ModelPicker: View {
         .focused($focus, equals: .card)
         .onKeyPress(phases: .down, action: key)
         .onAppear {
-            // The effort first, for a model that has levels; else the list.
-            page = startsExpanded ? .all : (startsOnList || current?.variants.isEmpty != false ? .models : .effort)
+            // Kept, whatever you pick on it.
+            turnedTo = page
             focus = .card
             highlight = shortList.first { $0.ref.sameModel(as: current?.ref) }.map { row($0) }
         }
@@ -76,14 +113,23 @@ struct ModelPicker: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 14)
                 .padding(.bottom, 6)
-            VStack(spacing: 1) {
-                let list = shortList
+            let list = shortList
+            let rows = VStack(spacing: 1) {
                 ForEach(list, id: \.key) { model in
                     // The provider only where it tells two of the same model apart.
                     modelRow(model, showsProvider: list.filter { $0.name == model.name }.count > 1)
                 }
             }
             .padding(.horizontal, 6)
+            // Its title and More models take the rest.
+            let room = maxHeight - 100
+            if CGFloat(list.count) * 35 > room {
+                ScrollView { rows }
+                    .scrollIndicators(.never)
+                    .frame(height: max(room, 105))
+            } else {
+                rows
+            }
             if !catalog.modelsByProvider.isEmpty {
                 Divider()
                     .padding(.horizontal, 16)
@@ -149,7 +195,7 @@ struct ModelPicker: View {
                     .padding(6)
                 }
                 .scrollIndicators(.never)
-                .frame(height: 360)
+                .frame(height: min(360, max(maxHeight - 41, 140)))
                 .onChange(of: highlight) { _, id in
                     guard let id else { return }
                     proxy.scrollTo(id)
@@ -277,7 +323,7 @@ struct ModelPicker: View {
     // MARK: Choosing
 
     private func go(_ next: Page) {
-        withAnimation(.snappy(duration: 0.2)) { page = next }
+        withAnimation(.snappy(duration: 0.2)) { turnedTo = next }
         if next == .all {
             focus = .search
         } else {

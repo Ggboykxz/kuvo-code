@@ -187,20 +187,25 @@ struct ModelChip<Label: View>: View {
     @State private var isOpen = false
     @State private var startsExpanded = false
     @State private var startsOnList = false
+    /// Where the card opens, and the room it has there, read as it opens.
+    @State private var placement = ModelPicker.Placement()
+    @State private var anchor = ScreenRoom()
 
     private var current: Model? { catalog.model(selection) ?? catalog.defaultModel }
     private var variant: String? { current.flatMap { model in selection?.sameModel(as: model.ref) == true ? selection?.variant : nil } }
 
     var body: some View {
         Button {
+            if !isOpen { placement = ModelPicker.Placement(room: anchor.room, prefersBelow: opensBelow) }
             isOpen.toggle()
         } label: {
             label(current, variant)
         }
         .buttonStyle(.plain)
         .help("Model and effort")
-        .popover(isPresented: $isOpen, arrowEdge: opensBelow ? .bottom : .top) {
-            ModelPicker(catalog: catalog, selection: selection, onSelect: onSelect, close: { isOpen = false }, startsExpanded: startsExpanded, startsOnList: startsOnList)
+        .background(ScreenRoomReader(room: anchor))
+        .popover(isPresented: $isOpen, arrowEdge: placement.below ? .bottom : .top) {
+            ModelPicker(catalog: catalog, selection: selection, onSelect: onSelect, close: { isOpen = false }, startsExpanded: startsExpanded, startsOnList: startsOnList, maxHeight: placement.height)
         }
         .onAppear { LogoImages.shared.prefetch(catalog.models.flatMap { [$0.makerLogoID, $0.providerID] }) }
         #if DEBUG
@@ -211,6 +216,7 @@ struct ModelChip<Label: View>: View {
             try? await Task.sleep(for: .seconds(3))
             startsExpanded = wanted == "models"
             startsOnList = wanted == "list"
+            placement = ModelPicker.Placement(room: anchor.room, prefersBelow: opensBelow)
             isOpen = true
             // KUVO_DEMO_EFFORT=<level>: with it set, as if picked.
             if let level = ProcessInfo.processInfo.environment["KUVO_DEMO_EFFORT"], let current {
