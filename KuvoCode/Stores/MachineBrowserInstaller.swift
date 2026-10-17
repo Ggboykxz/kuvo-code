@@ -114,24 +114,58 @@ nonisolated enum MachineBrowserInstaller {
         return architecture
     }
 
-    /// Whether the machine has this build in use, or a newer one: a Mac with an older version of
-    /// the app uses the newer browser another Mac put there, rather than swapping it back.
+    /// Whether the machine has a build to use: this one, or one that stays (`keeps`). This build,
+    /// there but not in use (another Mac swapped it out while a browser ran from it), goes back
+    /// in use without being sent again.
     static func isInstalled(_ runtime: BrowserRuntime, on connection: SSHConnection) async throws -> Bool {
         let output = try await connection.run("""
             B="\(folder)"
-            current=$(readlink "$B/current" 2>/dev/null) || exit 0
-            { [ -x "$B/$current/chrome" ] || [ -x "$B/$current/chrome-headless-shell" ]; } && echo "$current" || true
+            has() { [ -x "$B/$1/chrome" ] || [ -x "$B/$1/chrome-headless-shell" ]; }
+            current=$(readlink "$B/current" 2>/dev/null) && has "$current" && echo "current $current" && echo "by $(cat "$B/$current/kuvo-version" 2>/dev/null)"
+            has "\(runtime.id)" && echo "ours"
+            true
             """)
-        let current = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !current.isEmpty else { return false }
-        if current == runtime.id { return true }
-        let theirs = current.split(separator: "-").first.map(String.init) ?? ""
-        return theirs.compare(runtime.chromium.version, options: .numeric) == .orderedDescending
+        var current: String?
+        var madeBy = ""
+        var hasOurs = false
+        for line in output.split(separator: "\n") {
+            let words = line.split(separator: " ", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+            switch words.first {
+            case "current": current = words.count > 1 ? words[1] : nil
+            case "by": madeBy = words.count > 1 ? words[1] : ""
+            case "ours": hasOurs = true
+            default: break
+            }
+        }
+        if let current, current == runtime.id || keeps(current, madeBy: madeBy, over: runtime) { return true }
+        guard hasOurs else { return false }
+        try await connection.run("""
+            B="\(folder)"
+            \(builds)
+            ln -sfn "\(runtime.id)" "$B/current"
+            \(clearOldBuilds(keeping: runtime.id))
+            """)
+        return true
+    }
+
+    /// Whether a build on a machine stays rather than this one replacing it: one with a newer
+    /// Chromium, or the same Chromium put there by a newer Kuvo Code. A Mac with an older version
+    /// of the app uses the browser a newer one put there, rather than swapping it back, so two Macs
+    /// on different versions don't send theirs in turns. A build from before they said which Kuvo
+    /// Code put them there is replaced.
+    static func keeps(_ build: String, madeBy: String, over runtime: BrowserRuntime, version: String = AppInfo.version) -> Bool {
+        let theirs = build.split(separator: "-").first.map(String.init) ?? ""
+        switch theirs.compare(runtime.chromium.version, options: .numeric) {
+        case .orderedDescending: return true
+        case .orderedAscending: return false
+        case .orderedSame: return !madeBy.isEmpty && madeBy.compare(version, options: .numeric) == .orderedDescending
+        }
     }
 
     /// Sends a bundle to the machine and makes it the one in use. Older builds go, unless a browser
     /// still runs from one (it moves to the new one when it next starts).
     static func send(_ bundle: URL, _ runtime: BrowserRuntime, to connection: SSHConnection) async throws {
+        let version = AppInfo.version.filter { $0.isASCII && ($0.isNumber || $0 == ".") }
         try await connection.run("""
             set -e
             B="\(folder)"
@@ -140,6 +174,8 @@ nonisolated enum MachineBrowserInstaller {
             rm -rf "$B/.staging"
             mkdir -p "$B/.staging"
             tar xzf - -C "$B/.staging"
+            # Which Kuvo Code put it there, so an older one leaves it in place.
+            echo "\(version)" >"$B/.staging/kuvo-version"
             # The same build, already running (another Mac put it there meanwhile), stays as it is.
             if running "\(runtime.id)"; then rm -rf "$B/.staging"; else rm -rf "$B/\(runtime.id)"; mv "$B/.staging" "$B/\(runtime.id)"; fi
             ln -sfn "\(runtime.id)" "$B/current"
