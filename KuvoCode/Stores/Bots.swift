@@ -519,21 +519,30 @@ final class Bots {
                 await self?.syncInstructions()
                 self?.watchDue()
                 await self?.wakeDue()
-                // On time: up to the next one due here, at most 20 seconds.
+                // On time: up to the next one due here, at most 20 seconds (5 at least while the
+                // engine isn't up, as nothing can go).
                 let next = self?.nextLocalWake().map { $0.timeIntervalSinceNow } ?? 20
-                try? await Task.sleep(for: .seconds(min(20, max(0.5, next))))
+                let least = self?.app?.api == nil ? 5.0 : 0.5
+                try? await Task.sleep(for: .seconds(min(20, max(least, next))))
             }
         }
     }
+
+    /// Wake-ups on this Mac that didn't go, by bot and file: when to try again, and how many times
+    /// in a row they failed, so one that keeps failing is tried less and less often.
+    @ObservationIgnored private var retries: [String: (at: Date, failures: Int)] = [:]
 
     private func wakeDue() async {
         guard let api = app?.api else { return }
         for bot in list where bot.machine == nil && !FileManager.default.fileExists(atPath: Self.pauseFile(of: bot)) {
             let pending = Self.localWakes(of: bot)
-            if pending.contains(where: { $0.due <= .now }) { await api.waitForTools(in: bot.directory) }
-            for wake in pending where wake.due <= .now {
+            let due = pending.filter { $0.due <= .now && retries[bot.id + "/" + $0.id].map { $0.at <= .now } != false }
+            if !due.isEmpty { await api.waitForTools(in: bot.directory) }
+            for wake in due {
+                let key = bot.id + "/" + wake.id
                 do {
                     try await api.prompt(session: bot.sessionID, id: Identifier.message(), text: Wakes.marker + wake.note, delivery: .queue)
+                    retries[key] = nil
                     Analytics.shared.track("bot_wakeup_ran", ["kind": "wake", "repeats": wake.every != nil])
                     // Sent: one that repeats comes back at its next time; others are done.
                     let folder = (bot.folder as NSString).appendingPathComponent("wakes") as NSString
@@ -543,17 +552,26 @@ final class Bots {
                         try? FileManager.default.removeItem(atPath: folder.appendingPathComponent(wake.id))
                     }
                 } catch {
+                    // Again in a minute, then 2, 4… up to half an hour.
+                    let failures = (retries[key]?.failures ?? 0) + 1
+                    retries[key] = (.now.addingTimeInterval(min(1800, 60 * pow(2, Double(failures - 1)))), failures)
                     log.error("A wake-up for \(bot.id, privacy: .public) didn't go: \(error.localizedDescription, privacy: .public)")
                 }
             }
             let left = Self.localWakes(of: bot)
             if wakes[bot.id] != left { wakes[bot.id] = left }
+            for key in retries.keys where key.hasPrefix(bot.id + "/") && !left.contains(where: { bot.id + "/" + $0.id == key }) {
+                retries[key] = nil
+            }
         }
     }
 
-    /// When the next wake-up on this Mac is due.
+    /// When the next wake-up on this Mac can go: not a paused bot's, and one that didn't go at
+    /// its next try.
     private func nextLocalWake() -> Date? {
-        list.filter { $0.machine == nil }.compactMap { wakes[$0.id]?.first?.due }.min()
+        list.filter { $0.machine == nil && !FileManager.default.fileExists(atPath: Self.pauseFile(of: $0)) }
+            .flatMap { bot in (wakes[bot.id] ?? []).map { wake in max(wake.due, retries[bot.id + "/" + wake.id]?.at ?? wake.due) } }
+            .min()
     }
 
     private static func localWakes(of bot: Bot) -> [Wakes.Pending] {
