@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Following the agent's thinking while it streams no longer leaves the conversation blank once the thinking is done and folds into its summary: it stays at the end. Code blocks are lighter to draw, and keep their size while Find marks them.
 - Kuvo Code no longer quits when a program on your Mac sends its browser tools a malformed request.
 - Showing a folder in the panel works when the agent gives its path with a slash at the end.
 - Saving a page as a PDF over an existing file keeps the old file if the save fails. It used to be deleted first.
