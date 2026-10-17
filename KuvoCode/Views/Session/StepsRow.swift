@@ -25,6 +25,7 @@ struct StepsRow: View {
     let isLive: Bool
     let directory: String
     @AppStorage(StepsDetail.key) private var detail = StepsDetail.summary
+    @Environment(Workspace.self) private var workspace
     @State private var isExpanded = false
 
     var body: some View {
@@ -53,6 +54,12 @@ struct StepsRow: View {
                 if isExpanded {
                     ForEach(Array(done.enumerated()), id: \.offset) { _, block in step(block) }
                         .transition(.opacity)
+                } else {
+                    // Subagents it sent off in the background, still at work after the turn: under
+                    // the line, as the step under way is, each opening to what it's doing.
+                    ForEach(Self.helpersAtWork(in: done, running: workspace.running)) { call in
+                        ToolCallView(call: call, directory: directory)
+                    }
                 }
             }
             if let current { step(current) }
@@ -82,6 +89,16 @@ struct StepsRow: View {
             case .completed, .failed: false
             }
         default: false
+        }
+    }
+
+    /// The subagent steps among `blocks` whose sessions are still running.
+    static func helpersAtWork(in blocks: [Message.Content], running: Set<String>) -> [Message.ToolCall] {
+        guard !running.isEmpty else { return [] }
+        return blocks.compactMap { block in
+            guard case .tool(let call) = block, call.name == "subagent", call.state.isFinished,
+                  let session = call.state.metadata?["sessionID"]?.string, running.contains(session) else { return nil }
+            return call
         }
     }
 

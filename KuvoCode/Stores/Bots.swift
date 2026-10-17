@@ -119,7 +119,7 @@ final class Bots {
         }
         #endif
         if workspace.needsAttention(bot.sessionID) { return .waiting }
-        if workspace.running.contains(bot.sessionID) { return .working }
+        if workspace.isWorking(bot.sessionID) { return .working }
         if workspace.session(bot.sessionID)?.isUnread == true { return .news }
         if wakes[bot.id]?.isEmpty == false { return .sleeping }
         if watches[bot.id]?.isEmpty == false { return .watching }

@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Subagents an agent sends off to work in the background show while they work: under its steps, each with a spinner and opening to what it's doing, even after its turn has ended. The session's row and tab show it working meanwhile, and a bot's row says how many tasks it's working on. They used to vanish into "handed off 7 tasks".
 - In the sidebar, a bot's next wake-up, its watches and its pause stand apart from what it said, each with its sign: the wake-up and watches in your accent color, a pause in grey. "Needs you" is in orange.
 
 ## 0.5.5

@@ -127,6 +127,9 @@ struct ToolCallView: View {
         switch call.state {
         case .streaming, .running:
             Spinner(size: 11)
+        case .completed where isAtWork:
+            Spinner(size: 11)
+                .help("Working in the background")
         case .failed(_, let error, _, _) where error.isInterruption:
             Image(systemName: "stop.circle")
         case .failed:
@@ -349,6 +352,12 @@ struct ToolCallView: View {
     /// The session a subagent works in, once it has started.
     private var subagentSession: String? {
         call.name == "subagent" ? call.state.metadata?["sessionID"]?.string : nil
+    }
+
+    /// A subagent sent off in the background, its step done at once, still at work.
+    private var isAtWork: Bool {
+        guard let subagentSession else { return false }
+        return app.workspace.running.contains(subagentSession)
     }
 
     private var hasDetails: Bool {

@@ -922,6 +922,9 @@ final class Workspace {
             asking = asking.filter { $0.value != id }
         case "session.execution.started":
             running.insert(id)
+            // A session with no row may be a subagent's: whose it is, so the one that started it
+            // shows working while it does (in the background, after its own turn has ended).
+            if session(id) == nil, parents[id] == nil { Task { await reload(id) } }
             runStarted[id] = .now
             firstOutput[id] = nil
             if let session = session(id) { usageAtStart[id] = (Self.tokenCount(session.tokens), session.cost) }
@@ -1202,7 +1205,18 @@ final class Workspace {
     }
 
     /// Each subagent's session, by the session that started it.
-    @ObservationIgnored private var parents: [String: String] = [:]
+    private var parents: [String: String] = [:]
+
+    /// Subagents a session handed work to that are at it now (through subagents of subagents),
+    /// such as those it sent off in the background, which go on after its own turn ends.
+    func helpersAtWork(in id: String) -> Int {
+        running.count { $0 != id && root(of: $0) == id }
+    }
+
+    /// The session works, itself or through subagents still at it: what its row, tab and bot show.
+    func isWorking(_ id: String) -> Bool {
+        running.contains(id) || helpersAtWork(in: id) > 0
+    }
 
     /// The session a subagent's shows in (through subagents of subagents): the root one that
     /// started it; any other, itself.

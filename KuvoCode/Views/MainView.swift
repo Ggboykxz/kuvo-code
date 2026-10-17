@@ -563,7 +563,7 @@ struct MainView: View {
 
     private func status(of session: Session) -> TabItem.Status {
         if workspace.needsAttention(session.id) { return .waiting }
-        if workspace.running.contains(session.id) { return .working }
+        if workspace.isWorking(session.id) { return .working }
         if session.outcome == .failed { return .failed }
         if session.isUnread, !sessionsInView.contains(session.id) { return .unread }
         return .idle

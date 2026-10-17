@@ -986,6 +986,8 @@ private struct BotRow: View {
                 .foregroundStyle(.orange)
         } else if workspace.running.contains(bot.sessionID) {
             ShimmerText(text: "Working…")
+        } else if case let helpers = workspace.helpersAtWork(in: bot.sessionID), helpers > 0 {
+            ShimmerText(text: helpers == 1 ? "Working on a task…" : "Working on \(helpers) tasks…")
         } else if let machine = bot.machine, app.machines.engine(machine)?.isReady != true {
             Text("On \(machine), not connected")
         } else if hasNews, let reply = workspace.replyPreviews[bot.sessionID] {
@@ -1121,7 +1123,7 @@ private struct SessionStatus: View {
                 .font(.system(size: 12))
                 .foregroundStyle(.orange)
                 .help("Waiting for you")
-        } else if workspace.running.contains(session.id) {
+        } else if workspace.isWorking(session.id) {
             Spinner(size: 12)
                 .help("Working")
         } else if session.outcome == .failed {
