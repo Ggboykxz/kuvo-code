@@ -4,7 +4,7 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
-## Unreleased
+## 0.5.3
 
 - MCP servers you add give the agent their tools directly, so every model finds them; smaller ones often missed tools behind Code Mode. Servers you already added switch over too, unless you turned Code Mode on. For a server with many tools, turn Code Mode on in its settings to keep each message small.
 
