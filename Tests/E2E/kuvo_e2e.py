@@ -130,7 +130,9 @@ class App:
         self.quit()
         defaults("analytics.noticeShown", True)
         if model:
-            defaults("lastModel", model)
+            # As the app keeps it: the model whole, as JSON ("provider/model" for short here).
+            provider, _, model_id = model.partition("/")
+            defaults("lastModelRef", json.dumps({"id": model_id, "providerID": provider}))
         # What its browser downloads goes into the run's folder, not your Downloads.
         downloads = self.run.path("downloads")
         os.makedirs(downloads, exist_ok=True)
