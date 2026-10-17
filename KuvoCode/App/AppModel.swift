@@ -105,6 +105,8 @@ final class AppModel {
     /// coming in late as it stops, isn't taken for this one's, and a start that was stopped or
     /// started over while it waited gives up.
     private var launch = UUID()
+    /// The Mac waking from sleep, watched once for the machines (see `startMachines`).
+    @ObservationIgnored var wakeWatch: (any NSObjectProtocol)?
     private let log = Logger(subsystem: "run.kuvo.code", category: "engine")
 
     private var engineFolders: EngineFolders {

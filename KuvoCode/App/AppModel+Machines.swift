@@ -54,9 +54,12 @@ extension AppModel {
         }
         utilities.machineBrowser = { [weak self] machine in self?.machines.engine(machine)?.browser }
         // A machine whose connection dropped while the Mac slept, and that gave up trying, gets
-        // another go once it's awake and the network is back.
-        NotificationCenter.default.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.wakeMachines() }
+        // another go once it's awake and the network is back. (NSWorkspace says so on its own
+        // notification center; watched once, though this runs with each start of the engine.)
+        if wakeWatch == nil {
+            wakeWatch = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.wakeMachines() }
+            }
         }
         for engine in machines.engines.values { connect(engine) }
     }
