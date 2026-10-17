@@ -100,7 +100,7 @@ class Run:
         if not os.path.exists(os.path.join(folder, ".git")):
             git(folder, "init", "-q")
             git(folder, "add", "-A")
-            git(folder, "commit", "-qm", "Start")
+            git(folder, "commit", "-qm", "Start", "--allow-empty")
         return folder
 
 
