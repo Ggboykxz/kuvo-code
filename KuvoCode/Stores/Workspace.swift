@@ -973,8 +973,10 @@ final class Workspace {
         }
     }
 
-    @ObservationIgnored private var runStarted: [String: Date] = [:]
-    @ObservationIgnored private var firstOutput: [String: Date] = [:]
+    /// When a run began and first had something to show, as the Mac counts while awake: never
+    /// less than nothing when the clock is set back, and without the time it slept.
+    @ObservationIgnored private var runStarted: [String: SuspendingClock.Instant] = [:]
+    @ObservationIgnored private var firstOutput: [String: SuspendingClock.Instant] = [:]
     /// A session's tokens and cost as a run began, to tell what the run used.
     @ObservationIgnored private var usageAtStart: [String: (tokens: Int, cost: Double)] = [:]
 
@@ -1046,8 +1048,8 @@ final class Workspace {
         // A subagent's session has no row of its own.
         props["subagent"] = session == nil
         if let started = runStarted.removeValue(forKey: id) {
-            props["seconds"] = Int(Date.now.timeIntervalSince(started))
-            if let first = firstOutput.removeValue(forKey: id) { props["first_token_seconds"] = Int(first.timeIntervalSince(started)) }
+            props["seconds"] = Int((SuspendingClock.now - started).components.seconds)
+            if let first = firstOutput.removeValue(forKey: id) { props["first_token_seconds"] = Int((first - started).components.seconds) }
         }
         if let start = usageAtStart.removeValue(forKey: id), let session {
             props["tokens"] = Analytics.tokens(Double(max(0, Self.tokenCount(session.tokens) - start.tokens)))

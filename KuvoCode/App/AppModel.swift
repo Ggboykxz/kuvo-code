@@ -143,7 +143,7 @@ final class AppModel {
         engineStoppedWhileRunning = false
         // How far it got, for analytics when it fails: the download, the launch, or the connection.
         var stage = "download"
-        let began = Date.now
+        let began = SuspendingClock.now
         var downloaded = false
         do {
             // Set KUVO_OPENCODE_BINARY to run a local opencode build instead of the pinned download.
@@ -244,7 +244,7 @@ final class AppModel {
             phoneLink.groups = groups
             phoneLink.machineName = { [weak self] id in self?.machines.list.first { $0.id == id }?.name }
             phoneLink.start(endpoint: server.endpoint)
-            Analytics.shared.trackOnce("engine_ready", ["seconds": Int(Date.now.timeIntervalSince(began)), "downloaded": downloaded])
+            Analytics.shared.trackOnce("engine_ready", ["seconds": Int((SuspendingClock.now - began).components.seconds), "downloaded": downloaded])
             listen(to: api)
             Task { await usage.sync() }
             // In parallel: the catalog can wait on the engine's plugins (and they on a
