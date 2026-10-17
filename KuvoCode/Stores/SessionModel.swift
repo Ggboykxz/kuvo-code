@@ -284,8 +284,15 @@ final class SessionModel {
         failure = nil
     }
 
+    /// Events that came while a read was on its way, by read: it may have been made before them, so
+    /// they're applied again on top of it (what it has already, they leave as it is).
+    @ObservationIgnored private var cameDuringRead: [UUID: [ServerEvent]] = [:]
+
     func load() async {
         guard !waitsForEngine else { return }
+        let read = UUID()
+        cameDuringRead[read] = []
+        defer { cameDuringRead[read] = nil }
         async let messages = api.messages(session: id, limit: Self.pageSize)
         async let inbox = api.inbox(session: id)
         async let permissions = api.permissions(session: id)
@@ -306,6 +313,12 @@ final class SessionModel {
                 return
             }
             emptyReads = 0
+            // All of the read is in before anything changes: what streams in meanwhile goes to the
+            // copy on screen, and must not land between that copy going and the read replacing it.
+            let waiting = (try? await inbox) ?? []
+            let asked = (try? await permissions) ?? []
+            let open = ((try? await forms) ?? []) + ((try? await shared) ?? [])
+            let running = (try? await active).map { $0.contains(id) }
             // Earlier messages read as you scrolled up stay, ahead of the latest: only those this
             // read, not a saved copy's (whose start it doesn't know), and only when they reach the
             // latest page; after a gap (many messages while it was away), it starts again from it.
@@ -313,16 +326,15 @@ final class SessionModel {
             let reaches = page.data.first.map { first in earlier.last.map { $0.id >= first.id } ?? false } ?? false
             let kept = !isCopy && reaches ? page.data.first.map { first in earlier.filter { $0.id < first.id } } ?? [] : []
             if kept.isEmpty { earlierCursor = Self.cursor(before: page) }
-            // The engine's copy has what streamed in so far.
+            // The read, with what came while it was made.
+            var fresh = transcript
+            // Unknown (the engine didn't answer): as it was, not stopped.
+            fresh.load(messages: kept + page.data, inbox: waiting, permissions: asked, forms: open, isRunning: running ?? transcript.isRunning)
+            for event in cameDuringRead[read] ?? [] { fresh.apply(event) }
+            // It has what streamed in so far.
             discardLive()
-            transcript.load(
-                messages: kept + page.data,
-                inbox: (try? await inbox) ?? [],
-                permissions: (try? await permissions) ?? [],
-                forms: ((try? await forms) ?? []) + ((try? await shared) ?? []),
-                // Unknown (the engine didn't answer): as it was, not stopped.
-                isRunning: (try? await active).map { $0.contains(id) } ?? transcript.isRunning
-            )
+            transcript = fresh
+            if transcript.isStale { scheduleReload() }
             // A queue left waiting (the app quit mid-run, say) waits for Resume rather than
             // starting on its own. Read again later (a reconnect), it carries on.
             if !isLoaded, !isRunning, hasQueue {
@@ -345,6 +357,9 @@ final class SessionModel {
     }
 
     func apply(_ event: ServerEvent) {
+        if !cameDuringRead.isEmpty, Transcript.changes(with: event.type) {
+            for read in Array(cameDuringRead.keys) { cameDuringRead[read]?.append(event) }
+        }
         if Transcript.isStreamed(event.type) {
             // Gathered, to show with what comes in the next moment.
             if live == nil { live = transcript }
