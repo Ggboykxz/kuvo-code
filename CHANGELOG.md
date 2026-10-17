@@ -4,31 +4,31 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
-## Unreleased
+## 0.5.4
 
-- If the engine stops while you work, Kuvo Code starts it again in a moment and your conversations carry on, instead of a screen saying it couldn't start. Only if it keeps stopping does that screen come back, now saying it stopped.
-- The agent and your bots can save a page as a PDF, so "make me a one-page summary as a PDF" gives you a real document, in pages and with its colors, on this Mac or a machine.
-- The agent reads a long page or list in one step instead of scrolling through it a screen at a time: a job across ten pages took under a minute instead of five.
-- A bot asked to change its model points you to Edit Bot, which lists the models you can use, instead of suggesting ones you have no account for.
-- The agent can search the web again: every search failed, because the engine had no search service chosen. It now uses a free one, and moves to another when one is busy.
 - Long thinking and long replies stream and scroll smoothly. Opening the agent's thinking while it streamed, or scrolling through a long reply, could freeze the window for seconds at a time and keep your Mac busy after the reply was done. A code block is now colored once the agent has finished writing it, instead of flickering between plain and colored as it grows.
-- A new bot writes first. When its name says what it's for, like Social Media Manager, it says what it takes its job to be and asks what it needs to start; otherwise it asks what you'd like it to do.
-- Double-clicking an empty part of the title bar, or a card's header, zooms the window, or does what you chose in System Settings › Desktop & Dock. The tabs and project name there used to take the click.
-- Text reads lighter and cleaner, most of all light text in dark mode: Kuvo Code draws it as chat apps on the web do, without macOS thickening it.
-- The model picker opens on one side of its button and stays there. It used to open above, then jump below when it grew, as you turned to the model list or More models.
-- The agent knows where the files you attach are on your Mac, so it can work with them. It used to get only what's in them, go looking for them, and sometimes say they weren't on disk.
-- Files you attach stay on your message once it's sent. They used to vanish from it until you reopened the session.
-- With VoiceOver, the tabs in the title bar are buttons read by their own names, with Close Tab as an action; in Settings they all read "Back to Sessions" and couldn't be switched.
+- The agent can search the web again: every search failed, because the engine had no search service chosen. It now uses a free one, and moves to another when one is busy.
 - On a machine, the browser is now Chrome itself, run without a window, instead of Chrome's stripped-down headless version, which sites like Google and X took for a bot and turned sign-ins away from. It downloads again once, the first time you use the browser there.
-- Signing in to a site on a machine no longer stays at "Opening…" when the browser was only just set up there.
-- A bot's turn that only kept its memory up to date says "Updated its memory" and opens it, instead of "Edited 1 file" with Show All Changes leading to an empty list. Show All Changes shows only when the files are ones the Changes panel lists.
-- A session started in Plan mode says so at the top ("Plan mode: it explores and plans, without changing files"), instead of showing the engine's note to the model, "<system-reminder>…".
-- A session the model doesn't name (some free models leave it out) is named after the start of your first message, instead of staying "New Session" beside others like it.
-- In a machine's browser, a window a page opens, like Continue with Google's sign-in, shows where you are, in Settings' sign-in tab and in the side panel, and closing it brings back the page that opened it. It used to open out of sight, so the button seemed to do nothing.
+- If the engine stops while you work, Kuvo Code starts it again in a moment and your conversations carry on, instead of a screen saying it couldn't start. Only if it keeps stopping does that screen come back, now saying it stopped.
+- Files you attach stay on your message once it's sent. They used to vanish from it until you reopened the session.
+- The agent knows where the files you attach are on your Mac, so it can work with them. It used to get only what's in them, go looking for them, and sometimes say they weren't on disk.
+- The agent and your bots can save a page as a PDF, so "make me a one-page summary as a PDF" gives you a real document, in pages and with its colors, on this Mac or a machine.
+- A new bot writes first. When its name says what it's for, like Social Media Manager, it says what it takes its job to be and asks what it needs to start; otherwise it asks what you'd like it to do.
+- Text reads lighter and cleaner, most of all light text in dark mode: Kuvo Code draws it as chat apps on the web do, without macOS thickening it.
+- The agent reads a long page or list in one step instead of scrolling through it a screen at a time: a job across ten pages took under a minute instead of five.
+- The model picker opens on one side of its button and stays there. It used to open above, then jump below when it grew, as you turned to the model list or More models.
 - The model picker offers only models you can use: those of accounts you connected, and the free ones. Without an account it used to list paid and GitHub Copilot models too, which failed with "missing required Authorization header".
+- Double-clicking an empty part of the title bar, or a card's header, zooms the window, or does what you chose in System Settings › Desktop & Dock. The tabs and project name there used to take the click.
+- Undo brings back the files the agent changed in a project opened through a link, like a Dropbox folder: it used to take back only the conversation. Projects you open from now on get this; one opened before keeps working as it did.
+- In a machine's browser, a window a page opens, like Continue with Google's sign-in, shows where you are, in Settings' sign-in tab and in the side panel, and closing it brings back the page that opened it. It used to open out of sight, so the button seemed to do nothing.
+- Signing in to a site on a machine no longer stays at "Opening…" when the browser was only just set up there.
+- A session the model doesn't name (some free models leave it out) is named after the start of your first message, instead of staying "New Session" beside others like it.
+- A session started in Plan mode says so at the top ("Plan mode: it explores and plans, without changing files"), instead of showing the engine's note to the model, "<system-reminder>…".
+- A bot's turn that only kept its memory up to date says "Updated its memory" and opens it, instead of "Edited 1 file" with Show All Changes leading to an empty list. Show All Changes shows only when the files are ones the Changes panel lists.
+- A bot asked to change its model points you to Edit Bot, which lists the models you can use, instead of suggesting ones you have no account for.
 - A code block whose first line is long starts below its language and Copy, instead of running in under them where its end was hidden.
 - With VoiceOver, the composer's round button reads Send or Stop (it read "Up"); each line of the changes offers Comment on This Line, and each of your messages Copy, New Session From Here and Undo From Here, which otherwise show only under the pointer.
-- Undo brings back the files the agent changed in a project opened through a link, like a Dropbox folder: it used to take back only the conversation. Projects you open from now on get this; one opened before keeps working as it did.
+- With VoiceOver, the tabs in the title bar are buttons read by their own names, with Close Tab as an action; in Settings they all read "Back to Sessions" and couldn't be switched.
 
 ## 0.5.3
 
