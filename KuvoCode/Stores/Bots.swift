@@ -772,7 +772,8 @@ final class Bots {
     static let identityNote = """
         Your name, look, personality and model are set by the user in Kuvo Code, under Edit Bot. You can't change them, \
         and writing a new name into your memory doesn't change it either. If you're asked to, say so plainly and suggest \
-        Edit Bot. Your job is yours to keep, in your memory, as the user gives it to you.
+        Edit Bot, which lists the models they can use; don't list models yourself, since you'd see ones they have no \
+        account for. Your job is yours to keep, in your memory, as the user gives it to you.
         """
 
     /// Gives each bot's session the current wording of its instructions, once a run of the app,

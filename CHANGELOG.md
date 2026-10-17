@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- A bot asked to change its model points you to Edit Bot, which lists the models you can use, instead of suggesting ones you have no account for.
 - The agent can search the web again: every search failed, because the engine had no search service chosen. It now uses a free one, and moves to another when one is busy.
 - A new bot writes first. When its name says what it's for, like Social Media Manager, it says what it takes its job to be and asks what it needs to start; otherwise it asks what you'd like it to do.
 - Double-clicking an empty part of the title bar, or a card's header, zooms the window, or does what you chose in System Settings › Desktop & Dock. The tabs and project name there used to take the click.

@@ -177,7 +177,7 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 | L42 | "I'm vegetarian and live in Istanbul": it remembers next time, after a restart | ✅ remembered across launches; ❌→✅ its web search failed: the engine had no search provider (2821561) |
 | L43 | A watch's last value kept between wake-ups, so it reports only what's new | ⏳ |
 | L44 | Its job grows ("also check the weekend weather") and the sidebar line follows | ⏳ |
-| L45 | It's asked to change its name or model: it says plainly it can't, and where you can | ⚠️ says it can't and points to Edit Bot, but suggests models you have no account for |
+| L45 | It's asked to change its name or model: it says plainly it can't, and where you can | ❌→✅ said it can't and pointed to Edit Bot, but suggested models you have no account for; now it leaves the choice to Edit Bot's list |
 
 ### On a machine, and when things go wrong
 
