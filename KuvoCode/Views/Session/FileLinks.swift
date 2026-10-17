@@ -99,7 +99,10 @@ struct FileLinkingParser: MarkupParser {
         let began = ContinuousClock.now
         defer { ParseClock.add(ContinuousClock.now - began) }
         #endif
-        var text = try AttributedStringMarkdownParser.markdown().attributedString(for: input)
+        // Math is set aside while the Markdown is read, which would garble it, and drawn after.
+        let (protected, formulas) = MathText.protect(input)
+        var text = try AttributedStringMarkdownParser.markdown().attributedString(for: protected)
+        MathText.restore(&text, formulas)
         if !mentions.isEmpty { GroupMentions.apply(to: &text, bots: mentions, faces: true) }
         for (range, url) in FileLinks.spans(in: text, folders: folders()) {
             var attributes = text[range].runs.first?.attributes ?? AttributeContainer()

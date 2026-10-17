@@ -219,7 +219,8 @@ changing the icon there.
 
 ### Dependencies
 
-Kuvo Code depends on Textual, SwiftTerm, Sparkle and, through UsageKit,
+Kuvo Code depends on Textual, SwiftUIMath (which Textual uses too; replies'
+math is drawn with it directly), SwiftTerm, Sparkle and, through UsageKit,
 KeyboardShortcuts. SwiftTerm stays on 1.11, because 1.12 and later need the
 Metal toolchain to build.
 

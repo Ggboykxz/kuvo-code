@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Math in replies is drawn as formulas: `$…$` and `\(…\)` in a line, `$$…$$` and `\[…\]` centered on their own. It used to show as raw LaTeX, and a line of `=` under it turned the line above into a heading. Prices like $5 and code stay as they are.
 - Editors open in place instead of in pop-up windows. In Settings, an agent, command, MCP server, skill, key, sign-in or provider opens in the page, under a way back to it (Esc goes back too); New Project and Edit Project open in the window's main card, as a bot does; and Add a Machine opens inside what asked for it.
 - Renaming a session happens where its title is: in its row in the sidebar, or in its card's header from its tab or the command palette. A new branch is named right where the branch shows in the title bar.
 - Fields show everything written in them: an agent's or command's description, a skill's "Use it when", a project's run and setup commands, a group chat's name and purpose, and your answers grow as you type rather than cutting off.

@@ -3,10 +3,16 @@ import SwiftUI
 import Textual
 
 /// Code blocks in replies and Markdown: one recessed well with the code and its line numbers,
-/// and the language and a Copy button in its top corner.
+/// and the language and a Copy button in its top corner. A formula of its own, which a reply's
+/// `$$…$$` became (`MathText`), is drawn as math instead.
 struct CopyableCodeBlockStyle: StructuredText.CodeBlockStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        CopyableCodeBlock(configuration: configuration)
+    @ViewBuilder func makeBody(configuration: Configuration) -> some View {
+        if configuration.languageHint == MathText.blockLanguage,
+           let latex = (Mirror(reflecting: configuration.codeBlock).descendant("content") as? AttributedSubstring).map({ String($0.characters) }) {
+            MathBlockView(latex: latex.trimmingCharacters(in: .whitespacesAndNewlines))
+        } else {
+            CopyableCodeBlock(configuration: configuration)
+        }
     }
 }
 

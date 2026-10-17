@@ -359,7 +359,7 @@ private struct FileViewer: View {
                 switch content {
                 case .text(let text) where isMarkdown && !showsSource:
                     ScrollView {
-                        StructuredText(markdown: text)
+                        StructuredText(text, parser: MathMarkdownParser())
                             .transcriptFont()
                             .textual.codeBlockStyle(CopyableCodeBlockStyle())
                             .textual.highlighterTheme(CodeColors.theme)
