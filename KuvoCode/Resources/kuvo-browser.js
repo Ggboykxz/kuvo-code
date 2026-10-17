@@ -853,6 +853,9 @@ async function connect() {
 class ToolError extends Error {}
 // The page a call would work in is one you've taken over: it waits for you, out of the line.
 class HeldError extends Error {}
+// The engine gave up on the call (it was stopped, or ran out of time): it goes no further, and
+// nothing answers it.
+class Cancelled extends Error {}
 
 let link = null;
 let active = null;
@@ -881,6 +884,58 @@ const choosers = new Map();
 // Pages you took over in Kuvo Code: a tool for one waits until you hand it back.
 let held = new Set();
 const heldWaiters = new Set();
+// One tool call at a time in the browser, as they share its pages: the one whose turn it is, and
+// the line after it. A call waiting for you (to hand its page back, or to answer) waits out of
+// the line, so it holds up no one else's.
+let current = null;
+let line = Promise.resolve();
+
+/// Waits for the call's turn, then makes it the one at work.
+async function takeTurn(call) {
+  let done;
+  const turn = new Promise((resolve) => (done = resolve));
+  const before = line;
+  line = before.then(() => turn);
+  await before;
+  call.done = done;
+  current = call;
+  busy = true;
+  acceptDialogs = call.args.accept_dialog === true;
+  // The engine names the session calling, so an ask goes to the right conversation.
+  caller = call.session;
+  currentTool = call.name;
+  workingIn = null;
+  notes.unshift(...call.notes.splice(0));
+  link?.notify("Kuvo.setStatus", { working: true, tool: call.name });
+}
+
+/// The call's turn ends, and the next in line goes.
+function endTurn(call) {
+  if (current === call) {
+    current = null;
+    busy = false;
+    acceptDialogs = false;
+    caller = null;
+    currentTool = null;
+    workingIn = null;
+    notes.length = 0;
+    link?.notify("Kuvo.setStatus", { working: false });
+  }
+  call.done?.();
+}
+
+/// Waits for `until` (you) out of the line, so other calls go on meanwhile, then gets back in
+/// line to go on where it left off; one the engine gave up on meanwhile goes no further.
+async function outOfLine(until) {
+  const call = current;
+  call.notes = notes.splice(0);
+  endTurn(call);
+  const result = await until(call);
+  if (call.cancelled) throw new Cancelled();
+  await takeTurn(call);
+  if (call.cancelled) throw new Cancelled();
+  return result;
+}
 
 // The link being opened, so calls at once share it.
 let opening = null;
@@ -1215,28 +1270,57 @@ async function point(p, index, action) {
   return rect;
 }
 
-/// Asks the user, in Kuvo Code, and waits for the answer (15 minutes at most).
+/// Asks the user, in Kuvo Code, and waits for the answer (15 minutes at most), out of the line.
 /// With no Mac connected, it waits a few minutes for one (Kuvo Code opening) rather than the
-/// whole while.
+/// whole while. Meanwhile its page stays this conversation's; the engine giving up on the call
+/// closes the ask.
 function askUser(params) {
+  if (current.cancelled) throw new Cancelled();
   const id = crypto.randomUUID();
-  link.notify("Kuvo.ask", { id, ...params, ...(caller ? { session: caller } : {}) });
+  const session = caller;
+  link.notify("Kuvo.ask", { id, ...params, ...(session ? { session } : {}) });
   const started = Date.now();
   let alone = viewerCount ? null : started;
-  return new Promise((resolve) => {
-    waiting.set(id, resolve);
+  return outOfLine((call) => new Promise((resolve) => {
+    const finish = (answer) => {
+      clearInterval(check);
+      waiting.delete(id);
+      call.stops.delete(stop);
+      resolve(answer);
+    };
+    const stop = () => {
+      link?.notify("Kuvo.cancelAsk", { id });
+      finish({ type: "cancelled" });
+    };
+    waiting.set(id, finish);
+    call.stops.add(stop);
     const check = setInterval(() => {
-      if (!waiting.has(id)) return clearInterval(check);
       if (viewerCount) alone = null;
       else alone ??= Date.now();
       const nobody = alone !== null && Date.now() - alone > 180_000;
-      if (!nobody && Date.now() - started < 900_000) return;
-      clearInterval(check);
-      waiting.delete(id);
-      link?.notify("Kuvo.cancelAsk", { id });
-      resolve({ type: nobody ? "nobody" : "timedOut" });
+      if (nobody || Date.now() - started >= 900_000) {
+        link?.notify("Kuvo.cancelAsk", { id });
+        return finish({ type: nobody ? "nobody" : "timedOut" });
+      }
+      if (session && params.targetId) link?.notify("Kuvo.claim", { targetId: params.targetId, session });
     }, 5_000);
-  });
+    if (call.cancelled) stop();
+  }));
+}
+
+/// Back in the page a call waited for you in, as the page in use: nil if it can go on there (it's
+/// open, not taken over, on `host`, and its `fields` are still the kinds they were), else what
+/// changed meanwhile.
+async function backTo(p, host, fields = []) {
+  if (!(await pages()).some((info) => info.targetId === p.target)) return "The page was closed while the user answered.";
+  if (held.has(p.target)) return "The user took the page over and still has it.";
+  Object.assign(p, await use(p.target));
+  if (host && hostOf(await address(p)) !== host) return `The page left ${host} while the user answered.`;
+  for (const [index, wanted] of fields) {
+    const problem = index === null ? null : await checkField(p, index, wanted);
+    if (problem) return "The page changed while the user answered: " + problem;
+  }
+  return null;
 }
 
 /// The site a page is on, as the ask names it and Passwords keeps it: its host, or for a page
@@ -1435,24 +1519,31 @@ async function replyTo(session, id) {
 
 /// While you have the page a conversation works in, its tool call waits, up to ten minutes,
 /// before it joins the others (so it holds up no one else's); nil when the page is free, else the
-/// page and whether you still have it.
-async function waitForControl(session, name) {
+/// page and whether you still have it. The engine giving up on the call ends the wait.
+async function waitForControl(call) {
   // A new tab is a page of its own.
-  if (!held.size || name === "browser_new_tab") return null;
+  if (!held.size || call.name === "browser_new_tab") return null;
   const c = await browser();
   // The conversation's own page, as page() picks it; one with none yet gets one of its own,
   // never one you took over.
   let target = active;
-  if (session) {
-    const own = await c.send("Kuvo.mine", { session });
+  if (call.session) {
+    const own = await c.send("Kuvo.mine", { session: call.session });
     target = own.targetId && own.picked <= own.at ? own.targetId : null;
   }
   if (!target || !held.has(target) || !(await pages()).some((info) => info.targetId === target)) return null;
   const started = Date.now();
-  while (held.has(target) && Date.now() - started < 600_000) {
+  while (held.has(target) && !call.cancelled && Date.now() - started < 600_000) {
     await new Promise((resolve) => {
-      heldWaiters.add(resolve);
-      setTimeout(resolve, 5_000);
+      const done = () => {
+        clearTimeout(timer);
+        heldWaiters.delete(done);
+        call.stops.delete(done);
+        resolve();
+      };
+      const timer = setTimeout(done, 5_000);
+      heldWaiters.add(done);
+      call.stops.add(done);
     });
   }
   return { target, stillHeld: held.has(target) };
@@ -1462,6 +1553,27 @@ async function waitForControl(session, name) {
 async function afterControl(wait) {
   if (wait.stillHeld) return text("The user took over the browser and still has it. Carry on without it for now, or try again later; if you work on your own (a bot), schedule a wake-up to come back to it.");
   return text("The user took over the browser while you worked, and has handed it back. The page may have changed: this is where it is now. Go on from here.\n\n" + (await snapshot(await use(wait.target))));
+}
+
+/// A browser tool call, in its turn in the line, once you've handed back its page if you have
+/// it. One the engine gives up on stops waiting, or never runs, and nothing answers it.
+async function perform(call, reply) {
+  for (;;) {
+    const wait = await waitForControl(call).catch(() => null);
+    if (call.cancelled) return;
+    await takeTurn(call);
+    try {
+      if (call.cancelled) return;
+      await browser();
+      return reply(wait ? await afterControl(wait) : await tool(call.name, call.args));
+    } catch (error) {
+      if (error instanceof Cancelled) return;
+      // Its page, taken over while it waited in line: it waits again, out of the line.
+      if (!(error instanceof HeldError)) return reply(text(error instanceof ToolError ? error.message : "The browser ran into a problem: " + error.message, true));
+    } finally {
+      endTurn(call);
+    }
+  }
 }
 
 async function tool(name, args) {
@@ -1681,6 +1793,10 @@ async function tool(name, args) {
       }
       const answer = await askUser({ kind: "signIn", host, targetId: p.target, username: username !== null, password: password !== null });
       if (answer.type !== "signIn") return text(note() + noAnswer(answer, "sign in"));
+      // The page may have changed while you answered: a sign-in only goes into the fields it
+      // was asked for, on the site you were told.
+      const changed = await backTo(p, host, [[password, "password"], [username, "text"]]);
+      if (changed) return text(note() + changed + " Nothing was filled: take a fresh browser_snapshot, and ask again if it's still needed.");
       const filled = [];
       for (const [index, value, what] of [[username, answer.username, "the username"], [password, answer.password, "the password"]]) {
         if (index === null || !value) continue;
@@ -1701,6 +1817,8 @@ async function tool(name, args) {
       if (problem) return text(note() + problem);
       const answer = await askUser({ kind: "code", host, targetId: p.target, prompt: string("prompt") ?? "" });
       if (answer.type !== "code" || !answer.code) return text(note() + noAnswer(answer, "give a code"));
+      const changed = await backTo(p, host, [[index, "code"]]);
+      if (changed) return text(note() + changed + " Nothing was filled: take a fresh browser_snapshot, and ask again if it's still needed.");
       const outcome = await run(p, scripts.find + scripts.fill, { index, value: answer.code });
       if (outcome !== "ok") return text(note() + outcome);
       await sleep(300);
@@ -1711,6 +1829,9 @@ async function tool(name, args) {
       if (!instruction) return text("Missing instruction.", true);
       const answer = await askUser({ kind: "action", host: hostOf(await address(p)) ?? "the page", targetId: p.target, instruction });
       if (answer.type !== "done") return text(note() + noAnswer(answer, "do it"));
+      // The page may have closed meanwhile; one you still have is only read.
+      if (!(await pages()).some((info) => info.targetId === p.target)) return text(note() + "The user says it's done, and the page was closed. Take a fresh browser_snapshot to see where things are.");
+      if (!held.has(p.target)) p = await use(p.target);
       await settle(p, false);
       return withNote(snapshot(p).then((page) => "The user says it's done.\n\n" + page));
     }
@@ -1746,8 +1867,8 @@ async function tool(name, args) {
 
 async function mcp() {
   const write = (message) => process.stdout.write(JSON.stringify(message) + "\n");
-  // One tool at a time: they share the page.
-  let queue = Promise.resolve();
+  // Tool calls under way, by request ID, for the engine to give up on.
+  const calls = new Map();
   lines(process.stdin, (line) => {
     let message;
     try {
@@ -1755,8 +1876,24 @@ async function mcp() {
     } catch {
       return write({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } });
     }
+    // The engine gave up on a call (it was stopped, or ran out of time): it stops waiting for
+    // you, one still in line never runs, and nothing answers it.
+    if (message.method === "notifications/cancelled") {
+      const call = calls.get(message.params?.requestId);
+      if (!call) return;
+      call.cancelled = true;
+      calls.delete(call.id);
+      for (const stop of call.stops) stop();
+      call.stops.clear();
+      return;
+    }
     if (message.id === undefined || message.id === null) return;
-    const reply = (result) => write({ jsonrpc: "2.0", id: message.id, result });
+    let call = null;
+    const reply = (result) => {
+      if (call?.cancelled) return;
+      if (call) calls.delete(call.id);
+      write({ jsonrpc: "2.0", id: message.id, result });
+    };
     const params = message.params || {};
     switch (message.method) {
       case "initialize": {
@@ -1773,6 +1910,8 @@ async function mcp() {
       case "tools/list":
         return reply({ tools: CONFIG.tools });
       case "tools/call": {
+        call = { id: message.id, name: params.name || "", args: params.arguments || {}, session: params._meta?.["ai.opencode/sessionID"] ?? null, cancelled: false, stops: new Set(), notes: [] };
+        calls.set(call.id, call);
         // Showing something in Kuvo Code's panel needs no browser, nor a turn in the line.
         // Nor does writing to another agent.
         if (params.name === "list_agents" || params.name === "send_message" || params.name === "start_session") {
@@ -1788,37 +1927,7 @@ async function mcp() {
           tool(params.name, params.arguments || {}).then(reply, (error) => reply(text(error instanceof ToolError ? error.message : String(error), true)));
           return;
         }
-        // You have its page: it waits for you first, and only then joins the line of calls, so it
-        // holds up no one else's; taken over while it waited in line, it leaves the line to wait.
-        const run = () => waitForControl(params._meta?.["ai.opencode/sessionID"] ?? null, params.name).catch(() => null).then((wait) => (queue = queue.then(async () => {
-          let again = false;
-          const name = params.name || "";
-          const status = (working) => {
-            currentTool = working ? name : null;
-            workingIn = null;
-            link?.notify("Kuvo.setStatus", working ? { working, tool: name } : { working });
-          };
-          try {
-            await browser();
-            busy = true;
-            acceptDialogs = params.arguments?.accept_dialog === true;
-            // The engine names the session calling, so an ask goes to the right conversation.
-            caller = params._meta?.["ai.opencode/sessionID"] ?? null;
-            status(true);
-            reply(wait ? await afterControl(wait) : await tool(name, params.arguments || {}));
-          } catch (error) {
-            if (error instanceof HeldError) again = true;
-            else reply(text(error instanceof ToolError ? error.message : "The browser ran into a problem: " + error.message, true));
-          } finally {
-            busy = false;
-            acceptDialogs = false;
-            caller = null;
-            notes.length = 0;
-            status(false);
-            if (again) setTimeout(run, 0);
-          }
-        })));
-        run();
+        perform(call, reply);
         return;
       }
       default:
