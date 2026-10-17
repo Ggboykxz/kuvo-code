@@ -95,7 +95,7 @@ struct EngineSettings: View {
                         }
                     }
                 )) {
-                    Text("Ask the first time").tag("")
+                    Text("None").tag("")
                     Text("Any connected service").tag("random")
                     ForEach(searchProviders) { Text($0.name).tag($0.id) }
                     Divider()
@@ -121,7 +121,7 @@ struct EngineSettings: View {
             } header: {
                 Text("Web Search")
             } footer: {
-                Text("Each search service needs its own API key. With none chosen, the agent asks the first time it searches.")
+                Text("Each search service needs its own API key. With none chosen, the agent can't search the web.")
                     .foregroundStyle(.secondary)
             }
 
