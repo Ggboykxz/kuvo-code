@@ -383,7 +383,7 @@ final class SessionModel {
                 // can't read this Mac's files: they go to it inline, or copied there.
                 let machine = RemoteFolder.machine(of: session.location.directory)
                 let prepared = await Task.detached { machine.map { Attachments.prepare(files, for: model, machine: $0) } ?? Attachments.prepare(files, for: model) }.value
-                let message = Attachments.text(text, adding: prepared.paths)
+                let message = Attachments.text(text, for: prepared)
                 await waitForTools()
                 try await api.prompt(session: self.id, id: id, text: message, files: prepared.files, delivery: delivery)
             } catch {
@@ -447,7 +447,7 @@ final class SessionModel {
             do {
                 let machine = RemoteFolder.machine(of: session.location.directory)
                 let prepared = await Task.detached { machine.map { Attachments.prepare(files, for: model, machine: $0) } ?? Attachments.prepare(files, for: model) }.value
-                try await api.runCommand(session: id, name: name, arguments: Attachments.text(arguments, adding: prepared.paths), files: prepared.files, delivery: delivery)
+                try await api.runCommand(session: id, name: name, arguments: Attachments.text(arguments, for: prepared), files: prepared.files, delivery: delivery)
             } catch {
                 runningCommands.removeAll { $0.id == running.id }
                 failure = error.localizedDescription

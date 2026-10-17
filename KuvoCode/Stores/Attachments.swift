@@ -17,6 +17,9 @@ nonisolated enum Attachments {
         var files: [OpenCodeAPI.PromptFile] = []
         /// Sent as paths, in the note.
         var paths: [String] = []
+        /// Where the files sent with their contents are, in the note too: the model gets what's in
+        /// them, and their names, but not where they are, so it went looking for them.
+        var included: [String] = []
     }
 
     /// Where pasted images and converted copies are kept.
@@ -74,11 +77,13 @@ nonisolated enum Attachments {
                 let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
                 if let file = engineImage(from: url, size: size) {
                     prepared.files.append(file)
+                    prepared.included.append(url.path)
                 } else {
                     prepared.paths.append(url.path)
                 }
             case .content:
                 prepared.files.append(.init(uri: url.absoluteString, name: url.lastPathComponent))
+                prepared.included.append(url.path)
             case .path:
                 prepared.paths.append(url.path)
             }
@@ -89,7 +94,8 @@ nonisolated enum Attachments {
     /// The same, for an engine on `machine`, which can't read this Mac's files: what the model
     /// takes goes inline, as data (a folder as its listing, as the engine lists one); anything
     /// else is copied to the machine, into Kuvo Code's folder there, for the agent to open with
-    /// its tools. A file that can't be copied goes as a note that it's on the user's Mac.
+    /// its tools. A file that can't be copied goes as a note that it's on the user's Mac. Where
+    /// the inline ones are on the Mac isn't said: the agent there couldn't open them.
     static func prepare(_ urls: [URL], for model: Model?, machine: String) -> Prepared {
         let here = prepare(urls, for: model)
         var prepared = Prepared()
@@ -140,22 +146,33 @@ nonisolated enum Attachments {
 
     private static let noteStart = "<attached-files>"
     private static let noteEnd = "</attached-files>"
+    private static let includedHeading = "The attached files are on disk here (what's in them is in this message already):"
+    private static let pathsHeading = "Open these attached files with your tools if you need them:"
 
-    /// The message text with the note for files sent as paths.
-    static func text(_ text: String, adding paths: [String]) -> String {
-        guard !paths.isEmpty else { return text }
-        let note = [noteStart, "Open these attached files with your tools if you need them:"] + paths + [noteEnd]
-        return (text.isEmpty ? "" : text + "\n\n") + note.joined(separator: "\n")
+    /// The message text with the note: where the files sent with it are, and the files sent as
+    /// paths.
+    static func text(_ text: String, for prepared: Prepared) -> String {
+        var note: [String] = []
+        if !prepared.included.isEmpty { note += [includedHeading] + prepared.included }
+        if !prepared.paths.isEmpty { note += [pathsHeading] + prepared.paths }
+        guard !note.isEmpty else { return text }
+        return (text.isEmpty ? "" : text + "\n\n") + ([noteStart] + note + [noteEnd]).joined(separator: "\n")
     }
 
-    /// A message's text without the note, and the paths it listed.
+    /// A message's text without the note, and the paths of the files it sent as paths (the
+    /// others are the message's own files).
     static func split(_ text: String) -> (text: String, paths: [String]) {
         guard let start = text.range(of: noteStart, options: .backwards),
               let end = text.range(of: noteEnd, range: start.upperBound..<text.endIndex) else { return (text, []) }
+        var listsPaths = true
         let paths = text[start.upperBound..<end.lowerBound]
             .split(separator: "\n")
             .map(String.init)
-            .filter { $0.hasPrefix("/") }
+            .filter { line in
+                if line == includedHeading { listsPaths = false }
+                if line == pathsHeading { listsPaths = true }
+                return listsPaths && line.hasPrefix("/")
+            }
         let rest = (text[..<start.lowerBound] + text[end.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
         return (rest, paths)
     }

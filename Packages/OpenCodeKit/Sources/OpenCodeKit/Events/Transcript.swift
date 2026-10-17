@@ -1,4 +1,5 @@
 import Foundation
+import UniformTypeIdentifiers
 
 /// Everything a session view shows, kept current by applying events.
 ///
@@ -171,7 +172,10 @@ public struct Transcript: Sendable, Equatable {
                 return
             }
             let item = pending.remove(at: index)
-            messages.append(.user(Message.User(id: item.id, time: Message.Time(created: now), text: item.text)))
+            // With the files it was sent with, as they were picked: the engine's copy has them,
+            // but the event that delivers it doesn't, and they'd vanish from the message.
+            let files = item.files.map { Message.User.Attachment(mime: Self.mime(of: $0), name: $0.lastPathComponent, source: .uri($0.absoluteString)) }
+            messages.append(.user(Message.User(id: item.id, time: Message.Time(created: now), text: item.text, files: files.isEmpty ? nil : files)))
         case "session.inbox.cancelled":
             let id = try event.payload(as: EventPayload.InboxChanged.self).inboxID
             pending.removeAll { $0.id == id }
@@ -398,6 +402,11 @@ public struct Transcript: Sendable, Equatable {
             message.time.completed = time
             messages[index] = .assistant(message)
         }
+    }
+
+    /// A picked file's type, as the engine names it.
+    private static func mime(of file: URL) -> String {
+        UTType(filenameExtension: file.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
     }
 
     private static func hasUnfinishedTool(_ message: Message) -> Bool {

@@ -6,6 +6,8 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- The agent knows where the files you attach are on your Mac, so it can work with them. It used to get only what's in them, go looking for them, and sometimes say they weren't on disk.
+- Files you attach stay on your message once it's sent. They used to vanish from it until you reopened the session.
 - With VoiceOver, the tabs in the title bar are buttons read by their own names, with Close Tab as an action; in Settings they all read "Back to Sessions" and couldn't be switched.
 - On a machine, the browser is now Chrome itself, run without a window, instead of Chrome's stripped-down headless version, which sites like Google and X took for a bot and turned sign-ins away from. It downloads again once, the first time you use the browser there.
 - Signing in to a site on a machine no longer stays at "Opening…" when the browser was only just set up there.

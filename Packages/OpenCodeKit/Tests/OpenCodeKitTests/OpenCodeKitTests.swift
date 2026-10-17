@@ -89,6 +89,26 @@ import Testing
     #expect(transcript.pending.isEmpty)
 }
 
+/// A message you send keeps the files you attached once the engine takes it: the event that
+/// delivers it names only the message, and they used to vanish until the session was reloaded.
+@Test func keepsAMessagesFilesWhenItsDelivered() throws {
+    func event(_ json: String) throws -> ServerEvent { try ServerEvent(json: Data(json.utf8)) }
+    var transcript = Transcript(sessionID: "ses_1")
+    transcript.load(messages: [], inbox: [], permissions: [], forms: [], isRunning: false)
+    let report = URL(filePath: "/Users/me/Desktop/research/Report.md")
+    transcript.addLocal(id: "msg_1", text: "Read my reports", delivery: .steer, files: [report])
+    transcript.apply(try event(#"""
+    {"id":"evt_1","created":1,"type":"session.inbox.enqueued","data":{"sessionID":"ses_1","inboxID":"msg_1","item":{"type":"user","payload":{"text":"Read my reports","files":[{"uri":"file:///Users/me/Desktop/research/Report.md","name":"Report.md"}]},"delivery":"steer"}}}
+    """#))
+    transcript.apply(try event(#"""
+    {"id":"evt_2","created":2,"type":"session.inbox.delivered","data":{"sessionID":"ses_1","inboxID":"msg_1"}}
+    """#))
+    guard case .user(let message) = transcript.messages.first else { Issue.record("no message"); return }
+    #expect(message.files?.map(\.name) == ["Report.md"])
+    #expect(message.files?.first?.fileURL == report)
+    #expect(message.files?.first?.mime == "text/markdown")
+}
+
 /// What an MCP server asks belongs to no session in the engine; it shows in the conversation whose
 /// tool of that server is running, and goes once that tool is done.
 @Test func takesAnMCPServersFormWhileItsToolRuns() throws {
