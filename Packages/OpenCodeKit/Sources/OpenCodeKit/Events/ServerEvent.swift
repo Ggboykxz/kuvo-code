@@ -67,11 +67,14 @@ public enum EventPayload {
 
     public struct BlockEnded: Decodable, Sendable {
         public var assistantMessageID: String
+        public var ordinal: Int?
         public var text: String
     }
 
     public struct BlockStarted: Decodable, Sendable {
         public var assistantMessageID: String
+        /// Which of the step's blocks of its kind it is, from 0 (text and thinking each count their own).
+        public var ordinal: Int?
     }
 
     public struct ToolInputStarted: Decodable, Sendable {

@@ -99,7 +99,8 @@ public struct Transcript: Sendable, Equatable {
         "session.compaction.started", "session.compaction.ended", "session.compaction.failed", "session.revert.committed",
     ]
 
-    /// Applies one event. Events for other sessions are ignored.
+    /// Applies one event. Events for other sessions are ignored. One that a read since has already
+    /// (it came while the read was made, or waited out a reconnect) changes nothing again.
     public mutating func apply(_ event: ServerEvent) {
         do {
             try reduce(event)
@@ -180,6 +181,8 @@ public struct Transcript: Sendable, Equatable {
         case "session.inbox.enqueued":
             let enqueued = try event.payload(as: EventPayload.InboxEnqueued.self)
             guard enqueued.item.type == "user" else { return }
+            // Delivered already: a read since has it as a message.
+            guard !hasMessage(enqueued.inboxID) else { return }
             var item = Pending(id: enqueued.inboxID, text: enqueued.item.payload["text"]?.string ?? "", delivery: enqueued.item.delivery, isLocal: false, files: InboxItem.files(in: enqueued.item.payload))
             if let index = pending.firstIndex(where: { $0.id == item.id }) {
                 // A local copy knows the files as they were picked, before any conversion.
@@ -198,7 +201,7 @@ public struct Transcript: Sendable, Equatable {
             // With the files it was sent with, as they were picked: the engine's copy has them,
             // but the event that delivers it doesn't, and they'd vanish from the message.
             let files = item.files.map { Message.User.Attachment(mime: Self.mime(of: $0), name: $0.lastPathComponent, source: .uri($0.absoluteString)) }
-            messages.append(.user(Message.User(id: item.id, time: Message.Time(created: now), text: item.text, files: files.isEmpty ? nil : files)))
+            append(.user(Message.User(id: item.id, time: Message.Time(created: now), text: item.text, files: files.isEmpty ? nil : files)))
         case "session.inbox.cancelled":
             let id = try event.payload(as: EventPayload.InboxChanged.self).inboxID
             pending.removeAll { $0.id == id }
@@ -215,6 +218,8 @@ public struct Transcript: Sendable, Equatable {
         case "session.execution.succeeded", "session.execution.failed", "session.execution.interrupted":
             let ended = try event.payload(as: EventPayload.ExecutionEnded.self)
             isRunning = false
+            // An end a read since has: the steps open there are a later run's.
+            guard !hasMessage(messageID) else { return }
             closeOpenSteps(at: now)
             if messages.contains(where: Self.hasUnfinishedTool) { isStale = true }
             if ended.reason == "shutdown" { return }
@@ -267,47 +272,46 @@ public struct Transcript: Sendable, Equatable {
             // At work: whatever said otherwise (a read that missed the run) was wrong.
             isRunning = true
             let block = try event.payload(as: EventPayload.BlockStarted.self)
-            editAssistant(block.assistantMessageID) { $0.content.append(.text(Message.Content.Text(text: ""))) }
+            startBlock(.text(Message.Content.Text(text: "")), block.ordinal, in: block.assistantMessageID, kind: \.isText)
         case "session.text.delta":
             let delta = try event.payload(as: EventPayload.Delta.self)
-            editAssistant(delta.assistantMessageID) { message in
-                if let index = message.content.lastIndex(where: \.isText), case .text(var block) = message.content[index] {
-                    message.content[index] = Self.emptyBlock
-                    block.text += delta.delta
-                    message.content[index] = .text(block)
-                }
+            editBlock(delta.ordinal, kind: \.isText, in: delta.assistantMessageID) { content in
+                guard case .text(var block) = content else { return }
+                content = Self.emptyBlock
+                block.text += delta.delta
+                content = .text(block)
             }
         case "session.text.ended":
             let ended = try event.payload(as: EventPayload.BlockEnded.self)
-            editAssistant(ended.assistantMessageID) { message in
-                if let index = message.content.lastIndex(where: \.isText) {
-                    message.content[index] = .text(Message.Content.Text(text: ended.text))
-                } else {
-                    message.content.append(.text(Message.Content.Text(text: ended.text)))
-                }
-            }
+            let text = Message.Content.text(Message.Content.Text(text: ended.text))
+            let found = editBlock(ended.ordinal, kind: \.isText, in: ended.assistantMessageID) { $0 = text }
+            // Its start was missed: the words show now, and the read puts them in their place.
+            if !found { editAssistant(ended.assistantMessageID) { $0.content.append(text) } }
         case "session.reasoning.started":
             // At work: whatever said otherwise (a read that missed the run) was wrong.
             isRunning = true
             let block = try event.payload(as: EventPayload.BlockStarted.self)
-            editAssistant(block.assistantMessageID) { $0.content.append(.reasoning(Message.Content.Text(text: "", time: Message.Time(created: now)))) }
+            startBlock(.reasoning(Message.Content.Text(text: "", time: Message.Time(created: now))), block.ordinal, in: block.assistantMessageID, kind: \.isReasoning)
         case "session.reasoning.delta":
             let delta = try event.payload(as: EventPayload.Delta.self)
-            editAssistant(delta.assistantMessageID) { message in
-                if let index = message.content.lastIndex(where: \.isOpenReasoning), case .reasoning(var block) = message.content[index] {
-                    message.content[index] = Self.emptyBlock
-                    block.text += delta.delta
-                    message.content[index] = .reasoning(block)
-                }
+            editBlock(delta.ordinal, kind: \.isReasoning, in: delta.assistantMessageID) { content in
+                // Done already (a read since has it whole): what this adds is in it.
+                guard case .reasoning(var block) = content, !block.isComplete else { return }
+                content = Self.emptyBlock
+                block.text += delta.delta
+                content = .reasoning(block)
             }
         case "session.reasoning.ended":
             let ended = try event.payload(as: EventPayload.BlockEnded.self)
-            editAssistant(ended.assistantMessageID) { message in
-                if let index = message.content.lastIndex(where: \.isOpenReasoning), case .reasoning(var block) = message.content[index] {
-                    block.text = ended.text
-                    block.time?.completed = now
-                    message.content[index] = .reasoning(block)
-                }
+            let found = editBlock(ended.ordinal, kind: \.isReasoning, in: ended.assistantMessageID) { content in
+                guard case .reasoning(var block) = content else { return }
+                block.text = ended.text
+                block.time = Message.Time(created: block.time?.created ?? now, completed: now)
+                content = .reasoning(block)
+            }
+            if !found {
+                let block = Message.Content.reasoning(Message.Content.Text(text: ended.text, time: Message.Time(created: now, completed: now)))
+                editAssistant(ended.assistantMessageID) { $0.content.append(block) }
             }
 
         // Tools
@@ -316,6 +320,8 @@ public struct Transcript: Sendable, Equatable {
             isRunning = true
             let started = try event.payload(as: EventPayload.ToolInputStarted.self)
             editAssistant(started.assistantMessageID) { message in
+                // There already: a read since has it.
+                guard !message.content.contains(where: { $0.isTool(started.id) }) else { return }
                 let call = Message.ToolCall(id: started.id, name: started.name, state: .streaming(input: ""), time: .init(created: now))
                 message.content.append(.tool(call))
             }
@@ -335,6 +341,8 @@ public struct Transcript: Sendable, Equatable {
         case "session.tool.called":
             let called = try event.payload(as: EventPayload.ToolCalled.self)
             editTool(called.assistantMessageID, called.id) { call in
+                // Done already: a read since has its result.
+                guard !call.state.isFinished else { return }
                 call.state = .running(input: called.input, metadata: nil)
                 call.time?.ran = now
             }
@@ -353,6 +361,7 @@ public struct Transcript: Sendable, Equatable {
         case "session.tool.failed":
             let failure = try event.payload(as: EventPayload.ToolFailed.self)
             editTool(failure.assistantMessageID, failure.id) { call in
+                guard !call.state.isFinished else { return }
                 call.state = .failed(input: call.state.input ?? .object([:]), error: failure.error, output: failure.content, metadata: failure.metadata)
                 call.time?.completed = now
             }
@@ -360,18 +369,18 @@ public struct Transcript: Sendable, Equatable {
         // Notices
         case "session.agent.selected":
             let selected = try event.payload(as: EventPayload.AgentSelected.self)
-            messages.append(.agentSwitched(Message.AgentSwitch(id: messageID, time: Message.Time(created: now), agent: selected.agent, previous: selected.previous)))
+            append(.agentSwitched(Message.AgentSwitch(id: messageID, time: Message.Time(created: now), agent: selected.agent, previous: selected.previous)))
         case "session.model.selected":
             let selected = try event.payload(as: EventPayload.ModelSelected.self)
-            messages.append(.modelSwitched(Message.ModelSwitch(id: messageID, time: Message.Time(created: now), model: selected.model, previous: selected.previous)))
+            append(.modelSwitched(Message.ModelSwitch(id: messageID, time: Message.Time(created: now), model: selected.model, previous: selected.previous)))
         case "session.synthetic":
             struct Synthetic: Decodable { var text: String; var description: String? }
             let synthetic = try event.payload(as: Synthetic.self)
-            messages.append(.synthetic(Message.Notice(id: messageID, time: Message.Time(created: now), text: synthetic.text, description: synthetic.description)))
+            append(.synthetic(Message.Notice(id: messageID, time: Message.Time(created: now), text: synthetic.text, description: synthetic.description)))
         case "session.shell.started":
             struct Started: Decodable { var shell: ShellInfo }
             let shell = try event.payload(as: Started.self).shell
-            messages.append(.shell(Message.Shell(id: messageID, time: Message.Time(created: now), shellID: shell.id, command: shell.command, status: shell.status, exit: shell.exit)))
+            append(.shell(Message.Shell(id: messageID, time: Message.Time(created: now), shellID: shell.id, command: shell.command, status: shell.status, exit: shell.exit)))
         case "session.shell.ended":
             struct Ended: Decodable { var shell: ShellInfo; var output: Message.Shell.Output? }
             let ended = try event.payload(as: Ended.self)
@@ -385,9 +394,10 @@ public struct Transcript: Sendable, Equatable {
                 messages[index] = .shell(message)
             }
         case "session.compaction.started":
-            struct Started: Decodable { var reason: String? }
+            struct Started: Decodable { var reason: String?; var inputID: String? }
             let started = try event.payload(as: Started.self)
-            messages.append(.compaction(Message.Compaction(id: messageID, time: Message.Time(created: now), status: "running", reason: started.reason, summary: nil)))
+            // Named as the engine names it: after the input that asked for it, if one did.
+            append(.compaction(Message.Compaction(id: started.inputID ?? messageID, time: Message.Time(created: now), status: "running", reason: started.reason, summary: nil)))
         case "session.compaction.ended", "session.compaction.failed":
             struct Ended: Decodable { var text: String? }
             let ended = try event.payload(as: Ended.self)
@@ -412,6 +422,56 @@ public struct Transcript: Sendable, Equatable {
         messages.lastIndex { $0.id == id }
     }
 
+    private func hasMessage(_ id: String) -> Bool {
+        messages.lastIndex { $0.id == id } != nil
+    }
+
+    /// Adds a message an event makes, unless a read since has it: the engine names it the same.
+    private mutating func append(_ message: Message) {
+        guard !hasMessage(message.id) else { return }
+        messages.append(message)
+    }
+
+    /// Adds a block to a step: the `ordinal`th of its kind, from 0. One there already (a read since
+    /// has it) stays as it is; one after a gap (the blocks before it were missed) makes the copy stale.
+    private mutating func startBlock(_ block: Message.Content, _ ordinal: Int?, in messageID: String, kind: (Message.Content) -> Bool) {
+        var missed = false
+        editAssistant(messageID) { message in
+            if let ordinal {
+                let count = message.content.count(where: kind)
+                guard ordinal >= count else { return }
+                missed = ordinal > count
+            }
+            message.content.append(block)
+        }
+        if missed { isStale = true }
+    }
+
+    /// Changes the step's block of a kind that the events call `ordinal` (without one, the last of
+    /// its kind). When it isn't here (its start was missed), the copy is stale; false then.
+    @discardableResult
+    private mutating func editBlock(_ ordinal: Int?, kind: (Message.Content) -> Bool, in messageID: String, _ edit: (inout Message.Content) -> Void) -> Bool {
+        var found = false
+        editAssistant(messageID) { message in
+            guard let index = Self.blockIndex(ordinal, kind: kind, in: message.content) else { return }
+            found = true
+            edit(&message.content[index])
+        }
+        if !found { isStale = true }
+        return found
+    }
+
+    /// Where the `ordinal`th block of a kind is, or without one, the last.
+    private static func blockIndex(_ ordinal: Int?, kind: (Message.Content) -> Bool, in content: [Message.Content]) -> Int? {
+        guard let ordinal else { return content.lastIndex(where: kind) }
+        var count = 0
+        for index in content.indices where kind(content[index]) {
+            if count == ordinal { return index }
+            count += 1
+        }
+        return nil
+    }
+
     private mutating func editAssistant(_ id: String, _ edit: (inout Message.Assistant) -> Void) {
         guard let index = assistantIndex(id), case .assistant(var message) = messages[index] else {
             isStale = true
@@ -427,14 +487,18 @@ public struct Transcript: Sendable, Equatable {
     private static let emptyMessage = Message.other(id: "", type: "", created: 0)
     private static let emptyBlock = Message.Content.other(type: "")
 
+    /// Changes a tool call. When it isn't here (its start was missed), the copy is stale.
     private mutating func editTool(_ messageID: String, _ toolID: String, _ edit: (inout Message.ToolCall) -> Void) {
+        var found = false
         editAssistant(messageID) { message in
-            guard let index = message.content.lastIndex(where: { if case .tool(let call) = $0 { call.id == toolID } else { false } }),
+            guard let index = message.content.lastIndex(where: { $0.isTool(toolID) }),
                   case .tool(var call) = message.content[index] else { return }
+            found = true
             message.content[index] = Self.emptyBlock
             edit(&call)
             message.content[index] = .tool(call)
         }
+        if !found { isStale = true }
     }
 
     /// A new step or the end of a run closes any step still marked open.
@@ -470,7 +534,11 @@ extension Message.Content {
         if case .text = self { true } else { false }
     }
 
-    var isOpenReasoning: Bool {
-        if case .reasoning(let block) = self { !block.isComplete } else { false }
+    var isReasoning: Bool {
+        if case .reasoning = self { true } else { false }
+    }
+
+    func isTool(_ id: String) -> Bool {
+        if case .tool(let call) = self { call.id == id } else { false }
     }
 }
