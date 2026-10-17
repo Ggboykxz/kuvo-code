@@ -66,9 +66,9 @@ real open-source projects cloned into the run's folder. Status: ✅ passes, ⚠�
 | ID | Case | Status |
 | --- | --- | --- |
 | E1 | "Find the latest release of X and what changed" (the agent browses and reads) | ⏳ |
-| E2 | "Fill in this form with …" on a real form page | ⏳ |
+| E2 | "Fill in this form with …" on a real form page | ✅ httpbin's pizza form: seven fields, submitted, the echo matches |
 | E3 | Upload a file to a website for you (a bot on this Mac) | ⏳ |
-| E4 | Download a file from a page and work with it | ⏳ |
+| E4 | Download a file from a page and work with it | ✅ downloaded through the browser and read; the e2e copy now downloads into its run's folder |
 | E5 | A site that needs your sign-in: the card, Take Over, Hand Back | ⚠️ Google and X refused the headless shell; the machine browser is full Chrome now (a94a15b), sign-in to recheck with a real account |
 | E6 | Browse yourself in the panel: tabs, back, the new tab page, a page's dialog | ⏳ |
 | E7 | Upload a file to a website from a bot on a machine | ✅ upload from a session on a machine (full Chrome, the-internet.herokuapp.com); the same tools as a bot's |
@@ -110,10 +110,10 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 
 | ID | Job | Status |
 | --- | --- | --- |
-| L8 | "Tell me if this website goes down" (status code) | ⏳ |
+| L8 | "Tell me if this website goes down" (status code) | ✅ a 5-minute watch on the status code, wakes only on a change |
 | L9 | "Tell me when this product's price drops below €X" | ⏳ |
-| L10 | "Tell me when a new issue is opened on this GitHub repository" | ⏳ |
-| L11 | "Watch this RSS feed and send me new posts" | ⏳ |
+| L10 | "Tell me when a new issue is opened on this GitHub repository" | ✅ a 30-minute watch on GitHub's API, with the newest issue as its baseline |
+| L11 | "Watch this RSS feed and send me new posts" | ✅ a 5-minute watch on the feed; posts already there kept as seen |
 | L12 | "Tell me when this file in my project changes" | ⏳ |
 | L13 | "Warn me 30 days before this domain's certificate expires" | ⏳ |
 | L14 | "Check my CI every hour and tell me when it fails" | ⏳ |
@@ -123,8 +123,8 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 | ID | Job | Status |
 | --- | --- | --- |
 | L15 | "Remind me in 2 minutes to stand up" (a one-off, on time) | ✅ fired 43 s after the minute (wake-ups are checked each minute); the bot then reminded |
-| L16 | "Every weekday at 9" / "every Monday" / "every 2 hours" (repeats, listed, in the right time zone) | ⏳ |
-| L17 | "Move my morning reminder to 8:30" and "stop the hourly one" (changing and canceling by asking) | ⏳ |
+| L16 | "Every weekday at 9" / "every Monday" / "every 2 hours" (repeats, listed, in the right time zone) | ✅ weekdays at 9 and every 2 hours, listed |
+| L17 | "Move my morning reminder to 8:30" and "stop the hourly one" (changing and canceling by asking) | ✅ moved to 8:30, the 2-hour watch canceled, the list shows it |
 | L18 | "What do you have scheduled?" (it lists its wake-ups and watches) | ✅ lists its wake-ups with kuvo-wake |
 | L19 | A wake-up due while Kuvo Code was closed: it runs when the app opens | ⏳ |
 
@@ -153,20 +153,20 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 
 | ID | Job | Status |
 | --- | --- | --- |
-| L31 | Fill in and send a multi-step form | ⏳ |
-| L32 | A page behind a cookie banner, a popup and a new window | ⏳ |
+| L31 | Fill in and send a multi-step form | ✅ see E2 |
+| L32 | A page behind a cookie banner, a popup and a new window | ✅ a new window, switched to, its heading read |
 | L33 | A site that needs the user's sign-in (the card), then work behind it | ⏳ |
 | L34 | A one-time code from the user | ⏳ |
-| L35 | A table spread over several pages, or loaded as you scroll | ⏳ |
+| L35 | A table spread over several pages, or loaded as you scroll | ❌→✅ right count, but 38 steps and 5 minutes scrolling each page; with browser_text pointed out, 5 steps and 54 s |
 | L36 | Take a screenshot of a page and show it to me | ⚠️ the screenshot shows only inside the folded browser step; "show it to me" should show it in the reply |
-| L37 | A page's own dialog (alert, confirm) | ⏳ |
+| L37 | A page's own dialog (alert, confirm) | ✅ a JS confirm, declined, the page's result read back |
 
 ### People and other bots
 
 | ID | Job | Status |
 | --- | --- | --- |
 | L38 | It needs a decision: it asks plainly and stops, and carries on when you answer | ⏳ |
-| L39 | "Ask Sage to research X and tell me what it finds" (bot to bot, and the answer back) | ⏳ |
+| L39 | "Ask Sage to research X and tell me what it finds" (bot to bot, and the answer back) | ✅ asked Reader and relayed its answer (Reader's answer itself was wrong: a model mistake) |
 | L40 | A bot reports back to the session that asked it for something | ⏳ |
 | L41 | It finishes while you're in another app: a notification you can answer | ⏳ |
 

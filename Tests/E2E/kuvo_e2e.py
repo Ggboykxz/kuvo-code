@@ -131,8 +131,12 @@ class App:
         defaults("analytics.noticeShown", True)
         if model:
             defaults("lastModel", model)
+        # What its browser downloads goes into the run's folder, not your Downloads.
+        downloads = self.run.path("downloads")
+        os.makedirs(downloads, exist_ok=True)
         values = {"KUVO_E2E": "1", "KUVO_DEMO_BACKGROUND": "1", "KUVO_DEMO_USAGE": "off", "KUVO_DEMO_OFFSCREEN": "1",
-                  "KUVO_DEMO_APPEARANCE": appearance, "KUVO_DEMO_WINDOW": window, "KUVO_DEMO_MACHINE_ROOT": MACHINE_ROOT}
+                  "KUVO_DEMO_APPEARANCE": appearance, "KUVO_DEMO_WINDOW": window, "KUVO_DEMO_MACHINE_ROOT": MACHINE_ROOT,
+                  "KUVO_DEMO_DOWNLOADS": downloads}
         values.update({k: str(v) for k, v in env.items()})
         # A session started with a prompt takes its model from here, not from the last one used.
         if model and "KUVO_DEMO_PROMPT" in values:
