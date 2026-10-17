@@ -276,10 +276,12 @@ final class SessionModel {
         earlierCursor = Self.cursor(before: page)
     }
 
-    /// Its machine connected again, through `api`.
+    /// Its engine (a machine's, or this Mac's started again) connected again, through `api`. What
+    /// failed on the old connection is past.
     func reconnect(_ api: OpenCodeAPI) {
         self.api = api
         waitsForEngine = false
+        failure = nil
     }
 
     func load() async {

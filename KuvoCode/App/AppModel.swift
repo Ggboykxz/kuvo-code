@@ -97,6 +97,10 @@ final class AppModel {
     private var server: ServerProcess?
     private var eventTask: Task<Void, Never>?
     private var isStopping = false
+    /// When the engine was last started again on its own, after stopping while it ran.
+    private var automaticRestarts: [Date] = []
+    /// The engine had been running when it failed (it stopped, rather than couldn't start).
+    private(set) var engineStoppedWhileRunning = false
     /// The engine running now, as launched: an earlier one's exit, coming in late as it stops,
     /// isn't taken for this one's.
     private var launch = UUID()
@@ -128,6 +132,7 @@ final class AppModel {
     func start() async {
         guard engine != .ready, engine != .starting else { return }
         isStopping = false
+        engineStoppedWhileRunning = false
         // How far it got, for analytics when it fails: the download, the launch, or the connection.
         var stage = "download"
         let began = Date.now
@@ -329,8 +334,18 @@ final class AppModel {
         guard !isStopping, launch == self.launch else { return }
         let output = server?.recentOutput.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         log.error("Engine exited with status \(status): \(output, privacy: .public)")
+        let wasRunning = engine == .ready
         stop()
-        engine = .failed("The engine stopped unexpectedly (exit code \(status)).\(output.isEmpty ? "" : "\n\n" + String(output.suffix(600)))")
+        // One that was running is started again, as it was, unless it has stopped like this a few
+        // times in the last minutes: then it's for you to see why.
+        automaticRestarts.removeAll { $0 < .now.addingTimeInterval(-300) }
+        if wasRunning, automaticRestarts.count < 3 {
+            automaticRestarts.append(.now)
+            Task { await restart() }
+            return
+        }
+        engineStoppedWhileRunning = wasRunning || !automaticRestarts.isEmpty
+        engine = .failed("It stopped unexpectedly (exit code \(status))\(engineStoppedWhileRunning ? ", and again after starting over" : "").\(output.isEmpty ? "" : "\n\n" + String(output.suffix(600)))")
     }
 }
 

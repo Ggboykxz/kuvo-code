@@ -8,7 +8,15 @@ private let log = Logger(subsystem: "run.kuvo.code", category: "workspace")
 @Observable
 final class Workspace {
     /// This Mac's engine.
-    var api: OpenCodeAPI?
+    var api: OpenCodeAPI? {
+        // The engine started again (it stopped, or you restarted it): this Mac's open
+        // conversations go on through the new one, as a machine's do when it reconnects, and
+        // read it again once it's live.
+        didSet {
+            guard let api, let oldValue, oldValue.client.endpoint != api.client.endpoint else { return }
+            for model in models.values where !RemoteFolder.isRemote(model.session.location.directory) { model.reconnect(api) }
+        }
+    }
     /// A machine's engine, by its name, for projects on it (folders written `ssh://machine/path`).
     @ObservationIgnored var machineAPI: (String) -> OpenCodeAPI? = { _ in nil }
     /// The machine each session's events came from, for sessions without a row (a subagent's).

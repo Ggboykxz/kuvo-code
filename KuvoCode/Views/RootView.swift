@@ -112,7 +112,7 @@ struct EngineSetupView: View {
     private var title: String {
         switch app.engine {
         case .downloading: "Setting up"
-        case .failed: "The engine couldn't start"
+        case .failed: app.engineStoppedWhileRunning ? "The engine stopped" : "The engine couldn't start"
         default: "Starting"
         }
     }
