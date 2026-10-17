@@ -277,7 +277,8 @@ extension AppModel {
             for key in ["$schema", "shell", "worktree"] { settings.removeValue(forKey: key) }
             if var mcp = settings["mcp"] as? [String: Any], var servers = mcp["servers"] as? [String: Any] {
                 for id in Integrations.macOnly { servers.removeValue(forKey: id) }
-                mcp["servers"] = servers
+                // Keys there come in its environment, not files on this Mac.
+                mcp["servers"] = Integrations.keyVariables(in: servers)
                 settings["mcp"] = mcp
             }
             if let json = try? JSONSerialization.data(withJSONObject: settings) {

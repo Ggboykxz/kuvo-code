@@ -150,7 +150,8 @@ final class AppModel {
             try? Launcher.install(in: Bots.command.deletingLastPathComponent(), engine: binary)
             shell["PATH"] = Bots.command.deletingLastPathComponent().path + ":" + (shell["PATH"] ?? "/usr/bin:/bin")
             shell["KUVO_BOTS"] = Bots.root.path
-            // Keys you brought for integrations, which their settings name with {env:…}, and a
+            // Keys you brought for integrations, in the files their settings name with {file:…}
+            // (not the engine's environment, where the agent's commands would see them), and a
             // folder for what their servers keep (a sign-in).
             #if DEBUG
             // KUVO_DEMO_INTEGRATION_KEY=<id>|<NAME>|<value>: saves that key as Add Key… does
@@ -161,7 +162,7 @@ final class AppModel {
             }
             #endif
             // Read off the main thread: the keychain can wait on you (a prompt to allow it).
-            shell.merge(await Task.detached { IntegrationKeys.environment }.value) { _, key in key }
+            await Task.detached { IntegrationKeys.writeFiles() }.value
             let integrations = AppInfo.supportDirectory.appending(path: "integrations")
             try? FileManager.default.createDirectory(at: integrations, withIntermediateDirectories: true)
             shell["KUVO_INTEGRATIONS"] = integrations.path

@@ -62,6 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Closing the engine's stdin shuts it down cleanly (it would also exit with us).
         model.stop()
         model.stopMachines()
+        IntegrationKeys.removeFiles()
         Analytics.shared.flushBeforeQuit()
     }
 

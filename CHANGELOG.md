@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Keys you give integrations are no longer in the engine's environment, where the agent's own commands (env, say) could print them and send them to the model. This Mac's engine reads them from files only you can read, which go when Kuvo Code quits.
 - Group chats hand out the work: after the discussion, the lead lists who does what, and each bot does its part in its own conversation, with all its tools, then reports back to the chat. It starts at once if you'd already said to go ahead, or when you click Start the Work; a part that needs another done first waits for it, and a part waiting on you shows Needs You. In the chat itself, bots only talk and look things up.
 - Messages agents send each other, and a group chat's work handed to a bot, fold to one line in the conversation; click to open or fold one. Long ones start folded.
 - Approve All runs what Settings › Permissions sets to Ask First without asking, as its name says; it used to ask anyway. Don't Allow in Settings now holds in every session: one set to Ask First used to ask about it instead.

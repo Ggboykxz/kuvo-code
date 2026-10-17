@@ -62,8 +62,8 @@ nonisolated enum Integrations {
         }
     }
 
-    /// Its settings in the engine's file. Keys go in as `{env:…}` (their values reach the engine
-    /// in memory, never the file). Its tools are plain tools, as the browser's are: behind the
+    /// Its settings in the engine's file. Keys go in as `{file:…}`, the files the engine reads them
+    /// from (their values never go in the settings file, see IntegrationKeys). Its tools are plain tools, as the browser's are: behind the
     /// engine's Code Mode, the agent sees only a short list of them under one tool, and went to
     /// the service's site in the browser instead.
     static func settings(for service: Service) -> JSONValue? {
@@ -73,22 +73,51 @@ nonisolated enum Integrations {
     }
 
     /// Brings added integrations up to date before the engine starts: tools made plain tools (for
-    /// those added before they were), and a package's server started as it's pinned now, so a
-    /// new version or option reaches integrations added with an older one.
+    /// those added before they were), a package's server started as it's pinned now (so a new
+    /// version or option reaches integrations added with an older one), and keys read from their
+    /// files where an earlier version named them in the environment.
     @MainActor static func upgrade(_ config: EngineConfig) {
         guard case .object(let servers) = config.value(at: MCPSettings.path) else { return }
-        for (id, server) in servers {
-            guard let service = service(id), server.object != nil else { continue }
-            if server["codemode"] == nil {
-                config.set(.bool(false), at: MCPSettings.path + [id, "codemode"])
-            }
+        for (id, original) in servers {
+            guard let service = service(id), case .object(var server) = original else { continue }
+            if server["codemode"] == nil { server["codemode"] = .bool(false) }
             // The same package through kuvo-npx, pinned or started differently: as it is now.
             if case .package(let command, _, _, _, _, _) = service.way, let package = command.first,
                case .array(let old)? = server["command"], old.first?.string == Launcher.name,
                let oldPackage = old.dropFirst().first?.string, Self.packageName(oldPackage) == Self.packageName(package) {
-                let current = ([Launcher.name] + command).map(JSONValue.string)
-                if old != current { config.set(.array(current), at: MCPSettings.path + [id, "command"]) }
+                server["command"] = .array(([Launcher.name] + command).map(JSONValue.string))
             }
+            let updated = Self.keyFiles(in: .object(server))
+            if updated != original { config.set(updated, at: MCPSettings.path + [id]) }
+        }
+    }
+
+    /// Settings with each key named by the file this Mac's engine reads it from: one an earlier
+    /// version named in the environment (`{env:KUVO_KEY_…}`), or in another temporary folder.
+    nonisolated static func keyFiles(in value: JSONValue) -> JSONValue {
+        switch value {
+        case .string(let text):
+            guard text.contains("KUVO_KEY_"), let regex = try? NSRegularExpression(pattern: #"\{(?:env|file):[^{}]*?(KUVO_KEY_[A-Z0-9_]+)\}"#) else { return value }
+            let original = text as NSString
+            let result = NSMutableString(string: text)
+            for match in regex.matches(in: text, range: NSRange(location: 0, length: original.length)).reversed() {
+                result.replaceCharacters(in: match.range, with: IntegrationKeys.reference(original.substring(with: match.range(at: 1))))
+            }
+            return .string(result as String)
+        case .object(let object): return .object(object.mapValues(keyFiles))
+        case .array(let array): return .array(array.map(keyFiles))
+        default: return value
+        }
+    }
+
+    /// Settings for a machine, whose engine gets the keys in its environment: each named there.
+    nonisolated static func keyVariables(in value: Any) -> Any {
+        switch value {
+        case let text as String:
+            return text.replacingOccurrences(of: "{file:" + IntegrationKeys.folder.path + "/", with: "{env:")
+        case let object as [String: Any]: return object.mapValues(keyVariables)
+        case let array as [Any]: return array.map(keyVariables)
+        default: return value
         }
     }
 
@@ -99,14 +128,14 @@ nonisolated enum Integrations {
     }
 
     private static func server(for service: Service) -> JSONValue? {
-        let env = { (name: String) in JSONValue.string("{env:\(IntegrationKeys.variable(service.id, name))}") }
+        let env = { (name: String) in JSONValue.string(IntegrationKeys.reference(IntegrationKeys.variable(service.id, name))) }
         switch service.way {
         case .official(let url):
             return .object(["type": .string("remote"), "url": .string(url)])
         case .officialToken(let url, let key, _):
             return .object([
                 "type": .string("remote"), "url": .string(url), "oauth": .bool(false),
-                "headers": .object(["Authorization": .string("Bearer {env:\(IntegrationKeys.variable(service.id, key.name))}")]),
+                "headers": .object(["Authorization": .string("Bearer " + IntegrationKeys.reference(IntegrationKeys.variable(service.id, key.name)))]),
             ])
         case .officialApp(let url, _):
             return .object([
