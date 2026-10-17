@@ -851,11 +851,11 @@ struct MainView: View {
         .onChange(of: showsSidebar) { _, shows in if shows { keep(.sessions) } }
         .onChange(of: showsPanel) { _, shows in if shows { keep(.changes) } }
         // A session an agent started: beside the conversation that started it, if that's the one
-        // in view; otherwise in a tab of its own, for you to find.
+        // in view; otherwise (or asked to) in a tab of its own, for you to find.
         .onChange(of: workspace.besideRequest) { _, request in
             guard let request else { return }
             workspace.besideRequest = nil
-            if request.startedBy == sessionID {
+            if request.beside, request.startedBy == sessionID {
                 openBeside(request.session)
             } else if !tabs.contains(request.session), !splitPairs.values.contains(request.session) {
                 tabs.append(request.session)

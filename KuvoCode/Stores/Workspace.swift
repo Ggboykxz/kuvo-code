@@ -17,12 +17,14 @@ final class Workspace {
             for model in models.values where !RemoteFolder.isRemote(model.session.location.directory) { model.reconnect(api) }
         }
     }
-    /// A session an agent started (its start_session tool) to show beside the conversation that
-    /// started it, as its metadata says (`kuvo.startedBy`, `kuvo.beside`): asked once, as it's first
-    /// seen, wherever it runs.
+    /// A session an agent started (its start_session tool), to show beside the conversation that
+    /// started it or in a tab of its own, as its metadata says (`kuvo.startedBy`, `kuvo.beside`):
+    /// asked once, as it's first seen, wherever it runs.
     struct BesideRequest: Equatable {
         var session: String
         var startedBy: String
+        /// Beside the conversation that started it (the default); false: in a tab.
+        var beside = true
     }
     var besideRequest: BesideRequest?
     @ObservationIgnored private var askedBeside: Set<String> = []
@@ -1185,14 +1187,13 @@ final class Workspace {
         upsert(session)
     }
 
-    /// Asks for an agent's new session to show beside the one that started it, the first time
-    /// it's seen, while it's new.
+    /// Asks for an agent's new session to show beside the one that started it, or in a tab, the
+    /// first time it's seen, while it's new.
     private func noteBeside(_ session: Session) {
-        guard let kuvo = session.metadata?["kuvo"], kuvo["beside"]?.bool == true,
-              let starter = kuvo["startedBy"]?.string, !starter.isEmpty,
+        guard let kuvo = session.metadata?["kuvo"], let starter = kuvo["startedBy"]?.string,
               Date.now.timeIntervalSince1970 * 1000 - session.time.created < 120_000,
               askedBeside.insert(session.id).inserted else { return }
-        besideRequest = BesideRequest(session: session.id, startedBy: starter)
+        besideRequest = BesideRequest(session: session.id, startedBy: starter, beside: kuvo["beside"]?.bool != false)
     }
 
     private func upsert(_ session: Session) {
