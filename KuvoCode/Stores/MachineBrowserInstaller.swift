@@ -161,6 +161,7 @@ nonisolated enum MachineBrowserInstaller {
     /// the fraction downloaded.
     static func bundle(for architecture: String, runtime: BrowserRuntime, cache: URL, progress: @escaping @Sendable (Double) -> Void) async throws -> URL {
         let fm = FileManager.default
+        clearLeftovers(in: cache)
         let file = cache.appending(path: "\(runtime.id)-\(architecture).tar.gz")
         let checksum = cache.appending(path: "\(runtime.id)-\(architecture).sha256")
         if fm.fileExists(atPath: file.path), let expected = try? String(contentsOf: checksum, encoding: .utf8),
@@ -171,13 +172,18 @@ nonisolated enum MachineBrowserInstaller {
             throw MachineBrowserError.unsupported(architecture)
         }
         try fm.createDirectory(at: cache, withIntermediateDirectories: true)
-        let staging = cache.appending(path: ".staging-\(UUID().uuidString)")
+        // Named for this app's process, so a later one tells a folder left by one that quit.
+        let staging = cache.appending(path: ".staging-\(getpid())-\(UUID().uuidString)")
+        building.insert(staging.lastPathComponent)
+        defer {
+            try? fm.removeItem(at: staging)
+            building.remove(staging.lastPathComponent)
+        }
         let root = staging.appending(path: "root")
         let bundle = staging.appending(path: "bundle")
         for folder in [root, bundle.appending(path: "lib"), bundle.appending(path: "fonts"), bundle.appending(path: "licenses")] {
             try fm.createDirectory(at: folder, withIntermediateDirectories: true)
         }
-        defer { try? fm.removeItem(at: staging) }
 
         // Downloads, by size, for the progress.
         let total = Double(chromium.size + packages.reduce(0) { $0 + $1.size })
@@ -240,6 +246,24 @@ nonisolated enum MachineBrowserInstaller {
         return file
     }
 
+    /// The staging folders of bundles this app is putting together now (two machines' can be at once).
+    private static let building = Names()
+
+    /// Removes the staging folders of bundles that were being put together when the app quit:
+    /// those of an app no longer running, and this one's that no build here uses now.
+    private static func clearLeftovers(in cache: URL) {
+        let me = getpid()
+        for entry in (try? FileManager.default.contentsOfDirectory(atPath: cache.path)) ?? [] where entry.hasPrefix(".staging") {
+            // `.staging-<process>-<UUID>`; one named before they said whose it was is left over.
+            let parts = entry.split(separator: "-")
+            if parts.count > 2, let pid = pid_t(parts[1]) {
+                let inUse = pid == me ? building.contains(entry) : kill(pid, 0) == 0 || errno == EPERM
+                if inUse { continue }
+            }
+            try? FileManager.default.removeItem(at: cache.appending(path: entry))
+        }
+    }
+
     /// Downloads a file, from the first address that has it, and checks it against its checksum.
     private static func download(_ name: String, from urls: [URL], sha256 expected: String, into folder: URL, report: @escaping @Sendable (String, Int) -> Void) async throws -> URL {
         var lastError: Error?
@@ -300,6 +324,15 @@ nonisolated enum MachineBrowserInstaller {
                 return bytes.values.reduce(0, +)
             }
         }
+    }
+
+    /// Names, from tasks running at once.
+    private final class Names: @unchecked Sendable {
+        private let lock = NSLock()
+        private var names: Set<String> = []
+        func insert(_ name: String) { lock.withLock { _ = names.insert(name) } }
+        func remove(_ name: String) { lock.withLock { _ = names.remove(name) } }
+        func contains(_ name: String) -> Bool { lock.withLock { names.contains(name) } }
     }
 
     /// Reports a download's bytes as they arrive.
