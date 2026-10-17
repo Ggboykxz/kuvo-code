@@ -38,13 +38,14 @@ final class UsageAccounts {
     }
 
     /// The usage panel's provider for an account connected here, if it has one: a plan with limits
-    /// or spend to follow. ChatGPT's sign-in is Codex; an OpenAI API key has no plan. Anthropic only
-    /// takes API keys here, and an xAI or Ollama key isn't the plan those panels read, so they don't
-    /// count.
+    /// or spend to follow. ChatGPT's sign-in is Codex; an OpenAI API key has no plan. SuperGrok's
+    /// sign-in is Grok's weekly limit; an xAI API key has none. Anthropic only takes API keys here,
+    /// and an Ollama key isn't the plan its panel reads, so they don't count.
     static func usageProvider(for integrationID: String, signedIn: Bool) -> String? {
         switch integrationID {
         case "github-copilot": "copilot"
         case "openai": signedIn ? "codex" : nil
+        case "xai": signedIn ? "grok" : nil
         case "opencode", "opencode-go": "opencode"
         case "openrouter": "openrouter"
         case "zai", "zai-coding-plan": "zai"

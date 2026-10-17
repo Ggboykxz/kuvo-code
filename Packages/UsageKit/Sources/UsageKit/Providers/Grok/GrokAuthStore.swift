@@ -31,6 +31,9 @@ enum GrokAuthError: Error, LocalizedError, Equatable {
     case notLoggedIn
     case invalidAuth
     case expired
+    /// The host's SuperGrok sign-in has lapsed; its engine renews it when it next uses Grok.
+    /// (Fork addition.)
+    case hostExpired
 
     var errorDescription: String? {
         switch self {
@@ -40,6 +43,8 @@ enum GrokAuthError: Error, LocalizedError, Equatable {
             return "Grok auth invalid. Run `grok login` again."
         case .expired:
             return "Grok auth expired. Run `grok login` again."
+        case .hostExpired:
+            return "Updates the next time you use a Grok model in Kuvo Code."
         }
     }
 }
@@ -60,23 +65,33 @@ struct GrokAuthStore: Sendable {
         self.now = now
     }
 
+    /// The entry for the host's own SuperGrok sign-in (fork addition). Its engine keeps and renews
+    /// the token, and xAI rotates refresh tokens, so it's never refreshed or saved here: that would
+    /// sign the engine out.
+    static let hostEntryKey = "kuvo-host"
+
     func loadAuthCandidates() throws -> [GrokAuthState] {
-        guard files.exists(Self.authPath),
-              let text = try? files.readText(Self.authPath),
-              let auth = Self.parseAuth(text)
-        else {
-            throw GrokAuthError.notLoggedIn
+        // The Grok CLI's own login first (it's refreshed here); then the host's sign-in.
+        var candidates: [GrokAuthState] = []
+        var fileError: GrokAuthError = .notLoggedIn
+        if files.exists(Self.authPath) {
+            if let text = try? files.readText(Self.authPath), let auth = Self.parseAuth(text) {
+                candidates = auth.compactMap { entryKey, entry -> GrokAuthState? in
+                    guard let token = trimmed(entry.key) else { return nil }
+                    return GrokAuthState(auth: auth, entryKey: entryKey, entry: entry, token: token)
+                }
+            }
+            if candidates.isEmpty { fileError = .invalidAuth }
         }
-
-        let candidates = auth.compactMap { entryKey, entry -> GrokAuthState? in
-            guard let token = trimmed(entry.key) else { return nil }
-            return GrokAuthState(auth: auth, entryKey: entryKey, entry: entry, token: token)
-        }
-
-        guard !candidates.isEmpty else {
-            throw GrokAuthError.invalidAuth
-        }
+        if let host = hostCandidate() { candidates.append(host) }
+        guard !candidates.isEmpty else { throw fileError }
         return candidates
+    }
+
+    /// The host's SuperGrok sign-in, when it has one.
+    func hostCandidate() -> GrokAuthState? {
+        guard let token = HostAccounts.secret(for: ["xai"]) else { return nil }
+        return GrokAuthState(auth: [:], entryKey: Self.hostEntryKey, entry: GrokAuthEntry(key: token), token: token)
     }
 
     func save(_ state: GrokAuthState) throws {

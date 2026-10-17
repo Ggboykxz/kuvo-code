@@ -47,7 +47,8 @@ final class GrokProvider: ProviderRuntime {
     }
 
     func hasLocalCredentials() async -> Bool {
-        // Same source as `refresh()`: ~/.grok/auth.json with at least one keyed entry.
+        // Same source as `refresh()`: ~/.grok/auth.json with at least one keyed entry, or the host's
+        // sign-in.
         await loadOffMainActor { [authStore] in
             ((try? authStore.loadAuthCandidates()) ?? []).isEmpty == false
         }
@@ -64,8 +65,17 @@ final class GrokProvider: ProviderRuntime {
     private func loadAndProbe() async throws -> ProviderSnapshot {
         let candidates = try authStore.loadAuthCandidates()
         var sawExpiredCandidate = false
+        var sawExpiredHost = false
 
         for var state in candidates {
+            // The host's: used as it is while it lasts, never refreshed here.
+            if state.entryKey == GrokAuthStore.hostEntryKey {
+                if authStore.isExpired(entry: state.entry, token: state.token) {
+                    sawExpiredHost = true
+                    continue
+                }
+                return try await probe(state: &state, accessToken: state.token)
+            }
             if authStore.needsRefresh(entry: state.entry, token: state.token) {
                 if let refreshed = await refreshAccessToken(state: &state) {
                     return try await probe(state: &state, accessToken: refreshed)
@@ -78,6 +88,9 @@ final class GrokProvider: ProviderRuntime {
             return try await probe(state: &state, accessToken: state.token)
         }
 
+        if sawExpiredHost {
+            throw GrokAuthError.hostExpired
+        }
         if sawExpiredCandidate {
             throw GrokAuthError.expired
         }
@@ -145,13 +158,14 @@ final class GrokProvider: ProviderRuntime {
             token: accessToken,
             attempt: { try await self.usageClient.fetchCreditsConfig(accessToken: $0) },
             refreshAccessToken: {
+                guard working.entryKey != GrokAuthStore.hostEntryKey else { throw GrokAuthError.hostExpired }
                 guard let refreshed = await self.refreshAccessToken(state: &working) else {
                     throw GrokAuthError.expired
                 }
                 return refreshed
             },
             connectionFailed: GrokUsageError.connectionFailed,
-            authExpired: GrokAuthError.expired
+            authExpired: working.entryKey == GrokAuthStore.hostEntryKey ? GrokAuthError.hostExpired : GrokAuthError.expired
         )
     }
 

@@ -120,7 +120,7 @@ extension GrokAuthError: CategorizedError {
         switch self {
         case .notLoggedIn: .notLoggedIn
         case .invalidAuth: .authInvalid
-        case .expired: .authExpired
+        case .expired, .hostExpired: .authExpired
         }
     }
 }

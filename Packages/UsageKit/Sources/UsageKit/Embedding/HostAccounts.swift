@@ -29,7 +29,7 @@ public enum HostAccounts {
             defer { current = newCredentials }
             return current != newCredentials
         }
-        if changed { UsageMenuBar.shared.refresh(providerIDs: ["copilot", "openrouter", "zai", "opencode"]) }
+        if changed { UsageMenuBar.shared.refresh(providerIDs: ["copilot", "openrouter", "zai", "opencode", "grok"]) }
     }
 
     /// The panel's providers (`codex`, `copilot`, …) whose accounts are connected in the host: the

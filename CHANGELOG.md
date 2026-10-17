@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- The menu bar's usage panel shows Grok's weekly limit for a SuperGrok account you signed in to in Kuvo Code; it used to need the Grok CLI signed in too.
 - While the agent thinks between steps, its thinking shows under the steps as it happens. It could be folded in with the finished steps, as if the agent had stopped.
 ## 0.5.4
 
