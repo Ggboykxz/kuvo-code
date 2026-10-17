@@ -114,6 +114,8 @@ struct MainView: View {
     private func showBotTabs() {
         let inView = groupID.flatMap { groups.group($0)?.members.compactMap { bots.bot($0) } } ?? [bots.bot(forSession: sessionID)].compactMap { $0 }
         utilities.botsInView = Set(inView.filter { $0.machine == nil }.map(\.id))
+        // Its bots' seats are in view too: what they show you opens.
+        utilities.groupInView = groupID.map(BotGroups.tabKey)
     }
 
     private var draftDirectory: String? {
@@ -396,6 +398,8 @@ struct MainView: View {
 
     var body: some View {
         followingSessions
+        // A tab you pick is the agent's of the half you work in.
+        .onChange(of: focus == .split && splitModel != nil, initial: true) { _, beside in utilities.worksBeside = beside }
         .onChange(of: groupID) { showBotTabs() }
         .onChange(of: groupID.flatMap { groups.group($0)?.members } ?? []) { showBotTabs() }
         .task(id: activeDirectory) {

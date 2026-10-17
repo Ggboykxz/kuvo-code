@@ -57,7 +57,12 @@ extension AppModel {
             if let machine { machines.engine(machine)?.browser.expectAsk() }
         }
         utilities.machineBrowser = { [weak self] machine in self?.machines.engine(machine)?.browser }
-        utilities.isListedSession = { [weak self] session in self?.workspace.session(session) != nil }
+        // A subagent shows in the session that started it, a group chat's seat in its chat.
+        utilities.shownIn = { [weak self] session in
+            guard let self else { return session }
+            if let group = groups.group(seat: session) { return BotGroups.tabKey(group.id) }
+            return workspace.root(of: session)
+        }
         // A machine whose connection dropped while the Mac slept, and that gave up trying, gets
         // another go once it's awake and the network is back. (NSWorkspace says so on its own
         // notification center; watched once, though this runs with each start of the engine.)

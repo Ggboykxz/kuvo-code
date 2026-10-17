@@ -83,10 +83,24 @@ final class Utilities {
     var besideInView: String? {
         didSet { if besideInView != oldValue { showKept() } }
     }
+    /// The group chat in view, by its tab's key (`group:<id>`): its bots' seats are in view. The
+    /// window sets it.
+    var groupInView: String? {
+        didSet { if groupInView != oldValue { showKept() } }
+    }
+    /// You're working in the session beside the tab's (you clicked or typed there): a tab you pick
+    /// is its agent's. The window sets it.
+    var worksBeside = false
 
-    /// On screen: the tab's session, or the one beside it.
+    /// Where a session shows: a subagent's in the session that started it, a group chat seat's in
+    /// its chat (by its tab's key), any other in itself. The app sets it.
+    @ObservationIgnored var shownIn: (String) -> String = { $0 }
+
+    /// On screen: the tab's session, the one beside it, or the group chat in view; a subagent's
+    /// or a seat's when where it shows is.
     func isInView(_ session: String) -> Bool {
-        session == sessionInView || session == besideInView
+        let shown = shownIn(session)
+        return shown == sessionInView || shown == besideInView || shown == groupInView
     }
     /// The bots on this Mac whose conversation is in view (one, or a group chat's): their tabs
     /// show beside yours. The window sets it.
@@ -420,11 +434,13 @@ final class Utilities {
     /// down to it; a file in a tab of its own (not over the one you have open), with the tree open
     /// to it too. With its conversation out of view, it waits for you to come back to it.
     func showInPanel(_ url: URL, isFolder: Bool, for session: String) {
+        // Kept for where it shows: a subagent's in the session that started it.
+        let shown = shownIn(session)
         guard isInView(session) else {
-            kept[session] = (url, isFolder)
+            kept[shown] = (url, isFolder)
             return
         }
-        kept[session] = nil
+        kept[shown] = nil
         show(url, isFolder: isFolder)
     }
 
@@ -444,10 +460,10 @@ final class Utilities {
 
     /// What was kept for the conversations now in view, unless it's gone since.
     private func showKept() {
-        for session in [sessionInView, besideInView].compactMap(\.self) {
-            guard let shown = kept.removeValue(forKey: session) else { continue }
+        for place in [sessionInView, besideInView, groupInView].compactMap(\.self) {
+            guard let shown = kept.removeValue(forKey: place) else { continue }
             if shown.url.isFileURL, !FileManager.default.fileExists(atPath: shown.url.path) { continue }
-            showInPanel(shown.url, isFolder: shown.isFolder, for: session)
+            show(shown.url, isFolder: shown.isFolder)
         }
     }
 
@@ -482,15 +498,14 @@ final class Utilities {
     @ObservationIgnored private var picks: [String: Date] = [:]
     /// How long a tab stays with the conversation whose agent used it last.
     static let agentHold: TimeInterval = 90
-    /// Whether a session is one in the sidebar (not a subagent's). The window sets it.
-    @ObservationIgnored var isListedSession: (String) -> Bool = { _ in false }
 
     /// The tab a conversation's agent works in: the one it worked in last, unless you picked
-    /// another for it since; else yours in view (or your latest), unless another conversation's
-    /// agent is using it or you took it over. Nil when it needs a tab of its own.
+    /// another for it since; else, for a conversation in view, yours in view (or your latest),
+    /// unless another conversation's agent is using it or you took it over. Nil when it needs a
+    /// tab of its own: one you aren't looking at never starts in yours.
     func agentBrowser(for session: String) -> BrowserSession? {
         if let own = ownTab(of: session) { return browsers[own] }
-        guard let browser = activeBrowser, let id = id(of: browser), !browser.isHeld, isFree(id, for: session) else { return nil }
+        guard isInView(session), let browser = activeBrowser, let id = id(of: browser), !browser.isHeld, isFree(id, for: session) else { return nil }
         return browser
     }
 
@@ -503,10 +518,11 @@ final class Utilities {
     }
 
     /// Whether a conversation's agent may work in a tab: one no other conversation's agent has
-    /// used in the last moments, or whose conversation is in view.
+    /// used in the last moments, nor waits in for you (a sign-in, a code), and whose conversation
+    /// isn't in view.
     func isFree(_ id: UUID, for session: String) -> Bool {
         guard let claim = agentClaims[id], claim.session != session else { return true }
-        return Date.now.timeIntervalSince(claim.at) > Self.agentHold && !isInView(claim.session)
+        return Date.now.timeIntervalSince(claim.at) > Self.agentHold && !isInView(claim.session) && browsers[id]?.waitsForYou != true
     }
 
     /// A conversation's agent works in `browser` now.
@@ -523,16 +539,15 @@ final class Utilities {
     }
 
     /// Whether a conversation's browsing brings its tab forward: one in view's (beside the tab's
-    /// too), or a subagent's (which shows in the conversation that started it), not another's
-    /// behind it.
+    /// too, and its subagents'), not another's behind it.
     func bringsForward(_ session: String) -> Bool {
-        isInView(session) || !isListedSession(session)
+        isInView(session)
     }
 
-    /// You picked one of your tabs with a conversation in view: its agent goes on in it, unless
-    /// another conversation's agent is using it.
+    /// You picked one of your tabs with a conversation in view: the agent of the one you work in
+    /// (either half of a split) goes on in it, unless another conversation's agent is using it.
     private func picked(_ id: UUID) {
-        guard let session = sessionInView, let browser = browsers[id], tabs.first(where: { $0.id == id })?.owner == nil, isFree(id, for: session) else { return }
+        guard let session = worksBeside ? besideInView ?? sessionInView : sessionInView, let browser = browsers[id], tabs.first(where: { $0.id == id })?.owner == nil, isFree(id, for: session) else { return }
         picks[session] = .now
         agentWorks(session, in: browser)
     }

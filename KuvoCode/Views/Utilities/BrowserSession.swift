@@ -53,6 +53,9 @@ final class BrowserSession: NSObject {
     }
 
     /// The agent's step waits for you to answer it in Kuvo Code, or goes on once you have.
+    /// An agent's step waits on you here (a sign-in, a code, a step to do on the page).
+    var waitsForYou: Bool { waitingSteps > 0 }
+
     func agentWaitsForYou(_ waiting: Bool) {
         waitingSteps = max(0, waitingSteps + (waiting ? 1 : -1))
         if !waiting { answerWaitingDialog() }

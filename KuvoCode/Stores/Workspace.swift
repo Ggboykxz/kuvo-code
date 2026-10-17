@@ -1194,8 +1194,25 @@ final class Workspace {
     private func reload(_ id: String) async {
         guard let session = try? await api(forSession: id)?.session(id) else { return }
         // Only root sessions get a row; subagent sessions show inside their parent.
-        guard session.parentID == nil else { return }
+        if let parent = session.parentID {
+            parents[session.id] = parent
+            return
+        }
         upsert(session)
+    }
+
+    /// Each subagent's session, by the session that started it.
+    @ObservationIgnored private var parents: [String: String] = [:]
+
+    /// The session a subagent's shows in (through subagents of subagents): the root one that
+    /// started it; any other, itself.
+    func root(of id: String) -> String {
+        var id = id
+        for _ in 0..<5 {
+            guard let parent = parents[id] else { break }
+            id = parent
+        }
+        return id
     }
 
     /// A session made elsewhere (a bot's), so it can be opened right away.
