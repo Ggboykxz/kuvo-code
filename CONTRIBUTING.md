@@ -69,7 +69,12 @@ Recorded engine responses in `Tests/OpenCodeKitTests/Fixtures` drive most of
 OpenCodeKit's tests. `LiveServerTests` run against a real binary when
 `OPENCODE_TEST_BINARY` points to one, and `LiveRemoteEngineTests` against a
 Linux machine when `KUVO_TEST_SSH_HOST` names one you reach with SSH (they
-install the engine in its `~/.kuvo-code`).
+install the engine in its `~/.kuvo-code-test`, and remove it after).
+
+`Tests/E2E` tries the whole app the way people use it: a separate copy
+(`run.kuvo.code.e2e`) driven in the background through Accessibility, with
+OpenCode's free models, on real projects. Its README says how to run it, and
+`SCENARIOS.md` lists the cases and where each stands.
 
 ### Project layout
 

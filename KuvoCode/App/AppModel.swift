@@ -210,6 +210,9 @@ final class AppModel {
             workspace.seats = groups.seatIDs
             usage.api = api
             engine = .ready
+            #if DEBUG
+            E2E.note(server.endpoint)
+            #endif
             phoneLink.readyMachines = { [weak self] in self?.machines.engines.values.filter(\.isReady) ?? [] }
             phoneLink.bots = bots
             phoneLink.browserAsks = browserAsks
@@ -264,6 +267,9 @@ final class AppModel {
 
     func stop() {
         isStopping = true
+        #if DEBUG
+        E2E.forget()
+        #endif
         eventTask?.cancel()
         eventTask = nil
         server?.stop()
