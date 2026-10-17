@@ -43,6 +43,10 @@ struct SiteSignInPage: View {
             #endif
         }
         .onChange(of: site.place) { openOnMachine() }
+        // A popup the page opens (Continue with Google, say) shows here, and closing it comes back.
+        .onChange(of: machine.flatMap { app.machines.engine($0)?.browser.pages } ?? []) { _, pages in
+            if let machine { site.follow(pages, on: machine) }
+        }
         // Whether it's signed in, as you sign in.
         .task {
             while !Task.isCancelled {

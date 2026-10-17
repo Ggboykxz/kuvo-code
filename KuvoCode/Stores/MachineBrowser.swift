@@ -35,6 +35,8 @@ final class MachineBrowser {
         let id: String
         var title: String
         var url: String
+        /// The page that opened it (a sign-in's popup, a link to a new window).
+        var opener: String?
 
         /// Nothing on it yet.
         var isBlank: Bool { url.isEmpty || url == "about:blank" }
@@ -548,7 +550,7 @@ final class MachineBrowser {
 
     private func note(_ info: [String: Any]) {
         guard info["type"] as? String == "page", let id = info["targetId"] as? String else { return }
-        let page = Page(id: id, title: info["title"] as? String ?? "", url: info["url"] as? String ?? "")
+        let page = Page(id: id, title: info["title"] as? String ?? "", url: info["url"] as? String ?? "", opener: info["openerId"] as? String)
         if let index = pages.firstIndex(where: { $0.id == id }) {
             if pages[index] != page { pages[index] = page }
         } else {
@@ -565,7 +567,7 @@ final class MachineBrowser {
             let infos = try await link.send("Target.getTargets")["targetInfos"] as? [[String: Any]] ?? []
             pages = infos.compactMap { info in
                 guard info["type"] as? String == "page", let id = info["targetId"] as? String else { return nil }
-                return Page(id: id, title: info["title"] as? String ?? "", url: info["url"] as? String ?? "")
+                return Page(id: id, title: info["title"] as? String ?? "", url: info["url"] as? String ?? "", opener: info["openerId"] as? String)
             }
             state = .live
             reconnects = 0

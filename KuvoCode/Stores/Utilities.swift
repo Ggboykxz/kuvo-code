@@ -234,8 +234,14 @@ final class Utilities {
     /// opened included), and none for a page that closed.
     func syncMachinePages(_ machine: String, _ pages: [MachineBrowser.Page]) {
         let open = Set(pages.map(\.id))
+        let shown = tabs.first { $0.id == (place == machine ? selection : chosen[machine]) }
         for tab in tabs {
-            if case .machinePage(machine, let page?) = tab.kind, !open.contains(page) { remove(tab.id) }
+            guard case .machinePage(machine, let page?) = tab.kind, !open.contains(page) else { continue }
+            // A window that closed (a sign-in's popup, done) gives way to the page that opened it.
+            let opener = openers.removeValue(forKey: page).flatMap { opener in tabs.first { $0.kind == .machinePage(machine, opener) } }
+            let wasShown = shown?.id == tab.id
+            remove(tab.id)
+            if wasShown, let opener { show(opener, on: machine) }
         }
         let tabbed = Set(tabs.compactMap { tab -> String? in
             if case .machinePage(machine, let page?) = tab.kind { return page }
@@ -243,8 +249,21 @@ final class Utilities {
         })
         for page in pages where !tabbed.contains(page.id) {
             let last = tabs.lastIndex { if case .machinePage(machine, _) = $0.kind { true } else { false } }
-            tabs.insert(Tab(kind: .machinePage(machine, page.id)), at: last.map { $0 + 1 } ?? tabs.count)
+            let tab = Tab(kind: .machinePage(machine, page.id))
+            tabs.insert(tab, at: last.map { $0 + 1 } ?? tabs.count)
+            // A window the page in view opened comes forward, as a browser shows it.
+            if let opener = page.opener {
+                openers[page.id] = opener
+                if case .machinePage(machine, opener)? = shown?.kind { show(tab, on: machine) }
+            }
         }
+    }
+
+    /// The page each machine window was opened by, by page.
+    @ObservationIgnored private var openers: [String: String] = [:]
+
+    private func show(_ tab: Tab, on machine: String) {
+        if place == machine { selection = tab.id } else { chosen[machine] = tab.id }
     }
 
     /// The agent on a machine went to another page (or opened one): its tab comes forward, as the

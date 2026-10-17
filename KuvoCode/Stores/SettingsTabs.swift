@@ -17,9 +17,26 @@ final class SettingsTabs {
         var place = ""
         /// Its tabs on this Mac.
         let pages = SignInPages()
-        /// The page opened on each machine, by machine.
+        /// The page shown on each machine, by machine.
         var machinePages: [String: String] = [:]
+        /// The pages under it, by machine, when a page opened another (a sign-in's popup): the
+        /// one to go back to when it closes.
+        var machineOpeners: [String: [String]] = [:]
         var opening: String?
+
+        /// A machine's pages changed: a window the page in view opened comes forward, as a
+        /// browser shows it, and one that closed gives way to the page that opened it.
+        func follow(_ pages: [MachineBrowser.Page], on machine: String) {
+            guard let shown = machinePages[machine] else { return }
+            let open = Set(pages.map(\.id))
+            if let popup = pages.last(where: { $0.opener == shown }) {
+                machineOpeners[machine, default: []].append(shown)
+                machinePages[machine] = popup.id
+            } else if !open.contains(shown), let back = machineOpeners[machine]?.last(where: open.contains) {
+                machineOpeners[machine]?.removeAll { $0 == back || !open.contains($0) }
+                machinePages[machine] = back
+            }
+        }
 
         init(service: Integrations.Service) {
             self.service = service
