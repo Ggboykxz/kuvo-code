@@ -26,6 +26,12 @@ struct TabItem: Identifiable, Equatable {
     /// The session beside it in split view, shown with it as one tab (none, or one).
     var companion: [TabItem] = []
 
+    func titled(_ title: String) -> TabItem {
+        var tab = self
+        tab.title = title
+        return tab
+    }
+
     enum Status {
         case idle, working, waiting, failed, unread
 
@@ -39,6 +45,13 @@ struct TabItem: Identifiable, Equatable {
             }
         }
     }
+}
+
+/// How two sessions side by side show in the tab bar (Settings › General): one tab in two
+/// halves, the side you're in lit; one tab with both names; or the two tabs joined.
+enum PairStyle: String, CaseIterable {
+    case halves, compact, joined
+    static let key = "pairStyle"
 }
 
 /// Open sessions as tabs in one glass track; the active tab is a raised pill
@@ -59,36 +72,13 @@ struct TabStrip: View {
 
     @Namespace private var pill
     @Environment(\.colorScheme) private var scheme
+    @AppStorage(PairStyle.key) private var style = PairStyle.halves
 
     var body: some View {
         HStack(spacing: 0) {
             ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
                 let isActive = tab.id == selection
-                HStack(spacing: 0) {
-                    TabButton(tab: tab, isActive: isActive, close: { close(tab.id) }) {
-                        withAnimation(.ui) { selection = tab.id }
-                    }
-                    .rightClickMenu { menu(for: tab) }
-                    // The session beside it, in the same tab: a crease between the two.
-                    if let companion = tab.companion.first {
-                        Rectangle()
-                            .fill(Surface.hairline(scheme))
-                            .frame(width: 1, height: 16)
-                        TabButton(tab: companion, isActive: isActive, close: { closeBeside?(tab.id) }) {
-                            withAnimation(.ui) { selection = tab.id }
-                        }
-                        .rightClickMenu { besideMenu(for: tab) }
-                    }
-                }
-                .background {
-                    if isActive {
-                        ActivePill()
-                            .matchedGeometryEffect(id: "pill", in: pill)
-                    } else if !tab.companion.isEmpty {
-                        // Two sessions in one tab read as one, even out of view.
-                        Capsule().strokeBorder(Surface.hairline(scheme))
-                    }
-                }
+                tabView(tab, isActive: isActive)
                 // Hairlines between inactive neighbours, like Rex; none next to the pill. They
                 // fade out at both ends, so they read as a crease in the glass, not a drawn line.
                 if index < tabs.count - 1, !isActive, tabs[index + 1].id != selection {
@@ -118,6 +108,50 @@ struct TabStrip: View {
         if let swapBeside { items.append(ActionItem("Swap") { swapBeside(tab.id) }) }
         if let closeBeside { items.append(ActionItem("Close Split View") { closeBeside(tab.id) }) }
         return items
+    }
+
+    /// A tab: a session's, or two side by side as one tab, drawn as Settings › General says.
+    @ViewBuilder private func tabView(_ tab: TabItem, isActive: Bool) -> some View {
+        let select = { withAnimation(.ui) { selection = tab.id } }
+        switch (tab.companion.first, style) {
+        case (let companion?, .halves):
+            // One tab in two halves on a soft fill; the tab's own half raised while it's in view.
+            HStack(spacing: 0) {
+                TabButton(tab: tab, isActive: isActive, close: { close(tab.id) }, select: select)
+                    .rightClickMenu { menu(for: tab) }
+                    .background { if isActive { ActivePill().matchedGeometryEffect(id: "pill", in: pill) } }
+                TabButton(tab: companion, isActive: false, close: { closeBeside?(tab.id) }, select: select)
+                    .rightClickMenu { besideMenu(for: tab) }
+            }
+            .background(Pressable.hoverFill, in: .capsule)
+        case (let companion?, .compact):
+            // One tab: the two tiles stacked, and both titles.
+            TabButton(tab: tab.titled(tab.title + " · " + companion.title), isActive: isActive, close: { close(tab.id) }, behind: companion, select: select)
+                .rightClickMenu { menu(for: tab) + [.separator()] + besideMenu(for: tab) }
+                .background { if isActive { ActivePill().matchedGeometryEffect(id: "pill", in: pill) } }
+        default:
+            HStack(spacing: 0) {
+                TabButton(tab: tab, isActive: isActive, close: { close(tab.id) }, select: select)
+                    .rightClickMenu { menu(for: tab) }
+                // The session beside it, in the same tab: a crease between the two.
+                if let companion = tab.companion.first {
+                    Rectangle()
+                        .fill(Surface.hairline(scheme))
+                        .frame(width: 1, height: 16)
+                    TabButton(tab: companion, isActive: isActive, close: { closeBeside?(tab.id) }, select: select)
+                        .rightClickMenu { besideMenu(for: tab) }
+                }
+            }
+            .background {
+                if isActive {
+                    ActivePill()
+                        .matchedGeometryEffect(id: "pill", in: pill)
+                } else if !tab.companion.isEmpty {
+                    // Two sessions in one tab read as one, even out of view.
+                    Capsule().strokeBorder(Surface.hairline(scheme))
+                }
+            }
+        }
     }
 
     private func menu(for tab: TabItem) -> [NSMenuItem] {
@@ -157,6 +191,8 @@ private struct TabButton: View {
     let tab: TabItem
     let isActive: Bool
     let close: () -> Void
+    /// A second tile behind its own (a split pair shown as one tab).
+    var behind: TabItem?
     let select: () -> Void
 
     @State private var isHovering = false
@@ -166,7 +202,16 @@ private struct TabButton: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            TabIcon(logo: tab.logo, symbol: tab.symbol ?? (SidebarView.draftDirectory(from: tab.id) == nil ? "bubble.left" : "square.and.pencil"), bot: tab.bot, botMood: tab.botMood, group: tab.group, status: tab.status)
+            ZStack(alignment: .leading) {
+                if let behind {
+                    TabIcon(logo: behind.logo, symbol: behind.symbol ?? "bubble.left", bot: behind.bot, botMood: behind.botMood, group: behind.group, status: .idle)
+                        .scaleEffect(0.86)
+                        .offset(x: 9, y: -3)
+                        .opacity(0.9)
+                }
+                TabIcon(logo: tab.logo, symbol: tab.symbol ?? (SidebarView.draftDirectory(from: tab.id) == nil ? "bubble.left" : "square.and.pencil"), bot: tab.bot, botMood: tab.botMood, group: tab.group, status: tab.status)
+            }
+            .padding(.trailing, behind == nil ? 0 : 9)
             Text(tab.title)
                 .font(.system(size: 13, weight: isActive ? .medium : .regular))
                 .foregroundStyle(isActive ? .primary : .secondary)

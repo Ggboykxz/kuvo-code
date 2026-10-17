@@ -6,6 +6,7 @@ import UsageKit
 /// General: the window, where files open, and updates.
 struct GeneralSettings: View {
     @AppStorage(TabBar.showsKey) private var showsTabBar = true
+    @AppStorage(PairStyle.key) private var pairStyle = PairStyle.halves
     @AppStorage(OpenWith.editorKey) private var editor = ""
     @AppStorage(Awake.key) private var keepsAwake = true
     @Environment(Updates.self) private var updates
@@ -23,6 +24,15 @@ struct GeneralSettings: View {
                     Text("Show the tab bar")
                     Text("The row at the top, with the project, its branch and your sessions as tabs. Without it, switch sessions in the sidebar or with ⌘K.")
                 }
+                Picker(selection: $pairStyle) {
+                    Text("One tab in two halves").tag(PairStyle.halves)
+                    Text("One tab with both names").tag(PairStyle.compact)
+                    Text("Two tabs joined").tag(PairStyle.joined)
+                } label: {
+                    Text("Two sessions side by side")
+                    Text("How they show in the tab bar.")
+                }
+                .disabled(!showsTabBar)
             }
             Section("While Agents Work") {
                 Toggle(isOn: $keepsAwake) {

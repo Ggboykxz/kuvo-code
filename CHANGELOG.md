@@ -13,6 +13,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - While the agent thinks between steps, its thinking shows under the steps as it happens. It could be folded in with the finished steps, as if the agent had stopped.
 - With the side panel at its widest, it stays inside the window. Beside the bot editor it could run off the window's right edge; the editor's colors and faces now wrap onto another line when there's little room.
 - When the window hasn't room for the sidebar, the panel and a session beside, the one you opened last stays and the others make way. Showing the panel beside a split view used to do nothing, and its button needed a second press.
+- Two sessions side by side show as one tab in two halves, the tab's own half raised. Settings › General can show them as one tab with both names, or as the two tabs joined, as before.
 
 ## 0.5.4
 
