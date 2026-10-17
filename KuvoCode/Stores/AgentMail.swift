@@ -101,7 +101,7 @@ final class AgentMail {
         }
         let bots = Set(agents.map(\.session))
         let recent = workspace.sessions
-            .filter { $0.parentID == nil && $0.time.archived == nil && !bots.contains($0.id) && !workspace.seats.contains($0.id) }
+            .filter { $0.parentID == nil && !Workspace.isArchived($0) && !bots.contains($0.id) && !workspace.seats.contains($0.id) }
             .sorted { $0.time.updated > $1.time.updated }
             .prefix(40)
         for session in recent {
