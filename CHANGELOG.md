@@ -4,6 +4,8 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
+## Unreleased
+
 ## 0.5.4
 
 - Long thinking and long replies stream and scroll smoothly. Opening the agent's thinking while it streamed, or scrolling through a long reply, could freeze the window for seconds at a time and keep your Mac busy after the reply was done. A code block is now colored once the agent has finished writing it, instead of flickering between plain and colored as it grows.
