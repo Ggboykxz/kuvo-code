@@ -291,9 +291,12 @@ final class Utilities {
 
     /// Brings the panel into view on the browser of the place in view, at the page in use: you
     /// asked to see it.
-    func revealBrowser() {
+    /// Shows the browser in the panel: on a machine, `page` if it's given (the page an ask is
+    /// about), else the one the agent used last.
+    func revealBrowser(page: String? = nil) {
         if let place {
-            let tab = tabs.first { $0.kind == .machinePage(place, machineBrowser?(place)?.activeID) }
+            let tab = page.flatMap { page in tabs.first { $0.kind == .machinePage(place, page) } }
+                ?? tabs.first { $0.kind == .machinePage(place, machineBrowser?(place)?.activeID) }
                 ?? tabs.last { if case .machinePage(place, _) = $0.kind { true } else { false } }
             if let tab { selection = tab.id }
         } else if let browser = botsInView.lazy.compactMap(botBrowser).first ?? activeBrowser, let id = browsers.first(where: { $0.value === browser })?.key {

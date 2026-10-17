@@ -47,7 +47,7 @@ const TAB_IDLE = Number(process.env.KUVO_BROWSER_TAB_IDLE || 12 * 3600) * 1000;
 
 // Goes up with every change to the keeper (host mode): a newer one replaces one that's running
 // (its pages close, its sign-ins stay), and an older one never replaces a newer.
-const KEEPER = 16;
+const KEEPER = 17;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -1585,7 +1585,7 @@ async function tool(name, args) {
         const problem = await checkField(p, index, wanted);
         if (problem) return text(note() + problem);
       }
-      const answer = await askUser({ kind: "signIn", host, username: username !== null, password: password !== null });
+      const answer = await askUser({ kind: "signIn", host, targetId: p.target, username: username !== null, password: password !== null });
       if (answer.type !== "signIn") return text(note() + noAnswer(answer, "sign in"));
       const filled = [];
       for (const [index, value, what] of [[username, answer.username, "the username"], [password, answer.password, "the password"]]) {
@@ -1605,7 +1605,7 @@ async function tool(name, args) {
       if (!host) return text(note() + "Open the page that asks for the code first.");
       const problem = await checkField(p, index, "code");
       if (problem) return text(note() + problem);
-      const answer = await askUser({ kind: "code", host, prompt: string("prompt") ?? "" });
+      const answer = await askUser({ kind: "code", host, targetId: p.target, prompt: string("prompt") ?? "" });
       if (answer.type !== "code" || !answer.code) return text(note() + noAnswer(answer, "give a code"));
       const outcome = await run(p, scripts.find + scripts.fill, { index, value: answer.code });
       if (outcome !== "ok") return text(note() + outcome);
@@ -1615,7 +1615,7 @@ async function tool(name, args) {
     case "browser_ask_user": {
       const instruction = string("instruction");
       if (!instruction) return text("Missing instruction.", true);
-      const answer = await askUser({ kind: "action", host: hostOf(await address(p)) ?? "the page", instruction });
+      const answer = await askUser({ kind: "action", host: hostOf(await address(p)) ?? "the page", targetId: p.target, instruction });
       if (answer.type !== "done") return text(note() + noAnswer(answer, "do it"));
       await settle(p, false);
       return withNote(snapshot(p).then((page) => "The user says it's done.\n\n" + page));

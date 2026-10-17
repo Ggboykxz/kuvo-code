@@ -189,7 +189,7 @@ struct BrowserAskCard: View {
                     .keyboardShortcut(.cancelAction)
                 Spacer()
                 if inThread {
-                    Button("Show Page") { app.utilities.revealBrowser() }
+                    Button("Show Page") { app.utilities.revealBrowser(page: ask.page) }
                         .help("Show the browser in the panel")
                 }
                 Button("Done") { app.browserAsks.answer(ask.id, .done) }

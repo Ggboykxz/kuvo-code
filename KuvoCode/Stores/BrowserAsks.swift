@@ -35,6 +35,8 @@ final class BrowserAsks {
         /// Who's asking, and their session, when the conversation says.
         var asker: String?
         var session: String?
+        /// The page it's about, on a machine (its target), for Show Page.
+        var page: String?
     }
 
     /// Waiting for you, the oldest first.
