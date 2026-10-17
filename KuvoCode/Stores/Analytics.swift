@@ -32,11 +32,13 @@ final class Analytics {
     private static let usageDayKey = "analytics.usageDay"
     private static let internalKey = "analytics.internal"
     private static let installDateKey = "analytics.installDate"
-    /// Set while the app runs, cleared when it quits: still set at launch, the last run ended
-    /// some other way (a crash, Force Quit, the Mac losing power).
-    private static let runningKey = "analytics.running"
-    private static let launchedKey = "analytics.launchedAt"
-    private static let aliveKey = "analytics.aliveAt"
+    /// One for each copy of the app running, `analytics.run.<its process>`, with when it launched
+    /// and was last seen, removed when it quits: one still there at a launch, whose process has
+    /// gone, ended some other way (a crash, Force Quit, the Mac losing power). One for each, so a
+    /// second copy running (a development build) isn't taken for one that ended, nor hides one.
+    private static let runPrefix = "analytics.run."
+    /// Before, one flag for every copy: set while running, with when it launched and was seen.
+    private static let oldRunKeys = (running: "analytics.running", launched: "analytics.launchedAt", alive: "analytics.aliveAt")
     private static let onboardedKey = "analytics.onboarded"
     private static let onboardingStepsKey = "analytics.onboardingSteps"
     private static let accountKey = "analytics.accountConnected"
@@ -66,6 +68,10 @@ final class Analytics {
     private var lastOnboardingStep: String?
     private var queue: [[String: Any]] = []
     private var flushTask: Task<Void, Never>?
+    /// After a send that didn't go through, how long until the next try: longer each time, up
+    /// to an hour, and nil again once one goes through.
+    private var backoff: Duration?
+    private var isQuitting = false
     private var dayTimer: Timer?
     private var sentOnce: Set<String> = []
     private let log = Logger(subsystem: AppInfo.bundleID, category: "analytics")
@@ -103,7 +109,10 @@ final class Analytics {
         guard isEnabled, target != nil else { return }
         queue.append(["name": name, "ts": Date.now.ISO8601Format(), "props": props])
         if queue.count > 300 { queue.removeFirst(queue.count - 300) }
-        if queue.count >= 25 { flush() } else { scheduleFlush() }
+        // At quit, all at once (see flushBeforeQuit); while the collector is having trouble, at
+        // the next try.
+        guard !isQuitting else { return }
+        if queue.count >= 25, backoff == nil { flush() } else { scheduleFlush() }
     }
 
     /// Records an event the first time it happens while the app runs (one of each `key`, if given).
@@ -115,14 +124,22 @@ final class Analytics {
     /// At launch: the launch itself, then one "active" a day for as long as the app stays open.
     func start() {
         let defaults = UserDefaults.standard
-        // The last run didn't quit: how long it had been open when it was last seen.
-        if defaults.bool(forKey: Self.runningKey), let launched = defaults.object(forKey: Self.launchedKey) as? Date {
-            let alive = defaults.object(forKey: Self.aliveKey) as? Date ?? launched
-            track("app_exited_unexpectedly", ["minutes": Self.minutes(alive.timeIntervalSince(launched))])
+        // Runs that didn't quit: how long each had been open when it was last seen.
+        var ended: [[String: Date]] = []
+        if defaults.bool(forKey: Self.oldRunKeys.running), let launched = defaults.object(forKey: Self.oldRunKeys.launched) as? Date {
+            ended.append(["launched": launched, "alive": defaults.object(forKey: Self.oldRunKeys.alive) as? Date ?? launched])
         }
-        defaults.set(true, forKey: Self.runningKey)
-        defaults.set(launchedAt, forKey: Self.launchedKey)
-        defaults.set(launchedAt, forKey: Self.aliveKey)
+        for key in [Self.oldRunKeys.running, Self.oldRunKeys.launched, Self.oldRunKeys.alive] { defaults.removeObject(forKey: key) }
+        for (key, value) in defaults.dictionaryRepresentation() where key.hasPrefix(Self.runPrefix) {
+            guard !Self.isRunning(String(key.dropFirst(Self.runPrefix.count))) else { continue }
+            defaults.removeObject(forKey: key)
+            if let run = value as? [String: Date] { ended.append(run) }
+        }
+        for run in ended {
+            guard let launched = run["launched"] else { continue }
+            track("app_exited_unexpectedly", ["minutes": Self.minutes((run["alive"] ?? launched).timeIntervalSince(launched))])
+        }
+        noteAlive()
         var props: [String: Any] = ["ram": Self.memory]
         if isFirstLaunch { props["first"] = true }
         track("app_launched", props)
@@ -133,7 +150,7 @@ final class Analytics {
         defaults.set(Self.today, forKey: Self.activeDayKey)
         dayTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { _ in
             Task { @MainActor in
-                UserDefaults.standard.set(Date.now, forKey: Analytics.aliveKey)
+                Analytics.shared.noteAlive()
                 Analytics.shared.markActiveDay()
             }
         }
@@ -144,6 +161,29 @@ final class Analytics {
             try? await Task.sleep(for: .seconds(180))
             noteUsageProviders()
         }
+    }
+
+    /// This run, as seen now (see `runPrefix`).
+    private func noteAlive() {
+        UserDefaults.standard.set(["launched": launchedAt, "alive": Date.now], forKey: Self.runPrefix + Self.thisRun)
+    }
+
+    private static let thisRun = process(getpid()) ?? "\(getpid())"
+
+    private static func isRunning(_ run: String) -> Bool {
+        guard let pid = run.split(separator: "-").first.flatMap({ pid_t($0) }) else { return false }
+        return process(pid) == run
+    }
+
+    /// A running process as "<ID>-<when it started>", which no later process has (IDs are used
+    /// again); nil when there's none with that ID.
+    private static func process(_ pid: pid_t) -> String? {
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var name: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        guard sysctl(&name, u_int(name.count), &info, &size, nil, 0) == 0, size > 0 else { return nil }
+        let started = info.kp_proc.p_un.__p_starttime
+        return "\(pid)-\(started.tv_sec).\(started.tv_usec)"
     }
 
     /// Once a day: which AI tools the menu bar's usage panel follows (their public IDs).
@@ -340,44 +380,62 @@ final class Analytics {
 
     // MARK: Sending
 
+    /// The most events one send carries.
+    private static let batchSize = 100
+
     private func scheduleFlush() {
         guard flushTask == nil else { return }
+        let delay = backoff ?? .seconds(60)
         flushTask = Task {
-            try? await Task.sleep(for: .seconds(60))
+            try? await Task.sleep(for: delay)
+            // Sent already (flush cancels this).
+            guard !Task.isCancelled else { return }
             flushTask = nil
             flush()
         }
     }
 
-    /// Sends what's queued. A batch that doesn't go through is kept for the next try.
+    /// Sends what's queued, a batch at a time. A batch that doesn't go through is kept for a later
+    /// try, further off each time.
     func flush() {
         flushTask?.cancel()
         flushTask = nil
-        guard isEnabled, let request = request(for: queue) else { return }
-        let batch = queue
-        queue.removeAll()
+        let batch = Array(queue.prefix(Self.batchSize))
+        guard isEnabled, let request = request(for: batch) else { return }
+        queue.removeFirst(batch.count)
         Task {
+            var delivered = false
             do {
                 let (_, response) = try await URLSession.shared.data(for: request)
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-                // Refused outright (a bad batch): drop it. Server trouble: try again later.
-                if status >= 500 || status == 429 { requeue(batch) }
-            } catch {
-                requeue(batch)
-            }
+                // Refused outright (a bad batch): dropped. Server trouble: tried again later.
+                delivered = status < 500 && status != 429
+            } catch {}
+            if delivered { sent() } else { requeue(batch) }
         }
+    }
+
+    /// A batch went: what's left goes as usual (the next batch now, if there's a full one).
+    private func sent() {
+        backoff = nil
+        if queue.count >= 25 { flush() } else if !queue.isEmpty { scheduleFlush() }
     }
 
     private func requeue(_ batch: [[String: Any]]) {
         guard isEnabled else { return }
         queue = Array((batch + queue).suffix(300))
+        backoff = min((backoff ?? .seconds(30)) * 2, .seconds(3600))
+        // The next try, no sooner than that.
+        flushTask?.cancel()
+        flushTask = nil
         scheduleFlush()
     }
 
     /// At quit: how long it was open (and where a first run stopped), then one last send,
     /// waiting a moment for it.
     func flushBeforeQuit() {
-        UserDefaults.standard.set(false, forKey: Self.runningKey)
+        isQuitting = true
+        UserDefaults.standard.removeObject(forKey: Self.runPrefix + Self.thisRun)
         for session in Array(sessionUse.keys) { sessionEnded(session) }
         if !isOnboarded {
             var props: [String: Any] = ["step": lastOnboardingStep ?? "none"]
@@ -385,10 +443,16 @@ final class Analytics {
             track("onboarding_left", props)
         }
         track("app_closed", ["minutes": Self.minutes(Date.now.timeIntervalSince(launchedAt))])
-        guard isEnabled, let request = request(for: queue) else { return }
-        queue.removeAll()
-        let done = DispatchSemaphore(value: 0)
-        URLSession.shared.dataTask(with: request) { _, _, _ in done.signal() }.resume()
+        flushTask?.cancel()
+        flushTask = nil
+        guard isEnabled else { return }
+        // Every batch at once, waited for together.
+        let done = DispatchGroup()
+        while let request = request(for: Array(queue.prefix(Self.batchSize))) {
+            queue.removeFirst(min(Self.batchSize, queue.count))
+            done.enter()
+            URLSession.shared.dataTask(with: request) { _, _, _ in done.leave() }.resume()
+        }
         _ = done.wait(timeout: .now() + 2)
     }
 
@@ -402,7 +466,7 @@ final class Analytics {
             "build": AppInfo.build,
             "os_version": "\(os.majorVersion).\(os.minorVersion)",
             "arch": Self.architecture,
-            "events": Array(events.prefix(100)),
+            "events": events,
         ]
         if UserDefaults.standard.bool(forKey: Self.internalKey) { body["internal"] = true }
         if let code = language.languageCode?.identifier {
