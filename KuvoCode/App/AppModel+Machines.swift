@@ -214,6 +214,8 @@ extension AppModel {
                     await AgentMail.shared.collect(from: engine)
                 }
             }
+            // An account changed here while it connected, after it took the ones it has.
+            keepAccountsCurrent(engine)
         }
     }
 
@@ -272,24 +274,34 @@ extension AppModel {
     }
 
     /// This Mac's accounts changed (one connected, signed out of or switched): a machine's engine
-    /// has the ones it started with, so its models would stay the old ones. Each is started over
-    /// with the new ones as soon as nothing runs there, checked again every half minute meanwhile.
+    /// has the ones it started with, so its models would stay the old ones. Each connected one
+    /// takes the new ones as soon as nothing runs there; one still connecting is checked once
+    /// it's up (`start`).
     func updateMachineAccounts() {
-        for engine in machines.engines.values where engine.isReady {
-            engine.accountsUpdate?.cancel()
-            engine.accountsUpdate = Task { [weak self, weak engine] in
-                // A change comes as a few events in a row.
-                try? await Task.sleep(for: .seconds(2))
-                for _ in 0..<120 {
-                    guard !Task.isCancelled, let self, let engine, engine.isReady else { return }
-                    guard engine.isBehind(await self.machineLaunch()) else { return }
-                    if !self.workspace.isRunning(on: engine.machine.id), (try? await engine.api?.activeSessions())?.isEmpty == true {
-                        await engine.stopEngine()
-                        await self.start(engine)
-                        return
-                    }
-                    try? await Task.sleep(for: .seconds(30))
+        // A change comes as a few events in a row.
+        for engine in machines.engines.values where engine.isReady { keepAccountsCurrent(engine, after: .seconds(2)) }
+    }
+
+    /// Starts `engine` over with this Mac's accounts and settings as they are now, if it has
+    /// older ones, as soon as nothing runs there: checked again while something does, less often
+    /// the longer it takes, for as long as it stays connected. (Disconnected, it's checked again
+    /// when it connects.)
+    func keepAccountsCurrent(_ engine: MachineEngine, after delay: Duration = .zero) {
+        engine.accountsUpdate?.cancel()
+        engine.accountsUpdate = Task { [weak self, weak engine] in
+            try? await Task.sleep(for: delay)
+            var wait = 30
+            while !Task.isCancelled {
+                guard let self, let engine, engine.isReady else { return }
+                guard engine.isBehind(await self.machineLaunch()) else { return }
+                if !self.workspace.isRunning(on: engine.machine.id), (try? await engine.api?.activeSessions())?.isEmpty == true {
+                    await engine.stopEngine()
+                    // Apart from this task, which connecting replaces.
+                    Task { await self.start(engine) }
+                    return
                 }
+                try? await Task.sleep(for: .seconds(wait))
+                wait = min(wait * 2, 120)
             }
         }
     }
