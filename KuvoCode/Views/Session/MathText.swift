@@ -9,10 +9,10 @@ import Textual
 /// Markdown would garble it first (`\\` read as an escape, `_` and `*` as emphasis, a line of `=`
 /// as a heading's underline), so each formula is set aside before the Markdown is read: one of its
 /// own becomes a code block the code block style draws as math, centered; one in a line, a mark,
-/// put back after as a formula in the text. Formulas in code are left as they are, and so are
-/// prices like "$5 and $10" or "Joe's is $$". The text around them keeps its shape: a formula in a
-/// list item, a quote or a table stays in it, and one SwiftUIMath can't draw shows as it was
-/// written.
+/// put back after as a formula in the text. Code, links' addresses and web addresses are left as
+/// they are, and so are prices like "$5 and $10" or "Joe's is $$". The text around them keeps its
+/// shape: a formula in a list item, a quote or a table stays in it, and one SwiftUIMath can't draw
+/// shows as it was written.
 ///
 /// Math is always typeset at its own width: SwiftUIMath's line breaking, which Textual's own math
 /// asks for, drops spaces and breaks superscripts off.
@@ -135,8 +135,9 @@ enum MathText {
         var isDeep = false
         /// In a list item, or in a quote that has one.
         var inList = false
-        /// Under a paragraph, read otherwise than under a block: a list item that can't start in
-        /// a paragraph ("2. x"), or a line of "=" or "-" making it a heading.
+        /// Under a paragraph, read otherwise than under a block: a list item or a link's
+        /// definition that can't start in a paragraph ("2. x"), or a line of "=" or "-" making it
+        /// a heading.
         var underParagraph = false
 
         init(start: Int, end: Int, body: Int, depth: Int) {
@@ -166,10 +167,11 @@ enum MathText {
         var formula: Formula
     }
 
-    /// The lines of `chars`, read as Markdown reads its blocks, and the formulas in their words,
-    /// not in code. One of its own (`$$` or `\[`) closes in its paragraph; opened at the start of a
-    /// line's words, it's on lines of its own, which can look like anything ("+ x" isn't a list
-    /// item) but a blank line or a line out of its quote or list item.
+    /// The lines of `chars`, read as Markdown reads its blocks, and the formulas in their words:
+    /// not in code, a link's address or a web address. One of its own (`$$` or `\[`) closes in its
+    /// paragraph; opened at the start of a line's words, it's on lines of its own, which can look
+    /// like anything ("+ x" isn't a list item) but a blank line or a line out of its quote or list
+    /// item.
     nonisolated private static func read(_ chars: [Character]) -> (lines: [Line], places: [Place]) {
         var ranges: [Range<Int>] = []
         var start = 0
@@ -344,6 +346,18 @@ enum MathText {
                     }
                     // Three or more are never math: prices ("$$$"), or the shell's.
                     i += run
+                case "<":
+                    // A link written as its address: "<https://…>".
+                    i = autolinkEnd(chars, from: i, to: line.end).map { $0 + 1 } ?? i + 1
+                case "]" where i + 1 < line.end && chars[i + 1] == "(":
+                    // A link's address and title.
+                    i = destinationEnd(chars, from: i + 2, to: line.end).map { $0 + 1 } ?? i + 1
+                case "[" where i == line.content:
+                    // A link's definition: "[label]: https://…".
+                    i = definitionEnd(chars, from: i, to: line.end) ?? i + 1
+                case ":" where i > line.body && chars[i - 1].isASCII && chars[i - 1].isLetter && opensAddress(chars, at: i, to: line.end):
+                    // A web address: "https://…", to a space or a "<".
+                    while i < line.end, !chars[i].isWhitespace, chars[i] != "<" { i += 1 }
                 default:
                     i += 1
                 }
@@ -438,7 +452,8 @@ enum MathText {
                 line.isDeep = indent - column >= 4 || depth > 0 && quoteHasList
                 line.continues = true
                 let underlines = !line.isLazy && !line.isDeep && !inTable && MathText.isUnderline(rest)
-                line.underParagraph = start != nil || underlines
+                let defines = rest.first == "[" && MathText.definitionEnd(chars, from: body, to: range.upperBound) != nil
+                line.underParagraph = start != nil || underlines || defines
                 // A heading's underline ends it.
                 if underlines { paragraph = nil }
             } else {
@@ -567,7 +582,7 @@ enum MathText {
     nonisolated private enum Closing {
         case at(Int)
         case notHere
-        /// Not past code or three dollar signs.
+        /// Not past code, a link's address or three dollar signs.
         case never
     }
 
@@ -577,7 +592,7 @@ enum MathText {
         var j = from
         while j < to {
             let c = chars[j]
-            if c == "`" { return .never }
+            if c == "`" || opensAddress(chars, at: j, to: to) { return .never }
             if c == "\\" {
                 if !dollars, j + 1 < to, chars[j + 1] == "]" { return .at(j) }
                 j += 2
@@ -678,6 +693,86 @@ enum MathText {
         return nil
     }
 
+    /// Whether a link's address starts at `i`: "](…", or "://" in a web address.
+    nonisolated private static func opensAddress(_ chars: [Character], at i: Int, to end: Int) -> Bool {
+        guard i + 1 < end else { return false }
+        return chars[i] == "]" && chars[i + 1] == "(" || chars[i] == ":" && i + 2 < end && chars[i + 1] == "/" && chars[i + 2] == "/"
+    }
+
+    /// Where the `>` of a link written as its address (`<https://…>`, `<name@example.com>`) at
+    /// `start` is, on its line.
+    nonisolated private static func autolinkEnd(_ chars: [Character], from start: Int, to end: Int) -> Int? {
+        var i = start + 1
+        while i < end, chars[i] != ">" {
+            if chars[i].isWhitespace || chars[i] == "<" { return nil }
+            i += 1
+        }
+        guard i < end else { return nil }
+        let address = chars[(start + 1)..<i]
+        let scheme = address.prefix { $0 != ":" }
+        let isURL = scheme.count >= 2 && scheme.count < address.count && scheme.first!.isLetter
+            && scheme.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "+.-".contains($0)) }
+        return isURL || address.contains("@") ? i : nil
+    }
+
+    /// Where the `)` of a link's address and title is, from `start` (after its `(`), on its line.
+    nonisolated private static func destinationEnd(_ chars: [Character], from start: Int, to end: Int) -> Int? {
+        var i = start
+        func spaces() { while i < end, chars[i] == " " || chars[i] == "\t" { i += 1 } }
+        spaces()
+        if i < end, chars[i] == "<" {
+            i += 1
+            while i < end, chars[i] != ">" {
+                if chars[i] == "<" { return nil }
+                i += chars[i] == "\\" ? 2 : 1
+            }
+            guard i < end else { return nil }
+            i += 1
+        } else {
+            // Parentheses in it come in pairs.
+            var depth = 0
+            while i < end, !chars[i].isWhitespace {
+                if chars[i] == "\\" {
+                    i += 2
+                    continue
+                }
+                if chars[i] == "(" { depth += 1 }
+                if chars[i] == ")" {
+                    if depth == 0 { break }
+                    depth -= 1
+                }
+                i += 1
+            }
+        }
+        spaces()
+        if i < end, chars[i] == "\"" || chars[i] == "'" || chars[i] == "(" {
+            let closer: Character = chars[i] == "(" ? ")" : chars[i]
+            i += 1
+            while i < end, chars[i] != closer { i += chars[i] == "\\" ? 2 : 1 }
+            guard i < end else { return nil }
+            i += 1
+            spaces()
+        }
+        return i < end && chars[i] == ")" ? i : nil
+    }
+
+    /// The end of a link's definition at `start` ("[label]: https://… 'title'"), its line's end.
+    nonisolated private static func definitionEnd(_ chars: [Character], from start: Int, to end: Int) -> Int? {
+        var i = start + 1
+        while i < end, chars[i] != "]" {
+            if chars[i] == "[" { return nil }
+            i += chars[i] == "\\" ? 2 : 1
+        }
+        guard i > start + 1, i + 1 < end, chars[i + 1] == ":" else { return nil }
+        i += 2
+        while i < end, chars[i] == " " || chars[i] == "\t" { i += 1 }
+        guard i < end else { return nil }
+        while i < end, !chars[i].isWhitespace { i += 1 }
+        // Nothing after the address but a title.
+        let title = chars[i..<end].drop { $0 == " " || $0 == "\t" }
+        return title.isEmpty || "\"'(".contains(title.first!) ? end : nil
+    }
+
     /// Where `\)` closes the `\(` at `start`, on its line and not into code.
     nonisolated private static func inlineEnd(_ chars: [Character], from start: Int, to end: Int, closer: Character) -> Int? {
         var i = start + 2
@@ -698,8 +793,10 @@ enum MathText {
     nonisolated private static func inlineEnd(_ chars: [Character], from start: Int, to end: Int) -> Int? {
         guard start + 1 < end, !chars[start + 1].isWhitespace, chars[start + 1] != "$" else { return nil }
         var i = start + 1
-        // Not across a line, nor into code: "$10 and `$HOME`" is a price and code.
+        // Not across a line, nor into code or a link's address: "$10 and `$HOME`" is a price and
+        // code, and so is "$5 [docs](https://…?$top=2)" a price and a link.
         while i < end, chars[i] != "\n", chars[i] != "`" {
+            if opensAddress(chars, at: i, to: end) { return nil }
             if chars[i] == "\\" {
                 i += i + 1 < end && chars[i + 1] != "\n" ? 2 : 1
                 continue
