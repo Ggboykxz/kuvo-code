@@ -362,6 +362,7 @@ private struct FileViewer: View {
                         StructuredText(text, parser: MathMarkdownParser())
                             .transcriptFont()
                             .textual.codeBlockStyle(CopyableCodeBlockStyle())
+                            .textual.listItemStyle(.firstLine)
                             .textual.highlighterTheme(CodeColors.theme)
                             .textual.structuredTextStyle(.gitHub)
                             .textual.textSelection(.enabled)
