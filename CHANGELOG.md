@@ -4,7 +4,7 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
-## Unreleased
+## 0.5.8
 
 - While a reply is still being written, a code block that starts on a list item's line, like `- ```sh`, or in a quote stays a code block, and the words after it show as words.
 - Every account works on your remote machines, API keys and sign-ins like ChatGPT's or GitHub Copilot's alike: each is copied to the machine's engine and kept in step with your Mac, so a provider you connect, switch to or sign out of here does the same there right away, without the machine's engine starting over, and one that wasn't connected at the time catches up when it connects. A ChatGPT sign-in used to stay on your Mac. A sign-in renewed on one side no longer leaves its old copy behind on the other.
