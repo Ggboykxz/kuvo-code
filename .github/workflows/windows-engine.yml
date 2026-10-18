@@ -1,0 +1,58 @@
+name: Windows engine
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "windows/**"
+      - "Packages/KuvoLink/**"
+      - ".github/workflows/windows-engine.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-engine-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  bootstrap:
+    name: engine bootstrap
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: Test the engine bootstrap
+        run: node --test "windows/*.test.mjs"
+
+      - name: Test the link bridge
+        run: node --test "Packages/KuvoLink/Tests/Bridge/*.test.js"
+
+  windows:
+    name: engine on Windows, end to end
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: Test the engine bootstrap
+        run: node --test "windows/*.test.mjs"
+
+      - name: Test the link bridge
+        run: node --test "Packages/KuvoLink/Tests/Bridge/*.test.js"
+
+      # Downloads the pinned Windows build, checks it against npm's checksum, starts it and
+      # asks it for its info: the same road a client takes, on the platform it ships to.
+      - name: Install and run the pinned engine
+        run: node windows/kuvo-engine.mjs e2e

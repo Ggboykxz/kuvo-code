@@ -156,7 +156,8 @@ test("the host lets in a phone with the pairing token once, then by its key", as
   assert.deepEqual(saved.phones.map(p => [p.key, p.name]), [[link.publicOf(phone.key).toString("base64url"), "Test iPhone"]]);
   // Where its notifications go.
   assert.equal(saved.phones[0].address, phone.address.toString("base64url"));
-  assert.equal((fs.statSync(link.LINK_FILE).mode & 0o777).toString(8), "600");
+  // POSIX file modes; Windows has none, and its own permissions model instead.
+  if (process.platform !== "win32") assert.equal((fs.statSync(link.LINK_FILE).mode & 0o777).toString(8), "600");
 
   // The token is used up; the paired phone comes back without it.
   const late = phoneFor(host, hostKey);
@@ -318,11 +319,15 @@ test("the self-test passes here", () => {
 
 test("setup keeps the machine's keys and its own phones, starts the bridge, and stops it with no phones left", async () => {
   const { spawnSync } = await import("node:child_process");
+  const { fileURLToPath } = await import("node:url");
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), "kuvo-link-setup-"));
   fs.mkdirSync(path.join(folder, "workspace"));
-  const script = new URL("../../Sources/KuvoLink/Resources/kuvo-link.js", import.meta.url).pathname;
+  // fileURLToPath, not URL.pathname: Windows gives the latter a leading slash, and node
+  // then looks for /D:/…. 
+  const script = fileURLToPath(new URL("../../Sources/KuvoLink/Resources/kuvo-link.js", import.meta.url));
   const setup = input => {
     const result = spawnSync(process.execPath, [script, "setup"], { input: JSON.stringify(input), env: { ...process.env, KUVO_HOME: folder }, encoding: "utf8" });
+    assert.equal(result.status, 0, `setup exited ${result.status}: ${result.stderr}`);
     return JSON.parse(result.stdout);
   };
   const pidFile = path.join(folder, "run", "link.pid");

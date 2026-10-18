@@ -9,20 +9,21 @@
 //   BUN_BE_BUN=1 opencode kuvo-link.js pair [relay]    a link to pair a phone with this machine
 //   BUN_BE_BUN=1 opencode kuvo-link.js selftest        checks the runtime has what it needs
 //
-// It keeps its state in ~/.kuvo-code/run/link.json (mode 600), reads the engine's port and
-// password from run/engine.json, and connects out to the relay; it never listens. The protocol
-// is in PROTOCOL.md beside this file's source (kuvo-ai's Packages/KuvoLink), with the same in
-// Swift for the Mac and the phone.
+// It keeps its state in ~/.kuvo-code/run/link.json (mode 600; on Windows the file modes are
+// no-ops, and what keeps the key private there is the profile folder's own permissions),
+// reads the engine's port and password from run/engine.json, and connects out to the relay;
+// it never listens. The protocol is in PROTOCOL.md beside this file's source (kuvo-ai's
+// Packages/KuvoLink), with the same in Swift for the Mac and the phone.
 
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 // Goes up with every change, so `setup` replaces a running bridge that's older.
-export const BRIDGE_VERSION = "0.5.0";
+export const BRIDGE_VERSION = "0.5.1";
 const K = process.env.KUVO_HOME || path.join(os.homedir(), ".kuvo-code");
 const RUN = path.join(K, "run");
 export const LINK_FILE = path.join(RUN, "link.json");
@@ -923,14 +924,31 @@ function alive(pid) {
   }
 }
 
-// A bridge, not whatever took its number after a crash: on Linux its command line says so.
-function isBridge(pid) {
+// A process's command line, as the OS tells it: /proc on Linux, and Windows' own process list
+// where there is no /proc. null when it can't be read.
+function commandLineOf(pid, platform = process.platform) {
+  if (platform === "win32") {
+    const asked = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`], { encoding: "utf8", windowsHide: true, timeout: 10_000 });
+    return asked.status === 0 && asked.stdout.trim() !== "" ? asked.stdout : null;
+  }
+  try {
+    return fs.readFileSync(`/proc/${pid}/cmdline`, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+// A bridge, not whatever took its number after a crash: its command line says so. Where no
+// command line can be had the old answer stands on macOS (yes — the bridge only ever runs on
+// a machine reached over SSH, where /proc is there); on Windows, where an unreadable number
+// could be anyone's, it's no, so nothing is ever stopped on a guess.
+export function isBridge(pid, platform = process.platform, commandLine = commandLineOf) {
   if (!pid || pid === process.pid || !alive(pid)) return false;
   try {
-    return fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").includes("kuvo-link.js");
-  } catch {
-    return !fs.existsSync("/proc");
-  }
+    const line = commandLine(pid, platform);
+    if (line !== null) return line.includes("kuvo-link.js");
+  } catch {}
+  return platform !== "win32" && !fs.existsSync("/proc");
 }
 
 // Something to answer: a paired phone, or a pairing code waiting.
@@ -945,12 +963,18 @@ async function run() {
   fs.mkdirSync(RUN, { recursive: true, mode: 0o700 });
   fs.writeFileSync(PID_FILE, String(process.pid), { mode: 0o600 });
   fs.writeFileSync(VERSION_FILE, BRIDGE_VERSION, { mode: 0o600 });
-  const cleanUp = () => {
+  const forgetOwnPid = () => {
     try { if (fs.readFileSync(PID_FILE, "utf8") === String(process.pid)) fs.unlinkSync(PID_FILE); } catch {}
+  };
+  const cleanUp = () => {
+    forgetOwnPid();
     process.exit(0);
   };
   process.on("SIGTERM", cleanUp);
   process.on("SIGINT", cleanUp);
+  // Windows doesn't deliver those; whatever road it leaves by takes the pid file with it, so
+  // the next bridge doesn't take a stale number for a running one.
+  process.on("exit", forgetOwnPid);
 
   // Stops with the engine, when nothing's paired any more, or when another bridge took over;
   // phones removed since lose what they have open.
@@ -1004,12 +1028,15 @@ function runningBridge() {
   }
 }
 
+// How the bridge is started away from the command that made it: its own process, no console of
+// its own on Windows.
+export const bridgeSpawnOptions = (platform = process.platform) => ({ detached: true, stdio: "ignore", windowsHide: platform === "win32" });
+
 // Starts the bridge on its own, outliving this command, from the machine's workspace.
 function startBridge() {
   const workspace = path.join(K, "workspace");
   const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "run"], {
-    detached: true,
-    stdio: "ignore",
+    ...bridgeSpawnOptions(),
     cwd: fs.existsSync(workspace) ? workspace : K,
     env: process.env,
   });
