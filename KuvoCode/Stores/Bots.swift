@@ -64,6 +64,12 @@ final class Bots {
     @ObservationIgnored private var synced: Set<String> = []
     /// Machines given this copy's kuvo-wake since launch.
     @ObservationIgnored private var wakeInstalled: Set<String> = []
+    /// What changed for each bot that hasn't reached its session yet ("instructions", "name",
+    /// "model"), as its machine was away: done once it's back (`syncInstructions`), across launches.
+    private var waitingEdits: [String: [String]] {
+        get { UserDefaults.standard.dictionary(forKey: "botEditsWaiting") as? [String: [String]] ?? [:] }
+        set { UserDefaults.standard.set(newValue.isEmpty ? nil : newValue, forKey: "botEditsWaiting") }
+    }
     private let log = Logger(subsystem: "run.kuvo.code", category: "bots")
 
     /// The key under which a bot's job goes to its session.
@@ -233,17 +239,53 @@ final class Bots {
         bot.personality = edited.personality
         list[index] = bot
         save()
-        guard let api = app?.workspace.api(forFolder: bot.directory) else { return }
-        if old.name != bot.name || old.job != bot.job || old.instructions != bot.instructions || old.personality != bot.personality {
-            try? await sendInstructions(of: bot, api: api)
-            if old.name != bot.name { try? await api.renameSession(bot.sessionID, title: bot.name) }
-            await app?.groups.botChanged(bot)
-        }
+        var edits: Set<String> = []
+        if old.name != bot.name || old.job != bot.job || old.instructions != bot.instructions || old.personality != bot.personality { edits.insert("instructions") }
+        if old.name != bot.name { edits.insert("name") }
         // A new default model applies to its conversation too; you can still pick another there.
-        if old.model != bot.model, let model = bot.model {
-            try? await api.selectModel(session: bot.sessionID, model: model)
-            await app?.groups.modelChanged(of: bot)
+        if old.model != bot.model, bot.model != nil { edits.insert("model") }
+        await tell(bot.id, edits)
+    }
+
+    /// Whether `work` got to its engine: one it turned down counts, as asking again wouldn't change
+    /// its answer; one that didn't get there (the connection dropped) is tried again.
+    private static func reached(_ work: () async throws -> Void) async -> Bool {
+        do {
+            try await work()
+            return true
+        } catch {
+            return error is ServerError
         }
+    }
+
+    /// Tells `id`'s session what changed (`edits`, with any still waiting): its instructions,
+    /// its name as its conversation's title, its model; its group chats hear of them too. What
+    /// doesn't get there (its machine is away) waits for the next time it can (`syncInstructions`).
+    private func tell(_ id: String, _ edits: Set<String> = []) async {
+        var waiting = waitingEdits
+        let all = edits.union(waiting[id] ?? [])
+        guard !all.isEmpty else { return }
+        waiting[id] = Array(all)
+        waitingEdits = waiting
+        guard let bot = bot(id), let api = app?.workspace.api(forFolder: bot.directory) else { return }
+        var left = all
+        if all.contains("instructions"), await Self.reached({ try await self.sendInstructions(of: bot, api: api) }) { left.remove("instructions") }
+        if all.contains("name"), await Self.reached({ try await api.renameSession(bot.sessionID, title: bot.name) }) { left.remove("name") }
+        if all.contains("model") {
+            if let model = bot.model {
+                if await Self.reached({ try await api.selectModel(session: bot.sessionID, model: model) }) { left.remove("model") }
+            } else {
+                left.remove("model")
+            }
+        }
+        if !all.isDisjoint(with: ["instructions", "name"]) { await app?.groups.botChanged(bot) }
+        if all.contains("model") { await app?.groups.modelChanged(of: bot) }
+        // As the list is now: an edit made meanwhile stays on it.
+        waiting = waitingEdits
+        let still = Set(waiting[id] ?? []).subtracting(all).union(left)
+        waiting[id] = still.isEmpty ? nil : Array(still)
+        if self.bot(id) == nil { waiting[id] = nil }
+        waitingEdits = waiting
     }
 
     /// Deletes a bot: its conversation and its wake-ups, and its folder goes to the Trash (on a
@@ -290,9 +332,7 @@ final class Bots {
             // Saved even when unchanged, so its session hears the new wording.
             if let index = list.firstIndex(where: { $0.id == bot.id }) { list[index] = bot }
             save()
-            guard let api = app?.workspace.api(forFolder: bot.directory) else { continue }
-            try? await sendInstructions(of: bot, api: api)
-            await app?.groups.botChanged(bot)
+            await tell(bot.id, ["instructions"])
         }
     }
 
@@ -746,9 +786,8 @@ final class Bots {
         guard updated != bot, let index = list.firstIndex(where: { $0.id == id }) else { return }
         list[index] = updated
         save()
-        guard updated.job != bot.job || updated.instructions != bot.instructions, let api = app?.workspace.api(forFolder: updated.directory) else { return }
-        try? await sendInstructions(of: updated, api: api)
-        await app?.groups.botChanged(updated)
+        guard updated.job != bot.job || updated.instructions != bot.instructions else { return }
+        await tell(updated.id, ["instructions"])
     }
 
     /// Text compared without its spacing.
@@ -903,6 +942,15 @@ final class Bots {
     }
 
     func syncInstructions() async {
+        // What was changed while their machines were away, once they're back.
+        for id in waitingEdits.keys {
+            guard let bot = bot(id) else {
+                waitingEdits[id] = nil
+                continue
+            }
+            if app?.workspace.api(forFolder: bot.directory) != nil { await tell(id) }
+        }
+        await app?.groups.catchUp()
         let sent = UserDefaults.standard.dictionary(forKey: Self.sentKey) as? [String: String] ?? [:]
         for listed in list where !synced.contains(listed.id) {
             guard let api = app?.workspace.api(forFolder: listed.directory) else { continue }

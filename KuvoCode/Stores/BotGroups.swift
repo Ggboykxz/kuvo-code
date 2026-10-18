@@ -803,13 +803,19 @@ final class BotGroups {
             try await waitForRun(of: seat, after: ended, since: sent, api: api)
             let (text, _, _) = try await reply(in: seat, after: promptID, since: sent, api: api)
             let (tasks, go) = Self.tasks(in: text, members: members)
-            guard !tasks.isEmpty, !Task.isCancelled else { return }
+            guard !Task.isCancelled else { return }
+            guard !tasks.isEmpty else {
+                // Said, as a turn that fails is: otherwise a go-ahead just seems ignored.
+                if go { note("\(bot.name) didn’t say who does what, so no parts were handed out.", in: id) }
+                return
+            }
             change(wrapUpID, in: id) { $0.tasks = tasks }
             Analytics.shared.track("group_work_split", ["parts": tasks.count, "go": go])
             if go { startWork(wrapUpID, in: id) }
         } catch {
             guard !Task.isCancelled else { return }
             log.error("Splitting the work in \(id, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+            note("\(bot.name) couldn’t hand out the work: \(error.localizedDescription)", in: id)
         }
     }
 
@@ -1133,11 +1139,41 @@ final class BotGroups {
 
     // MARK: Remembering
 
+    /// Bots whose memory of their chats couldn't be written, as their machine was away, each with
+    /// the chats whose files go from its folder: for `catchUp`, across launches.
+    private var waitingMemory: [String: [String]] {
+        get { UserDefaults.standard.dictionary(forKey: "groupMemoryWaiting") as? [String: [String]] ?? [:] }
+        set { UserDefaults.standard.set(newValue.isEmpty ? nil : newValue, forKey: "groupMemoryWaiting") }
+    }
+
+    /// What `remember` couldn't do while a bot's machine was away, now it's back.
+    func catchUp() async {
+        for (botID, gone) in waitingMemory {
+            guard let bot = app?.bots.bot(botID) else {
+                waitingMemory[botID] = nil
+                continue
+            }
+            guard app?.workspace.api(forFolder: bot.directory) != nil else { continue }
+            waitingMemory[botID] = nil
+            let folder = (bot.folder as NSString).appendingPathComponent("groups")
+            for chat in Set(gone) { await removeFile((folder as NSString).appendingPathComponent("\(chat).md"), of: bot) }
+            await remember(botID)
+        }
+    }
+
     /// A bot's own conversation remembers its chats, as you'd remember a meeting: a recap of
     /// each in its instructions, and the whole of each in a file in its folder.
     /// `changed` is the one chat whose file needs writing again; nil writes them all.
     private func remember(_ botID: String, changed: String? = nil, forgetting gone: String? = nil) async {
-        guard !leaving.contains(botID), let app, let bot = app.bots.bot(botID), let api = app.workspace.api(forFolder: bot.directory) else { return }
+        guard !leaving.contains(botID), let app, let bot = app.bots.bot(botID) else { return }
+        guard let api = app.workspace.api(forFolder: bot.directory) else {
+            // Its machine is away: all of it once it's back (`catchUp`), and the file of a chat
+            // it left or that was deleted taken away then.
+            var waiting = waitingMemory
+            waiting[botID] = (waiting[botID] ?? []) + (gone.map { [$0] } ?? [])
+            waitingMemory = waiting
+            return
+        }
         let folder = (bot.folder as NSString).appendingPathComponent("groups")
         if let gone { await removeFile((folder as NSString).appendingPathComponent("\(gone).md"), of: bot) }
         let chats = list.filter { $0.members.contains(botID) && !messages(in: $0.id).isEmpty }
