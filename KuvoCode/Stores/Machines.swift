@@ -36,6 +36,8 @@ final class MachineEngine {
     /// Keeps its sign-ins in step with this Mac's while it's connected (`AppModel.syncSignIns`).
     @ObservationIgnored var signInSync: Task<Void, Never>?
     @ObservationIgnored var signInNudge: Task<Void, Never>?
+    /// Starts it over with this Mac's accounts once they've changed (`AppModel.updateMachineAccounts`).
+    @ObservationIgnored var accountsUpdate: Task<Void, Never>?
     /// Keeps its agents' list of everyone current, and brings their messages for agents
     /// elsewhere (`AgentMail`).
     @ObservationIgnored var agentSync: Task<Void, Never>?
@@ -133,6 +135,12 @@ final class MachineEngine {
         UserDefaults.standard.set(id, forKey: key)
         return id
     }()
+
+    /// This Mac started the engine running there with other accounts or settings than `launch`'s.
+    func isBehind(_ launch: Launch) -> Bool {
+        guard let engine = server?.engine, !isAnotherMacs(engine) else { return false }
+        return engine.notes["settings"] != launch.fingerprint
+    }
 
     /// Whether another Mac started this engine (engines from before Macs were noted count as
     /// this one's).

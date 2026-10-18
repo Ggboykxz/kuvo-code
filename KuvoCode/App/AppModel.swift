@@ -299,7 +299,9 @@ final class AppModel {
             }
         }
         merge(config, into: &base)
-        let data = (try? JSONSerialization.data(withJSONObject: base)) ?? Data()
+        // Sorted, so the same settings read the same each time (a machine's engine is started
+        // over when what it started with reads differently).
+        let data = (try? JSONSerialization.data(withJSONObject: base, options: [.sortedKeys])) ?? Data()
         return String(decoding: data, as: UTF8.self)
     }
 
@@ -356,8 +358,10 @@ final class AppModel {
                 case .event(let event):
                     // The file changed, here or elsewhere: show what it says now.
                     if event.type == "config.updated" { engineConfig.reload() }
-                    // A sign-in made or renewed here reaches the machines.
+                    // A sign-in made or renewed here reaches the machines, and an account
+                    // connected, signed out of or switched reaches their engines.
                     if event.type == "credential.updated" { syncSignIns() }
+                    if event.type == "credential.updated" || event.type == "credential.switched" { updateMachineAccounts() }
                     catalog.handle(event)
                     workspace.handle(event)
                     usage.handle(event)

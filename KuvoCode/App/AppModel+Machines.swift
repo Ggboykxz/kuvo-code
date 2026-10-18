@@ -178,12 +178,7 @@ extension AppModel {
     private func start(_ engine: MachineEngine) async {
         // It takes this Mac's accounts and settings, so this Mac's engine comes first.
         for _ in 0..<240 where api == nil { try? await Task.sleep(for: .milliseconds(250)) }
-        var environment = await machineEnvironment().environment
-        // The browser tools, with the machine's own browser.
-        let sites = Integrations.sites(Integrations.added(in: engineConfig).filter { !Integrations.macOnly.contains($0) })
-        environment["OPENCODE_CONFIG_CONTENT"] = AppModel.merged(MachineBrowserInstaller.engineConfig(sites: sites), into: environment["OPENCODE_CONFIG_CONTENT"])
-        let launch = MachineEngine.Launch(environment: environment, helper: MachineBrowserInstaller.helper)
-        await engine.start(launch, cache: AppInfo.supportDirectory.appending(path: "engine-linux"))
+        await engine.start(machineLaunch(), cache: AppInfo.supportDirectory.appending(path: "engine-linux"))
         // Its sessions, once it's up: tried again a few times, as they're what makes them live.
         for wait in [0, 2, 5, 10, 20] where engine.isReady {
             try? await Task.sleep(for: .seconds(wait))
@@ -265,6 +260,38 @@ extension AppModel {
         }
     }
 
+    /// What a machine's engine starts with: this Mac's accounts and settings, and the browser tools
+    /// with the machine's own browser.
+    private func machineLaunch() async -> MachineEngine.Launch {
+        var environment = await machineEnvironment().environment
+        let sites = Integrations.sites(Integrations.added(in: engineConfig).filter { !Integrations.macOnly.contains($0) })
+        environment["OPENCODE_CONFIG_CONTENT"] = AppModel.merged(MachineBrowserInstaller.engineConfig(sites: sites), into: environment["OPENCODE_CONFIG_CONTENT"])
+        return MachineEngine.Launch(environment: environment, helper: MachineBrowserInstaller.helper)
+    }
+
+    /// This Mac's accounts changed (one connected, signed out of or switched): a machine's engine
+    /// has the ones it started with, so its models would stay the old ones. Each is started over
+    /// with the new ones as soon as nothing runs there, checked again every half minute meanwhile.
+    func updateMachineAccounts() {
+        for engine in machines.engines.values where engine.isReady {
+            engine.accountsUpdate?.cancel()
+            engine.accountsUpdate = Task { [weak self, weak engine] in
+                // A change comes as a few events in a row.
+                try? await Task.sleep(for: .seconds(2))
+                for _ in 0..<120 {
+                    guard !Task.isCancelled, let self, let engine, engine.isReady else { return }
+                    guard engine.isBehind(await self.machineLaunch()) else { return }
+                    if !self.workspace.isRunning(on: engine.machine.id), (try? await engine.api?.activeSessions())?.isEmpty == true {
+                        await engine.stopEngine()
+                        await self.start(engine)
+                        return
+                    }
+                    try? await Task.sleep(for: .seconds(30))
+                }
+            }
+        }
+    }
+
     /// What a machine's engine gets from this Mac: the accounts that can go as environment
     /// variables (API keys, a GitHub Copilot sign-in), held in its memory and never written to its
     /// disk, and this Mac's engine settings, minus what only makes sense here (web search goes in
@@ -331,12 +358,14 @@ extension AppModel {
                 mcp["servers"] = Integrations.keyVariables(in: servers)
                 settings["mcp"] = mcp
             }
-            if let json = try? JSONSerialization.data(withJSONObject: settings) {
+            if let json = try? JSONSerialization.data(withJSONObject: settings, options: [.sortedKeys]) {
                 environment["OPENCODE_CONFIG_CONTENT"] = String(decoding: json, as: UTF8.self)
             }
         }
         // Always, so a choice taken back here is taken back there.
-        environment["KUVO_SETTINGS"] = (try? JSONEncoder().encode(global)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        environment["KUVO_SETTINGS"] = (try? encoder.encode(global)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
         // Keys you brought for the integrations machines run, in memory as on this Mac: not
         // those that stay on this Mac (an app's secret for a sign-in, say).
         let here = Set(Integrations.macOnly.map { IntegrationKeys.variable($0, "") })
