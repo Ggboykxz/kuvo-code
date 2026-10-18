@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- A link whose address or title goes on to the next line, with dollar signs in its address, opens that address; math used to change it.
 - An integration that takes a key, like GitHub with a personal access token, connects on your Mac as soon as you save the key. It used to say "Couldn't connect on this Mac" until Kuvo Code's engine restarted, which waited until no session on your Mac was working.
 - In replies and Markdown previews, a list item with a code block, quote or table in it keeps its number or bullet beside its own first line. It sat beside the block, so the item's first words read as the end of the item before.
 - Math in replies and Markdown previews no longer takes words that aren't its own. A numbered list with each formula opened after its label, like "1. Energy: $$", keeps every item; a code block that starts on a list item's line stays code; a quote under a list item keeps its quote marks out of the formula; and "$$" for prices or the shell's PID stays as written.
