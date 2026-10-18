@@ -617,11 +617,12 @@ struct MainView: View {
     /// The session's title, renamed in its card's header, while it's the one being renamed.
     private func rename(_ session: Session) -> CardRename? {
         guard renaming?.id == session.id else { return nil }
+        // Each ends only its own rename: one started on another session meanwhile stays.
         return CardRename(original: session.title ?? "") { title in
             Task { await workspace.rename(session.id, to: title) }
-            renaming = nil
+            if renaming?.id == session.id { renaming = nil }
         } cancel: {
-            renaming = nil
+            if renaming?.id == session.id { renaming = nil }
         }
     }
 

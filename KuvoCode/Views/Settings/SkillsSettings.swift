@@ -190,8 +190,9 @@ struct SkillsSettings: View {
             defer { isOpening = false }
             do {
                 let repository = try await SkillLibrary.repository(named: name)
-                // A skill you started writing meanwhile stays in view, and the name stays typed.
-                guard writing == nil else { return }
+                // A skill you started writing, or a repository you opened, meanwhile stays in view,
+                // and the name stays typed.
+                guard writing == nil, browsing == nil else { return }
                 browsing = repository
                 repositoryName = ""
             } catch {

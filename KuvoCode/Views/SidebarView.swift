@@ -510,11 +510,13 @@ struct SidebarView: View {
             EmptyView()
         } title: {
             if renaming == RenameTarget(id: session.id, place: place) {
+                // Each ends only its own rename: one started on another row meanwhile stays.
+                let target = RenameTarget(id: session.id, place: place)
                 InlineTitleField(original: session.title ?? "") { title in
                     Task { await workspace.rename(session.id, to: title) }
-                    renaming = nil
+                    if renaming == target { renaming = nil }
                 } cancel: {
-                    renaming = nil
+                    if renaming == target { renaming = nil }
                 }
             } else {
                 Text(session.title ?? "New Session")
