@@ -510,9 +510,11 @@ public enum Wakes {
         printf '%s' "$c_next" >"${w}next"
         run "$w" "$1" run-
         [ -z "$t_why" ] || continue
-        c_sum=$(printf '%s' "$t_out" | cksum)
+        # Sums start with "2/", for runs read this way. One from before (errors counted, a quiet
+        # grep didn't) is replaced by this reading, silently, so the new way wakes no one.
+        c_sum=2/$(printf '%s' "$t_out" | cksum)
         c_last=$(cat "${w}last" 2>/dev/null)
-        if [ -z "$c_last" ]; then printf '%s' "$c_sum" >"${w}last"; continue; fi
+        case "$c_last" in 2/*) ;; *) printf '%s' "$c_sum" >"${w}last"; rm -f "${w}pending" "${w}message" "${w}seen"; continue ;; esac
         # As the bot heard it: no change, and one seen before was a passing one.
         [ "$c_last" != "$c_sum" ] || { rm -f "${w}pending" "${w}message" "${w}seen"; continue; }
         # (One that woke the bot without reaching it yet is told again, as it is now.)

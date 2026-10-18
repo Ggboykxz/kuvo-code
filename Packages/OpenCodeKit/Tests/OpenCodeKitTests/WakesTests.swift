@@ -382,6 +382,14 @@ struct WakesTests {
         #expect(try step("B") == false, "\(label)")
         #expect(try step("B") == true, "\(label)")
 
+        // What an older kuvo-wake read (errors too) gives way to the first reading, silently,
+        // with a wake-up it hadn't delivered; from then on, changes wake the bot as before.
+        try reset()
+        try write("1234567890 12", watch.appending(path: "last"))
+        try write("1234567890 13", watch.appending(path: "pending"))
+        try write("Look\n\nYour watch saw a change.", watch.appending(path: "message"))
+        #expect(try ["B", "B", "C", "C"].map { try step($0) } == [false, false, false, true], "\(label)")
+        #expect(read(watch.appending(path: "last"))?.hasPrefix("2/") == true, "\(label)")
     }
 
     /// The script's next time for a repeat (as a wake-up's name has it), from its own functions, at `now`.
