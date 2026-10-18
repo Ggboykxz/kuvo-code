@@ -17,6 +17,27 @@ struct CopyableCodeBlockStyle: StructuredText.CodeBlockStyle {
     }
 }
 
+extension CopyableCodeBlockStyle {
+    /// How wide `line` is in a monospaced font with this advance: its characters times the
+    /// advance, wide ones (Chinese, emoji) twice, and a tab to the next tab stop.
+    nonisolated static func width(of line: String, advance: CGFloat) -> CGFloat {
+        var width: CGFloat = 0
+        for character in line {
+            if character == "\t" {
+                width = ((width / tabStop).rounded(.down) + 1) * tabStop
+                continue
+            }
+            let first = character.unicodeScalars.first!
+            let isWide = first.value >= 0x2E80 || first.properties.isEmojiPresentation || character.unicodeScalars.contains("\u{FE0F}")
+            width += isWide ? advance * 2 : advance
+        }
+        return width
+    }
+
+    /// Text's tab stops: AppKit's, every 28 points.
+    private nonisolated static let tabStop: CGFloat = 28
+}
+
 private struct CopyableCodeBlock: View {
     let configuration: StructuredText.CodeBlockStyleConfiguration
     /// The code, which Textual keeps private: read from the copy action's proxy, once; nil (no
@@ -49,14 +70,12 @@ private struct CopyableCodeBlock: View {
     }
 
     /// The first line is too long to share its row with the corner: the code starts below it,
-    /// so nothing is hidden under the language and Copy. Its width: the code's font is monospaced,
-    /// so its characters times the font's advance (wide ones, like Chinese or emoji, count twice),
-    /// a little larger than the code is set, to be safe. Not laid out as text: doing that here,
+    /// so nothing is hidden under the language and Copy. Its width from the font's advance, a
+    /// little larger than the code is set, to be safe. Not laid out as text: doing that here,
     /// while SwiftUI lays the conversation out, could crash in CoreText.
     private var clearsCorner: Bool {
         guard let firstLine, !firstLine.isEmpty, codeWidth > 0 else { return false }
-        let cells = firstLine.reduce(0) { $0 + ($1.unicodeScalars.first.map { $0.value >= 0x2E80 } == true ? 2 : 1) }
-        let width = CGFloat(cells) * Self.advance(font.size - 1.5)
+        let width = CopyableCodeBlockStyle.width(of: firstLine, advance: Self.advance(font.size - 1.5))
         return 14 + width + 8 > codeWidth - cornerSize.width
     }
 
