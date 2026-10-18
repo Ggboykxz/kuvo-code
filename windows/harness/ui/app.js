@@ -10,6 +10,7 @@ const el = (tag, attrs = {}, ...children) => {
     if (value === undefined || value === null) continue;
     if (name === "class") node.className = value;
     else if (name === "text") node.textContent = value;
+    else if (name === "html") node.innerHTML = value;
     else if (name.startsWith("on")) node.addEventListener(name.slice(2), value);
     else node.setAttribute(name, value);
   }
@@ -30,6 +31,51 @@ async function api(path, options = {}) {
 }
 
 /// Says what went wrong, in the page: a click that ends in a dead promise helps nobody.
+// ---- Markdown (the Mac app renders markdown; so does this) ----
+
+function sanitizeHtml(html) {
+  // The engine's words can carry anything: keep the structure, drop the dangerous parts.
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  doc.querySelectorAll("script, iframe, object, embed, link, meta, base, style").forEach(node => node.remove());
+  doc.querySelectorAll("*").forEach(node => {
+    [...node.attributes].forEach(attr => {
+      if (attr.name.startsWith("on") || /^\s*javascript:/i.test(attr.value)) node.removeAttribute(attr.name);
+    });
+  });
+  return doc.body.innerHTML;
+}
+
+function renderMarkdown(text) {
+  if (typeof marked === "undefined") return escapeHtml(String(text));
+  marked.setOptions({ breaks: true, gfm: true, highlight: (code, lang) => {
+    if (lang && typeof hljs !== "undefined" && hljs.getLanguage(lang)) {
+      try { return hljs.highlight(code, { language: lang }).value; } catch {}
+    }
+    if (typeof hljs !== "undefined") { try { return hljs.highlightAuto(code).value; } catch {} }
+    return escapeHtml(code);
+  } });
+  const html = sanitizeHtml(marked.parse(String(text)));
+  // A copy button on each code block, like the Mac app's CodeTextView.
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  doc.querySelectorAll("pre").forEach(pre => {
+    const button = document.createElement("button");
+    button.className = "small code-copy";
+    button.textContent = "Copy";
+    button.addEventListener("click", () => {
+      navigator.clipboard?.writeText(pre.querySelector("code")?.textContent ?? "").catch(() => {});
+      button.textContent = "Copied";
+      setTimeout(() => { button.textContent = "Copy"; }, 1200);
+    });
+    pre.style.position = "relative";
+    pre.append(button);
+  });
+  return doc.body.innerHTML;
+}
+
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
+}
+
 function complain(where, error) {
   const message = error?.message ?? String(error);
   if (where) where.textContent = message;
@@ -188,13 +234,13 @@ function toolCard(part) {
 function assistantEntry(entry) {
   const block = el("article", { class: "entry assistant" });
   for (const part of entry.parts) {
-    if (part.type === "text") block.append(el("div", { class: "text", text: part.text }));
+    if (part.type === "text") { const div = el("div", { class: "text markdown" }); div.innerHTML = renderMarkdown(part.text); block.append(div); }
     else if (part.type === "reasoning") {
       const summary = el("summary", { text: "Thinking" });
       if (entry.running) summary.classList.add("shimmer");
       block.append(el("details", { class: "reasoning" },
         summary,
-        el("div", { class: "text", text: part.text }),
+        el("div", { class: "text markdown", html: renderMarkdown(part.text) }),
       ));
     } else if (part.type === "tool") block.append(toolCard(part));
   }

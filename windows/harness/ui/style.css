@@ -581,3 +581,47 @@ echo "written"
 }
 .steps-row::before { content: "☰"; font-size: 12px; }
 .steps-row[hidden] { display: none; }
+
+/* ---- Markdown (the Mac app renders markdown; so does this) ---- */
+.markdown { line-height: var(--leading-body); }
+.markdown > :first-child { margin-top: 0; }
+.markdown > :last-child { margin-bottom: 0; }
+.markdown h1, .markdown h2, .markdown h3, .markdown h4 { font-weight: 600; letter-spacing: var(--tracking-display); margin: var(--space-4) 0 var(--space-2); line-height: var(--leading-tight); }
+.markdown h1 { font-size: var(--text-2xl); }
+.markdown h2 { font-size: var(--text-xl); }
+.markdown h3 { font-size: var(--text-lg); }
+.markdown h4 { font-size: var(--text-md); }
+.markdown p { margin: var(--space-2) 0; }
+.markdown a { color: var(--accent); text-decoration: none; }
+.markdown a:hover { text-decoration: underline; }
+.markdown ul, .markdown ol { margin: var(--space-2) 0; padding-left: var(--space-5); }
+.markdown li { margin: var(--space-1) 0; }
+.markdown code { font-family: var(--font-mono); font-size: 0.9em; background: var(--code-bg); padding: 1px 5px; border-radius: var(--radius-sm); }
+.markdown pre {
+  margin: var(--space-3) 0; padding: var(--space-3);
+  background: var(--code-bg); border-radius: var(--radius);
+  border: 1px solid var(--line);
+  overflow-x: auto;
+  position: relative;
+}
+.markdown pre code { background: transparent; padding: 0; border-radius: 0; }
+.markdown pre .code-lang { position: absolute; top: 4px; right: 8px; font-size: var(--text-xs); color: var(--ink-faint); text-transform: uppercase; }
+.markdown blockquote { margin: var(--space-3) 0; padding-left: var(--space-3); border-left: 2px solid var(--line); color: var(--ink-soft); }
+.markdown table { border-collapse: collapse; margin: var(--space-3) 0; width: 100%; font-size: var(--text-sm); }
+.markdown th, .markdown td { border: 1px solid var(--line); padding: var(--space-1) var(--space-2); text-align: left; }
+.markdown th { background: var(--panel-2); font-weight: 500; }
+.markdown hr { border: 0; border-top: 1px solid var(--line); margin: var(--space-4) 0; }
+.markdown img { max-width: 100%; border-radius: var(--radius-sm); }
+/* Highlight.js github theme adjustments for dark mode */
+@media (prefers-color-scheme: dark) {
+  .markdown pre { background: #0d1117; border-color: #21262d; }
+  .markdown pre code { color: #c9d1d9; }
+}
+
+/* ---- Code copy button ---- */
+.markdown pre .code-copy {
+  position: absolute; top: 6px; right: 6px;
+  opacity: 0; transition: opacity var(--motion-fast) var(--ease-standard);
+  font-size: var(--text-xs); padding: 2px 8px;
+}
+.markdown pre:hover .code-copy { opacity: 1; }
