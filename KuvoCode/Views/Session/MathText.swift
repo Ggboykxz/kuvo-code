@@ -49,26 +49,42 @@ enum MathText {
         var formulas = Formulas()
         (formulas.open, formulas.close) = marks(for: text)
         let chars = Array(text)
-        let lines = lines(of: chars)
+        let (lines, places) = read(chars)
+        guard !places.isEmpty else { return (input, formulas) }
+        func mark(_ formula: Formula) -> String {
+            formulas.list.append(formula)
+            return "\(formulas.open)\(formulas.list.count - 1)\(formulas.close)"
+        }
         var out = ""
         out.reserveCapacity(chars.count)
-        var index = 0
-        while index < lines.count {
-            let line = lines[index]
-            if line.isCode || line.isBlank {
-                out += String(chars[line.start..<line.end])
-                if line.end < chars.count { out += "\n" }
-                index += 1
-                continue
+        var i = 0
+        for place in places {
+            out += String(chars[i..<place.start])
+            i = place.end
+            let formula = place.formula
+            let line = lines[place.first], closing = lines[place.last]
+            let after = chars[place.end..<closing.end]
+            // The line under it reads on as it did, not as a code block, a list or a heading's
+            // underline, or out of a list or quote.
+            let nextReads = place.last + 1 < lines.count ? !lines[place.last + 1].changesAfterBlock : true
+            if !formula.isBlock || formula.drawn == nil || !line.takesBlock || formula.latex.contains("```") {
+                out += mark(formula)
+            } else if line.isTopLevel, nextReads || !after.allSatisfy(\.isWhitespace) {
+                // Under the words before it on its line, if any: at a line's start, a blank line
+                // ahead would be read into code above that's still open.
+                let atStart = chars[line.start..<place.start].allSatisfy(\.isWhitespace)
+                out += (atStart ? "" : "\n\n") + "```\(blockLanguage)\n\(formula.latex)\n```\n\n"
+            } else if !line.isTopLevel, place.start == line.body, after.allSatisfy(\.isWhitespace), nextReads {
+                // In its list item or quote: the fence goes in indented and quoted as its line is.
+                let prefix = String(chars[line.start..<line.body])
+                out += "```\(blockLanguage)\n" + formula.latex.split(separator: "\n").map { prefix + $0 }.joined(separator: "\n") + "\n\(prefix)```"
+                i = closing.end
+            } else {
+                out += mark(formula)
             }
-            // A run of lines with words, which a formula can't run out of.
-            var last = index
-            while last + 1 < lines.count, !lines[last + 1].isCode, !lines[last + 1].isBlank { last += 1 }
-            out += protect(chars, lines, index...last, into: &formulas)
-            if lines[last].end < chars.count { out += "\n" }
-            index = last + 1
         }
-        return out == text ? (input, formulas) : (out, formulas)
+        out += String(chars[i...])
+        return (out, formulas)
     }
 
     /// Two private-use characters `text` doesn't have, nor writes as `&#…;` (which Markdown turns
@@ -92,16 +108,22 @@ enum MathText {
         var end: Int
         /// Where its words start, after any quote marks and indentation.
         var body: Int
+        /// Where they start after its list markers, too.
+        var content: Int
         /// How many quotes it's in.
-        var depth = 0
+        var depth: Int
+        /// How many quote marks it has (a quote's paragraph can carry on without them).
+        var marks: Int
         /// In a code block, or one's fence: left as it is.
         var isCode = false
         var isBlank = false
-        /// In a formula of its own that started on a line of its own above, and ends on this one
-        /// or one below: math, however it looks as Markdown ("+ x" isn't a list item).
+        /// In a formula on lines of its own that started above, and ends on this one or one
+        /// below: math, however it looks as Markdown ("+ x" isn't a list item).
         var isMath = false
         /// Starts a list item ("- ", "1. ").
         var startsItem = false
+        /// Carries on the paragraph above.
+        var continues = false
         /// Carries on a paragraph without the indentation or quote marks of the list item or
         /// quote it's in.
         var isLazy = false
@@ -112,16 +134,42 @@ enum MathText {
         var isDeep = false
         /// In a list item, or in a quote that has one.
         var inList = false
+        /// Under a paragraph, read otherwise than under a block: a list item that can't start in
+        /// a paragraph ("2. x"), or a line of "=" or "-" making it a heading.
+        var underParagraph = false
+
+        init(start: Int, end: Int, body: Int, depth: Int) {
+            self.start = start
+            self.end = end
+            self.body = body
+            content = body
+            self.depth = depth
+            marks = depth
+        }
 
         /// A formula of its own can be a block here, in a fence indented as the line is.
         var takesBlock: Bool { !isOneLine && !startsItem && !isLazy && !isDeep }
         /// Not in a list item or quote: a block goes in at the left edge, between blank lines.
         var isTopLevel: Bool { depth == 0 && !inList }
+        /// Read otherwise under a block than under the paragraph it's in or after.
+        var changesAfterBlock: Bool { isLazy || isDeep || underParagraph }
     }
 
-    /// The lines of `chars`, read as Markdown reads its blocks, enough to tell code, list items,
-    /// quotes, tables and formulas of their own apart.
-    nonisolated private static func lines(of chars: [Character]) -> [Line] {
+    /// A formula in the text: from its opening `$` or `\` to past its closing one, the lines it
+    /// opens and closes on, and what it is.
+    nonisolated private struct Place {
+        var start: Int
+        var end: Int
+        var first: Int
+        var last: Int
+        var formula: Formula
+    }
+
+    /// The lines of `chars`, read as Markdown reads its blocks, and the formulas in their words,
+    /// not in code. One of its own (`$$` or `\[`) closes in its paragraph; opened at the start of a
+    /// line's words, it's on lines of its own, which can look like anything ("+ x" isn't a list
+    /// item) but a blank line or a line out of its quote or list item.
+    nonisolated private static func read(_ chars: [Character]) -> (lines: [Line], places: [Place]) {
         var ranges: [Range<Int>] = []
         var start = 0
         for (index, character) in chars.enumerated() where character == "\n" {
@@ -130,136 +178,347 @@ enum MathText {
         }
         ranges.append(start..<chars.count)
 
+        var blocks = Blocks(chars: chars, ranges: ranges)
         var lines: [Line] = []
         lines.reserveCapacity(ranges.count)
-        var fence: (marker: Character, count: Int, depth: Int)?
-        // The content columns of the open list items, innermost last (out of quotes).
+        var places: [Place] = []
+        // The last line of a formula on lines of its own being read, and where the words after a
+        // formula or code that ended on a later line start.
+        var mathUntil = -1
+        var resume = 0
+
+        /// Each line after `number` that carries on its paragraph, in its quote and not a table
+        /// row, while `reads` reads on.
+        func carryOn(after number: Int, _ reads: (Int, Line) -> Bool) {
+            var probe = blocks
+            for next in (number + 1)..<ranges.count {
+                let line = probe.read(next)
+                guard line.continues, !line.isOneLine, line.depth == lines[number].depth, reads(next, line) else { return }
+            }
+        }
+
+        /// The formula of its own opened at `start` on line `number`, if it closes, and whether
+        /// it's on lines of its own.
+        func display(at start: Int, on number: Int, dollars: Bool) -> (place: Place, ownLines: Bool)? {
+            let line = lines[number]
+            var parts = [chars[(start + 2)..<line.end]]
+            var end: Int?, last = number, closeBody = line.body
+            /// Reads `chars[from..<to]`, on line `next`: false where the formula closes, or can't.
+            func reads(_ next: Int, from: Int, to: Int) -> Bool {
+                switch closing(chars, from: from, to: to, dollars: dollars) {
+                case .at(let at):
+                    (end, last, closeBody) = (at, next, from)
+                    if next == number { parts = [chars[from..<at]] } else { parts.append(chars[from..<at]) }
+                    return false
+                case .never:
+                    return false
+                case .notHere:
+                    if next != number { parts.append(chars[from..<to]) }
+                    return true
+                }
+            }
+            // On lines of its own: opened at the start of a line's words, not after a list marker
+            // or on a line carrying a paragraph on lazily.
+            let ownLines = start == line.body && !line.startsItem && !line.isLazy
+            // Lines it runs over that Markdown would read as blocks of their own ("+ x", "1. x").
+            var overBlocks = false
+            if reads(number, from: start + 2, to: line.end), !line.isOneLine {
+                if ownLines {
+                    // Up to a blank line, a code fence, a line out of its quote, or out of its list
+                    // item: a quote mark, or a block's start, left of the item's words.
+                    let column = blocks.items.last ?? 0
+                    for next in (number + 1)..<ranges.count {
+                        let lead = prefix(of: chars, ranges[next], items: blocks.items)
+                        let rest = chars[lead.body..<ranges[next].upperBound]
+                        guard !rest.isEmpty, lead.depth == line.marks else { break }
+                        let start = lead.indent - (blocks.items.last { $0 <= lead.indent } ?? 0) < 4 ? blockStart(of: rest, indent: lead.indent) : nil
+                        if case .fence? = start { break }
+                        if line.marks > 0 ? lead.quoteColumn < column : lead.indent < column && start != nil { break }
+                        overBlocks = overBlocks || start != nil
+                        if !reads(next, from: lead.body, to: ranges[next].upperBound) { break }
+                    }
+                } else {
+                    carryOn(after: number) { next, line in reads(next, from: line.body, to: line.end) }
+                }
+            }
+            guard let end else { return nil }
+            // Over those, it closes on a line of its own, as math on lines of its own does.
+            if overBlocks, end != closeBody || !chars[(end + 2)..<ranges[last].upperBound].allSatisfy({ $0.isWhitespace || $0.isPunctuation }) {
+                return nil
+            }
+            let latex = parts.map { String($0).trimmingCharacters(in: .whitespaces) }.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            // Nothing, or no formula: "($$) … ($$)" are prices, and math has no "$" of its own.
+            guard !latex.isEmpty, !dollars || !")]}".contains(latex.first!), !hasDollar(latex) else { return nil }
+            let (open, close) = dollars ? ("$$", "$$") : ("\\[", "\\]")
+            let formula = Formula(source: open + parts.map { String($0) }.joined(separator: "\n") + close, latex: latex, isBlock: true, drawn: drawable(latex))
+            return (Place(start: start, end: end + 2, first: number, last: last, formula: formula), ownLines && last > number)
+        }
+
+        /// Sets `place` aside: true when it ends on a later line, where the words read on.
+        func take(_ place: Place, ownLines: Bool) -> Bool {
+            places.append(place)
+            guard place.last > place.first else { return false }
+            resume = place.end
+            if ownLines { mathUntil = place.last }
+            return true
+        }
+
+        for number in ranges.indices {
+            var line: Line
+            if number <= mathUntil {
+                let lead = prefix(of: chars, ranges[number], items: blocks.items)
+                line = Line(start: ranges[number].lowerBound, end: ranges[number].upperBound, body: lead.body, depth: lead.depth)
+                line.isMath = true
+                // What's after the formula's end is read in the line.
+                line.isOneLine = true
+            } else {
+                line = blocks.read(number)
+            }
+            lines.append(line)
+            guard !line.isCode, !line.isBlank, resume < line.end else { continue }
+            var i = max(resume, line.body)
+            words: while i < line.end {
+                switch chars[i] {
+                case "`":
+                    // Code in a line, as it is: to its end on the line, or on a later line of its
+                    // paragraph.
+                    var run = 0
+                    while i + run < line.end, chars[i + run] == "`" { run += 1 }
+                    if let end = closingBackticks(chars, from: i + run, to: line.end, count: run) {
+                        i = end + run
+                        continue
+                    }
+                    var end: Int?
+                    if !line.isOneLine {
+                        carryOn(after: number) { _, next in
+                            end = closingBackticks(chars, from: next.body, to: next.end, count: run)
+                            return end == nil
+                        }
+                    }
+                    if let end {
+                        resume = end + run
+                        break words
+                    }
+                    i += run
+                case "\\" where i + 1 < line.end:
+                    if chars[i + 1] == "[", let found = display(at: i, on: number, dollars: false) {
+                        if take(found.place, ownLines: found.ownLines) { break words }
+                        i = found.place.end
+                        continue
+                    }
+                    if chars[i + 1] == "(", let end = inlineEnd(chars, from: i, to: line.end, closer: ")") {
+                        let latex = String(chars[(i + 2)..<end]).trimmingCharacters(in: .whitespaces)
+                        if !latex.isEmpty {
+                            let formula = Formula(source: String(chars[i..<(end + 2)]), latex: latex, isBlock: false, drawn: drawable(latex))
+                            places.append(Place(start: i, end: end + 2, first: number, last: number, formula: formula))
+                            i = end + 2
+                            continue
+                        }
+                    }
+                    // An escape (\$, \\ and the like): as it is, for the Markdown to read.
+                    i += 2
+                case "$":
+                    var run = 0
+                    while i + run < line.end, chars[i + run] == "$" { run += 1 }
+                    if run == 2, let found = display(at: i, on: number, dollars: true) {
+                        if take(found.place, ownLines: found.ownLines) { break words }
+                        i = found.place.end
+                        continue
+                    }
+                    if run == 1, let end = inlineEnd(chars, from: i, to: line.end) {
+                        let latex = String(chars[(i + 1)..<end])
+                        let formula = Formula(source: String(chars[i...end]), latex: latex, isBlock: false, drawn: drawable(latex))
+                        places.append(Place(start: i, end: end + 1, first: number, last: number, formula: formula))
+                        i = end + 1
+                        continue
+                    }
+                    // Three or more are never math: prices ("$$$"), or the shell's.
+                    i += run
+                default:
+                    i += 1
+                }
+            }
+        }
+        return (lines, places)
+    }
+
+    /// Markdown's blocks, as far as the lines read so far go: a code fence, list items and a
+    /// paragraph being read, and whether it's a table.
+    nonisolated private struct Blocks {
+        let chars: [Character]
+        let ranges: [Range<Int>]
+        /// Its marks, its quote depth, and the column its list item's words start at, left of
+        /// which the item ends, and the code with it.
+        var fence: (marker: Character, count: Int, depth: Int, column: Int)?
+        /// The content columns of the open list items, innermost last (out of quotes).
         var items: [Int] = []
-        // A list item seen in the quote being read.
+        /// A list item seen in the quote being read.
         var quoteHasList = false
-        // The quote depth of the paragraph being read, when one is.
+        /// The quote depth of the paragraph being read, when one is.
         var paragraph: Int?
         var inTable = false
         var depthBefore = 0
-        // The last line of a formula of its own being read.
-        var mathUntil = -1
-        for (number, range) in ranges.enumerated() {
-            let (depth, quoteColumn, indent, body) = prefix(of: chars, range)
+
+        /// Line `number`, read on from the ones before it.
+        mutating func read(_ number: Int) -> Line {
+            let range = ranges[number]
+            let (depth, quoteColumn, indent, body) = MathText.prefix(of: chars, range, items: items)
             var line = Line(start: range.lowerBound, end: range.upperBound, body: body, depth: depth)
             let rest = chars[body..<range.upperBound]
-            if number <= mathUntil {
-                line.isMath = true
-                lines.append(line)
-                continue
-            }
             if let open = fence {
-                if line.depth >= open.depth {
+                // In its quote, and in its list item: indented as far, or blank.
+                let inItem = open.depth == 0
+                    ? depth == 0 && rest.isEmpty || (depth == 0 ? indent : quoteColumn) >= open.column
+                    : rest.isEmpty || indent >= open.column
+                if depth >= open.depth, inItem {
                     line.isCode = true
+                    // Closed in its own quote, less than a code block's indentation in.
                     let run = rest.prefix { $0 == open.marker }.count
-                    if run >= open.count, rest.dropFirst(run).allSatisfy(\.isWhitespace) { fence = nil }
-                    lines.append(line)
-                    continue
+                    if depth == open.depth, indent - open.column < 4, run >= open.count, rest.dropFirst(run).allSatisfy(\.isWhitespace) { fence = nil }
+                    return line
                 }
-                // Its quote ended, and the code with it.
+                // Its quote or list item ended, and the code with it.
                 fence = nil
             }
             if rest.isEmpty {
                 line.isBlank = true
                 paragraph = nil
                 inTable = false
-                lines.append(line)
-                continue
+                // A quote's blank line is out of the list items its marks are left of, too.
+                if depth > 0 { items.removeAll { $0 > quoteColumn } }
+                return line
             }
 
-            let fenceRun = rest.first == "`" || rest.first == "~" ? rest.prefix { $0 == rest.first }.count : 0
-            let opensFence = fenceRun >= 3 && !(rest.first == "`" && rest.dropFirst(fenceRun).contains("`"))
-            let isHeading = rest.first == "#" && {
-                let hashes = rest.prefix { $0 == "#" }.count
-                return hashes <= 6 && (hashes == rest.count || rest.dropFirst(hashes).first.map { $0 == " " || $0 == "\t" } == true)
-            }()
-            let isBreak = rest.first.map { "-*_".contains($0) } == true
-                && rest.allSatisfy { $0 == rest.first || $0 == " " || $0 == "\t" } && rest.filter { $0 == rest.first }.count >= 3
-            let marker = isBreak ? nil : listMarker(rest, indent: indent)
-            // A list's first item interrupts a paragraph only with words, and numbered from 1.
-            let markerStarts = marker.map { marker in
-                let inAList = line.depth == 0 ? !items.isEmpty : quoteHasList
-                return paragraph == nil || inAList || !marker.isEmpty && (marker.number ?? 1) == 1
-            } ?? false
-            let startsBlock = opensFence || isHeading || isBreak || markerStarts
+            // A block starts less than a code block's indentation into the list item it's in.
+            let column = depth == 0 ? items.last { $0 <= indent } ?? 0 : 0
+            let start = indent - column < 4 || depth > 0 && quoteHasList ? MathText.blockStart(of: rest, indent: indent) : nil
+            let startsBlock: Bool
+            if case .item(let marker)? = start {
+                // An item interrupts a paragraph only with words, and numbered from 1; out of the
+                // paragraph's quote or list item (or in a quote's list), any does.
+                let outside = depth < (paragraph ?? 0) || (depth == 0 ? indent < (items.last ?? 0) : quoteHasList)
+                startsBlock = paragraph == nil || inTable || outside || !marker.isEmpty && (marker.number ?? 1) == 1
+            } else {
+                startsBlock = start != nil
+            }
 
-            if let depth = paragraph, line.depth < depth, !startsBlock {
+            if let open = paragraph, depth < open, !startsBlock {
                 // A quote's paragraph carried on without its marks.
                 line.isLazy = true
-                line.depth = depth
-                line.inList = depth == 0 ? !items.isEmpty : quoteHasList
-                lines.append(line)
-                continue
+                line.continues = true
+                line.underParagraph = start != nil
+                line.depth = open
+                line.inList = open == 0 ? !items.isEmpty : quoteHasList
+                return line
             }
-            if line.depth != depthBefore { quoteHasList = false }
-            depthBefore = line.depth
-            // A quote is out of the list items its marks are left of.
-            if line.depth > 0 { items.removeAll { $0 > quoteColumn } }
+            if depth != depthBefore { quoteHasList = false }
+            depthBefore = depth
+            // A quote is out of the list items its marks are left of, and their paragraph.
+            if depth > 0, items.contains(where: { $0 > quoteColumn }) {
+                items.removeAll { $0 > quoteColumn }
+                paragraph = nil
+            }
 
-            if paragraph == line.depth, !startsBlock {
+            // A table's rows end at a block, code indented under them too.
+            if paragraph == depth, !startsBlock, !(inTable && indent - column >= 4) {
                 // The paragraph above carries on, however it's indented.
-                let column = line.depth == 0 ? (items.last ?? 0) : 0
-                line.inList = line.depth == 0 ? !items.isEmpty : quoteHasList
-                line.isLazy = line.depth == 0 && indent < column
-                line.isDeep = indent - column >= 4 || line.depth > 0 && quoteHasList
+                let column = depth == 0 ? (items.last ?? 0) : 0
+                line.inList = depth == 0 ? !items.isEmpty : quoteHasList
+                line.isLazy = depth == 0 && indent < column
+                line.isDeep = indent - column >= 4 || depth > 0 && quoteHasList
+                line.continues = true
+                let underlines = !line.isLazy && !line.isDeep && !inTable && MathText.isUnderline(rest)
+                line.underParagraph = start != nil || underlines
+                // A heading's underline ends it.
+                if underlines { paragraph = nil }
             } else {
                 // A block of its own starts: list items it's left of are over.
-                if line.depth == 0 { items.removeAll { $0 > indent } }
-                line.inList = line.depth == 0 ? !items.isEmpty : quoteHasList
-                let column = line.depth == 0 ? (items.last ?? 0) : 0
-                if indent - column >= 4, !(line.depth > 0 && quoteHasList) {
+                let underlines = paragraph == depth && !inTable && MathText.isUnderline(rest)
+                inTable = false
+                if depth == 0 { items.removeAll { $0 > indent } }
+                line.inList = depth == 0 ? !items.isEmpty : quoteHasList
+                if indent - column >= 4, !(depth > 0 && quoteHasList) {
                     line.isCode = true
                     paragraph = nil
-                } else if opensFence {
-                    line.isCode = true
-                    fence = (rest.first!, fenceRun, line.depth)
-                    paragraph = nil
-                } else if isHeading {
-                    line.isOneLine = true
-                    paragraph = nil
-                } else if isBreak {
-                    paragraph = nil
-                } else if markerStarts, let marker {
-                    line.startsItem = true
-                    line.inList = true
-                    if line.depth == 0 { items.append(marker.column) } else { quoteHasList = true }
-                    paragraph = marker.isEmpty ? nil : line.depth
                 } else {
-                    paragraph = line.depth
-                    line.isDeep = line.depth > 0 && quoteHasList
+                    // A list item's first line has its words, a block of its own (a code fence,
+                    // another item), or nothing.
+                    var start = start, fenceColumn = column, hasWords = true
+                    while case .item(let marker)? = start {
+                        line.startsItem = true
+                        line.inList = true
+                        if depth == 0 { items.append(marker.column) } else { quoteHasList = true }
+                        fenceColumn = marker.column
+                        start = nil
+                        if marker.isEmpty || marker.isCode {
+                            line.isCode = marker.isCode
+                            hasWords = false
+                        } else {
+                            line.content = marker.content
+                            start = MathText.blockStart(of: chars[marker.content..<range.upperBound], indent: marker.column)
+                        }
+                    }
+                    switch start {
+                    case .fence(let marker, let count)?:
+                        line.isCode = true
+                        fence = (marker, count, depth, fenceColumn)
+                        paragraph = nil
+                    case .heading?:
+                        line.isOneLine = true
+                        paragraph = nil
+                    case .rule?, .item?:
+                        line.underParagraph = underlines
+                        paragraph = nil
+                    case nil:
+                        // A quote opened on an item's line: the paragraph is the quote's.
+                        while line.startsItem, line.content < range.upperBound, chars[line.content] == ">" {
+                            line.depth += 1
+                            line.content += 1
+                            if line.content < range.upperBound, chars[line.content] == " " { line.content += 1 }
+                            depthBefore = line.depth
+                            quoteHasList = false
+                        }
+                        paragraph = hasWords && line.content < range.upperBound ? line.depth : nil
+                        if !line.startsItem { line.isDeep = depth > 0 && quoteHasList }
+                    }
                 }
             }
-            if !line.isCode, !line.startsItem, paragraph != nil {
+            if !line.isCode, paragraph != nil {
                 // A table: its header (with a line of dashes under it) and the rows after.
-                if !inTable, rest.contains("|"), number + 1 < ranges.count, isDelimiterRow(chars[ranges[number + 1]]) { inTable = true }
-                line.isOneLine = inTable || rest.first == "|"
-                // A formula of its own on lines of its own: the lines up to its end are math.
-                if !line.isOneLine, let end = mathEnd(chars, ranges, from: number, depth: line.depth) { mathUntil = end }
+                if !inTable, rest.contains("|"), number + 1 < ranges.count, MathText.isDelimiterRow(chars[ranges[number + 1]]) { inTable = true }
+                line.isOneLine = line.isOneLine || inTable || rest.first == "|"
             }
-            lines.append(line)
+            return line
         }
-        return lines
     }
 
-    /// Where a line's words start: past its quote marks (">", after up to three spaces, and a
-    /// space after it; how many, and how far in the first is) and its indentation (in columns, a
-    /// tab reaching the next of every four).
-    nonisolated private static func prefix(of chars: [Character], _ range: Range<Int>) -> (depth: Int, quoteColumn: Int, indent: Int, body: Int) {
+    /// A line of "=" or "-", which makes a paragraph above it a heading.
+    nonisolated private static func isUnderline(_ rest: ArraySlice<Character>) -> Bool {
+        let marks = rest.reversed().drop { $0 == " " || $0 == "\t" }
+        return marks.first.map { mark in (mark == "=" || mark == "-") && marks.allSatisfy { $0 == mark } } ?? false
+    }
+
+    /// Where a line's words start: past its quote marks (">", after up to three spaces, or three
+    /// past the words of the list item it's in, and a space after it; how many, and how far in
+    /// the first is) and its indentation (in columns, a tab reaching the next of every four).
+    nonisolated private static func prefix(of chars: [Character], _ range: Range<Int>, items: [Int]) -> (depth: Int, quoteColumn: Int, indent: Int, body: Int) {
         let end = range.upperBound
         var depth = 0, quoteColumn = 0
         var p = range.lowerBound
+        var reach = 3
+        if !items.isEmpty {
+            let spaces = chars[p..<end].prefix { $0 == " " }.count
+            reach += items.last { $0 <= spaces } ?? 0
+        }
         while true {
             var q = p
-            while q < end, q - p < 3, chars[q] == " " { q += 1 }
+            while q < end, q - p < reach, chars[q] == " " { q += 1 }
             guard q < end, chars[q] == ">" else { break }
             if depth == 0 { quoteColumn = q - p }
             depth += 1
             p = q + 1
             if p < end, chars[p] == " " { p += 1 }
+            reach = 3
         }
         var indent = 0
         while p < end, chars[p] == " " || chars[p] == "\t" {
@@ -269,24 +528,30 @@ enum MathText {
         return (depth, quoteColumn, indent, p)
     }
 
-    /// The last line of a formula of its own that opens at the start of line `number` (`$$` or
-    /// `\[`) and doesn't close on it: the one it closes on, in its paragraph and quote.
-    nonisolated private static func mathEnd(_ chars: [Character], _ ranges: [Range<Int>], from number: Int, depth: Int) -> Int? {
-        let body = prefix(of: chars, ranges[number]).body
-        let line = chars[body..<ranges[number].upperBound]
-        let dollars = line.starts(with: "$$") && !line.starts(with: "$$$")
-        guard dollars || line.starts(with: "\\[") else { return nil }
-        guard case .notHere = closing(chars, from: body + 2, to: ranges[number].upperBound, dollars: dollars) else { return nil }
-        for next in (number + 1)..<ranges.count {
-            let prefix = prefix(of: chars, ranges[next])
-            guard prefix.body < ranges[next].upperBound, prefix.depth == depth else { return nil }
-            switch closing(chars, from: prefix.body, to: ranges[next].upperBound, dollars: dollars) {
-            case .at: return next
-            case .never: return nil
-            case .notHere: continue
-            }
+    /// A block a line's words start.
+    nonisolated private enum BlockStart {
+        case fence(Character, Int)
+        case heading
+        case rule
+        case item(Marker)
+    }
+
+    /// The block `rest` starts, indented `indent`: a code fence, a heading, a thematic break or a
+    /// list item.
+    nonisolated private static func blockStart(of rest: ArraySlice<Character>, indent: Int) -> BlockStart? {
+        guard let first = rest.first else { return nil }
+        if first == "`" || first == "~" {
+            let run = rest.prefix { $0 == first }.count
+            if run >= 3, !(first == "`" && rest.dropFirst(run).contains("`")) { return .fence(first, run) }
         }
-        return nil
+        if first == "#" {
+            let hashes = rest.prefix { $0 == "#" }.count
+            if hashes <= 6, hashes == rest.count || rest.dropFirst(hashes).first.map({ $0 == " " || $0 == "\t" }) == true { return .heading }
+        }
+        if "-*_".contains(first), rest.allSatisfy({ $0 == first || $0 == " " || $0 == "\t" }), rest.filter({ $0 == first }).count >= 3 {
+            return .rule
+        }
+        return listMarker(rest, indent: indent).map { .item($0) }
     }
 
     nonisolated private enum Closing {
@@ -296,7 +561,8 @@ enum MathText {
         case never
     }
 
-    /// Where `$$` (or `\]`) closes a formula of its own in `chars[from..<to]`, one line.
+    /// Where `$$` (or `\]`) closes a formula of its own in `chars[from..<to]`, one line, but not
+    /// right before a word.
     nonisolated private static func closing(_ chars: [Character], from: Int, to: Int, dollars: Bool) -> Closing {
         var j = from
         while j < to {
@@ -310,17 +576,40 @@ enum MathText {
             if dollars, c == "$" {
                 var run = 0
                 while j + run < to, chars[j + run] == "$" { run += 1 }
-                if run == 2 { return .at(j) }
                 if run > 2 { return .never }
+                // Right before a letter or a digit, it opens the next formula.
+                let opensNext = j + 2 < to && (chars[j + 2].isLetter || chars[j + 2].isNumber)
+                if run == 2, !opensNext { return .at(j) }
+                j += run
+                continue
             }
             j += 1
         }
         return .notHere
     }
 
-    /// A list item's marker at the start of `rest`, indented `indent`: where the item's words
-    /// start (in columns), whether it has any, and its number.
-    nonisolated private static func listMarker(_ rest: ArraySlice<Character>, indent: Int) -> (column: Int, isEmpty: Bool, number: Int?)? {
+    /// Has a `$` that isn't escaped (`\$`).
+    nonisolated private static func hasDollar(_ latex: String) -> Bool {
+        var escaped = false
+        for character in latex {
+            if character == "$", !escaped { return true }
+            escaped = character == "\\" && !escaped
+        }
+        return false
+    }
+
+    /// A list item's marker: the column its words start at and where they start, whether it has
+    /// none, or only code (indented past the marker), and its number.
+    nonisolated private struct Marker {
+        var column: Int
+        var content: Int
+        var isEmpty: Bool
+        var isCode: Bool
+        var number: Int?
+    }
+
+    /// A list item's marker at the start of `rest`, indented `indent`.
+    nonisolated private static func listMarker(_ rest: ArraySlice<Character>, indent: Int) -> Marker? {
         guard let first = rest.first else { return nil }
         var width = 1
         var number: Int?
@@ -334,7 +623,9 @@ enum MathText {
         guard after.isEmpty || after.first == " " || after.first == "\t" else { return nil }
         let spaces = after.prefix { $0 == " " }.count
         let isEmpty = after.allSatisfy { $0 == " " || $0 == "\t" }
-        return (indent + width + (isEmpty || spaces > 4 || spaces == 0 ? 1 : spaces), isEmpty, number)
+        let isCode = !isEmpty && spaces > 4
+        let content = isCode ? after.startIndex + 1 : after.firstIndex { $0 != " " && $0 != "\t" } ?? rest.endIndex
+        return Marker(column: indent + width + (isEmpty || spaces > 4 || spaces == 0 ? 1 : spaces), content: content, isEmpty: isEmpty, isCode: isCode, number: number)
     }
 
     /// A table's line under its header: "| --- | :-: |".
@@ -343,139 +634,6 @@ enum MathText {
         guard line.contains("|"), line.contains("-") else { return false }
         while let last = line.last, last == " " || last == "\t" { line = line.dropLast() }
         return line.allSatisfy { "|-: \t".contains($0) }
-    }
-
-    /// One run of lines with words (`range`), its formulas set aside.
-    nonisolated private static func protect(_ chars: [Character], _ lines: [Line], _ range: ClosedRange<Int>, into formulas: inout Formulas) -> String {
-        let stretchEnd = lines[range.upperBound].end
-        var out = ""
-        var i = lines[range.lowerBound].start
-        /// The line `index` is on.
-        func lineIndex(_ index: Int) -> Int {
-            var low = range.lowerBound, high = range.upperBound
-            while low < high {
-                let middle = (low + high + 1) / 2
-                if lines[middle].start <= index { low = middle } else { high = middle - 1 }
-            }
-            return low
-        }
-        func mark(_ formula: Formula) -> String {
-            formulas.list.append(formula)
-            return "\(formulas.open)\(formulas.list.count - 1)\(formulas.close)"
-        }
-        /// The text from `start` to `end`, each line after the first from where its words start.
-        func written(from start: Int, to end: Int) -> [String] {
-            var parts: [String] = []
-            var index = lineIndex(start), from = start
-            while true {
-                parts.append(String(chars[from..<min(end, lines[index].end)]))
-                if end <= lines[index].end { break }
-                index += 1
-                from = lines[index].body
-            }
-            return parts
-        }
-        /// Where a formula of its own opened at `start` closes: on its line, or on the next ones of
-        /// its paragraph, but not into code, onto another list item or out of its quote, out of a
-        /// table row or heading, or past three dollar signs.
-        func blockEnd(from start: Int, dollars: Bool) -> Int? {
-            var index = lineIndex(start)
-            let first = lines[index]
-            var from = start + 2
-            while true {
-                switch closing(chars, from: from, to: lines[index].end, dollars: dollars) {
-                case .at(let end): return end
-                case .never: return nil
-                case .notHere:
-                    guard index < range.upperBound, !first.isOneLine else { return nil }
-                    index += 1
-                    let next = lines[index]
-                    guard next.depth == first.depth, next.isMath || !next.isOneLine && !next.isLazy && !next.startsItem else { return nil }
-                    from = next.body
-                }
-            }
-        }
-        /// Sets aside the formula of its own opened at `start`, if it closes; false if it doesn't.
-        func placeBlock(from start: Int, dollars: Bool) -> Bool {
-            guard let end = blockEnd(from: start, dollars: dollars) else { return false }
-            let parts = written(from: start + 2, to: end)
-            let latex = parts.map { $0.trimmingCharacters(in: .whitespaces) }.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-            // Nothing, or no formula: "($$) … ($$)" are prices.
-            guard !latex.isEmpty, !dollars || !")]}".contains(latex.first!) else { return false }
-            let (open, close) = dollars ? ("$$", "$$") : ("\\[", "\\]")
-            let formula = Formula(source: open + parts.joined(separator: "\n") + close, latex: latex, isBlock: true, drawn: drawable(latex))
-            let line = lines[lineIndex(start)]
-            let closing = lines[lineIndex(end)]
-            let after = chars[(end + 2)..<closing.end]
-            let next = lineIndex(end) < range.upperBound ? lines[lineIndex(end) + 1] : nil
-            // The line under it reads on as it did, not as a code block or out of a list or quote.
-            let nextReads = next.map { !$0.isLazy && !$0.isDeep && $0.depth == line.depth } ?? true
-            i = end + 2
-            if formula.drawn == nil || !line.takesBlock || latex.contains("```") {
-                out += mark(formula)
-            } else if line.isTopLevel, nextReads || !after.allSatisfy(\.isWhitespace) {
-                out += "\n\n```\(blockLanguage)\n\(latex)\n```\n\n"
-            } else if !line.isTopLevel, start == line.body, after.allSatisfy(\.isWhitespace), nextReads {
-                // In its list item or quote: the fence goes in indented and quoted as its line is.
-                let prefix = String(chars[line.start..<line.body])
-                out += "```\(blockLanguage)\n" + latex.split(separator: "\n").map { prefix + $0 }.joined(separator: "\n") + "\n\(prefix)```"
-                i = closing.end
-            } else {
-                out += mark(formula)
-            }
-            return true
-        }
-        while i < stretchEnd {
-            let c = chars[i]
-            // Code in a line: as it is.
-            if c == "`" {
-                var run = 0
-                while i + run < stretchEnd, chars[i + run] == "`" { run += 1 }
-                if let end = closingBackticks(chars, from: i + run, to: stretchEnd, count: run) {
-                    out += String(chars[i..<(end + run)])
-                    i = end + run
-                } else {
-                    out += String(repeating: "`", count: run)
-                    i += run
-                }
-                continue
-            }
-            if c == "\\", i + 1 < stretchEnd, chars[i + 1] != "\n" {
-                let next = chars[i + 1]
-                if next == "[", placeBlock(from: i, dollars: false) { continue }
-                if next == "(", let end = inlineEnd(chars, from: i, to: stretchEnd, closer: ")") {
-                    let latex = String(chars[(i + 2)..<end]).trimmingCharacters(in: .whitespaces)
-                    if !latex.isEmpty {
-                        out += mark(Formula(source: String(chars[i..<(end + 2)]), latex: latex, isBlock: false, drawn: drawable(latex)))
-                        i = end + 2
-                        continue
-                    }
-                }
-                // An escape (\$, \\ and the like): both as they are, for the Markdown to read.
-                out.append(c)
-                out.append(next)
-                i += 2
-                continue
-            }
-            if c == "$" {
-                var run = 0
-                while i + run < stretchEnd, chars[i + run] == "$" { run += 1 }
-                if run == 2, placeBlock(from: i, dollars: true) { continue }
-                if run == 1, let end = inlineEnd(chars, from: i, to: stretchEnd) {
-                    let latex = String(chars[(i + 1)..<end])
-                    out += mark(Formula(source: String(chars[i...end]), latex: latex, isBlock: false, drawn: drawable(latex)))
-                    i = end + 1
-                    continue
-                }
-                // Three or more are never math: prices ("$$$"), or the shell's.
-                out += String(repeating: "$", count: run)
-                i += run
-                continue
-            }
-            out.append(c)
-            i += 1
-        }
-        return out
     }
 
     /// Where a run of `count` backticks closes a code span, from `start` to `end`.
