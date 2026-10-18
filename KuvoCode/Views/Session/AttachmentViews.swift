@@ -36,11 +36,15 @@ nonisolated enum AttachmentItem: Identifiable, Sendable {
         return url.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
     }
 
-    /// From the file name first (a `.swift` file is more than "text"), then the stored type.
+    /// From the file name when it says more than the stored type (a `.swift` file is more than
+    /// "text") or that says nothing; the stored type otherwise, so a name can't make a picture a
+    /// script.
     var type: UTType? {
         let byName = UTType(filenameExtension: (name as NSString).pathExtension)
-        if case .stored(let file, _) = self { return byName ?? UTType(mimeType: file.mime) }
-        return byName
+        guard case .stored(let file, _) = self, let declared = UTType(mimeType: file.mime) else { return byName }
+        guard let byName else { return declared }
+        let saysMore = byName.conforms(to: declared) || (declared.conforms(to: .text) && byName.conforms(to: .text))
+        return saysMore || declared.isDynamic || declared == .data ? byName : declared
     }
 
     var isImage: Bool { type?.conforms(to: .image) == true }
@@ -74,18 +78,23 @@ nonisolated enum AttachmentItem: Identifiable, Sendable {
         return image
     }
 
-    /// Opens it in its app.
+    /// Opens it in its app. Anything that could run (an app, a script, an installer) shows in
+    /// Finder instead: a click on an attachment never runs it.
     func open() {
-        if let url = localURL() { NSWorkspace.shared.open(url) }
+        guard let url = localURL() else { return }
+        if Attachments.canRun(url) {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } else {
+            NSWorkspace.shared.open(url)
+        }
     }
 
-    /// Where it is on this Mac; a pasted image that only the engine has is written out first.
+    /// Where it is on this Mac; one that only the engine has (a pasted image, a tool's picture)
+    /// is written out first, as a download of its type.
     private func localURL() -> URL? {
         if let url = fileURL { return url }
         guard case .stored(let file, _) = self, let bytes = file.bytes else { return nil }
-        let ext = type?.preferredFilenameExtension ?? (name as NSString).pathExtension
-        let base = (name as NSString).deletingPathExtension
-        return Attachments.write(bytes, named: base, extension: ext.isEmpty ? "dat" : ext)
+        return Attachments.writeReceived(bytes, named: name, type: type)
     }
 
     func revealInFinder() {
@@ -232,16 +241,19 @@ struct StepPictures: View {
         }
     }
 
-    /// The pictures among a step's results, from the data they carry or the files they name.
+    /// The pictures among a step's results, from the data they carry or the files they name. A
+    /// name the tool gives keeps only its stem: the extension is the picture type's.
     static func items(in output: [Message.ToolOutput], step: String) -> [AttachmentItem] {
         output.enumerated().compactMap { index, part -> AttachmentItem? in
-            guard case .file(let uri, let mime, let name) = part, mime.hasPrefix("image/") else { return nil }
-            let fallback = "Screenshot." + (mime.split(separator: "/").last.map(String.init) ?? "png")
+            guard case .file(let uri, let mime, let name) = part, mime.lowercased().hasPrefix("image/") else { return nil }
+            let type = UTType(mimeType: mime).flatMap { $0.conforms(to: .image) ? $0 : nil } ?? .png
+            let stem = name.map { (Attachments.fileName($0) as NSString).deletingPathExtension } ?? "Screenshot"
+            let picture = stem + "." + (type.preferredFilenameExtension ?? "png")
             if uri.hasPrefix("data:"), let comma = uri.firstIndex(of: ",") {
                 let data = String(uri[uri.index(after: comma)...])
-                return .stored(Message.User.Attachment(mime: mime, name: name ?? fallback, data: data, source: .inline), id: "\(step)-\(index)")
+                return .stored(Message.User.Attachment(mime: mime, name: picture, data: data, source: .inline), id: "\(step)-\(index)")
             }
-            return .stored(Message.User.Attachment(mime: mime, name: name ?? fallback, source: .uri(uri)), id: "\(step)-\(index)")
+            return .stored(Message.User.Attachment(mime: mime, name: picture, source: .uri(uri)), id: "\(step)-\(index)")
         }
     }
 }

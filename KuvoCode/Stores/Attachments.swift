@@ -251,8 +251,11 @@ nonisolated enum Attachments {
         return write(data, named: name, extension: ext)
     }
 
-    /// A unique file in the attachments folder.
+    /// A unique file in the attachments folder, whatever `name` says: it never lands elsewhere,
+    /// or replaces a file.
     static func write(_ data: Data, named name: String, extension ext: String) -> URL? {
+        let name = fileName(name)
+        let ext = ext.isEmpty || ext.contains { !$0.isASCII || !($0.isLetter || $0.isNumber || "+-_".contains($0)) } ? "dat" : ext
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             var url = directory.appending(path: "\(name).\(ext)")
@@ -261,12 +264,58 @@ nonisolated enum Attachments {
                 url = directory.appending(path: "\(name) \(counter).\(ext)")
                 counter += 1
             }
-            try data.write(to: url)
+            try data.write(to: url, options: .withoutOverwriting)
             return url
         } catch {
             return nil
         }
     }
+
+    /// Writes out a file that came as data (a picture a tool returned, a file sent from the
+    /// phone) to open it: with the extension of `type`, not the one its name says, and marked as
+    /// downloaded, so Gatekeeper checks it like one.
+    static func writeReceived(_ data: Data, named name: String, type: UTType?) -> URL? {
+        let base = (fileName(name) as NSString).deletingPathExtension
+        guard let url = write(data, named: base, extension: type?.preferredFilenameExtension ?? "dat") else { return nil }
+        var values = URLResourceValues()
+        values.quarantineProperties = [kLSQuarantineTypeKey as String: kLSQuarantineTypeOtherDownload as String]
+        var quarantined = url
+        try? quarantined.setResourceValues(values)
+        return url
+    }
+
+    /// `name` as one file's name in the folder: its last part, without `:`, control characters or
+    /// leading dots (a hidden file), and short enough to take a counter and an extension.
+    static func fileName(_ name: String) -> String {
+        let last = name.split(separator: "/").last.map(String.init) ?? ""
+        var clean = ""
+        clean.unicodeScalars.append(contentsOf: last.unicodeScalars.filter { $0 != ":" && !CharacterSet.controlCharacters.contains($0) })
+        clean = clean.trimmingCharacters(in: .whitespaces)
+        while clean.hasPrefix(".") { clean = clean.dropFirst().trimmingCharacters(in: .whitespaces) }
+        var fitting = ""
+        for character in clean {
+            guard fitting.utf8.count + character.utf8.count <= 200 else { break }
+            fitting.append(character)
+        }
+        return fitting.isEmpty ? "Attachment" : fitting
+    }
+
+    /// Whether opening the file could run something: an app, a script, an installer, a disk
+    /// image, a link to one. These show in Finder instead of opening.
+    static func canRun(_ url: URL) -> Bool {
+        let file = url.resolvingSymlinksInPath()
+        guard let type = (try? file.resourceValues(forKeys: [.contentTypeKey]))?.contentType ?? UTType(filenameExtension: file.pathExtension) else { return false }
+        return ([type] + type.supertypes).contains { runnable.contains($0.identifier) }
+    }
+
+    /// Kinds of files that run, or install or open something else, when opened.
+    private static let runnable: Set<String> = Set([UTType.executable, .script, .application, .bundle, .diskImage, .internetLocation, .internetShortcut, .aliasFile].map(\.identifier)).union([
+        "com.apple.terminal.settings", // .terminal: runs its commands
+        "com.apple.installer-package-archive", "com.apple.installer-meta-package",
+        "com.apple.mobileconfig", "com.apple.configprofile",
+        "com.apple.automator-workflow", "com.apple.shortcut", "com.apple.shortcuts.workflow-file",
+        "com.sun.java-web-start",
+    ])
 
     /// A name like the system's screenshots: "Pasted Image 2026-10-13 at 15.32.10".
     static var pastedImageName: String {
