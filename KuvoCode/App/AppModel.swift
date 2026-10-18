@@ -107,6 +107,8 @@ final class AppModel {
     private var launch = UUID()
     /// The Mac waking from sleep, watched once for the machines (see `startMachines`).
     @ObservationIgnored var wakeWatch: (any NSObjectProtocol)?
+    /// This launch started the engine over once already for getting stuck starting.
+    @ObservationIgnored var restartedStuckEngine = false
     private let log = Logger(subsystem: "run.kuvo.code", category: "engine")
 
     private var engineFolders: EngineFolders {
@@ -226,6 +228,15 @@ final class AppModel {
             guard launch == self.launch else { return }
             self.api = api
             catalog.api = api
+            // An engine stuck starting (one of its own fetches never ended) is started over, once
+            // a launch: after that, a stall is left to show. (One waiting on a macOS prompt for
+            // folder access goes on waiting; the catalog fills once it's answered.)
+            catalog.onStalled = { [weak self] in
+                guard let self, !restartedStuckEngine else { return }
+                restartedStuckEngine = true
+                Analytics.shared.track("engine_failed", ["reason": "stalled"])
+                Task { await self.restart() }
+            }
             Analytics.shared.catalog = catalog
             workspace.api = api
             workspace.machineAPI = { [weak self] machine in self?.machines.engine(machine)?.api }

@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Models show by themselves once the engine has finished starting. If it was slow to start, the composer said "Choose a Model" until something else made Kuvo Code look again, and an engine that never finished starting is now started over once.
 - Setting up the browser on a machine tries again when the connection drops partway through. It used to wait for the next launch, or for you to open the machine's browser.
 - A choice in a question card, or in a form, no longer repeats itself when its description only says its label again ("Red" under Red).
 - With VoiceOver, the side panel's tabs can be picked and closed. They read as text and an icon, with nothing to press.

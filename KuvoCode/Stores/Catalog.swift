@@ -31,6 +31,15 @@ final class Catalog {
 
     private var refreshTask: Task<Void, Never>?
 
+    /// While the engine starts up it answers 503 ("Location plugins did not finish activating"),
+    /// and the models come later: they're asked for again every few seconds, so they show once
+    /// it's ready (after you answer a macOS prompt for folder access it was waiting on, say).
+    /// Past `stallLimit` the engine is taken for stuck (a fetch of its own that never ends
+    /// leaves it so for good), and the app starts it over.
+    @ObservationIgnored var onStalled: (() -> Void)?
+    @ObservationIgnored private var unavailableSince: ContinuousClock.Instant?
+    private static let stallLimit: Duration = .seconds(60)
+
     /// AI providers only: no MCP servers or web-search services.
     var providers: [Integration] {
         integrations.filter { !$0.isMCP && !Self.searchServices.contains($0.id) }
@@ -125,16 +134,40 @@ final class Catalog {
         async let agents = api.agents()
         async let commands = api.commands()
         do { self.integrations = try await integrations } catch { log.error("integrations: \(String(describing: error), privacy: .public)") }
+        var starting = false
         do {
             self.models = try await models
             if isMac { ProviderCompatibility.learn(from: self.models) }
             LogoImages.shared.prefetch(self.models.flatMap { [$0.makerLogoID, $0.providerID] })
-        } catch { log.error("models: \(String(describing: error), privacy: .public)") }
+        } catch {
+            log.error("models: \(String(describing: error), privacy: .public)")
+            starting = (error as? ServerError)?.status == 503
+        }
         do { self.defaultModel = try await defaultModel } catch { log.error("default model: \(String(describing: error), privacy: .public)") }
         do { self.agents = try await agents } catch { log.error("agents: \(String(describing: error), privacy: .public)") }
         do { self.commands = try await commands } catch { log.error("commands: \(String(describing: error), privacy: .public)") }
         for directory in projectCommands.keys { await loadCommands(in: directory) }
         isLoaded = true
+        if starting { waitForEngine() } else { unavailableSince = nil }
+    }
+
+    /// The engine is still starting: the models again in a moment, or, when it's been too long,
+    /// the engine started over.
+    private func waitForEngine() {
+        let since = unavailableSince ?? .now
+        unavailableSince = since
+        guard ContinuousClock.now - since < Self.stallLimit else {
+            log.error("the engine hasn't finished starting in \(Self.stallLimit, privacy: .public): starting it over")
+            unavailableSince = nil
+            onStalled?()
+            return
+        }
+        refreshTask?.cancel()
+        refreshTask = Task {
+            try? await Task.sleep(for: .seconds(5))
+            guard !Task.isCancelled else { return }
+            await refresh()
+        }
     }
 
     /// The commands a session in `directory` can run.
