@@ -238,7 +238,12 @@ final class SessionModel {
 
     /// How many messages one read takes: the latest on opening, then as many earlier ones each
     /// time the conversation's top comes into view.
+    #if DEBUG
+    /// KUVO_DEMO_PAGE: fewer, to measure scrolling up through pages of a conversation.
+    static let pageSize = ProcessInfo.processInfo.environment["KUVO_DEMO_PAGE"].flatMap(Int.init) ?? 200
+    #else
     static let pageSize = 200
+    #endif
     /// Where the messages not read yet end, while there are earlier ones.
     private(set) var earlierCursor: String?
     private(set) var isLoadingEarlier = false

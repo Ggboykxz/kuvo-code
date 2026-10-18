@@ -3,6 +3,8 @@ import AppKit
 import Darwin
 import OpenCodeKit
 import os
+import SwiftUI
+import Textual
 
 /// KUVO_DEMO_REPLAY=<file>: a run recorded from a real engine (one JSON object a line: `t`, ms
 /// from the start, and `raw`, the event as the engine sent it) played into a new session in
@@ -95,6 +97,7 @@ enum PerfReplay {
         func scrollViews(in view: NSView) -> [NSScrollView] { (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(scrollViews) }
         let scroll = NSApp.windows.compactMap(\.contentView).flatMap(scrollViews).max { ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0) }
         let fromEnd = scroll.map { Int(($0.documentView?.frame.height ?? 0) - $0.contentView.bounds.maxY) } ?? -1
+        if let file = ProcessInfo.processInfo.environment["KUVO_PERF_STALLS"] { try? meter.stallReport().write(toFile: file, atomically: true, encoding: .utf8) }
         let line = "replay \((path as NSString).lastPathComponent) x\(speed): \(events.count) events, \(thinking) characters of thinking, \(wrong) of \(checked) blocks shown wrong, played in \(played) (recorded \(String(format: "%.1f", recordedLength)) s), ended \(fromEnd) pt from the end of \(Int(scroll?.documentView?.frame.height ?? 0)), \(workspace.model(for: id)?.transcript.messages.count ?? -1) messages; " + meter.stop() + "\n"
         log.notice("\(line, privacy: .public)")
         if let file = ProcessInfo.processInfo.environment["KUVO_PERF_LOG"] {
@@ -116,11 +119,18 @@ nonisolated final class PerfMeter: NSObject, @unchecked Sendable {
     private var lateFrames = 0
     private var lastFrame: CFTimeInterval = 0
     private var began = CACurrentMediaTime()
+    var startedAt: CFTimeInterval { began }
     private var cpuAtStart: Double = 0
     private var made = (rows: 0, pieces: 0, codeBlocks: 0)
     private var rowsByID: [String: Int] = [:]
     private var mainAtStart: Double = 0
     private let mainThread = mach_thread_self()
+    /// Where the main thread's stack is, to walk it only there.
+    private let stackHigh = UInt(bitPattern: pthread_get_stackaddr_np(pthread_self()))
+    private let stackLow = UInt(bitPattern: pthread_get_stackaddr_np(pthread_self())) - UInt(pthread_get_stacksize_np(pthread_self()))
+    /// Each wait over 33 ms: when, how long, and the main thread's stacks while it lasted.
+    private var stalls: [(at: Double, ms: Double, stacks: [[UInt]])] = []
+    private let buffer = UnsafeMutablePointer<UInt>.allocate(capacity: 160)
 
     @MainActor func start() {
         began = CACurrentMediaTime()
@@ -128,7 +138,11 @@ nonisolated final class PerfMeter: NSObject, @unchecked Sendable {
         mainAtStart = mainCPU()
         made = (ScrollFrameMonitor.rowsMade, ScrollFrameMonitor.piecesMade, ScrollFrameMonitor.codeBlocksMade)
         rowsByID = ScrollFrameMonitor.rowsMadeByID
-        Thread { [self] in pingMain() }.start()
+        if Self.profileFile != nil {
+            Thread { [self] in profile() }.start()
+        } else {
+            Thread { [self] in pingMain() }.start()
+        }
         if let view = NSApp.windows.first(where: \.isVisible)?.contentView {
             let link = view.displayLink(target: self, selector: #selector(tick))
             link.add(to: .main, forMode: .common)
@@ -139,6 +153,10 @@ nonisolated final class PerfMeter: NSObject, @unchecked Sendable {
     /// "main thread …; process …; memory …; frames …".
     @MainActor func stop() -> String {
         lock.withLock { isRunning = false }
+        if let file = Self.profileFile {
+            Thread.sleep(forTimeInterval: 0.01)
+            try? profileReport().write(toFile: file, atomically: true, encoding: .utf8)
+        }
         link?.invalidate()
         let seconds = CACurrentMediaTime() - began
         let cpu = (Self.processCPU() - cpuAtStart) / seconds * 100
@@ -157,23 +175,148 @@ nonisolated final class PerfMeter: NSObject, @unchecked Sendable {
         return counts.isEmpty ? "" : " (" + counts.map { "\($0.0) ×\($0.1)" }.joined(separator: ", ") + ")"
     }
 
-    /// Asks the main thread for something, every few milliseconds, and notes how long it took.
+    /// KUVO_PERF_PROFILE=<file>: what the main thread runs, sampled every 2 ms all along (not
+    /// only in stalls), summed up by function when it stops: the time each took, with what it
+    /// called, and on its own.
+    private static let profileFile = ProcessInfo.processInfo.environment["KUVO_PERF_PROFILE"]
+    private var busySamples = 0
+    private var idleSamples = 0
+    private var symbolOf: [UInt: Int] = [:]
+    private var symbolIndex: [String: Int] = [:]
+    private var symbolNames: [String] = []
+    private var inclusive: [Int] = []
+    private var exclusive: [Int] = []
+    private var idleSymbols: Set<Int> = []
+
+    private func profile() {
+        while lock.withLock({ isRunning }) {
+            if let stack = mainStack() {
+                let symbols = stack.map(symbol)
+                // Waiting in the run loop for something to do: idle.
+                if symbols.contains(where: idleSymbols.contains) {
+                    idleSamples += 1
+                } else {
+                    busySamples += 1
+                    for index in Set(symbols) { inclusive[index] += 1 }
+                    exclusive[symbols[0]] += 1
+                }
+            }
+            Thread.sleep(forTimeInterval: 0.002)
+        }
+    }
+
+    /// The function an address is in, as a number (looked up once).
+    private func symbol(_ address: UInt) -> Int {
+        if let known = symbolOf[address] { return known }
+        var info = Dl_info()
+        var name = "?"
+        if dladdr(UnsafeRawPointer(bitPattern: address), &info) != 0 {
+            let image = info.dli_fname.map { (String(cString: $0) as NSString).lastPathComponent } ?? "?"
+            name = image + ":" + (info.dli_sname.map { String(cString: $0) } ?? "?")
+        }
+        let index: Int
+        if let existing = symbolIndex[name] {
+            index = existing
+        } else {
+            index = symbolNames.count
+            symbolNames.append(name)
+            symbolIndex[name] = index
+            inclusive.append(0)
+            exclusive.append(0)
+            if name.contains("CFRunLoopServiceMachPort") { idleSymbols.insert(index) }
+        }
+        symbolOf[address] = index
+        return index
+    }
+
+    /// The profile: "inclusive exclusive image:symbol", most time first.
+    func profileReport() -> String {
+        var out = "busy \(busySamples) idle \(idleSamples) samples of 2 ms\n"
+        for index in symbolNames.indices.sorted(by: { inclusive[$0] > inclusive[$1] }) where inclusive[index] >= 3 {
+            out += "\(inclusive[index]) \(exclusive[index]) \(symbolNames[index])\n"
+        }
+        return out
+    }
+
+    /// Asks the main thread for something, every few milliseconds, and notes how long it took. One
+    /// that takes over 25 ms is sampled: what the main thread is running, every 5 ms till it's done.
     private func pingMain() {
         var count = 0
         while lock.withLock({ isRunning }) {
             let start = CACurrentMediaTime()
             let done = DispatchSemaphore(value: 0)
             DispatchQueue.main.async { done.signal() }
-            done.wait()
+            var stacks: [[UInt]] = []
+            if done.wait(timeout: .now() + .milliseconds(25)) == .timedOut {
+                repeat {
+                    if stacks.count < 160, let stack = mainStack() { stacks.append(stack) }
+                } while done.wait(timeout: .now() + .milliseconds(5)) == .timedOut
+            }
             let wait = (CACurrentMediaTime() - start) * 1000
             count += 1
             let memory = count % 20 == 0 ? Self.memory() : 0
             lock.withLock {
                 waits.append(wait)
                 peakMemory = max(peakMemory, memory)
+                if wait > 33 { stalls.append((start - began, wait, stacks)) }
             }
             Thread.sleep(forTimeInterval: 0.005)
         }
+    }
+
+    /// The main thread's return addresses, innermost first: it's stopped for the moment it takes to
+    /// read them (nothing that could wait on it, like allocating, meanwhile).
+    private func mainStack() -> [UInt]? {
+        guard thread_suspend(mainThread) == KERN_SUCCESS else { return nil }
+        var n = 0
+        var state = arm_thread_state64_t()
+        var count = mach_msg_type_number_t(MemoryLayout<arm_thread_state64_t>.size / MemoryLayout<UInt32>.size)
+        let result = withUnsafeMutablePointer(to: &state) {
+            $0.withMemoryRebound(to: natural_t.self, capacity: Int(count)) { thread_get_state(mainThread, thread_state_flavor_t(ARM_THREAD_STATE64), $0, &count) }
+        }
+        if result == KERN_SUCCESS {
+            let mask: UInt = 0x0000_7FFF_FFFF_FFFF
+            buffer[0] = UInt(state.__pc) & mask
+            buffer[1] = UInt(state.__lr) & mask
+            n = 2
+            var fp = UInt(state.__fp)
+            while fp >= stackLow, fp < stackHigh - 16, fp % 8 == 0, n < 160 {
+                let frame = UnsafePointer<UInt>(bitPattern: fp)!
+                let ret = frame[1] & mask
+                let next = frame[0]
+                guard ret != 0 else { break }
+                buffer[n] = ret
+                n += 1
+                guard next > fp else { break }
+                fp = next
+            }
+        }
+        thread_resume(mainThread)
+        return n > 0 ? Array(UnsafeBufferPointer(start: buffer, count: n)) : nil
+    }
+
+    /// Each stall, and where the main thread was meanwhile: a line a sample, its frames innermost
+    /// first ("image:symbol | …", symbols as compiled: `swift demangle` reads them).
+    func stallReport() -> String {
+        let stalls = lock.withLock { self.stalls }
+        var names: [UInt: String] = [:]
+        func name(_ address: UInt) -> String {
+            if let name = names[address] { return name }
+            var info = Dl_info()
+            var name = String(address, radix: 16)
+            if dladdr(UnsafeRawPointer(bitPattern: address), &info) != 0 {
+                let image = info.dli_fname.map { (String(cString: $0) as NSString).lastPathComponent } ?? "?"
+                name = image + ":" + (info.dli_sname.map { String(cString: $0) } ?? "?")
+            }
+            names[address] = name
+            return name
+        }
+        var out = ""
+        for stall in stalls {
+            out += String(format: "STALL at %.2f s, %.0f ms, %d samples\n", stall.at, stall.ms, stall.stacks.count)
+            for stack in stall.stacks { out += "  " + stack.map(name).joined(separator: " | ") + "\n" }
+        }
+        return out
     }
 
     @objc private func tick(_ link: CADisplayLink) {
@@ -207,6 +350,339 @@ nonisolated final class PerfMeter: NSObject, @unchecked Sendable {
             $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) }
         }
         return result == KERN_SUCCESS ? info.phys_footprint : 0
+    }
+}
+#endif
+
+#if DEBUG
+/// With KUVO_DEMO_READ, each row's frame in the window as it's laid out, for PerfRead.
+struct RowProbe: ViewModifier {
+    static let isOn = ProcessInfo.processInfo.environment["KUVO_DEMO_READ"] != nil
+    static var frames: [String: CGRect] = [:]
+    /// Which copy of each row reported last, and rows reported by two copies at once.
+    static var owners: [String: UUID] = [:]
+    static var twins: Set<String> = []
+    let id: String
+    @State private var copy = UUID()
+
+    func body(content: Content) -> some View {
+        if Self.isOn {
+            content
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
+                    if let owner = Self.owners[id], owner != copy { Self.twins.insert(id) }
+                    Self.owners[id] = copy
+                    Self.frames[id] = $0
+                }
+                .onDisappear {
+                    guard Self.owners[id] == copy else { return }
+                    Self.frames[id] = nil
+                    Self.owners[id] = nil
+                }
+        } else {
+            content
+        }
+    }
+}
+
+/// KUVO_DEMO_READ=<seconds>: that long after a conversation opens, reads through it as you would
+/// with a trackpad, KUVO_DEMO_READ_SPEED points a frame (30): up to its top, earlier messages coming
+/// in on the way, then back down to the end. Each frame where what's in view moved other than as
+/// the scrolling did (a jump) is noted, with why if it can tell (rows in view or above it changing
+/// height, rows coming in, the scroll view moving on its own), in KUVO_PERF_JUMPS; a line with how
+/// many, the main thread's stalls and the frames drawn goes to KUVO_PERF_LOG.
+@MainActor
+enum PerfRead {
+    private struct Snapshot {
+        var frames: [String: CGRect]
+        var inConversation: [String: CGRect] = [:]
+        var origin: CGFloat
+        var height: CGFloat
+        var view: ClosedRange<CGFloat>
+    }
+
+    private static var isStarted = false
+    /// Conversations that went away while it read (made again, say).
+    static var viewsGone = 0
+
+    static func start() {
+        guard !isStarted, ProcessInfo.processInfo.environment["KUVO_DEMO_READ"] != nil else { return }
+        isStarted = true
+        Task { await run() }
+    }
+
+    private static func run() async {
+        let environment = ProcessInfo.processInfo.environment
+        guard let wait = environment["KUVO_DEMO_READ"].flatMap(Double.init) else { return }
+        try? await Task.sleep(for: .seconds(wait))
+        let speed = CGFloat(Double(environment["KUVO_DEMO_READ_SPEED"] ?? "") ?? 30)
+        func scrollViews(in view: NSView) -> [NSScrollView] { (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(scrollViews) }
+        guard let scroll = NSApp.windows.compactMap(\.contentView).flatMap(scrollViews).max(by: { ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0) }),
+              let root = scroll.window?.contentView else { return }
+        func snapshot() -> Snapshot {
+            // The part of the window the conversation shows, as SwiftUI's global space has it
+            // (from the top), less the edges under the header and the composer.
+            let rect = scroll.convert(scroll.bounds, to: nil)
+            let top = root.bounds.height - rect.maxY
+            return Snapshot(frames: RowProbe.frames, inConversation: ScrollAnchor.latest?.conversationFrames ?? [:], origin: scroll.contentView.bounds.origin.y,
+                            height: scroll.documentView?.frame.height ?? 0, view: (top + 60)...(top + rect.height - 120))
+        }
+        func send(_ delta: CGFloat, phase: CGScrollPhase) {
+            guard let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: Int32(delta), wheel2: 0, wheel3: 0) else { return }
+            event.setIntegerValueField(.scrollWheelEventScrollPhase, value: Int64(phase.rawValue))
+            event.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+            if let ns = NSEvent(cgEvent: event) { scroll.scrollWheel(with: ns) }
+        }
+        var report = ""
+        var jumps = 0
+        var worst: CGFloat = 0
+        var total: CGFloat = 0
+        var steps = 0
+        // The scrolling sent that the scroll view hasn't shown yet, and times it went elsewhere.
+        var pending: CGFloat = 0
+        var leaps = 0
+        var worstLeap: CGFloat = 0
+        var trace = ""
+        var costs = ""
+        var captures = 0
+        let meter = PerfMeter()
+        meter.start()
+        let started = ContinuousClock.now
+        for (pass, direction) in [("up", CGFloat(1)), ("down", -1)] {
+            var still = 0
+            var frame = 0
+            var before = snapshot()
+            var passSteps = 0
+            // At the top, long enough for earlier messages to come in.
+            while still < (direction > 0 ? 150 : 45), passSteps < 4000 {
+                // A gesture a second, as you'd move your fingers again and again.
+                let delta = speed * direction
+                if frame == 0 { send(0, phase: .began) }
+                send(delta, phase: .changed)
+                frame += 1
+                if frame == 60 {
+                    send(0, phase: .ended)
+                    frame = 0
+                    // A new gesture may drop its first bit of scrolling: not a jump.
+                    pending = 0
+                }
+                let stepStart = ContinuousClock.now
+                try? await Task.sleep(for: .milliseconds(16))
+                let after = snapshot()
+                steps += 1
+                // How long the step took, and the rows that came in it with their heights.
+                let took = (ContinuousClock.now - stepStart) / .milliseconds(1)
+                let arrived = after.frames.keys.filter { before.frames[$0] == nil }.map { "\($0):\(Int(after.frames[$0]!.height))" }
+                costs += "\(steps) \(Int(took)) \(String(format: "%.2f", CACurrentMediaTime() - meter.startedAt)) " + arrived.joined(separator: ",") + "\n"
+                passSteps += 1
+                defer { before = after }
+                let moved = before.origin - after.origin
+                // At an edge, it bounces: no telling. Some time there, and the pass is over.
+                let end = after.height - scroll.contentView.bounds.height
+                let atEdge = after.origin <= 0.5 || before.origin <= 0.5 || after.origin >= end - 0.5 || before.origin >= before.height - scroll.contentView.bounds.height - 0.5
+                still = abs(moved) < 0.5 || (direction > 0 ? after.origin <= 0.5 : after.origin >= end - 0.5) ? still + 1 : 0
+                trace += "\(pass) \(steps) \(Int(after.origin)) \(Int(after.height)) \(Int(moved)) \(after.frames.count)\n"
+                if atEdge {
+                    pending = 0
+                    continue
+                }
+                // Rows in view both times, and how far each moved on screen.
+                let shown = after.frames.filter { id, rect in
+                    guard let old = before.frames[id] else { return false }
+                    return rect.maxY > after.view.lowerBound && rect.minY < after.view.upperBound && old.maxY > before.view.lowerBound && old.minY < before.view.upperBound
+                }
+                let moves = shown.map { id, rect in (id, rect.minY - before.frames[id]!.minY) }.sorted { $0.1 < $1.1 }
+                guard !moves.isEmpty else { continue }
+                let typical = moves[moves.count / 2].1
+                // What's in view should move as your fingers did. A frame late (or two at once) is
+                // fine, and so is nothing moving while the main thread is busy (that's a stall,
+                // counted as one); what's left over once it moves again moved under you.
+                pending += delta - typical
+                var why: [String] = []
+                if abs(typical) > 0.5, abs(pending) > abs(delta) * 2.5 {
+                    jumps += 1
+                    worst = max(worst, abs(pending))
+                    total += abs(pending)
+                    why.append("what's in view jumped \(Int(-pending)) pt")
+                    pending = 0
+                }
+                // Rows in view moving apart: one of them changed height.
+                if let apart = moves.max(by: { abs($0.1 - typical) < abs($1.1 - typical) }), abs(apart.1 - typical) > 2 {
+                    leaps += 1
+                    worstLeap = max(worstLeap, abs(apart.1 - typical))
+                    why.append("\(apart.0) moved \(Int(apart.1 - typical)) pt from the rest")
+                }
+                guard !why.isEmpty else { continue }
+                for (id, rect) in after.frames {
+                    guard let old = before.frames[id], abs(old.height - rect.height) > 0.5 else { continue }
+                    let place = rect.maxY < after.view.lowerBound ? "above" : rect.minY > after.view.upperBound ? "below" : "in view"
+                    why.append("\(id) \(Int(old.height))→\(Int(rect.height)) \(place)")
+                }
+                let came = after.frames.keys.filter { before.frames[$0] == nil }
+                let went = before.frames.keys.filter { after.frames[$0] == nil }
+                if !came.isEmpty { why.append("came: " + came.sorted().joined(separator: ", ")) }
+                if !went.isEmpty { why.append("went: " + went.sorted().joined(separator: ", ")) }
+                if abs(moved - delta) > 0.5 { why.append("scroll view moved \(Int(moved)) for \(Int(delta))") }
+                // Rows in view: how far each moved on screen, and in the conversation.
+                why.append("in view: " + moves.map { id, move in
+                    let shift = (after.inConversation[id]?.minY).flatMap { new in before.inConversation[id].map { new - $0.minY } }
+                    return "\(id.suffix(8)) \(Int(move))/\(shift.map { String(Int($0)) } ?? "?")"
+                }.joined(separator: ", "))
+                if abs(after.height - before.height) > 0.5 { why.append("height \(Int(before.height))→\(Int(after.height))") }
+                report += "\(pass) step \(steps) at \(Int(after.origin)): " + why.joined(separator: "; ") + "\n    anchor: " + ScrollAnchor.notes.suffix(14).joined(separator: " | ") + "\n"
+                // KUVO_PERF_CAPTURE=<folder>: the window as it was then, the first few times.
+                if let folder = environment["KUVO_PERF_CAPTURE"], captures < 12, let number = scroll.window?.windowNumber {
+                    captures += 1
+                    let capture = Process()
+                    capture.executableURL = URL(filePath: "/usr/sbin/screencapture")
+                    capture.arguments = ["-x", "-o", "-l", String(number), folder + "/step\(steps).png"]
+                    try? capture.run()
+                    capture.waitUntilExit()
+                }
+            }
+            send(0, phase: .ended)
+            try? await Task.sleep(for: .milliseconds(300))
+        }
+        let line = "read x\(Int(speed)) pt a frame (conversation views gone meanwhile: \(viewsGone)): \(steps) steps in \(ContinuousClock.now - started), \(jumps) jumps (worst \(Int(worst)) pt, \(Int(total)) pt in all), \(leaps) rows changing in view (worst \(Int(worstLeap)) pt), \(RowProbe.twins.count) rows drawn twice\(RowProbe.twins.isEmpty ? "" : " (" + RowProbe.twins.sorted().prefix(4).joined(separator: ", ") + ")"), ended \(Int(scroll.documentView?.frame.height ?? 0) - Int(scroll.contentView.bounds.maxY)) pt from the end of \(Int(scroll.documentView?.frame.height ?? 0)); " + meter.stop() + "\n"
+        if let file = environment["KUVO_PERF_JUMPS"] {
+            try? report.write(toFile: file, atomically: true, encoding: .utf8)
+            try? trace.write(toFile: file + ".trace", atomically: true, encoding: .utf8)
+            try? costs.write(toFile: file + ".costs", atomically: true, encoding: .utf8)
+        }
+        if let file = environment["KUVO_PERF_STALLS"] { try? meter.stallReport().write(toFile: file, atomically: true, encoding: .utf8) }
+        if let file = environment["KUVO_PERF_LOG"] {
+            if let handle = FileHandle(forWritingAtPath: file) { handle.seekToEndOfFile(); handle.write(Foundation.Data(line.utf8)); try? handle.close() } else { FileManager.default.createFile(atPath: file, contents: Foundation.Data(line.utf8)) }
+        }
+    }
+}
+#endif
+
+#if DEBUG
+/// KUVO_PERF_RENDER: once the conversation is read, each piece of its replies laid out and drawn
+/// off screen, in Textual as the transcript draws it and in plainer ways, timed, to KUVO_PERF_LOG:
+/// what drawing replies costs, and what it could.
+@MainActor
+enum PerfRender {
+    static func run(model: SessionModel) async {
+        guard ProcessInfo.processInfo.environment["KUVO_PERF_RENDER"] != nil else { return }
+        for _ in 0..<40 where !model.isLoaded { try? await Task.sleep(for: .milliseconds(250)) }
+        try? await Task.sleep(for: .seconds(3))
+        let texts = model.transcript.messages.flatMap { message -> [String] in
+            guard case .assistant(let step) = message else { return [] }
+            return step.content.compactMap { if case .text(let text) = $0 { text.text } else { nil } }
+        }
+        let pieces = texts.flatMap { MarkdownChunks.split($0).map(\.text) }
+        let window = NSWindow(contentRect: NSRect(x: -30000, y: -30000, width: 800, height: 800), styleMask: .borderless, backing: .buffered, defer: false)
+        window.orderFrontRegardless()
+        let width: CGFloat = 680
+        var lines: [String] = []
+        func measure<V: View>(_ name: String, _ make: (String) -> V) async {
+            _ = time(make(pieces[0]), width: width, window: window)
+            var times: [Double] = []
+            var height: CGFloat = 0
+            for piece in pieces {
+                let (ms, h) = time(make(piece), width: width, window: window)
+                times.append(ms)
+                height += h
+                // A stall of its own for each, for the sampler.
+                try? await Task.sleep(for: .milliseconds(5))
+            }
+            let sorted = times.sorted()
+            let chars = pieces.reduce(0) { $0 + $1.count }
+            lines.append(String(format: "%@: %.0f ms for %d pieces (%d characters, %.0f pt): median %.1f ms, worst %.1f ms, %.1f ms per 1000 characters",
+                                name, times.reduce(0, +), pieces.count, chars, height, sorted[sorted.count / 2], sorted.last ?? 0, times.reduce(0, +) / Double(chars) * 1000))
+        }
+        func parsed(_ text: String) -> AttributedString { (try? FileLinkingParser(folders: { [] }).attributedString(for: text)) ?? AttributedString(text) }
+        // KUVO_PERF_STALLS: where the main thread is while Textual draws them.
+        let meter = PerfMeter()
+        if ProcessInfo.processInfo.environment["KUVO_PERF_STALLS"] != nil { meter.start() }
+        await measure("textual") { text in
+            StructuredText(text, parser: FileLinkingParser(folders: { [] }))
+                .transcriptFont()
+                .textual.codeBlockStyle(CopyableCodeBlockStyle())
+                .textual.listItemStyle(.firstLine)
+                .textual.inlineStyle(.gitHub)
+                .textual.highlighterTheme(CodeColors.theme)
+                .textual.structuredTextStyle(.gitHub)
+                .textual.textSelection(.enabled)
+        }
+        if let file = ProcessInfo.processInfo.environment["KUVO_PERF_STALLS"] {
+            try? await Task.sleep(for: .milliseconds(300))
+            _ = meter.stop()
+            try? meter.stallReport().write(toFile: file, atomically: true, encoding: .utf8)
+        }
+        await measure("textual, no selection") { text in
+            StructuredText(text, parser: FileLinkingParser(folders: { [] }))
+                .transcriptFont()
+                .textual.codeBlockStyle(CopyableCodeBlockStyle())
+                .textual.listItemStyle(.firstLine)
+                .textual.inlineStyle(.gitHub)
+                .textual.highlighterTheme(CodeColors.theme)
+                .textual.structuredTextStyle(.gitHub)
+        }
+        await measure("textual, plain code blocks") { text in
+            StructuredText(text, parser: FileLinkingParser(folders: { [] }))
+                .transcriptFont()
+                .textual.listItemStyle(.firstLine)
+                .textual.inlineStyle(.gitHub)
+                .textual.structuredTextStyle(.gitHub)
+                .textual.textSelection(.enabled)
+        }
+        await measure("one Text") { text in
+            Text(parsed(text)).transcriptFont().textSelection(.enabled)
+        }
+        await measure("a Text a block") { text in
+            let string = parsed(text)
+            let blocks = string.runs[\.presentationIntent].map { string[$0.1] }
+            return VStack(alignment: .leading, spacing: 12) {
+                ForEach(blocks.indices, id: \.self) { Text(AttributedString(blocks[$0])) }
+            }
+            .transcriptFont()
+        }
+        await measure("NSTextView") { text in PlainTextView(text: NSAttributedString(parsed(text))) }
+        window.orderOut(nil)
+        let line = "render " + lines.joined(separator: "\nrender ") + "\n"
+        if let file = ProcessInfo.processInfo.environment["KUVO_PERF_LOG"] {
+            if let handle = FileHandle(forWritingAtPath: file) { handle.seekToEndOfFile(); handle.write(Foundation.Data(line.utf8)); try? handle.close() } else { FileManager.default.createFile(atPath: file, contents: Foundation.Data(line.utf8)) }
+        }
+    }
+
+    /// Laid out at `width`, as tall as it needs, and drawn.
+    private static func time<V: View>(_ view: V, width: CGFloat, window: NSWindow) -> (Double, CGFloat) {
+        let start = CACurrentMediaTime()
+        let host = NSHostingView(rootView: view.frame(width: width, alignment: .leading).fixedSize(horizontal: false, vertical: true))
+        window.contentView = host
+        let size = host.fittingSize
+        window.setContentSize(NSSize(width: width, height: min(size.height, 8000)))
+        host.layoutSubtreeIfNeeded()
+        host.display()
+        CATransaction.flush()
+        let ms = (CACurrentMediaTime() - start) * 1000
+        window.contentView = nil
+        return (ms, size.height)
+    }
+}
+
+/// TextKit's own view, for comparing.
+private struct PlainTextView: NSViewRepresentable {
+    let text: NSAttributedString
+
+    func makeNSView(context: Context) -> NSTextView {
+        let view = NSTextView(usingTextLayoutManager: true)
+        view.isEditable = false
+        view.drawsBackground = false
+        view.textStorage?.setAttributedString(text)
+        return view
+    }
+
+    func updateNSView(_ view: NSTextView, context: Context) {}
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSTextView, context: Context) -> CGSize? {
+        let width = proposal.width ?? 680
+        nsView.frame.size.width = width
+        nsView.textContainer?.size = NSSize(width: width, height: .greatestFiniteMagnitude)
+        nsView.textLayoutManager?.ensureLayout(for: nsView.textLayoutManager!.documentRange)
+        let height = nsView.textLayoutManager?.usageBoundsForTextContainer.height ?? 0
+        return CGSize(width: width, height: height)
     }
 }
 #endif

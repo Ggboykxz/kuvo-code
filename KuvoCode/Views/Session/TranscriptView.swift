@@ -62,6 +62,7 @@ struct TranscriptView: View {
                         ScrollFrameMonitor.rowsMade += 1
                         ScrollFrameMonitor.rowsMadeByID[row.id, default: 0] += 1
                     }
+                    .modifier(RowProbe(id: row.id))
                     #endif
                     .padding(.top, index == 0 ? 0 : row.spacing(after: rows[index - 1]))
                     .transition(Self.rowTransition)
@@ -119,6 +120,10 @@ struct TranscriptView: View {
                 if let handle = FileHandle(forWritingAtPath: path) { handle.seekToEndOfFile(); handle.write(Data(line.utf8)); try? handle.close() } else { FileManager.default.createFile(atPath: path, contents: Data(line.utf8)) }
             }
         }
+        // Once, whatever happens to this view meanwhile (the test notes it if it's made again).
+        .onAppear { PerfRead.start() }
+        .onDisappear { PerfRead.viewsGone += 1 }
+        .task { await PerfRender.run(model: model) }
         // KUVO_DEMO_WANDER=<seconds>: that long after it opens, scrolls up a screen or two and back
         // down, again and again, as you would reading what streams in, for KUVO_DEMO_WANDER_FOR
         // seconds: scroll gestures, as a trackpad sends them, through AppKit.
