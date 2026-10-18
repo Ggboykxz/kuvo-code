@@ -908,12 +908,9 @@ final class Workspace {
             let text = reply.content.compactMap { content -> String? in
                 if case .text(let text) = content { text.text } else { nil }
             }.joined(separator: " ")
-            let plain = text
-                .replacingOccurrences(of: #"[*_`#>]+"#, with: "", options: .regularExpression)
-                .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-                .trimmingCharacters(in: .whitespaces)
+            let plain = ReplyPreview.line(text)
             guard !plain.isEmpty else { continue }
-            return plain.count > 220 ? String(plain.prefix(219)) + "…" : plain
+            return plain
         }
         return nil
     }

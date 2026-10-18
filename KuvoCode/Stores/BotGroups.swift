@@ -418,12 +418,8 @@ final class BotGroups {
             return
         }
         let who = app?.bots.bot(last.author)?.name
-        let plain = last.text
-            .replacingOccurrences(of: #"[*_`#>]+"#, with: "", options: .regularExpression)
-            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespaces)
         Notifier.shared.notify(session: Self.tabKey(id), title: group.name, subtitle: who.map { last.kind == .wrapUp ? "\($0)’s wrap-up" : $0 },
-                               body: plain.count > 220 ? String(plain.prefix(219)) + "…" : plain, replies: true, push: .init(.message, group: id))
+                               body: ReplyPreview.line(last.text), replies: true, push: .init(.message, group: id))
     }
 
     /// Takes the chat back to before one of your messages: it and everything said after it leave
@@ -985,10 +981,8 @@ final class BotGroups {
             startReady(wrapUpID, in: id)
             Analytics.shared.track("group_work_done")
             if let group = group(id) {
-                let plain = text.replacingOccurrences(of: #"[*_`#>]+"#, with: "", options: .regularExpression)
-                    .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression).trimmingCharacters(in: .whitespaces)
                 Notifier.shared.notify(session: Self.tabKey(id), title: group.name, subtitle: "\(bot.name) finished its part",
-                                       body: plain.count > 220 ? String(plain.prefix(219)) + "…" : plain, replies: true, push: .init(.message, group: id))
+                                       body: ReplyPreview.line(text), replies: true, push: .init(.message, group: id))
             }
             return
         }

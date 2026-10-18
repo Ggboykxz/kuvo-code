@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- A reply's preview in the sidebar, and in notifications, keeps what it quotes as written: a path or a `snake_case` name lost its underscores, and "C#" or "a > b" lost their marks. Only Markdown's own marks are taken off.
 - After a model error, Try Again stays when you pick another model or mode for the retry; the "Switched to…" line hid it, so there was no way forward.
 - A session in a worktree, and a bot's conversation, no longer show "Instructions updated: api/kuvo.worktree" or the like for what Kuvo Code tells the agent itself.
 - In the Changes tab, a binary file says "Binary" in its header, and a new file too big to show says "Too big to show". Both showed nothing at all, as if the file were empty. VoiceOver can fold and unfold each file, which read as a "Forward" heading before.

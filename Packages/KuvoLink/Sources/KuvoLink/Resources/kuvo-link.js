@@ -22,7 +22,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 // Goes up with every change, so `setup` replaces a running bridge that's older.
-export const BRIDGE_VERSION = "0.5.1";
+export const BRIDGE_VERSION = "0.5.2";
 const K = process.env.KUVO_HOME || path.join(os.homedir(), ".kuvo-code");
 const RUN = path.join(K, "run");
 export const LINK_FILE = path.join(RUN, "link.json");
@@ -726,7 +726,14 @@ export function pushTo(phone, json, hostKey) {
   return relayPush(Buffer.from(phone.address, "base64url"), mail);
 }
 
-const plain = text => String(text ?? "").replace(/[*_`#>]+/g, "").replace(/\s+/g, " ").trim();
+// Markdown's marks taken off, not the words (as ReplyPreview does on the Mac): headings and
+// quotes at a line's start, emphasis around words, code ticks, a link's address.
+const plain = text => String(text ?? "")
+  .replace(/^[ \t]{0,3}(#{1,6}|>+)[ \t]+/gm, "")
+  .replace(/!?\[([^\]]*)\]\([^)\s]*\)/g, "$1")
+  .replace(/(?<![\w*_])[*_]{1,3}(?=\S)|(?<=\S)[*_]{1,3}(?![\w*_])/g, "")
+  .replace(/`/g, "")
+  .replace(/\s+/g, " ").trim();
 
 // "Wants to run a command: npm test", as the Mac says it.
 export function describePermission(request) {
