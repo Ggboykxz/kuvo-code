@@ -118,11 +118,62 @@ public enum Message: Codable, Sendable, Hashable, Identifiable {
 
             /// The original file, when it was one.
             public var fileURL: URL? {
-                guard case .uri(let uri) = source, let url = URL(string: uri), url.isFileURL else { return nil }
+                // A `data:` URL can be megabytes: it isn't parsed only to find it's not a file.
+                guard case .uri(let uri) = source, uri.prefix(5).lowercased() == "file:", let url = URL(string: uri), url.isFileURL else { return nil }
                 return url
             }
 
-            public var bytes: Data? { data.flatMap { Data(base64Encoded: $0) } }
+            /// What's in it: the engine's copy, or what the `data:` URL it came as carries (a
+            /// photo sent from the phone, a picture a tool returned).
+            public var bytes: Data? {
+                if let data { return Data(base64Encoded: data) }
+                guard case .uri(let uri) = source else { return nil }
+                return Self.contents(ofDataURL: uri)
+            }
+
+            /// About how many bytes it has, without decoding them.
+            public var size: Int? {
+                if let data { return data.utf8.count * 3 / 4 }
+                guard case .uri(let uri) = source, let (payload, isBase64) = Self.dataURLParts(uri) else { return nil }
+                return isBase64 ? payload.utf8.count * 3 / 4 : payload.utf8.count
+            }
+
+            /// What a `data:` URL carries, base64 ("data:image/png;base64,iVBOR…") or
+            /// percent-encoded ("data:,Hello%2C%20there"); nil when it isn't one, or is malformed.
+            public static func contents(ofDataURL uri: String) -> Data? {
+                guard let (payload, isBase64) = dataURLParts(uri), let bytes = percentDecoded(payload) else { return nil }
+                return isBase64 ? Data(base64Encoded: bytes) : bytes
+            }
+
+            /// A `data:` URL's payload, after the comma, and whether its header ends in `;base64`.
+            private static func dataURLParts(_ uri: String) -> (payload: Substring, isBase64: Bool)? {
+                guard uri.prefix(5).lowercased() == "data:", let comma = uri.firstIndex(of: ",") else { return nil }
+                let parameters = uri[uri.index(uri.startIndex, offsetBy: 5)..<comma].split(separator: ";", omittingEmptySubsequences: false)
+                let isBase64 = parameters.count > 1 && parameters.last?.trimmingCharacters(in: .whitespaces).lowercased() == "base64"
+                return (uri[uri.index(after: comma)...], isBase64)
+            }
+
+            /// The bytes of `text` with its `%XX` escapes decoded; nil for a broken escape.
+            private static func percentDecoded(_ text: Substring) -> Data? {
+                let utf8 = text.utf8
+                guard utf8.contains(UInt8(ascii: "%")) else { return Data(utf8) }
+                func digit(_ byte: UInt8) -> UInt8? {
+                    switch byte {
+                    case UInt8(ascii: "0")...UInt8(ascii: "9"): byte - UInt8(ascii: "0")
+                    case UInt8(ascii: "a")...UInt8(ascii: "f"): byte - UInt8(ascii: "a") + 10
+                    case UInt8(ascii: "A")...UInt8(ascii: "F"): byte - UInt8(ascii: "A") + 10
+                    default: nil
+                    }
+                }
+                var bytes = Data(capacity: utf8.count)
+                var iterator = utf8.makeIterator()
+                while let byte = iterator.next() {
+                    guard byte == UInt8(ascii: "%") else { bytes.append(byte); continue }
+                    guard let high = iterator.next().flatMap(digit), let low = iterator.next().flatMap(digit) else { return nil }
+                    bytes.append(high << 4 | low)
+                }
+                return bytes
+            }
         }
     }
 
