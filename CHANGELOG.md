@@ -4,10 +4,10 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
-## Unreleased
+## 0.5.9
 
 - Scrolling up through a long conversation no longer jumps. As replies above come into view, or earlier messages load, what you're reading stays where it is, and earlier messages come in before you reach the top.
-- Replies draw in one go, and faster: a long reply no longer shows up empty for a moment and then at its size. The first code block in a conversation no longer holds up the app for a quarter of a second while code coloring starts.
+- Replies draw in one go, and faster: a long reply no longer shows up empty for a moment and then at its size. The first code block in a conversation no longer holds up the app for a quarter of a second while code coloring starts, and a code block keeps showing the latest code while it's being written.
 - A session on a remote machine no longer keeps showing "Connecting to…" over and over while nothing runs there. With an integration added, the machine's engine looked out of date every time it was checked, and was started over every few seconds.
 - Giving a bot a key of its own, or taking it away, changes only that key's entry in its folder's `.opencode/opencode.json`. It used to replace that file, and taking the last key away deleted the whole `.opencode` folder, with any skills or commands in it. A bot on a machine no longer loses its folder's settings each time the machine connects.
 - In a folder that isn't a git repository, the Changes tab lists the files the agent changed in the session, as it says it does: it stayed empty. A file edited several times shows as one change.
@@ -16,6 +16,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Settings › Permissions lists the approvals you saved with Always Allow in every project, to remove them. It said "None yet" for any made in a project.
 - Conversations keep going while a save panel or an error message is open. Exporting a session as Markdown, or an error after removing a worktree or moving a chat, used to stop every conversation, bot and wake-up from updating until you closed it. With VoiceOver, the composer's mode and model buttons open their menus.
 - Signing out of an account or integration here signs your remote machines out too, even when that fails the first time: it's tried again until it works, rather than leaving the machine signed in.
+- A sign-in renewed on a remote machine is no longer replaced by an older copy when the connection drops while Kuvo Code checks it.
 - When a remote machine connects again, it tells you what its agents asked while it was away, like a bot's permission request from a wake-up while your Mac slept. Before, nothing said so until you opened that conversation.
 - Messages agents send each other are no longer lost when a machine drops: one waiting for a machine stays queued until it's delivered, and one a machine's agent leaves for an agent elsewhere stays there until it gets through.
 - Answering a permission request from its notification says so when the answer didn't go through, as answering a question already did.
