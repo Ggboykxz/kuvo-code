@@ -68,6 +68,8 @@ struct TranscriptView: View {
                     .transition(Self.rowTransition)
             }
         }
+        // The reply being written draws its words from it.
+        .environment(model.writing)
         // What a widget writes back goes to this conversation's agent, as yours.
         .environment(\.answerAgent) { text in model.submit(text, files: [], for: nil, queue: false, commands: []) }
         .overlay {
@@ -134,6 +136,7 @@ struct TranscriptView: View {
         }
         .onDisappear { PerfRead.viewsGone += 1 }
         .task { await PerfRender.run(model: model) }
+        .task { await PerfDrag.run() }
         // KUVO_DEMO_WANDER=<seconds>: that long after it opens, scrolls up a screen or two and back
         // down, again and again, as you would reading what streams in, for KUVO_DEMO_WANDER_FOR
         // seconds: scroll gestures, as a trackpad sends them, through AppKit.
@@ -826,9 +829,11 @@ private struct AssistantStepView: View {
             ForEach(Array(message.content.enumerated()), id: \.offset) { index, block in
                 Group {
                     switch block {
+                    case .text(let text) where message.time.completed == nil && index == message.content.count - 1:
+                        // The last of a step under way: its words as they stream in.
+                        WritingText(row: message.id, part: index, text: text.text, folders: folders)
                     case .text(let text):
-                        // The last of a step under way may still be writing a code block.
-                        MarkdownText(text: text.text, folders: folders, isWriting: message.time.completed == nil && index == message.content.count - 1)
+                        MarkdownText(text: text.text, folders: folders)
                     case .reasoning(let reasoning):
                         ReasoningView(block: reasoning)
                     case .tool(let call):
@@ -850,6 +855,23 @@ private struct AssistantStepView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// The text a step under way ends in, which may still be being written: its words as they stream
+/// in, from the session's `WritingBlock`, so more of them draw only this.
+struct WritingText: View {
+    /// Its row, and where it is among the step's blocks.
+    let row: String
+    let part: Int
+    /// Its words when the conversation was last drawn.
+    let text: String
+    var folders: () -> [String] = { [] }
+    @Environment(WritingBlock.self) private var writing: WritingBlock?
+
+    var body: some View {
+        // Still being written: a code block it ends in is colored once it's done.
+        MarkdownText(text: writing?.text(row: row, part: part) ?? text, folders: folders, isWriting: true)
     }
 }
 

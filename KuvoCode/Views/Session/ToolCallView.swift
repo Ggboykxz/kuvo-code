@@ -453,8 +453,10 @@ struct SubagentSteps: View {
                 ForEach(model.transcript.messages) { message in
                     switch message {
                     case .assistant(let assistant):
-                        ForEach(Array(assistant.content.enumerated()), id: \.offset) { _, block in
+                        ForEach(Array(assistant.content.enumerated()), id: \.offset) { index, block in
                             switch block {
+                            case .text(let text) where assistant.time.completed == nil && index == assistant.content.count - 1:
+                                WritingText(row: assistant.id, part: index, text: text.text, folders: { [directory] })
                             case .text(let text):
                                 MarkdownText(text: text.text, folders: { [directory] })
                             case .tool(let call):
@@ -467,6 +469,8 @@ struct SubagentSteps: View {
                         EmptyView()
                     }
                 }
+                // Its reply being written draws its words from it.
+                .environment(model.writing)
                 if model.isRunning {
                     HStack(spacing: 8) {
                         Spinner(size: 11)

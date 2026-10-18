@@ -1,5 +1,6 @@
 import Foundation
 import OpenCodeKit
+import Textual
 
 /// One session, live: its transcript, what's pending, and the actions on it.
 @Observable
@@ -7,10 +8,33 @@ final class SessionModel {
     var session: Session
     /// The conversation as it shows. Words stream in a few at a time: they gather in `live` and
     /// show together, a few times a second (see `apply`), instead of the conversation being drawn
-    /// again for every few words.
+    /// again for every few words. More words of the reply being written go in quietly, and only
+    /// its view, which watches `writing`, is drawn again.
     private(set) var transcript: Transcript {
-        didSet { transcriptChanged() }
+        get {
+            access(keyPath: \.transcript)
+            return storedTranscript
+        }
+        set {
+            withMutation(keyPath: \.transcript) { storedTranscript = newValue }
+            transcriptChanged()
+        }
+        _modify {
+            access(keyPath: \.transcript)
+            _$observationRegistrar.willSet(self, keyPath: \.transcript)
+            defer {
+                _$observationRegistrar.didSet(self, keyPath: \.transcript)
+                transcriptChanged()
+            }
+            yield &storedTranscript
+        }
     }
+    @ObservationIgnored private var storedTranscript: Transcript
+    /// The reply being written, its words as they stream in.
+    let writing = WritingBlock()
+    /// What gathered in `live` is only more words of one reply: its step and which of its texts.
+    @ObservationIgnored private var liveWords: (step: String, ordinal: Int?)?
+    @ObservationIgnored private var liveIsWordsOnly = true
     /// The transcript with what streamed in since it last showed, until it shows.
     @ObservationIgnored private var live: Transcript?
     @ObservationIgnored private var showsLive: Task<Void, Never>?
@@ -41,6 +65,7 @@ final class SessionModel {
 
     private func transcriptChanged() {
         transcriptVersion &+= 1
+        writing.show(WritingBlock.Writing(in: storedTranscript))
         if isRunning != transcript.isRunning { isRunning = transcript.isRunning }
         if pending != transcript.pending { pending = transcript.pending }
         if permissions != transcript.permissions {
@@ -237,7 +262,7 @@ final class SessionModel {
         self.session = session
         self.api = api
         self.projectFolders = projectFolders
-        transcript = Transcript(sessionID: session.id)
+        storedTranscript = Transcript(sessionID: session.id)
     }
 
     var id: String { session.id }
@@ -327,6 +352,18 @@ final class SessionModel {
         }
         editTranscript { $0.messages = older + $0.messages }
         earlierCursor = Self.cursor(before: page)
+        prepareCode(in: older)
+    }
+
+    /// The code in replies read, colored ahead of time, so it shows colored as it's scrolled to
+    /// rather than plain for a moment first.
+    private func prepareCode(in messages: [Message]) {
+        let texts = messages.flatMap { message -> [String] in
+            guard case .assistant(let step) = message, step.time.completed != nil else { return [] }
+            return step.content.compactMap { if case .text(let text) = $0 { text.text } else { nil } }
+        }
+        guard !texts.isEmpty else { return }
+        Task { await CodeHighlighting.prepare(markdown: texts) }
     }
 
     /// Its engine (a machine's, or this Mac's started again) connected again, through `api`. What
@@ -387,6 +424,7 @@ final class SessionModel {
             // It has what streamed in so far.
             discardLive()
             transcript = fresh
+            prepareCode(in: page.data)
             if transcript.isStale { scheduleReload() }
             // A queue left waiting (the app quit mid-run, say) waits for Resume rather than
             // starting on its own. Read again later (a reconnect), it carries on.
@@ -417,6 +455,7 @@ final class SessionModel {
             // Gathered, to show with what comes in the next moment.
             if live == nil { live = transcript }
             live?.apply(event)
+            noteStreamed(event)
             if live?.isStale == true { scheduleReload() }
             showLiveSoon()
             return
@@ -425,6 +464,7 @@ final class SessionModel {
         if Transcript.changes(with: event.type) {
             if live != nil {
                 live?.apply(event)
+                liveIsWordsOnly = false
                 showLive()
             } else {
                 transcript.apply(event)
@@ -484,8 +524,33 @@ final class SessionModel {
         showsLive = nil
         guard let shown = live else { return }
         live = nil
+        defer {
+            liveWords = nil
+            liveIsWordsOnly = true
+            lastShown = .now
+        }
+        // Only more words of the reply being written, which its view already shows as written:
+        // in quietly, and to that view alone.
+        if liveIsWordsOnly, let words = liveWords, let block = WritingBlock.Writing(in: shown),
+           block.key.step == words.step, words.ordinal.map({ $0 == block.ordinal }) != false, writing.onlyGrows(to: block) {
+            storedTranscript = shown
+            writing.show(block)
+            return
+        }
         transcript = shown
-        lastShown = .now
+    }
+
+    /// Notes what streamed in: more words of one text, or anything else.
+    private func noteStreamed(_ event: ServerEvent) {
+        guard liveIsWordsOnly else { return }
+        guard event.type == "session.text.delta", let delta = try? event.payload(as: EventPayload.Delta.self) else {
+            liveIsWordsOnly = false
+            return
+        }
+        if let words = liveWords, words.step != delta.assistantMessageID || words.ordinal != delta.ordinal {
+            liveIsWordsOnly = false
+        }
+        liveWords = (delta.assistantMessageID, delta.ordinal)
     }
 
     /// What streamed in won't show: the engine's copy, read again, replaces it.
@@ -493,6 +558,8 @@ final class SessionModel {
         showsLive?.cancel()
         showsLive = nil
         live = nil
+        liveWords = nil
+        liveIsWordsOnly = true
     }
 
     /// Changes the transcript once what streamed in has shown, so the change isn't lost under it.
@@ -1073,5 +1140,75 @@ extension OpenCodeAPI {
             waited = true
             try? await Task.sleep(for: .milliseconds(250))
         }
+    }
+}
+
+/// The reply being written, as its words stream in: the text the step under way ends in. Its view
+/// watches this, so a few more words draw only it, not the conversation (see `SessionModel`).
+@Observable
+final class WritingBlock {
+    /// Which text: its step, and where it is among the step's blocks.
+    struct Key: Equatable {
+        var step: String
+        var part: Int
+    }
+
+    /// The text being written in a conversation, and its pieces as the conversation shows them
+    /// (see `MarkdownChunks`).
+    struct Writing {
+        var key: Key
+        /// Which of the step's texts it is, as the engine counts them.
+        var ordinal: Int
+        var text: String
+        var pieces: [MarkdownChunks.Chunk]
+
+        /// The row of its last piece, as `TranscriptView` names it.
+        var pieceRow: String {
+            key.step + "#\(key.part)" + (pieces.count == 1 ? "" : ".\(pieces.count - 1)")
+        }
+
+        /// The text being written in `transcript`: the last block of its last step, while that
+        /// step is under way and the text has words.
+        init?(in transcript: Transcript) {
+            guard case .assistant(let step)? = transcript.messages.last, step.time.completed == nil,
+                  case .text(let text)? = step.content.last,
+                  text.text.contains(where: { !$0.isWhitespace }) else { return nil }
+            key = Key(step: step.id, part: step.content.count - 1)
+            ordinal = step.content.dropLast().filter { if case .text = $0 { true } else { false } }.count
+            self.text = text.text
+            pieces = MarkdownChunks.split(text.text, isWriting: true)
+        }
+    }
+
+    private(set) var key: Key?
+    /// All of it, as written so far.
+    private(set) var text = ""
+    /// The row of its last piece, and that piece's words.
+    private(set) var pieceRow: String?
+    private(set) var piece = ""
+    @ObservationIgnored private var pieces: [MarkdownChunks.Chunk] = []
+
+    func show(_ writing: Writing?) {
+        if key != writing?.key { key = writing?.key }
+        if pieceRow != writing?.pieceRow { pieceRow = writing?.pieceRow }
+        let text = writing?.text ?? ""
+        if self.text != text { self.text = text }
+        let piece = writing?.pieces.last?.text ?? ""
+        if self.piece != piece { self.piece = piece }
+        pieces = writing?.pieces ?? []
+    }
+
+    /// `writing` is what shows already with more words at its end: the same text, in as many
+    /// pieces, all but the last as they were.
+    func onlyGrows(to writing: Writing) -> Bool {
+        writing.key == key && writing.pieces.count == pieces.count && writing.pieces.dropLast() == pieces.dropLast()
+    }
+
+    /// The words of a row's text, as they are now, while it's the one being written: the last
+    /// piece's row (`row`, in pieces), or the step's (`row`, with all its blocks) and its `part`.
+    func text(row: String, part: Int) -> String? {
+        if row == pieceRow { return piece }
+        if let key, key.step == row, key.part == part { return text }
+        return nil
     }
 }
