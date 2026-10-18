@@ -23,7 +23,7 @@ real open-source projects cloned into the run's folder. Status: ✅ passes, ⚠�
 | B1 | Open a project folder (drag it in, or New Project) and ask "what does this project do, and how is it organized?" | ✅ GLM, slugify |
 | B2 | "Run the tests and tell me what fails" on a project with a failing test | ✅ DeepSeek, textstats (a seeded bug): both failures found and explained |
 | B3 | "Fix this bug: …" from a real issue's text, then check the fix | ✅ fixed both, tests re-run green |
-| B4 | "Add a --json flag to the CLI and a test for it" | ⏳ |
+| B4 | "Add a --json flag to the CLI and a test for it" | ✅ a --lines flag in textstats: a helper, the flag, two tests and a README line; the tests pass and the output has "lines" |
 | B5 | Review the changes: open the diff, comment on a line ("rename this"), send the comments, see them handled | ✅ comment on a line, sent with an empty composer, handled; ❌→✅ Accessibility press on the mode/model menus hung until the menu closed (fadfbd9) |
 | B6 | Undo the last turn's changes, then change your mind | ✅ undo restores only that turn's files, Redo brings them back; ❌→✅ outside git the dialog promised files back the engine can't restore (26a90bc) |
 | B7 | "Commit this with a good message", then make a branch | ✅ Commit… with Suggest a Message, then New Branch… from the title bar |
@@ -78,7 +78,7 @@ real open-source projects cloned into the run's folder. Status: ✅ passes, ⚠�
 | ID | Case | Status |
 | --- | --- | --- |
 | F1 | Make a bot from scratch: it asks what its purpose is, you tell it, it keeps it | ✅ the bot writes first: infers its job from its name or asks (f95ed69) |
-| F2 | Start from a template (the morning news digest) and send its job | ⏳ |
+| F2 | Start from a template (the morning news digest) and send its job | ✅ Herald from Start From: its job typed in its composer, sent; it asked for topics in a question card, sent a first digest of five with links, and set a daily 8:00 wake-up |
 | F3 | "Remind me in 2 minutes to stretch": a wake-up arrives on time | ✅ see L15 |
 | F4 | "Every weekday at 9 …": a repeating wake-up, shown in Edit Bot, paused and resumed | ✅ see L16 and L17; shown in Edit Bot, Pause Wake-Ups holds them (a `paused` mark) and turning it off resumes; ❌→✅ the switch had no name for VoiceOver (014d6b9) |
 | F5 | "Tell me when this page changes": a watch that wakes the bot when it does | ✅ see L8–L11 |
