@@ -6,6 +6,8 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Math in replies and Markdown previews no longer takes words that aren't its own. A numbered list with each formula opened after its label, like "1. Energy: $$", keeps every item; a code block that starts on a list item's line stays code; a quote under a list item keeps its quote marks out of the formula; and "$$" for prices or the shell's PID stays as written.
+- A link whose address has dollar signs, like `?$filter=…&$top=2`, opens that address; math used to change it while the link's words looked right.
 - Signing out of an account, connecting one or switching accounts reaches your remote machines without restarting Kuvo Code: a machine's engine starts over with your accounts as soon as nothing is running there, so its bots and sessions stop offering a provider you disconnected. An idle machine's engine is no longer started over each time Kuvo Code launches for no reason.
 - Watches see something appear or go away again: a check like `curl -s … | grep -o '…'` that finds nothing counts, so a bot hears when an item comes back in stock or a status page stops saying all is well. A run where curl, wget or gh fails, as when the network is down, never counts, through `| jq`, `| sed` or `| head` too. A check that writes warnings no longer wakes its bot once after the update, and Check Now runs a check the way its watch does and says when a run wouldn't count.
 - Opening a picture or file from a conversation saves it in Kuvo Code's own Attachments folder, as the kind of file it says it is and marked as downloaded. Anything that could run, like an app, a script or an installer, is shown in Finder instead of opened.
