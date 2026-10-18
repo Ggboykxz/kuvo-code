@@ -35,7 +35,7 @@ real open-source projects cloned into the run's folder. Status: ✅ passes, ⚠�
 | B13 | Two sessions in the same project working at once, and one in another project | ✅ two sessions in tinysite and one in textstats at once, each with its own permission cards ("Waiting for you" in the sidebar) and the right result; ❌→✅ Always Allow for everything read "Don't ask again for: *" (a8d4c86) |
 | B14 | Switch model or effort mid-conversation | ✅ picked another free model mid-conversation, applied when the picker closes, next reply on it; ⚠️ the notice names the model by its id ("Switched to deepseek-v4.1-flash-free") |
 | B15 | "Start the dev server and show me the page": the page in the panel's browser | ❌→✅ the agent couldn't click or type in the Mac browser since 0.5.6 (3edd9f4); a page that didn't open said only "browser is empty" (3f59090); its dev server left running showed nowhere (14ed231) |
-| B16 | A long conversation: scrolling, finding text (⌘F), and the context filling up and compacting | ⏳ |
+| B16 | A long conversation: scrolling, finding text (⌘F), and the context filling up and compacting | ⚠️ Find in Conversation finds and highlights every match and counts them, but Next/Previous don't scroll to a result out of view (reported to the performance work, which is changing that scrolling); Summarize Now works and the agent still knows what it did |
 | B17 | A folder that isn't a git repository, a folder with spaces and accents in its name, and a big repository | ✅ accents and spaces in the folder name; ❌→✅ outside git the Changes tab stayed empty (8ad10d1) |
 | B18 | Rename, archive, restore and delete sessions; find one with ⌘K | ✅ rename (accents), archive, search finds it, unarchive, delete asks first, ⌘K finds files and sessions; ❌→✅ a deleted session stayed under In Conversations; a search typed at launch found nothing (8149536) |
 | B19 | "Use a subagent to research X while you do Y" | ✅ the subagent has its own row (task, agent, what it used) and its findings come back in the reply |
@@ -230,8 +230,8 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 | ID | Case | Status |
 | --- | --- | --- |
 | K1 | Every Settings page opens, reads well, and keeps what you change | ✅ all 22 Settings pages open with their content |
-| K2 | Every menu command and keyboard shortcut does what it says | ⏳ |
+| K2 | Every menu command and keyboard shortcut does what it says | ✅ every menu shortcut matches Settings › Keyboard Shortcuts and the docs; menu commands need the window in front (a copy in the background has them greyed), so pressed only through the palette and launch hooks |
 | K3 | Notifications: a finished task and a question while you're in another app | ⏳ |
 | K4 | The menu bar's usage panel | ⏳ |
-| K5 | Storage: see what takes room, clear it | ⏳ |
-| K6 | Passwords: save one for a site, use it, remove it | ⏳ |
+| K5 | Storage: see what takes room, clear it | ✅ sizes add up to what's on disk; Delete… on Logs asks, then leaves only the live log; "Other" is mostly MCP servers' npm cache, described on hover |
+| K6 | Passwords: save one for a site, use it, remove it | ✅ on a local login page: Save this password?, filled with the key, no second offer, listed and deleted in Settings; ❌→✅ every copy shared one creator code, so a demo or test copy listed (and could delete) the passwords saved in the app (6546e76); Delete read "Trash" to VoiceOver |
