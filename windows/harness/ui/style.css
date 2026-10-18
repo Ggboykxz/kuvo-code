@@ -295,3 +295,13 @@ aside {
 }
 .diff-body .add { color: var(--ok); }
 .diff-body .del { color: var(--danger); }
+
+/* ---- Files panel extras ---- */
+.file-search { width: 100%; font-size: 12px; }
+.search-results { font-size: 12px; max-height: 160px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
+.search-results .hit { padding: 2px 0; cursor: pointer; }
+.search-results .hit:hover { color: var(--accent); }
+.search-results .hit .where { color: var(--ink-soft); font-size: 11px; }
+.git-status { font-size: 11px; font-family: ui-monospace, monospace; max-height: 120px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
+.git-status .entry { padding: 1px 0; }
+.git-status .code { font-weight: 600; margin-right: 6px; }

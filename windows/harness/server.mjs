@@ -144,17 +144,25 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
       const asked = url.searchParams.get("path");
       const folder = asked ? path.resolve(asked) : currentProject ?? os.homedir();
       let folders = [];
+      let files = [];
       try {
-        folders = fs.readdirSync(folder, { withFileTypes: true })
+        const entries = fs.readdirSync(folder, { withFileTypes: true });
+        folders = entries
           .filter(entry => entry.isDirectory() && !entry.name.startsWith("."))
+          .map(entry => ({ name: entry.name, path: path.join(folder, entry.name) }))
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .slice(0, 500);
+        files = entries
+          .filter(entry => entry.isFile() && !entry.name.startsWith("."))
           .map(entry => ({ name: entry.name, path: path.join(folder, entry.name) }))
           .sort((a, b) => a.name.localeCompare(b.name))
           .slice(0, 500);
       } catch {
         folders = [];
+        files = [];
       }
       const parent = path.dirname(folder);
-      return json({ path: folder, parent: parent === folder ? null : parent, folders });
+      return json({ path: folder, parent: parent === folder ? null : parent, folders, files });
     }
 
     if (url.pathname === "/api/sessions" && request.method === "GET") {
@@ -189,9 +197,93 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
     return json({ ok: true, path: resolved });
   }
 
-    const { client } = await ensureEngine();
+  // File management: delete and create folders.
+  if (url.pathname === "/api/file" && request.method === "DELETE") {
+    const asked = url.searchParams.get("path");
+    if (!asked) throw new HttpError(400, "No file was given.");
+    const resolved = path.resolve(asked);
+    if (currentProject && resolved !== currentProject && !resolved.startsWith(currentProject + path.sep)) {
+      throw new HttpError(403, "That file is outside the project.");
+    }
+    let stats;
+    try { stats = fs.statSync(resolved); }
+    catch { throw new HttpError(404, "There's no such file."); }
+    if (stats.isDirectory()) fs.rmSync(resolved, { recursive: true, force: true });
+    else fs.unlinkSync(resolved);
+    return json({ ok: true });
+  }
+  if (url.pathname === "/api/mkdir" && request.method === "POST") {
+    const body = await readBody(request);
+    if (!body.path) throw new HttpError(400, "No folder was given.");
+    const resolved = path.resolve(body.path);
+    if (currentProject && resolved !== currentProject && !resolved.startsWith(currentProject + path.sep)) {
+      throw new HttpError(403, "That folder is outside the project.");
+    }
+    fs.mkdirSync(resolved, { recursive: true });
+    return json({ ok: true, path: resolved });
+  }
 
-    if (url.pathname === "/api/sessions" && request.method === "POST") {
+  // Search: which files contain a string, with the matching lines.
+  if (url.pathname === "/api/search" && request.method === "GET") {
+    const root = currentProject;
+    if (!root) throw new HttpError(400, "No project folder is open.");
+    const query = String(url.searchParams.get("q") ?? "").trim();
+    if (query === "") return json({ matches: [] });
+    const matches = [];
+    const walk = (dir, depth) => {
+      if (depth > 6 || matches.length > 200) return;
+      let entries;
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); }
+      catch { return; }
+      for (const entry of entries) {
+        if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) { walk(full, depth + 1); continue; }
+        if (!entry.isFile()) continue;
+        let text;
+        try { text = fs.readFileSync(full, "utf8"); }
+        catch { continue; }
+        const lines = text.split("\n");
+        const hits = [];
+        lines.forEach((line, index) => {
+          if (line.includes(query) && hits.length < 5) hits.push({ line: index + 1, text: line.trim().slice(0, 200) });
+        });
+        if (hits.length) matches.push({ path: full, hits });
+        if (matches.length >= 50) return;
+      }
+    };
+    walk(root, 0);
+    return json({ matches });
+  }
+
+  // Git: status and diff for the project, if it's a repository.
+  if (url.pathname === "/api/git/status" && request.method === "GET") {
+    if (!currentProject) throw new HttpError(400, "No project folder is open.");
+    const { execFileSync } = await import("node:child_process");
+    let output = "";
+    try { output = execFileSync("git", ["status", "--porcelain"], { cwd: currentProject, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); }
+    catch { return json({ repository: false, entries: [] }); }
+    const entries = output.split("\n").filter(Boolean).map(line => ({
+      code: line.slice(0, 2),
+      path: line.slice(3).trim(),
+    }));
+    return json({ repository: true, entries });
+  }
+  if (url.pathname === "/api/git/diff" && request.method === "GET") {
+    if (!currentProject) throw new HttpError(400, "No project folder is open.");
+    const asked = url.searchParams.get("path");
+    const { execFileSync } = await import("node:child_process");
+    let output = "";
+    try {
+      const args = asked ? ["diff", "--", asked] : ["diff"];
+      output = execFileSync("git", args, { cwd: currentProject, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    } catch { output = ""; }
+    return json({ diff: output });
+  }
+
+  const { client } = await ensureEngine();
+
+  if (url.pathname === "/api/sessions" && request.method === "POST") {
       const body = await readBody(request);
       const directory = directoryOf(body.directory ?? currentProject);
       currentProject = directory;

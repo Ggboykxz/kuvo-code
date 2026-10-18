@@ -40,7 +40,8 @@
     "win": {
       "target": [
         "nsis",
-        "portable"
+        "portable",
+        "msi"
       ],
       "sign": null,
       "signAndEditExecutable": false

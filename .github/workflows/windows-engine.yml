@@ -125,6 +125,9 @@ jobs:
 
       - name: Build the shell
         working-directory: windows/electron
+        env:
+          CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: |
           npm install --no-audit --no-fund
           npm run build
@@ -133,10 +136,16 @@ jobs:
         working-directory: windows/electron
         run: npm run smoke -- "dist/win-unpacked/Kuvo Code.exe"
 
-      - name: Keep the installer and the portable build
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: kuvo-windows-shell-x64
-          path: |
-            windows/electron/dist/*.exe
-          if-no-files-found: error
+      - name: Sign the harness executable (if a certificate is configured)
+        if: ${{ secrets.WINDOWS_CERTIFICATE != '' }}
+        working-directory: windows/harness
+        env:
+          CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        shell: powershell
+        run: |
+          $bytes = [Convert]::FromBase64String($env:CSC_LINK)
+          $certPath = Join-Path $env:RUNNER_TEMP "kuvo-cert.pfx"
+          [IO.File]::WriteAllBytes($certPath, $bytes)
+          signtool sign /fd sha256 /f $certPath /p $env:CSC_KEY_PASSWORD build/kuvo-windows-harness.exe
+          Remove-Item $certPath

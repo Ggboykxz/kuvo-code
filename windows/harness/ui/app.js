@@ -452,7 +452,7 @@ function toggleDrawer() {
   const drawer = $("drawer");
   drawer.hidden = !drawer.hidden;
   if (!drawer.hidden) {
-    if (state.drawerTab === "files") loadFileTree(state.project);
+    if (state.drawerTab === "files") { loadFileTree(state.project); refreshGit(); }
     else initTerminal();
   }
 }
@@ -576,6 +576,81 @@ $("files-refresh").addEventListener("click", () => loadFileTree($("files-refresh
 $("file-save").addEventListener("click", saveFile);
 $("diff-close").addEventListener("click", () => { $("diff-modal").hidden = true; });
 
+
+$("files-new-file").addEventListener("click", async () => {
+  if (!state.project) return;
+  const name = prompt("New file name:");
+  if (!name) return;
+  const target = `${$("files-refresh").dataset.path || state.project}/${name}`;
+  try {
+    await api("/api/file", { method: "POST", body: { path: target, content: "" } });
+    await loadFileTree($("files-refresh").dataset.path || state.project);
+    await openFile(target);
+  } catch (error) { complain(null, error); }
+});
+$("files-new-folder").addEventListener("click", async () => {
+  if (!state.project) return;
+  const name = prompt("New folder name:");
+  if (!name) return;
+  const target = `${$("files-refresh").dataset.path || state.project}/${name}`;
+  try {
+    await api("/api/mkdir", { method: "POST", body: { path: target } });
+    await loadFileTree($("files-refresh").dataset.path || state.project);
+  } catch (error) { complain(null, error); }
+});
+$("files-delete").addEventListener("click", async () => {
+  if (!state.openFile) return;
+  if (!confirm(`Delete ${state.openFile}?`)) return;
+  try {
+    await api(`/api/file?path=${encodeURIComponent(state.openFile)}`, { method: "DELETE" });
+    state.openFile = null;
+    $("file-editor").hidden = true;
+    await loadFileTree($("files-refresh").dataset.path || state.project);
+  } catch (error) { complain(null, error); }
+});
+$("files-search").addEventListener("input", async (event) => {
+  const query = event.target.value.trim();
+  const results = $("files-search-results");
+  if (query.length < 2) { results.hidden = true; results.innerHTML = ""; return; }
+  try {
+    const { matches } = await api(`/api/search?q=${encodeURIComponent(query)}`);
+    results.innerHTML = "";
+    results.hidden = false;
+    for (const match of matches.slice(0, 30)) {
+      const item = el("div", { class: "hit" });
+      item.append(el("div", { text: match.path.replace(state.project, "").replace(/^[/\\]/, "") }));
+      for (const hit of match.hits) {
+        const where = el("div", { class: "where", text: `${hit.line}: ${hit.text}` });
+        where.addEventListener("click", () => openFile(match.path));
+        item.append(where);
+      }
+      results.append(item);
+    }
+    if (matches.length === 0) results.append(el("div", { class: "where", text: "No matches." }));
+  } catch (error) { complain(null, error); }
+});
+async function refreshGit() {
+  try {
+    const { repository, entries } = await api("/api/git/status");
+    const box = $("git-status");
+    const button = $("git-diff");
+    if (!repository) { box.hidden = true; button.hidden = true; return; }
+    box.hidden = false; button.hidden = false;
+    box.innerHTML = "";
+    if (entries.length === 0) { box.append(el("div", { class: "entry", text: "Working tree clean." })); return; }
+    for (const entry of entries) {
+      box.append(el("div", { class: "entry", html: `<span class="code">${entry.code}</span>${entry.path}` }));
+    }
+  } catch (error) { complain(null, error); }
+}
+$("git-diff").addEventListener("click", async () => {
+  try {
+    const { diff } = await api("/api/git/diff");
+    showDiff("Working tree", "", diff || "(no changes)");
+  } catch (error) { complain(null, error); }
+});
+const originalToggleDrawer = toggleDrawer;
+// wrap toggleDrawer to also refresh git
 // ---- Boot ----
 
 async function boot() {
