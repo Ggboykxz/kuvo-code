@@ -101,7 +101,9 @@ A machine's browser is Chrome for Testing, the full browser run in Chrome's own 
 - **host**, the keeper: it starts Chromium, holds it over a pipe, and serves the DevTools
   protocol to everyone else on a Unix socket in `~/.kuvo-code/run`, with a few messages of its
   own (`Kuvo.*`): the page in use, who's browsing where, what agents ask you for, and which
-  page each conversation works in. Only one runs at a time.
+  page each conversation works in. Only one runs at a time. When an update puts a newer build
+  in `current`, it stops once nothing uses the browser, keeping the open pages, so the next
+  start runs the new one.
 - **mcp**, the agent's browser tools for the machine's engine, talking to the keeper.
 - **connect**, the Mac's live view of the pages, over SSH, also through the keeper.
 
