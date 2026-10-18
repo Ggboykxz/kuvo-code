@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- In replies and Markdown previews, a list item with a code block, quote or table in it keeps its number or bullet beside its own first line. It sat beside the block, so the item's first words read as the end of the item before.
 - Math in replies and Markdown previews no longer takes words that aren't its own. A numbered list with each formula opened after its label, like "1. Energy: $$", keeps every item; a code block that starts on a list item's line stays code; a quote under a list item keeps its quote marks out of the formula; and "$$" for prices or the shell's PID stays as written.
 - A link whose address has dollar signs, like `?$filter=…&$top=2`, opens that address; math used to change it while the link's words looked right.
 - Signing out of an account, connecting one or switching accounts reaches your remote machines without restarting Kuvo Code: a machine's engine starts over with your accounts as soon as nothing is running there, so its bots and sessions stop offering a provider you disconnected. An idle machine's engine is no longer started over each time Kuvo Code launches for no reason.
