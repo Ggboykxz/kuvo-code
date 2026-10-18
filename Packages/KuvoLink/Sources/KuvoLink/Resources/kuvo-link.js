@@ -725,6 +725,22 @@ export async function noticeFor(event, get) {
     for (let step = 0; step < 5 && current.parentID; step++) current = await session(current.parentID);
     return current;
   };
+  // A form an MCP server asks for is filed under no session ("global"): it's the running session
+  // of its folder with a tool of that server under way, as the Mac finds it; null for none.
+  const waitingOn = async (server, folder) => {
+    if (!server) return null;
+    const active = (await get("api/session/active").catch(() => null))?.data ?? {};
+    const name = String(server).replace(/[^\p{L}\p{N}_-]/gu, "_");
+    for (const id of Array.isArray(active) ? active : Object.keys(active)) {
+      const candidate = await session(id).catch(() => null);
+      if (!candidate || (folder && candidate.location?.directory !== folder)) continue;
+      const page = await get(`api/session/${encodeURIComponent(id)}/message?limit=8&order=desc`).catch(() => null);
+      const steps = (page?.data ?? []).filter(message => message.type === "assistant").flatMap(message => message.content ?? []);
+      if (steps.some(block => block.type === "tool" && block.state?.status === "running"
+        && (block.name?.startsWith(name + "_") || (block.name === "execute" && String(block.state.input?.code ?? "").includes(server))))) return id;
+    }
+    return null;
+  };
   const about = (shown, category, body, extra = {}) => {
     const bot = isBot(shown);
     const folder = shown.location?.directory ?? "";
@@ -745,7 +761,9 @@ export async function noticeFor(event, get) {
     case "form.created": {
       // The form comes under `form`, with its session.
       const form = data.form ?? data;
-      const where = await shown(form.sessionID);
+      const asker = form.sessionID === "global" ? await waitingOn(form.metadata?.server, event.location?.directory) : form.sessionID;
+      if (!asker) return null;
+      const where = await shown(asker);
       return about(where, "question", describeForm(form), { request: form.id, ...(where.id !== form.sessionID ? { requestSession: form.sessionID } : {}) });
     }
     case "session.execution.succeeded":

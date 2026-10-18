@@ -401,7 +401,11 @@ test("engine events become notifications, as the Mac words them", async () => {
     ses_bot: { id: "ses_bot", title: "Fixer", metadata: { kuvo: { bot: "bot_1" } }, location: { directory: "/home/me/.kuvo-code/bots/bot_1/workspace" } },
   };
   const messages = { data: [{ type: "assistant", content: [{ type: "text", text: "**All** green:\n 42 tests pass." }] }, { type: "user", content: [] }] };
+  // ses_main is at work, with a tool of the "linear" server running.
+  const working = { data: [{ type: "assistant", content: [{ type: "tool", name: "linear_create_issue", state: { status: "running", input: {} } }] }] };
   const get = async route => {
+    if (route === "api/session/active") return { data: ["ses_main"] };
+    if (route.endsWith("/message?limit=8&order=desc")) return route.includes("ses_main") ? working : { data: [] };
     if (route.endsWith("/message?limit=6&order=desc")) return messages;
     const id = decodeURIComponent(route.split("/").pop());
     if (!sessions[id]) throw new Error("404");
@@ -419,6 +423,13 @@ test("engine events become notifications, as the Mac words them", async () => {
   assert.equal(asked.category, "question");
   assert.equal(asked.body, "Which database?");
   assert.deepEqual(asked.data, { session: "ses_main", request: "frm_1" });
+  // An MCP server's form is filed under no session: it's the one of its folder using that server.
+  const elicitation = { id: "frm_2", sessionID: "global", metadata: { kind: "mcp-elicitation", server: "linear", message: "Which team?" }, fields: [] };
+  const fromServer = await link.noticeFor({ type: "form.created", location: { directory: "/home/me/kuvo-ai" }, data: { form: elicitation } }, get);
+  assert.equal(fromServer.body, "Which team?");
+  assert.deepEqual(fromServer.data, { session: "ses_main", request: "frm_2", requestSession: "global" });
+  // In a folder where nothing uses it: no notice.
+  assert.equal(await link.noticeFor({ type: "form.created", location: { directory: "/home/me/other" }, data: { form: elicitation } }, get), null);
 
   // A bot's run: its news, with what it said last, without its folder.
   const report = await link.noticeFor({ type: "session.execution.succeeded", data: { sessionID: "ses_bot" } }, get);
