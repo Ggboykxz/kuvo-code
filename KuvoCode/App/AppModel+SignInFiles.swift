@@ -16,8 +16,10 @@ extension AppModel {
                 let remote = "\"$HOME/\(RemoteEngineInstaller.root)/integrations/\(id)/\(name)\""
                 await Task.detached {
                     let here = (try? local.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)?.timeIntervalSince1970 ?? 0
-                    let output = RemoteShell.run("stat -c %Y \(remote) 2>/dev/null || echo 0", on: machine) ?? Data()
-                    let there = Double(String(decoding: output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+                    // Unknown when SSH failed (left for the next pass): taken as none there, a
+                    // sign-in the machine renewed would be overwritten with this Mac's older one.
+                    guard let output = RemoteShell.run("stat -c %Y \(remote) 2>/dev/null || echo 0", on: machine),
+                          let there = Double(String(decoding: output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)) else { return }
                     if here > there + 1 {
                         // Over SSH's own connection, readable by you alone there.
                         _ = try? await SSHConnection(destination: machine).run(
