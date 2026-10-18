@@ -11,8 +11,6 @@ extension StructuredText {
   struct Table: View {
     @Environment(\.tableStyle) private var tableStyle
 
-    @State private var spacing = TableCell.Spacing()
-
     private let intent: PresentationIntent.IntentType?
     private let content: AttributedSubstring
     private let columns: [PresentationIntent.TableColumn]
@@ -29,19 +27,30 @@ extension StructuredText {
 
     var body: some View {
       let configuration = TableStyleConfiguration(
-        label: .init(label),
+        label: .init(TableGrid(intent: intent, content: content, columns: columns)),
         indentationLevel: indentationLevel
       )
       let resolvedStyle = tableStyle.resolve(configuration: configuration)
-        .onPreferenceChange(TableCell.SpacingKey.self) { @MainActor in
-          spacing = $0
-        }
 
       AnyView(resolvedStyle)
     }
 
-    @ViewBuilder
-    private var label: some View {
+    private var indentationLevel: Int {
+      content.runs.first?.presentationIntent?.indentationLevel ?? 0
+    }
+  }
+
+  /// The table's cells. The spacing between them comes down from the style
+  /// (`tableCellSpacing`) through the environment, so the grid is laid out once, with it:
+  /// upstream waited for the style's preference and laid the whole table out again.
+  struct TableGrid: View {
+    @Environment(\.tableCellSpacing) private var spacing
+
+    let intent: PresentationIntent.IntentType?
+    let content: AttributedSubstring
+    let columns: [PresentationIntent.TableColumn]
+
+    var body: some View {
       let rowRuns = content.blockRuns(parent: intent)
 
       Grid(horizontalSpacing: spacing.horizontal, verticalSpacing: spacing.vertical) {
@@ -63,10 +72,6 @@ extension StructuredText {
       }
     }
 
-    private var indentationLevel: Int {
-      content.runs.first?.presentationIntent?.indentationLevel ?? 0
-    }
-
     private func alignment(for columnIndex: Int) -> HorizontalAlignment {
       guard columnIndex < columns.count else {
         return .leading
@@ -84,4 +89,8 @@ extension StructuredText {
       }
     }
   }
+}
+
+extension EnvironmentValues {
+  @Entry var tableCellSpacing = StructuredText.TableCell.Spacing()
 }

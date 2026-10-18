@@ -1,9 +1,8 @@
 import SwiftUI
 
 extension StructuredText {
-  /// The spacing a block's style sets, told up to the block stack: as a preference, which also
-  /// gathers the spacing of blocks inside a list or quote for it, and as a layout value, which
-  /// the stack reads in the same pass it lays the block out.
+  /// The spacing a block's style sets, as a preference (upstream's way, which nothing here reads
+  /// any more: see `DeclaredBlockSpacingKey`).
   struct BlockSpacingKey: PreferenceKey, LayoutValueKey {
     static let defaultValue = BlockSpacing()
 
@@ -12,15 +11,13 @@ extension StructuredText {
     }
   }
 
-  /// The spacing a block's style sets, read by the block stack from the block itself, so its
-  /// first layout has it (the preference comes after that layout, and laid out again with it,
-  /// the block moved under you).
+  /// The spacing a block's style sets, read by the block stack from the block itself as it lays
+  /// it out.
   struct DeclaredBlockSpacingKey: LayoutValueKey {
     static let defaultValue: BlockSpacing? = nil
   }
 
-  /// The spacing the block stack uses for a block once the preference has come (or a list
-  /// item's, which is known at once); nil until then.
+  /// A list item's spacing, the list's, which takes the place of what its blocks set.
   struct ResolvedBlockSpacingKey: LayoutValueKey {
     static let defaultValue: BlockSpacing? = nil
   }

@@ -170,6 +170,8 @@ extension TextualNamespace where Base: View {
       key: StructuredText.TableCell.SpacingKey.self,
       value: .init(horizontal: horizontal, vertical: vertical)
     )
+    // Down to the table's grid as well, which reads it as it's laid out the first time.
+    .environment(\.tableCellSpacing, .init(horizontal: horizontal, vertical: vertical))
   }
 
   /// Controls how content that overflows horizontally behaves in ``Overflow``.

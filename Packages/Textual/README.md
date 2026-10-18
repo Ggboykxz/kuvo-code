@@ -26,9 +26,10 @@ frame after it appeared, and the conversation jumped while you scrolled up into 
   first click (handled once the layouts are in); until then nothing reads them. Fragments pass
   their layouts on through `TextLayoutsKey`. Selectable text's links are opened by the selection's
   view, so fragments don't read layouts for link taps either. iOS is as upstream.
-- **Block spacing in the first layout.** A style's `blockSpacing` is also a layout value the
-  block stack reads as it lays a block out; upstream waited for the preference, laying every
-  block out again (and measuring each one's default spacing for nothing in between).
+- **Block and table spacing in the first layout.** A style's `blockSpacing` is also a layout
+  value the block stack reads as it lays a block out, and `tableCellSpacing` comes down to the
+  table's grid through the environment; upstream waited for preferences, laying every block and
+  table out again. A list or quote, whose own blocks set their spacing, takes a paragraph's.
 - **Code colored at once.** Tokens are kept in a cache (`TokenCache`), so a code block made
   again is colored from its first frame, and `CodeHighlighting.prepare(markdown:)` reads code
   blocks into it ahead of time.

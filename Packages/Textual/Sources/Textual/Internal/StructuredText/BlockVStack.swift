@@ -40,8 +40,6 @@ extension StructuredText {
     @Environment(\.listItemSpacingEnabled) private var listItemSpacingEnabled
     @Environment(\.resolvedListItemSpacing) private var resolvedListItemSpacing
 
-    @State private var blockSpacing: BlockSpacing?
-
     private let content: Content
 
     init(_ content: Content) {
@@ -49,13 +47,11 @@ extension StructuredText {
     }
 
     var body: some View {
-      // Read the block spacing preference and apply it as a layout value
+      // A list item's spacing is the list's; any other block's is its style's, which the stack
+      // reads from the block itself. (Upstream read every block's spacing as a preference, which
+      // came after the block was laid out, and laid it out again.)
       content
-        .onPreferenceChange(BlockSpacingKey.self) { @MainActor value in
-          // Override with the resolved list item spacing if enabled
-          blockSpacing = listItemSpacingEnabled ? resolvedListItemSpacing : value
-        }
-        .layoutValue(key: ResolvedBlockSpacingKey.self, value: listItemSpacingEnabled ? resolvedListItemSpacing : blockSpacing)
+        .layoutValue(key: ResolvedBlockSpacingKey.self, value: listItemSpacingEnabled ? resolvedListItemSpacing : nil)
     }
   }
 
@@ -71,27 +67,18 @@ extension StructuredText {
         spacings: subviews.indices.dropLast().map { index in
           let current = subviews[index]
           let next = subviews[index + 1]
-          let currentSpacing = Self.spacing(of: current)
-          let nextSpacing = Self.spacing(of: next)
-
-          // Take the maximum block spacing, otherwise the preferred view spacing (only once
-          // both are known: it measures the text, a costly thing to do for a guess).
-          if let spacing = [currentSpacing.value.bottom, nextSpacing.value.top].compactMap(\.self).max() {
-            return spacing
-          }
-          guard currentSpacing.isKnown, nextSpacing.isKnown else { return 0 }
-          return current.spacing.distance(to: next.spacing, along: .vertical)
+          // Take the maximum block spacing, otherwise the preferred view spacing
+          return [Self.spacing(of: current).bottom, Self.spacing(of: next).top].compactMap(\.self).max()
+            ?? current.spacing.distance(to: next.spacing, along: .vertical)
         }
       )
     }
 
-    /// A block's spacing: as the stack resolved it, or else as its style sets it, or, for a list
-    /// or quote (whose blocks set theirs), as a paragraph's in the GitHub style, until the stack
-    /// knows.
-    private static func spacing(of subview: LayoutSubview) -> (value: BlockSpacing, isKnown: Bool) {
-      if let resolved = subview[ResolvedBlockSpacingKey.self] { return (resolved, true) }
-      if let declared = subview[DeclaredBlockSpacingKey.self] { return (declared, true) }
-      return (BlockSpacing(top: 0, bottom: 16), false)
+    /// A block's spacing: a list item's, or as its style sets it, or, for a list or quote (whose
+    /// own blocks set theirs, upstream gathered as a preference), a paragraph's in the GitHub
+    /// style, what nearly every one of them comes to.
+    private static func spacing(of subview: LayoutSubview) -> BlockSpacing {
+      subview[ResolvedBlockSpacingKey.self] ?? subview[DeclaredBlockSpacingKey.self] ?? BlockSpacing(top: 0, bottom: 16)
     }
 
     func sizeThatFits(
