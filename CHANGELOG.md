@@ -6,8 +6,6 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
-## 0.5.13
-
 - With VoiceOver, the side panel's tabs can be picked and closed. They read as text and an icon, with nothing to press.
 - Pages left open in a machine's browser from before Kuvo Code last quit show in every session on that machine, until an agent works in one or you pick it, which makes it that session's. They went to whichever session was in view.
 - A machine's browser moves to a newer build Kuvo Code brings (a newer Chrome, new fonts) once nothing is using it, keeping its open pages. One started before the update arrived kept the old build for as long as the machine's engine ran.
