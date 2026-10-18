@@ -180,6 +180,12 @@ struct ComposerAttachment: View {
         .contentShape(.rect(cornerRadius: 10))
         .onTapGesture { if item.isImage { ImageViewer.shared.show([item]) } }
         .help(reason.map { "\(url.path)\n\($0)" } ?? url.path)
+        // One element for VoiceOver, whose remove button is there only on hover.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(item.name)
+        .accessibilityValue(isPath ? "Sent as a path" : item.detail)
+        .accessibilityAction(named: "Remove", remove)
+        .accessibilityAction { if item.isImage { ImageViewer.shared.show([item]) } }
     }
 
     private var reason: String? {
