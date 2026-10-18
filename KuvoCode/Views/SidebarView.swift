@@ -84,7 +84,8 @@ struct SidebarView: View {
                     SidebarSearchRow(text: $search)
 
                     if !search.isEmpty {
-                        let inConversations = conversationResults.filter { found in !results.contains { $0.id == found.session.id } }
+                        // Not those already found by name, nor one deleted since the search.
+                        let inConversations = conversationResults.filter { found in !results.contains { $0.id == found.session.id } && workspace.session(found.session.id) != nil }
                         if !results.isEmpty || inConversations.isEmpty {
                             SectionHeader(title: "Results") { EmptyView() }
                         }
@@ -252,7 +253,8 @@ struct SidebarView: View {
         // Another session picked: a rename in another row ends, keeping what was typed.
         .onChange(of: selection) { if renaming?.id != selection { renaming = nil } }
         // Titles match as you type; conversations once you pause.
-        .task(id: search) {
+        // Again once the sessions are in: a search typed while they load found none.
+        .task(id: "\(search)\n\(workspace.isLoaded)") {
             let query = search.trimmingCharacters(in: .whitespaces)
             guard query.count >= 3 else {
                 conversationResults = []
