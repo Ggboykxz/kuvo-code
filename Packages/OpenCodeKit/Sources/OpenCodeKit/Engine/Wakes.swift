@@ -431,29 +431,73 @@ public enum Wakes {
       case "$1" in *m) [ "$p_n" -ge 5 ] && echo $((p_n * 60));; *h) [ "$p_n" -ge 1 ] && echo $((p_n * 3600));; *d) [ "$p_n" -ge 1 ] && echo $((p_n * 86400));; *) return 1;; esac
     }
 
-    # Runs a command for at most a minute, where the system lets one say so. Its status is the
-    # command's, as `timeout` gives it: 124 when out of time, 128 and the signal when killed.
+    # Runs a command for at most a minute, where the system lets one say so: sh -c with the
+    # arguments given. Its status is the command's, as `timeout` gives it: 124 when out of time,
+    # 128 and the signal when killed.
     limited() {
-      if command -v timeout >/dev/null 2>&1; then timeout 60 sh -c "$1"
+      if command -v timeout >/dev/null 2>&1; then timeout 60 sh -c "$@"
       elif command -v perl >/dev/null 2>&1; then
         # In a group of its own, so the minute's end stops the whole pipeline, not just sh.
-        perl -e 'my $p = fork; if (!$p) { setpgrp; exec @ARGV; exit 127 } $SIG{ALRM} = sub { kill "TERM", -$p; sleep 1; kill "KILL", -$p; exit 124 }; alarm 60; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' sh -c "$1"
-      else sh -c "$1"; fi
+        perl -e 'my $p = fork; if (!$p) { setpgrp; exec @ARGV; exit 127 } $SIG{ALRM} = sub { kill "TERM", -$p; sleep 1; kill "KILL", -$p; exit 124 }; alarm 60; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' sh -c "$@"
+      else sh -c "$@"; fi
     }
 
-    # A bot's watches that are due ($1, its folder): each runs its check, in the folder the bot
-    # works in, and compares its output (not its errors) with `last`, what the bot last heard (at
-    # first, its first reading).
+    # Goes before a watch's check: its curl, wget and gh write to the file named by $1 (then
+    # shifted away) when they fail, but not for an error page (curl's 22, wget's 8), checks still
+    # pending (gh's 8) or what reads them stopping early (curl's 23, wget's 3, 141). A curl that
+    # writes out its own result (-w '%{http_code}' is 000 when it can't connect) never does.
+    noting='kuvo_noted=$1; shift
+    kuvo_ran() { case $1 in 0|141|$3|$4) ;; *) echo "$2 $1" >>"$kuvo_noted" ;; esac; return $1; }
+    curl() { command curl "$@"; kuvo_s=$?; for kuvo_a; do case $kuvo_a in --write-out*|-w*|-[!-]*w*) return $kuvo_s ;; esac; done; kuvo_ran $kuvo_s curl 22 23; }
+    wget() { command wget "$@"; kuvo_ran $? wget 3 8; }
+    gh() { command gh "$@"; kuvo_ran $? gh 8 8; }
+    '
+
+    # Runs a watch's check once, as its runs do ($1, the watch's folder; $2, the bot's; $3, what
+    # its files for the run start with): in the folder the bot works in, for at most a minute.
+    # Sets t_out to what it prints (not its errors), and t_why to why the run is no reading, or
+    # to nothing when it's one.
     #
-    # A run that times out, can't run, is killed, or fails without printing anything is no reading:
-    # a network that's down, or not back yet after sleep, is never a change, nor what later runs are
-    # compared with. A change counts when two readings in a row differ from `last`: the one that saw
-    # it (`seen` keeps when) and a second look two minutes later, once a period, on the watch's own
-    # times. The two needn't match, so a value that keeps moving (a price, a counter) wakes the bot
-    # once a period, with its latest output, while one odd reading between two as before doesn't.
-    # The wake-up goes to `message`, its output's sum to `pending`, and "KUVO-WATCH <letters>" is
-    # printed; once it's delivered, `delivered` makes it what the bot heard, so a value that changes
-    # and stays wakes it once.
+    # A check's status alone can't tell an outage from "nothing there": in `curl -s … | grep -o …`
+    # it's grep's, 1 both times, and in `curl … | jq …` it's 0. So curl, wget and gh say how they
+    # did, and a run is no reading when:
+    # - it ran out of time, couldn't run, or was killed (141 is only its output cut short);
+    # - a curl or wget in it failed, as when the network is down (an error page is a reading);
+    # - it printed nothing, and a gh in it failed, or it exited 2 or more.
+    # Printing nothing and exiting 0 or 1, as grep finding nothing does, is a reading: what it
+    # looks for isn't there.
+    run() {
+      t_dir=$(cat "$2/directory" 2>/dev/null); [ -d "$t_dir" ] || t_dir=$2
+      t_tmp=$1$3; rm -f "${t_tmp}status" "${t_tmp}failed"
+      t_out=$(cd "$t_dir" && { limited "$noting$(cat "${1}check")" sh "${t_tmp}failed" 2>/dev/null </dev/null; echo "$?" >"${t_tmp}status"; } | head -c 4000)
+      t_status=$(cat "${t_tmp}status" 2>/dev/null)
+      t_failed=$(head -n 1 "${t_tmp}failed" 2>/dev/null); t_lost=$(grep -v '^gh ' "${t_tmp}failed" 2>/dev/null | head -n 1)
+      rm -f "${t_tmp}status" "${t_tmp}failed"
+      t_why=
+      case "$t_status" in
+        ''|*[!0-9]*) t_why="the check didn't finish" ;;
+        124) t_why="the check ran out of time (a minute)" ;;
+        12[5-8]) t_why="the check couldn't run (exit $t_status)" ;;
+        *) if [ "$t_status" -gt 128 ] && [ "$t_status" -ne 141 ]; then t_why="the check was stopped (signal $((t_status - 128)))"
+          elif [ -n "$t_lost" ]; then t_why="${t_lost% *} failed (exit ${t_lost##* })"
+          elif [ -n "$t_out" ]; then :
+          elif [ -n "$t_failed" ]; then t_why="${t_failed% *} failed (exit ${t_failed##* }), and the check printed nothing"
+          elif [ "$t_status" -ge 2 ]; then t_why="the check failed (exit $t_status) without printing anything"
+          fi ;;
+      esac
+    }
+
+    # A bot's watches that are due ($1, its folder): each runs its check (see `run`) and compares
+    # what it prints with `last`, what the bot last heard (at first, its first reading).
+    #
+    # A run that's no reading (a network that's down, or not back yet after sleep) is never a
+    # change, nor what later runs are compared with. A change counts when two readings in a row
+    # differ from `last`: the one that saw it (`seen` keeps when) and a second look two minutes
+    # later, once a period, on the watch's own times. The two needn't match, so a value that keeps
+    # moving (a price, a counter) wakes the bot once a period, with its latest output, while one
+    # odd reading between two as before doesn't. The wake-up goes to `message`, its output's sum to
+    # `pending`, and "KUVO-WATCH <letters>" is printed; once it's delivered, `delivered` makes it
+    # what the bot heard, so a value that changes and stays wakes it once.
     checks() {
       for w in "$1"/watches/*/; do
         [ -f "${w}check" ] || continue
@@ -464,16 +508,9 @@ public enum Wakes {
         # A period on, from the run that saw a change when this is its second look.
         c_next=$((${c_seen:-$now} + c_period)); [ "$c_next" -gt "$now" ] || c_next=$((now + c_period))
         printf '%s' "$c_next" >"${w}next"
-        c_dir=$(cat "$1/directory" 2>/dev/null); [ -d "$c_dir" ] || c_dir=$1
-        c_check=$(cat "${w}check"); rm -f "${w}status"
-        c_out=$(cd "$c_dir" && { limited "$c_check" 2>/dev/null </dev/null; echo "$?" >"${w}status"; } | head -c 4000)
-        c_status=$(cat "${w}status" 2>/dev/null); rm -f "${w}status"
-        # No reading: out of time, couldn't run, killed (141 is only its output cut short), or
-        # failed with nothing to say.
-        case "$c_status" in ''|*[!0-9]*) continue ;; esac
-        [ "$c_status" -lt 124 ] || [ "$c_status" -eq 141 ] || continue
-        [ "$c_status" -eq 0 ] || [ -n "$c_out" ] || continue
-        c_sum=$(printf '%s' "$c_out" | cksum)
+        run "$w" "$1" run-
+        [ -z "$t_why" ] || continue
+        c_sum=$(printf '%s' "$t_out" | cksum)
         c_last=$(cat "${w}last" 2>/dev/null)
         if [ -z "$c_last" ]; then printf '%s' "$c_sum" >"${w}last"; continue; fi
         # As the bot heard it: no change, and one seen before was a passing one.
@@ -482,8 +519,10 @@ public enum Wakes {
         if [ -z "$c_seen" ] && [ ! -f "${w}pending" ]; then printf '%s' "$now" >"${w}seen"; printf '%s' $((now + 120)) >"${w}next"; continue; fi
         rm -f "${w}seen"
         c_letters=${w%/}; c_letters=${c_letters##*/}
-        printf '%s\n\nYour watch (%s, every %s) saw a change. Its check, %s, now prints:\n%s\n' \
-          "$(cat "${w}note")" "$c_letters" "$(cat "${w}every")" "$(head -n 1 "${w}check")" "$c_out" >"${w}message"
+        if [ -n "$t_out" ]; then c_now="now prints:
+    $t_out"; else c_now="now prints nothing."; fi
+        printf '%s\n\nYour watch (%s, every %s) saw a change. Its check, %s, %s\n' \
+          "$(cat "${w}note")" "$c_letters" "$(cat "${w}every")" "$(head -n 1 "${w}check")" "$c_now" >"${w}message"
         printf '%s' "$c_sum" >"${w}pending"
         echo "KUVO-WATCH $c_letters"
       done

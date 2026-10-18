@@ -783,8 +783,12 @@ final class Bots {
         How often is 5m or more, 2h or 1d. Make the check print just what you watch, like `curl -s <url> | grep -o '<the \
         part that matters>'` or `gh run list --limit 1 --json conclusion -q '.[0].conclusion'`, so a clock or an ad on the \
         page doesn't count as a change. It runs in your folder, for at most a minute. Only what it prints counts, not its \
-        errors, and a run that fails without printing anything (the network down, say) is skipped. A page that needs a real browser to show \
-        its content can't be watched this way; check it in the browser on a wake-up instead.
+        errors, and printing nothing counts too (grep finding nothing), so you hear when something appears or goes away. \
+        A run is skipped when a curl, wget or gh in it fails (the network down, say; an error page still counts), or when \
+        it prints nothing and exits 2 or more: make a script of yours do that when it can't tell. To watch whether a site \
+        is up, print its status code: `curl -s -o /dev/null -w '%{http_code}' <url>` prints 000 when it can't connect, \
+        which counts (though your own network being down looks the same). A page that needs a real browser to show its \
+        content can't be watched this way; check it in the browser on a wake-up instead.
 
         For something that repeats, schedule it once with --every, and it keeps coming back until it's canceled:
           kuvo-wake \(bot.id) add 2026-10-17T09:00 --every 1d "<what to do each time>"

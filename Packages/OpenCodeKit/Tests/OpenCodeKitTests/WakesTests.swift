@@ -217,7 +217,8 @@ struct WakesTests {
             }
             #expect(try String(contentsOf: watch.appending(path: "last"), encoding: .utf8) == last)
             #expect(!FileManager.default.fileExists(atPath: watch.appending(path: "seen").path))
-            #expect(!FileManager.default.fileExists(atPath: watch.appending(path: "status").path))
+            #expect(!FileManager.default.fileExists(atPath: watch.appending(path: "run-status").path))
+            #expect(!FileManager.default.fileExists(atPath: watch.appending(path: "run-failed").path))
         }
         try "cat state.txt".write(to: watch.appending(path: "check"), atomically: true, encoding: .utf8)
 
@@ -248,6 +249,9 @@ struct WakesTests {
         }
         try executable("date", "#!/bin/sh\nif [ \"$1\" = +%s ]; then cat \"$K/clock\"; else exec /bin/date \"$@\"; fi\n")
         if gnuTimeout { try executable("timeout", "#!/bin/sh\nshift\nexec \"$@\"\n") }
+        // A curl that prints what it's given and exits with it: with the network down, `curl -s`
+        // prints nothing and exits 6 or 7, or prints 000 when asked for its status code.
+        try executable("curl", "#!/bin/sh\ncat \"$K/out\"\nexit \"$(cat \"$K/code\")\"\n")
         let bot = k.appending(path: "bots/bot_test")
         let watch = bot.appending(path: "watches/AbCd12")
         try fm.createDirectory(at: watch, withIntermediateDirectories: true)
@@ -303,15 +307,43 @@ struct WakesTests {
         #expect(try ["A", "X", "A", "A"].map { try step($0) } == [false, false, false, false], "\(label)")
         #expect(!fm.fileExists(atPath: watch.appending(path: "seen").path), "\(label)")
 
-        // An outage longer than the second look: curl -s failing (6, 7), grep given nothing (1).
+        // An outage longer than the second look: a check failing quietly (6, 7, as curl -s does).
         try reset()
         #expect(try step("A") == false)
         let heard = read(watch.appending(path: "last"))
-        for code in [6, 7, 1, 6] { #expect(try step("", code) == false, "\(code), \(label)") }
+        for code in [6, 7, 2, 6] { #expect(try step("", code) == false, "\(code), \(label)") }
         #expect(try step("A") == false, "\(label)")
         #expect(try step("A") == false, "\(label)")
         #expect(woke.isEmpty, "\(label)")
         #expect(read(watch.appending(path: "last")) == heard, "\(label)")
+
+        // Something appearing and going away: grep finding nothing (1, nothing printed) is a
+        // reading, while curl failing before it (grep's 1 too), or before sed or jq (0), isn't.
+        try write("curl -s https://example.com/shop | grep -o 'In stock'", watch.appending(path: "check"))
+        try reset()
+        let soldOut = ("<b>Sold out</b>", 0), inStock = ("<b>In stock</b>", 0), down = ("", 7)
+        let flips = [soldOut, soldOut, down, down, soldOut, inStock, inStock, down, inStock, soldOut, soldOut, soldOut]
+        #expect(try flips.map { try step($0.0, $0.1) } == [false, false, false, false, false, false, true, false, false, false, true, false], "\(label)")
+        #expect(woke.map { $0.message.contains("now prints:\nIn stock") } == [true, false], "\(label)")
+        #expect(woke.last?.message.contains("now prints nothing.") == true, "\(label)")
+        // Down from its very first run: no first reading until it's back.
+        try reset()
+        #expect(try [down, down, soldOut, inStock, inStock].map { try step($0.0, $0.1) } == [false, false, false, false, true], "\(label)")
+        for check in ["curl -s https://example.com/api | sed -n 's/.*\"price\":\\([0-9]*\\).*/\\1/p'", "echo \"$(curl -s https://example.com/api)\" | grep -c 42"] {
+            try write(check, watch.appending(path: "check"))
+            try reset()
+            let price = (#"{"price":42}"#, 0)
+            #expect(try [price, down, down, down, price].map { try step($0.0, $0.1) } == [false, false, false, false, false], "\(check), \(label)")
+            #expect(read(watch.appending(path: "last")) != nil, "\(label)")
+        }
+        // A curl that writes out its own result counts whatever happens: a site's status code,
+        // 000 when it can't be reached.
+        for check in ["curl -s -o /dev/null -w '%{http_code}' https://example.com", "curl -so /dev/null -w%{http_code} https://example.com"] {
+            try write(check, watch.appending(path: "check"))
+            try reset()
+            #expect(try [("200", 0), ("000", 7), ("000", 7), ("200", 0), ("200", 0)].map { try step($0.0, $0.1) } == [false, false, true, false, true], "\(check), \(label)")
+        }
+        try write(reads, watch.appending(path: "check"))
 
         // A change seen, then no reading for its second look: the next reading that differs too wakes it.
         try reset()
@@ -336,7 +368,7 @@ struct WakesTests {
         // No reading never becomes the first one: a check that fails, or is killed (on a Mac, its
         // status was the one of a check that worked).
         try reset()
-        #expect(try step("", 1) == false)
+        #expect(try step("", 2) == false)
         #expect(read(watch.appending(path: "last")) == nil, "\(label)")
         try write("printf partial; kill -9 $$", watch.appending(path: "check"))
         #expect(try step("") == false)
@@ -349,6 +381,7 @@ struct WakesTests {
         try write("123456789 1", watch.appending(path: "seen"))
         #expect(try step("B") == false, "\(label)")
         #expect(try step("B") == true, "\(label)")
+
     }
 
     /// The script's next time for a repeat (as a wake-up's name has it), from its own functions, at `now`.
