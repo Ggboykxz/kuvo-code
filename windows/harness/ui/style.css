@@ -1,23 +1,25 @@
-/* DESIGN.md — Kuvo Code harness UI
-   A clean, product-oriented design system for a code-agent interface.
-   Near-monochrome, information-dense, micro-interactions, restrained accent.
-   Adapted from the Open Design "Neutral Modern" + "Linear" aesthetic.
-   Tokens are CSS variables; the page and the tests read the same copy. */
+/* Kuvo Code harness UI — design aligned to the macOS app.
+   The Mac app's visual language: a warm-ivory canvas with a faint ambient light, glass
+   panels, cards with a lit top edge and a hairline (not a gray stroke), soft shadows,
+   spring motion, and a cobalt accent. See docs/DESIGN.md and KuvoCode/Design/. */
 
 :root {
-  /* Surface */
-  --bg: #fafafa;
+  /* Canvas — warm ivory in light, near-black in dark, with a faint ambient light. */
+  --bg: #f2f0ea;
+  --bg-ambient: linear-gradient(135deg, rgba(255,158,64,0.07) 0%, rgba(255,158,64,0.018) 40%, rgba(107,132,255,0.018) 60%, rgba(107,132,255,0.07) 100%);
   --panel: #ffffff;
-  --panel-2: #f5f5f3;
+  --panel-2: #f6f4ee;
+  --panel-glass: rgba(255, 255, 255, 0.72);
   --code-bg: #f1f1ee;
   /* Text */
   --ink: #111111;
   --ink-soft: #6b6b6b;
   --ink-faint: #9a9a9f;
-  /* Border */
-  --line: #e5e5e5;
-  --line-soft: #efefec;
-  /* Accent — cobalt, used sparingly: primary CTAs, links, one hero element */
+  /* Border + lit edge (the Mac app lights edges rather than drawing gray strokes). */
+  --line: rgba(15, 23, 42, 0.08);
+  --line-soft: rgba(15, 23, 42, 0.05);
+  --lit: rgba(255, 255, 255, 0.8);
+  /* Accent — cobalt, used sparingly. */
   --accent: #2f6feb;
   --accent-ink: #ffffff;
   --accent-hover: #2458c4;
@@ -29,26 +31,25 @@
   --ok-soft: color-mix(in oklab, var(--ok), transparent 88%);
   --warn: #eab308;
   --warn-soft: color-mix(in oklab, var(--warn), transparent 88%);
-  /* Radius */
-  --radius: 8px;
-  --radius-sm: 6px;
-  --radius-lg: 12px;
+  /* Radius — the Mac app's metrics. */
+  --radius: 14px;
+  --radius-sm: 10px;
+  --radius-lg: 18px;
   --radius-pill: 9999px;
-  /* Elevation */
-  --elev-flat: none;
-  --elev-ring: 0 0 0 1px var(--line);
-  --elev-raised: 0 2px 8px color-mix(in oklab, var(--ink), transparent 92%);
-  /* Motion */
-  --motion-fast: 150ms;
-  --motion-base: 200ms;
-  --motion-slow: 300ms;
+  /* Shadow — soft, lifted off the glass. */
+  --shadow-card: 0 6px 16px rgba(15, 23, 42, 0.06);
+  --shadow-lifted: 0 12px 32px rgba(15, 23, 42, 0.10);
+  /* Motion — spring: quick with a little give. */
+  --motion-fast: 200ms;
+  --motion-base: 320ms;
+  --motion-slow: 500ms;
+  --ease-spring: cubic-bezier(0.34, 1.3, 0.64, 1);
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
   --ease-out: cubic-bezier(0, 0, 0.2, 1);
   /* Typography */
   --font-display: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
   --font-body: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
   --font-mono: ui-monospace, "Cascadia Mono", "JetBrains Mono", Menlo, monospace;
-  /* Type scale (px) */
   --text-xs: 11px;
   --text-sm: 12px;
   --text-base: 13px;
@@ -59,7 +60,7 @@
   --leading-body: 1.5;
   --leading-tight: 1.2;
   --tracking-display: -0.01em;
-  /* Spacing (8px base) */
+  /* Spacing — 8px base. */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -67,19 +68,25 @@
   --space-5: 20px;
   --space-6: 24px;
   --space-8: 32px;
+  --gutter: 20px;
+  --pane-gap: 8px;
+  --readable-width: 760px;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0a0a0a;
-    --panel: #141414;
-    --panel-2: #1a1a1a;
+    --bg: #070708;
+    --bg-ambient: linear-gradient(135deg, rgba(255,158,64,0.05) 0%, rgba(255,158,64,0.012) 40%, rgba(107,132,255,0.012) 60%, rgba(107,132,255,0.05) 100%);
+    --panel: #1a1a1a;
+    --panel-2: #141414;
+    --panel-glass: rgba(26, 26, 26, 0.72);
     --code-bg: #1e1e1e;
     --ink: #ececec;
     --ink-soft: #9a9a9f;
     --ink-faint: #6b6b70;
-    --line: #2c2c2e;
-    --line-soft: #232326;
+    --line: rgba(0, 0, 0, 0.45);
+    --line-soft: rgba(0, 0, 0, 0.3);
+    --lit: rgba(255, 255, 255, 0.13);
     --accent: #6f9dff;
     --accent-ink: #0a0a0a;
     --accent-hover: #8fb4ff;
@@ -90,12 +97,13 @@
     --ok-soft: color-mix(in oklab, var(--ok), transparent 88%);
     --warn: #fbbf24;
     --warn-soft: color-mix(in oklab, var(--warn), transparent 88%);
+    --shadow-card: 0 6px 16px rgba(0, 0, 0, 0.4);
+    --shadow-lifted: 0 12px 32px rgba(0, 0, 0, 0.5);
   }
 }
 
 * { box-sizing: border-box; }
 
-/* `hidden` means hidden, whatever the element's own display would be otherwise. */
 [hidden] { display: none !important; }
 
 html, body {
@@ -110,6 +118,44 @@ html, body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* The canvas carries a faint ambient light, warm top-left to cool bottom-right. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: var(--bg-ambient);
+  pointer-events: none;
+  z-index: -1;
+}
+
+/* ---- Glass panels (header, sidebar, composer, drawer) ---- */
+.glass {
+  background: var(--panel-glass);
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+}
+
+/* ---- Cards: lit top edge + hairline + soft shadow ---- */
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
+  position: relative;
+  transition: box-shadow var(--motion-fast) var(--ease-standard),
+              border-color var(--motion-fast) var(--ease-standard),
+              transform var(--motion-base) var(--ease-spring);
+}
+.card::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 1px;
+  background: var(--lit);
+  border-radius: var(--radius) var(--radius) 0 0;
+  pointer-events: none;
+}
+
 button {
   font: inherit;
   font-size: var(--text-sm);
@@ -121,16 +167,18 @@ button {
   cursor: pointer;
   transition: border-color var(--motion-fast) var(--ease-standard),
               background var(--motion-fast) var(--ease-standard),
-              color var(--motion-fast) var(--ease-standard);
+              color var(--motion-fast) var(--ease-standard),
+              transform var(--motion-fast) var(--ease-spring);
 }
 button:hover { border-color: var(--ink-soft); background: var(--panel-2); }
+button:active { transform: scale(0.97); }
 button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 button.danger { color: var(--danger); }
 button.danger:hover { border-color: var(--danger); background: var(--danger-soft); }
 button.small { padding: 3px 8px; font-size: var(--text-xs); }
 button:disabled { opacity: .4; cursor: default; }
-button:focus-visible { outline: none; box-shadow: var(--focus-ring, 0 0 0 2px var(--accent)); }
+button:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent-soft), 0 0 0 4px var(--accent); }
 
 input, textarea, select {
   font: inherit;
@@ -146,22 +194,19 @@ input, textarea, select {
 input:focus, textarea:focus, select:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-soft);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 textarea { resize: none; width: 100%; }
 
 .spacer { flex: 1; }
 
-/* ---- Header ---- */
+/* ---- Header (glass) ---- */
 header {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  background: var(--panel);
+  padding: var(--space-2) var(--space-4);
   border-bottom: 1px solid var(--line);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
 }
 .brand {
   font-weight: 600;
@@ -184,11 +229,10 @@ header {
 .engine.down::before { color: var(--danger); }
 
 /* ---- Layout ---- */
-main { flex: 1; display: grid; grid-template-columns: 260px 1fr; min-height: 0; }
+main { flex: 1; display: grid; grid-template-columns: 270px 1fr; min-height: 0; }
 
 aside {
   border-right: 1px solid var(--line);
-  background: var(--panel);
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -229,17 +273,23 @@ aside {
 
 #conversation { display: flex; flex-direction: column; min-height: 0; }
 
-/* ---- Session tabs ---- */
-.session-tabs { display: flex; gap: var(--space-1); padding: var(--space-1) var(--space-2); border-bottom: 1px solid var(--line); overflow-x: auto; background: var(--panel); }
+/* ---- Session tabs (the Mac app's tab strip: active tab is a raised pill) ---- */
+.session-tabs { display: flex; gap: var(--space-1); padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--line); overflow-x: auto; }
 .session-tabs.hidden { display: none; }
 .session-tab {
   display: flex; align-items: center; gap: var(--space-1);
-  border: 1px solid var(--line); background: transparent; color: var(--ink-soft);
-  border-radius: var(--radius-sm); padding: 3px 8px; cursor: pointer; font-size: var(--text-xs); white-space: nowrap;
-  transition: background var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
+  border: 1px solid transparent; background: transparent; color: var(--ink-soft);
+  border-radius: var(--radius-pill); padding: 4px 12px; cursor: pointer; font-size: var(--text-sm); white-space: nowrap;
+  transition: all var(--motion-fast) var(--ease-standard);
 }
-.session-tab:hover { background: var(--panel-2); }
-.session-tab.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.session-tab:hover { background: var(--panel-2); border-color: var(--line); }
+.session-tab.active {
+  background: var(--panel);
+  color: var(--ink);
+  border-color: var(--line);
+  box-shadow: var(--shadow-card);
+  transform: translateY(-1px);
+}
 .session-tab .close { opacity: .5; margin-left: 4px; font-size: 10px; }
 .session-tab .close:hover { opacity: 1; }
 
@@ -255,8 +305,8 @@ aside {
 .empty p { margin-top: 0; font-size: var(--text-md); line-height: var(--leading-body); }
 
 /* ---- Entries ---- */
-.entries { flex: 1; overflow-y: auto; padding: var(--space-4) var(--space-5) var(--space-2); display: flex; flex-direction: column; gap: var(--space-3); }
-.entry { max-width: 900px; width: 100%; margin: 0 auto; display: flex; flex-direction: column; gap: var(--space-2); }
+.entries { flex: 1; overflow-y: auto; padding: var(--space-5) var(--gutter) var(--space-2); display: flex; flex-direction: column; gap: var(--space-3); }
+.entry { max-width: var(--readable-width); width: 100%; margin: 0 auto; display: flex; flex-direction: column; gap: var(--space-2); }
 .entry .text { white-space: pre-wrap; word-break: break-word; line-height: var(--leading-body); }
 .entry.user .text {
   align-self: flex-end;
@@ -271,10 +321,24 @@ aside {
 .entry-error { color: var(--danger); white-space: pre-wrap; font-size: var(--text-md); }
 .entry-meta { color: var(--ink-soft); font-size: var(--text-xs); }
 .entry-meta.retry { color: var(--accent); }
-.notice { max-width: 900px; width: 100%; margin: 0 auto; color: var(--ink-soft); font-size: var(--text-md); }
+.notice { max-width: var(--readable-width); width: 100%; margin: 0 auto; color: var(--ink-soft); font-size: var(--text-md); }
 
 .reasoning { color: var(--ink-soft); font-size: var(--text-md); border-left: 2px solid var(--line); padding-left: var(--space-3); }
 .reasoning summary { cursor: pointer; font-size: var(--text-sm); color: var(--ink-faint); }
+
+/* Shimmer text for "Thinking…" / running state (the Mac app's ShimmerText). */
+.shimmer {
+  background: linear-gradient(90deg, var(--ink-soft) 25%, var(--ink) 50%, var(--ink-soft) 75%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 1.6s linear infinite;
+}
+@keyframes shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
 
 /* ---- Tool cards ---- */
 .tool {
@@ -282,9 +346,10 @@ aside {
   border-radius: var(--radius);
   background: var(--panel);
   overflow: hidden;
-  transition: border-color var(--motion-fast) var(--ease-standard);
+  transition: box-shadow var(--motion-fast) var(--ease-standard),
+              border-color var(--motion-fast) var(--ease-standard);
 }
-.tool:hover { border-color: var(--ink-faint); }
+.tool:hover { border-color: var(--ink-faint); box-shadow: var(--shadow-lifted); }
 .tool-head { display: flex; gap: var(--space-2); align-items: center; padding: var(--space-2) var(--space-3); }
 .tool-name { font-family: var(--font-mono); font-size: var(--text-sm); font-weight: 500; }
 .tool-status { font-size: var(--text-xs); color: var(--ink-soft); }
@@ -310,7 +375,7 @@ aside {
 .shell > pre:first-child { color: var(--ink-soft); }
 
 /* ---- Permission asks ---- */
-.asks { padding: 0 var(--space-5); display: flex; flex-direction: column; gap: var(--space-2); max-width: 900px; margin: 0 auto; width: 100%; }
+.asks { padding: 0 var(--gutter); display: flex; flex-direction: column; gap: var(--space-2); max-width: var(--readable-width); margin: 0 auto; width: 100%; }
 .ask {
   border: 1px solid var(--accent);
   border-radius: var(--radius);
@@ -319,36 +384,43 @@ aside {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+  animation: scaleIn var(--motion-base) var(--ease-spring);
 }
 .ask-head { display: flex; gap: var(--space-2); align-items: baseline; flex-wrap: wrap; }
 .ask-head span { color: var(--ink-soft); font-size: var(--text-sm); font-family: var(--font-mono); word-break: break-all; }
 .ask-message { color: var(--ink); font-size: var(--text-md); white-space: pre-wrap; }
 .ask-buttons { display: flex; gap: var(--space-2); }
 
-/* ---- Composer ---- */
+/* ---- Composer (glass, 14px radius) ---- */
 .composer {
-  border-top: 1px solid var(--line);
-  background: var(--panel);
-  padding: var(--space-3) var(--space-5) var(--space-4);
+  padding: var(--space-3) var(--gutter) var(--space-4);
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+  border-top: 1px solid var(--line);
 }
-.composer textarea { max-width: 900px; margin: 0 auto; min-height: 60px; }
-.composer-foot { display: flex; align-items: center; gap: var(--space-2); max-width: 900px; margin: 0 auto; width: 100%; }
+.composer textarea {
+  max-width: var(--readable-width);
+  margin: 0 auto;
+  min-height: 60px;
+  border-radius: var(--radius);
+  font-size: var(--text-md);
+}
+.composer-foot { display: flex; align-items: center; gap: var(--space-2); max-width: var(--readable-width); margin: 0 auto; width: 100%; }
 #model { max-width: 320px; }
 
-/* ---- Folder picker ---- */
+/* ---- Folder picker (glass card) ---- */
 .picker {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, .4);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(8px) saturate(1.2);
+  -webkit-backdrop-filter: blur(8px) saturate(1.2);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 60;
+  animation: fadeIn var(--motion-fast) var(--ease-out);
 }
 .picker-card {
   background: var(--panel);
@@ -360,7 +432,8 @@ aside {
   flex-direction: column;
   padding: var(--space-4);
   gap: var(--space-2);
-  box-shadow: var(--elev-raised);
+  box-shadow: var(--shadow-lifted);
+  animation: scaleIn var(--motion-base) var(--ease-spring);
 }
 .picker-head { display: flex; justify-content: space-between; align-items: center; }
 .picker-row { display: flex; gap: var(--space-2); }
@@ -373,19 +446,18 @@ aside {
 
 .fatal { padding: var(--space-6); color: var(--danger); }
 
-/* ---- Files / terminal drawer ---- */
+/* ---- Files / terminal drawer (glass) ---- */
 .drawer {
   position: fixed;
   top: 0; right: 0;
   width: 440px; max-width: 90vw;
   height: 100vh;
-  background: var(--panel);
   border-left: 1px solid var(--line);
-  box-shadow: -8px 0 24px rgba(0,0,0,.08);
+  box-shadow: -12px 0 40px rgba(0,0,0,.12);
   display: flex;
   flex-direction: column;
   z-index: 40;
-  animation: slideIn var(--motion-base) var(--ease-out);
+  animation: slideIn var(--motion-base) var(--ease-spring);
 }
 @keyframes slideIn {
   from { transform: translateX(100%); }
@@ -418,8 +490,8 @@ aside {
 .terminal .xterm { height: 100%; }
 .modal {
   position: fixed; inset: 0; background: rgba(0, 0, 0, .5);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(8px) saturate(1.2);
+  -webkit-backdrop-filter: blur(8px) saturate(1.2);
   display: flex; align-items: center; justify-content: center; z-index: 50;
   animation: fadeIn var(--motion-fast) var(--ease-out);
 }
@@ -436,8 +508,8 @@ aside {
   max-height: 80vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 16px 48px rgba(0,0,0,.16);
-  animation: scaleIn var(--motion-base) var(--ease-out);
+  box-shadow: var(--shadow-lifted);
+  animation: scaleIn var(--motion-base) var(--ease-spring);
 }
 @keyframes scaleIn {
   from { opacity: 0; transform: scale(.96); }
@@ -464,20 +536,8 @@ aside {
 .git-status .entry { padding: 1px 0; display: flex; align-items: center; gap: var(--space-2); }
 .git-status .code { font-weight: 600; margin-right: var(--space-1); min-width: 20px; }
 .git-status .entry button { padding: 1px 6px; font-size: var(--text-xs); }
-
-/* ---- Session tabs ---- */
-.session-tabs { display: flex; gap: var(--space-1); padding: var(--space-1) var(--space-2); border-bottom: 1px solid var(--line); overflow-x: auto; background: var(--panel); }
-.session-tabs.hidden { display: none; }
-.session-tab {
-  display: flex; align-items: center; gap: var(--space-1);
-  border: 1px solid var(--line); background: transparent; color: var(--ink-soft);
-  border-radius: var(--radius-sm); padding: 3px 8px; cursor: pointer; font-size: var(--text-xs); white-space: nowrap;
-  transition: all var(--motion-fast) var(--ease-standard);
-}
-.session-tab:hover { background: var(--panel-2); }
-.session-tab.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
-.session-tab .close { opacity: .5; margin-left: 4px; font-size: 10px; }
-.session-tab .close:hover { opacity: 1; }
+.git-branch-row { display: flex; gap: var(--space-2); align-items: center; }
+.git-branch-select { flex: 1; }
 
 /* ---- Scrollbars ---- */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
@@ -488,15 +548,6 @@ aside {
 
 /* ---- Focus ---- */
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent-soft); }
-
-/* ---- Animations ---- */
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent-soft), 0 0 0 4px var(--accent); }
 CSS
 echo "written"
-/* ---- Git branch controls ---- */
-.git-branch-row { display: flex; gap: var(--space-2); align-items: center; }
-.git-branch-select { flex: 1; }

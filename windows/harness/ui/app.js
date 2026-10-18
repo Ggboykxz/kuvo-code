@@ -189,8 +189,10 @@ function assistantEntry(entry) {
   for (const part of entry.parts) {
     if (part.type === "text") block.append(el("div", { class: "text", text: part.text }));
     else if (part.type === "reasoning") {
+      const summary = el("summary", { text: "Thinking" });
+      if (entry.running) summary.classList.add("shimmer");
       block.append(el("details", { class: "reasoning" },
-        el("summary", { text: "Thinking" }),
+        summary,
         el("div", { class: "text", text: part.text }),
       ));
     } else if (part.type === "tool") block.append(toolCard(part));
