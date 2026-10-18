@@ -76,7 +76,8 @@ struct ModelPicker: View {
     }
 
     private var choice: ModelRef? { picked ?? selection }
-    private var current: Model? { catalog.model(choice) ?? catalog.defaultModel }
+    /// None while the model picked can't be used now, until you pick another: the list opens.
+    private var current: Model? { picked == nil && catalog.isUnavailable(selection) ? nil : catalog.model(choice) ?? catalog.defaultModel }
     private var variant: String? { current.flatMap { model in choice?.sameModel(as: model.ref) == true ? choice?.variant : nil } }
 
     var body: some View {
@@ -431,7 +432,7 @@ struct ModelPicker: View {
         }
         var seen = Set<String>()
         // The model in use leads as the card opens; picking another doesn't reorder the list.
-        let leading = catalog.model(selection) ?? catalog.defaultModel
+        let leading = catalog.isUnavailable(selection) ? nil : catalog.model(selection) ?? catalog.defaultModel
         let candidates = [leading].compactMap(\.self) + recent + providers.flatMap { perProvider[$0] ?? [] }
         return candidates.filter { seen.insert($0.key).inserted }.prefix(8).map { $0 }
     }

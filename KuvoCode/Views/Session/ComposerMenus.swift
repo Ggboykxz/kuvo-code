@@ -191,7 +191,10 @@ struct ModelChip<Label: View>: View {
     @State private var placement = ModelPicker.Placement()
     @State private var anchor = ScreenRoom()
 
-    private var current: Model? { catalog.model(selection) ?? catalog.defaultModel }
+    /// The model picked can't be used now: the chip asks for another rather than show the
+    /// default as if it were in use.
+    private var isUnavailable: Bool { catalog.isUnavailable(selection) }
+    private var current: Model? { isUnavailable ? nil : catalog.model(selection) ?? catalog.defaultModel }
     private var variant: String? { current.flatMap { model in selection?.sameModel(as: model.ref) == true ? selection?.variant : nil } }
 
     var body: some View {
@@ -202,7 +205,7 @@ struct ModelChip<Label: View>: View {
             label(current, variant)
         }
         .buttonStyle(.plain)
-        .help("Model and effort")
+        .help(isUnavailable ? "\(catalog.model(selection)?.name ?? selection?.id ?? "") isn't available now: choose another model" : "Model and effort")
         .background(ScreenRoomReader(room: anchor))
         .popover(isPresented: $isOpen, arrowEdge: placement.below ? .bottom : .top) {
             ModelPicker(catalog: catalog, selection: selection, onSelect: onSelect, close: { isOpen = false }, startsExpanded: startsExpanded, startsOnList: startsOnList, maxHeight: placement.height)

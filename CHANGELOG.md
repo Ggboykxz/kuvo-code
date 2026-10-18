@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- A session whose model isn't available anymore, like a free model that went away or one from an account you signed out of, says **Choose a Model** in the composer, and the picker opens on the list. It showed the default model as if it were in use, while every message failed with "Model unavailable". After you pick another, **Try Again** under the error is still there and sends your message with it: switching the model used to hide it.
 - The agent can click, type and choose in the panel's browser on your Mac again. Since 0.5.6 every click or keystroke failed with "There's no element on the page now", though it could still read pages.
 - When a page doesn't open, like a local server that isn't running, the agent hears why ("Could not connect to the server") rather than finding an empty tab.
 - VoiceOver names the icon buttons by what they do: the sidebar's + buttons (New Bot or Group Chat, New Chat, New Project), Collapse All, Open in Editor, the Changes branch menu and Move to Project, and each Add in MCP Servers and Skills says what it adds. Menus no longer have a separate "Go Down" button for their arrow.

@@ -86,6 +86,12 @@ final class Catalog {
         return offered.first { $0.id == ref.id && $0.providerID == ref.providerID }
     }
 
+    /// A model picked that you can't use now (gone from its provider, or its account signed out
+    /// of): it would only fail. Not before the models are known.
+    func isUnavailable(_ ref: ModelRef?) -> Bool {
+        isLoaded && ref != nil && offeredModel(ref) == nil
+    }
+
     /// The model a new session or bot starts on: the first of `wanted` (the one picked, the one
     /// picked last) you can use now; else the engine's default, if you can; else the first model
     /// you can use. A model whose account you signed out of would only fail. Before the models are
