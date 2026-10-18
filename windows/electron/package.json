@@ -40,9 +40,9 @@
     "win": {
       "target": [
         "nsis",
-        "portable",
-        "msi"
+        "portable"
       ],
+      "icon": "build/icon.ico",
       "sign": null,
       "signAndEditExecutable": false
     },
