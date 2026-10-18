@@ -83,6 +83,7 @@ const state = {
   sessionQuery: "",
   openSessions: [],
   transcripts: new Map(),
+  findQuery: "",
 };
 
 let renderQueued = false;
@@ -308,6 +309,22 @@ function closeSessionTab(id) {
   }
 }
 
+function compactTokens(n) {
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
+  return String(n);
+}
+
+function updateContextGauge(session) {
+  const gauge = $("context-gauge");
+  const total = session?.tokens?.total ?? 0;
+  if (!total) { gauge.hidden = true; return; }
+  gauge.hidden = false;
+  const label = compactTokens(total);
+  gauge.textContent = label;
+  gauge.title = `Context window: ${compactTokens(total)} tokens used`;
+}
+
 async function openSession(id) {
   if (!id) return;
   if (state.session && state.transcript) state.transcripts.set(state.session.id, state.transcript);
@@ -315,6 +332,7 @@ async function openSession(id) {
   try {
     const detail = await api(`/api/sessions/${encodeURIComponent(id)}`);
     state.session = detail.session;
+    updateContextGauge(detail);
     const cached = state.transcripts.get(id);
     state.transcript = cached || fromHistory(id, detail.messages, detail.permissions, detail.running);
     if (!cached) state.transcripts.set(id, state.transcript);
@@ -363,6 +381,11 @@ $("stop").addEventListener("click", async () => {
 $("session-search").addEventListener("input", (event) => {
   state.sessionQuery = event.target.value.trim().toLowerCase();
   renderSessions();
+});
+
+$("find").addEventListener("input", (event) => {
+  state.findQuery = event.target.value.trim().toLowerCase();
+  render();
 });
 
 $("message-search").addEventListener("input", async (event) => {
@@ -858,7 +881,28 @@ function exportConversation() {
   lines.push(`Project: ${state.project || ""}`);
   lines.push(`Session: ${state.session.id}`);
   lines.push("");
-  for (const entry of state.transcript.entries) {
+  // A steps row: how much the agent did between its replies, like the Mac app's StepsRow.
+  const steps = state.transcript.entries.filter(entry => entry.kind === "assistant");
+  const stepCount = steps.length;
+  const toolCount = steps.reduce((sum, entry) => sum + entry.parts.filter(part => part.type === "tool").length, 0);
+  const totalMs = steps.reduce((sum, entry) => sum + ((entry.time?.completed ?? 0) - (entry.time?.started ?? 0)), 0);
+  const stepsRow = $("steps-row");
+  if (stepCount > 1 && !query) {
+    stepsRow.hidden = false;
+    const seconds = Math.round(totalMs / 1000);
+    stepsRow.textContent = `${stepCount} steps · ${seconds}s · ${toolCount} tools`;
+  } else {
+    stepsRow.hidden = true;
+  }
+
+  const query = state.findQuery;
+  const visibleEntries = query
+    ? state.transcript.entries.filter(entry => {
+        const text = (entry.parts ?? []).map(p => p.text ?? "").join(" ").toLowerCase();
+        return text.includes(query);
+      })
+    : state.transcript.entries;
+  for (const entry of visibleEntries) {
     if (entry.kind === "user") {
       lines.push(`## You`);
       lines.push("");

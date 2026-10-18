@@ -15,6 +15,8 @@
   <div class="spacer"></div>
   <button id="toggle-files" class="small" title="Files and terminal">Files</button>
   <button id="export" class="small" title="Export conversation as Markdown">Export</button>
+  <div id="context-gauge" class="context-gauge" hidden title="Context window used"></div>
+  <input id="find" class="file-search header-find" placeholder="Find in conversation…" spellcheck="false">
   <div id="engine" class="engine" title="The engine on this machine"></div>
 </header>
 
@@ -39,7 +41,8 @@
       <button id="choose" class="primary">Choose a folder</button>
       <button id="start" class="primary" hidden>Start a session</button>
     </div>
-    <div id="entries" class="entries"></div>
+    <div id="steps-row" class="steps-row" hidden></div>
+  <div id="entries" class="entries"></div>
     <div id="asks" class="asks"></div>
     <form id="composer" class="composer" hidden>
       <textarea id="prompt" rows="3" placeholder="Ask for something…  (Enter sends, Shift+Enter for a new line)"></textarea>
