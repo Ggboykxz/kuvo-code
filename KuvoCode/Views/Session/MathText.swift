@@ -351,7 +351,26 @@ enum MathText {
                     i = autolinkEnd(chars, from: i, to: line.end).map { $0 + 1 } ?? i + 1
                 case "]" where i + 1 < line.end && chars[i + 1] == "(":
                     // A link's address and title.
-                    i = destinationEnd(chars, from: i + 2, to: line.end).map { $0 + 1 } ?? i + 1
+                    if let end = destinationEnd(chars, across: [(i + 2)..<line.end]) {
+                        i = end + 1
+                        continue
+                    }
+                    // Or on the lines after, in its paragraph: "[a](" with the address below it,
+                    // or its title on the next line.
+                    var segments = [(i + 2)..<line.end]
+                    var end: Int?
+                    if !line.isOneLine {
+                        carryOn(after: number) { _, next in
+                            segments.append(next.body..<next.end)
+                            end = destinationEnd(chars, across: segments)
+                            return end == nil && segments.count < 4
+                        }
+                    }
+                    if let end {
+                        resume = end + 1
+                        break words
+                    }
+                    i += 1
                 case "[" where i == line.content:
                     // A link's definition: "[label]: https://…".
                     i = definitionEnd(chars, from: i, to: line.end) ?? i + 1
@@ -715,15 +734,35 @@ enum MathText {
         return isURL || address.contains("@") ? i : nil
     }
 
-    /// Where the `)` of a link's address and title is, from `start` (after its `(`), on its line.
+    /// Where the `)` of a link's address and title is, in `segments` (the rest of the line after
+    /// its `(`, then the lines after it in its paragraph, without their quote marks or
+    /// indentation), which Markdown reads as one, with a line break between each.
+    nonisolated private static func destinationEnd(_ chars: [Character], across segments: [Range<Int>]) -> Int? {
+        guard segments.count > 1 else { return segments.first.flatMap { destinationEnd(chars, from: $0.lowerBound, to: $0.upperBound) } }
+        var joined: [Character] = [], origin: [Int] = []
+        for (n, segment) in segments.enumerated() {
+            if n > 0 {
+                joined.append("\n")
+                origin.append(segment.lowerBound)
+            }
+            for index in segment {
+                joined.append(chars[index])
+                origin.append(index)
+            }
+        }
+        return destinationEnd(joined, from: 0, to: joined.count).map { origin[$0] }
+    }
+
+    /// Where the `)` of a link's address and title is, from `start` (after its `(`) to `end`. A
+    /// line break can come before the address, between it and its title, or in the title.
     nonisolated private static func destinationEnd(_ chars: [Character], from start: Int, to end: Int) -> Int? {
         var i = start
-        func spaces() { while i < end, chars[i] == " " || chars[i] == "\t" { i += 1 } }
+        func spaces() { while i < end, chars[i] == " " || chars[i] == "\t" || chars[i] == "\n" { i += 1 } }
         spaces()
         if i < end, chars[i] == "<" {
             i += 1
             while i < end, chars[i] != ">" {
-                if chars[i] == "<" { return nil }
+                if chars[i] == "<" || chars[i] == "\n" { return nil }
                 i += chars[i] == "\\" ? 2 : 1
             }
             guard i < end else { return nil }
