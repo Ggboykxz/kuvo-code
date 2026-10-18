@@ -221,6 +221,9 @@ final class BotGroups {
     /// Seats whose rules were brought up to date since launch.
     @ObservationIgnored private var seatsChecked: Set<String> = []
     @ObservationIgnored private var syncs: [String: Task<Void, Never>] = [:]
+    /// Bots being deleted, leaving their chats: they don't remember them (their folder, on a
+    /// machine already gone, isn't made again for a chat's transcript).
+    @ObservationIgnored private var leaving: Set<String> = []
     private let log = Logger(subsystem: "run.kuvo.code", category: "groups")
 
     /// The key of a seat's instructions, and of the chats a bot's own conversation remembers.
@@ -315,6 +318,8 @@ final class BotGroups {
 
     /// A bot that's being deleted leaves its chats.
     func remove(_ bot: Bot) async {
+        leaving.insert(bot.id)
+        defer { leaving.remove(bot.id) }
         for var group in list where group.members.contains(bot.id) {
             group.members.removeAll { $0 == bot.id }
             await update(group)
@@ -1132,7 +1137,7 @@ final class BotGroups {
     /// each in its instructions, and the whole of each in a file in its folder.
     /// `changed` is the one chat whose file needs writing again; nil writes them all.
     private func remember(_ botID: String, changed: String? = nil, forgetting gone: String? = nil) async {
-        guard let app, let bot = app.bots.bot(botID), let api = app.workspace.api(forFolder: bot.directory) else { return }
+        guard !leaving.contains(botID), let app, let bot = app.bots.bot(botID), let api = app.workspace.api(forFolder: bot.directory) else { return }
         let folder = (bot.folder as NSString).appendingPathComponent("groups")
         if let gone { await removeFile((folder as NSString).appendingPathComponent("\(gone).md"), of: bot) }
         let chats = list.filter { $0.members.contains(botID) && !messages(in: $0.id).isEmpty }
