@@ -104,13 +104,17 @@ struct ConversationScroll<Rows: View>: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: spacing) {
                 rows
+                // Room under the last message, so it doesn't sit on the composer: the end,
+                // which going to the end goes to (so it's made, wherever the lazy stack guessed
+                // the end was; a guess could leave the view past the rows, showing nothing).
+                Color.clear
+                    .frame(height: max(0, 32 - spacing))
+                    .id(ScrollAnchor.end)
             }
             .environment(\.scrollAnchor, anchor)
             .padding(.horizontal, Metrics.gutter)
             // Room under the card's header, which the conversation scrolls beneath.
             .padding(.top, 16)
-            // Room under the last message, so it doesn't sit on the composer.
-            .padding(.bottom, 32)
             .readableColumn()
             .coordinateSpace(.named(ScrollAnchor.space))
             .background { ScrollViewFinder { anchor.scrollView = $0 } }
@@ -153,8 +157,13 @@ struct ConversationScroll<Rows: View>: View {
                 endFollower.settle {
                     proxy.scrollTo(folded.row, anchor: .top)
                 } then: {
-                    anchor.scroll(to: nil)
+                    toEnd(proxy)
                 }
+                return
+            }
+            // Past the end, with nothing there to see, and you're not the one scrolling: to it.
+            if new.isPastEnd, !scrolling.isOn {
+                toEnd(proxy)
                 return
             }
             // Your scrolling decides; growth below the fold doesn't. Set only when it changes: each
@@ -166,7 +175,7 @@ struct ConversationScroll<Rows: View>: View {
             endFollower.follow {
                 // Later, you may have started scrolling meanwhile.
                 guard scroller.followsEnd, !scrolling.isOn else { return }
-                anchor.scroll(to: nil)
+                toEnd(proxy)
             }
         }
         // Where it's scrolled to, for going to a place (a plain value, read only then).
@@ -200,17 +209,19 @@ struct ConversationScroll<Rows: View>: View {
         .onChange(of: scroller.requests) {
             switch scroller.request {
             case .end(let animated):
-                anchor.scroll(to: nil, animated: animated)
+                if animated {
+                    anchor.scroll(to: nil, animated: true)
+                } else {
+                    toEnd(proxy)
+                }
             case .row(let id):
-                withAnimation(.ui) { proxy.scrollTo(id, anchor: .center) }
+                go(to: id, anchor: .center, proxy) {}
             case .place(let id, let fraction):
                 // Lined up so the place is as far down the view as it is down its row (in view,
                 // however tall the row), then moved to the middle.
-                proxy.scrollTo(id, anchor: UnitPoint(x: 0.5, y: fraction))
-                Task {
-                    try? await Task.sleep(for: .milliseconds(60))
+                go(to: id, anchor: UnitPoint(x: 0.5, y: fraction), proxy) {
                     guard scroller.request == .place(id, fraction) else { return }
-                    anchor.scroll(to: max(0, spot.geometry.offset + (fraction - 0.5) * spot.geometry.height))
+                    anchor.scroll(by: (fraction - 0.5) * spot.geometry.height)
                 }
             case .offset(let y):
                 anchor.scroll(to: y)
@@ -218,6 +229,44 @@ struct ConversationScroll<Rows: View>: View {
                 break
             }
         }
+    }
+}
+
+extension ConversationScroll {
+    /// To row `id`: the lazy stack goes to where it guessed the row was, and the rows on the way
+    /// are measured as they're made, so it's asked again once they have been; meanwhile what's
+    /// in view isn't kept in place (that would keep it from getting there). Then `then`.
+    fileprivate func go(to id: String, anchor point: UnitPoint, _ proxy: ScrollViewProxy, then: @escaping () -> Void) {
+        anchor.hold(for: .milliseconds(500))
+        proxy.scrollTo(id, anchor: point)
+        #if DEBUG
+        anchor.noteWhere(id, "asked")
+        #endif
+        Task {
+            for wait in [50, 120] {
+                try? await Task.sleep(for: .milliseconds(wait))
+                #if DEBUG
+                anchor.noteWhere(id, "after \(wait) ms")
+                #endif
+                proxy.scrollTo(id, anchor: point)
+            }
+            try? await Task.sleep(for: .milliseconds(50))
+            #if DEBUG
+            anchor.noteWhere(id, "done")
+            #endif
+            then()
+            #if DEBUG
+            try? await Task.sleep(for: .milliseconds(300))
+            anchor.noteWhere(id, "settled")
+            if let file = ProcessInfo.processInfo.environment["KUVO_PERF_FIND"] {
+                try? ScrollAnchor.notes.joined(separator: "\n").write(toFile: file, atomically: true, encoding: .utf8)
+            }
+            #endif
+        }
+    }
+
+    fileprivate func toEnd(_ proxy: ScrollViewProxy) {
+        proxy.scrollTo(ScrollAnchor.end, anchor: .bottom)
     }
 }
 
@@ -305,10 +354,12 @@ final class EndFollower {
 /// come into view (scrolling up, they're above it) measure taller or shorter than the lazy stack
 /// guessed, and earlier messages come in above, which moved everything after them. The row at the
 /// top of the view is noted, and when it moves in the conversation, the view moves with it, at
-/// once, before it's drawn. It also moves the view to the end or to a place: through AppKit's
-/// scroll view, as SwiftUI would put a position of its own back over what this did.
+/// once, before it's drawn. It also moves the view to a place: through AppKit's scroll view, as
+/// SwiftUI would put a position of its own back over what this did.
 final class ScrollAnchor {
     static let space = "conversation"
+    /// The conversation's end, after its last row.
+    static let end = "conversation-end"
     #if DEBUG
     static let isOn = ProcessInfo.processInfo.environment["KUVO_PERF_NO_ANCHOR"] == nil
     #else
@@ -336,11 +387,24 @@ final class ScrollAnchor {
     static var notes: [String] = []
     static weak var latest: ScrollAnchor?
     var conversationFrames: [String: CGRect] { frames }
+    func noteWhere(_ id: String, _ when: String) {
+        let origin = Int(scrollView?.contentView.bounds.origin.y ?? -1)
+        let frame = frames[id].map { "\(Int($0.minY))…\(Int($0.maxY))" } ?? "not made"
+        Self.note("go to \(id.suffix(10)) \(when): view at \(origin), row at \(frame), conversation \(Int(scrollView?.documentView?.frame.height ?? 0)) tall")
+    }
+
     private static func note(_ text: String) {
         notes.append(text)
         if notes.count > 40 { notes.removeFirst() }
     }
     #endif
+
+    /// Nothing kept in place until then: going to a row, the view moves as rows are measured.
+    private var heldUntil: ContinuousClock.Instant?
+
+    func hold(for duration: Duration) {
+        heldUntil = .now + duration
+    }
 
     func rowMoved(_ id: String, to frame: CGRect) {
         frames[id] = frame
@@ -348,39 +412,31 @@ final class ScrollAnchor {
         guard Self.isOn, let anchor, anchor.id == id else { return }
         let shift = frame.minY - anchor.minY
         self.anchor?.minY = frame.minY
+        if let heldUntil, heldUntil > .now { return }
         guard abs(shift) > 0.5, !isFollowingEnd, let scrollView else { return }
         let clip = scrollView.contentView
-        var origin = clip.bounds.origin
+        let origin = clip.bounds.origin.y
         // Not while it bounces at an edge.
-        guard origin.y >= 0, origin.y <= (scrollView.documentView?.frame.height ?? 0) - clip.bounds.height else { return }
-        origin.y += shift
-        clip.scroll(to: origin)
+        guard origin >= 0, origin <= (scrollView.documentView?.frame.height ?? 0) - clip.bounds.height else { return }
+        // Never above the conversation's start: rows above that turn out shorter than guessed
+        // would take it there, and it would bounce back.
+        let target = max(0, origin + shift)
+        clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: target))
         scrollView.reflectScrolledClipView(clip)
-        #if DEBUG
-        Self.note("\(id) moved \(Int(shift))")
-        #endif
-    }
-
-    /// To `y` in the conversation (nil: its end).
-    func scroll(to y: CGFloat?, animated: Bool = false) {
-        guard let scrollView else { return }
-        let clip = scrollView.contentView
-        var bounds = clip.bounds
-        bounds.origin.y = y ?? (scrollView.documentView?.frame.height ?? 0) + 10_000
-        let target = clip.constrainBoundsRect(bounds).origin
-        guard abs(target.y - clip.bounds.origin.y) > 0.5 else { return }
-        if animated {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.3
-                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                clip.animator().setBoundsOrigin(target)
-            } completionHandler: { [weak scrollView] in
-                scrollView?.reflectScrolledClipView(clip)
+        // Further down than the conversation reaches yet (it grows in this same pass): the rest
+        // once it has.
+        let short = target - clip.bounds.origin.y
+        if abs(short) > 0.5 {
+            DispatchQueue.main.async { [weak scrollView] in
+                guard let scrollView else { return }
+                let clip = scrollView.contentView
+                clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: clip.bounds.origin.y + short))
+                scrollView.reflectScrolledClipView(clip)
             }
-        } else {
-            clip.scroll(to: target)
-            scrollView.reflectScrolledClipView(clip)
         }
+        #if DEBUG
+        Self.note("\(id) moved \(Int(shift))\(abs(short) > 0.5 ? ", \(Int(short)) of it later" : "")")
+        #endif
     }
 
     func rowCame(_ id: String) {
@@ -403,6 +459,34 @@ final class ScrollAnchor {
         if first?.key != anchor?.id { Self.note("anchor \(first?.key ?? "none of \(rows.count)") at \(Int(offset))") }
         #endif
         anchor = first.map { ($0.key, $0.value.minY) }
+    }
+
+    /// This far down from where it is now (up, less than 0).
+    func scroll(by distance: CGFloat) {
+        guard let scrollView else { return }
+        scroll(to: max(0, scrollView.contentView.bounds.origin.y + distance))
+    }
+
+    /// To `y` in the conversation (nil: its end).
+    func scroll(to y: CGFloat?, animated: Bool = false) {
+        guard let scrollView else { return }
+        let clip = scrollView.contentView
+        var bounds = clip.bounds
+        bounds.origin.y = y ?? (scrollView.documentView?.frame.height ?? 0) + 10_000
+        let target = clip.constrainBoundsRect(bounds).origin
+        guard abs(target.y - clip.bounds.origin.y) > 0.5 else { return }
+        if animated {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.3
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                clip.animator().setBoundsOrigin(target)
+            } completionHandler: { [weak scrollView] in
+                scrollView?.reflectScrolledClipView(clip)
+            }
+        } else {
+            clip.scroll(to: target)
+            scrollView.reflectScrolledClipView(clip)
+        }
     }
 }
 

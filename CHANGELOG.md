@@ -6,6 +6,8 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Find in a conversation goes to each place it found again. In 0.5.9 it could stay where it was, or stop short in a long conversation.
+- A conversation opens showing its end at once. It could show nothing until you scrolled, or a moment of an earlier part first.
 - While nothing comes back from the model for a while, the line at the end of the conversation says "Waiting for the model to answer…" with how long, instead of "Working…". A provider that never answers could look for many minutes as if the agent were busy doing something.
 
 ## 0.5.10
