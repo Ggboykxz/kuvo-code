@@ -56,15 +56,20 @@ struct GroupEditor: View {
     }
 
     /// The meeting to save: its next time after now (a repeating one's next round, if the one
-    /// picked has passed; on weekdays, a weekday).
+    /// picked has passed; on weekdays, a weekday). With its time and repeat as they were, it keeps
+    /// the time of day (and a week's day) it had, whatever daylight saving or a new time zone did
+    /// to its next time; a time picked here is the one it keeps from then on.
     private var meeting: BotGroup.Meeting? {
         guard meets else { return nil }
-        var next = meetsAt
         let calendar = Calendar.current
-        if next <= .now, let every = meetsEvery { next = every.next(after: next, now: .now) }
+        let before = group?.meeting.flatMap { $0.next == meetsAt && $0.repeats == meetsEvery ? $0 : nil }
+        let at = meetsEvery?.keepsTimeOfDay == true ? before?.at ?? Wakes.minutes(of: meetsAt, calendar: calendar) : nil
+        let weekday = meetsEvery?.keepsWeekday == true ? before?.weekday ?? calendar.component(.weekday, from: meetsAt) : nil
+        var next = meetsAt
+        if next <= .now, let every = meetsEvery { next = every.next(after: next, now: .now, at: at, weekday: weekday, calendar: calendar) }
         while meetsEvery == .weekdays, calendar.isDateInWeekend(next), let day = calendar.date(byAdding: .day, value: 1, to: next) { next = day }
         let topic = topic.trimmingCharacters(in: .whitespacesAndNewlines)
-        return BotGroup.Meeting(next: next, every: meetsEvery?.text, topic: topic.isEmpty ? "Our regular meeting: where things stand, and what's next." : topic)
+        return BotGroup.Meeting(next: next, every: meetsEvery?.text, topic: topic.isEmpty ? "Our regular meeting: where things stand, and what's next." : topic, at: at, weekday: weekday)
     }
 
     private var isNew: Bool { group == nil }
