@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- The browser on a machine shows Chinese, Japanese and Korean, and Hebrew, Thai, Hindi, Tamil and other scripts, instead of empty boxes. It brings a font that covers them (adding about 3 MB to what a machine downloads once).
 ## 0.5.12
 
 - The line that sums up an agent's steps names an MCP server's tools by the server ("used GitHub", "used context7 2 times") rather than their raw names, and says "used a skill" and "started a session".

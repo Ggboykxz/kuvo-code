@@ -50,7 +50,7 @@ const TAB_IDLE = Number(process.env.KUVO_BROWSER_TAB_IDLE || 12 * 3600) * 1000;
 
 // Goes up with every change to the keeper (host mode): a newer one replaces one that's running
 // (its pages close, its sign-ins stay), and an older one never replaces a newer.
-const KEEPER = 20;
+const KEEPER = 21;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -343,10 +343,14 @@ async function launchChrome(sandbox) {
     `  <dir>${xml(path.join(build, "fonts"))}</dir>`,
     '  <include ignore_missing="yes">/etc/fonts/fonts.conf</include>',
     `  <cachedir>${xml(path.join(home, ".cache", "fontconfig"))}</cachedir>`,
-    "  <alias><family>sans-serif</family><prefer><family>Liberation Sans</family><family>DejaVu Sans</family></prefer></alias>",
-    "  <alias><family>serif</family><prefer><family>Liberation Serif</family><family>DejaVu Sans</family></prefer></alias>",
-    "  <alias><family>monospace</family><prefer><family>Liberation Mono</family><family>DejaVu Sans</family></prefer></alias>",
+    // Droid Sans after them for the scripts they don't have: Chinese, Japanese and Korean (in
+    // Droid Sans Fallback), Hebrew, Thai, Devanagari, Tamil and others; Japanese in its own
+    // forms on a Japanese page.
+    "  <alias><family>sans-serif</family><prefer><family>Liberation Sans</family><family>DejaVu Sans</family><family>Droid Sans</family><family>Droid Sans Fallback</family></prefer></alias>",
+    "  <alias><family>serif</family><prefer><family>Liberation Serif</family><family>DejaVu Sans</family><family>Droid Sans Fallback</family></prefer></alias>",
+    "  <alias><family>monospace</family><prefer><family>Liberation Mono</family><family>DejaVu Sans</family><family>Droid Sans Fallback</family></prefer></alias>",
     "  <alias><family>emoji</family><prefer><family>Noto Color Emoji</family></prefer></alias>",
+    '  <match><test name="lang" compare="contains"><string>ja</string></test><edit name="family" mode="prepend"><string>Droid Sans Japanese</string></edit></match>',
     "</fontconfig>",
     "",
   ].join("\n"));
