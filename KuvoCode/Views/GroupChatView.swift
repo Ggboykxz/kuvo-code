@@ -500,6 +500,8 @@ private struct GroupComposer: View {
                 .font(messageFont.body)
                 .lineLimit(1...10)
                 .focused($isFocused)
+                // As a session's composer, for the end-to-end tests.
+                .accessibilityIdentifier("composer")
                 .onChange(of: focusRequest) { focusAtEnd() }
                 .onKeyPress(.return, phases: .down) { press in
                     // Return sends; Shift-Return starts a new line.
