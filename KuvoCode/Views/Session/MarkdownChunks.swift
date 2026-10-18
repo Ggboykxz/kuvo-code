@@ -17,7 +17,12 @@ nonisolated enum MarkdownChunks {
     }
 
     /// About how long a piece gets before the next one starts.
+    #if DEBUG
+    /// KUVO_PERF_PIECE: another size, to measure.
+    static let size = ProcessInfo.processInfo.environment["KUVO_PERF_PIECE"].flatMap(Int.init) ?? 4000
+    #else
     static let size = 4000
+    #endif
 
     /// `text` in pieces, split only where a paragraph or heading starts after a paragraph,
     /// heading or code block has ended: blocks a split can't change (not inside a list, quote,

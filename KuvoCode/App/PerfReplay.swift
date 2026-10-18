@@ -357,11 +357,13 @@ nonisolated final class PerfMeter: NSObject, @unchecked Sendable {
 #if DEBUG
 /// With KUVO_DEMO_READ, each row's frame in the window as it's laid out, for PerfRead.
 struct RowProbe: ViewModifier {
-    static let isOn = ProcessInfo.processInfo.environment["KUVO_DEMO_READ"] != nil
+    static let isOn = ProcessInfo.processInfo.environment["KUVO_DEMO_READ"] != nil || ProcessInfo.processInfo.environment["KUVO_PERF_OPEN"] != nil
     static var frames: [String: CGRect] = [:]
     /// Which copy of each row reported last, and rows reported by two copies at once.
     static var owners: [String: UUID] = [:]
     static var twins: Set<String> = []
+    /// One just seen, for the test to stop and show.
+    static var newTwin: String?
     let id: String
     @State private var copy = UUID()
 
@@ -369,7 +371,7 @@ struct RowProbe: ViewModifier {
         if Self.isOn {
             content
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
-                    if let owner = Self.owners[id], owner != copy { Self.twins.insert(id) }
+                    if let owner = Self.owners[id], owner != copy, Self.twins.insert(id).inserted { Self.newTwin = id }
                     Self.owners[id] = copy
                     Self.frames[id] = $0
                 }
@@ -380,6 +382,41 @@ struct RowProbe: ViewModifier {
                 }
         } else {
             content
+        }
+    }
+}
+
+/// KUVO_PERF_OPEN: for 4 seconds after a conversation's view appears, each frame where what it
+/// shows changes: where it's scrolled to, how tall it is, the rows in view, and whether the last
+/// is one of them. A conversation should show its end from the first frame it shows anything.
+@MainActor
+enum PerfOpen {
+    private static var isStarted = false
+
+    static func start(lastRow: @escaping () -> String?) {
+        guard !isStarted, let file = ProcessInfo.processInfo.environment["KUVO_PERF_OPEN"] else { return }
+        isStarted = true
+        Task {
+            let began = ContinuousClock.now
+            var lines: [String] = []
+            var last = ""
+            func scrollViews(in view: NSView) -> [NSScrollView] { (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(scrollViews) }
+            while ContinuousClock.now - began < .seconds(4) {
+                let scroll = NSApp.windows.compactMap(\.contentView).flatMap(scrollViews).max { ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0) }
+                let origin = Int(scroll?.contentView.bounds.origin.y ?? -1)
+                let height = Int(scroll?.documentView?.frame.height ?? -1)
+                let view = scroll.map { $0.convert($0.bounds, to: nil) } ?? .zero
+                let top = (scroll?.window?.contentView?.bounds.height ?? 0) - view.maxY
+                let shown = RowProbe.frames.filter { $0.value.maxY > top + 40 && $0.value.minY < top + view.height - 100 }.keys
+                let end = lastRow()
+                let state = "at \(origin) of \(height), \(shown.count) rows in view\(end.map { shown.contains($0) ? ", the last among them" : ", not the last" } ?? "")"
+                if state != last {
+                    lines.append(String(format: "%5.0f ms ", (ContinuousClock.now - began) / .milliseconds(1)) + state)
+                    last = state
+                }
+                try? await Task.sleep(for: .milliseconds(8))
+            }
+            try? lines.joined(separator: "\n").write(toFile: file, atomically: true, encoding: .utf8)
         }
     }
 }
@@ -465,6 +502,25 @@ enum PerfRead {
                     // A new gesture may drop its first bit of scrolling: not a jump.
                     pending = 0
                 }
+                // A row drawn twice: stopped a moment, for a look (KUVO_PERF_CAPTURE: a file says
+                // so there, for a capture from outside).
+                if let twin = RowProbe.newTwin {
+                    RowProbe.newTwin = nil
+                    if let folder = environment["KUVO_PERF_CAPTURE"] {
+                        let copies = RowProbe.frames[twin].map { "\(Int($0.minY))" } ?? "?"
+                        try? "\(twin) at \(copies)\n".write(toFile: folder + "/twin-\(steps).marker", atomically: true, encoding: .utf8)
+                        try? await Task.sleep(for: .seconds(3))
+                    }
+                }
+                // KUVO_PERF_LOCKSTEP=<folder>:<from>:<to>: in those steps, each one waits for a
+                // capture of the window from outside (a file there says which step), so what's
+                // drawn can be compared frame by frame.
+                if let spec = environment["KUVO_PERF_LOCKSTEP"]?.split(separator: ":"), spec.count == 3,
+                   let from = Int(spec[1]), let to = Int(spec[2]), (from...to).contains(steps) {
+                    let marker = String(spec[0]) + "/step-\(String(format: "%05d", steps)).want"
+                    try? "\(Int(scroll.contentView.bounds.origin.y))".write(toFile: marker, atomically: true, encoding: .utf8)
+                    for _ in 0..<100 where FileManager.default.fileExists(atPath: marker) { try? await Task.sleep(for: .milliseconds(20)) }
+                }
                 let stepStart = ContinuousClock.now
                 try? await Task.sleep(for: .milliseconds(16))
                 let after = snapshot()
@@ -528,7 +584,7 @@ enum PerfRead {
                     return "\(id.suffix(8)) \(Int(move))/\(shift.map { String(Int($0)) } ?? "?")"
                 }.joined(separator: ", "))
                 if abs(after.height - before.height) > 0.5 { why.append("height \(Int(before.height))→\(Int(after.height))") }
-                report += "\(pass) step \(steps) at \(Int(after.origin)): " + why.joined(separator: "; ") + "\n    anchor: " + ScrollAnchor.notes.suffix(14).joined(separator: " | ") + "\n"
+                report += "\(pass) step \(steps) at \(Int(after.origin)): " + why.joined(separator: "; ") + "\n    anchor: " + ScrollAnchor.notes.suffix(10).joined(separator: "\n      ") + "\n"
                 // KUVO_PERF_CAPTURE=<folder>: the window as it was then, the first few times.
                 if let folder = environment["KUVO_PERF_CAPTURE"], captures < 12, let number = scroll.window?.windowNumber {
                     captures += 1

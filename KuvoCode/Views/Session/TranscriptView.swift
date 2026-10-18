@@ -122,6 +122,16 @@ struct TranscriptView: View {
         }
         // Once, whatever happens to this view meanwhile (the test notes it if it's made again).
         .onAppear { PerfRead.start() }
+        .onAppear { PerfOpen.start { rowCache.rows.last?.id } }
+        // KUVO_DEMO_FIND_STEPS=<n>: once Find is open, Next that many times, a second and a half apart.
+        .task {
+            guard let steps = ProcessInfo.processInfo.environment["KUVO_DEMO_FIND_STEPS"].flatMap(Int.init) else { return }
+            try? await Task.sleep(for: .seconds(8))
+            for by in Array(repeating: 1, count: steps) + [-1, -1] {
+                find.step(by)
+                try? await Task.sleep(for: .milliseconds(1500))
+            }
+        }
         .onDisappear { PerfRead.viewsGone += 1 }
         .task { await PerfRender.run(model: model) }
         // KUVO_DEMO_WANDER=<seconds>: that long after it opens, scrolls up a screen or two and back
