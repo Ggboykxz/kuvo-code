@@ -58,7 +58,11 @@ extension HighlightedTextFragment {
       tokens = [CodeToken(content: code, type: .plain)]
 
       if let languageHint, let tokenizer = await CodeTokenizer.loaded() {
-        tokens = await tokenizer.tokenize(code: code, language: languageHint)
+        let tokens = await tokenizer.tokenize(code: code, language: languageHint)
+        // The code changed meanwhile (a block still being written), which cancelled this: its
+        // tokens, of the code as it was, would show over the newer code's.
+        guard !Task.isCancelled else { return }
+        self.tokens = tokens
       }
     }
 
