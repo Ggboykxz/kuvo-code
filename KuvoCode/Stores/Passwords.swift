@@ -41,8 +41,16 @@ nonisolated enum Passwords {
         UserDefaults.standard.set(sites.sorted(), forKey: neverKey)
     }
 
-    /// 'KUVO', the creator code on every item this saves.
-    private static let creator: OSType = 0x4B55_564F
+    /// 'KUVO', the creator code on every item the app saves. A demo or test copy (another bundle
+    /// ID) marks its own with 'KV' and two letters of its own, so it never lists, fills or
+    /// deletes the passwords you saved in the app.
+    private static let creator: OSType = {
+        guard AppInfo.bundleID != "run.kuvo.code" else { return 0x4B55_564F }
+        var hash: UInt32 = 2_166_136_261
+        for byte in AppInfo.bundleID.utf8 { hash = (hash ^ UInt32(byte)) &* 16_777_619 }
+        let letters = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".utf8)
+        return 0x4B56_0000 | OSType(letters[Int(hash % 36)]) << 8 | OSType(letters[Int(hash / 36 % 36)])
+    }()
 
     private static var base: [String: Any] {
         [kSecClass as String: kSecClassInternetPassword, kSecAttrCreator as String: creator]
