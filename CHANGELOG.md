@@ -4,7 +4,7 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
-## Unreleased
+## 0.5.12
 
 - The line that sums up an agent's steps names an MCP server's tools by the server ("used GitHub", "used context7 2 times") rather than their raw names, and says "used a skill" and "started a session".
 - VoiceOver names the **Pause Wake-Ups** switch in Edit Bot, each bot's button under a group chat's composer ("Ask Reader"), and each field in a form an MCP server or a sign-in asks you to fill. They read as an unnamed switch, buttons and text fields.
