@@ -4,6 +4,8 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
+## Unreleased
+
 ## 0.5.8
 
 - While a reply is still being written, a code block that starts on a list item's line, like `- ```sh`, or in a quote stays a code block, and the words after it show as words.
