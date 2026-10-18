@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- A conversation on a machine picks up again by itself after the network drops out in a way that leaves the connection silent, like Wi-Fi changing. It could stop showing new replies until something else reconnected it.
 - Models show by themselves once the engine has finished starting. If it was slow to start, the composer said "Choose a Model" until something else made Kuvo Code look again, and an engine that never finished starting is now started over once.
 - Setting up the browser on a machine tries again when the connection drops partway through. It used to wait for the next launch, or for you to open the machine's browser.
 - A choice in a question card, or in a form, no longer repeats itself when its description only says its label again ("Red" under Red).
