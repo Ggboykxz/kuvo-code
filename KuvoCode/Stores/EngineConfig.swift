@@ -66,10 +66,13 @@ final class EngineConfig {
               let member = inline(.object([key: value])).map({ String($0.dropFirst().dropLast()) }) else { return nil }
         let isEmpty = text[last] == "{"
         let head = String(text[...last]), tail = String(text[close...])
-        guard text.contains("\n") else { return head + (isEmpty ? "" : ", ") + member + tail }
-        let lineStart = text[..<last].lastIndex(of: "\n").map { text.index(after: $0) } ?? text.startIndex
+        // The file's own line ending ("\r\n" is one Character to Swift, so it's read by scalar).
+        let scalars = text.unicodeScalars
+        let newline = scalars.contains("\r") ? (scalars.contains("\n") ? "\r\n" : "\r") : scalars.contains("\n") ? "\n" : nil
+        guard let newline else { return head + (isEmpty ? "" : ", ") + member + tail }
+        let lineStart = text[..<last].lastIndex(where: \.isNewline).map { text.index(after: $0) } ?? text.startIndex
         let indent = isEmpty ? "  " : String(text[lineStart...].prefix { $0 == " " || $0 == "\t" })
-        return head + (isEmpty ? "" : ",") + "\n" + indent + member + "\n" + tail
+        return head + (isEmpty ? "" : ",") + newline + indent + member + newline + tail
     }
 
     /// `value` as JSON on one line, spaced as people write it: `{"provider": "random"}`.
