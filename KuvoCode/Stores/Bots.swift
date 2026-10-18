@@ -782,7 +782,8 @@ final class Bots {
           kuvo-wake \(bot.id) watch 30m "<check>" "<what to do when it changes>"
         How often is 5m or more, 2h or 1d. Make the check print just what you watch, like `curl -s <url> | grep -o '<the \
         part that matters>'` or `gh run list --limit 1 --json conclusion -q '.[0].conclusion'`, so a clock or an ad on the \
-        page doesn't count as a change. It runs in your folder, for at most a minute. A page that needs a real browser to show \
+        page doesn't count as a change. It runs in your folder, for at most a minute. Only what it prints counts, not its \
+        errors, and a run that fails without printing anything (the network down, say) is skipped. A page that needs a real browser to show \
         its content can't be watched this way; check it in the browser on a wake-up instead.
 
         For something that repeats, schedule it once with --every, and it keeps coming back until it's canceled:

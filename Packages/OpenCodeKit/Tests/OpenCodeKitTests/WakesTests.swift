@@ -169,8 +169,8 @@ struct WakesTests {
         let letters = try #require(try FileManager.default.contentsOfDirectory(atPath: bot.appending(path: "watches").path).first)
         #expect(try run("list").output.contains("watch every 10m: cat state.txt"))
 
-        // The first run only notes what it prints; a change wakes the bot once the next run sees it
-        // too, the same output doesn't.
+        // The first run only notes what it prints; a change wakes the bot once a second look, two
+        // minutes later, sees one too, the same output doesn't.
         let due = { try "0".write(to: bot.appending(path: "watches/\(letters)/next"), atomically: true, encoding: .utf8) }
         try "open".write(to: bot.appending(path: "state.txt"), atomically: true, encoding: .utf8)
         #expect(try run("check").output.isEmpty)
@@ -226,6 +226,129 @@ struct WakesTests {
 
         #expect(try run("cancel \(letters)").status == 0)
         #expect(try FileManager.default.contentsOfDirectory(atPath: bot.appending(path: "watches").path).isEmpty)
+    }
+
+    /// A watch's runs, each at its next time on a clock of the test's own, with what its check prints
+    /// and how it exits: a value that moves wakes the bot once a period, one that changes and stays
+    /// wakes it once, and runs that fail, are killed or read once oddly never wake it nor become
+    /// what it compares with. Through `timeout` (as on Linux) and without it (perl, on a Mac).
+    @Test(arguments: WakesTests.shells, [false, true])
+    func watchesWakeForChangesNotFailures(shell: String, gnuTimeout: Bool) throws {
+        let k = try folder()
+        defer { try? FileManager.default.removeItem(at: k) }
+        #expect(try sh(Wakes.installScript, in: k).status == 0)
+        let fm = FileManager.default
+        let bin = k.appending(path: "testbin")
+        try fm.createDirectory(at: bin, withIntermediateDirectories: true)
+        func write(_ text: String, _ file: URL) throws { try text.write(to: file, atomically: true, encoding: .utf8) }
+        func read(_ file: URL) -> String? { try? String(contentsOf: file, encoding: .utf8) }
+        func executable(_ name: String, _ text: String) throws {
+            try write(text, bin.appending(path: name))
+            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.appending(path: name).path)
+        }
+        try executable("date", "#!/bin/sh\nif [ \"$1\" = +%s ]; then cat \"$K/clock\"; else exec /bin/date \"$@\"; fi\n")
+        if gnuTimeout { try executable("timeout", "#!/bin/sh\nshift\nexec \"$@\"\n") }
+        let bot = k.appending(path: "bots/bot_test")
+        let watch = bot.appending(path: "watches/AbCd12")
+        try fm.createDirectory(at: watch, withIntermediateDirectories: true)
+        let reads = #"cat "$K/out"; exit "$(cat "$K/code")""#
+        try write("10m", watch.appending(path: "every"))
+        try write(reads, watch.appending(path: "check"))
+        try write("Look", watch.appending(path: "note"))
+
+        var clock = 1_800_000_000
+        var woke: [(time: Int, message: String)] = []
+        /// Runs the watch at its next time, printing `output` and exiting with `code`; true if it woke the bot.
+        func step(_ output: String, _ code: Int = 0, deliver: Bool = true) throws -> Bool {
+            clock = max(clock, Int(read(watch.appending(path: "next")) ?? "") ?? 0)
+            try write(String(clock), k.appending(path: "clock"))
+            try write(output, k.appending(path: "out"))
+            try write(String(code), k.appending(path: "code"))
+            let process = Process()
+            process.executableURL = URL(filePath: shell)
+            process.arguments = [k.appending(path: "bin/kuvo-wake").path, bot.path, "check"]
+            process.environment = ["PATH": bin.path + ":/usr/bin:/bin", "K": k.path]
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            try process.run()
+            process.waitUntilExit()
+            let printed = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            guard Wakes.changedWatches(in: printed) == ["AbCd12"] else { return false }
+            woke.append((clock, Wakes.watchMessage("AbCd12", inBot: bot.path) ?? ""))
+            if deliver { Wakes.watchDelivered("AbCd12", inBot: bot.path) }
+            return true
+        }
+        func reset() throws {
+            for file in ["last", "seen", "pending", "message"] { try? fm.removeItem(at: watch.appending(path: file)) }
+            try write("0", watch.appending(path: "next"))
+            woke = []
+        }
+        let label = "\(shell)\(gnuTimeout ? ", timeout" : "")"
+
+        // A moving value: the first reading is where it starts; then each period, a change and a
+        // second look two minutes later that sees another, which wakes the bot with it.
+        try reset()
+        for (value, wakes) in [("1", false), ("2", false), ("3", true), ("4", false), ("5", true), ("6", false), ("7", true)] {
+            #expect(try step(value) == wakes, "\(value), \(label)")
+        }
+        #expect(woke.map { $0.time - woke[0].time } == [0, 600, 1200], "\(label)")
+        #expect(woke.last?.message.contains("now prints:\n7") == true, "\(label)")
+
+        // A change that stays wakes it once.
+        try reset()
+        #expect(try ["A", "B", "B", "B", "B"].map { try step($0) } == [false, false, true, false, false], "\(label)")
+
+        // One odd reading between two as before: nothing.
+        try reset()
+        #expect(try ["A", "X", "A", "A"].map { try step($0) } == [false, false, false, false], "\(label)")
+        #expect(!fm.fileExists(atPath: watch.appending(path: "seen").path), "\(label)")
+
+        // An outage longer than the second look: curl -s failing (6, 7), grep given nothing (1).
+        try reset()
+        #expect(try step("A") == false)
+        let heard = read(watch.appending(path: "last"))
+        for code in [6, 7, 1, 6] { #expect(try step("", code) == false, "\(code), \(label)") }
+        #expect(try step("A") == false, "\(label)")
+        #expect(try step("A") == false, "\(label)")
+        #expect(woke.isEmpty, "\(label)")
+        #expect(read(watch.appending(path: "last")) == heard, "\(label)")
+
+        // A change seen, then no reading for its second look: the next reading that differs too wakes it.
+        try reset()
+        #expect(try step("A") == false)
+        #expect(try step("B") == false)
+        #expect(try step("", 7) == false, "\(label)")
+        #expect(try step("B") == true, "\(label)")
+        #expect(try step("B") == false, "\(label)")
+
+        // A failing check prints something: that's a reading (grep -c finding none prints 0, exits 1).
+        try reset()
+        #expect(try ["3", "0", "0", "0"].map { try step($0, $0 == "0" ? 1 : 0) } == [false, false, true, false], "\(label)")
+
+        // Not delivered: told again at the next run, without another look; delivered, it's heard.
+        try reset()
+        #expect(try step("A") == false)
+        #expect(try step("B") == false)
+        #expect(try step("B", deliver: false) == true, "\(label)")
+        #expect(try step("B") == true, "\(label)")
+        #expect(try step("B") == false, "\(label)")
+
+        // No reading never becomes the first one: a check that fails, or is killed (on a Mac, its
+        // status was the one of a check that worked).
+        try reset()
+        #expect(try step("", 1) == false)
+        #expect(read(watch.appending(path: "last")) == nil, "\(label)")
+        try write("printf partial; kill -9 $$", watch.appending(path: "check"))
+        #expect(try step("") == false)
+        #expect(read(watch.appending(path: "last")) == nil, "killed, \(label)")
+        try write(reads, watch.appending(path: "check"))
+        #expect(try step("A") == false)
+        #expect(read(watch.appending(path: "last")) != nil, "\(label)")
+
+        // A second look from an older kuvo-wake (it kept the output's sum) is a first one now.
+        try write("123456789 1", watch.appending(path: "seen"))
+        #expect(try step("B") == false, "\(label)")
+        #expect(try step("B") == true, "\(label)")
     }
 
     /// The script's next time for a repeat (as a wake-up's name has it), from its own functions, at `now`.
