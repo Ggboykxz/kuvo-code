@@ -4,7 +4,7 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
-## Unreleased
+## 0.5.10
 
 - A reply's preview in the sidebar, and in notifications, keeps what it quotes as written: a path or a `snake_case` name lost its underscores, and "C#" or "a > b" lost their marks. Only Markdown's own marks are taken off.
 - After a model error, Try Again stays when you pick another model or mode for the retry; the "Switched to…" line hid it, so there was no way forward.
