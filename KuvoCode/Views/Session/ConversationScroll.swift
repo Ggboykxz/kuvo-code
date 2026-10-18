@@ -370,9 +370,31 @@ final class ScrollAnchor {
         didSet {
             #if DEBUG
             if scrollView !== oldValue, scrollView != nil { Self.latest = self }
+            if scrollView !== oldValue, let clip = scrollView?.contentView, let file = Self.boundsLog {
+                // KUVO_PERF_BOUNDS=<file>: each move of the view, and what moved it.
+                clip.postsBoundsChangedNotifications = true
+                var last = clip.bounds.origin.y
+                boundsWatch = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: clip, queue: nil) { [weak clip] _ in
+                    MainActor.assumeIsolated {
+                        guard let clip else { return }
+                        let now = clip.bounds.origin.y
+                        guard abs(now - last) > 0.5 else { return }
+                        let callers = Thread.callStackSymbols.dropFirst(9).prefix(8).map { line in
+                            line.split(separator: " ", omittingEmptySubsequences: true).dropFirst(3).dropLast(2).joined(separator: " ")
+                        }.joined(separator: " < ")
+                        let line = "\(String(format: "%.3f", CACurrentMediaTime())) \(Int(last))→\(Int(now)) doc \(Int(clip.documentView?.frame.height ?? 0)) | \(callers)\n"
+                        last = now
+                        if let handle = FileHandle(forWritingAtPath: file) { handle.seekToEndOfFile(); handle.write(Data(line.utf8)); try? handle.close() } else { FileManager.default.createFile(atPath: file, contents: Data(line.utf8)) }
+                    }
+                }
+            }
             #endif
         }
     }
+    #if DEBUG
+    private static let boundsLog = ProcessInfo.processInfo.environment["KUVO_PERF_BOUNDS"]
+    private var boundsWatch: NSObjectProtocol?
+    #endif
     var isFollowingEnd = true
     /// The rows laid out, where they are in the conversation, and those shown now. A row that
     /// goes and comes back where it was (the whole conversation hidden a moment) isn't told its
@@ -381,6 +403,8 @@ final class ScrollAnchor {
     private var shown: Set<String> = []
     /// The row kept in place, and where it was.
     private var anchor: (id: String, minY: CGFloat)?
+    /// Where this last put the view, to keep a row in place.
+    private var placed: CGFloat?
 
     #if DEBUG
     /// What it did lately, the one in use, and where its rows are, for the scrolling test.
@@ -412,17 +436,43 @@ final class ScrollAnchor {
         guard Self.isOn, let anchor, anchor.id == id else { return }
         let shift = frame.minY - anchor.minY
         self.anchor?.minY = frame.minY
-        if let heldUntil, heldUntil > .now { return }
-        guard abs(shift) > 0.5, !isFollowingEnd, let scrollView else { return }
+        if let heldUntil, heldUntil > .now {
+            #if DEBUG
+            if abs(shift) > 0.5 { Self.note("\(id) moved \(Int(shift)), held") }
+            #endif
+            return
+        }
+        guard abs(shift) > 0.5, !isFollowingEnd, let scrollView else {
+            #if DEBUG
+            if abs(shift) > 0.5 { Self.note("\(id) moved \(Int(shift)), following the end") }
+            #endif
+            return
+        }
         let clip = scrollView.contentView
         let origin = clip.bounds.origin.y
-        // Not while it bounces at an edge.
-        guard origin >= 0, origin <= (scrollView.documentView?.frame.height ?? 0) - clip.bounds.height else { return }
+        // Not while it bounces at an edge. Past the end AppKit knows of where this put it a moment
+        // ago is no bounce: the conversation grew in this same pass (earlier messages came in above),
+        // and AppKit hears of it after.
+        guard origin >= 0, origin <= (scrollView.documentView?.frame.height ?? 0) - clip.bounds.height
+                || placed.map({ abs($0 - origin) < 0.5 }) == true else {
+            #if DEBUG
+            Self.note("\(id) moved \(Int(shift)), at an edge: view at \(Int(origin)) of \(Int(scrollView.documentView?.frame.height ?? 0))")
+            #endif
+            return
+        }
         // Never above the conversation's start: rows above that turn out shorter than guessed
         // would take it there, and it would bounce back.
         let target = max(0, origin + shift)
         clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: target))
         scrollView.reflectScrolledClipView(clip)
+        placed = clip.bounds.origin.y
+        // SwiftUI's scroll view, told again once its update is over: told only during it, it
+        // keeps where it last knew the view to be, and puts the view back there the next time
+        // the conversation's size changes (earlier messages coming in above).
+        DispatchQueue.main.async { [weak clip] in
+            guard let clip else { return }
+            NotificationCenter.default.post(name: NSView.boundsDidChangeNotification, object: clip)
+        }
         // Further down than the conversation reaches yet (it grows in this same pass): the rest
         // once it has.
         let short = target - clip.bounds.origin.y
@@ -445,13 +495,22 @@ final class ScrollAnchor {
 
     func rowGone(_ id: String) {
         shown.remove(id)
-        if anchor?.id == id { anchor = nil }
+        if anchor?.id == id {
+            anchor = nil
+            #if DEBUG
+            Self.note("anchor \(id) gone")
+            #endif
+        }
     }
 
     /// The view scrolled: the first row that starts in it is the one to keep in place (or, with
-    /// none, the one across it).
+    /// none, the one across it). The one kept stays while any of it is in view: rows move several
+    /// times in one pass (earlier messages coming in above), and another, whose place isn't told
+    /// yet, would be moved for again. Where the view is comes from AppKit, as SwiftUI tells it a
+    /// moment late, from before this moved it.
     func viewMoved(offset: CGFloat, height: CGFloat) {
-        if let anchor, let frame = frames[anchor.id], frame.minY >= offset, frame.minY < offset + height { return }
+        let offset = scrollView?.contentView.bounds.origin.y ?? offset
+        if let anchor, shown.contains(anchor.id), let frame = frames[anchor.id], frame.maxY > offset, frame.minY < offset + height { return }
         let rows = frames.filter { shown.contains($0.key) }
         let first = rows.filter { $0.value.minY >= offset && $0.value.minY < offset + height }.min { $0.value.minY < $1.value.minY }
             ?? rows.filter { $0.value.maxY > offset && $0.value.minY < offset + height }.min { $0.value.minY < $1.value.minY }
