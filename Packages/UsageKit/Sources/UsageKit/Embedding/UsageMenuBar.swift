@@ -25,6 +25,13 @@ public final class UsageMenuBar {
         started = true
         openHost = openHostApp
         AppLog.bootstrap()
+        // Snapshots refreshed during a pass are saved together at its end; save what's pending when
+        // the host quits mid-pass (upstream does this in its app delegate's `applicationWillTerminate`).
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { UsageMenuBar.shared.container?.dataStore.flushPendingSnapshotWork() }
+        }
 
         // The host's settings domain is never empty, so a missing schema stamp is what marks a first
         // run. Stamp it directly: the migrations convert old OpenUsage installs and must not run here.
