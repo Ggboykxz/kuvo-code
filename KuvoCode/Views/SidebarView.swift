@@ -330,22 +330,35 @@ struct SidebarView: View {
     }
 
     private func archive(_ session: Session, removingWorktree: Bool) {
+        let discarding = worktreeIsDirty
         Task {
-            if removingWorktree { await removeWorktree(of: session) }
+            // A worktree that stays keeps its session in the list too.
+            if removingWorktree, !(await removeWorktree(of: session, discarding: discarding)) { return }
             await workspace.setArchived(session.id, true)
         }
     }
 
     private func delete(_ session: Session, removingWorktree: Bool) {
         if selection == session.id { selection = nil }
+        let discarding = worktreeIsDirty
         Task {
-            if removingWorktree { await removeWorktree(of: session) }
+            // Deleted either way, as you asked; a worktree that stays shows in Settings › Worktrees.
+            if removingWorktree { await removeWorktree(of: session, discarding: discarding) }
             await workspace.delete(session.id)
         }
     }
 
-    private func removeWorktree(of session: Session) async {
-        do { try await workspace.removeWorktree(session.location.directory) } catch { Modal.show(error) }
+    /// Whether it went; why not, if not, in an alert. `discarding`: you were told its changes that
+    /// aren't committed go.
+    @discardableResult
+    private func removeWorktree(of session: Session, discarding: Bool) async -> Bool {
+        do {
+            try await workspace.removeWorktree(session.location.directory, discardingChanges: discarding)
+            return true
+        } catch {
+            Modal.show(error)
+            return false
+        }
     }
 
     // MARK: Projects

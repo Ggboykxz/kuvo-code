@@ -574,10 +574,18 @@ final class Workspace {
         return sessions.contains { $0.id != id && !Self.isArchived($0) && worktrees[$0.location.directory]?.root == root }
     }
 
-    /// Removes a worktree's folder, changes that aren't committed too. Its branch stays with its
-    /// commits, unless it's merged already.
-    func removeWorktree(_ directory: String) async throws {
+    /// Removes a worktree's folder, and changes that aren't committed with it when
+    /// `discardingChanges` (you were told they go); without, one that has some stays. Its branch
+    /// stays with its commits, unless it's merged already. Never while an agent works in it.
+    func removeWorktree(_ directory: String, discardingChanges: Bool = true) async throws {
         guard let api = api(forFolder: directory), let tree = worktrees[directory] else { return }
+        // Looked at again now: an agent may have written more since you were asked.
+        if sessions.contains(where: { worktrees[$0.location.directory]?.root == tree.root && models[$0.id]?.isRunning == true }) {
+            throw GitFailure(message: "An agent is still working in the worktree of \(tree.branch), so it stays. Stop it first, then remove the worktree.")
+        }
+        if !discardingChanges, await Task.detached(operation: { Git.hasUncommittedChanges(in: tree.root) }).value {
+            throw GitFailure(message: "The worktree of \(tree.branch) has changes that aren’t committed, so it stays. Commit them, or remove it in Settings › Worktrees, which throws them away.")
+        }
         let project = try await api.location(directory: tree.project).project
         try await api.removeWorktree(project: project.id, directory: tree.root, force: true)
         // Git deletes only a branch that's merged.

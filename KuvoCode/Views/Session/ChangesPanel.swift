@@ -419,7 +419,8 @@ private struct BranchMenu: View {
                 // Its work is in the project now: nothing in the worktree is lost.
                 Button("Archive Session and Remove Worktree") {
                     Task {
-                        do { try await workspace.removeWorktree(directory) } catch { Modal.show(error) }
+                        // Only what's committed was merged: changes made since keep the worktree, and the session with it.
+                        do { try await workspace.removeWorktree(directory, discardingChanges: false) } catch { return Modal.show(error) }
                         await workspace.setArchived(model.id, true)
                     }
                 }
