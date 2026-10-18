@@ -86,7 +86,17 @@ struct PermissionCard: View {
 
     private var alwaysHelp: String {
         let patterns = request.save ?? request.resources
-        return patterns.isEmpty ? "Don't ask again for this in this project" : "Don't ask again for: " + patterns.joined(separator: ", ")
+        guard !patterns.isEmpty, patterns != ["*"] else {
+            // Everything of its kind, which "*" doesn't say.
+            let kind = switch request.action {
+            case "edit", "patch", "write": "changes to any file"
+            case "shell": "any command"
+            case "webfetch": "any address"
+            default: "this"
+            }
+            return "Don't ask again for \(kind) in this project"
+        }
+        return "Don't ask again for: " + patterns.joined(separator: ", ")
     }
 
     private func relative(_ path: String) -> String {
