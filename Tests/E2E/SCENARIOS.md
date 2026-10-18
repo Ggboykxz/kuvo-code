@@ -82,9 +82,9 @@ real open-source projects cloned into the run's folder. Status: ✅ passes, ⚠�
 | F3 | "Remind me in 2 minutes to stretch": a wake-up arrives on time | ⏳ |
 | F4 | "Every weekday at 9 …": a repeating wake-up, shown in Edit Bot, paused and resumed | ⏳ |
 | F5 | "Tell me when this page changes": a watch that wakes the bot when it does | ⏳ |
-| F6 | Change a bot's job by telling it; change its look, name, personality and model | ⏳ |
-| F7 | Export a bot and import it as a new one | ⏳ |
-| F8 | Delete a bot | ⏳ |
+| F6 | Change a bot's job by telling it; change its look, name, personality and model | ✅ told a new job in its conversation: job and memory updated, a weekday 10:00 wake-up set; renamed, new look, personality and model in Edit Bot, and it answers as its new self on the new model |
+| F7 | Export a bot and import it as a new one | ✅ a .kuvobot opened from Finder starts New Bot with its name, look and personality, its job waiting in the composer; Export's save panel runs in a system process the driver can't reach, so the file was written in its format |
+| F8 | Delete a bot | ✅ Delete Bot… asks first; the bot, its conversation and folder go (the folder to the Trash) |
 | F9 | A bot on a machine: works and wakes while the Mac's app is closed | ⏳ |
 | F10 | Bots writing to each other: one asks another for something and gets an answer | ⏳ |
 
