@@ -4,6 +4,8 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
+## Unreleased
+
 ## 0.5.13
 
 - With VoiceOver, the side panel's tabs can be picked and closed. They read as text and an icon, with nothing to press.
