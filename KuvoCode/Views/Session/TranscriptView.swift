@@ -869,6 +869,7 @@ private struct MarkdownPiece: View, Equatable {
             // Closer to the text than the GitHub style, so they win: code blocks, and, with Find's
             // marks, inline code without its own background (the marks give it one).
             .textual.codeBlockStyle(CopyableCodeBlockStyle())
+            .textual.listItemStyle(.firstLine)
             .textual.inlineStyle(highlight == nil ? .gitHub : .findMarks)
             .textual.highlighterTheme(CodeColors.theme)
             .textual.structuredTextStyle(.gitHub)
