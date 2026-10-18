@@ -90,13 +90,15 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
 
 ## A staged path
 
-- **Stage 0 (this change).** Engine bootstrap for Windows, the link bridge's
-  Windows edges, tests and a Windows CI job. No interface.
-- **Stage 1.** A minimal client around the bootstrap: sessions, prompts,
-  streaming, file changes — the core loop, in whichever toolkit Stage 0's host
-  chooses.
+- **Stage 0.** Engine bootstrap for Windows, the link bridge's Windows edges,
+  tests and a Windows CI job. No interface.
+- **Stage 1 (this change).** A minimal client around the bootstrap: `windows/harness/`
+  — sessions, prompts, streaming, permission asks, folded from the engine's events
+  by the same rules the Mac app's Transcript uses. Its view is plain HTML/JS so the
+  core loop is exercisable everywhere, not only on Windows; a native toolkit (the
+  Stage 2 question) replaces the page, not the client under it.
 - **Stage 2.** Panel parity: files, terminal (ConPTY), browser (WebView2), the
-  changes/review flow.
+  changes/review flow — and the native shell for Stage 1's client.
 - **Stage 3.** The rest: usage tray, notifications, machines over SSH, phone
   link, packaging, update feed, signing.
 

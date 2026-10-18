@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kuvo Code</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">Kuvo&nbsp;Code</div>
+  <button id="project" class="path" title="Change the project folder"></button>
+  <div class="spacer"></div>
+  <div id="engine" class="engine" title="The engine on this machine"></div>
+</header>
+
+<main>
+  <aside>
+    <div class="aside-head">
+      <span>Sessions</span>
+      <button id="new-session" class="small">New</button>
+    </div>
+    <ul id="sessions"></ul>
+    <div id="sessions-empty" class="aside-empty">No sessions yet.</div>
+  </aside>
+
+  <section id="conversation">
+    <div id="empty" class="empty">
+      <h1>Start with a folder</h1>
+      <p>Pick the project to work in, then say what you want done. The agent reads, edits and runs things in that folder, asking first.</p>
+      <button id="choose" class="primary">Choose a folder</button>
+      <button id="start" class="primary" hidden>Start a session</button>
+    </div>
+    <div id="entries" class="entries"></div>
+    <div id="asks" class="asks"></div>
+    <form id="composer" class="composer" hidden>
+      <textarea id="prompt" rows="3" placeholder="Ask for something…  (Enter sends, Shift+Enter for a new line)"></textarea>
+      <div class="composer-foot">
+        <select id="model" title="Model"></select>
+        <div class="spacer"></div>
+        <button id="stop" type="button" class="small" hidden>Stop</button>
+        <button id="send" class="primary" type="submit">Send</button>
+      </div>
+    </form>
+  </section>
+</main>
+
+<div id="picker" class="picker" hidden>
+  <div class="picker-card">
+    <div class="picker-head">
+      <strong>Project folder</strong>
+      <button id="picker-close" class="small">✕</button>
+    </div>
+    <div class="picker-row">
+      <button id="picker-up" class="small" title="Up">↑</button>
+      <input id="picker-path" spellcheck="false">
+      <button id="picker-go" class="small">Go</button>
+    </div>
+    <ul id="picker-folders"></ul>
+    <div class="picker-foot">
+      <span id="picker-note" class="note"></span>
+      <button id="picker-use" class="primary">Use this folder</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="/app.js"></script>
+</body>
+</html>

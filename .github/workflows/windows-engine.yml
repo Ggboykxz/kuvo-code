@@ -31,6 +31,9 @@ jobs:
       - name: Test the engine bootstrap
         run: node --test "windows/*.test.mjs"
 
+      - name: Test the conversation view's client, transcript and server
+        run: node --test "windows/harness/harness.test.mjs"
+
       - name: Test the link bridge
         run: node --test "Packages/KuvoLink/Tests/Bridge/*.test.js"
 
@@ -49,6 +52,9 @@ jobs:
       - name: Test the engine bootstrap
         run: node --test "windows/*.test.mjs"
 
+      - name: Test the conversation view's client, transcript and server
+        run: node --test "windows/harness/harness.test.mjs"
+
       - name: Test the link bridge
         run: node --test "Packages/KuvoLink/Tests/Bridge/*.test.js"
 
@@ -56,3 +62,14 @@ jobs:
       # asks it for its info: the same road a client takes, on the platform it ships to.
       - name: Install and run the pinned engine
         run: node windows/kuvo-engine.mjs e2e
+
+      # And the whole loop the page takes, on the engine that step installed: a session, a
+      # prompt, the answer streaming in, and the page's own code in a DOM reading it back.
+      # The engine answers it with one of its public free models, so this needs no account.
+      - name: The live loop, and the page against the real engine
+        env:
+          KUVO_HARNESS_LIVE: "1"
+        working-directory: windows/harness
+        run: |
+          npm install --no-audit --no-fund
+          npm run test:live

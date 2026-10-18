@@ -1,0 +1,469 @@
+// The harness on whatever machine runs the tests: the engine client (against a registry of
+// one engine), the transcript reducer (against recorded events), and the server in front
+// (against the same fake engine). Run with:
+//   node --test "windows/harness/harness.test.mjs"
+
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import http from "node:http";
+import os from "node:os";
+import path from "node:path";
+import { after, test } from "node:test";
+import { EngineClient, EngineError, messageID } from "./engine.mjs";
+import { apply, applyAll, emptyTranscript, fromHistory } from "./transcript.mjs";
+import { startHarness } from "./server.mjs";
+
+const home = fs.mkdtempSync(path.join(os.tmpdir(), "kuvo-harness-test-"));
+after(() => fs.rmSync(home, { recursive: true, force: true }));
+
+// ---- A registry of one engine: the routes a conversation view uses ----
+
+const PASSWORD = "hunter2-not-in-json";
+
+async function readAll(request) {
+  let text = "";
+  for await (const chunk of request) text += chunk;
+  return text;
+}
+
+function fakeEngine({ password = PASSWORD, session = null } = {}) {
+  const asked = [];
+  const subscribers = new Set();
+  const engine = {
+    asked,
+    messages: [],
+    permissions: [],
+    events: [],
+    session: session ?? { id: "ses_1", title: "A session", location: { directory: "/tmp/project" }, time: { created: 1, updated: 2 } },
+    sessions: [session ?? { id: "ses_1", title: "A session", location: { directory: "/tmp/project" }, time: { created: 1, updated: 2 } }],
+    push(event) {
+      engine.events.push(event);
+      for (const response of subscribers) response.write(`data: ${JSON.stringify(event)}\n\n`);
+    },
+    close: null,
+  };
+
+  const server = http.createServer(async (request, response) => {
+    const url = new URL(request.url, "http://127.0.0.1");
+    const body = await readAll(request);
+    asked.push({ method: request.method, path: url.pathname, query: url.searchParams, headers: request.headers, body: body === "" ? undefined : JSON.parse(body) });
+    const send = (what, status = 200) => {
+      response.writeHead(status, { "content-type": "application/json" });
+      response.end(JSON.stringify(what));
+    };
+
+    const expected = `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`;
+    if (request.headers.authorization !== expected) return send({ message: "Missing or wrong password." }, 401);
+
+    if (url.pathname === "/api/event") {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.write(": hello\n\n");
+      subscribers.add(response);
+      request.on("close", () => subscribers.delete(response));
+      return;
+    }
+    if (url.pathname === "/api/info") return send({ version: "2.0.32-test" });
+    if (url.pathname === "/api/model") return send({ data: [{ id: "big", providerID: "prov", name: "Big" }] });
+    if (url.pathname === "/api/session/active") return send({ data: {} });
+    if (url.pathname === "/api/session" && request.method === "GET") return send({ data: engine.sessions, cursor: null });
+    if (url.pathname === "/api/session" && request.method === "POST") {
+      const made = { id: "ses_new", title: null, location: body.location, time: { created: 3, updated: 3 } };
+      engine.sessions.unshift(made);
+      return send({ data: made });
+    }
+    if (url.pathname === `/api/session/${engine.session.id}` && request.method === "GET") return send({ data: engine.session });
+    if (url.pathname === `/api/session/${engine.session.id}/message`) return send({ data: engine.messages, cursor: null });
+    if (url.pathname === `/api/session/${engine.session.id}/permission`) return send({ data: engine.permissions });
+    if (url.pathname.endsWith("/prompt")) return send({ ok: true });
+    if (url.pathname.endsWith("/reply")) return send({ ok: true });
+    if (url.pathname.endsWith("/interrupt") || url.pathname.endsWith("/model") || url.pathname.endsWith("/move")) return send({ ok: true });
+    if (url.pathname.startsWith(`/api/session/${engine.session.id}`) && request.method === "DELETE") return send({ ok: true });
+    return send({ message: `No route ${request.method} ${url.pathname}` }, 404);
+  });
+  engine.close = () => new Promise(resolve => { for (const r of subscribers) r.end(); server.close(resolve); });
+  return new Promise(resolve => server.listen(0, "127.0.0.1", () => {
+    engine.url = `http://127.0.0.1:${server.address().port}/`;
+    resolve(engine);
+  }));
+}
+
+// ---- The engine client ----
+
+test("the client talks to the engine the Mac app's way: auth, folder scoping, routes", async t => {
+  const engine = await fakeEngine();
+  t.after(engine.close);
+  const client = new EngineClient({ url: engine.url, password: PASSWORD });
+
+  assert.equal((await client.info()).version, "2.0.32-test");
+  const sessions = await client.sessions({ directory: "C:\\work\\app" });
+  assert.equal(sessions.length, 1);
+  const listed = engine.asked.at(-1);
+  assert.equal(String(listed.query.get("directory")), "C:\\work\\app");
+  assert.equal(String(listed.query.get("parentID")), "null");
+
+  const made = await client.createSession({ directory: "C:\\work\\app", title: "Fix the tests" });
+  assert.equal(made.id, "ses_new");
+  assert.deepEqual(engine.asked.at(-1).body, { location: { directory: "C:\\work\\app" }, title: "Fix the tests" });
+
+  const id = await client.prompt({ session: "ses_1", text: "hello" });
+  assert.match(id, /^msg_[0-9A-Za-z]{10}$/);
+  const prompted = engine.asked.at(-1);
+  assert.equal(prompted.path, "/api/session/ses_1/prompt");
+  assert.deepEqual(prompted.body, { id, text: "hello", delivery: "steer" });
+
+  await client.replyPermission({ session: "ses_1", permission: "perm_1", decision: "always" });
+  assert.deepEqual(engine.asked.at(-1).body, { decision: "always" });
+  assert.equal(engine.asked.at(-1).headers.authorization, `Basic ${Buffer.from(`opencode:${PASSWORD}`).toString("base64")}`);
+});
+
+test("a refusal arrives as an EngineError with what the engine said", async t => {
+  const engine = await fakeEngine();
+  t.after(engine.close);
+  const wrong = new EngineClient({ url: engine.url, password: "not-the-password" });
+  await assert.rejects(wrong.sessions({ directory: "/x" }), error => {
+    assert.ok(error instanceof EngineError);
+    assert.equal(error.status, 401);
+    assert.match(error.message, /password/);
+    return true;
+  });
+});
+
+test("events arrive parsed, across the chunk boundaries a stream makes", async t => {
+  const frames = [
+    "data: {\"type\":\"session.text.delta\",\"data\":{\"delta\":\"he\"}}\n\n",
+    "data: {\"type\":\"session.text.de",
+    "lta\",\"data\":{\"delta\":\"llo\"}}\n\n",
+    ": keep-alive\n\n",
+    "data: {\"type\":\"session.text.ended\",\"data\":\ndata: {\"text\":\"hello\"}}\n\n",
+  ];
+  const server = http.createServer((request, response) => {
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    let index = 0;
+    const drip = setInterval(() => {
+      if (index >= frames.length) return clearInterval(drip);
+      response.write(frames[index++]);
+    }, 5);
+    request.on("close", () => clearInterval(drip));
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+
+  const client = new EngineClient({ url: `http://127.0.0.1:${server.address().port}/`, password: PASSWORD });
+  const controller = new AbortController();
+  const events = [];
+  for await (const event of client.events(controller.signal)) {
+    events.push(event);
+    if (events.length === 3) break;
+  }
+  controller.abort();
+  assert.deepEqual(events[0], { type: "session.text.delta", data: { delta: "he" } });
+  assert.deepEqual(events[1], { type: "session.text.delta", data: { delta: "llo" } });
+  assert.deepEqual(events[2], { type: "session.text.ended", data: { text: "hello" } });
+});
+
+test("message ids look like the Mac app's and don't repeat", () => {
+  const ids = new Set();
+  for (let index = 0; index < 500; index += 1) ids.add(messageID());
+  assert.equal(ids.size, 500);
+  for (const id of ids) assert.match(id, /^msg_[0-9A-Za-z]{10}$/);
+});
+
+// ---- The transcript ----
+
+const event = (type, data, id) => ({ id: id ?? `evt_${type}`, type, created: 10, data: { sessionID: "ses_1", ...data } });
+
+test("a whole turn: text, a tool, a permission asked and answered, the user's words", () => {
+  const transcript = emptyTranscript("ses_1");
+  applyAll(transcript, [
+    event("session.execution.started", {}),
+    event("session.step.started", { assistantMessageID: "msg_a1", agent: "build", model: { id: "big", providerID: "prov" }, started: 1 }),
+    event("session.text.started", { assistantMessageID: "msg_a1", ordinal: 0 }),
+    event("session.text.delta", { assistantMessageID: "msg_a1", ordinal: 0, delta: "Hello " }),
+    event("session.text.delta", { assistantMessageID: "msg_a1", ordinal: 0, delta: "world" }),
+    event("session.text.ended", { assistantMessageID: "msg_a1", ordinal: 0, text: "Hello world" }),
+    event("session.tool.input.started", { assistantMessageID: "msg_a1", id: "call_1", name: "bash" }),
+    event("session.tool.called", { assistantMessageID: "msg_a1", id: "call_1", input: { command: "ls" } }),
+    event("permission.asked", { id: "perm_1", action: "shell", resources: ["ls"], message: "Wants to run ls" }),
+    event("session.tool.success", { assistantMessageID: "msg_a1", id: "call_1", content: [{ type: "text", text: "a.txt" }] }),
+    event("permission.replied", { requestID: "perm_1" }),
+    event("session.inbox.enqueued", { inboxID: "msg_u1", item: { type: "user", payload: { text: "list the files" }, delivery: "steer" } }),
+    event("session.inbox.delivered", { inboxID: "msg_u1" }),
+    event("session.execution.succeeded", { reason: "completed" }),
+  ]);
+
+  assert.equal(transcript.running, false);
+  assert.deepEqual(transcript.permissions, []);
+  assert.deepEqual(transcript.pending, []);
+
+  const assistant = transcript.entries.find(entry => entry.kind === "assistant");
+  assert.equal(assistant.agent, "build");
+  const [text, tool] = assistant.parts;
+  assert.deepEqual(text, { type: "text", ordinal: 0, text: "Hello world", done: true });
+  assert.equal(tool.name, "bash");
+  assert.equal(tool.status, "completed");
+  assert.deepEqual(tool.input, { command: "ls" });
+  assert.deepEqual(tool.output, [{ type: "text", text: "a.txt" }]);
+
+  const user = transcript.entries.find(entry => entry.kind === "user");
+  assert.equal(user.text, "list the files");
+  const idle = transcript.entries.find(entry => entry.kind === "idle");
+  assert.equal(idle.outcome, "succeeded");
+
+  // An event for another session changes nothing.
+  const before = JSON.stringify(transcript);
+  apply(transcript, { type: "session.text.delta", data: { sessionID: "ses_other", assistantMessageID: "msg_a1", delta: "!!!" } });
+  assert.equal(JSON.stringify(transcript), before);
+});
+
+test("a running turn is running, a failed one says why, a shutdown says nothing", () => {
+  const transcript = emptyTranscript("ses_1");
+  apply(transcript, event("session.execution.started", {}));
+  assert.equal(transcript.running, true);
+  apply(transcript, event("session.execution.failed", { error: { message: "no provider" } }));
+  assert.equal(transcript.running, false);
+  assert.equal(transcript.entries.at(-1).outcome, "failed");
+  assert.equal(transcript.entries.at(-1).error.message, "no provider");
+  apply(transcript, event("session.execution.interrupted", { reason: "shutdown" }));
+  assert.equal(transcript.entries.at(-1).outcome, "failed", "a shutdown adds no ending");
+});
+
+test("a permission shows until it's answered, a delta with no start still shows its words", () => {
+  const transcript = emptyTranscript("ses_1");
+  apply(transcript, event("permission.asked", { id: "perm_2", action: "edit", resources: ["a.txt"] }));
+  assert.equal(transcript.permissions.length, 1);
+  apply(transcript, { type: "session.text.delta", data: { sessionID: "ses_1", assistantMessageID: "msg_a2", ordinal: 0, delta: "late words" } });
+  const assistant = transcript.entries.find(entry => entry.kind === "assistant");
+  assert.equal(assistant.parts[0].text, "late words");
+  apply(transcript, event("permission.replied", { requestID: "perm_2" }));
+  assert.deepEqual(transcript.permissions, []);
+});
+
+test("a shell the engine ran: started, then ended with what it printed", () => {
+  const transcript = emptyTranscript("ses_1");
+  applyAll(transcript, [
+    event("session.shell.started", { shell: { id: "sh_1", command: "npm test", status: "running" } }),
+    event("session.shell.ended", { shell: { id: "sh_1", command: "npm test", status: "exited", exit: 1 }, output: { output: "1 test failed\n", truncated: false } }),
+  ]);
+  assert.equal(transcript.entries.length, 1);
+  const [shell] = transcript.entries;
+  assert.deepEqual(shell, { kind: "shell", id: "shell_sh_1", created: 10, command: "npm test", status: "exited", exit: 1, output: "1 test failed\n" });
+  // As the engine stores one.
+  const stored = fromHistory("ses_1", [{
+    type: "shell", id: "msg_sh1", time: { created: 5 }, shellID: "sh_1", command: "npm test", status: "exited", exit: 1,
+    output: { output: "1 test failed\n", truncated: false },
+  }]);
+  assert.equal(stored.entries[0].output, "1 test failed\n");
+  assert.equal(stored.entries[0].exit, 1);
+});
+
+test("tool input streams in, a late called doesn't undo a result, a retry shows and clears", () => {
+  const transcript = emptyTranscript("ses_1");
+  applyAll(transcript, [
+    event("session.tool.input.started", { assistantMessageID: "msg_a1", id: "call_1", name: "edit" }),
+    event("session.tool.input.delta", { assistantMessageID: "msg_a1", id: "call_1", delta: "{\"file\":" }),
+    event("session.tool.input.delta", { assistantMessageID: "msg_a1", id: "call_1", delta: "\"a.txt\"}" }),
+  ]);
+  assert.equal(transcript.running, true, "tool input means work");
+  const [part] = transcript.entries[0].parts;
+  assert.equal(part.status, "streaming");
+  assert.equal(part.inputText, "{\"file\":\"a.txt\"}");
+
+  // What a read gave as finished stays finished when the older event arrives late.
+  applyAll(transcript, [
+    event("session.tool.called", { assistantMessageID: "msg_a1", id: "call_1", input: { file: "a.txt" } }),
+    event("session.tool.success", { assistantMessageID: "msg_a1", id: "call_1", content: "wrote a.txt" }),
+    event("session.tool.called", { assistantMessageID: "msg_a1", id: "call_1", input: { file: "b.txt" } }),
+    event("session.tool.failed", { assistantMessageID: "msg_a1", id: "call_1", error: { message: "nope" } }),
+  ]);
+  assert.equal(part.status, "completed");
+  assert.equal(part.output, "wrote a.txt");
+  assert.equal(part.error, undefined);
+
+  // A retry is shown while it waits, and goes away when the next step starts.
+  applyAll(transcript, [
+    event("session.step.failed", { assistantMessageID: "msg_a1", error: { message: "rate limited" } }),
+    event("session.retry.scheduled", { assistantMessageID: "msg_a1", attempt: 2, at: 20, error: { message: "rate limited" } }),
+  ]);
+  const assistant = transcript.entries[0];
+  assert.deepEqual(assistant.retry, { attempt: 2, at: 20 });
+  assert.equal(assistant.error.message, "rate limited");
+  apply(transcript, event("session.step.started", { assistantMessageID: "msg_a1" }));
+  assert.equal(assistant.retry, undefined);
+  assert.equal(assistant.error, undefined);
+
+  // A queued item says so until the engine delivers it.
+  applyAll(transcript, [
+    event("session.inbox.enqueued", { inboxID: "msg_u1", item: { type: "user", payload: { text: "and then" }, delivery: "steer" } }),
+    event("session.inbox.delivery.changed", { inboxID: "msg_u1", delivery: "queue" }),
+  ]);
+  assert.equal(transcript.pending[0].delivery, "queue");
+});
+
+test("what the engine stored reads back the same", () => {
+  const messages = [
+    { type: "user", id: "msg_u1", time: { created: 1 }, text: "do the thing" },
+    {
+      type: "assistant", id: "msg_a1", time: { created: 2, completed: 9 }, agent: "build", model: { id: "big", providerID: "prov" },
+      content: [
+        { type: "reasoning", text: "thinking about it", time: { created: 2, completed: 3 } },
+        { type: "text", text: "Done.", time: { created: 3, completed: 4 } },
+        { type: "tool", id: "call_1", name: "edit", state: { status: "completed", input: { file: "a.txt" }, content: [{ type: "text", text: "ok" }] } },
+      ],
+      cost: 0.01,
+    },
+    { type: "idle", id: "msg_i1", time: { created: 9 }, outcome: "succeeded" },
+  ];
+  const pending = [{ id: "perm_1", sessionID: "ses_1", action: "shell", resources: [] }, { id: "perm_x", sessionID: "ses_other", action: "shell", resources: [] }];
+  const transcript = fromHistory("ses_1", messages, pending, false);
+
+  assert.deepEqual(transcript.entries.map(entry => entry.kind), ["user", "assistant", "idle"]);
+  const assistant = transcript.entries[1];
+  assert.deepEqual(assistant.parts.map(part => part.type === "tool" ? `${part.type}:${part.status}` : part.type), ["reasoning", "text", "tool:completed"]);
+  assert.equal(transcript.permissions.length, 1, "another session's asks aren't shown");
+});
+
+// ---- The server in front ----
+
+async function inFront(engine) {
+  const harness = startHarness({
+    project: null,
+    port: 0,
+    clientFor: async () => ({
+      client: new EngineClient({ url: engine.url, password: PASSWORD }),
+      version: "2.0.32-test",
+      stop: async () => {},
+    }),
+    log: () => {},
+  });
+  return { harness, url: await harness.url() };
+}
+
+test("the server keeps the engine's password to itself, and answers the page", async t => {
+  const engine = await fakeEngine();
+  t.after(engine.close);
+  const { harness, url } = await inFront(engine);
+  t.after(() => harness.close());
+
+  const stopped = await (await fetch(`${url}api/state`)).json();
+  assert.equal(stopped.project, null);
+  assert.equal(stopped.engine.status, "stopped");
+
+  const project = path.join(home, "project");
+  fs.mkdirSync(path.join(project, "src"), { recursive: true });
+  const chosen = await (await fetch(`${url}api/project`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ directory: project }) })).json();
+  assert.equal(chosen.project, path.resolve(project));
+
+  const browsed = await (await fetch(`${url}api/browse?path=${encodeURIComponent(project)}`)).json();
+  assert.deepEqual(browsed.folders.map(child => child.name), ["src"]);
+  assert.equal(browsed.folders[0].path, path.join(path.resolve(project), "src"));
+  assert.equal(browsed.parent, path.dirname(path.resolve(project)));
+
+  const made = await (await fetch(`${url}api/sessions`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).json();
+  assert.equal(made.session.id, "ses_new");
+  assert.equal(engine.asked.at(-1).body.location.directory, path.resolve(project), "the session is made in the chosen folder");
+
+  const started = await (await fetch(`${url}api/state`)).json();
+  assert.equal(started.engine.status, "running", "the first call that needs it starts the engine");
+  assert.equal(started.engine.version, "2.0.32-test");
+
+  const listed = await (await fetch(`${url}api/sessions?directory=${encodeURIComponent(project)}`)).json();
+  assert.equal(listed.sessions.length, 2, "the made session joined the listed ones");
+  assert.equal(listed.sessions[0].id, "ses_new");
+  assert.ok(!JSON.stringify(started).includes(PASSWORD), "the page never sees the password");
+  assert.ok(!JSON.stringify(listed).includes(PASSWORD));
+});
+
+test("a prompt from the page reaches the engine; an empty one doesn't", async t => {
+  const engine = await fakeEngine();
+  t.after(engine.close);
+  const { harness, url } = await inFront(engine);
+  t.after(() => harness.close());
+  const send = body => fetch(`${url}api/sessions/ses_1/prompt`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+  const empty = await send({ text: "   " });
+  assert.equal(empty.status, 400);
+
+  const { id } = await (await send({ text: "hello there" })).json();
+  assert.match(id, /^msg_/);
+  assert.deepEqual(engine.asked.at(-1).body, { id, text: "hello there", delivery: "steer" });
+
+  const queued = await (await send({ text: "and this", delivery: "queue" })).json();
+  assert.equal(engine.asked.at(-1).body.delivery, "queue");
+  assert.notEqual(queued.id, id);
+});
+
+test("permission answers and the session's history cross the server", async t => {
+  const engine = await fakeEngine();
+  engine.messages = [{ type: "user", id: "msg_u1", time: { created: 1 }, text: "hi" }];
+  engine.permissions = [{ id: "perm_1", sessionID: "ses_1", action: "edit", resources: ["a.txt"] }];
+  t.after(engine.close);
+  const { harness, url } = await inFront(engine);
+  t.after(() => harness.close());
+
+  const detail = await (await fetch(`${url}api/sessions/ses_1`)).json();
+  assert.equal(detail.messages.length, 1);
+  assert.equal(detail.permissions[0].id, "perm_1");
+  assert.equal(detail.running, false);
+
+  const answered = await fetch(`${url}api/sessions/ses_1/permission/perm_1`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ decision: "once" }) });
+  assert.equal(answered.status, 200);
+  assert.deepEqual(engine.asked.at(-1).body, { decision: "once" });
+});
+
+test("events reach the page as they happen", async t => {
+  const engine = await fakeEngine();
+  t.after(engine.close);
+  const { harness, url } = await inFront(engine);
+  t.after(() => harness.close());
+
+  const controller = new AbortController();
+  const response = await fetch(`${url}api/events`, { signal: controller.signal });
+  assert.equal(response.status, 200);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const received = [];
+  const reading = (async () => {
+    while (received.length < 2) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      for (const line of decoder.decode(value).split("\n")) {
+        if (line.startsWith("data: ")) received.push(JSON.parse(line.slice(6)));
+      }
+    }
+  })();
+  // The page connects before anything happens; give the relay a moment, then speak.
+  await new Promise(resolve => setTimeout(resolve, 100));
+  engine.push(event("session.text.delta", { assistantMessageID: "msg_a1", ordinal: 0, delta: "hi" }, "evt_1"));
+  engine.push(event("session.text.ended", { assistantMessageID: "msg_a1", ordinal: 0, text: "hi" }, "evt_2"));
+  await Promise.race([reading, new Promise(resolve => setTimeout(resolve, 3000))]);
+  controller.abort();
+
+  assert.equal(received.length, 2);
+  assert.equal(received[0].type, "session.text.delta");
+  assert.equal(received[0].data.sessionID, "ses_1");
+});
+
+test("the page and the reducer are served", async t => {
+  const engine = await fakeEngine();
+  t.after(engine.close);
+  const { harness, url } = await inFront(engine);
+  t.after(() => harness.close());
+
+  const page = await fetch(url);
+  assert.equal(page.status, 200);
+  assert.match(await page.text(), /Kuvo&nbsp;Code/);
+  const app = await fetch(`${url}app.js`);
+  assert.match(await app.text(), /transcript\.mjs/);
+  const reducer = await fetch(`${url}transcript.mjs`);
+  assert.match(await reducer.text(), /export function apply/);
+});
+
+test("a project folder that isn't there is refused with a word about it", async t => {
+  const engine = await fakeEngine();
+  t.after(engine.close);
+  const { harness, url } = await inFront(engine);
+  t.after(() => harness.close());
+  const response = await fetch(`${url}api/project`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ directory: path.join(home, "nope") }) });
+  assert.equal(response.status, 400);
+  assert.match((await response.json()).error, /no such folder/i);
+});
