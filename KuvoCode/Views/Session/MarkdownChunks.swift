@@ -29,7 +29,7 @@ nonisolated enum MarkdownChunks {
         var start = text.startIndex
         var gap: CGFloat = 0
         var length = 0
-        var fence: (marker: Character, count: Int)?
+        var fence: Fence?
         var blank = true
         // The block since the last blank line is one a split can come after: paragraphs and
         // headings at the left edge, or a code block (a list's lines needn't be indented).
@@ -54,14 +54,22 @@ nonisolated enum MarkdownChunks {
             let trimmed = line.drop { $0 == " " }
             let indent = line.count - trimmed.count
             if let open = fence {
-                // Closed by the same marker, at least as long.
-                if indent < 4, trimmed.prefix(while: { $0 == open.marker }).count >= open.count,
-                   trimmed.drop(while: { $0 == open.marker }).allSatisfy(\.isWhitespace) {
-                    fence = nil
-                    language = nil
-                    blockIsSafe = true
+                // In its quote, and in its list item: indented as far, or blank.
+                let (depth, indent, words) = quoted(line)
+                if depth >= open.depth, words.isEmpty || indent >= open.column {
+                    // Closed by the same marker, at least as long, less than a code block's
+                    // indentation into its item.
+                    if indent - open.column < 4, words.prefix(while: { $0 == open.marker }).count >= open.count,
+                       words.drop(while: { $0 == open.marker }).allSatisfy(\.isWhitespace) {
+                        fence = nil
+                        language = nil
+                        blockIsSafe = open.depth == 0 && open.column == 0
+                    }
+                    continue
                 }
-                continue
+                // Its list item or quote ended, and the code with it.
+                fence = nil
+                language = nil
             }
             if trimmed.allSatisfy(\.isWhitespace) {
                 blank = true
@@ -84,11 +92,9 @@ nonisolated enum MarkdownChunks {
                 // words, drawn) splits where it did here.
                 counts = false
             }
-            if indent < 4, let marker = trimmed.first, marker == "`" || marker == "~", trimmed.prefix(while: { $0 == marker }).count >= 3 {
-                let count = trimmed.prefix { $0 == marker }.count
-                fence = (marker, count)
-                let info = trimmed.dropFirst(count).drop { $0 == " " }
-                language = info.startIndex..<info.startIndex
+            if let opened = Self.fence(openedBy: line) {
+                fence = opened
+                language = opened.info..<opened.info
                 blockIsSafe = false
                 continue
             }
@@ -128,6 +134,77 @@ nonisolated enum MarkdownChunks {
     static func text(of chunk: Chunk, marking mark: String) -> String {
         guard let writing = chunk.writing else { return chunk.text }
         return String(chunk.text[..<writing.lowerBound]) + mark + String(chunk.text[writing.lowerBound...])
+    }
+
+    /// A code block's fence, as far as splitting goes: its marks, how many, where its language
+    /// is written, how many quotes it's in, and the column its lines are indented to in the list
+    /// item it opened on (0 out of one): left of that, the item ends, and the code with it.
+    struct Fence {
+        var marker: Character
+        var count: Int
+        var info: String.Index
+        var depth: Int
+        var column: Int
+    }
+
+    /// The fence `line` opens, after any quote marks and list markers (`- ```sh`, `1. ~~~`,
+    /// `> ```), as Markdown reads it.
+    private static func fence(openedBy line: Substring) -> Fence? {
+        let (depth, indent, words) = quoted(line)
+        guard indent < 4 else { return nil }
+        var rest = words
+        var column = indent
+        var inItem = false
+        // Items on items ("- 1. ```").
+        while let (width, spaces) = listMarker(rest) {
+            column += width + spaces
+            rest = rest.dropFirst(width + spaces)
+            inItem = true
+        }
+        guard let marker = rest.first, marker == "`" || marker == "~" else { return nil }
+        let count = rest.prefix { $0 == marker }.count
+        guard count >= 3, !(marker == "`" && rest.dropFirst(count).contains("`")) else { return nil }
+        let info = rest.dropFirst(count).drop { $0 == " " }
+        return Fence(marker: marker, count: count, info: info.startIndex, depth: depth, column: inItem ? column : 0)
+    }
+
+    /// A line's quote marks, how far its words are indented after them, and its words.
+    private static func quoted(_ line: Substring) -> (depth: Int, indent: Int, words: Substring) {
+        var rest = line
+        var depth = 0
+        while true {
+            let spaces = rest.prefix { $0 == " " }.count
+            guard spaces < 4, rest.dropFirst(spaces).first == ">" else { break }
+            rest = rest.dropFirst(spaces + 1)
+            if rest.first == " " { rest = rest.dropFirst() }
+            depth += 1
+        }
+        var indent = 0
+        while let first = rest.first, first == " " || first == "\t" {
+            indent = first == "\t" ? indent + 4 - indent % 4 : indent + 1
+            rest = rest.dropFirst()
+        }
+        return (depth, indent, rest)
+    }
+
+    /// A list item's marker at the start of `words` (`-`, `*`, `+`, `1.` or `1)`), and the spaces
+    /// after it before the item's words: none for a marker alone on its line.
+    private static func listMarker(_ words: Substring) -> (width: Int, spaces: Int)? {
+        guard let first = words.first else { return nil }
+        var width = 0
+        if "-*+".contains(first) {
+            width = 1
+        } else {
+            let digits = words.prefix { $0.isASCII && $0.isNumber }.count
+            guard (1...9).contains(digits), let mark = words.dropFirst(digits).first, mark == "." || mark == ")" else { return nil }
+            width = digits + 1
+        }
+        let after = words.dropFirst(width)
+        let spaces = after.prefix { $0 == " " }.count
+        // Words right after the marker aren't an item, and five spaces or more start indented
+        // code in it, not a fence.
+        guard spaces >= 1, spaces <= 4 else { return nil }
+        return (width, spaces)
     }
 
     /// A line that starts a paragraph, a heading or a code block, whatever comes after it.
