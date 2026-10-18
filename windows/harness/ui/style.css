@@ -497,3 +497,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 }
 CSS
 echo "written"
+/* ---- Git branch controls ---- */
+.git-branch-row { display: flex; gap: var(--space-2); align-items: center; }
+.git-branch-select { flex: 1; }

@@ -318,6 +318,50 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
     return json({ ok: true, output });
   }
 
+  // Git: branches, checkout, amend.
+  if (url.pathname === "/api/git/branches" && request.method === "GET") {
+    if (!currentProject) throw new HttpError(400, "No project folder is open.");
+    const { execFileSync } = await import("node:child_process");
+    let output = "";
+    let current = "";
+    try {
+      output = execFileSync("git", ["branch", "--list", "--no-abbrev"], { cwd: currentProject, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+      current = execFileSync("git", ["branch", "--show-current"], { cwd: currentProject, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+    } catch { return json({ repository: false, branches: [], current: "" }); }
+    const branches = output.split("\n").map(line => line.trim().replace(/^\* /, "")).filter(Boolean);
+    return json({ repository: true, branches, current });
+  }
+  if (url.pathname === "/api/git/checkout" && request.method === "POST") {
+    if (!currentProject) throw new HttpError(400, "No project folder is open.");
+    const body = await readBody(request);
+    const name = String(body.name ?? "").trim();
+    if (name === "") throw new HttpError(400, "No branch was given.");
+    const { execFileSync } = await import("node:child_process");
+    try { execFileSync("git", ["checkout", name], { cwd: currentProject, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); }
+    catch (error) { throw new HttpError(500, error?.stderr?.toString() || error.message); }
+    return json({ ok: true });
+  }
+  if (url.pathname === "/api/git/branch" && request.method === "POST") {
+    if (!currentProject) throw new HttpError(400, "No project folder is open.");
+    const body = await readBody(request);
+    const name = String(body.name ?? "").trim();
+    if (name === "") throw new HttpError(400, "No branch name was given.");
+    const { execFileSync } = await import("node:child_process");
+    try { execFileSync("git", ["checkout", "-b", name], { cwd: currentProject, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); }
+    catch (error) { throw new HttpError(500, error?.stderr?.toString() || error.message); }
+    return json({ ok: true });
+  }
+  if (url.pathname === "/api/git/amend" && request.method === "POST") {
+    if (!currentProject) throw new HttpError(400, "No project folder is open.");
+    const body = await readBody(request);
+    const { execFileSync } = await import("node:child_process");
+    const message = String(body.message ?? "").trim();
+    const args = message ? ["commit", "--amend", "-m", message] : ["commit", "--amend", "--no-edit"];
+    try { execFileSync("git", args, { cwd: currentProject, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); }
+    catch (error) { throw new HttpError(500, error?.stderr?.toString() || error.message); }
+    return json({ ok: true });
+  }
+
   // Search across the project's sessions for a string in their messages.
   if (url.pathname === "/api/search/sessions" && request.method === "GET") {
     if (!currentProject) throw new HttpError(400, "No project folder is open.");
@@ -519,7 +563,19 @@ export function run() {
         const os = require("node:os");
         const dir = path.join(os.homedir(), ".kuvo-code", "logs");
         fs.mkdirSync(dir, { recursive: true });
-        fs.appendFileSync(path.join(dir, "harness.log"), `${new Date().toISOString()} ${message}\n`);
+        const file = path.join(dir, "harness.log");
+        // Rotate once the log grows past 5 MB, keeping three backups.
+        try {
+          const stats = fs.statSync(file);
+          if (stats.size > 5 * 1024 * 1024) {
+            for (let i = 2; i >= 0; i--) {
+              const from = i === 0 ? file : `${file}.${i}`;
+              const to = `${file}.${i + 1}`;
+              if (fs.existsSync(from)) fs.renameSync(from, to);
+            }
+          }
+        } catch {}
+        fs.appendFileSync(file, `${new Date().toISOString()} ${message}\n`);
       } catch {}
     },
   });

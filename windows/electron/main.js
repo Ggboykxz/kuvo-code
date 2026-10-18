@@ -154,6 +154,10 @@ function createTray() {
       const next = loadConfig(); next.autoStart = item.checked; saveConfig(next);
       app.setLoginItemSettings({ openAtLogin: item.checked });
     } });
+    items.push({ label: 'Automatic updates', type: 'checkbox', checked: config.autoUpdate !== false, click: (item) => {
+      const next = loadConfig(); next.autoUpdate = item.checked; saveConfig(next);
+      if (item.checked) try { autoUpdater.checkForUpdatesAndNotify(); } catch {}
+    } });
     items.push({ label: 'Check for updates', click: () => { try { autoUpdater.checkForUpdates(); } catch {} } });
     items.push({ type: 'separator' });
     items.push({ label: 'Quit', click: () => { quitting = true; app.quit(); } });
@@ -181,6 +185,13 @@ app.whenReady().then(async () => {
     const cfg = loadConfig();
     if (cfg.autoStart) app.setLoginItemSettings({ openAtLogin: true });
     globalShortcut.register('CommandOrControl+Shift+K', toggleWindow);
+    // Auto-update on startup, unless the user turned it off.
+    if (cfg.autoUpdate !== false) {
+      try {
+        autoUpdater.allowPrerelease = true;
+        autoUpdater.checkForUpdatesAndNotify();
+      } catch {}
+    }
     if (process.argv.includes('--smoke')) {
       const url = await startHarness();
       const response = await fetch(`${url}api/state`, { signal: AbortSignal.timeout(10000) });
@@ -196,10 +207,6 @@ app.whenReady().then(async () => {
     rememberProject(loadConfig().project || os.homedir());
     createWindow(url);
     createTray();
-    try {
-      autoUpdater.allowPrerelease = true;
-      autoUpdater.checkForUpdatesAndNotify();
-    } catch {}
   } catch (error) {
     dialog.showErrorBox('Kuvo Code', String(error && error.message || error));
     shutdown();
@@ -211,6 +218,9 @@ app.on('window-all-closed', () => { /* stay alive in the tray */ });
 app.on('before-quit', () => { quitting = true; });
 app.on('will-quit', () => { globalShortcut.unregisterAll(); shutdown(); });
 
+autoUpdater.on('update-available', () => {
+  try { new Notification({ title: 'Kuvo Code', body: 'A new version is available and is being downloaded.' }).show(); } catch {}
+});
 autoUpdater.on('update-downloaded', () => {
   if (!mainWindow) return;
   const choice = dialog.showMessageBoxSync(mainWindow, {

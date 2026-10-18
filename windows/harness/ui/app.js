@@ -728,8 +728,21 @@ async function refreshGit() {
     const { repository, entries } = await api("/api/git/status");
     const box = $("git-status");
     const button = $("git-diff");
-    if (!repository) { box.hidden = true; button.hidden = true; return; }
-    box.hidden = false; button.hidden = false;
+    const amend = $("git-amend");
+    const branchRow = $("git-branch-row");
+    if (!repository) { box.hidden = true; button.hidden = true; amend.hidden = true; branchRow.hidden = true; return; }
+    box.hidden = false; button.hidden = false; amend.hidden = false; branchRow.hidden = false;
+    // Load branches.
+    try {
+      const { branches, current } = await api("/api/git/branches");
+      const select = $("git-branch");
+      select.innerHTML = "";
+      for (const branch of branches) {
+        const option = el("option", { value: branch, text: branch });
+        if (branch === current) option.selected = true;
+        select.append(option);
+      }
+    } catch {}
     box.innerHTML = "";
     if (entries.length === 0) { box.append(el("div", { class: "entry", text: "Working tree clean." })); return; }
     for (const entry of entries) {
@@ -771,6 +784,36 @@ $("git-diff").addEventListener("click", async () => {
   try {
     const { diff } = await api("/api/git/diff");
     showDiff("Working tree", "", diff || "(no changes)");
+  } catch (error) { complain(null, error); }
+});
+$("git-branch").addEventListener("change", async (event) => {
+  try {
+    await api("/api/git/checkout", { method: "POST", body: { name: event.target.value } });
+    await refreshGit();
+  } catch (error) { complain(null, error); }
+});
+$("git-new-branch").addEventListener("click", async () => {
+  const name = prompt("New branch name:");
+  if (!name) return;
+  try {
+    await api("/api/git/branch", { method: "POST", body: { name } });
+    await refreshGit();
+  } catch (error) { complain(null, error); }
+});
+$("git-checkout").addEventListener("click", async () => {
+  const name = prompt("Branch to check out:");
+  if (!name) return;
+  try {
+    await api("/api/git/checkout", { method: "POST", body: { name } });
+    await refreshGit();
+  } catch (error) { complain(null, error); }
+});
+$("git-amend").addEventListener("click", async () => {
+  const message = prompt("New commit message (leave empty to keep):");
+  if (message === null) return;
+  try {
+    await api("/api/git/amend", { method: "POST", body: { message } });
+    await refreshGit();
   } catch (error) { complain(null, error); }
 });
 const originalToggleDrawer = toggleDrawer;

@@ -72,7 +72,13 @@
     <input id="files-search" class="file-search" placeholder="Search in project…" spellcheck="false">
     <div id="files-search-results" class="search-results" hidden></div>
     <div id="git-status" class="git-status" hidden></div>
+    <div id="git-branch-row" class="git-branch-row" hidden>
+      <select id="git-branch" class="file-search git-branch-select" title="Current branch"></select>
+      <button id="git-new-branch" class="small">New</button>
+      <button id="git-checkout" class="small">Checkout</button>
+    </div>
     <button id="git-diff" class="small" hidden>Show git diff</button>
+    <button id="git-amend" class="small" hidden>Amend last commit</button>
     <ul id="file-tree" class="file-tree"></ul>
     <div id="file-editor" class="file-editor" hidden>
       <div class="file-editor-head">
