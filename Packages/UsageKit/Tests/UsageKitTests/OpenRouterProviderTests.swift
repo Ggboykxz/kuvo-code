@@ -107,7 +107,7 @@ secrets: MemoryAPIKeySecrets()).keyStatus(),
         XCTAssertEqual(store.currentAPIKey(), "sk-or-file")
     }
 
-    func testDeleteClearsPrimaryAndAlternatePathsWithEnvironmentFallback() throws {
+    func testDeleteClearsItsOwnKeyAndLeavesOtherToolsFile() throws {
         let cases: [(paths: [Int], environment: [String: String])] = [
             ([0], ["OPENROUTER_API_KEY": "sk-or-env"]),
             ([0], [:]),
@@ -126,9 +126,12 @@ secrets: MemoryAPIKeySecrets()).keyStatus(),
             try store.deleteAPIKey()
 
             XCTAssertNil(secrets.values["openrouter"])
-            for path in OpenRouterAuthStore.configPaths { XCTAssertNil(files.files[path], path) }
-            XCTAssertEqual(store.loadAPIKey()?.apiKey, entry.environment["OPENROUTER_API_KEY"])
-            XCTAssertEqual(store.keyStatus(), entry.environment.isEmpty ? .notSet : .fromEnvironment)
+            XCTAssertNil(files.files[OpenRouterAuthStore.configPaths[0]])
+            // Another tool's key file is the user's own: kept, and used as theirs.
+            let other = entry.paths.contains(1)
+            XCTAssertEqual(files.files[OpenRouterAuthStore.configPaths[1]], other ? "sk-or-alt" : nil)
+            XCTAssertEqual(store.loadAPIKey()?.apiKey, other ? "sk-or-alt" : entry.environment["OPENROUTER_API_KEY"])
+            XCTAssertEqual(store.keyStatus(), other || !entry.environment.isEmpty ? .fromEnvironment : .notSet)
         }
     }
 

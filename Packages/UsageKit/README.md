@@ -32,7 +32,9 @@ here.
   lists, as JSON (providers in its order with their brand color, mark, notice and lines), and a
   refresh of everything, for Kuvo Code for iPhone.
 - **API keys pasted into the panel go into the Keychain** (`Providers/APIKeySecrets.swift`), not a
-  JSON file; a key an earlier version saved in a file moves there the next time it's read.
+  JSON file; a key an earlier version saved in a file moves there the next time it's read. A key in
+  another tool's file (`~/.config/openrouter/key.json`, `~/.config/zai/key.json`) is read but never
+  changed or removed: the panel shows it as the user's own, like one from the environment.
 - **A Bars style for the dashboard**, the default (`Views/UsageBarsView.swift`): one compact bar
   per provider in a pastel of its brand color, with thin monospaced labels, showing the limit closest to running out, and today's spend
   as one bar on top. Clicking a bar opens every metric underneath in the same style (`Views/UsageBarDetail.swift`), not the card.
