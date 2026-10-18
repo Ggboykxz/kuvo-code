@@ -4,6 +4,8 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
+## Unreleased
+
 ## 0.5.12
 
 - The line that sums up an agent's steps names an MCP server's tools by the server ("used GitHub", "used context7 2 times") rather than their raw names, and says "used a skill" and "started a session".
