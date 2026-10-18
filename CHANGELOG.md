@@ -6,6 +6,9 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Starting a rename on another session while one is open no longer closes the new one at once. In Settings › Skills, a repository that finishes loading after you opened another no longer replaces it.
+- A new session's first message is kept until it has really gone to the agent, so quitting while the session's tools start no longer loses it.
+- After a remote machine reconnects, a subagent that finished meanwhile no longer shows as working for good, nor does its session, tab or bot. A subagent sent off in the background that failed shows Failed.
 - In split view, a session beside that the window has no room to show no longer takes ⌘. and the other menus, isn't marked read, and isn't counted as in view. A tab you pick in the panel goes to the half you last worked in, and a tab a conversation's own subagent used is free for it again after a minute and a half.
 - A settings file with Windows line endings keeps its layout too when Kuvo Code adds the web search default; its closing brace was pulled up onto the last line.
 - Each subagent an agent hands work to has a row of its own in the conversation: its task and agent, the step it's on while it works and what it used once done; click it to see each step it takes. Several started at once show one under another, instead of folding into the steps as "handed off 4 tasks" or a "Delegated a task" that told you nothing.
