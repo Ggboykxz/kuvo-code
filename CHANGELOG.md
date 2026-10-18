@@ -8,9 +8,6 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 - Scrolling up through a long conversation no longer jumps. As replies above come into view, or earlier messages load, what you're reading stays where it is, and earlier messages come in before you reach the top.
 - Replies draw in one go, and faster: a long reply no longer shows up empty for a moment and then at its size. The first code block in a conversation no longer holds up the app for a quarter of a second while code coloring starts.
-- In the usage panel, a Claude usage-limit reset can be used from the Rate Limit Resets popover, as Codex's can: hover a reset, click Use and confirm, and your limits refill right away.
-- Antigravity's Gemini meters in the usage panel no longer read No data, and its plan shows even while Antigravity is closed.
-- In the usage panel, a Cursor Enterprise or Team seat shows its plan as such rather than Pro, and its Extra Usage when Cursor's main usage report leaves it out.
 - A session on a remote machine no longer keeps showing "Connecting to…" over and over while nothing runs there. With an integration added, the machine's engine looked out of date every time it was checked, and was started over every few seconds.
 - Giving a bot a key of its own, or taking it away, changes only that key's entry in its folder's `.opencode/opencode.json`. It used to replace that file, and taking the last key away deleted the whole `.opencode` folder, with any skills or commands in it. A bot on a machine no longer loses its folder's settings each time the machine connects.
 - When the agent asks to run a command, the card shows the command line as it will run, pipes and `&&` included. A command like `npm test | tail -5` showed as two separate lines.
