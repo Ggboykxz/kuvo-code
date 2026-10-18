@@ -24,7 +24,7 @@ public enum LinkError: Error, Equatable, LocalizedError {
 
     public var errorDescription: String? {
         switch self {
-        case .hostOffline: "It isn’t connected right now."
+        case .hostOffline: "It may be asleep or offline."
         case .refused: "It turned this phone away. Pair again."
         case .closed: "The connection closed."
         case .relayUnavailable: "Couldn’t reach the relay."
