@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- In split view, a session beside that the window has no room to show no longer takes ⌘. and the other menus, isn't marked read, and isn't counted as in view. A tab you pick in the panel goes to the half you last worked in, and a tab a conversation's own subagent used is free for it again after a minute and a half.
 - A settings file with Windows line endings keeps its layout too when Kuvo Code adds the web search default; its closing brace was pulled up onto the last line.
 - Each subagent an agent hands work to has a row of its own in the conversation: its task and agent, the step it's on while it works and what it used once done; click it to see each step it takes. Several started at once show one under another, instead of folding into the steps as "handed off 4 tasks" or a "Delegated a task" that told you nothing.
 
