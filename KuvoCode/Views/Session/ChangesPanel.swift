@@ -417,7 +417,7 @@ private struct BranchMenu: View {
                 // Its work is in the project now: nothing in the worktree is lost.
                 Button("Archive Session and Remove Worktree") {
                     Task {
-                        do { try await workspace.removeWorktree(directory) } catch { NSAlert(error: error).runModal() }
+                        do { try await workspace.removeWorktree(directory) } catch { Modal.show(error) }
                         await workspace.setArchived(model.id, true)
                     }
                 }

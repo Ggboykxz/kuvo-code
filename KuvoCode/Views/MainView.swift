@@ -1938,7 +1938,7 @@ private struct MoveToProjectButton: View {
             do {
                 try await workspace.move(sessionID, toProject: directory)
             } catch {
-                NSAlert(error: error).runModal()
+                Modal.show(error)
             }
         }
     }

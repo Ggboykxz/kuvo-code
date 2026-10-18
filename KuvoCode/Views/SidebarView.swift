@@ -345,7 +345,7 @@ struct SidebarView: View {
     }
 
     private func removeWorktree(of session: Session) async {
-        do { try await workspace.removeWorktree(session.location.directory) } catch { NSAlert(error: error).runModal() }
+        do { try await workspace.removeWorktree(session.location.directory) } catch { Modal.show(error) }
     }
 
     // MARK: Projects
@@ -550,11 +550,11 @@ struct SidebarView: View {
             let panel = NSSavePanel()
             panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
             panel.nameFieldStringValue = (session.title ?? "Conversation").replacingOccurrences(of: "/", with: "-") + ".md"
-            guard panel.runModal() == .OK, let url = panel.url else { return }
+            guard await Modal.run({ panel.runModal() }) == .OK, let url = panel.url else { return }
             try text.write(to: url, atomically: true, encoding: .utf8)
             Analytics.shared.track("session_exported", ["how": "file"])
         } catch {
-            NSAlert(error: error).runModal()
+            Modal.show(error)
         }
     }
 
@@ -602,7 +602,7 @@ struct SidebarView: View {
                     Clipboard.copy(text)
                     Analytics.shared.track("session_exported", ["how": "copy"])
                 } catch {
-                    NSAlert(error: error).runModal()
+                    Modal.show(error)
                 }
             }
         }
@@ -1110,7 +1110,7 @@ private struct MoveToProjectMenu: View {
             do {
                 try await workspace.move(session.id, toProject: directory)
             } catch {
-                NSAlert(error: error).runModal()
+                Modal.show(error)
             }
         }
     }

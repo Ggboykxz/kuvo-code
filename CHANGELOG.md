@@ -13,6 +13,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - In the usage panel, a Cursor Enterprise or Team seat shows its plan as such rather than Pro, and its Extra Usage when Cursor's main usage report leaves it out.
 - A session on a remote machine no longer keeps showing "Connecting to…" over and over while nothing runs there. With an integration added, the machine's engine looked out of date every time it was checked, and was started over every few seconds.
 - Giving a bot a key of its own, or taking it away, changes only that key's entry in its folder's `.opencode/opencode.json`. It used to replace that file, and taking the last key away deleted the whole `.opencode` folder, with any skills or commands in it. A bot on a machine no longer loses its folder's settings each time the machine connects.
+- Conversations keep going while a save panel or an error message is open. Exporting a session as Markdown, or an error after removing a worktree or moving a chat, used to stop every conversation, bot and wake-up from updating until you closed it. With VoiceOver, the composer's mode and model buttons open their menus.
 - Signing out of an account or integration here signs your remote machines out too, even when that fails the first time: it's tried again until it works, rather than leaving the machine signed in.
 
 ## 0.5.8
