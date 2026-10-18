@@ -6,6 +6,8 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Each subagent an agent hands work to has a row of its own in the conversation: its task and agent, the step it's on while it works and what it used once done; click it to see each step it takes. Several started at once show one under another, instead of folding into the steps as "handed off 4 tasks" or a "Delegated a task" that told you nothing.
+
 ## 0.5.7
 
 - When the engine stops while starting, the failure screen shows the engine's own error message again, not just an exit code.

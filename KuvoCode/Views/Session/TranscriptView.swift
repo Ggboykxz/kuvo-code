@@ -269,6 +269,10 @@ struct TranscriptView: View {
                         // So does what it wrote to another agent.
                         flushSteps(live: false)
                         rows.append(.sent(call))
+                    case .tool(let call) where call.name == "subagent":
+                        // And each subagent it handed work to, at work or done.
+                        flushSteps(live: false)
+                        rows.append(.subagent(call))
                     case .reasoning, .tool:
                         if steps.isEmpty { stepsID = "steps-" + assistant.id + "#\(part)" }
                         steps.append(block)
@@ -424,6 +428,8 @@ enum Row: Identifiable, Hashable {
     case widget(Message.ToolCall)
     /// What it wrote to another agent (send_message).
     case sent(Message.ToolCall)
+    /// A subagent it handed part of the work to.
+    case subagent(Message.ToolCall)
     /// `isLast`: the conversation ends here, so a failed run can be tried again.
     case turnEnd(Message.Idle, TurnStats, isLast: Bool)
     case notice(String, String, String)
@@ -469,7 +475,9 @@ enum Row: Identifiable, Hashable {
         case (.more, .assistant), (.more, .turnEnd), (.more, .working(_)), (.more, .steps): 10
         case (_, .widget), (.widget, _), (_, .sent), (.sent, _): 14
         case (.assistant, .assistant), (.assistant, .turnEnd), (.assistant, .working(_)),
-             (.steps, .assistant), (.assistant, .steps), (.steps, .turnEnd), (.steps, .working(_)): 10
+             (.steps, .assistant), (.assistant, .steps), (.steps, .turnEnd), (.steps, .working(_)),
+             (.subagent, .subagent), (.steps, .subagent), (.subagent, .steps), (.assistant, .subagent), (.more, .subagent),
+             (.subagent, .assistant), (.subagent, .turnEnd), (.subagent, .working(_)): 10
         case (_, .user), (_, .pending): 28
         case (.shell, .shell): 12
         case (_, .shell): 20
@@ -486,6 +494,7 @@ enum Row: Identifiable, Hashable {
         case .steps(let id, _, _): id
         case .widget(let call): call.id
         case .sent(let call): call.id
+        case .subagent(let call): call.id
         case .turnEnd(let m, _, _): m.id
         case .notice(let id, _, _): id
         case .shell(let m): m.id
@@ -565,6 +574,8 @@ private struct RowView: View, Equatable {
             WidgetCard(call: call, send: answerAgent)
         case .sent(let call):
             AgentSentRow(call: call)
+        case .subagent(let call):
+            SubagentRow(call: call, directory: directory)
         case .turnEnd(let idle, let stats, let isLast):
             TurnEndView(idle: idle, stats: stats, directory: directory, retry: isLast && !isOffline ? stats.message.map { message in { retry(message) } } : nil,
                         build: isLast && stats.agent == "plan" ? buildPlan : nil, reply: reply)

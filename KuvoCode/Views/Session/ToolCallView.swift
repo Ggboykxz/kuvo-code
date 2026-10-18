@@ -183,7 +183,7 @@ struct ToolCallView: View {
         case "webfetch": return (isActive ? "Fetching " : "Fetched ") + (string("url") ?? "a page")
         case "websearch": return "Searched the web for “\(string("query") ?? "")”"
         case "question": return isActive ? "Asking you a question" : "Asked you a question"
-        case "subagent": return (string("description") ?? "Delegated a task") + (string("agent").map { " · \($0)" } ?? "")
+        case "subagent": return (string("description") ?? (isActive ? "Starting a subagent…" : "A subagent's task")) + (string("agent").map { " · \($0)" } ?? "")
         case "skill": return "Used a skill"
         case "execute":
             // Code Mode: the agent wrote code that calls its tools.
@@ -421,8 +421,8 @@ struct OutputBlock: View {
 }
 
 /// What a subagent was asked, and the steps it took and what it said, as they happen, under
-/// its step (which draws the line beside them).
-private struct SubagentSteps: View {
+/// its step or its row (which draws the line beside them).
+struct SubagentSteps: View {
     let id: String
     /// What the agent asked it to do (its session's own first message adds the engine's
     /// preamble).
