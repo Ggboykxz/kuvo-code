@@ -246,15 +246,20 @@ final class Bots {
         }
     }
 
-    /// Deletes a bot: its conversation, its folder and its wake-ups. A project it worked in stays.
-    /// A machine's bot goes only once its folder there has, which stops its wake-ups and watches,
-    /// so while the machine can't be reached it stays, and this says so. (One whose machine you
-    /// removed from Kuvo Code just leaves the list.)
+    /// Deletes a bot: its conversation and its wake-ups, and its folder goes to the Trash (on a
+    /// machine, Kuvo Code's trash folder there), with what it made in it. A project it worked in
+    /// stays. A machine's bot goes only once its folder there has, which stops its wake-ups and
+    /// watches, so while the machine can't be reached it stays, and this says so. (One whose
+    /// machine you removed from Kuvo Code just leaves the list.)
     func delete(_ bot: Bot) async throws {
         if let machine = bot.machine, let engine = app?.machines.engine(machine) {
             guard engine.isReady else { throw Failure.stillOn(machine) }
-            let folder = bot.folder
-            guard await Task.detached(operation: { RemoteShell.run("rm -rf \(SSHConnection.quoted(folder))", on: machine) }).value != nil else {
+            let folder = SSHConnection.quoted(bot.folder)
+            let script = """
+                T="$HOME/\(RemoteEngineInstaller.root)/trash/$(date +%Y%m%d-%H%M%S)-$$"
+                [ ! -e \(folder) ] || { mkdir -p "$T" && mv -- \(folder) "$T/"; }
+                """
+            guard await Task.detached(operation: { RemoteShell.run(script, on: machine) }).value != nil else {
                 throw Failure.stillOn(machine)
             }
         }
@@ -266,7 +271,13 @@ final class Bots {
         app?.utilities.closeTabs(of: bot.id)
         app?.workspace.botSessions = sessionIDs
         await app?.workspace.delete(bot.sessionID)
-        if bot.machine == nil { try? FileManager.default.removeItem(atPath: bot.folder) }
+        if bot.machine == nil, FileManager.default.fileExists(atPath: bot.folder) {
+            do {
+                try FileManager.default.trashItem(at: URL(filePath: bot.folder), resultingItemURL: nil)
+            } catch {
+                log.error("A deleted bot's folder couldn't go to the Trash: \(error.localizedDescription, privacy: .public)")
+            }
+        }
         await BotKeys.forget(bot, app: app)
         Analytics.shared.track("bot_deleted")
     }

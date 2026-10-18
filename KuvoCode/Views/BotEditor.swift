@@ -156,8 +156,15 @@ struct BotEditor: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Its conversation, memory and wake-ups are deleted. This can’t be undone." + (bot?.project != nil ? " The project it worked in isn’t touched." : ""))
+            Text(deleteMessage)
         }
+    }
+
+    /// What deleting it does: its own folder (its memory and what it made there) goes to the Trash.
+    private var deleteMessage: String {
+        let folder = bot?.machine.map { "Its folder, with its memory and the files it made, goes to Kuvo Code’s trash folder on \($0)." }
+            ?? "Its folder, with its memory and the files it made, goes to the Trash."
+        return "Its conversation and wake-ups are deleted. " + folder + (bot?.project != nil ? " The project it worked in isn’t touched." : "")
     }
 
     private var form: some View {
