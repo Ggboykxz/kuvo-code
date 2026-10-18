@@ -370,6 +370,7 @@ final class Workspace {
         }
         model.isReachable = reachable(directory)
         models[id] = model
+        Task { await readShellJobs(in: directory) }
         return model
     }
 
@@ -829,6 +830,7 @@ final class Workspace {
     func resync() async {
         await refresh()
         asking = [:]
+        for directory in Set(models.values.map(\.session.location.directory)) { await readShellJobs(in: directory) }
         for model in models.values {
             // A machine's are read when it's connected (see `refresh(_ engine:)`).
             if RemoteFolder.machine(of: model.session.location.directory).map(connectedMachines.contains) ?? true { await model.load() }
@@ -948,6 +950,7 @@ final class Workspace {
             let folder = machine.map { RemoteFolder.folder(directory, on: $0) } ?? directory
             branches[folder] = (try? event.payload(as: Branch.self))?.branch
         }
+        noteShellJob(event)
         if let id = event.sessionID ?? Self.formSessionID(event), let model = models[id] {
             model.apply(event)
         }
@@ -1284,9 +1287,67 @@ final class Workspace {
         running.count { $0 != id && root(of: $0) == id }
     }
 
-    /// The session works, itself or through subagents still at it: what its row, tab and bot show.
+    /// The session works, itself, through subagents still at it, or with a command it left
+    /// running in the background: what its row, tab and bot show.
     func isWorking(_ id: String) -> Bool {
-        running.contains(id) || helpersAtWork(in: id) > 0
+        running.contains(id) || helpersAtWork(in: id) > 0 || shellJobs[id] != nil
+    }
+
+    // MARK: Commands running for agents
+
+    /// The shell commands the engine runs for each session's agent, while they run: one left
+    /// running in the background after its turn ended keeps the session working, and shows over
+    /// its composer.
+    private(set) var shellJobs: [String: [ShellJob]] = [:]
+
+    private func noteShellJob(_ event: ServerEvent) {
+        switch event.type {
+        case "shell.created":
+            struct Created: Decodable { var info: ShellJob }
+            guard let job = try? event.payload(as: Created.self).info, job.status == "running", let id = job.sessionID,
+                  shellJobs[id]?.contains(where: { $0.id == job.id }) != true else { return }
+            shellJobs[id, default: []].append(job)
+        case "shell.exited", "shell.deleted":
+            struct Gone: Decodable { var id: String }
+            guard let gone = try? event.payload(as: Gone.self).id else { return }
+            for (id, jobs) in shellJobs where jobs.contains(where: { $0.id == gone }) {
+                let left = jobs.filter { $0.id != gone }
+                shellJobs[id] = left.isEmpty ? nil : left
+            }
+        default:
+            break
+        }
+    }
+
+    /// What runs in `directory` now, as its engine lists it: commands started while this Mac
+    /// wasn't listening (before launch, or while a machine was away) show too.
+    func readShellJobs(in directory: String) async {
+        guard let api = api(forFolder: directory), let jobs = try? await api.shells(directory: directory) else { return }
+        for session in sessions where session.location.directory == directory {
+            let own = jobs.filter { $0.sessionID == session.id && $0.status == "running" }
+            if (shellJobs[session.id] ?? []) != own { shellJobs[session.id] = own.isEmpty ? nil : own }
+        }
+    }
+
+    /// Stops a command an agent left running: its process group is sent SIGTERM, on this Mac or
+    /// on its machine, so the engine sees it end and tells the agent, with what it printed. The
+    /// engine's own stop also deletes the output, and the agent hears the command was never
+    /// found, so it's only for when that can't be done.
+    func stopShellJob(_ job: ShellJob, in session: String) async {
+        let directory = self.session(session)?.location.directory ?? ""
+        let engine = api(forSession: session)
+        // Announced as it started, before it had a process: the engine knows it now.
+        var pid = job.pid
+        if pid == nil { pid = (try? await engine?.shell(job.id, directory: directory))?.pid }
+        if let pid, pid > 1 {
+            let machine = RemoteFolder.machine(of: directory)
+            let sent = await Task.detached { () -> Bool in
+                guard let machine else { return kill(-pid_t(pid), SIGTERM) == 0 }
+                return RemoteShell.run("kill -TERM -\(pid) 2>/dev/null && echo sent", on: machine).map { String(decoding: $0, as: UTF8.self).contains("sent") } ?? false
+            }.value
+            if sent { return }
+        }
+        try? await engine?.removeShell(job.id, directory: directory)
     }
 
     /// The session a subagent's shows in (through subagents of subagents): the root one that

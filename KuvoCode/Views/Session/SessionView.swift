@@ -80,6 +80,11 @@ private struct BottomStack: View {
     @Environment(\.takesCardKeys) private var takesCardKeys
     @Namespace private var glass
 
+    /// Commands its agent left running, which the conversation doesn't show as they run.
+    private var backgroundJobs: [ShellJob] {
+        (workspace.shellJobs[model.id] ?? []).filter { !model.inlineShells.contains($0.id) }
+    }
+
     var body: some View {
         GlassEffectContainer(spacing: 12) {
             VStack(spacing: 12) {
@@ -119,6 +124,14 @@ private struct BottomStack: View {
                         .glassEffect(.regular, in: .rect(cornerRadius: Metrics.composerRadius))
                         .glassEffectID("offline", in: glass)
                         .transition(.opacity)
+                }
+                if !backgroundJobs.isEmpty {
+                    BackgroundBar(jobs: backgroundJobs, api: workspace.api(forSession: model.id), directory: model.session.location.directory, isHidden: $model.hidesBackgroundJobs) { job in
+                        Task { await workspace.stopShellJob(job, in: model.id) }
+                    }
+                    .glassEffect(.regular, in: .rect(cornerRadius: Metrics.composerRadius))
+                    .glassEffectID("background", in: glass)
+                    .transition(.opacity)
                 }
                 // What's waiting, tucked behind the composer's top edge.
                 VStack(spacing: -QueueDock.overlap) {
@@ -172,6 +185,7 @@ private struct BottomStack: View {
                 }
             }
             .animation(.ui, value: model.waiting.isEmpty)
+            .animation(.ui, value: backgroundJobs.map(\.id))
             .animation(.ui, value: offlineMachine == nil)
             .animation(.ui, value: model.failure)
             .animation(.ui, value: app.browserAsks.asks(for: model.session.id).map(\.id))

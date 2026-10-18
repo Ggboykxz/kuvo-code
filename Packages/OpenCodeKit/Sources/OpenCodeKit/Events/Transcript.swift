@@ -13,6 +13,9 @@ public struct Transcript: Sendable, Equatable {
     public var permissions: [PermissionRequest] = []
     public var forms: [FormRequest] = []
     public var isRunning = false
+    /// The engine's own notices waiting to go in, like a background command's end: shown when
+    /// they do, as a read would have them.
+    var waitingNotices: [String: Message.Notice] = [:]
     /// Set when an event referred to something this copy doesn't have (it was
     /// loaded mid-step, say). The owner should reload from the server.
     public var isStale = false
@@ -188,6 +191,12 @@ public struct Transcript: Sendable, Equatable {
         // Inputs
         case "session.inbox.enqueued":
             let enqueued = try event.payload(as: EventPayload.InboxEnqueued.self)
+            if enqueued.item.type == "synthetic", !hasMessage(enqueued.inboxID) {
+                let payload = enqueued.item.payload
+                waitingNotices[enqueued.inboxID] = Message.Notice(id: enqueued.inboxID, time: Message.Time(created: now), text: payload["text"]?.string ?? "",
+                                                                  description: payload["description"]?.string, metadata: payload["metadata"])
+                return
+            }
             guard enqueued.item.type == "user" else { return }
             // Delivered already: a read since has it as a message.
             guard !hasMessage(enqueued.inboxID) else { return }
@@ -207,7 +216,8 @@ public struct Transcript: Sendable, Equatable {
         case "session.inbox.delivered":
             let id = try event.payload(as: EventPayload.InboxChanged.self).inboxID
             guard let index = pending.firstIndex(where: { $0.id == id }) else {
-                // Not ours to show (a synthetic or compaction input), or we missed it.
+                if let notice = waitingNotices.removeValue(forKey: id) { append(.synthetic(notice)) }
+                // Otherwise not ours to show (a compaction input), or we missed it.
                 return
             }
             let item = pending.remove(at: index)

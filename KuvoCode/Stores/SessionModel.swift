@@ -30,6 +30,11 @@ final class SessionModel {
     /// Each command permission's command line as the agent wrote it, by request: the engine asks
     /// about the commands in it one by one, without the pipes and `&&` between them.
     private(set) var permissionCommands: [String: String] = [:]
+    /// The shell commands the conversation shows as they run: a step waiting on one, or one you
+    /// ran with !. The session's others (see `Workspace.shellJobs`) run in the background.
+    private(set) var inlineShells: Set<String> = []
+    /// The background commands' bar shows only its line, which still says they run.
+    var hidesBackgroundJobs = false
     private(set) var forms: [FormRequest] = []
     /// How much of the context window the last step used.
     private(set) var contextUsed: Int?
@@ -43,6 +48,8 @@ final class SessionModel {
             permissionCommands = Self.commands(of: permissions, in: transcript.messages)
         }
         if forms != transcript.forms { forms = transcript.forms }
+        let inline = Self.inlineShells(in: transcript.messages)
+        if inlineShells != inline { inlineShells = inline }
         let used = Self.contextUsed(in: transcript.messages)
         if contextUsed != used { contextUsed = used }
         // Answers in progress go once their question has (answered, or dismissed).
@@ -51,6 +58,25 @@ final class SessionModel {
             let kept = questionProgress.filter { open.contains($0.key) }
             if kept.count != questionProgress.count { questionProgress = kept }
         }
+    }
+
+    /// Only the last messages: what runs now is at the end.
+    private static func inlineShells(in messages: [Message]) -> Set<String> {
+        var shells = Set<String>()
+        for message in messages.suffix(30) {
+            switch message {
+            case .shell(let shell) where shell.isRunning:
+                shells.insert(shell.shellID)
+            case .assistant(let step):
+                // A step sent to the background is done at once; one still running waits on its command.
+                for case .tool(let call) in step.content {
+                    if case .running(_, let metadata) = call.state, let shell = metadata?["shellID"]?.string { shells.insert(shell) }
+                }
+            default:
+                break
+            }
+        }
+        return shells
     }
 
     private static func commands(of requests: [PermissionRequest], in messages: [Message]) -> [String: String] {

@@ -311,6 +311,9 @@ struct TranscriptView: View {
                 } else if !sources.isEmpty, sources.allSatisfy({ $0.hasPrefix("core/") }) {
                     // The engine's own guidance (for the browser tools, say): nothing you set.
                     break
+                } else if notice.metadata?["source"]?.string == "shell" {
+                    // A command the agent left running in the background ended, which wakes it.
+                    rows.append(.notice(notice.id, "terminal", Self.backgroundEnd(notice)))
                 } else if notice.text.hasPrefix("<system-reminder>") {
                     // The engine's word to the model, not to you. Plan mode's rules say the mode,
                     // for a session that starts in it (a switch says so itself).

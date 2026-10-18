@@ -378,6 +378,28 @@ public struct OpenCodeAPI: Sendable {
         try await get("api/session/\(session.pathEscaped)/inbox", as: DataEnvelope<[InboxItem]>.self).data
     }
 
+    /// The shell commands running in `directory`'s location: agents', those left running in the
+    /// background among them.
+    public func shells(directory: String? = nil) async throws -> [ShellJob] {
+        try await get("api/shell", directory: directory, as: LocatedEnvelope<[ShellJob]>.self).data
+    }
+
+    /// One shell command, with its process once it has started and its exit once it has ended.
+    public func shell(_ id: String, directory: String? = nil) async throws -> ShellJob {
+        try await get("api/shell/\(id.pathEscaped)", directory: directory, as: LocatedEnvelope<ShellJob>.self).data
+    }
+
+    /// A shell command's output from byte `cursor` on (the start without), `limit` bytes at most.
+    public func shellOutput(_ id: String, from cursor: Int? = nil, limit: Int? = nil, directory: String? = nil) async throws -> ShellOutput {
+        try await get("api/shell/\(id.pathEscaped)/output", query: ["cursor": cursor.map(String.init), "limit": limit.map(String.init)],
+                      directory: directory, as: LocatedEnvelope<ShellOutput>.self).data
+    }
+
+    /// Stops a shell command and drops the output it kept.
+    public func removeShell(_ id: String, directory: String? = nil) async throws {
+        try await send("DELETE", "api/shell/\(id.pathEscaped)", directory: directory)
+    }
+
     public func diff(session: String) async throws -> [FileDiff] {
         try await get("api/session/\(session.pathEscaped)/diff", as: DataEnvelope<[FileDiff]>.self).data
     }

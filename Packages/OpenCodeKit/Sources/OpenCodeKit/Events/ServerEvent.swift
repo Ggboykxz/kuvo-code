@@ -137,6 +137,16 @@ public enum EventPayload {
             public var type: String
             public var payload: JSONValue
             public var delivery: InboxItem.Delivery
+
+            private enum CodingKeys: String, CodingKey { case type, payload, delivery }
+
+            public init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                type = try c.decode(String.self, forKey: .type)
+                payload = try c.decodeIfPresent(JSONValue.self, forKey: .payload) ?? .null
+                // The engine's own items (a background command's end) may come without one.
+                delivery = try c.decodeIfPresent(InboxItem.Delivery.self, forKey: .delivery) ?? .steer
+            }
         }
     }
 
