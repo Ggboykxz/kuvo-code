@@ -65,8 +65,13 @@ public final class WebSocketRelay: RelayTransport, @unchecked Sendable {
         Task { [weak self, task] in
             while self != nil {
                 try? await Task.sleep(for: .seconds(25))
-                // The pong's handler can be called again (with an error, as the task closes).
-                let answered = await firstAnswer { answer in task.sendPing { answer($0 == nil) } }
+                // The pong's handler can be called again (with an error, as the task closes). A
+                // relay that stops answering (frozen, or a path gone dead that sends no reset)
+                // never pongs: after 10 s it counts as gone, and everything connects again.
+                let answered = await firstAnswer { answer in
+                    task.sendPing { answer($0 == nil) }
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 10) { answer(false) }
+                }
                 if !answered { task.cancel(with: .goingAway, reason: nil); break }
             }
         }
