@@ -112,6 +112,10 @@ jobs:
           npm install --no-audit --no-fund
           npm run build:exe
 
+      # node-pty is a native module: it needs the MSVC developer environment to build.
+      - name: Set up the MSVC developer environment
+        uses: ilammy/msvc-dev-cmd@v1
+
       - name: Build the shell
         working-directory: windows/electron
         run: |
