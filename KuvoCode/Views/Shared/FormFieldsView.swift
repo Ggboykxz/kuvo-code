@@ -79,6 +79,9 @@ private struct FieldView: View {
         }
     }
 
+    /// What VoiceOver calls its field: its title shows above it, not as its label.
+    private var name: String { field.title ?? field.key }
+
     @ViewBuilder private var control: some View {
         switch field.kind {
         case .string(let options, let allowsCustom, let placeholder, _, let format, _):
@@ -95,9 +98,11 @@ private struct FieldView: View {
             } else if format == "password" {
                 SecureField(placeholder ?? "", text: stringBinding)
                     .wellField()
+                    .accessibilityLabel(name)
             } else {
                 TextField(placeholder ?? "", text: stringBinding)
                     .wellField()
+                    .accessibilityLabel(name)
             }
         case .number(let isInteger, _, _, _):
             TextField("", value: Binding(
@@ -105,6 +110,7 @@ private struct FieldView: View {
                 set: { value = $0.map { .number(isInteger ? $0.rounded() : $0) } }
             ), format: .number)
             .wellField()
+            .accessibilityLabel(name)
             .frame(maxWidth: 160)
         case .boolean:
             Toggle(field.title ?? field.key, isOn: Binding(
