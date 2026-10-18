@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Opening a picture or file from a conversation saves it in Kuvo Code's own Attachments folder, as the kind of file it says it is and marked as downloaded. Anything that could run, like an app, a script or an installer, is shown in Finder instead of opened.
 - Starting a rename on another session while one is open no longer closes the new one at once. In Settings › Skills, a repository that finishes loading after you opened another no longer replaces it.
 - A new session's first message is kept until it has really gone to the agent, so quitting while the session's tools start no longer loses it.
 - After a remote machine reconnects, a subagent that finished meanwhile no longer shows as working for good, nor does its session, tab or bot. A subagent sent off in the background that failed shows Failed.
