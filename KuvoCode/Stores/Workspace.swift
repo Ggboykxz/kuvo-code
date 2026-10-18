@@ -101,6 +101,9 @@ final class Workspace {
     private(set) var settings: [String: ProjectSettings] = Workspace.loadSettings()
     /// Sessions' own git worktrees, by the folder their sessions run in.
     private(set) var worktrees: [String: Worktree] = Workspace.loadWorktrees()
+    /// The projects of worktrees removed since, by the folder their sessions ran in: an archived
+    /// session there still belongs to its project, and comes back to it if you restore it.
+    private var removedWorktrees: [String: String] = UserDefaults.standard.dictionary(forKey: "removedWorktrees") as? [String: String] ?? [:]
     private(set) var isLoaded = false
 
     private var models: [String: SessionModel] = [:]
@@ -159,7 +162,7 @@ final class Workspace {
 
     /// The project a folder sessions run in belongs to: its own, or a worktree's project.
     func projectDirectory(_ directory: String) -> String {
-        worktrees[directory]?.project ?? directory
+        worktrees[directory]?.project ?? removedWorktrees[directory] ?? directory
     }
 
     func projectDirectory(of session: Session) -> String {
@@ -579,6 +582,8 @@ final class Workspace {
         try await api.removeWorktree(project: project.id, directory: tree.root, force: true)
         // Git deletes only a branch that's merged.
         _ = await Task.detached { Git.run(["branch", "-d", tree.branch], in: tree.project) }.value
+        for (folder, removed) in worktrees where removed.root == tree.root { removedWorktrees[folder] = removed.project }
+        UserDefaults.standard.set(removedWorktrees, forKey: "removedWorktrees")
         worktrees = worktrees.filter { $0.value.root != tree.root }
         saveWorktrees()
         Analytics.shared.track("worktree_removed")
