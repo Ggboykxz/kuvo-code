@@ -563,7 +563,7 @@ private struct RowView: View, Equatable {
             let stored = (message.files ?? []).enumerated().map { AttachmentItem.stored($1, id: "\(message.id)#\($0)") }
             YourMessage(text: text, attachments: stored + Attachments.paths(paths, besides: (message.files ?? []).compactMap(\.fileURL)).map(AttachmentItem.path), comments: comments, sent: Date(timeIntervalSince1970: message.time.created / 1000),
                         fork: { fork(message) }, undo: { undo(message) },
-                        undoNote: "The conversation goes back to before this message, and so do the files the agent changed since. The message comes back to the composer. You can redo it all until you send something.",
+                        undoNote: YourMessage.undoNote(in: directory),
                         isOffline: isOffline)
         case .pending(let item):
             let (text, comments, paths) = UserBubble.split(item.text)

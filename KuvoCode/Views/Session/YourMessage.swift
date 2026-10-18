@@ -38,6 +38,27 @@ struct YourMessage: View {
         return "You: " + parts.joined(separator: ". ")
     }
 
+    /// What undoing from a message does in a session in `directory`. The engine keeps snapshots
+    /// of files only in a git repository, so outside one the files stay as they are.
+    static func undoNote(in directory: String) -> String {
+        isInRepository(directory)
+            ? "The conversation goes back to before this message, and so do the files the agent changed since. The message comes back to the composer. You can redo it all until you send something."
+            : "The conversation goes back to before this message. The files the agent changed since stay as they are: they can be put back only in a git repository. The message comes back to the composer. You can redo it until you send something."
+    }
+
+    /// Whether `directory` is in a git repository, by a `.git` in it or a folder above. One on a
+    /// machine counts as one: it isn't looked at from here.
+    private static func isInRepository(_ directory: String) -> Bool {
+        guard !RemoteFolder.isRemote(directory) else { return true }
+        var url = URL(filePath: directory).standardizedFileURL
+        while true {
+            if FileManager.default.fileExists(atPath: url.appending(path: ".git").path(percentEncoded: false)) { return true }
+            let parent = url.deletingLastPathComponent()
+            if parent.path == url.path { return false }
+            url = parent
+        }
+    }
+
     var body: some View {
         VStack(alignment: .trailing, spacing: 2) {
             UserBubble(text: text, style: style, attachments: attachments, comments: comments)
