@@ -535,6 +535,7 @@ private struct RemoteSkillRow: View {
             } else if let installed {
                 if installed.repository == skill.repository.id, installed.path == skill.path {
                     Button("Remove", action: remove)
+                        .accessibilityLabel("Remove \(skill.name)")
                 } else {
                     // Another skill by this name is installed (they'd share a folder).
                     Text("Another \(skill.name) is added, from \(installed.repository)")
@@ -544,6 +545,7 @@ private struct RemoteSkillRow: View {
                 }
             } else {
                 Button("Add", action: add)
+                    .accessibilityLabel("Add \(skill.name)")
             }
         }
         .task { about = await SkillLibrary.about(skill) }

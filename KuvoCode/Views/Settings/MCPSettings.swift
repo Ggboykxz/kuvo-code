@@ -76,6 +76,7 @@ struct MCPSettings: View {
                                 .foregroundStyle(.secondary)
                         } else {
                             Button("Add") { add(server) }
+                                .accessibilityLabel("Add \(server.title)")
                         }
                     }
                 }

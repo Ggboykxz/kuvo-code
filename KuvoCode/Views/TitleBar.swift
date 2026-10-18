@@ -473,6 +473,7 @@ private struct BranchLabel: View {
             if isMenu {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 7, weight: .bold))
+                    .accessibilityHidden(true)
             }
         }
         .font(.system(size: 11))

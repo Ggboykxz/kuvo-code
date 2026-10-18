@@ -195,6 +195,8 @@ struct MenuChevron: View {
         Image(systemName: "chevron.down")
             .font(.system(size: 8, weight: .bold))
             .foregroundStyle(.secondary)
+            // It only says there's a menu, which VoiceOver says itself ("Go Down" otherwise).
+            .accessibilityHidden(true)
     }
 }
 

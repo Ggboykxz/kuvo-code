@@ -249,6 +249,7 @@ struct ModelChipLabel: View {
             Image(systemName: "chevron.down")
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
         }
         .font(.callout)
         .padding(.horizontal, 8)

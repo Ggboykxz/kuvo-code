@@ -58,6 +58,7 @@ struct BackgroundBar: View {
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .rotationEffect(.degrees(isHidden ? 180 : 0))
+                    .accessibilityHidden(true)
             }
             .padding(.leading, 14)
             .padding(.trailing, 16)

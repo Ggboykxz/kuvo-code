@@ -187,6 +187,7 @@ struct ChangesPanel: View {
             }
             .buttonStyle(CardActionStyle())
             .help(collapsed.count == changes.files.count ? "Expand All" : "Collapse All")
+            .accessibilityLabel(collapsed.count == changes.files.count ? "Expand All" : "Collapse All")
             .disabled(changes.files.isEmpty)
         }
         .padding(.horizontal, 14)
@@ -409,6 +410,7 @@ private struct BranchMenu: View {
         .fixedSize()
         .disabled(isWorking)
         .help(isWorktree ? "This session works on its own branch, \(tree.branch). Merge it or create a pull request." : "Create a pull request for \(tree.branch)")
+        .accessibilityLabel(isWorktree ? "Merge or Create Pull Request" : "Create Pull Request")
         .alert(title, isPresented: Binding(get: { outcome != nil }, set: { if !$0 { outcome = nil } })) {
             if case .conflict(_, let target) = outcome, let model {
                 Button("Ask the Agent to Fix It") {
@@ -576,6 +578,7 @@ private struct FileHeader: View {
                 }
                 .buttonStyle(CardActionStyle())
                 .help("Open in Editor")
+                .accessibilityLabel("Open in Editor")
                 .disabled(file.status == .deleted)
             }
             // An AppKit menu, so Open With shows the apps' icons (SwiftUI's leaves them out).

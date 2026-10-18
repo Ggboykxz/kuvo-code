@@ -135,6 +135,7 @@ struct SidebarView: View {
                                     .hoverHighlight(in: RoundedRectangle(cornerRadius: 6), mutesInk: true)
                             }
                             .help("New Bot or Group Chat")
+                            .accessibilityLabel("New Bot or Group Chat")
                         } else {
                             Button(action: newBot) {
                                 Image(systemName: "plus")
@@ -142,6 +143,7 @@ struct SidebarView: View {
                             }
                             .buttonStyle(IconButtonStyle(width: 22, height: 22))
                             .help("New Bot…")
+                            .accessibilityLabel("New Bot")
                         }
                     }
                     if !isFolded("bots") {
@@ -183,6 +185,7 @@ struct SidebarView: View {
                         }
                         .buttonStyle(IconButtonStyle(width: 22, height: 22))
                         .help("New Project… (⇧⌘N)")
+                        .accessibilityLabel("New Project")
                     }
                     if !isFolded("projects") {
                         if workspace.isLoaded && workspace.projects.isEmpty {
@@ -428,6 +431,7 @@ struct SidebarView: View {
             }
             .buttonStyle(IconButtonStyle(width: 22, height: 22))
             .help("New Chat (⌥⌘N)")
+            .accessibilityLabel("New Chat")
         }
         if !isFolded("chats") {
             if selection == draft {
@@ -1075,6 +1079,7 @@ private struct SectionHeader<Trailing: View>: View {
                             .foregroundStyle(.tertiary)
                             .rotationEffect(.degrees(isFolded.wrappedValue ? -90 : 0))
                             .opacity(isHovering || isFolded.wrappedValue ? 1 : 0)
+                            .accessibilityHidden(true)
                     }
                     .contentShape(.rect)
                 }

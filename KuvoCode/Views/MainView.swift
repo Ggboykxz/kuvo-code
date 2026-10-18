@@ -1931,6 +1931,7 @@ private struct MoveToProjectButton: View {
                 .hoverHighlight(in: RoundedRectangle(cornerRadius: 6), mutesInk: true)
         }
         .help("Move to Project: carry this chat into one of your projects")
+        .accessibilityLabel("Move to Project")
     }
 
     private func move(to directory: String) {
