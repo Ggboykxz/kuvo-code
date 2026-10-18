@@ -141,7 +141,7 @@
 				4B0A00000000000000000012 /* XCLocalSwiftPackageReference "Packages/OpenCodeKit" */,
 				4B0A0000000000000000001A /* XCLocalSwiftPackageReference "Packages/UsageKit" */,
 				4B0A00000000000000000052 /* XCLocalSwiftPackageReference "Packages/KuvoLink" */,
-				4B0A00000000000000000017 /* XCRemoteSwiftPackageReference "textual" */,
+				4B0A00000000000000000017 /* XCLocalSwiftPackageReference "Packages/Textual" */,
 				4B0A00000000000000000062 /* XCRemoteSwiftPackageReference "swiftui-math" */,
 				4B0A0000000000000000001D /* XCRemoteSwiftPackageReference "SwiftTerm" */,
 				4B0A00000000000000000040 /* XCRemoteSwiftPackageReference "Sparkle" */,
@@ -406,17 +406,13 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/KuvoLink;
 		};
+		4B0A00000000000000000017 /* XCLocalSwiftPackageReference "Packages/Textual" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/Textual;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		4B0A00000000000000000017 /* XCRemoteSwiftPackageReference "textual" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/gonzalezreal/textual";
-			requirement = {
-				kind = upToNextMinorVersion;
-				minimumVersion = 0.5.0;
-			};
-		};
 		4B0A00000000000000000062 /* XCRemoteSwiftPackageReference "swiftui-math" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/gonzalezreal/swiftui-math";
@@ -450,7 +446,6 @@
 		};
 		4B0A00000000000000000016 /* Textual */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 4B0A00000000000000000017 /* XCRemoteSwiftPackageReference "textual" */;
 			productName = Textual;
 		};
 		4B0A00000000000000000061 /* SwiftUIMath */ = {

@@ -222,10 +222,12 @@ changing the icon there.
 Kuvo Code depends on Textual, SwiftUIMath (which Textual uses too; replies'
 math is drawn with it directly), SwiftTerm, Sparkle and, through UsageKit,
 KeyboardShortcuts. SwiftTerm stays on 1.11, because 1.12 and later need the
-Metal toolchain to build.
+Metal toolchain to build. Textual is a copy in `Packages/Textual`, changed so
+replies are laid out in one pass (its README says what's different and how to
+bring in upstream's changes).
 
 If you add or update a package, or change code copied from another project
-(`prism-bundle.js`, `buildDomTree.js`, UsageKit), run
+(`prism-bundle.js`, `buildDomTree.js`, UsageKit, Textual), run
 `./scripts/third-party-licenses.sh` and commit the updated
 `THIRD_PARTY_LICENSES.txt`; CI checks that it's current.
 

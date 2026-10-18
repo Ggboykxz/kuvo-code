@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Replies draw in one go, and faster: a long reply no longer shows up empty for a moment and then at its size. The first code block in a conversation no longer holds up the app for a quarter of a second while code coloring starts.
 ## 0.5.8
 
 - While a reply is still being written, a code block that starts on a list item's line, like `- ```sh`, or in a quote stays a code block, and the words after it show as words.
