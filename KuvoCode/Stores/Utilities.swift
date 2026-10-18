@@ -26,9 +26,14 @@ final class Utilities {
         var id = UUID()
         var kind: Kind
         /// The conversation whose panel it's in (`panelOf` names it): a session's, a bot's or a
-        /// group chat's. A bot browses in its tabs out of sight.
+        /// group chat's. A bot browses in its tabs out of sight. `Utilities.unclaimed` for a
+        /// machine's page no conversation has yet.
         var owner: String
     }
+
+    /// A machine's page whose conversation isn't known (one left open there when the app last
+    /// quit): in every panel on that machine, until an agent works in it or you pick it.
+    static let unclaimed = "*"
 
     private(set) var tabs: [Tab] = []
     var selection: UUID?
@@ -41,6 +46,8 @@ final class Utilities {
             if let browser = browsers[old], browser.isHeld { browser.isHeld = false }
             if case .machinePage(let machine, let page?) = tab.kind { machineBrowser?(machine)?.handBack(page) }
         }
+        // A page no conversation had is the one you picked it in now.
+        if let index = tabs.firstIndex(where: { $0.id == id }), tabs[index].owner == Self.unclaimed { tabs[index].owner = panelKey }
         selection = id
         picked(id)
     }
@@ -149,7 +156,7 @@ final class Utilities {
         switch tab.kind {
         // A group chat's bots browse beside it.
         case .browser: return place == nil && (tab.owner == key || (groupInView != nil && botsInView.contains(tab.owner)))
-        case .machinePage(let machine, _): return place == machine && tab.owner == key
+        case .machinePage(let machine, _): return place == machine && (tab.owner == key || tab.owner == Self.unclaimed)
         default: return tab.owner == key
         }
     }
@@ -189,12 +196,13 @@ final class Utilities {
     }
 
     /// The tab you had in the panel in view, else the one in view if it's there too (a tool's, or
-    /// a new tab opened as it changed); a panel with nothing in it starts over.
+    /// a new tab opened as it changed); a panel with none of its own (only a machine's unclaimed
+    /// pages, or a group chat's bots') starts over.
     private func restoreSelection() {
         let visible = visibleTabs
         let isVisible = { (id: UUID?) in id.flatMap { id in visible.contains { $0.id == id } ? id : nil } }
         selection = isVisible(chosen[chosenKey(panelKey, place)]) ?? isVisible(selection) ?? visible.first?.id
-        if visible.isEmpty { startOver() }
+        if !visible.contains(where: { $0.owner == panelKey }) { startOver() }
     }
 
     /// Shows the Changes tab, opening it again if it was closed.
@@ -327,11 +335,11 @@ final class Utilities {
         })
         for page in pages where !tabbed.contains(page.id) {
             let last = tabs.lastIndex { if case .machinePage(machine, _) = $0.kind { true } else { false } }
-            // In the panel of the conversation whose agent works there, or that opened it; else
-            // the one in view's.
-            let worker = machineBrowser?(machine)?.session(of: page.id) ?? (pendingReveal?.machine == machine ? pendingReveal?.session : nil)
+            // In the panel of the conversation whose agent works there, or of the page that opened
+            // it; else unclaimed, until an agent works in it (`machinePageActive`) or you pick it.
+            let worker = machineBrowser?(machine)?.session(of: page.id)
             let opened = page.opener.flatMap { opener in tabs.first { $0.kind == .machinePage(machine, opener) }?.owner }
-            let tab = Tab(kind: .machinePage(machine, page.id), owner: worker.map(panelOf) ?? opened ?? panelKey)
+            let tab = Tab(kind: .machinePage(machine, page.id), owner: worker.map(panelOf) ?? opened ?? Self.unclaimed)
             tabs.insert(tab, at: last.map { $0 + 1 } ?? tabs.count)
             // A window the page in view opened comes forward, as a browser shows it.
             if let opener = page.opener {
@@ -351,7 +359,7 @@ final class Utilities {
     @ObservationIgnored private var openers: [String: String] = [:]
 
     private func show(_ tab: Tab, on machine: String) {
-        if place == machine, tab.owner == panelKey { selection = tab.id } else { chosen[chosenKey(tab.owner, machine)] = tab.id }
+        if place == machine, isVisible(tab) { selection = tab.id } else { chosen[chosenKey(tab.owner, machine)] = tab.id }
     }
 
     /// The agent on a machine went to another page (or opened one): its tab comes forward, as the
@@ -361,7 +369,7 @@ final class Utilities {
         // The page is in the panel of the conversation whose agent works in it.
         if let session { tabs[index].owner = panelOf(session) }
         let tab = tabs[index]
-        if place == machine, tab.owner == panelKey, session.map(isInView) ?? true {
+        if place == machine, isVisible(tab), session.map(isInView) ?? true {
             selection = tab.id
             if PanelSettings.isOn(PanelSettings.revealsForAgent) { revealRequest += 1 }
         } else {
