@@ -6,7 +6,7 @@ extension AppModel {
     /// you signed in to here (Notion, Linear…) work on your machines too: each is copied between
     /// this Mac's engine and a machine's, the newer one winning (a service may hand out a new
     /// refresh token each time it's used, and the other copy then stops working). The older copy
-    /// goes, so they don't pile up. Sign-outs made while it was away go first.
+    /// goes, so they don't pile up. Sign-outs it hasn't taken yet go first.
     ///
     /// Once after another with each machine (two at once would each copy the same sign-in), and
     /// each to its end: what it changes is a change that asks for it again, and cut off halfway it
@@ -95,39 +95,54 @@ extension AppModel {
     }
 
     /// Signs out of `integration` (a server's or an account's, which engines name alike), here and
-    /// on every machine: those not connected now when they next connect.
+    /// on every machine: those connected now right after, the others when they next connect. Each
+    /// machine keeps it to do until its copy is gone, so a removal that fails (the connection
+    /// dropped meanwhile) is tried again with the next sync; the sync copies only what this Mac
+    /// has, so it would never take that copy away by itself.
     func forgetSignIn(_ integration: String) {
-        let ready = machines.engines.values.filter(\.isReady)
-        let engines = [api].compactMap(\.self) + ready.compactMap(\.api)
-        for api in engines {
-            Task {
-                guard let entries = try? await api.credentialEntries() else { return }
-                for entry in entries where entry.integrationID == integration { try? await api.removeCredential(entry.id) }
+        let mac = api
+        Task {
+            if let mac, let entries = try? await mac.credentialEntries() {
+                for entry in entries where entry.integrationID == integration { try? await mac.removeCredential(entry.id) }
             }
+            // Only after this Mac's is gone: one it still has counts as signed in to again.
+            var pending = Self.pendingSignOuts.filter { id, _ in machines.list.contains { $0.id == id } }
+            for machine in machines.list where !(pending[machine.id] ?? []).contains(integration) {
+                pending[machine.id, default: []].append(integration)
+            }
+            Self.pendingSignOuts = pending
+            for engine in machines.engines.values where engine.isReady { nudgeSignIns(engine) }
         }
-        var away = Self.signOutsWhileAway
-        for machine in machines.list where !ready.contains(where: { $0.machine.id == machine.id }) {
-            away[machine.id, default: []].append(integration)
-        }
-        Self.signOutsWhileAway = away
     }
 
-    /// The sign-outs a machine that wasn't connected missed, by machine.
-    private static var signOutsWhileAway: [String: [String]] {
+    /// The sign-outs each machine still has to take, by machine.
+    private static var pendingSignOuts: [String: [String]] {
         get { UserDefaults.standard.dictionary(forKey: "machineSignOuts") as? [String: [String]] ?? [:] }
         set { UserDefaults.standard.set(newValue.isEmpty ? nil : newValue, forKey: "machineSignOuts") }
     }
 
-    /// Signs `engine`'s machine out of what you signed out of while it wasn't connected, unless
-    /// you've signed in to it again here since.
+    /// Signs `engine`'s machine out of what you signed out of here, unless you've signed in to it
+    /// again since. One it couldn't is left for the next time.
     private func signOutWhileAway(_ engine: MachineEngine, api remote: OpenCodeAPI) async {
         let id = engine.machine.id
-        guard let missed = Self.signOutsWhileAway[id], let mac = api,
+        guard let missed = Self.pendingSignOuts[id], let mac = api,
               let ours = try? await mac.credentialEntries(), let theirs = try? await remote.credentialEntries() else { return }
-        for integration in Set(missed) where !ours.contains(where: { $0.integrationID == integration }) {
-            for entry in theirs where entry.integrationID == integration { try? await remote.removeCredential(entry.id) }
+        var done: Set<String> = []
+        for integration in Set(missed) {
+            var removed = true
+            // Signed in to here again: the sync copies that one over instead.
+            if !ours.contains(where: { $0.integrationID == integration }) {
+                for entry in theirs where entry.integrationID == integration {
+                    if (try? await remote.removeCredential(entry.id)) == nil { removed = false }
+                }
+            }
+            if removed { done.insert(integration) }
         }
-        Self.signOutsWhileAway[id] = nil
+        // As the list is now: a sign-out made meanwhile stays on it.
+        var pending = Self.pendingSignOuts
+        let left = (pending[id] ?? []).filter { !done.contains($0) }
+        pending[id] = left.isEmpty ? nil : left
+        Self.pendingSignOuts = pending
     }
 
     /// Every connected machine, after a sign-in here (or one renewed by itself).
