@@ -381,10 +381,17 @@ final class MachineBrowser {
         link.onEvent = { [weak self] method, params, session in self?.handle(method, params, session) }
         link.onFrame = { [weak self] frame in
             guard let self, frame.session == self.session else { return }
+            // The page as it was: taking a sharp picture of it draws it again, which comes as a
+            // picture too. Not one to show (over the sharp one) or sharpen again.
+            if frame.digest == lastDigest, frame.scroll == picture?.scroll { return }
+            lastDigest = frame.digest
             #if DEBUG
-            meter.frame(frame.image)
+            meter.frame(frame.image, bytes: frame.bytes)
+            meter.picture(scrollY: frame.scroll.y)
             #endif
             picture = Picture(image: frame.image, size: frame.size, scroll: frame.scroll)
+            pictureCount += 1
+            sharpen()
             // Back at the browser's own size: another viewer (another Mac) that set its size left.
             if frame.size == Self.windowSize, viewport.size != Self.windowSize { reapplyViewport() }
         }
@@ -503,6 +510,9 @@ final class MachineBrowser {
             if params["sessionId"] as? String == session { session = nil }
         default:
             guard sessionID != nil, sessionID == session else { return }
+            #if DEBUG
+            if method.hasPrefix("Page.frame") || method.hasSuffix("EventFired") { meter.event(method) }
+            #endif
             switch method {
             case "Page.frameStartedLoading":
                 if params["frameId"] as? String == shownPage { isLoading = true }
@@ -717,7 +727,36 @@ final class MachineBrowser {
         guard let link, let session else { return }
         let (size, scale) = viewport
         _ = try? await link.send("Emulation.setDeviceMetricsOverride", ["width": Int((size.width / zoom).rounded()), "height": Int((size.height / zoom).rounded()), "deviceScaleFactor": scale * zoom, "mobile": false], session: session)
-        _ = try? await link.send("Page.startScreencast", ["format": "jpeg", "quality": 75, "maxWidth": Int(size.width * scale), "maxHeight": Int(size.height * scale)], session: session)
+        // At the screen's own size (not its scale) while the page moves: making and encoding a
+        // picture at twice that took a server's Chrome long enough to hold up scrolling and clicks
+        // by a good part of a second. Once it stops, a sharp one comes (`sharpen`).
+        _ = try? await link.send("Page.startScreencast", ["format": "jpeg", "quality": 75, "maxWidth": Int(size.width), "maxHeight": Int(size.height)], session: session)
+    }
+
+    /// Pictures that came, to tell whether one came while a sharp one was being made.
+    @ObservationIgnored private var pictureCount = 0
+    @ObservationIgnored private var lastDigest = 0
+    @ObservationIgnored private var sharpening: Task<Void, Never>?
+
+    /// A moment after the page last changed, a picture of it at the screen's scale, for the
+    /// pictures that come at half of it while it moves.
+    private func sharpen() {
+        sharpening?.cancel()
+        guard viewport.scale > 1, let link, let session, let picture else { return }
+        let count = pictureCount
+        sharpening = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled, let self, self.pictureCount == count, self.session == session else { return }
+            guard let result = try? await link.send("Page.captureScreenshot", ["format": "jpeg", "quality": 85, "fromSurface": true], session: session),
+                  let base64 = result["data"] as? String else { return }
+            let image = await Task.detached(priority: .userInitiated) { () -> CGImage? in
+                guard let data = Data(base64Encoded: base64), let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+                return CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+            }.value
+            // Only if the page is as it was: a picture since is newer.
+            guard let image, !Task.isCancelled, self.pictureCount == count, self.session == session else { return }
+            self.picture = Picture(image: image, size: picture.size, scroll: picture.scroll)
+        }
     }
 
     private func refreshHistory() async {
@@ -735,6 +774,9 @@ final class MachineBrowser {
     /// Goes to an address, or searches for anything else, in the page shown.
     func load(_ input: String) {
         guard let url = BrowserSession.url(from: input) else { return }
+        #if DEBUG
+        meter.event("navigate")
+        #endif
         fire("Page.navigate", ["url": url.absoluteString])
     }
 
@@ -822,10 +864,40 @@ final class MachineBrowser {
         private var count = 0, since = Date.now, waitingSince: Date?, delays: [Double] = []
         private var size = ""
 
-        func input() { if on, waitingSince == nil { waitingSince = .now } }
+        private var lastInput: Date?
 
-        func frame(_ image: CGImage) {
+        func input() {
             guard on else { return }
+            if waitingSince == nil { waitingSince = .now }
+            lastInput = .now
+        }
+
+        /// Each picture for a while after input, and where the page was scrolled to.
+        func picture(scrollY: CGFloat) {
+            guard on, let lastInput, Date.now.timeIntervalSince(lastInput) < 3 else { return }
+            log.notice("picture \(String(format: "%.0f", Date.now.timeIntervalSince(lastInput) * 1000), privacy: .public) ms after the last input, at \(Int(scrollY), privacy: .public)")
+        }
+
+        /// A navigation's steps, from when it was asked for, and the first picture after each.
+        private var navigatedAt: Date?
+        private var awaitingFrame: String?
+        private var bytes = 0
+
+        func event(_ name: String) {
+            guard on else { return }
+            if name == "navigate" { navigatedAt = .now }
+            let since = navigatedAt.map { String(format: "%.0f", Date.now.timeIntervalSince($0) * 1000) } ?? "-"
+            log.notice("event \(name, privacy: .public) at \(since, privacy: .public) ms")
+            awaitingFrame = name
+        }
+
+        func frame(_ image: CGImage, bytes frameBytes: Int) {
+            guard on else { return }
+            bytes += frameBytes
+            if let awaiting = awaitingFrame, let navigatedAt {
+                log.notice("first picture after \(awaiting, privacy: .public) at \(String(format: "%.0f", Date.now.timeIntervalSince(navigatedAt) * 1000), privacy: .public) ms, \(frameBytes / 1024, privacy: .public) KB")
+                awaitingFrame = nil
+            }
             count += 1
             size = "\(image.width)x\(image.height)"
             if let start = waitingSince {
@@ -835,7 +907,8 @@ final class MachineBrowser {
             let elapsed = Date.now.timeIntervalSince(since)
             guard elapsed >= 1 else { return }
             let delay = delays.isEmpty ? "-" : String(format: "%.0f", delays.reduce(0, +) / Double(delays.count))
-            log.notice("frames \(String(format: "%.1f", Double(self.count) / elapsed), privacy: .public)/s \(self.size, privacy: .public), scroll to frame \(delay, privacy: .public) ms")
+            log.notice("frames \(String(format: "%.1f", Double(self.count) / elapsed), privacy: .public)/s \(self.size, privacy: .public), \(Int(Double(self.bytes) / elapsed / 1024), privacy: .public) KB/s, scroll to frame \(delay, privacy: .public) ms")
+            bytes = 0
             count = 0
             since = .now
             delays = []
@@ -1141,6 +1214,10 @@ final class MachineBrowserLink {
             var size: CGSize
             var scroll: CGPoint
             var session: String?
+            /// How big it came, as JPEG.
+            var bytes = 0
+            /// Its JPEG's hash: the same picture again (one made as a sharp one was taken) has it.
+            var digest = 0
         }
 
         var writer: FileHandle?
@@ -1193,7 +1270,7 @@ final class MachineBrowserLink {
             let width = (metadata["deviceWidth"] as? NSNumber)?.doubleValue ?? Double(image.width)
             let height = (metadata["deviceHeight"] as? NSNumber)?.doubleValue ?? Double(image.height)
             let scroll = CGPoint(x: (metadata["scrollOffsetX"] as? NSNumber)?.doubleValue ?? 0, y: (metadata["scrollOffsetY"] as? NSNumber)?.doubleValue ?? 0)
-            deliverFrame(Frame(image: image, size: CGSize(width: width, height: height), scroll: scroll, session: session))
+            deliverFrame(Frame(image: image, size: CGSize(width: width, height: height), scroll: scroll, session: session, bytes: data.count, digest: data.hashValue))
         }
     }
 }

@@ -50,7 +50,7 @@ const TAB_IDLE = Number(process.env.KUVO_BROWSER_TAB_IDLE || 12 * 3600) * 1000;
 
 // Goes up with every change to the keeper (host mode): a newer one replaces one that's running
 // (its pages close, its sign-ins stay), and an older one never replaces a newer.
-const KEEPER = 21;
+const KEEPER = 22;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -320,6 +320,9 @@ async function launchChrome(sandbox) {
     "--disable-dev-shm-usage",
     "--hide-scrollbars",
     "--mute-audio",
+    // A scroll moves the page at once: the Mac's trackpad and wheel already ease it, and
+    // Chrome's own easing on top, drawn a few times a second on a server, made it lag behind.
+    "--disable-smooth-scrolling",
     `--user-agent=${userAgent()}`,
     "about:blank",
   ];

@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Scrolling and clicking in a machine's browser keep up with you. Its live view comes at your screen's size while the page moves, and sharp once it stops; making every picture sharp kept the browser on the server so busy that a scroll took most of a second to show.
 - A session waiting for your answer shows the orange hand in the sidebar and tab bar even if you haven't opened it, like a bot's work in a session of its own. It showed as still working.
 - Settings › Engine no longer says every web search service needs an API key: most search without one. Its "Any service" choice was called "Any connected service", though it uses services you haven't connected too.
 - Kuvo Code no longer stops responding for a second as it starts, while it checks that its engine is genuine.
