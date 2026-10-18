@@ -353,7 +353,16 @@ struct TranscriptView: View {
         // Always while it works, with the time since your message, so a long step is plainly
         // still going.
         if model.transcript.isRunning {
-            rows.append(.working(since: turn.started))
+            // Since when nothing has come back from the model: your message, or a step, with no
+            // step writing or running a tool after it (a step stays open while its tools run).
+            var quiet: Milliseconds?
+            switch messages.last {
+            case .assistant(let step)?: quiet = step.time.completed ?? (step.content.isEmpty ? step.time.created : nil)
+            case .user(let message)?: quiet = message.time.created
+            case .synthetic(let notice)?, .system(let notice)?: quiet = notice.time.created
+            default: break
+            }
+            rows.append(.working(since: turn.started, quiet: quiet))
         }
         return rows
     }
@@ -457,7 +466,8 @@ enum Row: Identifiable, Hashable {
     /// An undo that the next message makes final, with how many messages it took back.
     case undone(Int)
     /// The agent at work, since the time of your message.
-    case working(since: Milliseconds?)
+    /// `quiet`: since when nothing has come back from the model.
+    case working(since: Milliseconds?, quiet: Milliseconds?)
 
     /// The words Find looks in, as the row shows them: messages, replies, and commands you ran
     /// with what they printed.
@@ -490,12 +500,12 @@ enum Row: Identifiable, Hashable {
         switch (previous, self) {
         // The space the Markdown style puts between those paragraphs.
         case (_, .more(_, let gap)): gap
-        case (.more, .assistant), (.more, .turnEnd), (.more, .working(_)), (.more, .steps): 10
+        case (.more, .assistant), (.more, .turnEnd), (.more, .working), (.more, .steps): 10
         case (_, .widget), (.widget, _), (_, .sent), (.sent, _): 14
-        case (.assistant, .assistant), (.assistant, .turnEnd), (.assistant, .working(_)),
-             (.steps, .assistant), (.assistant, .steps), (.steps, .turnEnd), (.steps, .working(_)),
+        case (.assistant, .assistant), (.assistant, .turnEnd), (.assistant, .working),
+             (.steps, .assistant), (.assistant, .steps), (.steps, .turnEnd), (.steps, .working),
              (.subagent, .subagent), (.steps, .subagent), (.subagent, .steps), (.assistant, .subagent), (.more, .subagent),
-             (.subagent, .assistant), (.subagent, .turnEnd), (.subagent, .working(_)): 10
+             (.subagent, .assistant), (.subagent, .turnEnd), (.subagent, .working): 10
         case (_, .user), (_, .pending): 28
         case (.shell, .shell): 12
         case (_, .shell): 20
@@ -548,6 +558,15 @@ private struct RowView: View, Equatable {
 
     static func sentAt(_ created: Milliseconds) -> String {
         MessageTime.sentAt(Date(timeIntervalSince1970: created / 1000))
+    }
+
+    /// "Working… 12s · Esc to stop"; once the model has said nothing for a while, that it's
+    /// waiting for it, which a provider that never answers can make last many minutes.
+    static func working(since: Milliseconds?, quiet: Milliseconds?, now: Date) -> String {
+        if let quiet, now.timeIntervalSince1970 - quiet / 1000 >= 20 {
+            return "Waiting for the model to answer…" + elapsed(since: quiet, now: now)
+        }
+        return "Working…" + elapsed(since: since, now: now)
     }
 
     /// " 12s", " 1m 5s" after a few seconds, then " · Esc to stop".
@@ -623,7 +642,7 @@ private struct RowView: View, Equatable {
             .background(.quaternary.opacity(0.5), in: .capsule)
             .frame(maxWidth: .infinity)
             .help("Sending a message makes the undo final")
-        case .working(let since):
+        case .working(let since, let quiet):
             HStack(spacing: 8) {
                 // A bot shows itself at work.
                 if let bot {
@@ -631,7 +650,7 @@ private struct RowView: View, Equatable {
                         .frame(width: 16)
                 }
                 TimelineView(.periodic(from: .now, by: 1)) { context in
-                    ShimmerText(text: "Working…" + Self.elapsed(since: since, now: context.date))
+                    ShimmerText(text: Self.working(since: since, quiet: quiet, now: context.date))
                         .font(.callout)
                 }
             }

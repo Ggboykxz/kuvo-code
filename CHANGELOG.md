@@ -6,6 +6,8 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- While nothing comes back from the model for a while, the line at the end of the conversation says "Waiting for the model to answer…" with how long, instead of "Working…". A provider that never answers could look for many minutes as if the agent were busy doing something.
+
 ## 0.5.10
 
 - A reply's preview in the sidebar, and in notifications, keeps what it quotes as written: a path or a `snake_case` name lost its underscores, and "C#" or "a > b" lost their marks. Only Markdown's own marks are taken off.
