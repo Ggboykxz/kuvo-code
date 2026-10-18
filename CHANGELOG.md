@@ -9,6 +9,9 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Settings › Engine no longer says every web search service needs an API key: most search without one. Its "Any service" choice was called "Any connected service", though it uses services you haven't connected too.
 - Kuvo Code no longer stops responding for a second as it starts, while it checks that its engine is genuine.
 - Opened from the disk image, Kuvo Code offers to move itself to your Applications folder and opens from there. From the disk image it can't update itself, so updates were quietly skipped.
+- Scrolling through a long conversation is smoother: replies take about a third less work to draw as they come into view, and code blocks show colored at once instead of plain for a moment first.
+- Scrolling up while earlier messages come in no longer jumps the conversation by a few lines now and then.
+- A long reply streams in more smoothly: new words redraw only the reply being written, not the whole conversation.
 
 ## 0.5.13
 
