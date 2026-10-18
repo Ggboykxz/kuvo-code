@@ -392,6 +392,52 @@ struct WakesTests {
         #expect(read(watch.appending(path: "last"))?.hasPrefix("2/") == true, "\(label)")
     }
 
+    /// Check Now: `kuvo-wake <bot> try <letters>` runs a watch's check as its runs do and says why
+    /// a run like it wouldn't count, without counting it.
+    @Test(arguments: WakesTests.shells)
+    func checkNowRunsTheCheckAsTheWatchDoes(shell: String) throws {
+        let k = try folder()
+        defer { try? FileManager.default.removeItem(at: k) }
+        #expect(try sh(Wakes.installScript, in: k).status == 0)
+        let fm = FileManager.default
+        let bin = k.appending(path: "testbin")
+        try fm.createDirectory(at: bin, withIntermediateDirectories: true)
+        try "#!/bin/sh\ncat \"$K/out\"\nexit \"$(cat \"$K/code\")\"\n".write(to: bin.appending(path: "curl"), atomically: true, encoding: .utf8)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.appending(path: "curl").path)
+        let bot = k.appending(path: "bots/bot_test")
+        let watch = bot.appending(path: "watches/AbCd12")
+        try fm.createDirectory(at: watch, withIntermediateDirectories: true)
+        try "10m".write(to: watch.appending(path: "every"), atomically: true, encoding: .utf8)
+        try "Look".write(to: watch.appending(path: "note"), atomically: true, encoding: .utf8)
+        try "0".write(to: watch.appending(path: "next"), atomically: true, encoding: .utf8)
+        func tried(_ check: String, page: String = "", code: Int = 0, letters: String = "AbCd12") throws -> (status: Int32, output: String) {
+            try check.write(to: watch.appending(path: "check"), atomically: true, encoding: .utf8)
+            try page.write(to: k.appending(path: "out"), atomically: true, encoding: .utf8)
+            try String(code).write(to: k.appending(path: "code"), atomically: true, encoding: .utf8)
+            return try sh("PATH=\"$K/testbin:$PATH\" \(shell) \"$K/bin/kuvo-wake\" \"$K/bots/bot_test\" try '\(letters)'", in: k)
+        }
+        let shop = "curl -s https://example.com/shop | grep -o 'In stock'"
+        #expect(Wakes.tried(try tried(shop, page: "In stock").output)! == ("In stock", nil), "\(shell)")
+        // Nothing found counts; the network down doesn't, and says so.
+        #expect(Wakes.tried(try tried(shop, page: "Sold out").output)! == ("", nil), "\(shell)")
+        #expect(Wakes.tried(try tried(shop, code: 6).output)?.skipped == "curl failed (exit 6)", "\(shell)")
+        #expect(Wakes.tried(try tried("echo partial >&2; exit 3").output)?.skipped == "the check failed (exit 3) without printing anything", "\(shell)")
+        #expect(Wakes.tried(try tried("nosuchcommand-kuvo").output)?.skipped == "the check couldn't run (exit 127)", "\(shell)")
+        #expect(Wakes.tried(try tried("printf 'a\\nb'; exit 3").output)! == ("a\nb", nil), "\(shell)")
+        // In the folder the bot works in, its errors left out, with no arguments of its own.
+        try fm.createDirectory(at: k.appending(path: "project"), withIntermediateDirectories: true)
+        try k.appending(path: "project").path.write(to: bot.appending(path: "directory"), atomically: true, encoding: .utf8)
+        #expect(Wakes.tried(try tried("echo \"${PWD##*/} $#\"; echo oops >&2").output)! == ("project 0", nil), "\(shell)")
+        // It counts nothing, and leaves nothing behind.
+        #expect(try fm.contentsOfDirectory(atPath: watch.path).sorted() == ["check", "every", "next", "note"], "\(shell)")
+        #expect(try String(contentsOf: watch.appending(path: "next"), encoding: .utf8) == "0")
+        for letters in ["", "..", "../AbCd12", "AbCd12/..", "nope"] {
+            let result = try tried("echo hi", letters: letters)
+            #expect(result.status == 2 && Wakes.tried(result.output) == nil, "\(letters), \(shell)")
+        }
+        #expect(Wakes.tried("Usage:\n  kuvo-wake <bot> add") == nil)
+    }
+
     /// The script's next time for a repeat (as a wake-up's name has it), from its own functions, at `now`.
     private func scriptNext(_ due: Date, _ every: String, now: Date, zone: String, shell: String = "/bin/sh") throws -> Date {
         let functions = try #require(Wakes.script.components(separatedBy: "if [ \"$1\" = fire ]").first)

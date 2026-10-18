@@ -381,34 +381,51 @@ final class Bots {
         watches[bot.id]?.removeAll { $0.letters == letters }
     }
 
-    /// Runs a watch's check now, as its own run would (in the bot's folder, for at most a minute),
-    /// and returns what it prints, without counting it as a run.
+    /// Runs a watch's check now, as its own runs do (kuvo-wake's `try`: in the bot's folder, for
+    /// at most a minute, only what it prints), without counting it as a run: what it prints, or
+    /// why a run like this one wouldn't count.
     func tryCheck(_ watch: Wakes.Watch, of bot: Bot) async -> String {
-        let folder = bot.machine.map { _ in RemoteFolder.parse(bot.directory)?.path ?? bot.directory } ?? bot.directory
-        let script = "cd \(SSHConnection.quoted(folder)) 2>/dev/null || cd \(SSHConnection.quoted(bot.folder)); "
-            + "if command -v timeout >/dev/null 2>&1; then timeout 60 sh -c \(SSHConnection.quoted(watch.check)); else sh -c \(SSHConnection.quoted(watch.check)); fi 2>&1 </dev/null | head -c 4000"
+        let letters = watch.letters
+        guard !letters.isEmpty, letters.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else { return "" }
+        let output: String
         if let machine = bot.machine {
-            let output = await Task.detached { RemoteShell.run(script, on: machine) }.value
-            return output.map { String(decoding: $0, as: UTF8.self) } ?? "Couldn’t reach \(machine)."
+            let script = "\"\(Self.machineCommand)\" \(SSHConnection.quoted(bot.folder)) try \(letters)"
+            var data = await Task.detached { RemoteShell.run(script, on: machine) }.value
+            // A kuvo-wake there from before `try`: this copy's, then again.
+            if let old = data, Wakes.tried(String(decoding: old, as: UTF8.self)) == nil, let engine = app?.machines.engine(machine) {
+                try? await Wakes.install(on: engine.machine.connection)
+                data = await Task.detached { RemoteShell.run(script, on: machine) }.value
+            }
+            guard let data else { return "Couldn’t reach \(machine)." }
+            output = String(decoding: data, as: UTF8.self)
+        } else {
+            try? Self.installCommand()
+            let environment = app?.shellEnvironment ?? ProcessInfo.processInfo.environment
+            let arguments = [Self.command.path, bot.folder, "try", letters]
+            output = await Task.detached { () -> String in
+                let process = Process()
+                process.executableURL = URL(filePath: "/bin/sh")
+                process.arguments = arguments
+                process.environment = environment
+                process.standardInput = FileHandle.nullDevice
+                let pipe = Pipe()
+                process.standardOutput = pipe
+                process.standardError = FileHandle.nullDevice
+                guard (try? process.run()) != nil else { return "" }
+                // The check stops after a minute; this, a little later.
+                let stop = DispatchWorkItem { if process.isRunning { process.terminate() } }
+                DispatchQueue.global().asyncAfter(deadline: .now() + 75, execute: stop)
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
+                stop.cancel()
+                return String(decoding: data, as: UTF8.self)
+            }.value
         }
-        let environment = app?.shellEnvironment ?? ProcessInfo.processInfo.environment
-        return await Task.detached { () -> String in
-            let process = Process()
-            process.executableURL = URL(filePath: "/bin/sh")
-            process.arguments = ["-c", script]
-            process.environment = environment
-            process.standardInput = FileHandle.nullDevice
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            process.standardError = pipe
-            guard (try? process.run()) != nil else { return "" }
-            let stop = DispatchWorkItem { if process.isRunning { process.terminate() } }
-            DispatchQueue.global().asyncAfter(deadline: .now() + 60, execute: stop)
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            stop.cancel()
-            return String(decoding: data, as: UTF8.self)
-        }.value
+        guard let tried = Wakes.tried(output) else { return "Couldn’t run the check. Is the watch still there?" }
+        guard let skipped = tried.skipped else { return tried.output }
+        let printed = tried.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return "This run wouldn’t count: \(skipped). The watch skips runs like this, so they never wake the bot."
+            + (printed.isEmpty ? "" : "\n\n" + printed)
     }
 
     private static func localWatches(of bot: Bot) -> [Wakes.Watch] {

@@ -200,6 +200,15 @@ public enum Wakes {
         }
     }
 
+    /// What `kuvo-wake <bot> try <letters>` printed: what the check printed, and why a run like
+    /// it wouldn't count (nil when it would). Nil for anything else, like a kuvo-wake without `try`.
+    public static func tried(_ output: String) -> (output: String, skipped: String?)? {
+        guard output.hasPrefix("KUVO-TRY ") else { return nil }
+        let line = output.prefix { $0 != "\n" }
+        let why = line.dropFirst("KUVO-TRY ".count).trimmingCharacters(in: .whitespaces)
+        return (String(output.dropFirst(line.count + 1)), why.isEmpty ? nil : why)
+    }
+
     /// A changed watch's wake-up, from its folder in the bot's (on this Mac).
     public static func watchMessage(_ letters: String, inBot folder: String) -> String? {
         try? String(contentsOfFile: watchFolder(letters, inBot: folder) + "/message", encoding: .utf8)
@@ -660,6 +669,13 @@ public enum Wakes {
       check)
         # For the Mac's app: the watches that are due, run now.
         checks "$bot" ;;
+      try)
+        # For Check Now: a watch's check, by its letters, run as its runs are, without counting.
+        # A line with why a run like it wouldn't count (after "KUVO-TRY "), then what it printed.
+        case "$3" in ''|*[!A-Za-z0-9]*) w= ;; *) w="$bot/watches/$3/" ;; esac
+        [ -n "$w" ] && [ -f "${w}check" ] || { echo "No watch \"$3\". See kuvo-wake $1 list." >&2; exit 2; }
+        run "$w" "$bot" try-
+        printf 'KUVO-TRY %s\n%s' "$t_why" "$t_out" ;;
       list)
         found=
         for wake in "$bot"/wakes/*; do
