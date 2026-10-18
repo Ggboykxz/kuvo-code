@@ -958,7 +958,16 @@ final class Bots {
             if listed.machine != nil { await syncJob(of: listed.id) }
             guard let bot = bot(listed.id) else { continue }
             if sent[bot.sessionID] != Self.digest(Self.instructions(for: bot)) {
-                guard (try? await sendInstructions(of: bot, api: api)) != nil else { continue }
+                do {
+                    try await sendInstructions(of: bot, api: api)
+                } catch let error as ServerError where error.status == 404 {
+                    // Its conversation is gone from the engine: asking again each time won't
+                    // bring it back.
+                    synced.insert(bot.id)
+                    continue
+                } catch {
+                    continue
+                }
             }
             synced.insert(bot.id)
             await repairRules(of: bot, api: api)
