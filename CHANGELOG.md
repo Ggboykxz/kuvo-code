@@ -15,6 +15,13 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Settings › Permissions lists the approvals you saved with Always Allow in every project, to remove them. It said "None yet" for any made in a project.
 - Conversations keep going while a save panel or an error message is open. Exporting a session as Markdown, or an error after removing a worktree or moving a chat, used to stop every conversation, bot and wake-up from updating until you closed it. With VoiceOver, the composer's mode and model buttons open their menus.
 - Signing out of an account or integration here signs your remote machines out too, even when that fails the first time: it's tried again until it works, rather than leaving the machine signed in.
+- When a remote machine connects again, it tells you what its agents asked while it was away, like a bot's permission request from a wake-up while your Mac slept. Before, nothing said so until you opened that conversation.
+- Messages agents send each other are no longer lost when a machine drops: one waiting for a machine stays queued until it's delivered, and one a machine's agent leaves for an agent elsewhere stays there until it gets through.
+- Answering a permission request from its notification says so when the answer didn't go through, as answering a question already did.
+- Changing a bot's name, model or personality while its machine is away reaches the bot once the machine is back. Its group chats catch up too, and a chat you deleted meanwhile is taken out of its folder. In a group chat, a go-ahead whose work couldn't be handed out now says so.
+- Deleting a bot moves its folder, with its memory and the files it made, to the Trash (on a machine, to Kuvo Code's trash folder there). It used to be deleted for good.
+- Removing an OpenRouter or Z.ai key in the usage panel no longer deletes that key's file in `~/.config`, which other tools use. A key there shows as yours, like one from your environment.
+- A remote machine's engine is no longer started over when this Mac's engine and the machine's list GitHub Copilot's models differently.
 
 ## 0.5.8
 
