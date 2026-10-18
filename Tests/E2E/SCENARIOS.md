@@ -86,7 +86,7 @@ real open-source projects cloned into the run's folder. Status: ✅ passes, ⚠�
 | F7 | Export a bot and import it as a new one | ✅ a .kuvobot opened from Finder starts New Bot with its name, look and personality, its job waiting in the composer; Export's save panel runs in a system process the driver can't reach, so the file was written in its format |
 | F8 | Delete a bot | ✅ Delete Bot… asks first; the bot, its conversation and folder go (the folder to the Trash) |
 | F9 | A bot on a machine: works and wakes while the Mac's app is closed | ⏳ |
-| F10 | Bots writing to each other: one asks another for something and gets an answer | ⏳ |
+| F10 | Bots writing to each other: one asks another for something and gets an answer | ✅ Advisor found Reader with list_agents, asked which library the chat picked, waited, and relayed "date-fns" |
 
 ## L. What bots can get done
 
@@ -195,8 +195,8 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 | --- | --- | --- |
 | G1 | Make a group chat, ask it to decide something, and watch the bots talk it through | ✅ two bots talked it through and came to a decision |
 | G2 | Say "go ahead" and the work is handed out; each bot does its part and reports back | ✅ with the go-ahead in the message, Advisor wrote its file in a session of its own (its edit permission now shows the hand, 7759768), Reader checked it from Advisor's paste (bots can't read each other's folders), and the lead wrapped up what was decided, done and next |
-| G3 | Undo a message, stop the chat, keep it going | ⏳ |
-| G4 | A meeting on a schedule | ⏳ |
+| G3 | Undo a message, stop the chat, keep it going | ✅ Undo From Here asked first, took the message out and back to the composer; Stop ended the talk with no bot left running; a debate paused at its 9 turns and Keep Going carried on |
+| G4 | A meeting on a schedule | ✅ a one-off meeting set 2½ minutes out came at its second, both bots answered the topic, and the schedule cleared itself |
 
 ## H. Integrations and tools
 
