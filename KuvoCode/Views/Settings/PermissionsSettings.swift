@@ -117,7 +117,15 @@ struct PermissionsSettings: View {
     ]
 
     private func loadSaved() async {
-        saved = (try? await app.api?.savedPermissions()) ?? []
+        guard let api = app.api else { return saved = [] }
+        // The engine lists one project's at a time: the folders outside any, then each project's.
+        var found = (try? await api.savedPermissions()) ?? []
+        for project in Set(workspace.sessions.map(\.projectID)).sorted() {
+            for permission in (try? await api.savedPermissions(projectID: project)) ?? [] where !found.contains(where: { $0.id == permission.id }) {
+                found.append(permission)
+            }
+        }
+        saved = found
     }
 
     private func projectName(_ id: String) -> String {

@@ -94,8 +94,10 @@ public struct OpenCodeAPI: Sendable {
         try await get("api/websearch/provider", directory: directory, as: LocatedEnvelope<[WebSearchProvider]>.self).data
     }
 
-    public func savedPermissions() async throws -> [SavedPermission] {
-        try await get("api/permission/saved", as: DataEnvelope<[SavedPermission]>.self).data
+    /// One project's approvals saved with Always: `projectID`'s, or by default the engine's own
+    /// folder's (the folders outside any project's).
+    public func savedPermissions(projectID: String? = nil) async throws -> [SavedPermission] {
+        try await get("api/permission/saved", query: ["projectID": projectID], as: DataEnvelope<[SavedPermission]>.self).data
     }
 
     public func removeSavedPermission(_ id: String) async throws {
