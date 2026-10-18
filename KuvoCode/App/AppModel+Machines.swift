@@ -267,8 +267,9 @@ extension AppModel {
 
     /// What a machine's engine gets from this Mac: the accounts that can go as environment
     /// variables (API keys, a GitHub Copilot sign-in), held in its memory and never written to its
-    /// disk, and this Mac's engine settings, minus what only makes sense here. `staysHere` names
-    /// the accounts that can't go, like a ChatGPT sign-in.
+    /// disk, and this Mac's engine settings, minus what only makes sense here (web search goes in
+    /// its settings file, as here). `staysHere` names the accounts that can't go, like a ChatGPT
+    /// sign-in.
     func machineEnvironment() async -> (environment: [String: String], staysHere: [String]) {
         var environment: [String: String] = [:]
         var staysHere: [String] = []
@@ -303,11 +304,27 @@ extension AppModel {
         }
         // Web search that works, as on this Mac, unless the file chose otherwise.
         engineConfig.addDefaults()
+        // What goes in the settings file of the machine's engine, in `~/.kuvo-code`, rather than in
+        // its memory with the rest, which outranks a project's own settings: web search, so a
+        // project there can choose otherwise, as here. Only which provider, or none: a choice with
+        // more in it (a key, say) stays off its disk.
+        var global: [String: JSONValue] = [:]
         if let data = try? Data(contentsOf: engineConfig.file),
            var settings = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
             // A shell or a worktree folder on this Mac means nothing on the machine, nor do
             // integrations that use this Mac's apps.
             for key in ["$schema", "shell", "worktree"] { settings.removeValue(forKey: key) }
+            if let search = (try? JSONDecoder().decode([String: JSONValue].self, from: data))?["websearch"] {
+                let isPlain = switch search {
+                case .bool: true
+                case .object(let choice): choice.count == 1 && choice["provider"]?.string != nil
+                default: false
+                }
+                if isPlain {
+                    settings.removeValue(forKey: "websearch")
+                    global["websearch"] = search
+                }
+            }
             if var mcp = settings["mcp"] as? [String: Any], var servers = mcp["servers"] as? [String: Any] {
                 for id in Integrations.macOnly { servers.removeValue(forKey: id) }
                 // Keys there come in its environment, not files on this Mac.
@@ -318,6 +335,8 @@ extension AppModel {
                 environment["OPENCODE_CONFIG_CONTENT"] = String(decoding: json, as: UTF8.self)
             }
         }
+        // Always, so a choice taken back here is taken back there.
+        environment["KUVO_SETTINGS"] = (try? JSONEncoder().encode(global)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
         // Keys you brought for the integrations machines run, in memory as on this Mac: not
         // those that stay on this Mac (an app's secret for a sign-in, say).
         let here = Set(Integrations.macOnly.map { IntegrationKeys.variable($0, "") })

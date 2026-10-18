@@ -31,6 +31,42 @@ struct RemoteEngineTests {
         #expect(script.contains("umask 077"))
     }
 
+    /// Settings given as `KUVO_SETTINGS` become the engine's own settings file, in its folder, for
+    /// its user only, and aren't left in its environment; without them, the file is left alone.
+    @Test func settingsGoInTheEnginesOwnFile() throws {
+        // Up to where it starts the engine.
+        let setup = try #require(RemoteServer.launchScript.components(separatedBy: "R=\"$K/run\"").first) + "env | grep -c '^KUVO_SETTINGS=' || true\n"
+        for shell in WakesTests.shells {
+            let home = FileManager.default.temporaryDirectory.appending(path: "opencodekit-home-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: home) }
+            try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+            let file = home.appending(path: "\(RemoteEngineInstaller.root)/config/opencode/opencode.json")
+            func run(_ input: String) throws -> String {
+                let process = Process()
+                process.executableURL = URL(filePath: shell)
+                process.arguments = ["-c", setup]
+                process.environment = ["PATH": "/usr/bin:/bin", "HOME": home.path]
+                let stdin = Pipe(), stdout = Pipe()
+                process.standardInput = stdin
+                process.standardOutput = stdout
+                try process.run()
+                stdin.fileHandleForWriting.write(Data(input.utf8))
+                try stdin.fileHandleForWriting.close()
+                process.waitUntilExit()
+                return String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            }
+            let settings = #"{"websearch":{"provider":"random"}}"#
+            #expect(try run("KUVO_PORT=1\nKUVO_SETTINGS=\(settings)\n\n").trimmingCharacters(in: .whitespacesAndNewlines) == "0", "\(shell)")
+            #expect(try String(contentsOf: file, encoding: .utf8) == settings + "\n", "\(shell)")
+            let permissions = try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? Int
+            #expect(permissions == 0o600, "\(shell)")
+            _ = try run("KUVO_PORT=1\n\n")
+            #expect(try String(contentsOf: file, encoding: .utf8) == settings + "\n", "\(shell)")
+            _ = try run("KUVO_PORT=1\nKUVO_SETTINGS={}\n\n")
+            #expect(try String(contentsOf: file, encoding: .utf8) == "{}\n", "\(shell)")
+        }
+    }
+
     @Test func linuxBuildsAreThePinnedVersion() {
         for machine in ["x86_64", "aarch64"] {
             let release = EngineRelease.linux(machine: machine)

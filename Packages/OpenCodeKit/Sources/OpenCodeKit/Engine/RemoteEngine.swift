@@ -301,6 +301,9 @@ public final class RemoteServer: @unchecked Sendable {
     /// starts it in a session of its own on the machine's localhost, writes down how to find it,
     /// and starts its watchdog. Prints its process once it listens.
     ///
+    /// `KUVO_SETTINGS`, when it's given, becomes the engine's settings file there (its global
+    /// settings, which a project's own outrank), in place of what was there.
+    ///
     /// Every minute the watchdog sends bots' wake-ups that are due ([Wakes]). Every ten, it stops
     /// the engine if the app hasn't been around for a day and no wake-up is waiting.
     static var launchScript: String {
@@ -308,6 +311,10 @@ public final class RemoteServer: @unchecked Sendable {
         while IFS= read -r line && [ -n "$line" ]; do export "$line"; done
         port=$KUVO_PORT; record=$KUVO_RECORD; unset KUVO_PORT KUVO_RECORD
         \(RemoteEngineInstaller.folders)
+        if [ -n "${KUVO_SETTINGS+set}" ]; then
+          mkdir -p "$K/config/opencode" && (umask 077; printf '%s\\n' "$KUVO_SETTINGS" >"$K/config/opencode/opencode.json")
+          unset KUVO_SETTINGS
+        fi
         R="$K/run"; mkdir -p "$R"; chmod 700 "$R"
         \(Wakes.installScript)
         \(Launcher.installScript)
