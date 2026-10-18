@@ -431,6 +431,46 @@ struct WakesTests {
         }
     }
 
+    /// A weekly repeat keeps its day of the week as it keeps its time of day: Monday at 10:00 in New
+    /// York is Tuesday at midnight in Tokyo, but once the Mac is there, it's Mondays at 10:00 there.
+    @Test func aWeeklyRepeatKeepsItsDayInANewTimeZone() throws {
+        func calendar(_ zone: String) -> Calendar {
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = TimeZone(identifier: zone)!
+            return calendar
+        }
+        let newYork = calendar("America/New_York"), tokyo = calendar("Asia/Tokyo")
+        let at = { (calendar: Calendar, day: Int, hour: Int) in calendar.date(from: DateComponents(year: 2026, month: 11, day: day, hour: hour))! }
+        // From one zone to the other, Mondays (November 16 and 23, 2026) both ways, and every two weeks.
+        let cases: [(due: Date, every: Wakes.Repeat, made: Calendar, now: Calendar, zone: String, next: Date)] = [
+            (at(newYork, 16, 10), .weeks(1), newYork, tokyo, "Asia/Tokyo", at(tokyo, 23, 10)),
+            (at(tokyo, 16, 9), .weeks(1), tokyo, newYork, "America/New_York", at(newYork, 23, 9)),
+            (at(newYork, 16, 10), .weeks(2), newYork, tokyo, "Asia/Tokyo", calendar("Asia/Tokyo").date(from: DateComponents(year: 2026, month: 11, day: 30, hour: 10))!),
+            (at(newYork, 16, 10), .weeks(1), newYork, newYork, "America/New_York", at(newYork, 23, 10)),
+        ]
+        for test in cases {
+            let wake = try #require(Wakes.Pending(id: Wakes.name(due: test.due, every: test.every, calendar: test.made), note: ""))
+            #expect(wake.weekday == 2)
+            let next = try #require(wake.nextID(after: test.due.addingTimeInterval(60), calendar: test.now))
+            #expect(next.hasPrefix("\(Int(test.next.timeIntervalSince1970))-"), "\(test.zone): \(next)")
+            #expect(next.hasSuffix("w@Mon\(test.made == newYork ? "1000" : "0900")"))
+            let text = Wakes.text(of: test.every, at: wake.at, weekday: wake.weekday)
+            for shell in Self.shells {
+                #expect(try scriptNext(test.due, text, now: test.due.addingTimeInterval(60), zone: test.zone, shell: shell) == test.next, "\(text) in \(test.zone), \(shell)")
+            }
+        }
+
+        // The script names a weekly one with its day, and one from before with the day it was due.
+        let functions = try #require(Wakes.script.components(separatedBy: "if [ \"$1\" = fire ]").first)
+        let k = try folder()
+        defer { try? FileManager.default.removeItem(at: k) }
+        let due = Int(at(newYork, 16, 10).timeIntervalSince1970)
+        for shell in Self.shells {
+            let run = try sh("export TZ=America/New_York\n\(functions)\nkept \(due) 1w; kept \(due) 2w@1000; kept \(due) 1w@Tue1000; kept \(due) 1d; repeats 1w@Mon0900 && echo ok; repeats 1d@Mon0900 || echo no; repeats 1w@Xyz0900 || echo no", in: k, shell: shell)
+            #expect(run.output == "1w@Mon1000\n2w@Mon1000\n1w@Tue1000\n1d@1000\nok\nno\nno\n", "\(shell)")
+        }
+    }
+
     @Test func readsARepeat() {
         #expect(Wakes.Repeat("30m") == .minutes(30))
         #expect(Wakes.Repeat("1w") == .weeks(1))
@@ -449,6 +489,13 @@ struct WakesTests {
         #expect(kept?.nextID()?.hasSuffix("-CkytYD-weekdays@0230") == true)
         #expect(kept?.letters == "CkytYD")
         #expect(Wakes.Pending(id: "1792080986-CkytYD-1d@2460", note: "")?.at == nil)
+        let weekly = Wakes.Pending(id: "1792080986-CkytYD-2w@Mon0930", note: "hi")
+        #expect(weekly?.every == .weeks(2))
+        #expect(weekly?.at == 570)
+        #expect(weekly?.weekday == 2)
+        #expect(weekly?.nextID()?.hasSuffix("-CkytYD-2w@Mon0930") == true)
+        #expect(Wakes.Pending(id: "1792080986-CkytYD-1w@Xyz0930", note: "")?.at == nil)
+        #expect(Wakes.Pending(id: "1792080986-CkytYD-1w", note: "")?.nextID()?.contains("-CkytYD-1w@") == true)
         #expect(Wakes.Pending(id: "1792080986-CkytYD-2h", note: "")?.nextID()?.hasSuffix("-CkytYD-2h") == true)
         #expect(Wakes.Pending(id: "1792080986-CkytYD", note: "hi")?.nextID() == nil)
         let command = Wakes.command(in: #"kuvo-wake bot_abc add 2026-10-17T09:00 --every weekdays "standup""#)

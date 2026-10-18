@@ -38,6 +38,8 @@ struct BotGroup: Codable, Identifiable, Hashable {
         /// The time of day one that repeats by days keeps, in minutes, from its first time, so
         /// daylight saving or a new time zone doesn't move it for good.
         var at: Int?
+        /// The day of the week a weekly one keeps, likewise (1 is Sunday).
+        var weekday: Int?
 
         var repeats: Wakes.Repeat? { every.flatMap(Wakes.Repeat.init) }
     }
@@ -375,7 +377,8 @@ final class BotGroups {
             meet(group.id, about: meeting.topic)
             if let every = meeting.repeats {
                 if every.keepsTimeOfDay, meeting.at == nil { meeting.at = Wakes.minutes(of: meeting.next) }
-                meeting.next = every.next(after: meeting.next, now: .now, at: every.keepsTimeOfDay ? meeting.at : nil)
+                if every.keepsWeekday, meeting.weekday == nil { meeting.weekday = Calendar.current.component(.weekday, from: meeting.next) }
+                meeting.next = every.next(after: meeting.next, now: .now, at: every.keepsTimeOfDay ? meeting.at : nil, weekday: every.keepsWeekday ? meeting.weekday : nil)
                 list[index].meeting = meeting
             } else {
                 list[index].meeting = nil
