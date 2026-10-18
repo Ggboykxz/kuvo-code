@@ -95,12 +95,22 @@ private struct QueueRow: View {
                     .buttonStyle(TextButtonStyle())
                     .font(.system(size: 13))
                     .help(isRunning ? "Steer: the agent takes this at its next step, without waiting for the run to end" : "Send it now")
+                } else if isRunning {
+                    // For its next step already: what's left is not waiting for that.
+                    Button {
+                        model.sendNow(item)
+                    } label: {
+                        Label("Send Now", systemImage: "arrow.up")
+                    }
+                    .buttonStyle(TextButtonStyle())
+                    .font(.system(size: 13))
+                    .help("Send Now: stops the agent's current step and gives it this")
                 }
                 Button("Remove", systemImage: "trash") { model.cancelPending(item) }
                     .buttonStyle(CardActionStyle())
                     .help("Remove")
                 Menu {
-                    if isRunning {
+                    if isRunning && isQueued {
                         Button("Send Now") { model.sendNow(item) }
                     }
                     Button("Edit") { model.edit(item) }
@@ -116,7 +126,7 @@ private struct QueueRow: View {
                 .buttonStyle(.plain)
                 .menuIndicator(.hidden)
                 .fixedSize()
-                .help(isRunning ? "Send Now (stops the current step), Edit, Remove" : "Edit, Remove")
+                .help(isRunning && isQueued ? "Send Now (stops the current step), Edit, Remove" : "Edit, Remove")
             }
         }
         .padding(.leading, 6)
