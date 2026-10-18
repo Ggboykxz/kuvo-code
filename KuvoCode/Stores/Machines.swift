@@ -36,6 +36,8 @@ final class MachineEngine {
     /// Keeps its sign-ins in step with this Mac's while it's connected (`AppModel.syncSignIns`).
     @ObservationIgnored var signInSync: Task<Void, Never>?
     @ObservationIgnored var signInNudge: Task<Void, Never>?
+    /// Copying its sign-ins, now or last: the next waits for it.
+    @ObservationIgnored var signInTurn: Task<Void, Never>?
     /// Starts it over with this Mac's accounts once they've changed (`AppModel.updateMachineAccounts`).
     @ObservationIgnored var accountsUpdate: Task<Void, Never>?
     /// Keeps its agents' list of everyone current, and brings their messages for agents

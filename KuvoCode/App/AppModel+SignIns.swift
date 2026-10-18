@@ -1,12 +1,30 @@
+import Foundation
 import OpenCodeKit
 
 extension AppModel {
-    /// Integrations you signed in to here (Notion, Linear…) work on your machines too: each
-    /// sign-in is copied between this Mac's engine and a machine's, the newer one winning (a
-    /// service may hand out a new refresh token each time it's used, and the other copy then
-    /// stops working). The older copy goes, so they don't pile up.
+    /// Integrations you signed in to here (Notion, Linear…) work on your machines too, and so do
+    /// accounts you signed in to with your browser (a ChatGPT plan): each sign-in is copied
+    /// between this Mac's engine and a machine's, the newer one winning (a service may hand out a
+    /// new refresh token each time it's used, and the other copy then stops working). The older
+    /// copy goes, so they don't pile up. Sign-outs made while it was away go first.
+    ///
+    /// Once after another with each machine (two at once would each copy the same sign-in), and
+    /// each to its end: what it changes is a change that asks for it again, and cut off halfway it
+    /// would leave the older copy behind.
     func syncSignIns(with engine: MachineEngine) async {
+        let previous = engine.signInTurn
+        let turn = Task { [weak self, weak engine] in
+            await previous?.value
+            guard let self, let engine else { return }
+            await self.copySignIns(with: engine)
+        }
+        engine.signInTurn = turn
+        await turn.value
+    }
+
+    private func copySignIns(with engine: MachineEngine) async {
         guard let mac = api, let remote = engine.api else { return }
+        await signOutWhileAway(engine, api: remote)
         async let macServers = mac.mcpServers()
         async let remoteServers = remote.mcpServers()
         async let macEntries = mac.credentialEntries()
@@ -17,17 +35,44 @@ extension AppModel {
             guard let local = server.integrationID, let match = there.first(where: { $0.name == server.name }), let far = match.integrationID,
                   let mine = ours.first(where: { $0.integrationID == local && $0.active && $0.isOAuth }) else { continue }
             let yours = theirs.first { $0.integrationID == far && $0.active && $0.isOAuth }
-            if mine.expires > (yours?.expires ?? -1) {
-                guard (try? await remote.storeCredential(mine, for: far)) != nil else { continue }
-                if let yours { try? await remote.removeCredential(yours.id) }
-                await reconnect(match.name, api: remote, machine: engine.machine.id)
-            } else if let yours, yours.expires > mine.expires {
-                // The machine's is newer (it refreshed): back to this Mac.
-                guard (try? await mac.storeCredential(yours, for: local)) != nil else { continue }
-                try? await mac.removeCredential(mine.id)
-                await reconnect(server.name, api: mac, machine: nil)
+            switch await exchange(mine, yours, here: local, there: far, mac: mac, remote: remote) {
+            case true?: await reconnect(match.name, api: remote, machine: engine.machine.id)
+            case false?: await reconnect(server.name, api: mac, machine: nil)
+            case nil: break
             }
         }
+        // Accounts: those that can't go as a key in its environment (`machineEnvironment`), as
+        // a GitHub Copilot sign-in does. Only once the catalog says which are accounts.
+        let accounts = Set(catalog.integrations.filter { !$0.isMCP && $0.id != "github-copilot" }.map(\.id))
+        for mine in ours where mine.active && mine.isOAuth && accounts.contains(mine.integrationID) {
+            let yours = theirs.first { $0.integrationID == mine.integrationID && $0.active && $0.isOAuth }
+            await exchange(mine, yours, here: mine.integrationID, there: mine.integrationID, mac: mac, remote: remote)
+        }
+    }
+
+    /// Puts the newer of this Mac's sign-in and the machine's on the other side, in place of the
+    /// older: true if the machine's changed, false if this Mac's did. For another account than
+    /// the machine's (one you switched to here), this Mac's.
+    @discardableResult
+    private func exchange(_ mine: CredentialEntry, _ yours: CredentialEntry?, here local: String, there far: String,
+                          mac: OpenCodeAPI, remote: OpenCodeAPI) async -> Bool? {
+        if let yours, Self.isSameAccount(mine, yours), yours.expires > mine.expires {
+            // The machine's is newer (it renewed it): back to this Mac, and from it to the others.
+            guard (try? await mac.storeCredential(yours, for: local)) != nil else { return nil }
+            try? await mac.removeCredential(mine.id)
+            return false
+        }
+        if let yours, Self.isSameAccount(mine, yours), yours.expires == mine.expires { return nil }
+        guard (try? await remote.storeCredential(mine, for: far)) != nil else { return nil }
+        if let yours { try? await remote.removeCredential(yours.id) }
+        return true
+    }
+
+    /// Copies of one sign-in: the same account, as the service names it, or else the same label
+    /// (a copy keeps it).
+    private static func isSameAccount(_ one: CredentialEntry, _ other: CredentialEntry) -> Bool {
+        if let a = one.value["accountId"]?.string, let b = other.value["accountId"]?.string { return a == b }
+        return one.label == other.label
     }
 
     /// Connects an integration's server again after a sign-in (or a Try Again), in every folder
@@ -37,16 +82,40 @@ extension AppModel {
         for folder in workspace.openFolders(on: machine) { try? await api.connectMCP(server, directory: folder) }
     }
 
-    /// Signs out of `integration` (a server's, which engines name alike), here and on every
-    /// connected machine.
+    /// Signs out of `integration` (a server's or an account's, which engines name alike), here and
+    /// on every machine: those not connected now when they next connect.
     func forgetSignIn(_ integration: String) {
-        let engines = [api].compactMap(\.self) + machines.engines.values.filter(\.isReady).compactMap(\.api)
+        let ready = machines.engines.values.filter(\.isReady)
+        let engines = [api].compactMap(\.self) + ready.compactMap(\.api)
         for api in engines {
             Task {
                 guard let entries = try? await api.credentialEntries() else { return }
                 for entry in entries where entry.integrationID == integration { try? await api.removeCredential(entry.id) }
             }
         }
+        var away = Self.signOutsWhileAway
+        for machine in machines.list where !ready.contains(where: { $0.machine.id == machine.id }) {
+            away[machine.id, default: []].append(integration)
+        }
+        Self.signOutsWhileAway = away
+    }
+
+    /// The sign-outs a machine that wasn't connected missed, by machine.
+    private static var signOutsWhileAway: [String: [String]] {
+        get { UserDefaults.standard.dictionary(forKey: "machineSignOuts") as? [String: [String]] ?? [:] }
+        set { UserDefaults.standard.set(newValue.isEmpty ? nil : newValue, forKey: "machineSignOuts") }
+    }
+
+    /// Signs `engine`'s machine out of what you signed out of while it wasn't connected, unless
+    /// you've signed in to it again here since.
+    private func signOutWhileAway(_ engine: MachineEngine, api remote: OpenCodeAPI) async {
+        let id = engine.machine.id
+        guard let missed = Self.signOutsWhileAway[id], let mac = api,
+              let ours = try? await mac.credentialEntries(), let theirs = try? await remote.credentialEntries() else { return }
+        for integration in Set(missed) where !ours.contains(where: { $0.integrationID == integration }) {
+            for entry in theirs where entry.integrationID == integration { try? await remote.removeCredential(entry.id) }
+        }
+        Self.signOutsWhileAway[id] = nil
     }
 
     /// Every connected machine, after a sign-in here (or one renewed by itself).

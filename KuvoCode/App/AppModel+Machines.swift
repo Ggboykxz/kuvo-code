@@ -309,8 +309,8 @@ extension AppModel {
     /// What a machine's engine gets from this Mac: the accounts that can go as environment
     /// variables (API keys, a GitHub Copilot sign-in), held in its memory and never written to its
     /// disk, and this Mac's engine settings, minus what only makes sense here (web search goes in
-    /// its settings file, as here). `staysHere` names the accounts that can't go, like a ChatGPT
-    /// sign-in.
+    /// its settings file, as here). Sign-ins with your browser go as copies instead
+    /// (`syncSignIns`). `staysHere` names the accounts that can't go at all.
     func machineEnvironment() async -> (environment: [String: String], staysHere: [String]) {
         var environment: [String: String] = [:]
         var staysHere: [String] = []
@@ -330,6 +330,9 @@ extension AppModel {
             for credential in credentials where credential.active {
                 let integration = integrations.first { $0.id == credential.integrationID }
                 let name = integration?.name ?? credential.integrationID
+                // A sign-in with your browser (a ChatGPT plan, an integration's) is copied to its
+                // engine as it is (`syncSignIns`).
+                if credential.value.type == "oauth", credential.integrationID != "github-copilot" { continue }
                 guard let variable = integration?.environmentVariables.first else {
                     staysHere.append(name)
                     continue

@@ -308,6 +308,8 @@ private struct ConnectedRow: View {
         let ids = provider.connections.filter { $0.type == "credential" }.compactMap(\.credentialID)
         Task {
             for id in ids { try? await api.removeCredential(id) }
+            // And its copies on your machines (a ChatGPT sign-in).
+            app.forgetSignIn(provider.id)
         }
     }
 }

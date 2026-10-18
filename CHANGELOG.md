@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Your ChatGPT sign-in works on your remote machines too, as integrations' sign-ins do: it's copied to each machine's engine and kept in step with it, so ChatGPT's models are there as on your Mac. Signing out of an account or an integration reaches a machine that wasn't connected at the time once it connects, and a sign-in renewed on one side no longer leaves its old copy behind on the other.
 - A remote machine's browser keeps its temporary files in Kuvo Code's own folder there, never in the machine's /tmp, and clears away what a browser that was stopped hard left in /tmp before.
 - A link whose address or title goes on to the next line, with dollar signs in its address, opens that address; math used to change it.
 - A bot can have keys of its own: in Edit Bot, under Keys, give it a GitHub token or another integration's key that only it uses, in place of your shared one from Settings › Integrations. No other bot or session gets it, on your Mac or on a machine. On remote machines, integrations' keys are no longer in the engine's environment, where an agent's commands could print them: they're in files only you can read, gone once the engine stops.
