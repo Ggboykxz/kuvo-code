@@ -194,7 +194,7 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 | ID | Case | Status |
 | --- | --- | --- |
 | G1 | Make a group chat, ask it to decide something, and watch the bots talk it through | ✅ two bots talked it through and came to a decision |
-| G2 | Say "go ahead" and the work is handed out; each bot does its part and reports back | ⏳ |
+| G2 | Say "go ahead" and the work is handed out; each bot does its part and reports back | ✅ with the go-ahead in the message, Advisor wrote its file in a session of its own (its edit permission now shows the hand, 7759768), Reader checked it from Advisor's paste (bots can't read each other's folders), and the lead wrapped up what was decided, done and next |
 | G3 | Undo a message, stop the chat, keep it going | ⏳ |
 | G4 | A meeting on a schedule | ⏳ |
 
