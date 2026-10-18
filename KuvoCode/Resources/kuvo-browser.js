@@ -37,6 +37,9 @@ const CURRENT = path.join(BROWSER, "current");
 const PROFILE = path.join(BROWSER, "profile");
 // What pages download, under their own names; gone after a week.
 const DOWNLOADS = path.join(BROWSER, "downloads");
+// Chromium's temporary files: the socket its lock answers on, and the shared memory that
+// --disable-dev-shm-usage puts there. Emptied each time it starts.
+const TMP = path.join(BROWSER, "tmp");
 const SCRIPT = process.argv[1];
 // How long Chromium keeps running with nobody connected.
 const IDLE = Number(process.env.KUVO_BROWSER_IDLE || 10 * 60) * 1000;
@@ -47,7 +50,7 @@ const TAB_IDLE = Number(process.env.KUVO_BROWSER_TAB_IDLE || 12 * 3600) * 1000;
 
 // Goes up with every change to the keeper (host mode): a newer one replaces one that's running
 // (its pages close, its sign-ins stay), and an older one never replaces a newer.
-const KEEPER = 19;
+const KEEPER = 20;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -269,6 +272,28 @@ function browserBinary(build) {
   return null;
 }
 
+/// What a Chromium that was stopped hard left of its lock somewhere else, like the machine's
+/// /tmp (one from before it had a folder of its own): gone, once that Chromium is.
+function removeStaleLock() {
+  try {
+    // "<host>-<pid>", of the Chromium that last had the profile.
+    const owner = fs.readlinkSync(path.join(PROFILE, "SingletonLock"));
+    const pid = Number(owner.slice(owner.lastIndexOf("-") + 1));
+    if (pid > 0) {
+      try {
+        process.kill(pid, 0);
+        return;
+      } catch (error) {
+        if (error.code !== "ESRCH") return;
+      }
+    }
+    const folder = path.dirname(fs.readlinkSync(path.join(PROFILE, "SingletonSocket")));
+    if (!/^(org\.chromium\.Chromium|com\.google\.Chrome)\.[A-Za-z0-9]+$/.test(path.basename(folder))) return;
+    if (fs.lstatSync(folder).uid !== process.getuid()) return;
+    fs.rmSync(folder, { recursive: true, force: true });
+  } catch {}
+}
+
 /// Starts Chromium and waits until it answers on its pipe.
 async function launchChrome(sandbox) {
   const binary = browserBinary(fs.realpathSync(CURRENT)) ?? "chrome-headless-shell";
@@ -325,8 +350,16 @@ async function launchChrome(sandbox) {
     "</fontconfig>",
     "",
   ].join("\n"));
+  // Its temporary files in its own folder, never the machine's /tmp, where one stopped hard would
+  // leave them. Unless that's too far down for its lock's socket (a path of 107 bytes at most):
+  // then wherever its temporary files would go otherwise.
+  removeStaleLock();
+  fs.rmSync(TMP, { recursive: true, force: true });
+  fs.mkdirSync(TMP, { recursive: true, mode: 0o700 });
+  const fits = Buffer.byteLength(path.join(TMP, "org.chromium.Chromium.XXXXXX", "SingletonSocket")) <= 107;
   const env = {
     ...process.env,
+    ...(fits ? { TMPDIR: TMP } : {}),
     HOME: home,
     XDG_CONFIG_HOME: path.join(home, ".config"),
     XDG_CACHE_HOME: path.join(home, ".cache"),
