@@ -147,3 +147,11 @@ jobs:
           [IO.File]::WriteAllBytes($certPath, $bytes)
           signtool sign /fd sha256 /f $certPath /p $env:CSC_KEY_PASSWORD build/kuvo-windows-harness.exe
           Remove-Item $certPath
+
+      - name: Keep the installer and the portable build
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kuvo-windows-shell-x64
+          path: |
+            windows/electron/dist/*.exe
+          if-no-files-found: error
