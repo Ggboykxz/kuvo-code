@@ -9,6 +9,14 @@ private let log = Logger(subsystem: "run.kuvo.code", category: "catalog")
 @Observable
 final class Catalog {
     var api: OpenCodeAPI?
+    /// This Mac's engine's, whose list of models says what every engine is started with
+    /// (`ProviderCompatibility`); a machine's would make the two take turns, and the machine's
+    /// engine look out of date each time.
+    let isMac: Bool
+
+    init(isMac: Bool = false) {
+        self.isMac = isMac
+    }
 
     private(set) var integrations: [Integration] = []
     private(set) var models: [Model] = []
@@ -113,7 +121,7 @@ final class Catalog {
         do { self.integrations = try await integrations } catch { log.error("integrations: \(String(describing: error), privacy: .public)") }
         do {
             self.models = try await models
-            ProviderCompatibility.learn(from: self.models)
+            if isMac { ProviderCompatibility.learn(from: self.models) }
             LogoImages.shared.prefetch(self.models.flatMap { [$0.makerLogoID, $0.providerID] })
         } catch { log.error("models: \(String(describing: error), privacy: .public)") }
         do { self.defaultModel = try await defaultModel } catch { log.error("default model: \(String(describing: error), privacy: .public)") }

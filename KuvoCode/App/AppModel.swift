@@ -21,7 +21,7 @@ final class AppModel {
     /// The login shell's environment (PATH and the like), for the engine and terminals.
     private(set) var shellEnvironment = ProcessInfo.processInfo.environment
 
-    let catalog = Catalog()
+    let catalog = Catalog(isMac: true)
     /// The right panel's tools; one window, so one set.
     let utilities = Utilities()
     /// What the agent asks you for while it browses: sign-ins, codes, steps only you can do.
