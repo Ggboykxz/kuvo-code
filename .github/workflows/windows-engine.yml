@@ -117,11 +117,9 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
 
       # node-gyp 9 (bundled with Node 22) still wants distutils, which Python 3.12
-      # removed: give it a 3.11 it can talk to.
-      - name: Set up Python 3.11 for node-gyp
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+      # removed: setuptools provides the shim node-gyp is looking for.
+      - name: Install setuptools for node-gyp
+        run: python -m pip install --upgrade setuptools
 
       - name: Build the shell
         working-directory: windows/electron
