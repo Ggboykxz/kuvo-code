@@ -23,16 +23,24 @@ enum MathText {
         let isBlock: Bool
     }
 
-    private static let open: Character = "\u{E000}"
-    private static let close: Character = "\u{E001}"
+    /// The formulas set aside from a text, in order, and the two characters around a formula's
+    /// number where it was: ones the text has nowhere, so none of its own is read as a mark.
+    struct Formulas: Equatable {
+        var list: [Formula] = []
+        fileprivate var open: Character = "\u{E000}"
+        fileprivate var close: Character = "\u{E001}"
+
+        var isEmpty: Bool { list.isEmpty }
+    }
 
     // MARK: Setting formulas aside
 
     /// `input` with each formula outside code swapped for a mark, and the formulas, in order.
-    static func protect(_ input: String) -> (text: String, formulas: [Formula]) {
+    static func protect(_ input: String) -> (text: String, formulas: Formulas) {
         // Most replies have none: nothing to do.
-        guard input.contains("$") || input.contains("\\(") || input.contains("\\[") else { return (input, []) }
-        var formulas: [Formula] = []
+        guard input.contains("$") || input.contains("\\(") || input.contains("\\[") else { return (input, Formulas()) }
+        var formulas = Formulas()
+        (formulas.open, formulas.close) = marks(for: input)
         var out = ""
         out.reserveCapacity(input.count)
         var chunk = ""
@@ -58,6 +66,21 @@ enum MathText {
         return (out, formulas)
     }
 
+    /// Two private-use characters `text` doesn't have, nor writes as `&#…;` (which Markdown turns
+    /// into the character).
+    private static func marks(for text: String) -> (Character, Character) {
+        var used: Set<UInt32> = []
+        for scalar in text.unicodeScalars where (0xE000...0xF8FF).contains(scalar.value) { used.insert(scalar.value) }
+        if text.contains("&#") {
+            for match in text.matches(of: /&#(?:[xX]([0-9a-fA-F]{1,6})|([0-9]{1,7}));/) {
+                if let value = match.1.flatMap({ UInt32($0, radix: 16) }) ?? match.2.flatMap({ UInt32($0) }) { used.insert(value) }
+            }
+        }
+        var value: UInt32 = 0xE000
+        while used.contains(value) || used.contains(value + 1) { value += 2 }
+        return (Character(Unicode.Scalar(value)!), Character(Unicode.Scalar(value + 1)!))
+    }
+
     /// The ``` or ~~~ that opens or closes a fenced code block, if the line starts with one.
     private static func fenceMarker(_ line: Substring) -> String? {
         guard let first = line.first, first == "`" || first == "~" else { return nil }
@@ -66,14 +89,14 @@ enum MathText {
     }
 
     /// One stretch of text between code blocks, its formulas set aside.
-    private static func protectChunk(_ chunk: String, into formulas: inout [Formula]) -> String {
+    private static func protectChunk(_ chunk: String, into formulas: inout Formulas) -> String {
         guard !chunk.isEmpty else { return chunk }
         let chars = Array(chunk)
         var out = ""
         var i = 0
         func mark(_ latex: String, block: Bool) -> String {
-            formulas.append(Formula(latex: latex.trimmingCharacters(in: .whitespacesAndNewlines), isBlock: block))
-            return "\(open)\(formulas.count - 1)\(close)"
+            formulas.list.append(Formula(latex: latex.trimmingCharacters(in: .whitespacesAndNewlines), isBlock: block))
+            return "\(formulas.open)\(formulas.list.count - 1)\(formulas.close)"
         }
         /// Where the line `index` is on starts.
         func lineStart(_ index: Int) -> Int {
@@ -209,9 +232,9 @@ enum MathText {
     /// plain copy of the text's bytes, which is quick, rather than by walking its characters,
     /// which works out where each one ends at every step (a long reply is read again with each
     /// streamed word); and replaced last first, so the ones before keep their place.
-    static func restore(_ text: inout AttributedString, _ formulas: [Formula]) {
+    static func restore(_ text: inout AttributedString, _ formulas: Formulas) {
         guard !formulas.isEmpty else { return }
-        let opening = Array(String(open).utf8), closing = Array(String(close).utf8)
+        let opening = Array(String(formulas.open).utf8), closing = Array(String(formulas.close).utf8)
         var marks: [(start: Int, end: Int, formula: Formula)] = []
         var plain = String(text.characters)
         plain.withUTF8 { bytes in
@@ -224,13 +247,15 @@ enum MathText {
                     i += 1
                     continue
                 }
-                var j = i + opening.count, index = 0
-                while j < bytes.count, (0x30...0x39).contains(bytes[j]) {
+                // No more digits than a number of formulas has, so it never overflows.
+                let digits = i + opening.count
+                var j = digits, index = 0
+                while j < bytes.count, j - digits < 10, (0x30...0x39).contains(bytes[j]) {
                     index = index * 10 + Int(bytes[j] - 0x30)
                     j += 1
                 }
-                if j > i + opening.count, matches(closing, at: j), formulas.indices.contains(index) {
-                    marks.append((i, j + closing.count, formulas[index]))
+                if j > digits, matches(closing, at: j), formulas.list.indices.contains(index) {
+                    marks.append((i, j + closing.count, formulas.list[index]))
                     i = j + closing.count
                 } else {
                     i += opening.count
