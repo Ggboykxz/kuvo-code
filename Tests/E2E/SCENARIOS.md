@@ -35,7 +35,7 @@ real open-source projects cloned into the run's folder. Status: ✅ passes, ⚠�
 | B13 | Two sessions in the same project working at once, and one in another project | ✅ two sessions in tinysite and one in textstats at once, each with its own permission cards ("Waiting for you" in the sidebar) and the right result; ❌→✅ Always Allow for everything read "Don't ask again for: *" (a8d4c86) |
 | B14 | Switch model or effort mid-conversation | ✅ picked another free model mid-conversation, applied when the picker closes, next reply on it; ⚠️ the notice names the model by its id ("Switched to deepseek-v4.1-flash-free") |
 | B15 | "Start the dev server and show me the page": the page in the panel's browser | ❌→✅ the agent couldn't click or type in the Mac browser since 0.5.6 (3edd9f4); a page that didn't open said only "browser is empty" (3f59090); its dev server left running showed nowhere (14ed231) |
-| B16 | A long conversation: scrolling, finding text (⌘F), and the context filling up and compacting | ⚠️ Find in Conversation finds and highlights every match and counts them, but Next/Previous don't scroll to a result out of view (reported to the performance work, which is changing that scrolling); Summarize Now works and the agent still knows what it did |
+| B16 | A long conversation: scrolling, finding text (⌘F), and the context filling up and compacting | ❌→✅ Find's Next/Previous didn't scroll to a result out of view (fixed by the performance work, ea28e93, rechecked); Summarize Now works and the agent still knows what it did |
 | B17 | A folder that isn't a git repository, a folder with spaces and accents in its name, and a big repository | ✅ accents and spaces in the folder name; ❌→✅ outside git the Changes tab stayed empty (8ad10d1) |
 | B18 | Rename, archive, restore and delete sessions; find one with ⌘K | ✅ rename (accents), archive, search finds it, unarchive, delete asks first, ⌘K finds files and sessions; ❌→✅ a deleted session stayed under In Conversations; a search typed at launch found nothing (8149536) |
 | B19 | "Use a subagent to research X while you do Y" | ✅ the subagent has its own row (task, agent, what it used) and its findings come back in the reply |
@@ -79,9 +79,9 @@ real open-source projects cloned into the run's folder. Status: ✅ passes, ⚠�
 | --- | --- | --- |
 | F1 | Make a bot from scratch: it asks what its purpose is, you tell it, it keeps it | ✅ the bot writes first: infers its job from its name or asks (f95ed69) |
 | F2 | Start from a template (the morning news digest) and send its job | ⏳ |
-| F3 | "Remind me in 2 minutes to stretch": a wake-up arrives on time | ⏳ |
-| F4 | "Every weekday at 9 …": a repeating wake-up, shown in Edit Bot, paused and resumed | ⏳ |
-| F5 | "Tell me when this page changes": a watch that wakes the bot when it does | ⏳ |
+| F3 | "Remind me in 2 minutes to stretch": a wake-up arrives on time | ✅ see L15 |
+| F4 | "Every weekday at 9 …": a repeating wake-up, shown in Edit Bot, paused and resumed | ✅ see L16 and L17; shown in Edit Bot, Pause Wake-Ups holds them (a `paused` mark) and turning it off resumes; ❌→✅ the switch had no name for VoiceOver (014d6b9) |
+| F5 | "Tell me when this page changes": a watch that wakes the bot when it does | ✅ see L8–L11 |
 | F6 | Change a bot's job by telling it; change its look, name, personality and model | ✅ told a new job in its conversation: job and memory updated, a weekday 10:00 wake-up set; renamed, new look, personality and model in Edit Bot, and it answers as its new self on the new model |
 | F7 | Export a bot and import it as a new one | ✅ a .kuvobot opened from Finder starts New Bot with its name, look and personality, its job waiting in the composer; Export's save panel runs in a system process the driver can't reach, so the file was written in its format |
 | F8 | Delete a bot | ✅ Delete Bot… asks first; the bot, its conversation and folder go (the folder to the Trash) |
