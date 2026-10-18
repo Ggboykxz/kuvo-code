@@ -318,6 +318,31 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
     return json({ ok: true, output });
   }
 
+  // Search across the project's sessions for a string in their messages.
+  if (url.pathname === "/api/search/sessions" && request.method === "GET") {
+    if (!currentProject) throw new HttpError(400, "No project folder is open.");
+    const query = String(url.searchParams.get("q") ?? "").trim().toLowerCase();
+    if (query === "") return json({ matches: [] });
+    const { client } = await ensureEngine();
+    const sessions = await client.sessions({ directory: currentProject });
+    const matches = [];
+    for (const session of sessions) {
+      try {
+        const messages = await client.messages(session.id);
+        const hits = [];
+        for (const message of messages) {
+          const text = (message?.parts ?? []).map(p => p.text ?? "").join(" ").toLowerCase();
+          if (text.includes(query) && hits.length < 3) {
+            hits.push({ messageID: message.id, snippet: text.slice(Math.max(0, text.indexOf(query) - 40), text.indexOf(query) + 80).trim() });
+          }
+        }
+        if (hits.length) matches.push({ session, hits });
+        if (matches.length >= 20) break;
+      } catch {}
+    }
+    return json({ matches });
+  }
+
   const { client } = await ensureEngine();
 
   if (url.pathname === "/api/sessions" && request.method === "POST") {

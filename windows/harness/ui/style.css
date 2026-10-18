@@ -305,3 +305,15 @@ aside {
 .git-status { font-size: 11px; font-family: ui-monospace, monospace; max-height: 120px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
 .git-status .entry { padding: 1px 0; }
 .git-status .code { font-weight: 600; margin-right: 6px; }
+
+/* ---- Session tabs ---- */
+.session-tabs { display: flex; gap: 4px; padding: 6px 12px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.session-tabs.hidden { display: none; }
+.session-tab {
+  display: flex; align-items: center; gap: 4px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--ink-soft);
+  border-radius: 6px; padding: 3px 8px; cursor: pointer; font-size: 12px; white-space: nowrap;
+}
+.session-tab.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.session-tab .close { opacity: .6; margin-left: 4px; }
+.session-tab .close:hover { opacity: 1; }

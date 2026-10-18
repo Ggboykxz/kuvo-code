@@ -25,11 +25,14 @@
       <button id="new-session" class="small">New</button>
     </div>
     <input id="session-search" class="file-search" placeholder="Search sessions…" spellcheck="false">
+    <input id="message-search" class="file-search" placeholder="Search messages…" spellcheck="false">
+    <div id="message-search-results" class="search-results" hidden></div>
     <ul id="sessions"></ul>
     <div id="sessions-empty" class="aside-empty">No sessions yet.</div>
   </aside>
 
   <section id="conversation">
+    <div id="session-tabs" class="session-tabs" hidden></div>
     <div id="empty" class="empty">
       <h1>Start with a folder</h1>
       <p>Pick the project to work in, then say what you want done. The agent reads, edits and runs things in that folder, asking first.</p>

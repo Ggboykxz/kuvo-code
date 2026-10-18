@@ -81,6 +81,8 @@ const state = {
   drawerTab: "files",
   eventSource: null,
   sessionQuery: "",
+  openSessions: [],
+  transcripts: new Map(),
 };
 
 let renderQueued = false;
@@ -201,6 +203,18 @@ function assistantEntry(entry) {
 
 function renderConversation() {
   const hasSession = state.session !== null;
+  const tabs = $("session-tabs");
+  tabs.hidden = state.openSessions.length < 2;
+  tabs.innerHTML = "";
+  for (const id of state.openSessions) {
+    const session = state.sessions.find(s => s.id === id) || (state.session && state.session.id === id ? state.session : null);
+    const title = session?.title || id.slice(0, 8);
+    const tab = el("div", { class: `session-tab ${id === state.session?.id ? "active" : ""}` });
+    const label = el("span", { text: title, onclick: () => openSession(id) });
+    const close = el("span", { class: "close", text: "✕", onclick: (e) => { e.stopPropagation(); closeSessionTab(id); } });
+    tab.append(label, close);
+    tabs.append(tab);
+  }
   $("composer").hidden = !hasSession;
   const empty = $("empty");
   empty.hidden = hasSession;
@@ -280,13 +294,34 @@ function permissionCard(request) {
   return card;
 }
 
+function closeSessionTab(id) {
+  state.openSessions = state.openSessions.filter(s => s !== id);
+  state.transcripts.delete(id);
+  if (state.session && state.session.id === id) {
+    const next = state.openSessions[state.openSessions.length - 1];
+    if (next) openSession(next);
+    else { state.session = null; state.transcript = null; render(); }
+  } else {
+    render();
+  }
+}
+
 async function openSession(id) {
-  const detail = await api(`/api/sessions/${encodeURIComponent(id)}`);
-  state.session = detail.session;
-  state.transcript = fromHistory(id, detail.messages, detail.permissions, detail.running);
-  selectModelInPicker();
-  render();
-  $("prompt").focus();
+  if (!id) return;
+  if (state.session && state.transcript) state.transcripts.set(state.session.id, state.transcript);
+  if (!state.openSessions.includes(id)) state.openSessions.push(id);
+  try {
+    const detail = await api(`/api/sessions/${encodeURIComponent(id)}`);
+    state.session = detail.session;
+    const cached = state.transcripts.get(id);
+    state.transcript = cached || fromHistory(id, detail.messages, detail.permissions, detail.running);
+    if (!cached) state.transcripts.set(id, state.transcript);
+    selectModelInPicker();
+    render();
+    $("prompt").focus();
+  } catch (error) {
+    complain(null, error);
+  }
 }
 
 // ---- Composer ----
@@ -326,6 +361,28 @@ $("stop").addEventListener("click", async () => {
 $("session-search").addEventListener("input", (event) => {
   state.sessionQuery = event.target.value.trim().toLowerCase();
   renderSessions();
+});
+
+$("message-search").addEventListener("input", async (event) => {
+  const query = event.target.value.trim();
+  const results = $("message-search-results");
+  if (query.length < 3) { results.hidden = true; results.innerHTML = ""; return; }
+  try {
+    const { matches } = await api(`/api/search/sessions?q=${encodeURIComponent(query)}`);
+    results.innerHTML = "";
+    results.hidden = false;
+    for (const match of matches.slice(0, 20)) {
+      const item = el("div", { class: "hit" });
+      item.append(el("div", { text: match.session.title || match.session.id }));
+      for (const hit of match.hits) {
+        const where = el("div", { class: "where", text: hit.snippet });
+        where.addEventListener("click", () => openSession(match.session.id));
+        item.append(where);
+      }
+      results.append(item);
+    }
+    if (matches.length === 0) results.append(el("div", { class: "where", text: "No matches." }));
+  } catch (error) { complain(null, error); }
 });
 
 $("new-session").addEventListener("click", async () => {
