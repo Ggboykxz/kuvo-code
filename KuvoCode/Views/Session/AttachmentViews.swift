@@ -62,19 +62,41 @@ nonisolated enum AttachmentItem: Identifiable, Sendable {
     }
 
     private var byteCount: Int? {
-        if case .stored(let file, _) = self, let data = file.data { return data.count * 3 / 4 }
+        if case .stored(let file, _) = self, let size = file.size { return size }
         return (try? fileURL?.resourceValues(forKeys: [.fileSizeKey]))??.fileSize
     }
 
+    /// Changes with what it shows: a message's copy from the engine takes the place of the one
+    /// it was sent with, under the same id. Cheap, as views compare it each time they update.
+    var contentID: String {
+        guard case .stored(let file, let id) = self else { return id }
+        let source = switch file.source {
+        case .uri(let uri)? where uri.hasPrefix("data:"): Self.sample(uri)
+        case .uri(let uri)?: uri
+        case .inline?: "inline"
+        case nil: ""
+        }
+        return [id, file.mime, file.data.map(Self.sample) ?? "", source].joined(separator: "|")
+    }
+
+    /// A long string's length and two pieces of it: enough to tell two files apart without
+    /// reading them.
+    private static func sample(_ text: String) -> String {
+        let utf8 = text.utf8
+        let middle = utf8.index(utf8.startIndex, offsetBy: utf8.count / 2)
+        return "\(utf8.count)," + String(decoding: utf8[middle...].prefix(32), as: UTF8.self) + "," + String(decoding: utf8.suffix(32), as: UTF8.self)
+    }
+
     func loadImage() async -> NSImage? {
-        if let cached = AttachmentImages.cache.object(forKey: id as NSString) { return cached }
+        let key = contentID as NSString
+        if let cached = AttachmentImages.cache.object(forKey: key) { return cached }
         let item = self
         let image = await Task.detached(priority: .userInitiated) { () -> NSImage? in
             if let url = item.fileURL, let image = NSImage(contentsOf: url) { return image }
             if case .stored(let file, _) = item, let bytes = file.bytes { return NSImage(data: bytes) }
             return nil
         }.value
-        if let image { AttachmentImages.cache.setObject(image, forKey: id as NSString) }
+        if let image { AttachmentImages.cache.setObject(image, forKey: key) }
         return image
     }
 
@@ -193,7 +215,7 @@ private struct AttachmentIcon: View {
                     .frame(width: size, height: size)
             }
         }
-        .task(id: item.id) { if item.isImage { image = await item.loadImage() } }
+        .task(id: item.contentID) { if item.isImage { image = await item.loadImage() } }
     }
 
     private var icon: NSImage {
@@ -248,12 +270,8 @@ struct StepPictures: View {
             guard case .file(let uri, let mime, let name) = part, mime.lowercased().hasPrefix("image/") else { return nil }
             let type = UTType(mimeType: mime).flatMap { $0.conforms(to: .image) ? $0 : nil } ?? .png
             let stem = name.map { (Attachments.fileName($0) as NSString).deletingPathExtension } ?? "Screenshot"
-            let picture = stem + "." + (type.preferredFilenameExtension ?? "png")
-            if uri.hasPrefix("data:"), let comma = uri.firstIndex(of: ",") {
-                let data = String(uri[uri.index(after: comma)...])
-                return .stored(Message.User.Attachment(mime: mime, name: picture, data: data, source: .inline), id: "\(step)-\(index)")
-            }
-            return .stored(Message.User.Attachment(mime: mime, name: picture, source: .uri(uri)), id: "\(step)-\(index)")
+            let file = Message.User.Attachment(mime: mime, name: stem + "." + (type.preferredFilenameExtension ?? "png"), source: .uri(uri))
+            return .stored(file, id: "\(step)-\(index)")
         }
     }
 }
@@ -264,6 +282,8 @@ private struct AttachmentPicture: View {
     /// Opens it in the viewer.
     let view: () -> Void
     @State private var image: NSImage?
+    /// Loaded without a picture (data that isn't one, a file that's gone): no spinner then.
+    @State private var isMissing = false
     @State private var isHovering = false
     @Environment(\.colorScheme) private var scheme
 
@@ -281,7 +301,15 @@ private struct AttachmentPicture: View {
                 RoundedRectangle(cornerRadius: 12)
                     .fill(.fill.tertiary)
                     .frame(width: height * 1.4, height: height)
-                    .overlay(Spinner(size: 16))
+                    .overlay {
+                        if isMissing {
+                            Image(systemName: "photo")
+                                .font(.system(size: 20))
+                                .foregroundStyle(.tertiary)
+                        } else {
+                            Spinner(size: 16)
+                        }
+                    }
             }
         }
         .clipShape(.rect(cornerRadius: 12))
@@ -298,7 +326,10 @@ private struct AttachmentPicture: View {
         .onTapGesture(perform: view)
         .contextMenu { AttachmentMenu(item: item) }
         .help("\(item.name) — click to look closer")
-        .task(id: item.id) { image = await item.loadImage() }
+        .task(id: item.contentID) {
+            image = await item.loadImage()
+            isMissing = image == nil
+        }
     }
 
     /// The picture's own shape, at most `height` tall and `maxWidth` wide, never enlarged.
