@@ -44,6 +44,9 @@ struct MainView: View {
     /// Making or changing a group chat, the same way.
     @State private var groupEditor: GroupEditorRequest?
     @State private var focus = Pane.conversation
+    /// The half of the conversation you worked in last (a click in the panel or the sidebar
+    /// isn't working in either): a tab you pick in the panel is its agent's.
+    @State private var lastHalf = Pane.conversation
     /// Tabs you closed, last one last, with where they were: ⇧⌘T opens them again.
     @State private var closedTabs: [ClosedTab] = []
     /// Goes up to put the cursor in a new session's composer.
@@ -129,7 +132,7 @@ struct MainView: View {
     /// The session you're working in: the one beside, once you've clicked into it. The menus'
     /// commands (Stop, Find, the modes) go to it.
     private var focusedModel: SessionModel? {
-        focus == .split ? splitModel ?? activeModel : activeModel
+        focus == .split && besideID != nil ? splitModel : activeModel
     }
 
     /// The sessions on screen: the tab's, and the one beside it.
@@ -137,8 +140,12 @@ struct MainView: View {
         [sessionID, besideID].compactMap(\.self)
     }
 
-    /// The session beside the tab's, while it shows.
-    private var besideID: String? { splitModel?.id }
+    /// The session beside the tab's, while it shows: with room for it in the window, and not under
+    /// the expanded panel. One that gave way is out of view: not read, nor working there.
+    private var besideID: String? {
+        guard let splitModel, paneLayout(available: contentWidth).split != nil, !(showsPanel && panelExpanded) else { return nil }
+        return splitModel.id
+    }
 
     /// When the sessions on screen last finished.
     private var idlesInView: [Milliseconds?] {
@@ -399,7 +406,8 @@ struct MainView: View {
     var body: some View {
         followingSessions
         // A tab you pick is the agent's of the half you work in.
-        .onChange(of: focus == .split && splitModel != nil, initial: true) { _, beside in utilities.worksBeside = beside }
+        .onChange(of: focus) { _, pane in if pane == .conversation || pane == .split { lastHalf = pane } }
+        .onChange(of: lastHalf == .split && besideID != nil, initial: true) { _, beside in utilities.worksBeside = beside }
         .onChange(of: groupID) { showBotTabs() }
         .onChange(of: groupID.flatMap { groups.group($0)?.members } ?? []) { showBotTabs() }
         .task(id: activeDirectory) {
@@ -671,8 +679,8 @@ struct MainView: View {
             keep(.split)
             keptSplit = main
         }
-        // Its composer takes the keyboard: the menus' commands go to it.
-        focus = .split
+        // Its composer takes the keyboard, if there's room for it: the menus' commands go to it.
+        if paneLayout(available: contentWidth).split != nil { focus = .split }
     }
 
     /// Close Split View: the two go back to tabs of their own, the one beside next to `tab`.
@@ -804,7 +812,7 @@ struct MainView: View {
                 } content: {
                     SessionView(model: model)
                         .environment(\.bot, bot)
-                        .environment(\.takesCardKeys, !(focus == .split && splitModel != nil))
+                        .environment(\.takesCardKeys, !(focus == .split && besideID != nil))
                         // Typing here is working here, however the keyboard got here.
                         .environment(\.composerFocused) { focus = .conversation }
                         .largeWidgetHost()

@@ -519,10 +519,12 @@ final class Utilities {
 
     /// Whether a conversation's agent may work in a tab: one no other conversation's agent has
     /// used in the last moments, nor waits in for you (a sign-in, a code), and whose conversation
-    /// isn't in view.
+    /// isn't in view; or one the same conversation's other agent (its subagent, or the one that
+    /// started it) used, after those moments.
     func isFree(_ id: UUID, for session: String) -> Bool {
         guard let claim = agentClaims[id], claim.session != session else { return true }
-        return Date.now.timeIntervalSince(claim.at) > Self.agentHold && !isInView(claim.session) && browsers[id]?.waitsForYou != true
+        guard browsers[id]?.waitsForYou != true, Date.now.timeIntervalSince(claim.at) > Self.agentHold else { return false }
+        return shownIn(claim.session) == shownIn(session) || !isInView(claim.session)
     }
 
     /// A conversation's agent works in `browser` now.
