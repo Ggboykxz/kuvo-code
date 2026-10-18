@@ -118,6 +118,8 @@ nonisolated private final class UpdateSteps: NSObject, SPUUpdaterDelegate {
         case SUError.downloadError.rawValue, SUError.appcastError.rawValue: "network"
         case SUError.temporaryDirectoryError.rawValue, SUError.fileCopyFailure.rawValue, SUError.installationWriteNoPermissionError.rawValue: "disk"
         case SUError.installationCanceledError.rawValue, SUError.installationAuthorizeLaterError.rawValue: "cancelled"
+        // Open from the disk image or a download, where it can't update itself (see AppLocation).
+        case SUError.runningFromDiskImageError.rawValue, SUError.runningTranslocated.rawValue: "location"
         default: "other"
         }
     }

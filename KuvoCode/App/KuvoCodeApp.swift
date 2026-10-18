@@ -35,6 +35,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
     let updates = Updates()
 
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // Opened from the disk image, it can't update itself: it offers to move to Applications.
+        AppLocation.offerMove()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         Notifier.shared.start()
         Notifier.shared.answer = { [model] session, request, answer in model.workspace.answer(request, in: session, with: answer) }

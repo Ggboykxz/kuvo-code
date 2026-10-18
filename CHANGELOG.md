@@ -6,6 +6,8 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Opened from the disk image, Kuvo Code offers to move itself to your Applications folder and opens from there. From the disk image it can't update itself, so updates were quietly skipped.
+
 ## 0.5.13
 
 - A conversation on a machine picks up again by itself after the network drops out in a way that leaves the connection silent, like Wi-Fi changing. It could stop showing new replies until something else reconnected it.
