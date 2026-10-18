@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Kuvo Code no longer stops responding for a second as it starts, while it checks that its engine is genuine.
 - Opened from the disk image, Kuvo Code offers to move itself to your Applications folder and opens from there. From the disk image it can't update itself, so updates were quietly skipped.
 
 ## 0.5.13

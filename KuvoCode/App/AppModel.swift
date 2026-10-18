@@ -123,11 +123,8 @@ final class AppModel {
         }
     }
 
-    /// The engine this Mac runs (KUVO_OPENCODE_BINARY's, or the one installed), once there is one.
-    var engineBinary: URL? {
-        if let override = ProcessInfo.processInfo.environment["KUVO_OPENCODE_BINARY"] { return URL(filePath: override) }
-        return installer.installed()
-    }
+    /// The engine this Mac runs (KUVO_OPENCODE_BINARY's, or the one installed), once it has started.
+    private(set) var engineBinary: URL?
 
     private var installer: EngineInstaller {
         EngineInstaller(root: AppInfo.supportDirectory.appending(path: "engine"))
@@ -153,7 +150,8 @@ final class AppModel {
             let binary: URL
             if let override = ProcessInfo.processInfo.environment["KUVO_OPENCODE_BINARY"] {
                 binary = URL(filePath: override)
-            } else if let installed = installer.installed() {
+            } else if let installed = await Task.detached(operation: { [installer] in installer.installed() }).value {
+                // Checking its signature reads all of it, a second or so: off the main thread.
                 binary = installed
             } else {
                 engine = .downloading(progress: 0)
@@ -167,6 +165,7 @@ final class AppModel {
                 guard launch == self.launch else { return }
             }
 
+            engineBinary = binary
             engine = .starting
             stage = "launch"
             var shell = await environment
