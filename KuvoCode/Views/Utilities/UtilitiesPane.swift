@@ -291,6 +291,13 @@ private struct UtilityTabButton: View {
         .onTapGesture(perform: select)
         .onHover { isHovering = $0 }
         .help(title)
+        // A tab to pick for VoiceOver, which has no tap to make, and Close Tab, whose button shows
+        // only on hover.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction(.default, select)
+        .accessibilityAction(named: "Close Tab", close)
     }
 }
 
