@@ -482,7 +482,11 @@ extension MachineBrowserInstaller {
     /// server, under the same name as the panel's browser tools on this Mac; with the sites of
     /// the integrations added there, which it sends the agent away from, to their tools.
     @MainActor static func engineConfig(sites: [Integrations.Site]) -> [String: Any] {
-        let encoded = (try? JSONEncoder().encode(sites)).map { String(decoding: $0, as: UTF8.self) } ?? "[]"
+        // Sorted: JSONEncoder writes a struct's keys in another order almost every time, and the
+        // engine is started over whenever what it started with reads differently.
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        let encoded = (try? encoder.encode(sites)).map { String(decoding: $0, as: UTF8.self) } ?? "[]"
         return ["mcp": ["servers": ["kuvo-browser": [
             "type": "local",
             "command": ["sh", "-c", command("mcp")],

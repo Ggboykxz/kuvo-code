@@ -1,5 +1,6 @@
 import AppKit
 import OpenCodeKit
+import os
 
 extension AppModel {
     /// Connects every machine you've added, each in the background on its own.
@@ -285,6 +286,8 @@ extension AppModel {
                 guard let self, let engine, engine.isReady else { return }
                 guard engine.isBehind(await self.machineLaunch()) else { return }
                 if !self.workspace.isRunning(on: engine.machine.id), (try? await engine.api?.activeSessions())?.isEmpty == true {
+                    // Said in the log, so one that keeps starting over is seen there.
+                    Logger(subsystem: "run.kuvo.code", category: "machine").info("\(engine.machine.id, privacy: .public)'s engine starts over with this Mac's newer settings")
                     await engine.stopEngine()
                     // Apart from this task, which connecting replaces.
                     Task { await self.start(engine) }
