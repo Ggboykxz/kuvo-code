@@ -74,8 +74,10 @@ final class SettingsTabs {
 
     init() {
         let defaults = UserDefaults.standard
-        let pages = (defaults.string(forKey: Self.tabsKey) ?? "").split(separator: ",").compactMap { SettingsPage(rawValue: String($0)) }
-        let current = defaults.string(forKey: SettingsPage.storageKey).flatMap(SettingsPage.init) ?? pages.first ?? .general
+        // Only pages Settings still lists (Phone goes while the phone link is off).
+        let shown = SettingsPage.shown
+        let pages = (defaults.string(forKey: Self.tabsKey) ?? "").split(separator: ",").compactMap { SettingsPage(rawValue: String($0)) }.filter(shown.contains)
+        let current = defaults.string(forKey: SettingsPage.storageKey).flatMap(SettingsPage.init).flatMap { shown.contains($0) ? $0 : nil } ?? pages.first ?? .general
         tabs = (pages.isEmpty ? [current] : pages).map { Tab(id: UUID().uuidString, kind: .page($0)) }
         let selected = tabs.first { $0.page == current } ?? tabs[0]
         selectedID = selected.id
