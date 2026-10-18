@@ -1783,6 +1783,10 @@ struct MainView: View {
         }
         // KUVO_DEMO_DRAFT: a message typed, not sent, in the new session's composer.
         if let draft = environment["KUVO_DEMO_DRAFT"] { Drafts.shared[SidebarView.draftTag(folder)].text = draft }
+        // KUVO_DEMO_DRAFT_FILES: comma-separated paths, attached there, not sent.
+        if let files = environment["KUVO_DEMO_DRAFT_FILES"] {
+            Drafts.shared[SidebarView.draftTag(folder)].files = files.split(separator: ",").map { URL(filePath: String($0)) }
+        }
         guard let prompt = environment["KUVO_DEMO_PROMPT"] else { return newSession(in: folder) }
         let parts = environment["KUVO_DEMO_MODEL"]?.split(separator: "/", maxSplits: 1).map(String.init)
         let model = parts.flatMap { $0.count == 2 ? ModelRef(id: $0[1], providerID: $0[0]) : nil }
