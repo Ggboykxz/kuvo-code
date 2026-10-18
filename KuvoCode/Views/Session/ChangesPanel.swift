@@ -552,6 +552,11 @@ private struct FileHeader: View {
                 .foregroundStyle(hasBody ? (isHovering ? .primary : .secondary) : .quaternary)
                 .rotationEffect(.degrees(isCollapsed ? 0 : 90))
                 .frame(width: 10)
+                .accessibilityLabel("\(isCollapsed ? "Expand" : "Collapse") \((file.path as NSString).lastPathComponent)")
+                .accessibilityRemoveTraits(.isHeader)
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction { toggle() }
+                .accessibilityHidden(!hasBody)
             Image(nsImage: NSWorkspace.shared.icon(of: file.url))
                 .resizable()
                 .frame(width: 18, height: 18)
@@ -568,7 +573,14 @@ private struct FileHeader: View {
                     .background(statusColor.opacity(0.14), in: .capsule)
             }
             Spacer(minLength: 6)
-            DiffStat(additions: file.additions, deletions: file.deletions)
+            if hasBody {
+                DiffStat(additions: file.additions, deletions: file.deletions)
+            } else {
+                // Why it has no lines to show.
+                Text(file.isTooBig ? "Too big to show" : "Binary")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
             // A machine's files open nowhere on this Mac.
             if file.url.isFileURL {
                 Button {

@@ -13,6 +13,8 @@ nonisolated struct ChangedFile: Identifiable, Hashable, Sendable {
     var oldPath: String?
     var status: Status
     var isBinary = false
+    /// Too big to read line by line (a new file of a few megabytes); shown like a binary one.
+    var isTooBig = false
     var lines: [DiffLine] = []
     /// Where the file is on disk.
     var url: URL
@@ -287,9 +289,12 @@ nonisolated enum Git {
         let data: Data?
         if url.isFileURL {
             let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
-            data = size <= 2_000_000 ? try? Data(contentsOf: url) : nil
+            file.isTooBig = size > 2_000_000
+            data = file.isTooBig ? nil : try? Data(contentsOf: url)
         } else {
-            data = RemoteShell.read(url, limit: 2_000_001).flatMap { $0.count <= 2_000_000 ? $0 : nil }
+            let read = RemoteShell.read(url, limit: 2_000_001)
+            file.isTooBig = (read?.count ?? 0) > 2_000_000
+            data = file.isTooBig ? nil : read
         }
         guard let data, !data.contains(0),
               let text = String(data: data, encoding: .utf8) else {

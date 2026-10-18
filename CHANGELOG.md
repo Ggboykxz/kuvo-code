@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- In the Changes tab, a binary file says "Binary" in its header, and a new file too big to show says "Too big to show". Both showed nothing at all, as if the file were empty. VoiceOver can fold and unfold each file, which read as a "Forward" heading before.
 - Hovering over **Always Allow** on a permission card that covers everything of its kind says so ("changes to any file in this project", "any command") rather than showing "*".
 - A session whose model isn't available anymore, like a free model that went away or one from an account you signed out of, says **Choose a Model** in the composer, and the picker opens on the list. It showed the default model as if it were in use, while every message failed with "Model unavailable". After you pick another, **Try Again** under the error is still there and sends your message with it: switching the model used to hide it.
 - The agent can click, type and choose in the panel's browser on your Mac again. Since 0.5.6 every click or keystroke failed with "There's no element on the page now", though it could still read pages.
