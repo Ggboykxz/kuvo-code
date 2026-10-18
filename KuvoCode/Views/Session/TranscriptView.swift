@@ -37,7 +37,7 @@ struct TranscriptView: View {
         // More of a reply, in a row of its own, carries on from the row before rather than coming in.
         let added = rows.filter { !$0.continues }
         ConversationScroll(scroller: scroller, animation: rowCache.isBulk ? nil : Self.rowAnimation, change: RowCache.Change(count: added.count, last: added.last?.id), thinking: Self.thinking(in: rows),
-                           quote: { model.addQuote($0, how: "selection") }) {
+                           nearTop: model.hasEarlier ? { loadEarlier() } : nil, quote: { model.addQuote($0, how: "selection") }) {
             // Its top in view: the messages before, read and put ahead, the view staying put.
             if model.hasEarlier, !rows.isEmpty {
                 HStack(spacing: 8) {
@@ -49,12 +49,13 @@ struct TranscriptView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.bottom, 20)
                 .id("earlier")
-                .onAppear { loadEarlier(above: rows.first?.id) }
+                .onAppear { loadEarlier() }
             }
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                 RowView(row: row, directory: model.session.location.directory, folders: model.folders, cancel: model.cancelPending, undo: model.undo(from:), redo: model.redo, fork: fork, retry: model.retry(_:), buildPlan: model.agent == "plan" && !isOffline ? { model.buildPlan() } as () -> Void : nil, reply: model.reply(to:))
                     .equatable()
                     .environment(\.findHighlight, find.highlight(for: row.id))
+                    .conversationRow(row.id)
                     .id(row.id)
                     #if DEBUG
                     .onAppear {
@@ -171,13 +172,13 @@ struct TranscriptView: View {
         rows.map { ConversationFind.Row(id: $0.id, parts: $0.findParts) }
     }
 
-    private func loadEarlier(above id: String?) {
-        // Only once you've scrolled up to it, not as the conversation opens at its end; unless
-        // it all fits, when the top is in view from the start.
-        guard !scroller.followsEnd || scroller.fits else { return }
+    /// The messages before those read, put ahead of them: what you're reading stays where it is.
+    private func loadEarlier() {
+        // Only once you've scrolled up toward it, not as the conversation opens at its end;
+        // unless it all fits, when the top is in view from the start.
+        guard model.hasEarlier, !model.isLoadingEarlier, !scroller.followsEnd || scroller.fits else { return }
         Task {
             await model.loadEarlier()
-            if let id { scroller.keep(id) }
             // Still all in view: the top won't come into view again, so on to the next.
             try? await Task.sleep(for: .milliseconds(300))
             while model.hasEarlier, scroller.fits, !Task.isCancelled {

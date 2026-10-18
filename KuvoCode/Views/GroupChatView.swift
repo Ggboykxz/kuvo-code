@@ -33,6 +33,7 @@ struct GroupChatView: View {
                                 startWork: message.tasks?.contains { $0.state == .proposed } == true ? { groups.startWork(message.id, in: group.id) } : nil)
                     .equatable()
                     .environment(\.findHighlight, find.highlight(for: message.id))
+                    .conversationRow(message.id)
                     .id(message.id)
                     .transition(.opacity.combined(with: .offset(y: 8)))
             }
