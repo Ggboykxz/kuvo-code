@@ -543,10 +543,14 @@ enum PerfRead {
                 }
                 // Rows in view both times, and how far each moved on screen.
                 let shown = after.frames.filter { id, rect in
-                    guard let old = before.frames[id] else { return false }
+                    guard rect.height > 0, let old = before.frames[id], old.height > 0 else { return false }
                     return rect.maxY > after.view.lowerBound && rect.minY < after.view.upperBound && old.maxY > before.view.lowerBound && old.minY < before.view.upperBound
                 }
-                let moves = shown.map { id, rect in (id, rect.minY - before.frames[id]!.minY) }.sorted { $0.1 < $1.1 }
+                let all = shown.map { id, rect in (id, rect.minY - before.frames[id]!.minY) }.sorted { $0.1 < $1.1 }
+                // Not a row that stays put to the point while the rest move: one the lazy stack
+                // set aside, unseen, without telling it went (its place, as last told, stays).
+                let moving = all.filter { abs($0.1) > 0.01 }
+                let moves = moving.isEmpty ? all : moving
                 guard !moves.isEmpty else { continue }
                 let typical = moves[moves.count / 2].1
                 // What's in view should move as your fingers did. A frame late (or two at once) is
@@ -620,13 +624,17 @@ enum PerfRead {
 enum PerfRender {
     static func run(model: SessionModel) async {
         guard ProcessInfo.processInfo.environment["KUVO_PERF_RENDER"] != nil else { return }
-        for _ in 0..<40 where !model.isLoaded { try? await Task.sleep(for: .milliseconds(250)) }
-        try? await Task.sleep(for: .seconds(3))
-        let texts = model.transcript.messages.flatMap { message -> [String] in
-            guard case .assistant(let step) = message else { return [] }
-            return step.content.compactMap { if case .text(let text) = $0 { text.text } else { nil } }
+        func texts() -> [String] {
+            model.transcript.messages.flatMap { message -> [String] in
+                guard case .assistant(let step) = message else { return [] }
+                return step.content.compactMap { if case .text(let text) = $0 { text.text } else { nil } }
+            }
         }
-        let pieces = texts.flatMap { MarkdownChunks.split($0).map(\.text) }
+        // The engine can take a while to start.
+        for _ in 0..<240 where !model.isLoaded || texts().isEmpty { try? await Task.sleep(for: .milliseconds(250)) }
+        try? await Task.sleep(for: .seconds(3))
+        let pieces = texts().flatMap { MarkdownChunks.split($0).map(\.text) }
+        guard !pieces.isEmpty else { return }
         let window = NSWindow(contentRect: NSRect(x: -30000, y: -30000, width: 800, height: 800), styleMask: .borderless, backing: .buffered, defer: false)
         window.orderFrontRegardless()
         let width: CGFloat = 680
@@ -739,6 +747,54 @@ private struct PlainTextView: NSViewRepresentable {
         nsView.textLayoutManager?.ensureLayout(for: nsView.textLayoutManager!.documentRange)
         let height = nsView.textLayoutManager?.usageBoundsForTextContainer.height ?? 0
         return CGSize(width: width, height: height)
+    }
+}
+
+/// KUVO_DEMO_DRAG=<x1>,<y1>,<x2>,<y2>: that long after the conversation opens (KUVO_DEMO_DRAG_AT
+/// seconds, 6 by default), the pointer comes to the first point, rests, and drags to the second
+/// (points in the window, from its top left), as events posted to the app: selecting text
+/// without the real pointer. KUVO_DEMO_DRAG_REST=0 clicks at once, without resting first.
+enum PerfDrag {
+    static func run() async {
+        let env = ProcessInfo.processInfo.environment
+        guard let spec = env["KUVO_DEMO_DRAG"] else { return }
+        let xy = spec.split(separator: ",").compactMap { Double($0) }
+        guard xy.count == 4 else { return }
+        try? await Task.sleep(for: .seconds(env["KUVO_DEMO_DRAG_AT"].flatMap(Double.init) ?? 6))
+        guard let window = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil && $0.frame.width > 600 }),
+              let content = window.contentView else { return }
+        // KUVO_DEMO_DRAG_DIRECT=1: to the view under the first point itself, as a window in the
+        // background takes a first click only to come forward.
+        let direct = env["KUVO_DEMO_DRAG_DIRECT"] == "1"
+        let start = NSPoint(x: xy[0], y: content.bounds.height - xy[1])
+        let target = content.hitTest(start)
+        if direct { print("drag target: \(target.map { String(describing: type(of: $0)) } ?? "none")") }
+        func post(_ type: NSEvent.EventType, _ x: Double, _ y: Double, clicks: Int = 1) {
+            let point = NSPoint(x: x, y: content.bounds.height - y)
+            guard let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                 windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: clicks, pressure: type == .leftMouseUp ? 0 : 1) else { return }
+            guard direct, let target else { return NSApp.postEvent(event, atStart: false) }
+            switch type {
+            case .leftMouseDown: target.mouseDown(with: event)
+            case .leftMouseDragged: target.mouseDragged(with: event)
+            case .leftMouseUp: target.mouseUp(with: event)
+            default: break
+            }
+        }
+        if env["KUVO_DEMO_DRAG_REST"] != "0" {
+            post(.mouseMoved, xy[0] - 4, xy[1])
+            try? await Task.sleep(for: .milliseconds(80))
+            post(.mouseMoved, xy[0], xy[1])
+            try? await Task.sleep(for: .milliseconds(400))
+        }
+        post(.leftMouseDown, xy[0], xy[1])
+        for step in 1...12 {
+            try? await Task.sleep(for: .milliseconds(16))
+            let t = Double(step) / 12
+            post(.leftMouseDragged, xy[0] + (xy[2] - xy[0]) * t, xy[1] + (xy[3] - xy[1]) * t)
+        }
+        try? await Task.sleep(for: .milliseconds(16))
+        post(.leftMouseUp, xy[2], xy[3])
     }
 }
 #endif
