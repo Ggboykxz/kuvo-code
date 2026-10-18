@@ -223,7 +223,7 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 | J1 | The network goes away mid-reply | ⏳ |
 | J2 | A model that fails or is gone (an error to read, a way forward) | ❌→✅ the composer showed the default model while every message went to the missing one, and picking another hid Try Again (f8feef7, 1132f77); now Choose a Model, and Try Again answers on the new model |
 | J3 | The engine stops; the app brings it back | ✅ the engine killed mid-session came back on its own within seconds; the next message went through |
-| J4 | Very large output from a command, a huge file, a binary file in the changes | ⏳ |
+| J4 | Very large output from a command, a huge file, a binary file in the changes | ✅ 3 million lines from seq: the engine kept the tail for the agent and the whole log in Kuvo Code's data folder (pruned after a week); a 30 MB file and a binary in the changes, app idle at 0% CPU; ❌→✅ both showed an empty header, as if empty, and folding was out of VoiceOver's reach (4e0f33a) |
 
 ## K. Settings, menus and the rest
 
