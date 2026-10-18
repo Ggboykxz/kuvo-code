@@ -10,13 +10,33 @@
 
 import fs from "node:fs";
 import http from "node:http";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { EngineClient, EngineError } from "./engine.mjs";
 import { install, launch } from "../kuvo-engine.mjs";
 
-const here = path.dirname(fileURLToPath(import.meta.url));
+// Packed into an executable (build-exe.mjs), the page's files live inside the binary rather
+// than next to it, and node:sea is how they're read back. Beside the source they are files.
+const sea = (() => {
+  // `require` exists inside the bundled (CommonJS) binary; in source form it doesn't.
+  try { return require("node:sea"); } catch { /* source form */ }
+  try { return createRequire(import.meta.url)("node:sea"); } catch { /* no SEA (Node < 20.6) */ }
+  return null;
+})();
+// `here` is only needed to read the page from disk, which the packed form never does.
+const here = sea?.isSea?.()
+  ? process.cwd()
+  : path.dirname(fileURLToPath(import.meta.url));
+const packed = (name) => {
+  if (!sea?.isSea()) return null;
+  try {
+    return sea.getAsset(name, "utf8");
+  } catch {
+    return null;
+  }
+};
 
 export class HttpError extends Error {
   constructor(status, message) {
@@ -202,8 +222,10 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
       response.writeHead(404, { "content-type": "text/plain" });
       return response.end("Not found.\n");
     }
-    response.writeHead(200, { "content-type": file[1], "cache-control": "no-store" });
-    return response.end(fs.readFileSync(path.join(here, file[0])));
+    const [where, type] = file;
+    const body = packed(path.basename(where)) ?? fs.readFileSync(path.join(here, where));
+    response.writeHead(200, { "content-type": type, "cache-control": "no-store" });
+    return response.end(body);
   }
 
   async function relayEvents(request, response) {
@@ -281,8 +303,8 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
   };
 }
 
-const main = process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
-if (main) {
+/// The command line: `kuvo-windows-harness [--project <folder>] [--port <port>]`.
+export function run() {
   const args = process.argv.slice(2);
   const option = (name) => {
     const at = args.indexOf(name);
@@ -301,4 +323,11 @@ if (main) {
     await harness.close();
     process.exit(0);
   });
+  return harness;
 }
+
+// True only when this file is what was started — which it never is inside the packed
+// executable (build-exe.mjs's banner sets KUVO_BUNDLED there, before anything runs): that
+// binary has no source file to compare with, and the entry calls `run()` itself.
+const main = process.env.KUVO_BUNDLED !== "1" && process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+if (main) run();

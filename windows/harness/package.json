@@ -5,10 +5,14 @@
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
+    "build:exe": "node build-exe.mjs",
+    "smoke:exe": "node smoke-exe.mjs",
     "test": "node --test harness.test.mjs",
     "test:live": "node --test --test-concurrency=1 live.test.mjs ui.dom.test.mjs"
   },
   "devDependencies": {
-    "jsdom": "^30.0.0"
+    "esbuild": "^0.28.2",
+    "jsdom": "^30.0.0",
+    "postject": "^1.0.0-alpha.6"
   }
 }

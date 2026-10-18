@@ -290,8 +290,9 @@ export async function e2e({ log = console.log } = {}) {
 
 // ---- Command line ----
 
-const main = process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
-if (main) {
+// Wrapped, not top-level: the harness's executable bundling (build-exe.mjs) packs this file
+// into a CommonJS binary, where top-level await has no form.
+async function cli() {
   const [command] = process.argv.slice(2);
   try {
     if (command === "install") {
@@ -319,3 +320,9 @@ if (main) {
     process.exit(1);
   }
 }
+
+// True only when this file is what was started. Bundled into the harness's executable
+// (windows/harness/build-exe.mjs) it never is — that banner sets KUVO_BUNDLED before anything
+// runs — so the command line below stays out of that binary.
+const main = process.env.KUVO_BUNDLED !== "1" && process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+if (main) cli();

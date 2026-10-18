@@ -70,3 +70,21 @@ answer arriving, the folder picker, and a reload reading the conversation back.
 The `.github/workflows/windows-engine.yml` workflow runs all of it on Linux and on
 Windows, and ends by installing and running the real pinned engine — and the live
 loop — on Windows.
+
+## The executable
+
+On Windows the harness can be packed into one file, `kuvo-windows-harness.exe`: this
+machine's own node runtime, the bundled harness, and the page carried inside it.
+Nothing else needs to be installed on the machine that runs it — the engine still
+installs itself on first use.
+
+```sh
+cd windows/harness
+npm install
+npm run build:exe                 # writes build/kuvo-windows-harness.exe
+npm run smoke:exe                 # starts it, fetches its page and its state, stops it
+build\kuvo-windows-harness.exe --project C:\work\app
+```
+
+CI builds and smoke-tests the executable on every Windows run, and keeps it as an
+artifact.
