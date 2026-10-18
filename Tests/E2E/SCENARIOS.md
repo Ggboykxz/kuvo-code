@@ -203,17 +203,17 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 | ID | Case | Status |
 | --- | --- | --- |
 | H1 | Add a well-known MCP server with no account from Popular Servers and use it | ✅ Context7 from Popular Servers, its two tools used in a session; ❌→✅ every Add read "Add" to VoiceOver (182a4c0) |
-| H2 | Add your own MCP server (a command) and use its tools | ⏳ |
-| H3 | An MCP server that asks you something mid-task | ⏳ |
-| H4 | Add a skill from GitHub and use it | ⏳ |
-| H5 | Integrations that need an account: what you see before and after | ⏳ |
+| H2 | Add your own MCP server (a command) and use its tools | ✅ a stdio server of my own (a Python script) added in Settings › MCP Servers, connected, and its tool used in a session; the steps line now says "used secret" (f6e7f2a) |
+| H3 | An MCP server that asks you something mid-task | ✅ a server that asks mid-task (an MCP elicitation): the form card, answered, and the agent got it back; ❌→✅ the form's fields had no name for VoiceOver (df9402c) |
+| H4 | Add a skill from GitHub and use it | ✅ internal-comms from Anthropic's catalog: it asks first, saves into the copy's own skills folder, and the agent loaded it and wrote in its format; "used a skill" (f6e7f2a) |
+| H5 | Integrations that need an account: what you see before and after | ⚠️ before only (no real accounts here): each integration says how it connects, browser ones "Not signed in"; asked for Notion pages, the agent said there's no Notion integration, opened Notion in its browser and asked to sign in with a card; Not Now ended it with what to do |
 
 ## I. Remote machines
 
 | ID | Case | Status |
 | --- | --- | --- |
-| I1 | Add a Linux machine over SSH; its engine installs | ⏳ |
-| I2 | A project on the machine: ask, edit, run tests, review the changes, use its terminal | ⏳ |
+| I1 | Add a Linux machine over SSH; its engine installs | ✅ lokum-local added in Settings › Machines: Connecting…, then Connected; the engine and browser went into ~/.kuvo-code-e2e only |
+| I2 | A project on the machine: ask, edit, run tests, review the changes, use its terminal | ⚠️ partly: sessions there, its agent browsing, each session's panel with its own machine pages; ❌→✅ the browser showed Chinese, Japanese and Korean as boxes (f7d0841), a Chrome started before an update kept the old build (08e3ec8), pages left open after a relaunch went to the panel in view (4fa480e); edits, tests, review and terminal there not run yet |
 | I3 | The machine drops off and comes back mid-task | ⏳ |
 
 ## J. When things go wrong
