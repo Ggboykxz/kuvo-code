@@ -9,6 +9,9 @@ final class BrowserSession: NSObject {
     private(set) var title = ""
     private(set) var url: URL?
     private(set) var isLoading = false
+    /// Why the last page didn't open, until another starts to: for the agent, which would see
+    /// only an empty tab or the page before.
+    fileprivate(set) var loadFailure: String?
     private(set) var canGoBack = false
     private(set) var canGoForward = false
     private(set) var progress = 0.0
@@ -370,6 +373,25 @@ extension BrowserSession: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
         start(download)
+    }
+
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        loadFailure = nil
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        noteFailure(error)
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        noteFailure(error)
+    }
+
+    private func noteFailure(_ error: Error) {
+        let error = error as NSError
+        // Stopped for another page, or become a download (WebKit's "frame load interrupted"): not a failure.
+        guard !(error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled), !(error.domain == "WebKitErrorDomain" && error.code == 102) else { return }
+        loadFailure = error.localizedDescription
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

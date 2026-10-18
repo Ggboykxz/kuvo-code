@@ -77,6 +77,11 @@ final class BrowserAgent {
         guard BrowserSession.url(from: address) != nil else { return "Not an address or search: \(address)" }
         browser.load(address)
         await settle(browser, expectNavigation: true)
+        // Didn't open (nothing answers there, say): why, rather than an empty tab or the page before.
+        if let failure = browser.loadFailure {
+            let before = browser.url == nil ? "" : "\n\nThe tab is still on the page before:\n\n" + (await snapshot())
+            return "Couldn't open \(address): \(failure)" + before
+        }
         return await snapshot()
     }
 

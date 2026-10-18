@@ -7,6 +7,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 ## Unreleased
 
 - The agent can click, type and choose in the panel's browser on your Mac again. Since 0.5.6 every click or keystroke failed with "There's no element on the page now", though it could still read pages.
+- When a page doesn't open, like a local server that isn't running, the agent hears why ("Could not connect to the server") rather than finding an empty tab.
 - A command the agent leaves running in the background shows in a bar over the composer, with how long it has run, what it has printed and Stop, and the session shows as working until it ends. It used to look as if nothing was happening. The bar can be folded to one line, which still shows that something runs. When a command ends, the conversation says so, and whether it finished, failed or was stopped, before the agent carries on.
 - A message waiting for the agent's next step has Send Now right in its row, which stops the agent's current step and gives it the message. It was only in the ⋯ menu.
 - Searching the sidebar: a session you delete leaves the results under In Conversations at once (clicking it opened nothing), and a search typed while Kuvo Code is still starting finds what was said in conversations once they're in.
