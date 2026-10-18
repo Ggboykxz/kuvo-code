@@ -10,7 +10,7 @@ struct ProviderBarDetail: View {
     let group: ProviderGroup
     @Environment(LayoutStore.self) private var layout
     @Environment(WidgetDataStore.self) private var dataStore
-    @Environment(\.codexResetClaims) private var codexResetClaims
+    @Environment(\.resetClaims) private var resetClaims
 
     var body: some View {
         let providerID = group.provider.id
@@ -31,7 +31,7 @@ struct ProviderBarDetail: View {
             toggleMeterStyle: { dataStore.meterStyle.toggle() },
             toggleResetDisplay: { dataStore.resetDisplayMode.toggle() }
         )
-        .environment(\.codexResetClaim, codexResetClaims[providerID])
+        .environment(\.resetClaim, resetClaims[providerID])
     }
 }
 
@@ -219,11 +219,11 @@ private struct BarMeterRow: View {
 }
 
 /// An amount without a limit: spend over a period, a balance, credits. Spend rows show which
-/// models it went to on hover, and Codex's reset credits their timeline, as in the cards.
+/// models it went to on hover, and Codex's and Claude's resets their timeline, as in the cards.
 private struct BarValueRow: View {
     let data: WidgetData
     @Environment(\.reduceAnimations) private var reduceAnimations
-    @Environment(\.codexResetClaim) private var codexResetClaim
+    @Environment(\.resetClaim) private var resetClaim
     @State private var hover = HoverPopoverState()
 
     private var hasPopover: Bool {
@@ -265,9 +265,12 @@ private struct BarValueRow: View {
                         count: data.resetCreditCount, expiries: data.expiriesAt,
                         onHoverChange: { hover.detailHover($0) },
                         onPinChange: { hover.setPinned($0) },
-                        claim: codexResetClaim.map { service in
-                            { expiry, request in await service.claim(creditExpiringAt: expiry, redeemRequestID: request) }
-                        }
+                        claim: resetClaim.flatMap { service in
+                            service.isClaimable ? { expiry, request in
+                                await service.claim(creditExpiringAt: expiry, redeemRequestID: request)
+                            } : nil
+                        },
+                        confirmDetail: resetClaim?.confirmDetail
                     )
                 }
             }
