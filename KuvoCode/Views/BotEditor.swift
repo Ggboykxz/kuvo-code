@@ -899,6 +899,7 @@ private struct WakeList: View {
                     }
                 }
                 .toggleStyle(.switch)
+                .accessibilityLabel("Pause Wake-Ups")
                 .padding(.vertical, 8)
             }
             WellDivider()

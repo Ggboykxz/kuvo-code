@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- VoiceOver names the **Pause Wake-Ups** switch in Edit Bot and each bot's button under a group chat's composer ("Ask Reader"). They read as an unnamed switch and buttons.
 - Each session has its own side panel, and so does each bot and group chat: its files, terminals and browser tabs stay with it, and switching conversations shows the other's. The panel was shared, so one agent's pages and terminals showed in every conversation.
 
 ## 0.5.11

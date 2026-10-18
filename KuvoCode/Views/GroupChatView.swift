@@ -527,6 +527,7 @@ private struct GroupComposer: View {
                     }
                     .buttonStyle(.plain)
                     .help("Ask \(bot.name)")
+                    .accessibilityLabel("Ask \(bot.name)")
                 }
                 Spacer(minLength: 0)
                 SendStopButton(stops: isTalking, canSend: canSend, sendHelp: "Send (Return)", stopHelp: "Stop the Discussion (Esc)", send: send, stop: stop)
