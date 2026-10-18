@@ -79,9 +79,16 @@ struct IntegrationsSettings: View {
             KeyEntry(service: request.service) { saved in
                 addingKey = nil
                 guard saved else { return }
+                // This Mac's engine reads the key from its file as it reads its settings again,
+                // which adding the integration has it do: its server connects again once it has.
                 add(request.service)
-                // Keys reach engines when they start: each starts again once nothing's at work in it.
-                app.renewEngines(mac: true)
+                Task {
+                    try? await Task.sleep(for: .seconds(2))
+                    if let api = app.api { await app.reconnect(request.service.id, api: api, machine: nil) }
+                    await refresh()
+                }
+                // Machines take keys as their engines start: each starts again once nothing's at work there.
+                app.renewEngines(mac: false)
             }
         }
     }

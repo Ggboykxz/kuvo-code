@@ -37,6 +37,16 @@ nonisolated enum IntegrationKeys {
         }
     }
 
+    /// One key's file, for an engine that's running: its settings read it when they're next read
+    /// (as adding the integration does), with no need to start it again.
+    private static func writeFile(_ value: String, for variable: String) {
+        let manager = FileManager.default
+        try? manager.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let file = folder.appending(path: variable)
+        try? manager.removeItem(at: file)
+        manager.createFile(atPath: file.path, contents: Data(value.utf8), attributes: [.posixPermissions: 0o600])
+    }
+
     /// When Kuvo Code quits: the keys' files go.
     static func removeFiles() {
         try? FileManager.default.removeItem(at: folder)
@@ -70,12 +80,16 @@ nonisolated enum IntegrationKeys {
         }
         let data = Data(value.utf8)
         let updated = SecItemUpdate(base as CFDictionary, [kSecValueData as String: data] as CFDictionary)
-        if updated != errSecItemNotFound { return updated == errSecSuccess }
-        var item = base
-        item[kSecValueData as String] = data
-        item[kSecAttrLabel as String] = "Kuvo Code integration key"
-        item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        return SecItemAdd(item as CFDictionary, nil) == errSecSuccess
+        var saved = updated == errSecSuccess
+        if updated == errSecItemNotFound {
+            var item = base
+            item[kSecValueData as String] = data
+            item[kSecAttrLabel as String] = "Kuvo Code integration key"
+            item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+            saved = SecItemAdd(item as CFDictionary, nil) == errSecSuccess
+        }
+        if saved { writeFile(value, for: variable) }
+        return saved
     }
 
     /// Every key you saved, as the environment the engines run with. (The keychain lists them
