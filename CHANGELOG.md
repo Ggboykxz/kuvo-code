@@ -4,12 +4,23 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
-## Unreleased
+## 0.5.6
 
-- A message of yours that starts like a note from another agent but names no one ("[Message from · ses_1]") no longer crashes Kuvo Code.
-- **Help › Contact Us…** writes to us at info@kuvo.run, from the menu bar or the menu at the bottom of the sidebar.
 - Subagents an agent sends off to work in the background show while they work: under its steps, each with a spinner and opening to what it's doing, even after its turn has ended. The session's row and tab show it working meanwhile, and a bot's row says how many tasks it's working on. They used to vanish into "handed off 7 tasks".
 - In the sidebar, a bot's next wake-up, its watches and its pause stand apart from what it said, each with its sign: the wake-up and watches in your accent color, a pause in grey. "Needs you" is in orange.
+- **Help › Contact Us…** writes to us at info@kuvo.run, from the menu bar or the menu at the bottom of the sidebar.
+- A message of yours that starts like a note from another agent but names no one ("[Message from · ses_1]") no longer crashes Kuvo Code.
+- Math in replies keeps the text around it whole: lists, quotes, tables and code keep their shape next to formulas, and the shell's `$$` and prices no longer turn into math. A formula that can't be drawn shows as written instead of leaving a gap, and more draw, like `\boxed`, `\dots` and `align`. A reply with certain symbol characters no longer shows a formula twice or quits Kuvo Code.
+- Find marks the right words in a reply with math in it.
+- Split view: the half you type in gets the menus and keys, like Stop, Find and the modes, not only the half you clicked. When the window is short of room, only the split you opened last stays ahead of the side panel.
+- A file a subagent or a group chat's bot shows you opens where you see that conversation. A conversation you aren't looking at no longer takes over the tab you're in, and a tab waiting on a sign-in or a code isn't taken by another.
+- Renaming ends, keeping what you typed, when its row folds away or you leave its tab, instead of coming back later and taking the keyboard. A new branch is made only when you press Return. Bots and group chats are renamed in their editors, so their tabs no longer offer Rename….
+- In Settings, something opened over an editor, like a sign-in, goes back to that editor, and searching opens its result in another tab, so what you typed in an editor stays.
+- New Project keeps its worktree setup command after you add a machine and come back.
+- A new session's first message comes back in its composer if Kuvo Code quits or crashes while the session is being made.
+- Web pages the agent browses can't read or change the numbered elements it acts on, on this Mac or a machine. Stopping the agent while it waits in the browser stops it at once; it used to keep your Mac busy until the wait ran out.
+- Long replies with many links listed at the end stream smoothly, and a link defined twice goes to its first address, as Markdown has it.
+- A code block whose first line starts with tabs or has emoji no longer runs under its language and Copy.
 
 ## 0.5.5
 
