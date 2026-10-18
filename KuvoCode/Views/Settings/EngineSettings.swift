@@ -96,12 +96,12 @@ struct EngineSettings: View {
                     }
                 )) {
                     Text("None").tag("")
-                    Text("Any connected service").tag("random")
+                    Text("Any service").tag("random")
                     ForEach(searchProviders) { Text($0.name).tag($0.id) }
                     Divider()
                     Text("Off").tag("off")
                 }
-                // The chosen service's key, or every service's when any connected one will do.
+                // The chosen service's key, or every service's when any one will do.
                 ForEach(keyedServices) { integration in
                     LabeledContent("\(integration.name) API key") {
                         let credentials = integration.connections.filter { $0.type == "credential" }.compactMap(\.credentialID)
@@ -121,7 +121,7 @@ struct EngineSettings: View {
             } header: {
                 Text("Web Search")
             } footer: {
-                Text("Each search service needs its own API key. With none chosen, the agent can't search the web.")
+                Text("Some services need an API key; others search without one. With none chosen, the agent can't search the web.")
                     .foregroundStyle(.secondary)
             }
 

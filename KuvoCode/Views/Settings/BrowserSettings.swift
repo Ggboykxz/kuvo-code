@@ -15,8 +15,8 @@ struct PanelSettingsView: View {
                 Picker(selection: $startsWith) {
                     ForEach(PanelSettings.Start.allCases, id: \.self) { Text($0.title).tag($0) }
                 } label: {
-                    Text("Start a project’s panel with")
-                    Text("The first time you open the panel in a project.")
+                    Text("Start each panel with")
+                    Text("The first time you open a session’s, bot’s or group chat’s panel.")
                 }
                 Toggle(isOn: $revealsForAgent) {
                     Text("Show the panel when the agent browses")
