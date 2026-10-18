@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; img-src 'self' data:; font-src 'self' data:;">
 <title>Kuvo Code</title>
 <link rel="stylesheet" href="/style.css">
 <link rel="stylesheet" href="/vendor/xterm.css">
@@ -13,6 +14,7 @@
   <button id="project" class="path" title="Change the project folder"></button>
   <div class="spacer"></div>
   <button id="toggle-files" class="small" title="Files and terminal">Files</button>
+  <button id="export" class="small" title="Export conversation as Markdown">Export</button>
   <div id="engine" class="engine" title="The engine on this machine"></div>
 </header>
 

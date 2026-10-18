@@ -1,7 +1,7 @@
 // Kuvo Code's Windows shell: a native window around the harness, which already knows how to
 // install and run the engine. This process owns the window, the tray, the terminal (ConPTY)
 // and the lifecycle.
-const { app, BrowserWindow, Tray, Menu, nativeImage, dialog, globalShortcut } = require('electron');
+const { app, BrowserWindow, Tray, Menu, nativeImage, dialog, globalShortcut, Notification } = require('electron');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
@@ -50,6 +50,10 @@ async function startHarness(project) {
   const folder = project || cfg.project || os.homedir();
   const { command, args } = harnessCommand(folder, 0);
   harness = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  harness.on('exit', (code) => {
+    if (quitting) return;
+    try { new Notification({ title: 'Kuvo Code', body: `The harness stopped (exit ${code ?? 0}).` }).show(); } catch {}
+  });
   const url = await new Promise((resolve, reject) => {
     let buffer = '';
     const timer = setTimeout(() => reject(new Error('the harness did not come up in time')), 60000);

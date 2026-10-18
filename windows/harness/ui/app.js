@@ -71,6 +71,7 @@ const state = {
   models: [],
   openFile: null,
   drawerTab: "files",
+  eventSource: null,
 };
 
 let renderQueued = false;
@@ -387,17 +388,31 @@ function handleEvent(event) {
 }
 
 function connectEvents() {
-  const events = new EventSource("/api/events");
-  events.onmessage = message => {
-    try {
-      handleEvent(JSON.parse(message.data));
-    } catch {}
+  let reconnectTimer = null;
+  const connect = () => {
+    const events = new EventSource("/api/events");
+    state.eventSource = events;
+    events.onmessage = message => {
+      try {
+        handleEvent(JSON.parse(message.data));
+      } catch {}
+    };
+    events.onopen = () => {
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+      state.engine = state.engine || { status: "running" };
+      render();
+      // Anything that happened while the stream was away is fixed by a read.
+      if (state.session) openSession(state.session.id).catch(() => {});
+    };
+    events.onerror = () => {
+      // The browser closes the stream on error; reopen it shortly.
+      try { events.close(); } catch {}
+      if (!reconnectTimer) {
+        reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, 2000);
+      }
+    };
   };
-  events.onopen = () => {
-    // Anything that happened while the stream was away is fixed by a read.
-    if (state.session) openSession(state.session.id).catch(() => {});
-  };
-  events.onerror = () => {};
+  connect();
 }
 
 // ---- Folder picker ----
@@ -568,6 +583,7 @@ function showDiff(title, oldText, newText) {
 }
 
 $("toggle-files").addEventListener("click", toggleDrawer);
+$("export").addEventListener("click", exportConversation);
 $("drawer-close").addEventListener("click", () => { $("drawer").hidden = true; });
 document.querySelectorAll(".drawer-tab").forEach(button => {
   button.addEventListener("click", () => setDrawerTab(button.dataset.tab));
@@ -651,6 +667,74 @@ $("git-diff").addEventListener("click", async () => {
 });
 const originalToggleDrawer = toggleDrawer;
 // wrap toggleDrawer to also refresh git
+
+// ---- Keyboard shortcuts ----
+
+document.addEventListener("keydown", (event) => {
+  if (!(event.ctrlKey || event.metaKey)) return;
+  const key = event.key.toLowerCase();
+  if (key === "s" && state.openFile) {
+    event.preventDefault();
+    saveFile();
+  } else if (key === "o") {
+    event.preventDefault();
+    if (state.project) { $("toggle-files").click(); }
+    else openPicker();
+  } else if (key === "`") {
+    event.preventDefault();
+    if ($("drawer").hidden) $("toggle-files").click();
+    setDrawerTab("terminal");
+  } else if (key === "f" && event.shiftKey) {
+    event.preventDefault();
+    if ($("drawer").hidden) $("toggle-files").click();
+    setDrawerTab("files");
+    setTimeout(() => $("files-search").focus(), 50);
+  } else if (key === "n" && event.shiftKey && state.project) {
+    event.preventDefault();
+    $("new-session").click();
+  }
+});
+
+// ---- Export conversation ----
+
+function exportConversation() {
+  if (!state.transcript || !state.session) return;
+  const lines = [];
+  lines.push(`# ${state.session.title || "Conversation"}`);
+  lines.push("");
+  lines.push(`Project: ${state.project || ""}`);
+  lines.push(`Session: ${state.session.id}`);
+  lines.push("");
+  for (const entry of state.transcript.entries) {
+    if (entry.kind === "user") {
+      lines.push(`## You`);
+      lines.push("");
+      lines.push(entry.text);
+      lines.push("");
+    } else if (entry.kind === "assistant") {
+      lines.push(`## Assistant`);
+      lines.push("");
+      for (const part of entry.parts) {
+        if (part.type === "text") lines.push(part.text);
+        else if (part.type === "reasoning") lines.push(`> ${part.text}`);
+        else if (part.type === "tool") lines.push(`- tool: ${part.name} (${part.status})`);
+      }
+      if (entry.error) lines.push(`
+_error: ${entry.error.message || entry.error}_`);
+      lines.push("");
+    }
+  }
+  const blob = new Blob([lines.join("\n")], { type: "text/markdown" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${(state.session.title || "conversation").replace(/[^a-z0-9]+/gi, "-")}.md`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 // ---- Boot ----
 
 async function boot() {

@@ -142,7 +142,13 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
     // The page's folder picker: what's under a folder, so someone can walk to theirs.
     if (url.pathname === "/api/browse" && request.method === "GET") {
       const asked = url.searchParams.get("path");
-      const folder = asked ? path.resolve(asked) : currentProject ?? os.homedir();
+      let folder = asked ? path.resolve(asked) : currentProject ?? os.homedir();
+      // Keep the picker from wandering outside the user's home (or the open project).
+      const home = os.homedir();
+      if (asked && folder !== home && !folder.startsWith(home + path.sep)
+          && !(currentProject && (folder === currentProject || folder.startsWith(currentProject + path.sep)))) {
+        folder = currentProject ?? home;
+      }
       let folders = [];
       let files = [];
       try {
