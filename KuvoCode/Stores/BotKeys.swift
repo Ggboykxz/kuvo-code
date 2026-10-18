@@ -70,8 +70,9 @@ enum BotKeys {
 
     /// As an engine starts (on `machine`, or this Mac's): each bot's there, in case its keys or the
     /// integrations' settings changed meanwhile. On this Mac, only bots with keys of their own or
-    /// a folder's settings from before; on a machine, every bot there (keys taken away while it
-    /// was away leave their settings there).
+    /// a folder's settings file; on a machine, every bot there (keys taken away while it was away
+    /// leave their servers named there). A folder's settings change only where they name its
+    /// servers.
     static func applyAll(on machine: String?, app: AppModel) async {
         let names = await Task.detached { IntegrationKeys.names }.value
         for bot in app.bots.list where bot.machine == machine && bot.project == nil {
@@ -81,10 +82,13 @@ enum BotKeys {
         }
     }
 
-    /// Writes its folder's settings where it works, naming a server for each integration it has
-    /// its own keys for, or takes them away when it has none; on a machine, with its keys in
-    /// their files there (see `RemoteServer.launchScript`). Each of those servers connects again
-    /// in its folder. On a machine that isn't connected, this waits for it to be (`AppModel.start`).
+    /// Names a server in its folder's settings where it works for each integration it has its own
+    /// keys for, and takes away those it named for keys it no longer has; on a machine, with its
+    /// keys in their files there (see `RemoteServer.launchScript`). The rest of those settings is
+    /// the folder's own (the bot's, or yours) and stays as it is; the file goes only once nothing
+    /// is left in it, and its `.opencode` folder only if that held nothing else. Each of those
+    /// servers connects again in its folder. On a machine that isn't connected, this waits for it
+    /// to be (`AppModel.start`).
     static func apply(to bot: Bot, app: AppModel, removing removed: [String] = []) async {
         guard bot.project == nil else { return }
         let (own, _) = await status(of: bot.id)
@@ -94,43 +98,101 @@ enum BotKeys {
         let touched = Set(chosen.map(\.id) + services.filter { service in removed.contains { $0.hasPrefix(IntegrationKeys.variable(service.id, "")) } }.map(\.id))
         if let machine = bot.machine {
             guard let engine = app.machines.engine(machine), engine.isReady else { return }
+            let workspace = (bot.folder as NSString).appendingPathComponent("workspace")
             let keys = await Task.detached { IntegrationKeys.variables(ofBot: bot.id).compactMap { name in IntegrationKeys.value(name).map { (name, $0) } } }.value
             var lines = keys.map { "\($0.0)=\($0.1)" }.filter { !$0.contains("\n") }
             lines += removed.map { "DELETE=\($0)" }
-            if servers.isEmpty {
-                lines.append("REMOVE=1")
-            } else if let settings = settingsText(servers, keyVariables: true) {
-                lines.append("SETTINGS=" + settings)
+            // Its settings there as they are now, each key named in its file there.
+            let current: String??
+            do {
+                current = .some(try await settingsFile(in: workspace, on: engine))
+            } catch {
+                log.error("A bot's folder settings couldn't be read on its machine: \(error.localizedDescription, privacy: .public)")
+                current = nil
             }
-            guard await send(lines, to: engine, workspace: (bot.folder as NSString).appendingPathComponent("workspace")) else { return }
+            if let current, let servers = onMachine(servers) {
+                switch change(current, servers: servers, bot: bot.id) {
+                case .write(let settings): if let text = text(settings, pretty: false) { lines.append("SETTINGS=" + text) }
+                case .remove: lines.append("REMOVE=1")
+                case .notPlainJSON: log.error("A bot's folder settings on its machine aren't plain JSON, so its own keys aren't named there")
+                case .same: break
+                }
+            }
+            guard !lines.isEmpty, await send(lines, to: engine, workspace: workspace) else { return }
             if let api = engine.api { for id in touched { try? await api.connectMCP(id, directory: bot.directory) } }
         } else {
             let folder = URL(filePath: bot.directory).appending(path: ".opencode")
             let file = folder.appending(path: "opencode.json")
-            if servers.isEmpty {
+            let exists = FileManager.default.fileExists(atPath: file.path)
+            let current = exists ? try? String(contentsOf: file, encoding: .utf8) : nil
+            switch exists && current == nil ? .notPlainJSON : change(current, servers: servers, bot: bot.id) {
+            case .write(let settings):
+                if let text = text(settings, pretty: true) {
+                    try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+                    FileManager.default.createFile(atPath: file.path, contents: Data((text + "\n").utf8), attributes: [.posixPermissions: 0o600])
+                }
+            case .remove:
                 try? FileManager.default.removeItem(at: file)
-                // The folder too, if it held only that.
-                try? FileManager.default.removeItem(at: folder)
-            } else if let text = settingsText(servers, keyVariables: false) {
-                try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-                FileManager.default.createFile(atPath: file.path, contents: Data(text.utf8), attributes: [.posixPermissions: 0o600])
+                // The folder too, if that was all it held: rmdir leaves one that isn't empty.
+                rmdir(folder.path)
+            case .notPlainJSON:
+                log.error("A bot's folder settings aren't plain JSON, so its own keys aren't named there")
+            case .same:
+                break
             }
             if let api = app.workspace.api(forFolder: bot.directory) { for id in touched { try? await api.connectMCP(id, directory: bot.directory) } }
         }
     }
 
-    /// Its folder's settings: only the servers it has keys of its own for. Slashes as they are:
-    /// the engine finds `{file:…}` in the text before it reads it.
-    private static func settingsText(_ servers: [String: JSONValue], keyVariables: Bool) -> String? {
-        let settings: JSONValue = .object(["mcp": .object(["servers": .object(servers)])])
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        guard var data = try? encoder.encode(settings) else { return nil }
-        if keyVariables, let object = try? JSONSerialization.jsonObject(with: data),
-           let converted = try? JSONSerialization.data(withJSONObject: Integrations.keyVariables(in: object), options: [.sortedKeys, .withoutEscapingSlashes]) {
-            data = converted
+    /// What becomes of a folder's settings file.
+    nonisolated enum SettingsChange: Equatable {
+        case same, write([String: JSONValue]), remove
+        /// Not plain JSON (comments, say): left alone, as Settings leaves the engine's own.
+        case notPlainJSON
+    }
+
+    /// `text`, a bot's folder's settings file (nil when there's none), with `servers` in place of
+    /// those it named for `bot`'s own keys before (each reads one of them), and everything else in
+    /// it as it was.
+    nonisolated static func change(_ text: String?, servers: [String: JSONValue], bot: String) -> SettingsChange {
+        var old: [String: JSONValue] = [:]
+        if let text, !text.allSatisfy(\.isWhitespace) {
+            guard let settings = try? JSONDecoder().decode([String: JSONValue].self, from: Data(text.utf8)) else { return .notPlainJSON }
+            old = settings
         }
-        return String(decoding: data, as: UTF8.self)
+        guard old["mcp"] == nil || old["mcp"]?.object != nil,
+              old["mcp"]?["servers"] == nil || old["mcp"]?["servers"]?.object != nil else { return .notPlainJSON }
+        var mcp = old["mcp"]?.object ?? [:]
+        var named = (mcp["servers"]?.object ?? [:]).filter { IntegrationKeys.variables(ofBot: bot, in: Integrations.keyNames(in: $0.value)).isEmpty }
+        named.merge(servers) { $1 }
+        mcp["servers"] = named.isEmpty ? nil : .object(named)
+        var new = old
+        new["mcp"] = mcp.isEmpty ? nil : .object(mcp)
+        if new == old { return .same }
+        return new.isEmpty ? .remove : .write(new)
+    }
+
+    /// Its folder's settings file on its machine: nil when there's none.
+    private static func settingsFile(in workspace: String, on engine: MachineEngine) async throws -> String? {
+        let file = SSHConnection.quoted(workspace) + "/.opencode/opencode.json"
+        let output = try await engine.machine.connection.run("if [ -e \(file) ]; then printf 'file\\n'; cat \(file) || exit 1; fi")
+        guard output.hasPrefix("file\n") else { return nil }
+        return String(output.dropFirst(5))
+    }
+
+    /// `servers` as a machine's engine reads them, each key from its file there.
+    private static func onMachine(_ servers: [String: JSONValue]) -> [String: JSONValue]? {
+        guard let data = try? JSONEncoder().encode(servers), let object = try? JSONSerialization.jsonObject(with: data),
+              let converted = try? JSONSerialization.data(withJSONObject: Integrations.keyVariables(in: object), options: [.withoutEscapingSlashes]) else { return nil }
+        return try? JSONDecoder().decode([String: JSONValue].self, from: converted)
+    }
+
+    /// Settings as a file's text: on one line for the machine's script, which reads them as one.
+    /// Slashes as they are: the engine finds `{file:…}` in the text before it reads it.
+    private static func text(_ settings: [String: JSONValue], pretty: Bool) -> String? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = pretty ? [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes] : [.sortedKeys, .withoutEscapingSlashes]
+        return (try? encoder.encode(settings)).map { String(decoding: $0, as: UTF8.self) }
     }
 
     /// Sends `lines` to `writeScript` on the machine; false if they didn't get there.
