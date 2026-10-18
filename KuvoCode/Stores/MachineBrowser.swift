@@ -111,6 +111,8 @@ final class MachineBrowser {
         didSet { rest(oldValue.subtracting(workingPages)) }
     }
     private var workers: [String: String] = [:]
+    /// The session of the agent at work in a page, when it says.
+    func session(of page: String) -> String? { workers[page] }
     /// Pages an agent finished a step in a moment ago, and pages taken over (by any Mac).
     private var restingPages: Set<String> = []
     private var heldPages: Set<String> = []

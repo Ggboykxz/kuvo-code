@@ -6,6 +6,8 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Each session has its own side panel, and so does each bot and group chat: its files, terminals and browser tabs stay with it, and switching conversations shows the other's. The panel was shared, so one agent's pages and terminals showed in every conversation.
+
 ## 0.5.11
 
 - Find in a conversation goes to each place it found again. In 0.5.9 it could stay where it was, or stop short in a long conversation.

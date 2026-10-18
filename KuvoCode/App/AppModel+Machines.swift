@@ -14,6 +14,7 @@ extension AppModel {
         // An agent on a machine browses with the machine's browser: the panel shows it, as it
         // shows its own browser for an agent here.
         workspace.onMachineBrowsing = { [weak self] machine, session in self?.utilities.revealMachineBrowser(machine, for: session) }
+        workspace.onDeleted = { [weak self] session in self?.utilities.closeTabs(of: session) }
         BrowserTools.sessionFolder = { [weak self] session in self?.workspace.session(session)?.location.directory }
         BrowserTools.isInView = { [weak self] session in self?.utilities.isInView(session) ?? false }
         // Agents writing to each other, here and on machines.
@@ -63,6 +64,12 @@ extension AppModel {
             guard let self else { return session }
             if let group = groups.group(seat: session) { return BotGroups.tabKey(group.id) }
             return workspace.root(of: session)
+        }
+        // Each conversation has its own panel: a bot's session's is the bot's, and a seat's or a
+        // subagent's is where it shows.
+        utilities.panelOf = { [weak self] session in
+            guard let self else { return session }
+            return bots.bot(forSession: session)?.id ?? utilities.shownIn(session)
         }
         // A machine whose connection dropped while the Mac slept, and that gave up trying, gets
         // another go once it's awake and the network is back. (NSWorkspace says so on its own

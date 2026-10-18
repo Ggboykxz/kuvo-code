@@ -27,6 +27,10 @@ final class BrowserAgent {
     static var botOwner: (String) -> String? = { _ in nil }
 
     /// The agent for one tool call: a bot's browses in its own tabs.
+    /// The panel this agent's tabs are in: its bot's, or its conversation's (the one in view's
+    /// when nobody called).
+    private var panel: String { owner ?? caller.map(utilities.panelOf) ?? utilities.panelKey }
+
     func serving(_ caller: String?) -> BrowserAgent {
         BrowserAgent(utilities: utilities, asks: asks, owner: caller.flatMap(Self.botOwner), caller: caller)
     }
@@ -87,7 +91,7 @@ final class BrowserAgent {
 
     func newTab(_ address: String?) async -> String {
         let shows = owner == nil ? caller.map(utilities.bringsForward) ?? true : true
-        let browser = utilities.newBrowser(address, byAgent: true, owner: owner, shown: shows)
+        let browser = utilities.newBrowser(address, byAgent: true, owner: panel, shown: shows)
         // A bot's new tab is the one it goes on in, and a conversation's.
         if owner != nil { use = browser }
         if owner == nil, let caller { utilities.agentWorks(caller, in: browser) }
@@ -127,7 +131,7 @@ final class BrowserAgent {
     /// since its last tool, for its next result: downloads, dialogs.
     func takeNotes() -> String {
         let tabs = owner == nil ? caller.map(utilities.agentTabs) : nil
-        let notes = (tabs ?? utilities.browserTabs(of: owner).map(\.browser)).flatMap { browser in
+        let notes = (tabs ?? utilities.browserTabs(of: panel).map(\.browser)).flatMap { browser in
             defer { browser.agentNotes = [] }
             return browser.agentNotes
         }
@@ -142,7 +146,7 @@ final class BrowserAgent {
     /// The panel's browser tabs (a bot's own, for a bot), numbered from 1; or switches to one, or
     /// closes one.
     func tabs(_ action: String, tab number: Int?) async -> String {
-        let open = utilities.browserTabs(of: owner)
+        let open = utilities.browserTabs(of: panel)
         if action != "list" {
             guard let number, open.indices.contains(number - 1) else { return "There's no tab [\(number ?? 0)]. " + list(open) }
             let chosen = open[number - 1]
@@ -152,7 +156,7 @@ final class BrowserAgent {
             }
             if action == "close" {
                 utilities.close(chosen.id)
-                return "Closed tab [\(number)]. " + list(utilities.browserTabs(of: owner))
+                return "Closed tab [\(number)]. " + list(utilities.browserTabs(of: panel))
             }
             if chosen.browser.isHeld { return "The user took tab [\(number)] over and has it now. Pick another, or carry on without it." }
             if owner != nil { use = chosen.browser }
@@ -486,7 +490,7 @@ final class BrowserAgent {
             use = browser
         } else if let caller {
             shows = utilities.bringsForward(caller)
-            browser = utilities.agentBrowser(for: caller) ?? utilities.newBrowser(byAgent: true, shown: shows)
+            browser = utilities.agentBrowser(for: caller) ?? utilities.newBrowser(byAgent: true, owner: panel, shown: shows)
             utilities.agentWorks(caller, in: browser)
         } else {
             browser = utilities.activeBrowser ?? utilities.newBrowser(byAgent: true)

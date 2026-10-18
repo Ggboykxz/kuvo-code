@@ -638,9 +638,13 @@ final class Workspace {
         requestedTab = session.id
     }
 
+    /// A session was deleted: its panel goes with it. The app sets it.
+    @ObservationIgnored var onDeleted: ((String) -> Void)?
+
     /// Deleted on its engine; one on a machine that's away waits for it (it would come back).
     func delete(_ id: String) async {
         guard let api = api(forSession: id) else { return }
+        onDeleted?(id)
         if let machine = session(id).flatMap({ RemoteFolder.machine(of: $0.location.directory) }) { keepList(of: machine) }
         sessions.removeAll { $0.id == id }
         models[id] = nil

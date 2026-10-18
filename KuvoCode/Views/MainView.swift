@@ -853,6 +853,7 @@ struct MainView: View {
                         // The first takes the draft's tab and stays in view; more attempts open at the end.
                         let draft = SidebarView.draftTag(directory)
                         if tabs.contains(draft) {
+                            utilities.adoptDraft(as: session.id)
                             replaceTab(draft, with: session.id)
                         } else if !tabs.contains(session.id) {
                             tabs.append(session.id)
