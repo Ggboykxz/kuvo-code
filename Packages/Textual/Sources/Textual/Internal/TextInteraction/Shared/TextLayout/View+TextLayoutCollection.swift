@@ -14,11 +14,20 @@
     func overlayTextLayoutCollection(
       @ViewBuilder content: @escaping (any TextLayoutCollection) -> some View
     ) -> some View {
-      overlayPreferenceValue(Text.LayoutKey.self) { value in
-        GeometryReader { geometry in
-          content(LiveTextLayoutCollection(base: value, geometry: geometry))
+      // On macOS, only the layouts fragments pass on once selecting is on (see `TextLayoutsKey`).
+      #if canImport(AppKit) && !targetEnvironment(macCatalyst)
+        overlayPreferenceValue(TextLayoutsKey.self) { value in
+          GeometryReader { geometry in
+            content(LiveTextLayoutCollection(base: value, geometry: geometry))
+          }
         }
-      }
+      #else
+        overlayPreferenceValue(Text.LayoutKey.self) { value in
+          GeometryReader { geometry in
+            content(LiveTextLayoutCollection(base: value, geometry: geometry))
+          }
+        }
+      #endif
     }
   }
 #endif

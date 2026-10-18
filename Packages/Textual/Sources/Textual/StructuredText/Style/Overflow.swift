@@ -74,6 +74,11 @@ public struct Overflow<Content: View>: View {
             .transformPreference(Text.LayoutKey.self) { value in
               value = []
             }
+            #if TEXTUAL_ENABLE_TEXT_SELECTION && canImport(AppKit) && !targetEnvironment(macCatalyst)
+              .transformPreference(TextLayoutsKey.self) { value in
+                value = []
+              }
+            #endif
         }
       }
       .onScrollGeometryChange(for: CGFloat.self, of: \.containerSize.width) {

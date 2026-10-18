@@ -11,7 +11,13 @@
   // `openURL`.
 
   final class NSTextInteractionView: NSView {
-    var model: TextSelectionModel
+    var model: TextSelectionModel {
+      didSet {
+        guard model !== oldValue else { return }
+        oldValue.layoutsDidChange = nil
+        watchLayouts()
+      }
+    }
     var exclusionRects: [CGRect]
     var openURL: OpenURLAction
 
@@ -21,6 +27,8 @@
 
     private var dragStart: TextPosition?
     private var selectionAnchor: TextPosition?
+    /// A click that made the selection active, handled once its text's layouts come in.
+    private var pendingMouseDown: NSEvent?
 
     init(
       model: TextSelectionModel,
@@ -33,6 +41,15 @@
 
       super.init(frame: .zero)
       self.wantsLayer = false
+      watchLayouts()
+    }
+
+    private func watchLayouts() {
+      model.layoutsDidChange = { [weak self] in
+        guard let self, let event = self.pendingMouseDown, self.model.hasText else { return }
+        self.pendingMouseDown = nil
+        self.handleMouseDown(event)
+      }
     }
 
     required init?(coder: NSCoder) {
@@ -54,6 +71,17 @@
 
     override func mouseDown(with event: NSEvent) {
       window?.makeFirstResponder(self)
+      // Not active yet (the pointer came and clicked at once): its text tells where it's laid
+      // out in a moment, and the click is handled then.
+      guard model.isActive, model.hasText else {
+        model.isActive = true
+        pendingMouseDown = event
+        return
+      }
+      handleMouseDown(event)
+    }
+
+    private func handleMouseDown(_ event: NSEvent) {
       let location = convert(event.locationInWindow, from: nil)
 
       switch event.clickCount {
@@ -80,6 +108,10 @@
     }
 
     override func mouseDragged(with event: NSEvent) {
+      if let pending = pendingMouseDown, model.hasText {
+        pendingMouseDown = nil
+        handleMouseDown(pending)
+      }
       guard let dragStart else {
         return
       }
@@ -99,6 +131,7 @@
     }
 
     override func rightMouseDown(with event: NSEvent) {
+      model.isActive = true
       let location = convert(event.locationInWindow, from: nil)
       updateSelectionForContextMenu(at: location)
 

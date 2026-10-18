@@ -20,6 +20,18 @@ frame after it appeared, and the conversation jumped while you scrolled up into 
   lays out a view for the selection only while something is selected.
 - **The code highlighter starts off the main thread.** Making it (JavaScriptCore with Prism)
   took a quarter of a second, on the first code block's way to the screen.
+- **Selection asks for layouts only once it's needed (macOS).** Reading `Text.LayoutKey` has
+  SwiftUI lay each text out once more, which cost about a third of drawing a reply. A text's
+  `TextSelectionModel` turns active when the pointer rests on it in the active app, or on the
+  first click (handled once the layouts are in); until then nothing reads them. Fragments pass
+  their layouts on through `TextLayoutsKey`. Selectable text's links are opened by the selection's
+  view, so fragments don't read layouts for link taps either. iOS is as upstream.
+- **Block spacing in the first layout.** A style's `blockSpacing` is also a layout value the
+  block stack reads as it lays a block out; upstream waited for the preference, laying every
+  block out again (and measuring each one's default spacing for nothing in between).
+- **Code colored at once.** Tokens are kept in a cache (`TokenCache`), so a code block made
+  again is colored from its first frame, and `CodeHighlighting.prepare(markdown:)` reads code
+  blocks into it ahead of time.
 
 ## Updating
 

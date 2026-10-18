@@ -12,6 +12,30 @@
 
   typealias PlatformTextSelectionInteraction = AppKitTextSelectionInteraction
 
+  /// When something last scrolled, to tell the pointer resting on text from text moving under
+  /// it: scroll wheel events, and scroll views' live scrolling (a trackpad's, and its momentum).
+  @MainActor enum ScrollWatch {
+    private static var last: TimeInterval = 0
+    private static var watchers: [Any] = []
+
+    static var isIdle: Bool {
+      if watchers.isEmpty {
+        watchers.append(
+          NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
+            last = ProcessInfo.processInfo.systemUptime
+            return event
+          } as Any)
+        for name in [NSScrollView.willStartLiveScrollNotification, NSScrollView.didLiveScrollNotification, NSScrollView.didEndLiveScrollNotification] {
+          watchers.append(
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { _ in
+              MainActor.assumeIsolated { last = ProcessInfo.processInfo.systemUptime }
+            })
+        }
+      }
+      return ProcessInfo.processInfo.systemUptime - last > 0.25
+    }
+  }
+
   struct AppKitTextSelectionInteraction: ViewModifier {
     @State private var cursorPushed = false
 
@@ -37,6 +61,11 @@
     private func updateCursor(for phase: HoverPhase, model: TextSelectionModel) {
       switch phase {
       case .active(let location):
+        // The pointer rests on it, in the app you're using, not scrolling past: selecting may
+        // come, so its text tells where it's laid out from now on.
+        if !model.isActive, NSApp.isActive, ScrollWatch.isIdle {
+          model.isActive = true
+        }
         let cursor =
           model.url(for: location) != nil
           ? NSCursor.pointingHand

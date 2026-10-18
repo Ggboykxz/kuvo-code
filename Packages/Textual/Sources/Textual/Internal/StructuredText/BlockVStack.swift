@@ -40,7 +40,7 @@ extension StructuredText {
     @Environment(\.listItemSpacingEnabled) private var listItemSpacingEnabled
     @Environment(\.resolvedListItemSpacing) private var resolvedListItemSpacing
 
-    @State private var blockSpacing = BlockSpacing()
+    @State private var blockSpacing: BlockSpacing?
 
     private let content: Content
 
@@ -55,7 +55,7 @@ extension StructuredText {
           // Override with the resolved list item spacing if enabled
           blockSpacing = listItemSpacingEnabled ? resolvedListItemSpacing : value
         }
-        .layoutValue(key: BlockSpacingKey.self, value: blockSpacing)
+        .layoutValue(key: ResolvedBlockSpacingKey.self, value: listItemSpacingEnabled ? resolvedListItemSpacing : blockSpacing)
     }
   }
 
@@ -71,14 +71,27 @@ extension StructuredText {
         spacings: subviews.indices.dropLast().map { index in
           let current = subviews[index]
           let next = subviews[index + 1]
-          let currentBottom = current[BlockSpacingKey.self].bottom
-          let nextTop = next[BlockSpacingKey.self].top
+          let currentSpacing = Self.spacing(of: current)
+          let nextSpacing = Self.spacing(of: next)
 
-          // Take the maximum block spacing, otherwise the preferred view spacing
-          return [currentBottom, nextTop].compactMap(\.self).max()
-            ?? current.spacing.distance(to: next.spacing, along: .vertical)
+          // Take the maximum block spacing, otherwise the preferred view spacing (only once
+          // both are known: it measures the text, a costly thing to do for a guess).
+          if let spacing = [currentSpacing.value.bottom, nextSpacing.value.top].compactMap(\.self).max() {
+            return spacing
+          }
+          guard currentSpacing.isKnown, nextSpacing.isKnown else { return 0 }
+          return current.spacing.distance(to: next.spacing, along: .vertical)
         }
       )
+    }
+
+    /// A block's spacing: as the stack resolved it, or else as its style sets it, or, for a list
+    /// or quote (whose blocks set theirs), as a paragraph's in the GitHub style, until the stack
+    /// knows.
+    private static func spacing(of subview: LayoutSubview) -> (value: BlockSpacing, isKnown: Bool) {
+      if let resolved = subview[ResolvedBlockSpacingKey.self] { return (resolved, true) }
+      if let declared = subview[DeclaredBlockSpacingKey.self] { return (declared, true) }
+      return (BlockSpacing(top: 0, bottom: 16), false)
     }
 
     func sizeThatFits(

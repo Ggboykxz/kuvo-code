@@ -11,18 +11,30 @@ import SwiftUI
 
 struct TextLinkInteraction: ViewModifier {
   @Environment(\.openURL) private var openURL
+  #if TEXTUAL_ENABLE_TEXT_SELECTION && canImport(AppKit) && !targetEnvironment(macCatalyst)
+    @Environment(\.textSelection) private var textSelection
+  #endif
   /// Whether the text has links: without any, nothing to tap, and no overlay to lay out.
   var isOn = true
 
   func body(content: Content) -> some View {
     #if TEXTUAL_ENABLE_LINKS
-      if isOn {
+      if isOn, !selectionTakesClicks {
         linked(content)
       } else {
         content
       }
     #else
       content
+    #endif
+  }
+
+  /// On macOS, selectable text's clicks go to the selection's view over it, which opens links.
+  private var selectionTakesClicks: Bool {
+    #if TEXTUAL_ENABLE_TEXT_SELECTION && canImport(AppKit) && !targetEnvironment(macCatalyst)
+      textSelection.allowsSelection
+    #else
+      false
     #endif
   }
 

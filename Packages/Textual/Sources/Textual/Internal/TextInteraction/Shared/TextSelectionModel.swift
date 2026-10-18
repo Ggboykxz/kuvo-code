@@ -25,6 +25,14 @@
       }
     }
 
+    /// Whether its text tells where it's laid out, which selecting needs (macOS): only once the
+    /// pointer rests on it or it's clicked, as telling it costs most of drawing the text.
+    var isActive = false
+
+    /// Called once the text's layouts come in after it's made active.
+    @ObservationIgnored
+    var layoutsDidChange: (() -> Void)?
+
     @ObservationIgnored
     var selectionWillChange: (() -> Void)?
 
@@ -52,6 +60,7 @@
 
       let oldLayoutCollection = self.layoutCollection
       self.layoutCollection = layoutCollection
+      defer { layoutsDidChange?() }
 
       guard
         let selectedRange,
