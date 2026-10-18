@@ -4,6 +4,8 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
+## Unreleased
+
 ## 0.5.6
 
 - Subagents an agent sends off to work in the background show while they work: under its steps, each with a spinner and opening to what it's doing, even after its turn has ended. The session's row and tab show it working meanwhile, and a bot's row says how many tasks it's working on. They used to vanish into "handed off 7 tasks".
