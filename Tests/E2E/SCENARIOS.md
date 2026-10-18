@@ -21,23 +21,23 @@ real open-source projects cloned into the run's folder. Status: ✅ passes, ⚠�
 | ID | Case | Status |
 | --- | --- | --- |
 | B1 | Open a project folder (drag it in, or New Project) and ask "what does this project do, and how is it organized?" | ✅ GLM, slugify |
-| B2 | "Run the tests and tell me what fails" on a project with a failing test | ⏳ |
-| B3 | "Fix this bug: …" from a real issue's text, then check the fix | ⏳ |
+| B2 | "Run the tests and tell me what fails" on a project with a failing test | ✅ DeepSeek, textstats (a seeded bug): both failures found and explained |
+| B3 | "Fix this bug: …" from a real issue's text, then check the fix | ✅ fixed both, tests re-run green |
 | B4 | "Add a --json flag to the CLI and a test for it" | ⏳ |
-| B5 | Review the changes: open the diff, comment on a line ("rename this"), send the comments, see them handled | ⏳ |
-| B6 | Undo the last turn's changes, then change your mind | ⏳ |
-| B7 | "Commit this with a good message", then make a branch | ⏳ |
-| B8 | Start a session in a worktree, work there, and merge it back | ⏳ |
-| B9 | Plan first ("plan how to add dark mode, don't change anything"), then switch to Build and carry it out | ⏳ |
-| B10 | Ask First: allow a command once, always allow another, deny an edit with a reason | ⏳ |
-| B11 | The agent asks questions before starting ("which database should I use?") and you answer in the card | ⏳ |
-| B12 | Queue follow-ups while it works, steer it mid-task, stop it with Esc, resume | ⏳ |
+| B5 | Review the changes: open the diff, comment on a line ("rename this"), send the comments, see them handled | ✅ comment on a line, sent with an empty composer, handled; ❌→✅ Accessibility press on the mode/model menus hung until the menu closed (fadfbd9) |
+| B6 | Undo the last turn's changes, then change your mind | ✅ undo restores only that turn's files, Redo brings them back; ❌→✅ outside git the dialog promised files back the engine can't restore (26a90bc) |
+| B7 | "Commit this with a good message", then make a branch | ✅ Commit… with Suggest a Message, then New Branch… from the title bar |
+| B8 | Start a session in a worktree, work there, and merge it back | ✅ worktree session, Merge into main, Archive and Remove Worktree; ❌→✅ the archived session lost its project (2321ca2); removal threw away changes made after the check (a5077ea) |
+| B9 | Plan first ("plan how to add dark mode, don't change anything"), then switch to Build and carry it out | ✅ Plan changed nothing, Build It carried it out |
+| B10 | Ask First: allow a command once, always allow another, deny an edit with a reason | ✅ allow once, always, deny; ❌→✅ Always Allowed listed nothing (523f32e); a piped command showed as two (773d689) |
+| B11 | The agent asks questions before starting ("which database should I use?") and you answer in the card | ✅ two questions: number key picks, typing writes your own, Return sends |
+| B12 | Queue follow-ups while it works, steer it mid-task, stop it with Esc, resume | ✅ queue with ⌘↩, Steer, Esc stops, Resume, ↑/↓ history; ❌→✅ Send Now only in ⋯ for a next-step message (45b9548) |
 | B13 | Two sessions in the same project working at once, and one in another project | ⏳ |
 | B14 | Switch model or effort mid-conversation | ⏳ |
-| B15 | "Start the dev server and show me the page": the page in the panel's browser | ⏳ |
+| B15 | "Start the dev server and show me the page": the page in the panel's browser | ❌→✅ the agent couldn't click or type in the Mac browser since 0.5.6 (3edd9f4); a page that didn't open said only "browser is empty" (3f59090); its dev server left running showed nowhere (14ed231) |
 | B16 | A long conversation: scrolling, finding text (⌘F), and the context filling up and compacting | ⏳ |
-| B17 | A folder that isn't a git repository, a folder with spaces and accents in its name, and a big repository | ⏳ |
-| B18 | Rename, archive, restore and delete sessions; find one with ⌘K | ⏳ |
+| B17 | A folder that isn't a git repository, a folder with spaces and accents in its name, and a big repository | ✅ accents and spaces in the folder name; ❌→✅ outside git the Changes tab stayed empty (8ad10d1) |
+| B18 | Rename, archive, restore and delete sessions; find one with ⌘K | ✅ rename (accents), archive, search finds it, unarchive, delete asks first, ⌘K finds files and sessions; ❌→✅ a deleted session stayed under In Conversations; a search typed at launch found nothing (8149536) |
 | B19 | "Use a subagent to research X while you do Y" | ⏳ |
 | B20 | Custom commands and skills: add one, use it with / | ⏳ |
 
