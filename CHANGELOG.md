@@ -4,7 +4,7 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
-## Unreleased
+## 0.5.7
 
 - When the engine stops while starting, the failure screen shows the engine's own error message again, not just an exit code.
 - On a remote machine, a project's own web search setting in its opencode.json wins over your Mac's choice, as it does on your Mac.
