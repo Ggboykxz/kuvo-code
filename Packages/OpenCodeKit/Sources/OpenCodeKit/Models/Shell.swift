@@ -41,3 +41,21 @@ public struct ShellOutput: Decodable, Sendable, Hashable {
     /// How much there is so far, in bytes.
     public var size: Int
 }
+
+extension Message.Notice {
+    /// For the engine's notice that a command left running in the background ended (which wakes
+    /// the agent): how it went, and what it ran, as both apps show it. Nil for any other notice.
+    public var backgroundEnd: String? {
+        guard metadata?["source"]?.string == "shell" else { return nil }
+        let command = (description ?? "").split(separator: "\n").first.map(String.init) ?? ""
+        let short = command.count > 80 ? command.prefix(79) + "…" : Substring(command)
+        let exit = metadata?["exit"]?.number.flatMap { Int(exactly: $0) }
+        let outcome = switch (metadata?["state"]?.string, exit) {
+        case _ where metadata?["signal"]?.string != nil: "Background command stopped"
+        case ("completed", 0?), ("completed", nil): "Background command finished"
+        case (_, let code?) where code != 0: "Background command failed (exit \(code))"
+        default: "Background command stopped"
+        }
+        return short.isEmpty ? outcome : "\(outcome): \(short)"
+    }
+}

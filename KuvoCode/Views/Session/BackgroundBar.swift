@@ -149,18 +149,8 @@ private struct ShellOutputView: View {
 }
 
 extension TranscriptView {
-    /// The line for a background command's end: how it went, and what it ran.
+    /// The line for a background command's end (OpenCodeKit words it, for the phone too).
     static func backgroundEnd(_ notice: Message.Notice) -> String {
-        let command = (notice.description ?? "").split(separator: "\n").first.map(String.init) ?? ""
-        let short = command.count > 80 ? command.prefix(79) + "…" : Substring(command)
-        let exit = notice.metadata?["exit"]?.int
-        let stopped = notice.metadata?["signal"]?.string != nil
-        let outcome = switch (notice.metadata?["state"]?.string, exit) {
-        case _ where stopped: "Background command stopped"
-        case ("completed", 0?), ("completed", nil): "Background command finished"
-        case (_, let code?) where code != 0: "Background command failed (exit \(code))"
-        default: "Background command stopped"
-        }
-        return short.isEmpty ? outcome : "\(outcome): \(short)"
+        notice.backgroundEnd ?? notice.description ?? notice.text
     }
 }
