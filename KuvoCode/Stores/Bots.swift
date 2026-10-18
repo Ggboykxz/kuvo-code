@@ -267,6 +267,7 @@ final class Bots {
         app?.workspace.botSessions = sessionIDs
         await app?.workspace.delete(bot.sessionID)
         if bot.machine == nil { try? FileManager.default.removeItem(atPath: bot.folder) }
+        await BotKeys.forget(bot, app: app)
         Analytics.shared.track("bot_deleted")
     }
 

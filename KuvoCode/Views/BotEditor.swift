@@ -32,6 +32,8 @@ struct BotEditor: View {
     /// The project it works in; nil for a folder of its own.
     @State private var project: String?
     @State private var showsAddMachine = false
+    /// An integration it's being given a key of its own for, in the form's place.
+    @State private var keyFor: Integrations.Service?
     @State private var isWorking = false
     @State private var failure: String?
     /// Making it: waiting for its machine to connect first, if it's on its way.
@@ -83,6 +85,11 @@ struct BotEditor: View {
                         showsAddMachine = false
                     }
                 }, cancel: { withAnimation(.ui) { showsAddMachine = false } })
+            }
+            .transition(.opacity)
+        } else if let service = keyFor, let bot {
+            EditorDetail(back: "Edit \(trimmedName)", title: "\(service.title) Key", onBack: { withAnimation(.ui) { keyFor = nil } }) {
+                BotKeyEntry(service: service, bot: bot) { withAnimation(.ui) { keyFor = nil } }
             }
             .transition(.opacity)
         } else {
@@ -223,6 +230,15 @@ struct BotEditor: View {
                     }
                     section("Wake-Ups", note: "The bot schedules these itself: wake-ups to carry on later, and watches, which check something without its model and wake it when that changes. Add a wake-up of your own, and at its time what it says to do arrives in its conversation.") {
                         WakeList(bot: bot)
+                    }
+                    if bot.project == nil {
+                        section("Keys", note: "A key of its own, like a GitHub token only it should use: its tools take it in place of your shared one, and no other bot or session gets it.") {
+                            BotKeysSection(bot: bot) { service in withAnimation(.ui) { keyFor = service } }
+                        }
+                    } else {
+                        section("Keys", note: "It works in a project, beside your sessions there, so it uses the keys they do, from Settings › Integrations. A bot with a folder of its own can have its own.") {
+                            EmptyView()
+                        }
                     }
                     section("Memory") {
                         WellGroup {

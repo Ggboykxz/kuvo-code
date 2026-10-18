@@ -304,6 +304,11 @@ public final class RemoteServer: @unchecked Sendable {
     /// `KUVO_SETTINGS`, when it's given, becomes the engine's settings file there (its global
     /// settings, which a project's own outrank), in place of what was there.
     ///
+    /// Integrations' keys (`KUVO_KEY_…`) go in files only this user can read, in `keys`, which the
+    /// settings name with `{file:…}`, never in the engine's environment, where the agent's own
+    /// commands (`env`, say) would print them. They're gone once the engine is: its watchdog takes
+    /// them away, unless an engine started since has put its own there.
+    ///
     /// Every minute the watchdog sends bots' wake-ups that are due ([Wakes]). Every ten, it stops
     /// the engine if the app hasn't been around for a day and no wake-up is waiting.
     static var launchScript: String {
@@ -316,6 +321,11 @@ public final class RemoteServer: @unchecked Sendable {
           unset KUVO_SETTINGS
         fi
         R="$K/run"; mkdir -p "$R"; chmod 700 "$R"
+        launch="$$.$(date +%s)"
+        rm -rf "$K/keys"; mkdir -p "$K/keys"; chmod 700 "$K/keys"; echo "$launch" >"$K/keys/.launch"
+        for v in $(env | sed -n 's/^\\(KUVO_KEY_[A-Za-z0-9_]*\\)=.*/\\1/p'); do
+          (umask 077; printf '%s' "$(printenv "$v")" >"$K/keys/$v"); unset "$v"
+        done
         \(Wakes.installScript)
         \(Launcher.installScript)
         export PATH="$K/bin:$PATH"
@@ -325,7 +335,7 @@ public final class RemoteServer: @unchecked Sendable {
         pid=$!
         i=0
         until grep -q "server listening" "$R/engine.log" 2>/dev/null; do
-          if ! kill -0 "$pid" 2>/dev/null || [ $i -ge 900 ]; then tail -n 5 "$R/engine.log" >&2; kill "$pid" 2>/dev/null; exit 3; fi
+          if ! kill -0 "$pid" 2>/dev/null || [ $i -ge 900 ]; then tail -n 5 "$R/engine.log" >&2; kill "$pid" 2>/dev/null; rm -rf "$K/keys"; exit 3; fi
           sleep 0.1; i=$((i + 1))
         done
         (umask 077; printf '{"pid":%s,%s\n' "$pid" "$record" >"$R/engine.json")
@@ -333,7 +343,7 @@ public final class RemoteServer: @unchecked Sendable {
         if [ -f "$R/link.json" ] && [ -f "$K/bin/kuvo-link.js" ]; then
           KUVO_HOME="$K" BUN_BE_BUN=1 BUN_RUNTIME_TRANSPILER_CACHE_PATH=0 setsid "$K/engine/\(OpenCodeEngine.version)/opencode" "$K/bin/kuvo-link.js" run >"$R/link.log" 2>&1 </dev/null &
         fi
-        setsid sh -c 'i=0; while kill -0 "$1" 2>/dev/null; do sleep 60; "$3/bin/kuvo-wake" fire "$3/bots" "$2/engine.json" 2>/dev/null; i=$((i + 1)); [ $((i % 10)) -eq 0 ] || continue; { ls "$3"/bots/*/wakes/* || ls -d "$3"/bots/*/watches/*/; } >/dev/null 2>&1 && continue; [ -n "$(find "$2/attached" -mmin +1440 2>/dev/null)" ] && kill "$1"; done' watchdog "$pid" "$R" "$K" >/dev/null 2>&1 </dev/null &
+        setsid sh -c 'i=0; while kill -0 "$1" 2>/dev/null; do sleep 60; "$3/bin/kuvo-wake" fire "$3/bots" "$2/engine.json" 2>/dev/null; i=$((i + 1)); [ $((i % 10)) -eq 0 ] || continue; { ls "$3"/bots/*/wakes/* || ls -d "$3"/bots/*/watches/*/; } >/dev/null 2>&1 && continue; [ -n "$(find "$2/attached" -mmin +1440 2>/dev/null)" ] && kill "$1"; done; [ "$(cat "$3/keys/.launch" 2>/dev/null)" = "$4" ] && rm -rf "$3/keys"' watchdog "$pid" "$R" "$K" "$launch" >/dev/null 2>&1 </dev/null &
         echo "$pid"
         """
     }
@@ -399,6 +409,7 @@ public final class RemoteServer: @unchecked Sendable {
     static var stopScript: String {
         """
         R="\(run)"
+        rm -rf "${R%/run}/keys"
         [ -f "$R/engine.json" ] || exit 0
         pid=$(sed -n 's/^{"pid":\\([0-9]*\\),.*/\\1/p' "$R/engine.json")
         [ -n "$pid" ] && grep -q opencode "/proc/$pid/cmdline" 2>/dev/null && kill "$pid"

@@ -66,8 +66,10 @@ nonisolated enum Integrations {
     /// from (their values never go in the settings file, see IntegrationKeys). Its tools are plain tools, as the browser's are: behind the
     /// engine's Code Mode, the agent sees only a short list of them under one tool, and went to
     /// the service's site in the browser instead.
-    static func settings(for service: Service) -> JSONValue? {
-        guard case .object(var settings) = server(for: service) else { return nil }
+    /// With `bot`, the settings that bot's folder has, naming its own keys rather than the shared ones.
+    static func settings(for service: Service, bot: String? = nil) -> JSONValue? {
+        let variable = { (name: String) in bot.map { IntegrationKeys.variable(service.id, name, bot: $0) } ?? IntegrationKeys.variable(service.id, name) }
+        guard case .object(var settings) = server(for: service, variable: variable) else { return nil }
         settings["codemode"] = .bool(false)
         return .object(settings)
     }
@@ -130,11 +132,12 @@ nonisolated enum Integrations {
         }
     }
 
-    /// Settings for a machine, whose engine gets the keys in its environment: each named there.
+    /// Settings for a machine, where the engine reads the keys from files of their own in its
+    /// folder (see `RemoteServer.launchScript`): each named there.
     nonisolated static func keyVariables(in value: Any) -> Any {
         switch value {
         case let text as String:
-            return text.replacingOccurrences(of: "{file:" + IntegrationKeys.folder.path + "/", with: "{env:")
+            return text.replacingOccurrences(of: "{file:" + IntegrationKeys.folder.path + "/", with: "{file:~/\(RemoteEngineInstaller.root)/keys/")
         case let object as [String: Any]: return object.mapValues(keyVariables)
         case let array as [Any]: return array.map(keyVariables)
         default: return value
@@ -147,15 +150,16 @@ nonisolated enum Integrations {
         return String(spec[..<at])
     }
 
-    private static func server(for service: Service) -> JSONValue? {
-        let env = { (name: String) in JSONValue.string(IntegrationKeys.reference(IntegrationKeys.variable(service.id, name))) }
+    /// `variable` names a key's variable (the shared key's, or a bot's own).
+    private static func server(for service: Service, variable: @escaping (String) -> String) -> JSONValue? {
+        let env = { (name: String) in JSONValue.string(IntegrationKeys.reference(variable(name))) }
         switch service.way {
         case .official(let url):
             return .object(["type": .string("remote"), "url": .string(url)])
         case .officialToken(let url, let key, _):
             return .object([
                 "type": .string("remote"), "url": .string(url), "oauth": .bool(false),
-                "headers": .object(["Authorization": .string("Bearer " + IntegrationKeys.reference(IntegrationKeys.variable(service.id, key.name)))]),
+                "headers": .object(["Authorization": .string("Bearer " + IntegrationKeys.reference(variable(key.name)))]),
             ])
         case .officialApp(let url, _):
             return .object([

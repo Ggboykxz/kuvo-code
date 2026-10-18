@@ -5,14 +5,38 @@ import Security
 /// This Mac's engine reads them from files only you can read, in Kuvo Code's temporary folder,
 /// which its settings name with `{file:…}`: written each time it starts, and gone when Kuvo Code
 /// quits. So they're never in its settings file, nor in its environment, where the agent's own
-/// commands (`env`, say) would print them. Machines get them in memory, as environment variables
-/// their settings name with `{env:…}`, never on their disk.
+/// commands (`env`, say) would print them. A machine's engine has them the same way, in files in
+/// its folder there for as long as it runs (see `RemoteServer.launchScript`).
 nonisolated enum IntegrationKeys {
     private static var service: String { (Bundle.main.bundleIdentifier ?? "run.kuvo.code") + ".integrations" }
 
     /// The variable an integration's key goes in: KUVO_KEY_<ID>_<NAME>.
     static func variable(_ integration: String, _ name: String) -> String {
-        "KUVO_KEY_" + (integration + "_" + name).uppercased().map { $0.isLetter || $0.isNumber ? $0 : "_" }.map(String.init).joined()
+        "KUVO_KEY_" + plain(integration + "_" + name)
+    }
+
+    /// A bot's own key, which only its conversation uses: KUVO_KEY_<ID>_<NAME>__<BOT>.
+    static func variable(_ integration: String, _ name: String, bot: String) -> String {
+        variable(integration, name) + "__" + plain(bot)
+    }
+
+    /// Whether `variable` is a bot's own key.
+    static func isBots(_ variable: String) -> Bool {
+        variable.contains("__")
+    }
+
+    /// A bot's own keys, as saved: each one's variable.
+    static func variables(ofBot bot: String) -> [String] {
+        variables(ofBot: bot, in: names)
+    }
+
+    /// Those of `names` that are `bot`'s own keys.
+    static func variables(ofBot bot: String, in names: [String]) -> [String] {
+        names.filter { $0.hasSuffix("__" + plain(bot)) }.sorted()
+    }
+
+    private static func plain(_ text: String) -> String {
+        text.uppercased().map { $0.isLetter || $0.isNumber ? $0 : "_" }.map(String.init).joined()
     }
 
     /// Where this Mac's engine reads the keys.
@@ -95,6 +119,15 @@ nonisolated enum IntegrationKeys {
     /// Every key you saved, as the environment the engines run with. (The keychain lists them
     /// without their values, so each is read on its own.)
     static var environment: [String: String] {
+        var found: [String: String] = [:]
+        for name in names {
+            if let value = value(name) { found[name] = value }
+        }
+        return found
+    }
+
+    /// The keys you saved, by their variables, without reading them.
+    static var names: [String] {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -102,11 +135,7 @@ nonisolated enum IntegrationKeys {
             kSecMatchLimit as String: kSecMatchLimitAll,
         ]
         var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let items = result as? [[String: Any]] else { return [:] }
-        var found: [String: String] = [:]
-        for case let name as String in items.map({ $0[kSecAttrAccount as String] }) {
-            if let value = value(name) { found[name] = value }
-        }
-        return found
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let items = result as? [[String: Any]] else { return [] }
+        return items.compactMap { $0[kSecAttrAccount as String] as? String }
     }
 }

@@ -232,6 +232,8 @@ final class AppModel {
             bots.app = self
             groups.app = self
             workspace.botSessions = bots.sessionIDs
+            // Bots' keys of their own, in their folders' settings as integrations are now.
+            Task { await BotKeys.applyAll(on: nil, app: self) }
             workspace.seats = groups.seatIDs
             usage.api = api
             engine = .ready
@@ -301,7 +303,7 @@ final class AppModel {
         merge(config, into: &base)
         // Sorted, so the same settings read the same each time (a machine's engine is started
         // over when what it started with reads differently).
-        let data = (try? JSONSerialization.data(withJSONObject: base, options: [.sortedKeys])) ?? Data()
+        let data = (try? JSONSerialization.data(withJSONObject: base, options: [.sortedKeys, .withoutEscapingSlashes])) ?? Data()
         return String(decoding: data, as: UTF8.self)
     }
 

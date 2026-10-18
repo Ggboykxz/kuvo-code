@@ -187,6 +187,8 @@ extension AppModel {
         }
         // Phones you've paired reach it directly, through its own bridge.
         if engine.isReady { await phoneLink.sync(engine) }
+        // Its bots' keys of their own, which may have changed while it was away.
+        if engine.isReady { await BotKeys.applyAll(on: engine.machine.id, app: self) }
         // What you signed in to here works there too, kept in step while it's connected.
         engine.signInSync?.cancel()
         if engine.isReady {
@@ -333,8 +335,8 @@ extension AppModel {
         engineConfig.addDefaults()
         // What goes in the settings file of the machine's engine, in `~/.kuvo-code`, rather than in
         // its memory with the rest, which outranks a project's own settings: web search, so a
-        // project there can choose otherwise, as here. Only which provider, or none: a choice with
-        // more in it (a key, say) stays off its disk.
+        // project there can choose otherwise, as here, and integrations (below). Only which
+        // provider, or none: a choice with more in it (a key, say) stays off its disk.
         var global: [String: JSONValue] = [:]
         if let data = try? Data(contentsOf: engineConfig.file),
            var settings = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
@@ -354,22 +356,36 @@ extension AppModel {
             }
             if var mcp = settings["mcp"] as? [String: Any], var servers = mcp["servers"] as? [String: Any] {
                 for id in Integrations.macOnly { servers.removeValue(forKey: id) }
-                // Keys there come in its environment, not files on this Mac.
-                mcp["servers"] = Integrations.keyVariables(in: servers)
+                // Keys there come in files of their own on the machine, not this Mac's.
+                servers = Integrations.keyVariables(in: servers) as? [String: Any] ?? servers
+                // Integrations go in its settings file, as here, so a folder's own outrank them:
+                // a bot with a key of its own names its server there (`BotKeys`). They name their
+                // keys' files, never the keys.
+                let integrations = servers.filter { Integrations.service($0.key) != nil }
+                if !integrations.isEmpty,
+                   let data = try? JSONSerialization.data(withJSONObject: integrations, options: [.withoutEscapingSlashes]),
+                   let value = try? JSONDecoder().decode(JSONValue.self, from: data) {
+                    for id in integrations.keys { servers.removeValue(forKey: id) }
+                    global["mcp"] = .object(["servers": value])
+                }
+                mcp["servers"] = servers
                 settings["mcp"] = mcp
             }
-            if let json = try? JSONSerialization.data(withJSONObject: settings, options: [.sortedKeys]) {
+            // Slashes as they are: the engine finds `{file:…}` in the text before it reads it.
+            if let json = try? JSONSerialization.data(withJSONObject: settings, options: [.sortedKeys, .withoutEscapingSlashes]) {
                 environment["OPENCODE_CONFIG_CONTENT"] = String(decoding: json, as: UTF8.self)
             }
         }
         // Always, so a choice taken back here is taken back there.
         let encoder = JSONEncoder()
-        encoder.outputFormatting = .sortedKeys
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         environment["KUVO_SETTINGS"] = (try? encoder.encode(global)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
-        // Keys you brought for the integrations machines run, in memory as on this Mac: not
-        // those that stay on this Mac (an app's secret for a sign-in, say).
+        // Keys you brought for the integrations machines run, which go in files of their own
+        // there as the engine starts (see `RemoteServer.launchScript`): not those that stay on
+        // this Mac (an app's secret for a sign-in, say), nor bots' own, which reach only their
+        // bot's machine (`BotKeys`).
         let here = Set(Integrations.macOnly.map { IntegrationKeys.variable($0, "") })
-        let keys = await Task.detached { IntegrationKeys.environment }.value.filter { name, _ in !here.contains { name.hasPrefix($0) } }
+        let keys = await Task.detached { IntegrationKeys.environment }.value.filter { name, _ in !here.contains { name.hasPrefix($0) } && !IntegrationKeys.isBots(name) }
         environment.merge(keys) { _, key in key }
         // What some providers need until opencode handles it, as on this Mac.
         let compatibility = ProviderCompatibility.config
