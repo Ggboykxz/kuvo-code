@@ -6,21 +6,25 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
-- Scrolling up through a long conversation no longer jumps. As replies above come into view, or earlier messages load, what you're reading stays where it is, and earlier messages come in before you reach the top.
-- Replies draw in one go, and faster: a long reply no longer shows up empty for a moment and then at its size. The first code block in a conversation no longer holds up the app for a quarter of a second while code coloring starts.
-- A session on a remote machine no longer keeps showing "Connecting to…" over and over while nothing runs there. With an integration added, the machine's engine looked out of date every time it was checked, and was started over every few seconds.
-- Giving a bot a key of its own, or taking it away, changes only that key's entry in its folder's `.opencode/opencode.json`. It used to replace that file, and taking the last key away deleted the whole `.opencode` folder, with any skills or commands in it. A bot on a machine no longer loses its folder's settings each time the machine connects.
 - A command the agent leaves running in the background shows in a bar over the composer, with how long it has run, what it has printed and Stop, and the session shows as working until it ends. It used to look as if nothing was happening. The bar can be folded to one line, which still shows that something runs. When a command ends, the conversation says so, and whether it finished, failed or was stopped, before the agent carries on.
 - A message waiting for the agent's next step has Send Now right in its row, which stops the agent's current step and gives it the message. It was only in the ⋯ menu.
 - Searching the sidebar: a session you delete leaves the results under In Conversations at once (clicking it opened nothing), and a search typed while Kuvo Code is still starting finds what was said in conversations once they're in.
 - Undo From Here in a folder that isn't a git repository says that the agent's file changes stay as they are: only the conversation goes back there. It said the files went back too.
 - Removing a session's worktree never throws away work you weren't warned about: after a merge, or when changes appeared after Kuvo Code asked, the worktree stays and says why, and none is removed while an agent works in it.
+
+## 0.5.9
+
+- Scrolling up through a long conversation no longer jumps. As replies above come into view, or earlier messages load, what you're reading stays where it is, and earlier messages come in before you reach the top.
+- Replies draw in one go, and faster: a long reply no longer shows up empty for a moment and then at its size. The first code block in a conversation no longer holds up the app for a quarter of a second while code coloring starts, and a code block keeps showing the latest code while it's being written.
+- A session on a remote machine no longer keeps showing "Connecting to…" over and over while nothing runs there. With an integration added, the machine's engine looked out of date every time it was checked, and was started over every few seconds.
+- Giving a bot a key of its own, or taking it away, changes only that key's entry in its folder's `.opencode/opencode.json`. It used to replace that file, and taking the last key away deleted the whole `.opencode` folder, with any skills or commands in it. A bot on a machine no longer loses its folder's settings each time the machine connects.
 - In a folder that isn't a git repository, the Changes tab lists the files the agent changed in the session, as it says it does: it stayed empty. A file edited several times shows as one change.
 - A session archived with its worktree removed stays with its project: Settings › Archived Sessions listed it under the worktree's folder name, and restoring it made a project of a folder that was gone.
 - When the agent asks to run a command, the card shows the command line as it will run, pipes and `&&` included. A command like `npm test | tail -5` showed as two separate lines.
 - Settings › Permissions lists the approvals you saved with Always Allow in every project, to remove them. It said "None yet" for any made in a project.
 - Conversations keep going while a save panel or an error message is open. Exporting a session as Markdown, or an error after removing a worktree or moving a chat, used to stop every conversation, bot and wake-up from updating until you closed it. With VoiceOver, the composer's mode and model buttons open their menus.
 - Signing out of an account or integration here signs your remote machines out too, even when that fails the first time: it's tried again until it works, rather than leaving the machine signed in.
+- A sign-in renewed on a remote machine is no longer replaced by an older copy when the connection drops while Kuvo Code checks it.
 - When a remote machine connects again, it tells you what its agents asked while it was away, like a bot's permission request from a wake-up while your Mac slept. Before, nothing said so until you opened that conversation.
 - Messages agents send each other are no longer lost when a machine drops: one waiting for a machine stays queued until it's delivered, and one a machine's agent leaves for an agent elsewhere stays there until it gets through.
 - Answering a permission request from its notification says so when the answer didn't go through, as answering a question already did.

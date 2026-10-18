@@ -7,6 +7,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 // The bridge keeps its state in KUVO_HOME, so give it a folder of its own before loading it.
 const home = fs.mkdtempSync(path.join(os.tmpdir(), "kuvo-link-test-"));
@@ -320,7 +321,7 @@ test("setup keeps the machine's keys and its own phones, starts the bridge, and 
   const { spawnSync } = await import("node:child_process");
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), "kuvo-link-setup-"));
   fs.mkdirSync(path.join(folder, "workspace"));
-  const script = new URL("../../Sources/KuvoLink/Resources/kuvo-link.js", import.meta.url).pathname;
+  const script = fileURLToPath(new URL("../../Sources/KuvoLink/Resources/kuvo-link.js", import.meta.url));
   const setup = input => {
     const result = spawnSync(process.execPath, [script, "setup"], { input: JSON.stringify(input), env: { ...process.env, KUVO_HOME: folder }, encoding: "utf8" });
     return JSON.parse(result.stdout);
@@ -330,8 +331,18 @@ test("setup keeps the machine's keys and its own phones, starts the bridge, and 
     // A relay nobody listens on: the bridge keeps trying, which is all this needs.
     const first = setup({ relay: "ws://127.0.0.1:9", name: "test", phones: [{ key: "AAAA", name: "A" }] });
     assert.match(first.address, /^[A-Za-z0-9_-]{22}$/);
-    for (let i = 0; i < 50 && !fs.existsSync(pidFile); i++) await new Promise(r => setTimeout(r, 50));
-    const pid = Number(fs.readFileSync(pidFile, "utf8"));
+    // The file exists briefly before its PID is written; setup also needs its version file.
+    let pid = 0;
+    let ready = false;
+    for (let i = 0; i < 50; i++) {
+      try {
+        pid = Number(fs.readFileSync(pidFile, "utf8"));
+        ready = Number.isInteger(pid) && pid > 0 && fs.readFileSync(path.join(folder, "run", "link.version"), "utf8").trim() === link.BRIDGE_VERSION;
+        if (ready) break;
+      } catch {}
+      await new Promise(r => setTimeout(r, 50));
+    }
+    assert.ok(ready, "the bridge writes its PID and version before setup runs again");
     process.kill(pid, 0);
 
     // Its keys stay; the phones are what the Mac says now; the same bridge carries on.
@@ -359,7 +370,10 @@ test("setup keeps the machine's keys and its own phones, starts the bridge, and 
     }
     assert.ok(stopped);
   } finally {
-    try { process.kill(Number(fs.readFileSync(pidFile, "utf8")), "SIGKILL"); } catch {}
+    try {
+      const pid = Number(fs.readFileSync(pidFile, "utf8"));
+      if (Number.isInteger(pid) && pid > 0) process.kill(pid, "SIGKILL");
+    } catch {}
     fs.rmSync(folder, { recursive: true, force: true });
   }
 });

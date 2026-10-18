@@ -47,6 +47,12 @@ jobs:
         working-directory: Packages/UsageKit
         run: swift test
 
+      - name: Test KuvoLink and the machines' bridge
+        working-directory: Packages/KuvoLink
+        run: |
+          swift test
+          node --test Tests/Bridge/*.test.js
+
       # The same scripts the release workflow runs, signed ad hoc here.
       - name: Build the app
         run: ./scripts/build-app.sh
