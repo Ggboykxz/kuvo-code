@@ -108,7 +108,7 @@ struct EngineSettings: View {
                         if !credentials.isEmpty {
                             HStack(spacing: 12) {
                                 Text("Added").foregroundStyle(.secondary)
-                                Button("Remove") { removeKeys(credentials) }
+                                Button("Remove") { removeKeys(credentials, of: integration.id) }
                             }
                         } else if let variable = integration.connections.first(where: { $0.type == "env" }) {
                             // From the environment: nothing here to change.
@@ -188,11 +188,13 @@ struct EngineSettings: View {
         return ids.compactMap { id in catalog.integrations.first { $0.id == id } }
     }
 
-    /// Removes a service's stored keys, so a wrong one can be added again.
-    private func removeKeys(_ ids: [String]) {
+    /// Removes a service's stored keys, so a wrong one can be added again: here, and the copies on
+    /// your machines.
+    private func removeKeys(_ ids: [String], of integration: String) {
         guard let api = app.api else { return }
         Task {
             for id in ids { try? await api.removeCredential(id) }
+            app.forgetSignIn(integration)
             await catalog.refresh()
         }
     }

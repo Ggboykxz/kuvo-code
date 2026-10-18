@@ -38,8 +38,8 @@ final class MachineEngine {
     @ObservationIgnored var signInNudge: Task<Void, Never>?
     /// Copying its sign-ins, now or last: the next waits for it.
     @ObservationIgnored var signInTurn: Task<Void, Never>?
-    /// Starts it over with this Mac's accounts once they've changed (`AppModel.updateMachineAccounts`).
-    @ObservationIgnored var accountsUpdate: Task<Void, Never>?
+    /// Starts it over with this Mac's settings once they've changed (`AppModel.keepSettingsCurrent`).
+    @ObservationIgnored var settingsUpdate: Task<Void, Never>?
     /// Keeps its agents' list of everyone current, and brings their messages for agents
     /// elsewhere (`AgentMail`).
     @ObservationIgnored var agentSync: Task<Void, Never>?
@@ -119,7 +119,7 @@ final class MachineEngine {
         /// The browser helper the engine runs for the browser tools (`kuvo-browser.js`).
         var helper: (text: String, hash: String)
 
-        /// Changes when the accounts or settings do, so an engine started with older ones is known.
+        /// Changes when the settings do, so an engine started with older ones is known.
         /// The launch script's, the watchdog's and the browser helper's versions count too: an
         /// engine running older ones is started over the next time it's idle. (The launch script's
         /// goes up when what it sets up changes: its folders, `kuvo-npx`.)
@@ -138,7 +138,7 @@ final class MachineEngine {
         return id
     }()
 
-    /// This Mac started the engine running there with other accounts or settings than `launch`'s.
+    /// This Mac started the engine running there with other settings than `launch`'s.
     func isBehind(_ launch: Launch) -> Bool {
         guard let engine = server?.engine, !isAnotherMacs(engine) else { return false }
         return engine.notes["settings"] != launch.fingerprint
@@ -152,7 +152,7 @@ final class MachineEngine {
 
     /// Connects to the machine's engine: the one already running there (from an earlier launch,
     /// maybe still working on something), or a new one, installed first if needed. One this Mac
-    /// started with an older version, or older accounts and settings while nothing is running, is
+    /// started with an older version, or older settings while nothing is running, is
     /// replaced. One another Mac started is used as it is, unless it's an older version: two Macs
     /// with different settings would otherwise take turns starting it over, each dropping the
     /// other's connection, and an older app would put back an older engine.
@@ -196,7 +196,7 @@ final class MachineEngine {
             try check()
             let api = OpenCodeAPI(endpoint: server.endpoint, folderPrefix: RemoteFolder.prefix(for: machine.id))
             if server.engine.notes["settings"] != launch.fingerprint, !isAnotherMacs(server.engine), (try? await api.activeSessions())?.isEmpty == true {
-                // Started with older accounts or settings, and nothing to interrupt: start it over.
+                // Started with older settings, and nothing to interrupt: start it over.
                 try check()
                 server.disconnect()
                 attached = nil

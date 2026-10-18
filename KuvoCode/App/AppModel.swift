@@ -360,12 +360,8 @@ final class AppModel {
                 case .event(let event):
                     // The file changed, here or elsewhere: show what it says now.
                     if event.type == "config.updated" { engineConfig.reload() }
-                    // A sign-in made, renewed or switched to here reaches the machines, and an
-                    // account connected, signed out of or switched reaches their engines.
-                    if event.type == "credential.updated" || event.type == "credential.switched" {
-                        syncSignIns()
-                        updateMachineAccounts()
-                    }
+                    // An account or sign-in added, renewed or switched to here reaches the machines.
+                    if event.type == "credential.updated" || event.type == "credential.switched" { syncSignIns() }
                     catalog.handle(event)
                     workspace.handle(event)
                     usage.handle(event)

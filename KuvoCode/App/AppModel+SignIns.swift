@@ -2,11 +2,11 @@ import Foundation
 import OpenCodeKit
 
 extension AppModel {
-    /// Integrations you signed in to here (Notion, Linear…) work on your machines too, and so do
-    /// accounts you signed in to with your browser (a ChatGPT plan): each sign-in is copied
-    /// between this Mac's engine and a machine's, the newer one winning (a service may hand out a
-    /// new refresh token each time it's used, and the other copy then stops working). The older
-    /// copy goes, so they don't pile up. Sign-outs made while it was away go first.
+    /// Your accounts (API keys, sign-ins like ChatGPT's or GitHub Copilot's) and the integrations
+    /// you signed in to here (Notion, Linear…) work on your machines too: each is copied between
+    /// this Mac's engine and a machine's, the newer one winning (a service may hand out a new
+    /// refresh token each time it's used, and the other copy then stops working). The older copy
+    /// goes, so they don't pile up. Sign-outs made while it was away go first.
     ///
     /// Once after another with each machine (two at once would each copy the same sign-in), and
     /// each to its end: what it changes is a change that asks for it again, and cut off halfway it
@@ -41,31 +41,43 @@ extension AppModel {
             case nil: break
             }
         }
-        // Accounts: those that can't go as a key in its environment (`machineEnvironment`), as
-        // a GitHub Copilot sign-in does. Only once the catalog says which are accounts.
-        let accounts = Set(catalog.integrations.filter { !$0.isMCP && $0.id != "github-copilot" }.map(\.id))
-        for mine in ours where mine.active && mine.isOAuth && accounts.contains(mine.integrationID) {
-            let yours = theirs.first { $0.integrationID == mine.integrationID && $0.active && $0.isOAuth }
+        // Accounts, each the one in use here: keys and sign-ins alike. (Integrations the catalog
+        // names as an account's, not a server's.)
+        let integrations = catalog.integrations.isEmpty ? ((try? await mac.integrations()) ?? []) : catalog.integrations
+        let accounts = Set(integrations.filter { !$0.isMCP }.map(\.id))
+        for mine in ours where mine.active && accounts.contains(mine.integrationID) {
+            let yours = theirs.first { $0.integrationID == mine.integrationID && $0.active }
             await exchange(mine, yours, here: mine.integrationID, there: mine.integrationID, mac: mac, remote: remote)
         }
     }
 
-    /// Puts the newer of this Mac's sign-in and the machine's on the other side, in place of the
-    /// older: true if the machine's changed, false if this Mac's did. For another account than
-    /// the machine's (one you switched to here), this Mac's.
+    /// Puts this Mac's sign-in or key on the machine, in place of the one there, unless that's the
+    /// same, or the machine's is the newer of the two (it renewed it), which comes back here
+    /// instead: true if the machine's changed, false if this Mac's did. For another account than
+    /// the machine's (one you switched to here), or another key, this Mac's.
     @discardableResult
     private func exchange(_ mine: CredentialEntry, _ yours: CredentialEntry?, here local: String, there far: String,
                           mac: OpenCodeAPI, remote: OpenCodeAPI) async -> Bool? {
-        if let yours, Self.isSameAccount(mine, yours), yours.expires > mine.expires {
-            // The machine's is newer (it renewed it): back to this Mac, and from it to the others.
-            guard (try? await mac.storeCredential(yours, for: local)) != nil else { return nil }
-            try? await mac.removeCredential(mine.id)
-            return false
+        if let yours, Self.isSameAccount(mine, yours) {
+            // Each side renews its own sign-in with the same refresh token: only a new one (from a
+            // service that hands out a new one each time) has to go to the other.
+            if Self.lasting(mine) == Self.lasting(yours) { return nil }
+            if yours.expires > mine.expires {
+                // Back to this Mac, and from it to the other machines.
+                guard (try? await mac.storeCredential(yours, for: local)) != nil else { return nil }
+                try? await mac.removeCredential(mine.id)
+                return false
+            }
         }
-        if let yours, Self.isSameAccount(mine, yours), yours.expires == mine.expires { return nil }
         guard (try? await remote.storeCredential(mine, for: far)) != nil else { return nil }
         if let yours { try? await remote.removeCredential(yours.id) }
         return true
+    }
+
+    /// What stays the same while a sign-in renews itself: its refresh token, or a key (or the
+    /// whole of something else).
+    private static func lasting(_ entry: CredentialEntry) -> JSONValue? {
+        entry.value["refresh"] ?? entry.value["key"] ?? entry.value
     }
 
     /// Copies of one sign-in: the same account, as the service names it, or else the same label

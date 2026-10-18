@@ -214,8 +214,8 @@ extension AppModel {
                     await AgentMail.shared.collect(from: engine)
                 }
             }
-            // An account changed here while it connected, after it took the ones it has.
-            keepAccountsCurrent(engine)
+            // Settings changed here while it connected, after it took the ones it has.
+            keepSettingsCurrent(engine)
         }
     }
 
@@ -267,29 +267,19 @@ extension AppModel {
     /// What a machine's engine starts with: this Mac's accounts and settings, and the browser tools
     /// with the machine's own browser.
     private func machineLaunch() async -> MachineEngine.Launch {
-        var environment = await machineEnvironment().environment
+        var environment = await machineEnvironment()
         let sites = Integrations.sites(Integrations.added(in: engineConfig).filter { !Integrations.macOnly.contains($0) })
         environment["OPENCODE_CONFIG_CONTENT"] = AppModel.merged(MachineBrowserInstaller.engineConfig(sites: sites), into: environment["OPENCODE_CONFIG_CONTENT"])
         return MachineEngine.Launch(environment: environment, helper: MachineBrowserInstaller.helper)
     }
 
-    /// This Mac's accounts changed (one connected, signed out of or switched): a machine's engine
-    /// has the ones it started with, so its models would stay the old ones. Each connected one
-    /// takes the new ones as soon as nothing runs there; one still connecting is checked once
-    /// it's up (`start`).
-    func updateMachineAccounts() {
-        // A change comes as a few events in a row.
-        for engine in machines.engines.values where engine.isReady { keepAccountsCurrent(engine, after: .seconds(2)) }
-    }
-
-    /// Starts `engine` over with this Mac's accounts and settings as they are now, if it has
-    /// older ones, as soon as nothing runs there: checked again while something does, less often
-    /// the longer it takes, for as long as it stays connected. (Disconnected, it's checked again
-    /// when it connects.)
-    func keepAccountsCurrent(_ engine: MachineEngine, after delay: Duration = .zero) {
-        engine.accountsUpdate?.cancel()
-        engine.accountsUpdate = Task { [weak self, weak engine] in
-            try? await Task.sleep(for: delay)
+    /// Starts `engine` over with this Mac's settings as they are now (an integration's key), if
+    /// it has older ones, as soon as nothing runs there: checked again while something does, less
+    /// often the longer it takes, for as long as it stays connected. (Disconnected, it's checked
+    /// again when it connects.)
+    func keepSettingsCurrent(_ engine: MachineEngine) {
+        engine.settingsUpdate?.cancel()
+        engine.settingsUpdate = Task { [weak self, weak engine] in
             var wait = 30
             while !Task.isCancelled {
                 guard let self, let engine, engine.isReady else { return }
@@ -306,46 +296,12 @@ extension AppModel {
         }
     }
 
-    /// What a machine's engine gets from this Mac: the accounts that can go as environment
-    /// variables (API keys, a GitHub Copilot sign-in), held in its memory and never written to its
-    /// disk, and this Mac's engine settings, minus what only makes sense here (web search goes in
-    /// its settings file, as here). Sign-ins with your browser go as copies instead
-    /// (`syncSignIns`). `staysHere` names the accounts that can't go at all.
-    func machineEnvironment() async -> (environment: [String: String], staysHere: [String]) {
+    /// What a machine's engine starts with from this Mac: its engine settings, minus what only
+    /// makes sense here (web search goes in its settings file, as here), and integrations' keys.
+    /// Accounts don't: they're copied to its engine as they are and kept in step
+    /// (`syncSignIns`), so a change reaches it without starting it over.
+    func machineEnvironment() async -> [String: String] {
         var environment: [String: String] = [:]
-        var staysHere: [String] = []
-        if let api, let credentials = try? await api.credentialSecrets() {
-            // The catalog's, or, while it's still loading (its plugins can be slow), asked for
-            // here, for a few seconds at most.
-            var integrations = catalog.integrations
-            if integrations.isEmpty {
-                integrations = await withTaskGroup(of: [Integration]?.self) { group in
-                    group.addTask { try? await api.integrations() }
-                    group.addTask { try? await Task.sleep(for: .seconds(8)); return nil }
-                    let first = await group.next() ?? nil
-                    group.cancelAll()
-                    return first ?? []
-                }
-            }
-            for credential in credentials where credential.active {
-                let integration = integrations.first { $0.id == credential.integrationID }
-                let name = integration?.name ?? credential.integrationID
-                // A sign-in with your browser (a ChatGPT plan, an integration's) is copied to its
-                // engine as it is (`syncSignIns`).
-                if credential.value.type == "oauth", credential.integrationID != "github-copilot" { continue }
-                guard let variable = integration?.environmentVariables.first else {
-                    staysHere.append(name)
-                    continue
-                }
-                if let key = credential.value.key, !key.isEmpty {
-                    environment[variable] = key
-                } else if credential.integrationID == "github-copilot", let token = credential.value.access, !token.isEmpty {
-                    environment[variable] = token
-                } else {
-                    staysHere.append(name)
-                }
-            }
-        }
         // Web search that works, as on this Mac, unless the file chose otherwise.
         engineConfig.addDefaults()
         // What goes in the settings file of the machine's engine, in `~/.kuvo-code`, rather than in
@@ -407,6 +363,6 @@ extension AppModel {
         if !compatibility.isEmpty {
             environment["OPENCODE_CONFIG_CONTENT"] = AppModel.merged(compatibility, into: environment["OPENCODE_CONFIG_CONTENT"])
         }
-        return (environment, staysHere)
+        return environment
     }
 }
