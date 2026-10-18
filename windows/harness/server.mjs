@@ -287,6 +287,37 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
     return json({ diff: output });
   }
 
+  // Git: stage, unstage, commit.
+  if (url.pathname === "/api/git/stage" && request.method === "POST") {
+    if (!currentProject) throw new HttpError(400, "No project folder is open.");
+    const body = await readBody(request);
+    const files = Array.isArray(body.paths) ? body.paths : (body.path ? [body.path] : []);
+    const { execFileSync } = await import("node:child_process");
+    try { execFileSync("git", ["add", "--", ...files], { cwd: currentProject, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); }
+    catch (error) { throw new HttpError(500, error?.stderr?.toString() || error.message); }
+    return json({ ok: true });
+  }
+  if (url.pathname === "/api/git/unstage" && request.method === "POST") {
+    if (!currentProject) throw new HttpError(400, "No project folder is open.");
+    const body = await readBody(request);
+    const files = Array.isArray(body.paths) ? body.paths : (body.path ? [body.path] : []);
+    const { execFileSync } = await import("node:child_process");
+    try { execFileSync("git", ["reset", "HEAD", "--", ...files], { cwd: currentProject, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); }
+    catch (error) { throw new HttpError(500, error?.stderr?.toString() || error.message); }
+    return json({ ok: true });
+  }
+  if (url.pathname === "/api/git/commit" && request.method === "POST") {
+    if (!currentProject) throw new HttpError(400, "No project folder is open.");
+    const body = await readBody(request);
+    const message = String(body.message ?? "").trim();
+    if (message === "") throw new HttpError(400, "A commit needs a message.");
+    const { execFileSync } = await import("node:child_process");
+    let output = "";
+    try { output = execFileSync("git", ["commit", "-m", message], { cwd: currentProject, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); }
+    catch (error) { throw new HttpError(500, (error?.stdout?.toString() || "") + (error?.stderr?.toString() || error.message)); }
+    return json({ ok: true, output });
+  }
+
   const { client } = await ensureEngine();
 
   if (url.pathname === "/api/sessions" && request.method === "POST") {
@@ -455,7 +486,17 @@ export function run() {
   const harness = startHarness({
     project: option("--project") ?? process.env.KUVO_HARNESS_PROJECT ?? process.cwd(),
     port: Number(option("--port") ?? process.env.KUVO_HARNESS_PORT ?? 4620),
-    log: message => console.error(message),
+    log: (message) => {
+      console.error(message);
+      try {
+        const fs = require("node:fs");
+        const path = require("node:path");
+        const os = require("node:os");
+        const dir = path.join(os.homedir(), ".kuvo-code", "logs");
+        fs.mkdirSync(dir, { recursive: true });
+        fs.appendFileSync(path.join(dir, "harness.log"), `${new Date().toISOString()} ${message}\n`);
+      } catch {}
+    },
   });
   harness.url().then(url => {
     console.log(`Kuvo Code (Windows harness) at ${url}`);

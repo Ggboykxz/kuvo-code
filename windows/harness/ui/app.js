@@ -655,7 +655,37 @@ async function refreshGit() {
     box.innerHTML = "";
     if (entries.length === 0) { box.append(el("div", { class: "entry", text: "Working tree clean." })); return; }
     for (const entry of entries) {
-      box.append(el("div", { class: "entry", html: `<span class="code">${entry.code}</span>${entry.path}` }));
+      const row = el("div", { class: "entry" });
+      row.append(el("span", { class: "code", text: entry.code }));
+      const name = el("span", { text: entry.path });
+      row.append(name);
+      const staged = entry.code.trim() !== "" && !entry.code.startsWith(" ");
+      // Actually: staged if first char is not space and not ?
+      const isStaged = entry.code[0] && entry.code[0] !== " " && entry.code[0] !== "?";
+      const button = el("button", { class: "small", text: isStaged ? "unstage" : "stage" });
+      button.addEventListener("click", async () => {
+        try {
+          await api("/api/git/" + (isStaged ? "unstage" : "stage"), { method: "POST", body: { paths: [entry.path] } });
+          await refreshGit();
+        } catch (error) { complain(null, error); }
+      });
+      row.append(button);
+      box.append(row);
+    }
+    // Commit controls
+    if (entries.length > 0) {
+      const commitRow = el("div", { class: "entry" });
+      const input = el("input", { class: "file-search", placeholder: "Commit message…" });
+      const button = el("button", { class: "small primary", text: "Commit" });
+      button.addEventListener("click", async () => {
+        try {
+          await api("/api/git/commit", { method: "POST", body: { message: input.value } });
+          input.value = "";
+          await refreshGit();
+        } catch (error) { complain(null, error); }
+      });
+      commitRow.append(input, button);
+      box.append(commitRow);
     }
   } catch (error) { complain(null, error); }
 }

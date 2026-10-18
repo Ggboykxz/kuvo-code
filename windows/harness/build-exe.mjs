@@ -34,6 +34,7 @@ await build({
   platform: "node",
   format: "cjs",
   target: "node22",
+  minify: true,
   outfile: path.join(buildDir, "harness.cjs"),
   banner: { js: 'process.env.KUVO_BUNDLED = "1";' },
   logLevel: "error",
