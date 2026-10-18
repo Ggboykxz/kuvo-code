@@ -226,6 +226,14 @@ struct TranscriptView: View {
             turnEnds[index] = following
             if case .idle(let idle) = messages[index] { following = idle }
         }
+        // Where the conversation ends for Try Again: a model or mode picked after a failed run
+        // leaves it the last, so it goes again with them.
+        let last = messages.lastIndex { message in
+            switch message {
+            case .modelSwitched, .agentSwitched: false
+            default: true
+            }
+        }
         func flushSteps(live: Bool) {
             guard !steps.isEmpty else { return }
             rows.append(.steps(stepsID, steps, isLive: live))
@@ -294,7 +302,7 @@ struct TranscriptView: View {
                     rows.append(.assistant(end, showsError: showsError))
                 }
             case .idle(let idle):
-                rows.append(.turnEnd(idle, turn, isLast: index == messages.count - 1))
+                rows.append(.turnEnd(idle, turn, isLast: index == last))
                 turn = TurnStats()
             case .modelSwitched(let change):
                 rows.append(.notice(change.id, "cpu", "Switched to \(change.model.id)" + (change.model.variant.map { " · \(EffortLevel.title($0))" } ?? "")))
