@@ -252,7 +252,8 @@ struct TranscriptView: View {
                         // A long reply in rows of its pieces (see MarkdownChunks): only those near
                         // the view are made, and no row gets so tall that the conversation loses
                         // its place.
-                        for (index, chunk) in MarkdownChunks.split(text.text).enumerated() {
+                        let chunks = MarkdownChunks.split(text.text, isWriting: assistant.time.completed == nil && part == assistant.content.count - 1)
+                        for (index, chunk) in chunks.enumerated() {
                             var words = assistant
                             words.id = assistant.id + "#\(part)" + (index == 0 ? "" : ".\(index)")
                             words.content = [.text(Message.Content.Text(text: String(chunk.text), time: text.time))]
@@ -815,7 +816,7 @@ struct MarkdownText: View {
     /// A long reply in pieces (see `MarkdownChunks`), so that as it streams in, only its last
     /// piece is read and laid out again.
     private var pieces: some View {
-        let chunks = MarkdownChunks.split(text)
+        let chunks = MarkdownChunks.split(text, isWriting: isWriting)
         // Find's marks, each piece's own.
         let marks = highlight.map { highlight in
             guard chunks.count > 1 else { return [highlight] }
