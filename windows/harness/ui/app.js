@@ -36,6 +36,14 @@ function complain(where, error) {
   else alert(message);
 }
 
+function notify(title, body) {
+  try {
+    if (typeof Notification === "undefined") return;
+    if (Notification.permission === "default") Notification.requestPermission().catch(() => {});
+    if (Notification.permission === "granted") new Notification({ title, body }).show();
+  } catch {}
+}
+
 const when = stamp => {
   if (!stamp) return "";
   const seconds = Math.round((Date.now() - stamp) / 1000);
@@ -72,6 +80,7 @@ const state = {
   openFile: null,
   drawerTab: "files",
   eventSource: null,
+  sessionQuery: "",
 };
 
 let renderQueued = false;
@@ -102,7 +111,8 @@ function renderSessions() {
   const list = $("sessions");
   list.replaceChildren();
   $("sessions-empty").hidden = state.sessions.length > 0;
-  for (const session of state.sessions) {
+  const visibleSessions = state.sessionQuery ? state.sessions.filter(s => (s.title || "").toLowerCase().includes(state.sessionQuery)) : state.sessions;
+  for (const session of visibleSessions) {
     const running = state.session?.id === session.id && state.transcript?.running;
     const item = el("li", { class: session.id === state.session?.id ? "current" : "" },
       el("button", { class: "session", "data-id": session.id, onclick: () => openSession(session.id) },
@@ -313,6 +323,11 @@ $("stop").addEventListener("click", async () => {
   }
 });
 
+$("session-search").addEventListener("input", (event) => {
+  state.sessionQuery = event.target.value.trim().toLowerCase();
+  renderSessions();
+});
+
 $("new-session").addEventListener("click", async () => {
   if (!state.project) return openPicker();
   try {
@@ -377,6 +392,7 @@ function handleEvent(event) {
   render();
   // A turn just ended: what the engine stored is the truth, and the list changed.
   if (before && !state.transcript.running) {
+    notify("Kuvo Code", "The turn is done.");
     setTimeout(async () => {
       try {
         await openSession(state.session.id);
@@ -384,7 +400,12 @@ function handleEvent(event) {
       } catch {}
     }, 250);
   }
-  if (event.type === "permission.asked" || event.type === "permission.replied") render();
+  if (event.type === "permission.asked") {
+    notify("Kuvo Code", event.data?.message || "The agent is asking for permission.");
+    render();
+  } else if (event.type === "permission.replied") {
+    render();
+  }
 }
 
 function connectEvents() {
