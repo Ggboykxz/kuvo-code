@@ -46,6 +46,7 @@ struct ChangesPanel: View {
 
     /// The session's record of its edits is about its own folder.
     private var engineChanges: [FileDiff] { isPrimary ? model?.changes ?? [] : [] }
+    private var editedFiles: [FileDiff] { isPrimary ? model?.editedFiles ?? [] : [] }
 
     /// Comments name files by their path, after the folder's name outside the primary folder,
     /// as the agent knows the project's folders.
@@ -66,7 +67,7 @@ struct ChangesPanel: View {
         // Git is quick to ask; look again every few seconds while the panel is open.
         .task(id: "\(changes.directory)\n\(changes.scope)\n\(changes.base ?? "")") {
             while !Task.isCancelled {
-                await changes.refresh(fallback: engineChanges)
+                await changes.refresh(fallback: engineChanges, edits: editedFiles)
                 try? await Task.sleep(for: .seconds(3))
             }
         }
@@ -76,8 +77,9 @@ struct ChangesPanel: View {
                 highlighting[file.id] = await DiffHighlighting.make(for: file)
             }
         }
-        .onChange(of: model?.isRunning) { Task { await changes.refresh(fallback: engineChanges) } }
-        .onChange(of: engineChanges) { Task { await changes.refresh(fallback: engineChanges) } }
+        .onChange(of: model?.isRunning) { Task { await changes.refresh(fallback: engineChanges, edits: editedFiles) } }
+        .onChange(of: engineChanges) { Task { await changes.refresh(fallback: engineChanges, edits: editedFiles) } }
+        .onChange(of: editedFiles) { Task { await changes.refresh(fallback: engineChanges, edits: editedFiles) } }
     }
 
     // MARK: Header

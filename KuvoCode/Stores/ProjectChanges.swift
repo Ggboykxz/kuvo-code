@@ -84,8 +84,10 @@ final class ProjectChanges {
     var additions: Int { files.reduce(0) { $0 + $1.additions } }
     var deletions: Int { files.reduce(0) { $0 + $1.deletions } }
 
-    /// Reads the changes again. `fallback` is the engine's diff, used outside a repository.
-    func refresh(fallback: [FileDiff] = []) async {
+    /// Reads the changes again. `fallback` is the engine's diff, used outside a repository, or
+    /// when it's empty there (the engine keeps no snapshots outside one), `edits`: the files the
+    /// session's edits changed.
+    func refresh(fallback: [FileDiff] = [], edits: [FileDiff] = []) async {
         let directory = directory, scope = scope, base = base
         if scope == .session {
             hasUncommitted = false
@@ -102,7 +104,7 @@ final class ProjectChanges {
             apply(result)
         } else {
             isRepository = false
-            apply(fallback.map { DiffParser.file(from: $0, directory: directory) })
+            apply((fallback.isEmpty ? edits : fallback).map { DiffParser.file(from: $0, directory: directory) })
         }
         isLoaded = true
     }

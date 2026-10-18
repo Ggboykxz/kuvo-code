@@ -89,6 +89,10 @@ final class SessionModel {
     /// What's done here waits while its engine can't be reached: it would only fail.
     private var canReach: Bool { !waitsForEngine && isReachable() }
     private(set) var changes: [FileDiff] = []
+    /// The files its agent's edits changed, from the edits themselves: what the Changes tab shows
+    /// in a folder outside a git repository, where `changes` stays empty (the engine keeps no
+    /// snapshots there).
+    private(set) var editedFiles: [FileDiff] = []
     /// Comments on lines of the changes, sent with the next message.
     var reviewComments: [ReviewComment] = []
     /// What's in the composer, kept while you look at other sessions and across launches.
@@ -1018,6 +1022,9 @@ final class SessionModel {
             try? await Task.sleep(for: .milliseconds(400))
             guard !Task.isCancelled, let diff = try? await api.diff(session: id) else { return }
             changes = diff
+            let messages = transcript.messages, directory = session.location.directory
+            let edits = diff.isEmpty ? await Task.detached { SessionEdits.files(in: messages, directory: directory) }.value : []
+            if !Task.isCancelled, editedFiles != edits { editedFiles = edits }
         }
     }
 }

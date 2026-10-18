@@ -139,6 +139,14 @@ public struct FileDiff: Codable, Sendable, Hashable, Identifiable {
     public var deletions: Int
     public var status: Status?
 
+    public init(file: String, patch: String, additions: Int, deletions: Int, status: Status? = nil) {
+        self.file = file
+        self.patch = patch
+        self.additions = additions
+        self.deletions = deletions
+        self.status = status
+    }
+
     public var id: String { file }
 
     public enum Status: String, Codable, Sendable {
