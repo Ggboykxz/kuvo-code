@@ -632,11 +632,21 @@ enum MathText {
     // MARK: Putting them back
 
     /// Each mark in `text` swapped for its formula, drawn in the line, or for the formula as it
-    /// was written when it can't be drawn. The marks are found in a plain copy of the text's
+    /// was written when it can't be drawn.
+    static func restore(_ text: inout AttributedString, _ formulas: Formulas) {
+        restore(&text, formulas) { formula, attributes in
+            var drawn = AttributedString("\u{FFFC}", attributes: attributes)
+            drawn.textual.attachment = AnyAttachment(InlineMath(latex: formula.latex, drawn: formula.drawn ?? formula.latex, isDisplay: formula.isBlock))
+            return drawn
+        }
+    }
+
+    /// Each mark in `text` swapped for what `drawing` makes of its formula, or for the formula as
+    /// it was written when it can't be drawn. The marks are found in a plain copy of the text's
     /// bytes, which is quick, rather than by walking its characters, which works out where each
     /// one ends at every step (a long reply is read again with each streamed word); and replaced
     /// last first, so the ones before keep their place.
-    static func restore(_ text: inout AttributedString, _ formulas: Formulas) {
+    nonisolated static func restore(_ text: inout AttributedString, _ formulas: Formulas, drawing: (Formula, AttributeContainer) -> AttributedString) {
         guard !formulas.isEmpty else { return }
         let opening = Array(String(formulas.open).utf8), closing = Array(String(formulas.close).utf8)
         var marks: [(start: Int, end: Int, formula: Formula)] = []
@@ -670,12 +680,7 @@ enum MathText {
             let start = text.utf8.index(text.startIndex, offsetBy: mark.start)
             let end = text.utf8.index(start, offsetBy: mark.end - mark.start)
             let attributes = text[start..<end].runs.first?.attributes ?? AttributeContainer()
-            guard let drawn = mark.formula.drawn else {
-                text.replaceSubrange(start..<end, with: AttributedString(mark.formula.source, attributes: attributes))
-                continue
-            }
-            var formula = AttributedString("\u{FFFC}", attributes: attributes)
-            formula.textual.attachment = AnyAttachment(InlineMath(latex: mark.formula.latex, drawn: drawn, isDisplay: mark.formula.isBlock))
+            let formula = mark.formula.drawn == nil ? AttributedString(mark.formula.source, attributes: attributes) : drawing(mark.formula, attributes)
             text.replaceSubrange(start..<end, with: formula)
         }
     }

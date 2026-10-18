@@ -158,18 +158,37 @@ nonisolated enum FindText {
     }
 
     /// What `markdown` shows once drawn: its words without their marks, files by their names,
-    /// as Find counts them. Kept, as Find reads every reply on each letter you type.
+    /// formulas as one character each, as Find counts them. Kept, as Find reads every reply on
+    /// each letter you type.
     static func shown(markdown: String, folders: [String]) -> String {
         let key = folders.joined(separator: "\n") + "\u{0}" + markdown as NSString
         if let known = cache.object(forKey: key) { return known as String }
-        // As Textual reads it (Foundation's Markdown), here away from the main thread.
-        var text = (try? AttributedString(markdown: markdown)) ?? AttributedString(markdown)
+        // As Textual reads it (Foundation's Markdown), with its math set aside first and put back
+        // as it's drawn, here away from the main thread.
+        let (protected, formulas) = MathText.protect(markdown)
+        var text = (try? AttributedString(markdown: protected)) ?? AttributedString(markdown)
+        MathText.restore(&text, formulas) { _, attributes in AttributedString("\u{FFFC}", attributes: attributes) }
         for (range, _) in FileLinks.spans(in: text, folders: folders) {
             text.replaceSubrange(range, with: AttributedString(FileLinks.icon + " " + FileLinks.label(String(text[range].characters))))
         }
-        let shown = String(text.characters)
+        let shown = searchable(text)
         cache.setObject(shown as NSString, forKey: key)
         return shown
+    }
+
+    /// The characters of `text` Find looks in: a formula of its own (a code block drawn as math)
+    /// as object characters, as nothing in it can be marked.
+    static func searchable(_ text: AttributedString) -> String {
+        func isMath(_ intent: PresentationIntent?) -> Bool {
+            intent?.components.contains { $0.kind == .codeBlock(languageHint: MathText.blockLanguage) } == true
+        }
+        guard text.runs[\.presentationIntent].contains(where: { isMath($0.0) }) else { return String(text.characters) }
+        var plain = ""
+        for (intent, range) in text.runs[\.presentationIntent] {
+            let characters = text[range].characters
+            plain += isMath(intent) ? String(repeating: "\u{FFFC}", count: characters.count) : String(characters)
+        }
+        return plain
     }
 
     /// NSCache is thread-safe.
@@ -198,7 +217,7 @@ nonisolated enum FindText {
                 text[run.range].swiftUI.backgroundColor = codeBackground
             }
         }
-        let plain = String(text.characters)
+        let plain = searchable(text)
         for (number, range) in ranges(of: highlight.query, in: plain).enumerated() {
             // From the start each time, as marking may move what an index points at.
             let lower = text.characters.index(text.startIndex, offsetBy: plain.distance(from: plain.startIndex, to: range.lowerBound))
