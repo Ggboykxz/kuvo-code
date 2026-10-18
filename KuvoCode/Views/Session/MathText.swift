@@ -10,8 +10,9 @@ import Textual
 /// as a heading's underline), so each formula is set aside before the Markdown is read: one of its
 /// own becomes a code block the code block style draws as math, centered; one in a line, a mark,
 /// put back after as a formula in the text. Formulas in code are left as they are, and so are
-/// prices like "$5 and $10". The text around them keeps its shape: a formula in a list item, a
-/// quote or a table stays in it, and one SwiftUIMath can't draw shows as it was written.
+/// prices like "$5 and $10" or "Joe's is $$". The text around them keeps its shape: a formula in a
+/// list item, a quote or a table stays in it, and one SwiftUIMath can't draw shows as it was
+/// written.
 ///
 /// Math is always typeset at its own width: SwiftUIMath's line breaking, which Textual's own math
 /// asks for, drops spaces and breaks superscripts off.
@@ -200,6 +201,7 @@ enum MathText {
         /// The formula of its own opened at `start` on line `number`, if it closes, and whether
         /// it's on lines of its own.
         func display(at start: Int, on number: Int, dollars: Bool) -> (place: Place, ownLines: Bool)? {
+            if dollars, isPrice(chars, at: start) { return nil }
             let line = lines[number]
             var parts = [chars[(start + 2)..<line.end]]
             var end: Int?, last = number, closeBody = line.body
@@ -249,6 +251,14 @@ enum MathText {
             let latex = parts.map { String($0).trimmingCharacters(in: .whitespaces) }.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
             // Nothing, or no formula: "($$) … ($$)" are prices, and math has no "$" of its own.
             guard !latex.isEmpty, !dollars || !")]}".contains(latex.first!), !hasDollar(latex) else { return nil }
+            // Two "$$" set apart as words in a sentence, around no math: prices ("Joe's is $$ and
+            // Katz's is $$ too"), or the shell's.
+            if dollars, chars[min(line.content, start)..<start].contains(where: { !$0.isWhitespace }),
+               chars[(end + 2)..<ranges[last].upperBound].contains(where: { !$0.isWhitespace }),
+               chars[start + 2].isWhitespace, chars[end - 1].isWhitespace || last > number && end == closeBody,
+               !looksLikeMath(latex) {
+                return nil
+            }
             let (open, close) = dollars ? ("$$", "$$") : ("\\[", "\\]")
             let formula = Formula(source: open + parts.map { String($0) }.joined(separator: "\n") + close, latex: latex, isBlock: true, drawn: drawable(latex))
             return (Place(start: start, end: end + 2, first: number, last: last, formula: formula), ownLines && last > number)
@@ -561,8 +571,8 @@ enum MathText {
         case never
     }
 
-    /// Where `$$` (or `\]`) closes a formula of its own in `chars[from..<to]`, one line, but not
-    /// right before a word.
+    /// Where `$$` (or `\]`) closes a formula of its own in `chars[from..<to]`, one line: not as a
+    /// price, "($$)", nor right before a word.
     nonisolated private static func closing(_ chars: [Character], from: Int, to: Int, dollars: Bool) -> Closing {
         var j = from
         while j < to {
@@ -579,7 +589,7 @@ enum MathText {
                 if run > 2 { return .never }
                 // Right before a letter or a digit, it opens the next formula.
                 let opensNext = j + 2 < to && (chars[j + 2].isLetter || chars[j + 2].isNumber)
-                if run == 2, !opensNext { return .at(j) }
+                if run == 2, !isPrice(chars, at: j), !opensNext { return .at(j) }
                 j += run
                 continue
             }
@@ -588,12 +598,28 @@ enum MathText {
         return .notHere
     }
 
+    /// Whether the `$$` at `i` is a price in parentheses: "($$)".
+    nonisolated private static func isPrice(_ chars: [Character], at i: Int) -> Bool {
+        i > 0 && i + 2 < chars.count && chars[i - 1] == "(" && chars[i + 2] == ")"
+    }
+
     /// Has a `$` that isn't escaped (`\$`).
     nonisolated private static func hasDollar(_ latex: String) -> Bool {
         var escaped = false
         for character in latex {
             if character == "$", !escaped { return true }
             escaped = character == "\\" && !escaped
+        }
+        return false
+    }
+
+    /// Has what only math has: a command, a sub- or superscript, braces, an equals sign or another
+    /// relation, a plus, or a function's argument ("f(x)").
+    nonisolated private static func looksLikeMath(_ latex: String) -> Bool {
+        var previous: Character = " "
+        for character in latex {
+            if "\\^_{}=<>+".contains(character) || character == "(" && (previous.isLetter || previous.isNumber) { return true }
+            previous = character
         }
         return false
     }
