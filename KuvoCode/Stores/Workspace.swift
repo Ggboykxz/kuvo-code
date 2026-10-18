@@ -523,7 +523,7 @@ final class Workspace {
 
     // MARK: Worktrees
 
-    private static let worktreeInstructionKey = "kuvo.worktree"
+    static let worktreeInstructionKey = "kuvo.worktree"
 
     private static func instructions(for tree: Worktree) -> String {
         """

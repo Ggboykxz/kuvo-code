@@ -308,8 +308,9 @@ struct TranscriptView: View {
                 let sources = notice.instructionSources
                 if !sources.isEmpty, sources.allSatisfy({ $0.contains(ProjectFolders.instructionKey) }) {
                     rows.append(.notice(notice.id, "folder", "Project folders updated"))
-                } else if !sources.isEmpty, sources.allSatisfy({ $0.hasPrefix("core/") }) {
-                    // The engine's own guidance (for the browser tools, say): nothing you set.
+                } else if !sources.isEmpty, sources.allSatisfy({ $0.hasPrefix("core/") || $0.contains(Workspace.worktreeInstructionKey) || $0.contains(Bots.instructionKey) }) {
+                    // The engine's own guidance (for the browser tools, say), or what Kuvo Code
+                    // adds for a worktree or a bot: nothing you set.
                     break
                 } else if notice.metadata?["source"]?.string == "shell" {
                     // A command the agent left running in the background ended, which wakes it.
