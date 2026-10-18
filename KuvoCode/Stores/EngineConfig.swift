@@ -33,11 +33,80 @@ final class EngineConfig {
         reload()
         let isNew = !FileManager.default.fileExists(atPath: file.path)
         guard problem == nil, isNew || !UserDefaults.standard.bool(forKey: Self.defaultsAddedKey) else { return }
-        if settings["websearch"] == nil { set(.object(["provider": .string("random")]), at: ["websearch"]) }
+        if settings["websearch"] == nil { add(.object(["provider": .string("random")]), as: "websearch") }
         if problem == nil { UserDefaults.standard.set(true, forKey: Self.defaultsAddedKey) }
     }
 
     private static let defaultsAddedKey = "engine.defaultsAdded"
+
+    /// Adds a setting to the file as it's written, keeping its layout and order: one line at its
+    /// end. A file that's new, or not laid out as expected, is written whole, as `set` does.
+    private func add(_ value: JSONValue, as key: String) {
+        if let original = try? String(contentsOf: file, encoding: .utf8),
+           let text = Self.adding(key, value, to: original),
+           let parsed = try? JSONDecoder().decode([String: JSONValue].self, from: Data(text.utf8)),
+           parsed == settings.merging([key: value], uniquingKeysWith: { $1 }) {
+            do {
+                try Data(text.utf8).write(to: target, options: .atomic)
+                settings = parsed
+            } catch {
+                problem = "It couldn't be saved: \(error.localizedDescription)"
+            }
+        } else {
+            set(value, at: [key])
+        }
+    }
+
+    /// `text`, a JSON object, with `key: value` added as its last member, laid out like the rest
+    /// (on a line of its own, indented as the one before it, or all on one line); nil when it
+    /// doesn't end as an object does.
+    static func adding(_ key: String, _ value: JSONValue, to text: String) -> String? {
+        guard let close = text.lastIndex(where: { !$0.isWhitespace }), text[close] == "}",
+              let last = text[..<close].lastIndex(where: { !$0.isWhitespace }),
+              let member = inline(.object([key: value])).map({ String($0.dropFirst().dropLast()) }) else { return nil }
+        let isEmpty = text[last] == "{"
+        let head = String(text[...last]), tail = String(text[close...])
+        guard text.contains("\n") else { return head + (isEmpty ? "" : ", ") + member + tail }
+        let lineStart = text[..<last].lastIndex(of: "\n").map { text.index(after: $0) } ?? text.startIndex
+        let indent = isEmpty ? "  " : String(text[lineStart...].prefix { $0 == " " || $0 == "\t" })
+        return head + (isEmpty ? "" : ",") + "\n" + indent + member + "\n" + tail
+    }
+
+    /// `value` as JSON on one line, spaced as people write it: `{"provider": "random"}`.
+    private static func inline(_ value: JSONValue) -> String? {
+        switch value {
+        case .object(let object):
+            var members: [String] = []
+            for key in object.keys.sorted() {
+                guard let name = inline(.string(key)), let value = inline(object[key]!) else { return nil }
+                members.append(name + ": " + value)
+            }
+            return "{" + members.joined(separator: ", ") + "}"
+        case .array(let items):
+            var texts: [String] = []
+            for item in items {
+                guard let text = inline(item) else { return nil }
+                texts.append(text)
+            }
+            return "[" + texts.joined(separator: ", ") + "]"
+        default:
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = .withoutEscapingSlashes
+            return (try? encoder.encode(value)).map { String(decoding: $0, as: UTF8.self) }
+        }
+    }
+
+    /// Where the file is written: through a link (to a dotfiles folder, say) to the file it names,
+    /// so the link stays a link.
+    private var target: URL {
+        var url = file.resolvingSymlinksInPath()
+        // A link to a file that isn't there yet, which that leaves as it is.
+        for _ in 0..<8 {
+            guard let destination = try? FileManager.default.destinationOfSymbolicLink(atPath: url.path) else { break }
+            url = URL(filePath: destination, relativeTo: url.deletingLastPathComponent()).standardizedFileURL
+        }
+        return url
+    }
 
     /// Settings › Permissions' rules, in their order: what every session and mode is held to.
     var permissionRules: [PermissionRule] {
@@ -104,8 +173,9 @@ final class EngineConfig {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         do {
-            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try encoder.encode(document).write(to: file, options: .atomic)
+            let target = target
+            try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try encoder.encode(document).write(to: target, options: .atomic)
             settings = document
         } catch {
             problem = "It couldn't be saved: \(error.localizedDescription)"
