@@ -55,6 +55,9 @@ final class PhoneLink {
     /// Your group chats, for `kuvo/groups`: a phone reads and writes in them as the window does;
     /// set by AppModel.
     @ObservationIgnored weak var groups: BotGroups?
+    /// Your sessions, for stopping a command an agent left running (`kuvo/shell/<id>/stop`); set
+    /// by AppModel.
+    @ObservationIgnored weak var workspace: Workspace?
     /// A machine's name, by its id, for where an ask's browser runs; set by AppModel.
     @ObservationIgnored var machineName: (String) -> String? = { _ in nil }
 
@@ -289,6 +292,16 @@ final class PhoneLink {
             if request.path == "kuvo/groups/events" { return Self.following { self?.groupsJSON() } }
             if let id = Self.groupID(in: request.path, then: "events") { return Self.following { self?.groupJSON(id) } }
             if request.path == "kuvo/usage/events" { return Self.following { self?.usageJSON() } }
+            if let id = Self.shellID(in: request.path), request.method.uppercased() == "POST" {
+                return AsyncThrowingStream { continuation in
+                    Task { @MainActor in
+                        let (status, body) = await self?.stopShell(id, with: request.body) ?? (503, Data())
+                        continuation.yield(.head(status: status, headers: ["content-type": "application/json"]))
+                        continuation.yield(.body(body))
+                        continuation.finish()
+                    }
+                }
+            }
             return AsyncThrowingStream { continuation in
                 Task { @MainActor in
                     let (status, body) = self?.answer(request) ?? (503, Data())
@@ -647,6 +660,28 @@ final class PhoneLink {
     }
 
     /// The chat in `kuvo/groups/<id>/<action>`.
+    /// `kuvo/shell/<id>/stop` → the engine's id of the command.
+    nonisolated private static func shellID(in path: String) -> String? {
+        let parts = path.split(separator: "/")
+        guard parts.count == 4, parts[0] == "kuvo", parts[1] == "shell", parts[3] == "stop" else { return nil }
+        return String(parts[2]).removingPercentEncoding
+    }
+
+    /// Stops a command an agent left running, as Stop in the bar over the composer does: found
+    /// among the ones this Mac follows, or asked of the engine of `session` when given.
+    private func stopShell(_ id: String, with body: Data) async -> (Int, Data) {
+        struct Given: Decodable { var session: String? }
+        guard let workspace else { return (503, Data()) }
+        var found = workspace.shellJobs.lazy.compactMap { session, jobs in jobs.first { $0.id == id }.map { (session, $0) } }.first
+        if found == nil, let session = (try? JSONDecoder().decode(Given.self, from: body))?.session, let api = workspace.api(forSession: session),
+           let job = try? await api.shell(id, directory: workspace.session(session)?.location.directory), job.status == "running" {
+            found = (session, job)
+        }
+        guard let (session, job) = found else { return (404, Data("{}".utf8)) }
+        let how = await workspace.stopShellJob(job, in: session)
+        return (200, Data(#"{"stopped":"\#(how)"}"#.utf8))
+    }
+
     nonisolated private static func groupID(in path: String, then action: String) -> String? {
         let parts = path.split(separator: "/")
         guard parts.count == 4, parts[0] == "kuvo", parts[1] == "groups", parts[3] == action else { return nil }

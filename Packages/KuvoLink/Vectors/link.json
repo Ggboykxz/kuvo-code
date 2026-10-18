@@ -324,6 +324,45 @@
     {
       "path": "api/experimental/persistent-pty/pty_1",
       "allowed": false
+    },
+    {
+      "path": "api/shell",
+      "allowed": true
+    },
+    {
+      "path": "api/shell/sh_1",
+      "allowed": true
+    },
+    {
+      "path": "api/shell/sh_1/output?cursor=0&limit=1",
+      "allowed": true
+    },
+    {
+      "path": "api/shell/../config",
+      "allowed": false
+    },
+    {
+      "path": "api/shell/sh_1/x",
+      "allowed": false
+    },
+    {
+      "path": "api/shells",
+      "allowed": false
+    },
+    {
+      "path": "api/shell",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": "api/shell/sh_1",
+      "allowed": false,
+      "method": "DELETE"
+    },
+    {
+      "path": "api/shell/sh_1/output",
+      "allowed": true,
+      "method": "GET"
     }
   ],
   "sockets": [

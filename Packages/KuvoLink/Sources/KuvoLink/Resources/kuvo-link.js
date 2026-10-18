@@ -22,7 +22,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 // Goes up with every change, so `setup` replaces a running bridge that's older.
-export const BRIDGE_VERSION = "0.5.0";
+export const BRIDGE_VERSION = "0.5.1";
 const K = process.env.KUVO_HOME || path.join(os.homedir(), ".kuvo-code");
 const RUN = path.join(K, "run");
 export const LINK_FILE = path.join(RUN, "link.json");
@@ -524,7 +524,15 @@ const leavesProject = path => {
     return true;
   }
 };
-export const allowed = path => !leavesProject(path) && ALLOWED.some(pattern => pattern.test(path));
+// Commands the engine runs for agents: read only (the list, one, its output); never run one or
+// remove it.
+const SHELL = /^api\/shell(\/|\?|$)/;
+const SHELL_READ = /^api\/shell(\/[^/?]+(\/output)?)?(\?.*)?$/;
+export const allowed = (path, method = "GET") => {
+  if (leavesProject(path)) return false;
+  if (SHELL.test(path)) return ["GET", "HEAD"].includes(method.toUpperCase()) && SHELL_READ.test(path);
+  return ALLOWED.some(pattern => pattern.test(path));
+};
 export const socketAllowed = path => !leavesProject(path) && SOCKETS.some(pattern => pattern.test(path));
 
 const readEngineFile = () => JSON.parse(fs.readFileSync(ENGINE_FILE, "utf8"));
@@ -540,7 +548,8 @@ export function engineHandler(readEngine = readEngineFile, info = {}) {
       yield { body: Buffer.from(JSON.stringify({ kind: "machine", bridge: BRIDGE_VERSION, engine: engine.version ?? null, ...info })) };
       return;
     }
-    if (!allowed(request.path)) return yield* text(403, "That isn't available over the link.");
+    const stop = request.path.match(/^kuvo\/shell\/([^/?]+)\/stop$/);
+    if (!stop && !allowed(request.path, request.method)) return yield* text(403, "That isn't available over the link.");
     let engine;
     try {
       engine = readEngine();
@@ -551,6 +560,10 @@ export function engineHandler(readEngine = readEngineFile, info = {}) {
     const headers = { authorization: `Basic ${Buffer.from(`opencode:${engine.password}`).toString("base64")}` };
     const given = Object.fromEntries(Object.entries(request.headers).map(([k, v]) => [k.toLowerCase(), v]));
     for (const name of REQUEST_HEADERS) if (given[name]) headers[name] = given[name];
+    if (stop) {
+      if (request.method.toUpperCase() !== "POST") return yield* text(405, "Stop it with POST.");
+      return yield* stopShell(decodeURIComponent(stop[1]), engine, headers, signal);
+    }
     const method = request.method.toUpperCase();
     const response = await fetch(`http://127.0.0.1:${engine.port}/${request.path}`, {
       method,
@@ -576,6 +589,32 @@ export function engineHandler(readEngine = readEngineFile, info = {}) {
       reader.cancel().catch(() => {});
     }
   };
+}
+
+// Stops a command the engine runs for an agent: SIGTERM to its process group, here on the
+// machine, so the engine sees it end and tells the agent, with what it printed. The engine's own
+// remove deletes the output too, and the agent hears the command was never found, so it's only
+// for when the signal can't be sent.
+async function* stopShell(id, engine, headers, signal) {
+  const json = (status, value) => [{ head: { status, headers: { "content-type": "application/json" } } }, { body: Buffer.from(JSON.stringify(value)) }];
+  const url = `http://127.0.0.1:${engine.port}/api/shell/${encodeURIComponent(id)}`;
+  let job;
+  try {
+    const response = await fetch(url, { headers, signal });
+    if (response.ok) job = (await response.json()).data;
+  } catch {}
+  if (!job || job.status !== "running") return yield* json(404, {});
+  if (Number.isInteger(job.pid) && job.pid > 1) {
+    try {
+      process.kill(-job.pid, "SIGTERM");
+      return yield* json(200, { stopped: "signal" });
+    } catch {}
+  }
+  try {
+    const response = await fetch(url, { method: "DELETE", headers, signal });
+    if (response.ok) return yield* json(200, { stopped: "removed" });
+  } catch {}
+  return yield* json(404, {});
 }
 
 // What LinkHost runs to open a socket: the engine's WebSocket at that path, with its password.

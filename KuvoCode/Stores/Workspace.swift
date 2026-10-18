@@ -1333,7 +1333,9 @@ final class Workspace {
     /// on its machine, so the engine sees it end and tells the agent, with what it printed. The
     /// engine's own stop also deletes the output, and the agent hears the command was never
     /// found, so it's only for when that can't be done.
-    func stopShellJob(_ job: ShellJob, in session: String) async {
+    /// How it went: "signal" or "removed" (the engine's stop), for a phone that asked.
+    @discardableResult
+    func stopShellJob(_ job: ShellJob, in session: String) async -> String {
         let directory = self.session(session)?.location.directory ?? ""
         let engine = api(forSession: session)
         // Announced as it started, before it had a process: the engine knows it now.
@@ -1345,9 +1347,10 @@ final class Workspace {
                 guard let machine else { return kill(-pid_t(pid), SIGTERM) == 0 }
                 return RemoteShell.run("kill -TERM -\(pid) 2>/dev/null && echo sent", on: machine).map { String(decoding: $0, as: UTF8.self).contains("sent") } ?? false
             }.value
-            if sent { return }
+            if sent { return "signal" }
         }
         try? await engine?.removeShell(job.id, directory: directory)
+        return "removed"
     }
 
     /// The session a subagent's shows in (through subagents of subagents): the root one that

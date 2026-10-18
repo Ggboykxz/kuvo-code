@@ -6,8 +6,13 @@ public enum EngineRoutes {
     /// Sessions and what's in them, live events, what the phone needs to show them, a project's
     /// files to read, and terminals. Never accounts, keys or integrations, the engine's settings,
     /// MCP servers or plugins.
-    public static func allows(_ path: String) -> Bool {
+    public static func allows(_ path: String, method: String = "GET") -> Bool {
         guard staysInProject(path) else { return false }
+        // Commands the engine runs for agents: read only (the list, one, its output); never run
+        // one or remove it.
+        if path.prefixMatch(of: #/api/shell(/|\?|$)/#) != nil {
+            return ["GET", "HEAD"].contains(method.uppercased()) && path.wholeMatch(of: #/api/shell(/[^/?]+(/output)?)?(\?.*)?/#) != nil
+        }
         return path.prefixMatch(of: #/api/session(/|\?|$)/#) != nil
             || path.prefixMatch(of: #/api/experimental/session/[^/]+/wait(\?|$)/#) != nil
             || path.prefixMatch(of: #/api/event(\?|$)/#) != nil
@@ -84,7 +89,7 @@ public enum EngineRoutes {
     /// in pieces as they come: an event stream's events one by one.
     public static func forward(_ request: LinkRequest, to base: URL, password: String?, session: URLSession = .shared) -> AsyncThrowingStream<LinkResponsePart, Error> {
         AsyncThrowingStream { continuation in
-            guard allows(request.path) else {
+            guard allows(request.path, method: request.method) else {
                 continuation.yield(.head(status: 403, headers: ["content-type": "text/plain"]))
                 continuation.yield(.body(Data("That isn’t available over the link.".utf8)))
                 continuation.finish()

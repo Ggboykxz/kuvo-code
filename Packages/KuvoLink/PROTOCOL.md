@@ -174,7 +174,16 @@ itself. A host serves:
 
 - `api/…`: passed to its engine, if the path is on the host's list (sessions, messages,
   prompts, permissions, questions, events, providers, agents, commands, a project's files,
-  terminals). Never accounts or keys.
+  terminals). Never accounts or keys. The commands the engine runs for agents are read only:
+  `GET api/shell` (those running in the folder `x-opencode-directory` names), `GET
+  api/shell/<id>` and `GET api/shell/<id>/output?cursor=&limit=`; running one or removing it is
+  refused. Their `shell.created`, `shell.exited` and `shell.deleted` come with `api/event`.
+- `POST kuvo/shell/<id>/stop` (`{"session": "ses_…"}`, which may be left out): stops a command an
+  agent left running, as Stop over the Mac's composer does: SIGTERM to its process group, so the
+  engine sees it end and tells the agent, with what it printed; only if that can't be sent, the
+  engine's own remove (which deletes the output, and the agent hears the command wasn't found).
+  Answers `200 {"stopped": "signal"}` or `200 {"stopped": "removed"}`, or `404 {}` when no such
+  command runs. A machine's bridge does it there (from 0.5.1), with the Mac closed too.
 - `kuvo/info`: what the host is and runs; a Mac also names its folder of chats (conversations of
   no project), and `integrations`, each integration's name by its MCP server's (`{"microsoft-365":
   "Outlook and Microsoft 365", …}`), for a card when one asks something.
