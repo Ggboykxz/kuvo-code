@@ -13,7 +13,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const exe = process.argv[2] ?? path.join(here, "build", process.platform === "win32" ? "kuvo-windows-harness.exe" : "kuvo-windows-harness");
+const exe = process.argv[2] ?? path.join(here, "build", "kuvo-windows-harness.exe");
 if (!fs.existsSync(exe)) throw new Error(`there's no executable at ${exe}: build it first (npm run build:exe)`);
 
 const project = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "kuvo-exe-")));

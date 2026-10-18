@@ -99,6 +99,12 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
   Stage 2 question) replaces the page, not the client under it.
 - **Stage 2.** Panel parity: files, terminal (ConPTY), browser (WebView2), the
   changes/review flow — and the native shell for Stage 1's client.
+  - **2.1 (this change).** The native shell: `windows/electron/` (Electron) — a
+    window, a tray, single instance, and the harness supervised as a child process;
+    plus an NSIS installer and a portable build. The shell reuses the harness UI
+    verbatim and builds in CI on `windows-latest`.
+  - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
+    auto-update wiring, code signing.
 - **Stage 3.** The rest: usage tray, notifications, machines over SSH, phone
   link, packaging, update feed, signing.
 

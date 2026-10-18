@@ -19,7 +19,7 @@ import { inject } from "postject";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const buildDir = path.join(here, "build");
-const name = process.platform === "win32" ? "kuvo-windows-harness.exe" : "kuvo-windows-harness";
+const name = "kuvo-windows-harness.exe";
 const target = path.join(buildDir, name);
 
 fs.rmSync(buildDir, { recursive: true, force: true });

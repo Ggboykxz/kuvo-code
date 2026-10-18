@@ -1,0 +1,58 @@
+{
+  "name": "kuvo-code",
+  "version": "0.2.0",
+  "description": "Kuvo Code for Windows: a native shell around the engine and the conversation view.",
+  "author": "Ggboykxz",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win",
+    "build:portable": "electron-builder --win portable",
+    "smoke": "node smoke.js"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.0"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "run.kuvo.code.windows",
+    "productName": "Kuvo Code",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../harness/build/kuvo-windows-harness.exe",
+        "to": "harness/kuvo-windows-harness.exe"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "sign": null,
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "Ggboykxz",
+      "repo": "kuvo-code",
+      "releaseType": "prerelease"
+    }
+  }
+}

@@ -8,3 +8,4 @@ build/
 *.xcuserstate
 Config/Signing.local.xcconfig
 CLAUDE.md
+dist/

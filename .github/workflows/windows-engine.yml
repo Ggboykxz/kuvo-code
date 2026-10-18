@@ -92,3 +92,40 @@ jobs:
           name: kuvo-windows-harness-x64
           path: windows/harness/build/kuvo-windows-harness.exe
           if-no-files-found: error
+
+  shell:
+    name: native shell (Electron) on Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      # The shell wraps the harness executable, so build that first.
+      - name: Build the harness executable
+        working-directory: windows/harness
+        run: |
+          npm install --no-audit --no-fund
+          npm run build:exe
+
+      - name: Build the shell
+        working-directory: windows/electron
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+
+      - name: Prove the shell starts
+        working-directory: windows/electron
+        run: npm run smoke -- "dist/win-unpacked/Kuvo Code.exe"
+
+      - name: Keep the installer and the portable build
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kuvo-windows-shell-x64
+          path: |
+            windows/electron/dist/*.exe
+          if-no-files-found: error
