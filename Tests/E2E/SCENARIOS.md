@@ -13,7 +13,7 @@ real open-source projects cloned into the run's folder. Status: ✅ passes, ⚠�
 | A2 | Start chatting right away with no account, from the first screen | ⏳ |
 | A3 | Look for how to connect Claude, ChatGPT or an API key, and find where each account's usage shows | ⏳ |
 | A4 | Bring over an existing opencode setup from Settings › General | ⏳ |
-| A5 | Change the theme, the accent and the text size, and see them apply everywhere | ⏳ |
+| A5 | Change the theme, the accent and the text size, and see them apply everywhere | ✅ Dark, Orange and Large applied to the sidebar, conversation and composer; FIX: the tab bar's badges, the agent's pointer and @User kept macOS's accent, and the swatches had no names for VoiceOver |
 | A6 | Quit with work running and open again: the conversation and the queue are as they were | ⏳ |
 
 ## B. Working on a project

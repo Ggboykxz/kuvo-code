@@ -206,6 +206,8 @@ private struct AccentSwatches: View {
                 }
                 .buttonStyle(.plain)
                 .help(option.title)
+                .accessibilityLabel(option.title)
+                .accessibilityAddTraits(accent == option.rawValue ? .isSelected : [])
             }
             // Any color, from the system's color panel.
             Button {

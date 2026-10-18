@@ -311,13 +311,14 @@ struct TabIcon: View {
 private struct StatusBadge: View {
     let status: TabItem.Status
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accent) private var accent
 
     var body: some View {
         ZStack {
             Circle().fill(scheme == .dark ? Color(white: 0.2) : .white)
             switch status {
             case .working:
-                disc(.accentColor)
+                disc(accent)
                 Spinner(size: 8)
                     .foregroundStyle(.white, .white)
             case .waiting:
@@ -325,7 +326,7 @@ private struct StatusBadge: View {
             case .failed:
                 disc(.red).overlay { mark("exclamationmark") }
             case .unread:
-                disc(.accentColor).padding(1.5)
+                disc(accent).padding(1.5)
             case .idle:
                 EmptyView()
             }
