@@ -4,6 +4,8 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
+## Unreleased
+
 ## 0.5.13
 
 - A conversation on a machine picks up again by itself after the network drops out in a way that leaves the connection silent, like Wi-Fi changing. It could stop showing new replies until something else reconnected it.
