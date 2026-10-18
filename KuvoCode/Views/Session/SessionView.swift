@@ -338,6 +338,9 @@ struct DraftSessionView: View {
                 Drafts.shared.remove(draftKey)
                 if let first = sessions.first, !since.isEmpty { Drafts.shared[first.id] = since }
                 for session in sessions { created(session, sent.text, sent.files) }
+                // Kept until the engine has it (or it's back in the session's composer): a quit
+                // while it's prepared, or while the session's tools start, doesn't lose it.
+                for session in sessions { await workspace.model(for: session.id)?.messagesSent() }
                 Drafts.shared.sent(sending)
             } catch {
                 Analytics.shared.firstMessageBlocked("session_failed_" + Analytics.trouble(error))

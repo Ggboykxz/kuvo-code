@@ -514,6 +514,11 @@ final class SessionModel {
         }
     }
 
+    /// Once the messages on their way have gone to the engine, or come back to the composer.
+    func messagesSent() async {
+        await sending?.value
+    }
+
     /// Sends what's in the composer: a message, or a command for "/name arguments". What can't
     /// be sent goes back there.
     func submit(_ text: String, files: [URL], for model: Model?, queue: Bool, commands: [Command]) {
