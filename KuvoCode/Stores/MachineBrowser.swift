@@ -246,26 +246,43 @@ final class MachineBrowser {
             return
         }
         let connection = machine.connection
-        do {
-            if try await MachineBrowserInstaller.isInstalled(runtime, on: connection) {
+        // A connection that drops on the way (sending a couple of hundred megabytes takes a
+        // while) is tried twice more, rather than leaving the machine without its browser until
+        // the next launch.
+        for attempt in 1...3 {
+            do {
+                if try await MachineBrowserInstaller.isInstalled(runtime, on: connection) {
+                    setup = .ready
+                    return
+                }
+                setup = .installing(0)
+                let architecture = try await MachineBrowserInstaller.architecture(on: connection)
+                let bundle = try await MachineBrowserInstaller.bundle(for: architecture, runtime: runtime, cache: Self.cache) { fraction in
+                    Task { @MainActor in
+                        if case .installing(let done?) = self.setup, fraction > done { self.setup = .installing(fraction) }
+                    }
+                }
+                setup = .installing(nil)
+                try await MachineBrowserInstaller.send(bundle, runtime, to: connection)
                 setup = .ready
+                log.notice("\(self.machine.destination, privacy: .public) has the browser \(runtime.id, privacy: .public)")
+                return
+            } catch where attempt < 3 && Self.dropped(error) {
+                log.notice("\(self.machine.destination, privacy: .public): SSH dropped setting up the browser, trying again")
+                try? await Task.sleep(for: .seconds(5 * attempt))
+            } catch {
+                log.error("\(self.machine.destination, privacy: .public) couldn't get the browser: \(error.localizedDescription, privacy: .public)")
+                setup = .failed(error.localizedDescription)
                 return
             }
-            setup = .installing(0)
-            let architecture = try await MachineBrowserInstaller.architecture(on: connection)
-            let bundle = try await MachineBrowserInstaller.bundle(for: architecture, runtime: runtime, cache: Self.cache) { fraction in
-                Task { @MainActor in
-                    if case .installing(let done?) = self.setup, fraction > done { self.setup = .installing(fraction) }
-                }
-            }
-            setup = .installing(nil)
-            try await MachineBrowserInstaller.send(bundle, runtime, to: connection)
-            setup = .ready
-            log.notice("\(self.machine.destination, privacy: .public) has the browser \(runtime.id, privacy: .public)")
-        } catch {
-            log.error("\(self.machine.destination, privacy: .public) couldn't get the browser: \(error.localizedDescription, privacy: .public)")
-            setup = .failed(error.localizedDescription)
         }
+    }
+
+    /// SSH stopped on its own (exit 255), not over the machine's host key or this Mac's keys,
+    /// which trying again wouldn't change.
+    static func dropped(_ error: Error) -> Bool {
+        guard case RemoteEngineError.ssh(status: 255, let message) = error else { return false }
+        return !message.contains("Host key verification failed") && !message.localizedCaseInsensitiveContains("permission denied")
     }
 
     /// The machine was removed, or you disconnected it: the live view ends with it.

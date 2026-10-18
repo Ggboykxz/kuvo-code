@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Setting up the browser on a machine tries again when the connection drops partway through. It used to wait for the next launch, or for you to open the machine's browser.
 - A choice in a question card, or in a form, no longer repeats itself when its description only says its label again ("Red" under Red).
 - With VoiceOver, the side panel's tabs can be picked and closed. They read as text and an icon, with nothing to press.
 - Pages left open in a machine's browser from before Kuvo Code last quit show in every session on that machine, until an agent works in one or you pick it, which makes it that session's. They went to whichever session was in view.
