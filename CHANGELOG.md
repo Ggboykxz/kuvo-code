@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- A machine's browser moves to a newer build Kuvo Code brings (a newer Chrome, the fonts above) once nothing is using it, keeping its open pages. One started before the update arrived kept the old build for as long as the machine's engine ran.
 - The browser on a machine shows Chinese, Japanese and Korean, and Hebrew, Thai, Hindi, Tamil and other scripts, instead of empty boxes. It brings a font that covers them (adding about 3 MB to what a machine downloads once).
 ## 0.5.12
 

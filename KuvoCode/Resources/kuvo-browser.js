@@ -523,6 +523,21 @@ async function host() {
       internal("Target.closeTarget", { targetId });
     }
   }, Math.min(30 * 60_000, TAB_IDLE / 2)).unref();
+  // A build an update put in `current` takes over once nobody uses this one (no agent at work,
+  // no page taken over or shown, nothing asked): what's open is kept, and opens again when the
+  // next client starts the browser from there. Otherwise one started before the update arrived
+  // would run the old build for as long as the engine does.
+  const runsFrom = path.dirname(chrome.spawnfile);
+  setInterval(() => {
+    let installed;
+    try {
+      installed = fs.realpathSync(CURRENT);
+    } catch {
+      return;
+    }
+    if (installed === runsFrom || everyStatus().working || held.size || asks.size || viewers()) return;
+    stop();
+  }, 60_000).unref();
 
   let stopping = false;
   const stop = async () => {
