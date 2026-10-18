@@ -446,7 +446,7 @@ private struct ChoiceRow: View {
                     Text(option.label)
                         .foregroundStyle(.primary)
                         .frame(minHeight: Self.badgeSize)
-                    if let description = option.description, !description.isEmpty {
+                    if let description = ChoiceText.detail(option.description, label: option.label) {
                         Text(description)
                             .font(.callout)
                             .foregroundStyle(.secondary)

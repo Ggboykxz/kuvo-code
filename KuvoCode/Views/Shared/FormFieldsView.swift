@@ -180,7 +180,7 @@ private struct OptionList: View {
                             .foregroundStyle(isSelected ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
                         VStack(alignment: .leading, spacing: 2) {
                             Text(option.label)
-                            if let description = option.description {
+                            if let description = ChoiceText.detail(option.description, label: option.label) {
                                 Text(description)
                                     .font(.callout)
                                     .foregroundStyle(.secondary)
@@ -196,5 +196,16 @@ private struct OptionList: View {
                 .buttonStyle(FilledButtonStyle(shape: .rect(cornerRadius: 10), rest: isSelected ? 0 : 0.045))
             }
         }
+    }
+}
+
+/// What a choice says under its label: its description, unless that only repeats the label
+/// ("Red" under Red), as models often write.
+enum ChoiceText {
+    static func detail(_ description: String?, label: String) -> String? {
+        guard let description = description?.trimmingCharacters(in: .whitespacesAndNewlines), !description.isEmpty,
+              description.compare(label.trimmingCharacters(in: .whitespacesAndNewlines), options: .caseInsensitive) != .orderedSame
+        else { return nil }
+        return description
     }
 }
