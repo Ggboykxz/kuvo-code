@@ -11,7 +11,7 @@ import Textual
 /// own becomes a code block the code block style draws as math, centered; one in a line, a mark,
 /// put back after as a formula in the text. Formulas in code are left as they are, and so are
 /// prices like "$5 and $10". The text around them keeps its shape: a formula in a list item, a
-/// quote or a table stays in it.
+/// quote or a table stays in it, and one SwiftUIMath can't draw shows as it was written.
 ///
 /// Math is always typeset at its own width: SwiftUIMath's line breaking, which Textual's own math
 /// asks for, drops spaces and breaks superscripts off.
@@ -20,8 +20,12 @@ enum MathText {
     nonisolated static let blockLanguage = "kuvo-math"
 
     nonisolated struct Formula: Equatable {
+        /// As written, with its dollar signs or brackets.
+        let source: String
         let latex: String
         let isBlock: Bool
+        /// The LaTeX SwiftUIMath draws (see `drawable`); nil when it can't, and `source` shows.
+        let drawn: String?
     }
 
     /// The formulas set aside from a text, in order, and the two characters around a formula's
@@ -398,7 +402,8 @@ enum MathText {
             let latex = parts.map { $0.trimmingCharacters(in: .whitespaces) }.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
             // Nothing, or no formula: "($$) … ($$)" are prices.
             guard !latex.isEmpty, !dollars || !")]}".contains(latex.first!) else { return false }
-            let formula = Formula(latex: latex, isBlock: true)
+            let (open, close) = dollars ? ("$$", "$$") : ("\\[", "\\]")
+            let formula = Formula(source: open + parts.joined(separator: "\n") + close, latex: latex, isBlock: true, drawn: drawable(latex))
             let line = lines[lineIndex(start)]
             let closing = lines[lineIndex(end)]
             let after = chars[(end + 2)..<closing.end]
@@ -406,7 +411,7 @@ enum MathText {
             // The line under it reads on as it did, not as a code block or out of a list or quote.
             let nextReads = next.map { !$0.isLazy && !$0.isDeep && $0.depth == line.depth } ?? true
             i = end + 2
-            if !line.takesBlock || latex.contains("```") {
+            if formula.drawn == nil || !line.takesBlock || latex.contains("```") {
                 out += mark(formula)
             } else if line.isTopLevel, nextReads || !after.allSatisfy(\.isWhitespace) {
                 out += "\n\n```\(blockLanguage)\n\(latex)\n```\n\n"
@@ -441,7 +446,7 @@ enum MathText {
                 if next == "(", let end = inlineEnd(chars, from: i, to: stretchEnd, closer: ")") {
                     let latex = String(chars[(i + 2)..<end]).trimmingCharacters(in: .whitespaces)
                     if !latex.isEmpty {
-                        out += mark(Formula(latex: latex, isBlock: false))
+                        out += mark(Formula(source: String(chars[i..<(end + 2)]), latex: latex, isBlock: false, drawn: drawable(latex)))
                         i = end + 2
                         continue
                     }
@@ -458,7 +463,7 @@ enum MathText {
                 if run == 2, placeBlock(from: i, dollars: true) { continue }
                 if run == 1, let end = inlineEnd(chars, from: i, to: stretchEnd) {
                     let latex = String(chars[(i + 1)..<end])
-                    out += mark(Formula(latex: latex, isBlock: false))
+                    out += mark(Formula(source: String(chars[i...end]), latex: latex, isBlock: false, drawn: drawable(latex)))
                     i = end + 1
                     continue
                 }
@@ -524,12 +529,113 @@ enum MathText {
         return nil
     }
 
+    // MARK: What SwiftUIMath can draw
+
+    /// `latex` as SwiftUIMath draws it, with a few commands it lacks put as ones it has (`\dots`
+    /// as `\ldots`, `\operatorname{f}` as `\mathrm{f}`, `\begin{align}` as `aligned`, sizes and
+    /// boxes left out); nil when it still can't, so the formula shows as written rather than as
+    /// nothing. Kept, as each reply is read again with every word that streams in.
+    nonisolated static func drawable(_ latex: String) -> String? {
+        let key = latex as NSString
+        if let known = drawables.object(forKey: key) { return known.latex }
+        let drawn = substituted(latex)
+        let width = Math.typographicBounds(for: drawn, fitting: .unspecified, font: .init(name: .latinModern, size: 20), style: .text).width
+        let result = width > 0 ? drawn : nil
+        drawables.setObject(Drawable(latex: result), forKey: key)
+        return result
+    }
+
+    nonisolated private final class Drawable: Sendable {
+        let latex: String?
+        init(latex: String?) { self.latex = latex }
+    }
+
+    /// NSCache is thread-safe.
+    nonisolated(unsafe) private static let drawables: NSCache<NSString, Drawable> = {
+        let cache = NSCache<NSString, Drawable>()
+        cache.countLimit = 2000
+        return cache
+    }()
+
+    /// Commands SwiftUIMath doesn't know, as ones it does; empty ones are left out.
+    nonisolated private static let substitutes: [String: String] = [
+        "dots": "ldots", "dotsc": "ldots", "dotso": "ldots", "dotsb": "cdots", "dotsm": "cdots", "dotsi": "cdots",
+        "varnothing": "emptyset", "lVert": "Vert", "rVert": "Vert", "lvert": "vert", "rvert": "vert",
+        "operatorname": "mathrm", "boldsymbol": "bm", "pmb": "bm", "bmod": "mod",
+        "big": "", "Big": "", "bigg": "", "Bigg": "", "bigl": "", "bigr": "", "bigm": "", "Bigl": "", "Bigr": "", "Bigm": "",
+        "biggl": "", "biggr": "", "biggm": "", "Biggl": "", "Biggr": "", "Biggm": "",
+        "boxed": "", "notag": "", "nonumber": "",
+    ]
+
+    /// Environments SwiftUIMath doesn't know, as ones it does; empty ones are left out.
+    nonisolated private static let environments: [String: String] = [
+        "align": "aligned", "align*": "aligned", "flalign": "aligned", "flalign*": "aligned", "eqnarray*": "eqnarray",
+        "gather*": "gather", "multline": "gather", "multline*": "gather", "dcases": "cases",
+        "equation": "", "equation*": "", "displaymath": "",
+    ]
+
+    nonisolated private static func substituted(_ latex: String) -> String {
+        guard latex.contains("\\") else { return latex }
+        var out = ""
+        var rest = latex[...]
+        while let slash = rest.firstIndex(of: "\\") {
+            out += rest[..<slash]
+            rest = rest[rest.index(after: slash)...]
+            let name = String(rest.prefix { $0.isASCII && $0.isLetter })
+            guard !name.isEmpty else {
+                // "\\", "\{", "\,": as they are.
+                out += "\\" + rest.prefix(1)
+                rest = rest.dropFirst()
+                continue
+            }
+            rest = rest.dropFirst(name.count)
+            if name == "begin" || name == "end", rest.first == "{", let close = rest.firstIndex(of: "}") {
+                let environment = String(rest[rest.index(after: rest.startIndex)..<close])
+                if let substitute = environments[environment] {
+                    rest = rest[rest.index(after: close)...]
+                    if !substitute.isEmpty { out += "\\\(name){\(substitute)}" }
+                    continue
+                }
+                out += "\\" + name
+            } else if name == "tag", let argument = braced(&rest) {
+                // An equation's number, after it.
+                out += "\\qquad " + (argument.starred ? argument.text : "(\(argument.text))")
+            } else if let substitute = substitutes[name] {
+                if name == "operatorname", rest.first == "*" { rest = rest.dropFirst() }
+                // A space after it, so it doesn't run into the letters after.
+                out += substitute.isEmpty ? "" : "\\\(substitute) "
+            } else {
+                out += "\\" + name
+            }
+        }
+        return out + rest
+    }
+
+    /// The `{…}` (or `*{…}`) at the start of `rest`, taken off it.
+    nonisolated private static func braced(_ rest: inout Substring) -> (text: Substring, starred: Bool)? {
+        var text = rest
+        let starred = text.first == "*"
+        if starred { text = text.dropFirst() }
+        guard text.first == "{" else { return nil }
+        var depth = 0
+        for index in text.indices {
+            if text[index] == "{" { depth += 1 }
+            if text[index] == "}" { depth -= 1 }
+            if depth == 0 {
+                rest = text[text.index(after: index)...]
+                return (text[text.index(after: text.startIndex)..<index], starred)
+            }
+        }
+        return nil
+    }
+
     // MARK: Putting them back
 
-    /// Each mark in `text` swapped for its formula, drawn in the line. The marks are found in a
-    /// plain copy of the text's bytes, which is quick, rather than by walking its characters,
-    /// which works out where each one ends at every step (a long reply is read again with each
-    /// streamed word); and replaced last first, so the ones before keep their place.
+    /// Each mark in `text` swapped for its formula, drawn in the line, or for the formula as it
+    /// was written when it can't be drawn. The marks are found in a plain copy of the text's
+    /// bytes, which is quick, rather than by walking its characters, which works out where each
+    /// one ends at every step (a long reply is read again with each streamed word); and replaced
+    /// last first, so the ones before keep their place.
     static func restore(_ text: inout AttributedString, _ formulas: Formulas) {
         guard !formulas.isEmpty else { return }
         let opening = Array(String(formulas.open).utf8), closing = Array(String(formulas.close).utf8)
@@ -563,8 +669,13 @@ enum MathText {
         for mark in marks.reversed() {
             let start = text.utf8.index(text.startIndex, offsetBy: mark.start)
             let end = text.utf8.index(start, offsetBy: mark.end - mark.start)
-            var formula = AttributedString("\u{FFFC}", attributes: text[start..<end].runs.first?.attributes ?? AttributeContainer())
-            formula.textual.attachment = AnyAttachment(InlineMath(latex: mark.formula.latex, isDisplay: mark.formula.isBlock))
+            let attributes = text[start..<end].runs.first?.attributes ?? AttributeContainer()
+            guard let drawn = mark.formula.drawn else {
+                text.replaceSubrange(start..<end, with: AttributedString(mark.formula.source, attributes: attributes))
+                continue
+            }
+            var formula = AttributedString("\u{FFFC}", attributes: attributes)
+            formula.textual.attachment = AnyAttachment(InlineMath(latex: mark.formula.latex, drawn: drawn, isDisplay: mark.formula.isBlock))
             text.replaceSubrange(start..<end, with: formula)
         }
     }
@@ -594,7 +705,9 @@ enum MathText {
 /// A formula in a line of text. Measured and drawn at its own width; drawn larger than it shows,
 /// as the text's own size isn't known where it's drawn, and scaled down into its place.
 struct InlineMath: Attachment {
+    /// As written, and as drawn (see `MathText.drawable`).
     let latex: String
+    let drawn: String
     /// Set as a formula of its own is (larger operators, limits above and below).
     let isDisplay: Bool
 
@@ -604,8 +717,8 @@ struct InlineMath: Attachment {
     private static let drawnSize: CGFloat = 40
 
     var body: some View {
-        Math(latex)
-            .mathFont(.init(name: .latinModern, size: MathText.drawingSize(for: latex, near: Self.drawnSize, display: isDisplay)))
+        Math(drawn)
+            .mathFont(.init(name: .latinModern, size: MathText.drawingSize(for: drawn, near: Self.drawnSize, display: isDisplay)))
             .mathTypesettingStyle(isDisplay ? .display : .text)
             .mathRenderingMode(.monochrome)
             .fixedSize()
@@ -621,7 +734,7 @@ struct InlineMath: Attachment {
 
     private func bounds(in environment: TextEnvironmentValues) -> Math.TypographicBounds {
         Math.typographicBounds(
-            for: latex,
+            for: drawn,
             fitting: .unspecified,
             font: .init(name: .latinModern, size: FontScaled(MathText.scale).resolve(in: environment)),
             style: isDisplay ? .display : .text
@@ -636,6 +749,7 @@ struct InlineMath: Attachment {
 /// drawn a pixel narrower or wider than it measured, which SwiftUIMath sets again to fit, breaking
 /// it onto a second line its height has no room for.
 struct MathBlockView: View {
+    /// As SwiftUIMath draws it (see `MathText.drawable`).
     let latex: String
     @Environment(\.messageFont) private var font
     @Environment(\.displayScale) private var displayScale

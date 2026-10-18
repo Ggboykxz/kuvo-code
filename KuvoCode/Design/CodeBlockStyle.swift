@@ -4,12 +4,13 @@ import Textual
 
 /// Code blocks in replies and Markdown: one recessed well with the code and its line numbers,
 /// and the language and a Copy button in its top corner. A formula of its own, which a reply's
-/// `$$…$$` became (`MathText`), is drawn as math instead.
+/// `$$…$$` became (`MathText`), is drawn as math instead (as code, should it not draw).
 struct CopyableCodeBlockStyle: StructuredText.CodeBlockStyle {
     @ViewBuilder func makeBody(configuration: Configuration) -> some View {
         if configuration.languageHint == MathText.blockLanguage,
-           let latex = (Mirror(reflecting: configuration.codeBlock).descendant("content") as? AttributedSubstring).map({ String($0.characters) }) {
-            MathBlockView(latex: latex.trimmingCharacters(in: .whitespacesAndNewlines))
+           let latex = (Mirror(reflecting: configuration.codeBlock).descendant("content") as? AttributedSubstring).map({ String($0.characters) }),
+           let drawn = MathText.drawable(latex.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            MathBlockView(latex: drawn)
         } else {
             CopyableCodeBlock(configuration: configuration)
         }
