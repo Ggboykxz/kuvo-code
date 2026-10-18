@@ -6,6 +6,13 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- When the engine stops while starting, the failure screen shows the engine's own error message again, not just an exit code.
+- On a remote machine, a project's own web search setting in its opencode.json wins over your Mac's choice, as it does on your Mac.
+- Adding the web search default no longer rewrites your engine settings file: it adds one line and keeps your layout. A settings file that's a link (to your dotfiles, say) stays a link when Settings change it.
+- A watch on something that keeps changing, like a price or a counter, wakes its bot again, once each time it runs, with the latest output; it never did, and was checked every two minutes. A check that fails without printing anything, or is stopped, counts as not having run, so a longer outage no longer wakes the bot twice, and a check's error messages don't count as what it shows.
+- A weekly wake-up or group meeting keeps its day of the week after a time-zone change, and saving a group chat no longer moves its meeting's time after the clocks changed.
+- Deleting a bot on a machine that's in several group chats no longer leaves a chat transcript in its folder there.
+
 ## 0.5.6
 
 - Subagents an agent sends off to work in the background show while they work: under its steps, each with a spinner and opening to what it's doing, even after its turn has ended. The session's row and tab show it working meanwhile, and a bot's row says how many tasks it's working on. They used to vanish into "handed off 7 tasks".
