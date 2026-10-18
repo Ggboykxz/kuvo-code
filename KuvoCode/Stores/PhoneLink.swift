@@ -467,7 +467,9 @@ final class PhoneLink {
             }
             return listed
         }
-        return (try? JSONEncoder().encode(Listed(asks: asks))) ?? Data()
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        return (try? encoder.encode(Listed(asks: asks))) ?? Data()
     }
 
     /// A phone's answer, as the card's: a sign-in typed there (kept in Passwords if asked) or one
@@ -562,6 +564,9 @@ final class PhoneLink {
 
     private static var groupEncoder: JSONEncoder {
         let encoder = JSONEncoder()
+        // Sorted, as a stream sends what it's encoded only when the text differs, and JSONEncoder
+        // writes a struct's keys in another order almost every time.
+        encoder.outputFormatting = .sortedKeys
         encoder.dateEncodingStrategy = .secondsSince1970
         return encoder
     }

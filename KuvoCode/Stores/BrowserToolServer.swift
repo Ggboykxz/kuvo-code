@@ -439,7 +439,9 @@ struct HTTPResponse {
     var body = Data()
 
     static func json(_ object: Any) -> HTTPResponse {
-        let data = (try? JSONSerialization.data(withJSONObject: object)) ?? Data()
+        // Sorted, so the tools' list reads the same at every launch, and a conversation picked up
+        // after one keeps the provider's prompt cache.
+        let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data()
         return HTTPResponse(status: 200, headers: ["Content-Type": "application/json"], body: data)
     }
 }
