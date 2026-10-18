@@ -84,7 +84,7 @@ private struct BottomStack: View {
         GlassEffectContainer(spacing: 12) {
             VStack(spacing: 12) {
                 ForEach(model.permissions) { request in
-                    PermissionCard(request: request, directory: model.session.location.directory) { decision in
+                    PermissionCard(request: request, command: model.permissionCommands[request.id], directory: model.session.location.directory) { decision in
                         model.reply(to: request, decision)
                     }
                     .disabled(offlineMachine != nil)

@@ -27,6 +27,9 @@ final class SessionModel {
     private(set) var isRunning = false
     private(set) var pending: [Transcript.Pending] = []
     private(set) var permissions: [PermissionRequest] = []
+    /// Each command permission's command line as the agent wrote it, by request: the engine asks
+    /// about the commands in it one by one, without the pipes and `&&` between them.
+    private(set) var permissionCommands: [String: String] = [:]
     private(set) var forms: [FormRequest] = []
     /// How much of the context window the last step used.
     private(set) var contextUsed: Int?
@@ -35,7 +38,10 @@ final class SessionModel {
         transcriptVersion &+= 1
         if isRunning != transcript.isRunning { isRunning = transcript.isRunning }
         if pending != transcript.pending { pending = transcript.pending }
-        if permissions != transcript.permissions { permissions = transcript.permissions }
+        if permissions != transcript.permissions {
+            permissions = transcript.permissions
+            permissionCommands = Self.commands(of: permissions, in: transcript.messages)
+        }
         if forms != transcript.forms { forms = transcript.forms }
         let used = Self.contextUsed(in: transcript.messages)
         if contextUsed != used { contextUsed = used }
@@ -45,6 +51,18 @@ final class SessionModel {
             let kept = questionProgress.filter { open.contains($0.key) }
             if kept.count != questionProgress.count { questionProgress = kept }
         }
+    }
+
+    private static func commands(of requests: [PermissionRequest], in messages: [Message]) -> [String: String] {
+        var commands: [String: String] = [:]
+        for request in requests where request.action == "shell" {
+            guard let source = request.source,
+                  case .assistant(let step)? = messages.last(where: { $0.id == source.messageID }) else { continue }
+            for case .tool(let call) in step.content where call.id == source.id {
+                commands[request.id] = call.state.input?["command"]?.string
+            }
+        }
+        return commands
     }
 
     /// What the last step sent and got back is what's in the window now.

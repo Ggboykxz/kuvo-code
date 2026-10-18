@@ -5,6 +5,8 @@ import SwiftUI
 /// The agent wants to do something that needs your OK.
 struct PermissionCard: View {
     let request: PermissionRequest
+    /// For a command: the whole command line, pipes and all, which the request names in parts.
+    var command: String?
     let directory: String
     let reply: (PermissionRequest.Decision) -> Void
     @Environment(\.takesCardKeys) private var takesKeys
@@ -30,7 +32,7 @@ struct PermissionCard: View {
             if let diff = request.diffs.first {
                 DiffView(diff: diff, title: relative(diff.file), maxLines: 14)
             } else if !request.resources.isEmpty {
-                Text(request.resources.map(relative).joined(separator: "\n"))
+                Text(command ?? request.resources.map(relative).joined(separator: "\n"))
                     .transcriptCodeFont()
                     .textSelection(.enabled)
                     .lineLimit(6)
@@ -65,7 +67,7 @@ struct PermissionCard: View {
         case "edit", "patch": "Allow editing \(subject)?"
         case "write": "Allow writing \(subject)?"
         case "read": "Allow reading \(subject)?"
-        case "shell": request.resources.count > 1 ? "Allow running these commands?" : "Allow running this command?"
+        case "shell": request.resources.count > 1 && command == nil ? "Allow running these commands?" : "Allow running this command?"
         case "external_directory": "Allow working outside the project?"
         case "subagent": "Allow starting the \(subject) agent?"
         case "webfetch": "Allow fetching \(subject)?"
