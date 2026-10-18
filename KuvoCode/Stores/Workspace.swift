@@ -719,7 +719,8 @@ final class Workspace {
             SessionCopies.saveSessions(theirs, of: machine)
             connectedMachines.insert(machine)
             if let active = try? await api.activeSessions(), isCurrent() {
-                running = running.filter { id in session(id).map { RemoteFolder.machine(of: $0.location.directory) != machine } ?? true }.union(active)
+                // A subagent's session has no row: its machine is the one its events came from.
+                running = running.filter { id in (session(id).map { RemoteFolder.machine(of: $0.location.directory) } ?? sessionMachines[id]) != machine }.union(active)
             }
             // Its open conversations, kept while it was away, are read again; one deleted there
             // meanwhile goes. (The list has only the newest, so one missing from it is asked about.)
@@ -750,6 +751,8 @@ final class Workspace {
         let gone = Set(sessions.filter { RemoteFolder.machine(of: $0.location.directory) == machine }.map(\.id))
         if !forGood, connectedMachines.contains(machine) { saveList(of: machine) }
         running.subtract(gone)
+        // And its subagents', which have no row.
+        running = running.filter { sessionMachines[$0] != machine || session($0) != nil }
         connectedMachines.remove(machine)
         if forGood {
             listSaves[machine]?.cancel()

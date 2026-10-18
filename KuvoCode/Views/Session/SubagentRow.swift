@@ -25,6 +25,15 @@ struct SubagentRow: View {
         !call.state.isFinished || session.map { workspace.running.contains($0) } == true
     }
 
+    /// How it failed, once done: its step's error, or, for one sent off in the background (whose
+    /// step is done at once), its own last step's.
+    private var failure: StructuredError? {
+        guard !isWorking else { return nil }
+        if case .failed(_, let error, _, _) = call.state { return error }
+        guard let model, case .assistant(let step)? = model.transcript.messages.last(where: { if case .assistant = $0 { true } else { false } }) else { return nil }
+        return step.error
+    }
+
     private var title: String {
         if let task = input?["description"]?.string, !task.isEmpty { return task }
         return isWorking ? "Starting a subagent…" : "A subagent's task"
@@ -95,7 +104,7 @@ struct SubagentRow: View {
     @ViewBuilder private var icon: some View {
         if isWorking {
             Spinner(size: 11)
-        } else if case .failed(_, let error, _, _) = call.state, !error.isInterruption {
+        } else if let failure, !failure.isInterruption {
             Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
         } else {
             Image(systemName: "person.2")
@@ -108,11 +117,11 @@ struct SubagentRow: View {
         if isWorking {
             ShimmerText(text: currentStep)
                 .font(.caption)
-        } else if case .failed(_, let error, _, _) = call.state {
-            Text(error.isInterruption ? "Stopped" : "Failed")
+        } else if let failure {
+            Text(failure.isInterruption ? "Stopped" : "Failed")
                 .font(.caption)
-                .foregroundStyle(error.isInterruption ? AnyShapeStyle(.secondary) : AnyShapeStyle(.red))
-                .help(error.message)
+                .foregroundStyle(failure.isInterruption ? AnyShapeStyle(.secondary) : AnyShapeStyle(.red))
+                .help(failure.message)
         } else if !isExpanded, let model, let usage = SubagentSteps.usage(model) {
             Text(usage)
                 .font(.caption)
