@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- The line that sums up an agent's steps names an MCP server's tools by the server ("used GitHub", "used context7 2 times") rather than their raw names, and says "used a skill" and "started a session".
 - VoiceOver names the **Pause Wake-Ups** switch in Edit Bot, each bot's button under a group chat's composer ("Ask Reader"), and each field in a form an MCP server or a sign-in asks you to fill. They read as an unnamed switch, buttons and text fields.
 - Each session has its own side panel, and so does each bot and group chat: its files, terminals and browser tabs stay with it, and switching conversations shows the other's. The panel was shared, so one agent's pages and terminals showed in every conversation.
 

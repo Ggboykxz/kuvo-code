@@ -133,7 +133,12 @@ enum StepsSummary {
         case "kuvo-browser_show_in_panel": return "show"
         case "kuvo-browser_send_message": return "message"
         case "kuvo-browser_list_agents": return "agents"
-        default: return name
+        default:
+            // Kuvo Code's own other tools, by their names ("start_session").
+            if name.hasPrefix("kuvo-browser_") { return String(name.dropFirst("kuvo-browser_".count)) }
+            // An MCP server's tool, as the engine names it ("github_create_issue"): by its server.
+            if let underscore = name.firstIndex(of: "_") { return "mcp:" + name[..<underscore] }
+            return name
         }
     }
 
@@ -153,6 +158,12 @@ enum StepsSummary {
         case "message": return many ? "wrote to other agents \(count) times" : "wrote to another agent"
         case "agents": return "looked up the other agents"
         case "todowrite", "todoread": return "kept its to-do list"
+        case "skill": return many ? "used \(count) skills" : "used a skill"
+        case "start_session": return many ? "started \(count) sessions" : "started a session"
+        case let kind where kind.hasPrefix("mcp:"):
+            let server = String(kind.dropFirst(4))
+            let name = Integrations.service(server)?.title ?? server
+            return many ? "used \(name) \(count) times" : "used \(name)"
         default: return many ? "used \(kind) \(count) times" : "used \(kind)"
         }
     }
