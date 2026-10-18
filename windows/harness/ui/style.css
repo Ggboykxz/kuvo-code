@@ -241,3 +241,57 @@ aside {
 .note { color: var(--ink-soft); font-size: 12.5px; flex: 1; }
 
 .fatal { padding: 24px; color: var(--danger); }
+
+/* ---- Files / terminal drawer ---- */
+.drawer {
+  position: fixed;
+  top: 0; right: 0;
+  width: 420px; max-width: 90vw;
+  height: 100vh;
+  background: var(--panel);
+  border-left: 1px solid var(--line);
+  box-shadow: -4px 0 16px rgba(0,0,0,.08);
+  display: flex;
+  flex-direction: column;
+  z-index: 40;
+}
+.drawer.hidden { display: none; }
+.drawer-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 12px; border-bottom: 1px solid var(--line);
+}
+.drawer-tabs { display: flex; gap: 4px; }
+.drawer-tab {
+  border: 1px solid var(--line); background: var(--bg); color: var(--ink-soft);
+  border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px;
+}
+.drawer-tab.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.drawer-body { flex: 1; overflow: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.file-tree-head { display: flex; align-items: center; gap: 8px; }
+.file-tree { list-style: none; padding: 0; margin: 0; font-family: ui-monospace, monospace; font-size: 12px; }
+.file-tree li { padding: 2px 4px; cursor: pointer; border-radius: 4px; }
+.file-tree li:hover { background: var(--code-bg); }
+.file-tree li.dir { color: var(--ink-soft); }
+.file-editor { display: flex; flex-direction: column; gap: 6px; flex: 1; min-height: 0; }
+.file-editor.hidden { display: none; }
+.file-editor-head { display: flex; align-items: center; justify-content: space-between; }
+#file-content { flex: 1; min-height: 200px; font-family: ui-monospace, monospace; font-size: 12px; }
+.terminal { flex: 1; min-height: 200px; background: #000; border-radius: 6px; padding: 4px; }
+.terminal .xterm { height: 100%; }
+.modal {
+  position: fixed; inset: 0; background: rgba(0,0,0,.4);
+  display: flex; align-items: center; justify-content: center; z-index: 50;
+}
+.modal.hidden { display: none; }
+.modal-card {
+  background: var(--panel); border-radius: var(--radius);
+  width: min(900px, 90vw); max-height: 80vh; display: flex; flex-direction: column;
+}
+.modal-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.diff-body {
+  margin: 0; padding: 10px 12px; overflow: auto; flex: 1;
+  font-family: ui-monospace, monospace; font-size: 12px; white-space: pre;
+  background: var(--code-bg);
+}
+.diff-body .add { color: var(--ok); }
+.diff-body .del { color: var(--danger); }

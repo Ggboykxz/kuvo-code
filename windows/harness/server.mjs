@@ -54,6 +54,20 @@ async function defaultClientFor({ binary, log }) {
   return { client, version: info.version ?? null, stop: engine.stop };
 }
 
+const MIME = {
+  html: "text/html; charset=utf-8",
+  js: "text/javascript; charset=utf-8",
+  mjs: "text/javascript; charset=utf-8",
+  css: "text/css; charset=utf-8",
+  json: "application/json; charset=utf-8",
+  png: "image/png",
+  ico: "image/x-icon",
+  svg: "image/svg+xml",
+  woff2: "font/woff2",
+  txt: "text/plain; charset=utf-8",
+  md: "text/plain; charset=utf-8",
+};
+
 export function startHarness({ project = null, port = Number(process.env.KUVO_HARNESS_PORT ?? 4620), binary = process.env.KUVO_OPENCODE_BINARY ?? null, clientFor = defaultClientFor, log = () => {} } = {}) {
   let currentProject = project === null ? null : path.resolve(project);
   let engine = null;
@@ -150,6 +164,31 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
       return json({ sessions: await client.sessions({ directory }) });
     }
 
+  // Files: read and write within the project. No engine needed.
+  if (url.pathname === "/api/file" && request.method === "GET") {
+    const asked = url.searchParams.get("path");
+    if (!asked) throw new HttpError(400, "No file was given.");
+    const resolved = path.resolve(asked);
+    if (currentProject && resolved !== currentProject && !resolved.startsWith(currentProject + path.sep)) {
+      throw new HttpError(403, "That file is outside the project.");
+    }
+    let content;
+    try { content = fs.readFileSync(resolved, "utf8"); }
+    catch { throw new HttpError(404, "There's no such file."); }
+    return json({ path: resolved, content });
+  }
+  if (url.pathname === "/api/file" && request.method === "POST") {
+    const body = await readBody(request);
+    if (!body.path) throw new HttpError(400, "No file was given.");
+    const resolved = path.resolve(body.path);
+    if (currentProject && resolved !== currentProject && !resolved.startsWith(currentProject + path.sep)) {
+      throw new HttpError(403, "That file is outside the project.");
+    }
+    fs.mkdirSync(path.dirname(resolved), { recursive: true });
+    fs.writeFileSync(resolved, String(body.content ?? ""), "utf8");
+    return json({ ok: true, path: resolved });
+  }
+
     const { client } = await ensureEngine();
 
     if (url.pathname === "/api/sessions" && request.method === "POST") {
@@ -211,19 +250,24 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
   }
 
   async function serveStatic(request, response, url) {
-    const files = {
-      "/": ["ui/index.html", "text/html; charset=utf-8"],
-      "/app.js": ["ui/app.js", "text/javascript; charset=utf-8"],
-      "/style.css": ["ui/style.css", "text/css; charset=utf-8"],
-      "/transcript.mjs": ["transcript.mjs", "text/javascript; charset=utf-8"],
-    };
-    const file = files[url.pathname];
-    if (!file) {
+    // Map a URL to a file we're willing to serve, with a traversal guard. The packed
+    // executable carries these same files inside itself (build-exe.mjs).
+    let relative;
+    if (url.pathname === "/") relative = "ui/index.html";
+    else if (url.pathname === "/transcript.mjs") relative = "transcript.mjs";
+    else relative = "ui" + url.pathname;
+    const root = relative === "transcript.mjs" ? here : path.join(here, "ui");
+    const resolved = path.resolve(here, relative);
+    if (!resolved.startsWith(root + path.sep) && resolved !== path.join(here, "transcript.mjs")) {
       response.writeHead(404, { "content-type": "text/plain" });
       return response.end("Not found.\n");
     }
-    const [where, type] = file;
-    const body = packed(path.basename(where)) ?? fs.readFileSync(path.join(here, where));
+    if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+      response.writeHead(404, { "content-type": "text/plain" });
+      return response.end("Not found.\n");
+    }
+    const type = MIME[relative.split(".").pop().toLowerCase()] ?? "application/octet-stream";
+    const body = packed(relative) ?? fs.readFileSync(resolved);
     response.writeHead(200, { "content-type": type, "cache-control": "no-store" });
     return response.end(body);
   }

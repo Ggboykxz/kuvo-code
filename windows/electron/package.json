@@ -12,7 +12,8 @@
     "smoke": "node smoke.js"
   },
   "dependencies": {
-    "electron-updater": "^6.3.0"
+    "electron-updater": "^6.3.0",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "electron": "^33.0.0",
@@ -54,5 +55,8 @@
       "repo": "kuvo-code",
       "releaseType": "prerelease"
     }
+  },
+  "optionalDependencies": {
+    "node-pty": "^1.0.0"
   }
 }

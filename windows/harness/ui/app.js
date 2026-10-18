@@ -69,6 +69,8 @@ const state = {
   session: null,
   transcript: null,
   models: [],
+  openFile: null,
+  drawerTab: "files",
 };
 
 let renderQueued = false;
@@ -153,6 +155,19 @@ function toolCard(part) {
     : part.output === undefined ? "" : brief(part.output);
   if (output) card.append(el("pre", { class: "tool-output", text: output.length > 4000 ? `${output.slice(0, 4000)}…` : output }));
   if (part.error) card.append(el("div", { class: "tool-error", text: errorText(part.error) }));
+  const lower = (part.name || "").toLowerCase();
+  const hasDiff = lower.includes("edit") || lower.includes("write") || lower.includes("patch")
+    || (part.input && (part.input.oldString || part.input.old || part.input.content));
+  if (hasDiff) {
+    const button = el("button", { class: "small", text: "diff" });
+    button.addEventListener("click", () => {
+      const input = part.input || {};
+      const oldText = input.oldString ?? input.old ?? "";
+      const newText = input.newString ?? input.new ?? input.content ?? part.output ?? "";
+      showDiff(`${part.name || "tool"} · ${input.filePath || input.path || input.file || ""}`, oldText, newText);
+    });
+    card.append(button);
+  }
   return card;
 }
 
@@ -429,6 +444,137 @@ $("picker-use").addEventListener("click", async () => {
     complain($("picker-note"), error);
   }
 });
+
+
+// ---- Files, terminal, diff ----
+
+function toggleDrawer() {
+  const drawer = $("drawer");
+  drawer.hidden = !drawer.hidden;
+  if (!drawer.hidden) {
+    if (state.drawerTab === "files") loadFileTree(state.project);
+    else initTerminal();
+  }
+}
+
+function setDrawerTab(tab) {
+  state.drawerTab = tab;
+  document.querySelectorAll(".drawer-tab").forEach(button => {
+    button.classList.toggle("active", button.dataset.tab === tab);
+  });
+  $("drawer-files").hidden = tab !== "files";
+  $("drawer-terminal").hidden = tab !== "terminal";
+  if (tab === "files") loadFileTree(state.project);
+  else initTerminal();
+}
+
+async function loadFileTree(folder) {
+  if (!folder) return;
+  try {
+    const { path: p, parent, folders, files } = await api(`/api/browse?path=${encodeURIComponent(folder)}`);
+    $("files-root").textContent = p;
+    $("files-refresh").dataset.path = p;
+    const list = $("file-tree");
+    list.innerHTML = "";
+    if (parent) list.append(el("li", { class: "dir", text: "..", onclick: () => loadFileTree(parent) }));
+    for (const folder of folders || []) {
+      list.append(el("li", { class: "dir", text: `${folder.name}/`, onclick: () => loadFileTree(folder.path) }));
+    }
+    for (const file of files || []) {
+      list.append(el("li", { text: file.name, onclick: () => openFile(file.path) }));
+    }
+  } catch (error) {
+    complain(null, error);
+  }
+}
+
+async function openFile(filePath) {
+  try {
+    const { content } = await api(`/api/file?path=${encodeURIComponent(filePath)}`);
+    state.openFile = filePath;
+    $("file-name").textContent = filePath.split(/[\\/]/).pop();
+    $("file-content").value = content;
+    $("file-editor").hidden = false;
+  } catch (error) {
+    complain(null, error);
+  }
+}
+
+async function saveFile() {
+  if (!state.openFile) return;
+  const button = $("file-save");
+  const previous = button.textContent;
+  try {
+    await api("/api/file", { method: "POST", body: { path: state.openFile, content: $("file-content").value } });
+    button.textContent = "Saved";
+    setTimeout(() => { button.textContent = previous; }, 1200);
+  } catch (error) {
+    complain(null, error);
+  }
+}
+
+function initTerminal() {
+  const container = $("terminal");
+  if (container.dataset.ready === "1") return;
+  container.dataset.ready = "1";
+  const note = $("terminal-note");
+  const port = new URLSearchParams(location.search).get("terminalPort");
+  if (!port) { note.textContent = "Terminal is available when running inside the Kuvo Code shell."; return; }
+  if (typeof Terminal === "undefined") { note.textContent = "Terminal library failed to load."; return; }
+  const term = new Terminal({ convertEol: true, fontSize: 13, theme: { background: "#1e1e1e", foreground: "#d4d4d4" } });
+  let fitAddon = null;
+  if (typeof FitAddon === "function") {
+    fitAddon = new FitAddon();
+    term.loadAddon(fitAddon);
+  }
+  term.open(container);
+  if (fitAddon) fitAddon.fit();
+  const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+  ws.onopen = () => { note.textContent = ""; term.focus(); };
+  ws.onmessage = (event) => term.write(typeof event.data === "string" ? event.data : "");
+  ws.onclose = () => { note.textContent = "Terminal closed."; };
+  term.onData((data) => { if (ws.readyState === WebSocket.OPEN) ws.send(data); });
+  window.addEventListener("resize", () => { if (fitAddon) { fitAddon.fit(); if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows })); } });
+}
+
+function diffLines(oldText, newText) {
+  const a = String(oldText).split("\n");
+  const b = String(newText).split("\n");
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = m - 1; i >= 0; i--)
+    for (let j = n - 1; j >= 0; j--)
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const ops = [];
+  let i = 0, j = 0;
+  while (i < m && j < n) {
+    if (a[i] === b[j]) { ops.push({ t: " ", line: a[i] }); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { ops.push({ t: "-", line: a[i] }); i++; }
+    else { ops.push({ t: "+", line: b[j] }); j++; }
+  }
+  while (i < m) { ops.push({ t: "-", line: a[i] }); i++; }
+  while (j < n) { ops.push({ t: "+", line: b[j] }); j++; }
+  return ops;
+}
+
+function showDiff(title, oldText, newText) {
+  const body = $("diff-body");
+  body.innerHTML = "";
+  for (const op of diffLines(oldText, newText)) {
+    body.append(el("div", { class: op.t === "+" ? "add" : op.t === "-" ? "del" : "ctx", text: `${op.t} ${op.line}` }));
+  }
+  $("diff-title").textContent = title;
+  $("diff-modal").hidden = false;
+}
+
+$("toggle-files").addEventListener("click", toggleDrawer);
+$("drawer-close").addEventListener("click", () => { $("drawer").hidden = true; });
+document.querySelectorAll(".drawer-tab").forEach(button => {
+  button.addEventListener("click", () => setDrawerTab(button.dataset.tab));
+});
+$("files-refresh").addEventListener("click", () => loadFileTree($("files-refresh").dataset.path || state.project));
+$("file-save").addEventListener("click", saveFile);
+$("diff-close").addEventListener("click", () => { $("diff-modal").hidden = true; });
 
 // ---- Boot ----
 

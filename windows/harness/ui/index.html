@@ -5,12 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kuvo Code</title>
 <link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/vendor/xterm.css">
 </head>
 <body>
 <header>
   <div class="brand">Kuvo&nbsp;Code</div>
   <button id="project" class="path" title="Change the project folder"></button>
   <div class="spacer"></div>
+  <button id="toggle-files" class="small" title="Files and terminal">Files</button>
   <div id="engine" class="engine" title="The engine on this machine"></div>
 </header>
 
@@ -45,6 +47,44 @@
   </section>
 </main>
 
+<div id="drawer" class="drawer" hidden>
+  <div class="drawer-head">
+    <div class="drawer-tabs">
+      <button class="drawer-tab active" data-tab="files">Files</button>
+      <button class="drawer-tab" data-tab="terminal">Terminal</button>
+    </div>
+    <button id="drawer-close" class="small">✕</button>
+  </div>
+  <div id="drawer-files" class="drawer-body">
+    <div class="file-tree-head">
+      <button id="files-refresh" class="small">Refresh</button>
+      <span id="files-root" class="note"></span>
+    </div>
+    <ul id="file-tree" class="file-tree"></ul>
+    <div id="file-editor" class="file-editor" hidden>
+      <div class="file-editor-head">
+        <span id="file-name" class="note"></span>
+        <button id="file-save" class="small primary">Save</button>
+      </div>
+      <textarea id="file-content" spellcheck="false"></textarea>
+    </div>
+  </div>
+  <div id="drawer-terminal" class="drawer-body" hidden>
+    <div id="terminal" class="terminal"></div>
+    <div id="terminal-note" class="note"></div>
+  </div>
+</div>
+
+<div id="diff-modal" class="modal" hidden>
+  <div class="modal-card">
+    <div class="modal-head">
+      <strong id="diff-title">Diff</strong>
+      <button id="diff-close" class="small">✕</button>
+    </div>
+    <pre id="diff-body" class="diff-body"></pre>
+  </div>
+</div>
+
 <div id="picker" class="picker" hidden>
   <div class="picker-card">
     <div class="picker-head">
@@ -64,6 +104,8 @@
   </div>
 </div>
 
+<script src="/vendor/xterm.min.js"></script>
+<script src="/vendor/addon-fit.min.js"></script>
 <script type="module" src="/app.js"></script>
 </body>
 </html>

@@ -45,16 +45,24 @@ if (!bundle.includes('process.env.KUVO_BUNDLED = "1"')) {
 
 // The blob: the bundle plus the page's files, which server.mjs asks for by name.
 const blob = path.join(buildDir, "harness.blob");
+// Every file under ui/ (and transcript.mjs) is carried inside the binary, keyed by its
+// path relative to this folder — the same key serveStatic looks up with.
+const assets = { "transcript.mjs": path.join(here, "transcript.mjs") };
+function collectAssets(dir, prefix) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    const key = `${prefix}/${entry.name}`;
+    if (entry.isDirectory()) collectAssets(full, key);
+    else assets[key] = full;
+  }
+}
+collectAssets(path.join(here, "ui"), "ui");
+
 const config = {
   main: path.join(buildDir, "harness.cjs"),
   output: blob,
   disableExperimentalSEAWarning: true,
-  assets: {
-    "index.html": path.join(here, "ui/index.html"),
-    "app.js": path.join(here, "ui/app.js"),
-    "style.css": path.join(here, "ui/style.css"),
-    "transcript.mjs": path.join(here, "transcript.mjs"),
-  },
+  assets,
 };
 const configPath = path.join(buildDir, "sea-config.json");
 fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
