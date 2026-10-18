@@ -32,7 +32,7 @@ real open-source projects cloned into the run's folder. Status: ✅ passes, ⚠�
 | B10 | Ask First: allow a command once, always allow another, deny an edit with a reason | ✅ allow once, always, deny; ❌→✅ Always Allowed listed nothing (523f32e); a piped command showed as two (773d689) |
 | B11 | The agent asks questions before starting ("which database should I use?") and you answer in the card | ✅ two questions: number key picks, typing writes your own, Return sends |
 | B12 | Queue follow-ups while it works, steer it mid-task, stop it with Esc, resume | ✅ queue with ⌘↩, Steer, Esc stops, Resume, ↑/↓ history; ❌→✅ Send Now only in ⋯ for a next-step message (45b9548) |
-| B13 | Two sessions in the same project working at once, and one in another project | ⏳ |
+| B13 | Two sessions in the same project working at once, and one in another project | ✅ two sessions in tinysite and one in textstats at once, each with its own permission cards ("Waiting for you" in the sidebar) and the right result; ❌→✅ Always Allow for everything read "Don't ask again for: *" (a8d4c86) |
 | B14 | Switch model or effort mid-conversation | ✅ picked another free model mid-conversation, applied when the picker closes, next reply on it; ⚠️ the notice names the model by its id ("Switched to deepseek-v4.1-flash-free") |
 | B15 | "Start the dev server and show me the page": the page in the panel's browser | ❌→✅ the agent couldn't click or type in the Mac browser since 0.5.6 (3edd9f4); a page that didn't open said only "browser is empty" (3f59090); its dev server left running showed nowhere (14ed231) |
 | B16 | A long conversation: scrolling, finding text (⌘F), and the context filling up and compacting | ⏳ |
@@ -47,17 +47,17 @@ real open-source projects cloned into the run's folder. Status: ✅ passes, ⚠�
 | --- | --- | --- |
 | C1 | Attach a screenshot of a bug ("make it look like this") | ✅ the picture shows in your message, and the model described it correctly |
 | C2 | Attach a PDF or a CSV and ask about it | ❌→✅ three .md reports vanished from the sent message and the agent didn't know where they were (b8aee60) |
-| C3 | Drop several files, paste a picture from the clipboard, remove one before sending | ⏳ |
-| C4 | Quote part of a reply and answer it | ⏳ |
-| C5 | Browse the project's files in the panel and open one | ⏳ |
-| C6 | The agent shows you a file or folder in the panel ("show me where that's configured") | ⏳ |
+| C3 | Drop several files, paste a picture from the clipboard, remove one before sending | ✅ three files in the composer, one removed, the other two sent and read; ❌→✅ the remove button was hover-only, out of VoiceOver's reach (6de8dcc); pasting from the clipboard not run (it would replace yours) |
+| C4 | Quote part of a reply and answer it | ✅ Reply quotes the answer above your message; the agent knew what it referred to |
+| C5 | Browse the project's files in the panel and open one | ✅ Files from the new tab page, the filter, a file opens colored with its folder path |
+| C6 | The agent shows you a file or folder in the panel ("show me where that's configured") | ✅ "show me that file in the panel": the agent opened index.html there itself |
 
 ## D. Chats (no project)
 
 | ID | Case | Status |
 | --- | --- | --- |
-| D1 | Ask a general question, then a follow-up | ⏳ |
-| D2 | "Write a regex for …" and copy the code | ⏳ |
+| D1 | Ask a general question, then a follow-up | ✅ a chat question and a follow-up that needs the first answer |
+| D2 | "Write a regex for …" and copy the code | ✅ a Python regex with a test, run by the agent; the code block has line numbers, colors and Copy Code (not pressed, to keep your clipboard) |
 | D3 | "Make a chart of this data" or "a small game": a widget in the conversation | ✅ a live chart in the conversation |
 | D4 | A chat that turns into work: Move to Project | ✅ moved into a project with its conversation; the agent then works there |
 
@@ -221,7 +221,7 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 | ID | Case | Status |
 | --- | --- | --- |
 | J1 | The network goes away mid-reply | ⏳ |
-| J2 | A model that fails or is gone (an error to read, a way forward) | ❌→✅ the composer showed the default model while every message went to the missing one, and picking another hid Try Again (f8feef7); now Choose a Model, and Try Again answers on the new model |
+| J2 | A model that fails or is gone (an error to read, a way forward) | ❌→✅ the composer showed the default model while every message went to the missing one, and picking another hid Try Again (f8feef7, 1132f77); now Choose a Model, and Try Again answers on the new model |
 | J3 | The engine stops; the app brings it back | ✅ the engine killed mid-session came back on its own within seconds; the next message went through |
 | J4 | Very large output from a command, a huge file, a binary file in the changes | ⏳ |
 
