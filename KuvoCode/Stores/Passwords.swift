@@ -103,8 +103,9 @@ nonisolated enum Passwords {
         return (try? await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason)) ?? false
     }
 
-    /// The world the browser's password scripts run in, apart from the page's own scripts.
-    @MainActor static var world: WKContentWorld { .world(name: "kuvo-passwords") }
+    /// The world the browser's password scripts run in, apart from the page's own scripts. Kept,
+    /// as WebKit drops a world once nothing holds it.
+    @MainActor static let world = WKContentWorld.world(name: "kuvo-passwords")
     static let messageName = "kuvoLogin"
 
     /// Spots a sign-in being sent (a form submitted, a button clicked, Return pressed with a password

@@ -514,8 +514,10 @@ final class BrowserAgent {
 
     /// The agent's own world in each page: the element scripts run there, and the numbers they
     /// keep stay there, where the page's own scripts can't read or change them. The DOM is the
-    /// same in both, so what they do to the page is the same.
-    static var world: WKContentWorld { .world(name: "kuvo-agent") }
+    /// same in both, so what they do to the page is the same. Kept: WebKit drops a world, and
+    /// what its scripts kept, once nothing holds it, so a world made afresh for each call had
+    /// lost the snapshot's numbers by the click.
+    static let world = WKContentWorld.world(name: "kuvo-agent")
 
     /// Runs one of the element scripts with the numbers from the last snapshot.
     private func run(_ body: String, _ arguments: [String: Any], in browser: BrowserSession) async -> String {
