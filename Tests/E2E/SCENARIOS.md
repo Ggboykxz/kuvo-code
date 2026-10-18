@@ -33,19 +33,19 @@ real open-source projects cloned into the run's folder. Status: ✅ passes, ⚠�
 | B11 | The agent asks questions before starting ("which database should I use?") and you answer in the card | ✅ two questions: number key picks, typing writes your own, Return sends |
 | B12 | Queue follow-ups while it works, steer it mid-task, stop it with Esc, resume | ✅ queue with ⌘↩, Steer, Esc stops, Resume, ↑/↓ history; ❌→✅ Send Now only in ⋯ for a next-step message (45b9548) |
 | B13 | Two sessions in the same project working at once, and one in another project | ⏳ |
-| B14 | Switch model or effort mid-conversation | ⏳ |
+| B14 | Switch model or effort mid-conversation | ✅ picked another free model mid-conversation, applied when the picker closes, next reply on it; ⚠️ the notice names the model by its id ("Switched to deepseek-v4.1-flash-free") |
 | B15 | "Start the dev server and show me the page": the page in the panel's browser | ❌→✅ the agent couldn't click or type in the Mac browser since 0.5.6 (3edd9f4); a page that didn't open said only "browser is empty" (3f59090); its dev server left running showed nowhere (14ed231) |
 | B16 | A long conversation: scrolling, finding text (⌘F), and the context filling up and compacting | ⏳ |
 | B17 | A folder that isn't a git repository, a folder with spaces and accents in its name, and a big repository | ✅ accents and spaces in the folder name; ❌→✅ outside git the Changes tab stayed empty (8ad10d1) |
 | B18 | Rename, archive, restore and delete sessions; find one with ⌘K | ✅ rename (accents), archive, search finds it, unarchive, delete asks first, ⌘K finds files and sessions; ❌→✅ a deleted session stayed under In Conversations; a search typed at launch found nothing (8149536) |
-| B19 | "Use a subagent to research X while you do Y" | ⏳ |
-| B20 | Custom commands and skills: add one, use it with / | ⏳ |
+| B19 | "Use a subagent to research X while you do Y" | ✅ the subagent has its own row (task, agent, what it used) and its findings come back in the reply |
+| B20 | Custom commands and skills: add one, use it with / | ✅ a command made in Settings › Commands, offered after /, Tab to add words, filled into its prompt |
 
 ## C. Files and attachments
 
 | ID | Case | Status |
 | --- | --- | --- |
-| C1 | Attach a screenshot of a bug ("make it look like this") | ⏳ |
+| C1 | Attach a screenshot of a bug ("make it look like this") | ✅ the picture shows in your message, and the model described it correctly |
 | C2 | Attach a PDF or a CSV and ask about it | ❌→✅ three .md reports vanished from the sent message and the agent didn't know where they were (b8aee60) |
 | C3 | Drop several files, paste a picture from the clipboard, remove one before sending | ⏳ |
 | C4 | Quote part of a reply and answer it | ⏳ |
@@ -58,8 +58,8 @@ real open-source projects cloned into the run's folder. Status: ✅ passes, ⚠�
 | --- | --- | --- |
 | D1 | Ask a general question, then a follow-up | ⏳ |
 | D2 | "Write a regex for …" and copy the code | ⏳ |
-| D3 | "Make a chart of this data" or "a small game": a widget in the conversation | ⏳ |
-| D4 | A chat that turns into work: Move to Project | ⏳ |
+| D3 | "Make a chart of this data" or "a small game": a widget in the conversation | ✅ a live chart in the conversation |
+| D4 | A chat that turns into work: Move to Project | ✅ moved into a project with its conversation; the agent then works there |
 
 ## E. The browser
 
@@ -70,7 +70,7 @@ real open-source projects cloned into the run's folder. Status: ✅ passes, ⚠�
 | E3 | Upload a file to a website for you (a bot on this Mac) | ✅ see L22 |
 | E4 | Download a file from a page and work with it | ✅ downloaded through the browser and read; the e2e copy now downloads into its run's folder |
 | E5 | A site that needs your sign-in: the card, Take Over, Hand Back | ⚠️ Google and X refused the headless shell; the machine browser is full Chrome now (a94a15b), sign-in to recheck with a real account |
-| E6 | Browse yourself in the panel: tabs, back, the new tab page, a page's dialog | ⏳ |
+| E6 | Browse yourself in the panel: tabs, back, the new tab page, a page's dialog | ✅ a page's confirm in a bar with Cancel and OK, the address field, Back, the camera attaching a screenshot of the page |
 | E7 | Upload a file to a website from a bot on a machine | ✅ upload from a session on a machine (full Chrome, the-internet.herokuapp.com); the same tools as a bot's |
 
 ## F. Bots
@@ -193,7 +193,7 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 
 | ID | Case | Status |
 | --- | --- | --- |
-| G1 | Make a group chat, ask it to decide something, and watch the bots talk it through | ⏳ |
+| G1 | Make a group chat, ask it to decide something, and watch the bots talk it through | ✅ two bots talked it through and came to a decision |
 | G2 | Say "go ahead" and the work is handed out; each bot does its part and reports back | ⏳ |
 | G3 | Undo a message, stop the chat, keep it going | ⏳ |
 | G4 | A meeting on a schedule | ⏳ |
@@ -202,7 +202,7 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 
 | ID | Case | Status |
 | --- | --- | --- |
-| H1 | Add a well-known MCP server with no account from Popular Servers and use it | ⏳ |
+| H1 | Add a well-known MCP server with no account from Popular Servers and use it | ✅ Context7 from Popular Servers, its two tools used in a session; ❌→✅ every Add read "Add" to VoiceOver (182a4c0) |
 | H2 | Add your own MCP server (a command) and use its tools | ⏳ |
 | H3 | An MCP server that asks you something mid-task | ⏳ |
 | H4 | Add a skill from GitHub and use it | ⏳ |
@@ -221,15 +221,15 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 | ID | Case | Status |
 | --- | --- | --- |
 | J1 | The network goes away mid-reply | ⏳ |
-| J2 | A model that fails or is gone (an error to read, a way forward) | ⏳ |
-| J3 | The engine stops; the app brings it back | ⏳ |
+| J2 | A model that fails or is gone (an error to read, a way forward) | ❌→✅ the composer showed the default model while every message went to the missing one, and picking another hid Try Again (f8feef7); now Choose a Model, and Try Again answers on the new model |
+| J3 | The engine stops; the app brings it back | ✅ the engine killed mid-session came back on its own within seconds; the next message went through |
 | J4 | Very large output from a command, a huge file, a binary file in the changes | ⏳ |
 
 ## K. Settings, menus and the rest
 
 | ID | Case | Status |
 | --- | --- | --- |
-| K1 | Every Settings page opens, reads well, and keeps what you change | ⏳ |
+| K1 | Every Settings page opens, reads well, and keeps what you change | ✅ all 22 Settings pages open with their content |
 | K2 | Every menu command and keyboard shortcut does what it says | ⏳ |
 | K3 | Notifications: a finished task and a question while you're in another app | ⏳ |
 | K4 | The menu bar's usage panel | ⏳ |
