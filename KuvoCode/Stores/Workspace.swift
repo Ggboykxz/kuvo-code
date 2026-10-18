@@ -715,6 +715,7 @@ final class Workspace {
             // to the old one.
             for model in models.values where RemoteFolder.machine(of: model.session.location.directory) == machine { model.reconnect(api) }
             let theirs = listed.filter { !isHidden($0) }
+            let reconnected = connectedOnce.contains(machine)
             tellMissedNews(in: theirs, machine: machine)
             sessions = sessions.filter { RemoteFolder.machine(of: $0.location.directory) != machine } + theirs
             for session in theirs { sessionMachines[session.id] = machine }
@@ -726,6 +727,7 @@ final class Workspace {
             if let active = try? await api.activeSessions(), isCurrent() {
                 // A subagent's session has no row: its machine is the one its events came from.
                 running = running.filter { id in (session(id).map { RemoteFolder.machine(of: $0.location.directory) } ?? sessionMachines[id]) != machine }.union(active)
+                await noteAsks(on: machine, in: active, api: api, tell: reconnected)
             }
             // Its open conversations, kept while it was away, are read again; one deleted there
             // meanwhile goes. (The list has only the newest, so one missing from it is asked about.)
@@ -748,6 +750,38 @@ final class Workspace {
             return false
         }
         return true
+    }
+
+    /// What a machine's sessions at work ask you, once it's back: `asking` as it is there now and,
+    /// when it `tell`s (connected again since launch, as for bots' news), each request made while
+    /// it was out of reach (a bot's wake-up while your Mac slept) told then, as it would have
+    /// been, since no event brings it. One told before isn't told again.
+    private func noteAsks(on machine: String, in active: Set<String>, api: OpenCodeAPI, tell: Bool) async {
+        var found: [String: String] = [:]
+        var complete = true
+        for id in active {
+            async let permissions = api.permissions(session: id)
+            async let forms = api.forms(session: id)
+            // Couldn't read them: its own are left as they were.
+            guard let permissions = try? await permissions, let forms = try? await forms else {
+                complete = false
+                continue
+            }
+            for request in permissions {
+                found[request.id] = request.sessionID
+                if tell, asking[request.id] == nil { notifyAsk(request.sessionID, body: Self.describe(request), request: request.id, isPermission: true) }
+            }
+            for form in forms where form.sessionID != FormRequest.anySession {
+                found[form.id] = form.sessionID
+                guard tell, asking[form.id] == nil else { continue }
+                let question = Self.question(in: form)
+                notifyAsk(form.sessionID, body: question?.text ?? (form.isQuestion ? "Has a question for you." : "Needs your answer."), request: form.id, question: question)
+            }
+        }
+        // Answered meanwhile (on your phone, say): no longer asking.
+        let isTheirs = { (id: String) in (self.session(id).map { RemoteFolder.machine(of: $0.location.directory) } ?? self.sessionMachines[id]) == machine }
+        let kept = complete ? asking.filter { !isTheirs($0.value) || sharedForms[$0.key] != nil } : asking
+        asking = kept.merging(found) { $1 }
     }
 
     /// A machine disconnected: its sessions stay as last seen until it's back, their
@@ -1201,7 +1235,16 @@ final class Workspace {
     func answer(_ request: String, in session: String, with answer: Notifier.PermissionAnswer) {
         Analytics.shared.track("permission_answered", ["decision": answer.rawValue, "from": "notification"])
         guard let decision = PermissionRequest.Decision(rawValue: answer.rawValue) else { return }
-        Task { try? await api(forSession: session)?.reply(session: session, permission: request, decision: decision) }
+        Task {
+            do {
+                guard let api = api(forSession: session) else { throw CancellationError() }
+                try await api.reply(session: session, permission: request, decision: decision)
+            } catch {
+                // The agent still waits: say so, as for a question, rather than lose the answer.
+                Notifier.shared.notify(session: session, title: botName?(session) ?? self.session(session)?.title ?? AppInfo.name,
+                                       body: "Your answer didn’t go. Open the conversation to answer there.")
+            }
+        }
     }
 
     func markViewed(_ id: String) {
