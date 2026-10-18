@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Watches see something appear or go away again: a check like `curl -s … | grep -o '…'` that finds nothing counts, so a bot hears when an item comes back in stock or a status page stops saying all is well. A run where curl, wget or gh fails, as when the network is down, never counts, through `| jq`, `| sed` or `| head` too. A check that writes warnings no longer wakes its bot once after the update, and Check Now runs a check the way its watch does and says when a run wouldn't count.
 - Opening a picture or file from a conversation saves it in Kuvo Code's own Attachments folder, as the kind of file it says it is and marked as downloaded. Anything that could run, like an app, a script or an installer, is shown in Finder instead of opened.
 - Starting a rename on another session while one is open no longer closes the new one at once. In Settings › Skills, a repository that finishes loading after you opened another no longer replaces it.
 - A new session's first message is kept until it has really gone to the agent, so quitting while the session's tools start no longer loses it.
