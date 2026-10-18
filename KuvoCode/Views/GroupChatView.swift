@@ -354,7 +354,7 @@ private struct WorkList: View {
 
     /// Whether the bot is waiting on you in its conversation: a permission, a question, a sign-in.
     private static func waits(on bot: Bot, in workspace: Workspace) -> Bool {
-        workspace.needsAttention(bot.sessionID) || workspace.asking.values.contains(bot.sessionID)
+        workspace.needsAttention(bot.sessionID)
     }
 
     /// Its words as the lead wrote them: code, bold and links shown, on its own lines.

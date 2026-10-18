@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- A session waiting for your answer shows the orange hand in the sidebar and tab bar even if you haven't opened it, like a bot's work in a session of its own. It showed as still working.
 - Settings › Engine no longer says every web search service needs an API key: most search without one. Its "Any service" choice was called "Any connected service", though it uses services you haven't connected too.
 - Kuvo Code no longer stops responding for a second as it starts, while it checks that its engine is genuine.
 - Opened from the disk image, Kuvo Code offers to move itself to your Applications folder and opens from there. From the disk image it can't update itself, so updates were quietly skipped.

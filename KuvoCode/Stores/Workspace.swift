@@ -426,8 +426,10 @@ final class Workspace {
         defaultBranches[directory] = info.branch?.default
     }
 
+    /// Waiting on you: a permission, a question or a sign-in, in a conversation you have open or
+    /// not (a bot's work in a session of its own, say).
     func needsAttention(_ id: String) -> Bool {
-        if askingInBrowser.contains(id) { return true }
+        if askingInBrowser.contains(id) || asking.values.contains(id) { return true }
         guard let model = models[id] else { return false }
         return !model.permissions.isEmpty || !model.forms.isEmpty
     }
