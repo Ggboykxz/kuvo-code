@@ -201,6 +201,21 @@ itself. A host serves:
   models (providers `claude-code`, `codex-cli`, `cursor`, `grok-cli`, `antigravity`) is made
   there, never on the engine. `kuvo/info` has `agents: true` while the bridge is up; otherwise
   these answer 503.
+  - Accounts: besides each agent's own sign-in, ones you added, each its own provider
+    `<agent's provider>@<id>` (`claude-code@1f2e3d4c`), named `Claude Code · Work` in
+    `kuvo/agents/api/integration` (`metadata.accountID`, `metadata.accountLabel`). Their models
+    and sessions are theirs. `kuvo/agents/api/kuvo/accounts`: `POST {agent, label}` (agent:
+    `claude`, `codex`, `cursor`, `grok`, `antigravity`) → `{data: {providerID}}`, then sign in as
+    any; `PATCH …/accounts/<provider> {label}`; `DELETE …/accounts/<provider>`.
+  - Auto: a session's model `{providerID: "auto", id: "auto"}` runs down your list.
+    `kuvo/agents/api/kuvo/auto`: `GET` and `PUT {entries}` → `{data: {entries: [{providerID,
+    modelID, variant?}], limits: [{key, until, scope, known}]}}` (`key` is a provider for an
+    account's limit, `provider/model` for a model's; `until` in ms); `DELETE …/auto/limits`
+    tries them all again. The event `kuvo.auto.updated` says the list or its limits changed.
+  - A session with the agents may switch to any model (`…/session/<id>/model`), the engine's
+    too: it runs those through an engine session of its own, which carries
+    `metadata.kuvo.engineFor` and is never shown (hide it in the engine's session list).
+    `…/session/<id>/fork {before}` makes a new session from a message.
 - On a Mac, `kuvo/hosts`: the machines this phone may reach directly, with their addresses
   and static keys, so pairing once with the Mac reaches them all.
 - On a Mac, `kuvo/bots`: your bots by their session, wherever they live, with their name,
