@@ -5,6 +5,7 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- Showing the sidebar again slides it straight in: it stays ready while hidden, bots included, rather than being drawn again first, which made the start of the slide stutter.
 
 - Scrolling the sidebar, and everything else that moves in the window, takes less work: macOS no longer works out where the window can be dragged from each time something moves, only while the pointer is on the title bar. Scrolling the sidebar took about half the work in tests.
 - Picking another model while the agent works hands the run to it right away: the step under way stops and the new model carries on, or says why it can't (one that isn't available shows its error with Try Again). Before, the switch waited for the next step, so a step that had stalled kept the session working with nothing happening. And a reply that stops arriving partway now says it's waiting for the model to answer.
