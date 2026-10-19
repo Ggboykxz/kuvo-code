@@ -305,6 +305,14 @@ public enum Wakes {
     # Kuvo Code's wake-ups for bots. See `kuvo-wake <bot> help`.
     now=$(date +%s)
 
+    # What it runs (watches' checks) gets the computer's own folders back, as the agent's commands
+    # do: on a machine, the engine's watchdog runs it with them pointed into ~/.kuvo-code, each one's
+    # own value kept as KUVO_OWN_<name>, empty when it had none (see CommandEnvironment).
+    for o_name in $(env | sed -n 's/^KUVO_OWN_\([A-Za-z0-9_]*\)=.*/\1/p'); do
+      o_value=$(printenv "KUVO_OWN_$o_name"); unset "KUVO_OWN_$o_name"
+      if [ -n "$o_value" ]; then export "$o_name=$o_value"; else unset "$o_name"; fi
+    done
+
     usage() {
       echo "Usage:"
       echo "  kuvo-wake <bot> add <when> [--every <repeat>] <note>"

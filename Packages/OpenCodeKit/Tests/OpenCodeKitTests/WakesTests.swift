@@ -429,6 +429,11 @@ struct WakesTests {
         try fm.createDirectory(at: k.appending(path: "project"), withIntermediateDirectories: true)
         try k.appending(path: "project").path.write(to: bot.appending(path: "directory"), atomically: true, encoding: .utf8)
         #expect(Wakes.tried(try tried("echo \"${PWD##*/} $#\"; echo oops >&2").output)! == ("project 0", nil), "\(shell)")
+        // With the computer's own folders, as the watchdog on a machine keeps them.
+        let own = "KUVO_OWN_XDG_CONFIG_HOME=/home/me/.config KUVO_OWN_XDG_DATA_HOME= XDG_CONFIG_HOME=\"$K/config\" XDG_DATA_HOME=\"$K/data\" "
+        try #"printf '%s|%s|%s' "$XDG_CONFIG_HOME" "${XDG_DATA_HOME-unset}" "${KUVO_OWN_XDG_CONFIG_HOME-unset}""#.write(to: watch.appending(path: "check"), atomically: true, encoding: .utf8)
+        let folders = try sh(own + "\(shell) \"$K/bin/kuvo-wake\" \"$K/bots/bot_test\" try AbCd12", in: k)
+        #expect(Wakes.tried(folders.output)?.output == "/home/me/.config|unset|unset", "\(shell)")
         // It counts nothing, and leaves nothing behind.
         #expect(try fm.contentsOfDirectory(atPath: watch.path).sorted() == ["check", "every", "next", "note"], "\(shell)")
         #expect(try String(contentsOf: watch.appending(path: "next"), encoding: .utf8) == "0")
