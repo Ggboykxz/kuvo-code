@@ -1435,6 +1435,12 @@ final class Workspace {
     /// running in the background after its turn ended keeps the session working, and shows over
     /// its composer.
     private(set) var shellJobs: [String: [ShellJob]] = [:]
+    /// The commands that have run a moment, which the bar over the composer may show: the step
+    /// that waits on a command claims it only once it has started, so for its first moment each
+    /// one looks like it runs in the background, and most end within it. Shown at once, every
+    /// command flashed the bar.
+    private(set) var lastingShellJobs: Set<String> = []
+    private static let lastingAfter: Milliseconds = 2000
 
     private func noteShellJob(_ event: ServerEvent) {
         switch event.type {
@@ -1443,6 +1449,8 @@ final class Workspace {
             guard let job = try? event.payload(as: Created.self).info, job.status == "running", let id = job.sessionID,
                   shellJobs[id]?.contains(where: { $0.id == job.id }) != true else { return }
             shellJobs[id, default: []].append(job)
+            // From now: the engine's clock (a machine's) needn't be this Mac's.
+            noteLasting(job.id, after: Self.lastingAfter)
         case "shell.exited", "shell.deleted":
             struct Gone: Decodable { var id: String }
             guard let gone = try? event.payload(as: Gone.self).id else { return }
@@ -1450,8 +1458,23 @@ final class Workspace {
                 let left = jobs.filter { $0.id != gone }
                 shellJobs[id] = left.isEmpty ? nil : left
             }
+            lastingShellJobs.remove(gone)
         default:
             break
+        }
+    }
+
+    /// `id` counts as lasting `after` from now, if it's still running then.
+    private func noteLasting(_ id: String, after: Milliseconds) {
+        guard !lastingShellJobs.contains(id) else { return }
+        guard after > 0 else {
+            lastingShellJobs.insert(id)
+            return
+        }
+        Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(Int(after)))
+            guard let self, shellJobs.values.contains(where: { $0.contains { $0.id == id } }) else { return }
+            lastingShellJobs.insert(id)
         }
     }
 
@@ -1462,7 +1485,16 @@ final class Workspace {
         for session in sessions where session.location.directory == directory {
             let own = jobs.filter { $0.sessionID == session.id && $0.status == "running" }
             if (shellJobs[session.id] ?? []) != own { shellJobs[session.id] = own.isEmpty ? nil : own }
+            // Ones started a while ago show at once.
+            let now = Date.now.timeIntervalSince1970 * 1000
+            for job in own {
+                let age = job.time?.started.map { now - $0 } ?? 0
+                noteLasting(job.id, after: min(Self.lastingAfter, max(0, Self.lastingAfter - age)))
+            }
         }
+        // And none that ended while this Mac wasn't listening.
+        let running = Set(shellJobs.values.joined().map(\.id))
+        if !lastingShellJobs.isSubset(of: running) { lastingShellJobs.formIntersection(running) }
     }
 
     /// Stops a command an agent left running: its process group is sent SIGTERM, on this Mac or

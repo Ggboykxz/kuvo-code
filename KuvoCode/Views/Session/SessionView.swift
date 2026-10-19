@@ -126,9 +126,10 @@ private struct BottomStack: View {
     @Environment(\.takesCardKeys) private var takesCardKeys
     @Namespace private var glass
 
-    /// Commands its agent left running, which the conversation doesn't show as they run.
+    /// Commands its agent left running, which the conversation doesn't show as they run: once
+    /// they've run a moment (see `Workspace.lastingShellJobs`).
     private var backgroundJobs: [ShellJob] {
-        (workspace.shellJobs[model.id] ?? []).filter { !model.inlineShells.contains($0.id) }
+        (workspace.shellJobs[model.id] ?? []).filter { workspace.lastingShellJobs.contains($0.id) && !model.inlineShells.contains($0.id) }
     }
 
     var body: some View {
