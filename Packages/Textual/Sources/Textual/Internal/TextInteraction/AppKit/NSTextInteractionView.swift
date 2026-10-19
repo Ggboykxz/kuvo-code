@@ -29,6 +29,9 @@
     private var selectionAnchor: TextPosition?
     /// A click that made the selection active, handled once its text's layouts come in.
     private var pendingMouseDown: NSEvent?
+    /// A right-click (or Control-click) that did, its menu shown once they come in: before, it
+    /// would find no word under it, and be empty.
+    private var pendingMenuEvent: NSEvent?
 
     init(
       model: TextSelectionModel,
@@ -46,9 +49,15 @@
 
     private func watchLayouts() {
       model.layoutsDidChange = { [weak self] in
-        guard let self, let event = self.pendingMouseDown, self.model.hasText else { return }
-        self.pendingMouseDown = nil
-        self.handleMouseDown(event)
+        guard let self, self.model.hasText else { return }
+        if let event = self.pendingMouseDown {
+          self.pendingMouseDown = nil
+          self.handleMouseDown(event)
+        }
+        if let event = self.pendingMenuEvent {
+          self.pendingMenuEvent = nil
+          self.showMenu(for: event)
+        }
       }
     }
 
@@ -131,18 +140,31 @@
     }
 
     override func rightMouseDown(with event: NSEvent) {
-      model.isActive = true
-      let location = convert(event.locationInWindow, from: nil)
-      updateSelectionForContextMenu(at: location)
-
-      NSMenu.popUpContextMenu(makeContextMenu(), with: event, for: self)
+      guard model.isActive, model.hasText else { return waitForLayouts(event) }
+      showMenu(for: event)
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {
+      guard model.isActive, model.hasText else {
+        waitForLayouts(event)
+        return nil
+      }
       let location = convert(event.locationInWindow, from: nil)
       updateSelectionForContextMenu(at: location)
 
       return makeContextMenu()
+    }
+
+    /// Selection on, and the menu for `event` once the text's layouts are in.
+    private func waitForLayouts(_ event: NSEvent) {
+      model.isActive = true
+      pendingMenuEvent = event
+    }
+
+    private func showMenu(for event: NSEvent) {
+      let location = convert(event.locationInWindow, from: nil)
+      updateSelectionForContextMenu(at: location)
+      NSMenu.popUpContextMenu(makeContextMenu(), with: event, for: self)
     }
 
     override func selectAll(_ sender: Any?) {
