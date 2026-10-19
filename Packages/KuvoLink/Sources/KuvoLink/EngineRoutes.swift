@@ -22,6 +22,18 @@ public enum EngineRoutes {
             || path.prefixMatch(of: #/api/pty(/|\?|$)/#) != nil
     }
 
+    /// What a phone may ask a Mac's coding agents' bridge for: what it may ask an engine for, and
+    /// their accounts (adding, naming, removing and signing in to them) and Auto's list. Never
+    /// where the engine is, nor updating an agent's program (that runs an installer on the Mac).
+    public static func allowsAgents(_ path: String, method: String = "GET") -> Bool {
+        guard staysInProject(path) else { return false }
+        if path.prefixMatch(of: #/api/kuvo/engine(/|\?|$)/#) != nil { return false }
+        if path.prefixMatch(of: #/api/integration/[^/?]+/update(/|\?|$)/#) != nil { return false }
+        return allows(path, method: method)
+            || path.prefixMatch(of: #/api/integration(/|\?|$)/#) != nil
+            || path.prefixMatch(of: #/api/kuvo/(auto|accounts)(/|\?|$)/#) != nil
+    }
+
     /// The sockets a phone may open: a terminal's.
     public static func allowsSocket(_ path: String) -> Bool {
         staysInProject(path) && path.prefixMatch(of: #/api/pty/[^/?]+/connect(\?|$)/#) != nil
@@ -87,9 +99,10 @@ public enum EngineRoutes {
 
     /// Passes `request` to the engine at `base` (its password added here), and its response back
     /// in pieces as they come: an event stream's events one by one.
-    public static func forward(_ request: LinkRequest, to base: URL, password: String?, session: URLSession = .shared) -> AsyncThrowingStream<LinkResponsePart, Error> {
+    public static func forward(_ request: LinkRequest, to base: URL, password: String?, session: URLSession = .shared,
+                               allowing: @Sendable (String, String) -> Bool = { allows($0, method: $1) }) -> AsyncThrowingStream<LinkResponsePart, Error> {
         AsyncThrowingStream { continuation in
-            guard allows(request.path, method: request.method) else {
+            guard allowing(request.path, request.method) else {
                 continuation.yield(.head(status: 403, headers: ["content-type": "text/plain"]))
                 continuation.yield(.body(Data("That isn’t available over the link.".utf8)))
                 continuation.finish()

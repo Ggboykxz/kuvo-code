@@ -45,6 +45,21 @@ final class FakeEngine: URLProtocol, @unchecked Sendable {
         return (status, headers, pieces)
     }
 
+    @Test func theAgentsBridgeAlsoTakesTheirAccountsAndAuto() {
+        #expect(EngineRoutes.allowsAgents("api/session/ses_1/prompt", method: "POST"))
+        #expect(EngineRoutes.allowsAgents("api/integration"))
+        #expect(EngineRoutes.allowsAgents("api/integration/claude-code@1f2e/connect/oauth", method: "POST"))
+        #expect(EngineRoutes.allowsAgents("api/kuvo/auto", method: "PUT"))
+        #expect(EngineRoutes.allowsAgents("api/kuvo/auto/limits", method: "DELETE"))
+        #expect(EngineRoutes.allowsAgents("api/kuvo/accounts/codex-cli@9a8b", method: "PATCH"))
+        #expect(!EngineRoutes.allowsAgents("api/kuvo/engine", method: "PUT"))
+        #expect(!EngineRoutes.allowsAgents("api/integration/claude-code/update", method: "POST"))
+        #expect(!EngineRoutes.allowsAgents("api/fs/read/../../etc/passwd"))
+        // The engine's own list stays as it was.
+        #expect(!EngineRoutes.allows("api/integration"))
+        #expect(!EngineRoutes.allows("api/kuvo/auto"))
+    }
+
     @Test func passesRequestsWithTheEnginesPassword() async throws {
         FakeEngine.asked = []
         let request = LinkRequest(method: "POST", path: "api/session/ses_1/prompt?x=1", headers: ["X-Opencode-Directory": "/p", "Authorization": "Basic forged", "Cookie": "c"], body: Data("{}".utf8))
