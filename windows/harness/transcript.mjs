@@ -59,7 +59,14 @@ export function fromHistory(sessionID, messages, permissions = [], running = fal
     const entry = messageEntry(message);
     if (entry) transcript.entries.push(entry);
   }
-  transcript.running = running;
+  // A run is running while its last words are unfinished — the Mac app's own measure
+  // (Message.isRunning reads the message's status), not the engine's session flag, which
+  // can still say "running" for a moment after the turn is over.
+  const unfinished = transcript.entries.some(entry => entry.kind === "assistant" && (entry.parts ?? []).some(part => {
+    if (part.type === "text" || part.type === "reasoning") return part.done === false;
+    return part.status === "running" || part.status === "pending";
+  }));
+  transcript.running = Boolean(running) && unfinished;
   return transcript;
 }
 

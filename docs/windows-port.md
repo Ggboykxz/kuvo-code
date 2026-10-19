@@ -105,7 +105,11 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
-  - **2.38 (this change).** Providers, the Mac app's way: the engine's own are listed, and
+  - **2.39 (this change).** A run is running while its **last words are unfinished**, the Mac
+    app's own measure (its `Message.isRunning` reads the message's status), not while the
+    engine's session flag still says so — that flag lingers for a moment after the turn is
+    over, and the Stop button used to stay.
+  - **2.38. Providers, the Mac app's way: the engine's own are listed, and
     you can add one of yours with its id, its name, its address and its models — the key is
     not written here, it stays where opencode keeps it.
   - **2.37. The upstream's v0.5.20 behaviour: the sidebar folds away (and

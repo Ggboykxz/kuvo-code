@@ -821,3 +821,16 @@ test("opencode's own settings are read even when they are .jsonc, with comments"
   })).json();
   assert.deepEqual(brought.added, ["mcp:rea"]);
 });
+
+test("a session is running while its last words are unfinished, not while a flag says so", async t => {
+  const { fromHistory } = await import("./transcript.mjs");
+  const finished = fromHistory("ses_1", [
+    { id: "msg_1", type: "assistant", time: { created: 1 }, content: [{ type: "text", text: "done", time: { created: 1, completed: 2 } }] },
+  ], [], true);
+  assert.equal(finished.running, false, "the engine's flag alone does not keep a finished run running");
+
+  const going = fromHistory("ses_1", [
+    { id: "msg_1", type: "assistant", time: { created: 1 }, content: [{ type: "text", text: "still", time: { created: 1 } }] },
+  ], [], true);
+  assert.equal(going.running, true, "unfinished words mean the run is going");
+});
