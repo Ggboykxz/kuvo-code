@@ -239,6 +239,8 @@ export function handler(context: Context) {
             sessions.prompt(id, { id: input.id ?? newID("msg"), text: String(input.text ?? ""), files: input.files ?? [], delivery: input.delivery ?? "steer" })
             return json({})
           }
+          case "fork":
+            return json({ data: sessions.fork(id, String((await body()).before ?? "")) })
           case "synthetic": {
             const input = await body()
             sessions.synthetic(id, String(input.text ?? ""), typeof input.description === "string" ? input.description : undefined)

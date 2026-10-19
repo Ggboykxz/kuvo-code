@@ -200,6 +200,39 @@ export class Sessions {
     return this.agent(providerID)?.id ?? "engine"
   }
 
+  /**
+   * A new session with this one's conversation before `before` (a message of yours), to try
+   * another way from there. The agents' own conversations can't be copied: whichever runs it
+   * gets what came before as a handover.
+   */
+  fork(id: string, before: string): Session {
+    const record = this.record(id)
+    const at = record.messages.findIndex((message) => message.id === before)
+    if (at < 0) throw new NotFound("That message isn't in this session.")
+    const now = Date.now()
+    const source = record.session
+    const session: Session = {
+      id: newID("ses"),
+      projectID: source.projectID,
+      agent: source.agent,
+      model: source.model,
+      cost: 0,
+      tokens: noTokens(),
+      time: { created: now, updated: now },
+      title: source.title,
+      location: { ...source.location },
+      permissions: source.permissions,
+      metadata: { ...source.metadata },
+    }
+    this.store.add(session)
+    const copy = this.store.get(session.id)!
+    copy.messages = structuredClone(record.messages.slice(0, at))
+    if (record.agent.kuvoInstructions) copy.agent.kuvoInstructions = structuredClone(record.agent.kuvoInstructions)
+    this.store.save(session.id, true)
+    emit("session.created", { sessionID: session.id, session }, session.location.directory)
+    return session
+  }
+
   list(directory?: string): Session[] {
     return this.store
       .all()

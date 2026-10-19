@@ -415,6 +415,24 @@ describe("moving between agents", () => {
     expect(a.threads[0].closed).toBe(true)
   })
 
+  test("a new session from a message: what came before, handed over", async () => {
+    const id = create()
+    const first = send(id, "first")
+    await settled(id, 1)
+    const second = send(id, "second")
+    await settled(id, 2)
+    const fork = sessions.fork(id, second)
+    expect(fork.id).not.toBe(id)
+    expect(sessions.messages(fork.id).map((message) => message.id)).toContain(first)
+    expect(sessions.messages(fork.id).map((message) => message.id)).not.toContain(second)
+    send(fork.id, "another way")
+    await settled(fork.id, 2)
+    const handed = a.runs.at(-1)!.text
+    expect(handed).toContain("first")
+    expect(handed).not.toContain("second")
+    expect(handed.endsWith("User message:\nanother way")).toBe(true)
+  })
+
   test("a model of the same agent needs no handover", async () => {
     const id = create()
     send(id, "one")

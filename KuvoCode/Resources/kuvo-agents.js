@@ -4506,6 +4506,35 @@ class Sessions {
       return autoProvider;
     return this.agent(providerID)?.id ?? "engine";
   }
+  fork(id, before) {
+    const record = this.record(id);
+    const at = record.messages.findIndex((message) => message.id === before);
+    if (at < 0)
+      throw new NotFound("That message isn't in this session.");
+    const now = Date.now();
+    const source = record.session;
+    const session = {
+      id: newID("ses"),
+      projectID: source.projectID,
+      agent: source.agent,
+      model: source.model,
+      cost: 0,
+      tokens: noTokens(),
+      time: { created: now, updated: now },
+      title: source.title,
+      location: { ...source.location },
+      permissions: source.permissions,
+      metadata: { ...source.metadata }
+    };
+    this.store.add(session);
+    const copy = this.store.get(session.id);
+    copy.messages = structuredClone(record.messages.slice(0, at));
+    if (record.agent.kuvoInstructions)
+      copy.agent.kuvoInstructions = structuredClone(record.agent.kuvoInstructions);
+    this.store.save(session.id, true);
+    emit("session.created", { sessionID: session.id, session }, session.location.directory);
+    return session;
+  }
   list(directory) {
     return this.store.all().filter((session) => !directory || session.location.directory === directory).sort((a, b) => b.time.updated - a.time.updated || (a.id < b.id ? 1 : -1));
   }
@@ -5244,6 +5273,8 @@ function handler(context) {
             sessions.prompt(id, { id: input.id ?? newID("msg"), text: String(input.text ?? ""), files: input.files ?? [], delivery: input.delivery ?? "steer" });
             return json({});
           }
+          case "fork":
+            return json({ data: sessions.fork(id, String((await body()).before ?? "")) });
           case "synthetic": {
             const input = await body();
             sessions.synthetic(id, String(input.text ?? ""), typeof input.description === "string" ? input.description : undefined);
