@@ -1,0 +1,617 @@
+// The conversation view, in React: sessions on the left, the transcript and the composer
+// on the right. The engine's events keep the transcript current, as they always did.
+
+import { useEffect, useRef, useState } from "react";
+import { api } from "./api";
+import type { Attachment, FormRequest, PermissionRequest, SessionSummary, Transcript, TranscriptEntry } from "./api";
+import { brief, compactTokens, errorText, renderMarkdown, when } from "./lib";
+import {
+  answerPermission,
+  applyLook,
+  boot,
+  closeSessionTab,
+  complain,
+  deleteSession,
+  dismissForm,
+  loadAgents,
+  loadCommands,
+  loadForms,
+  loadInbox,
+  loadLook,
+  loadModels,
+  loadProjects,
+  loadSessionDiff,
+  loadSessions,
+  loadVcs,
+  notify,
+  openSession,
+  redoNow,
+  render,
+  replyForm,
+  saveConfig,
+  sendPrompt,
+  state,
+  stopRun,
+  undoFromHere,
+  useStore,
+} from "./store";
+import { Settings } from "./Settings";
+import { DiffModal, Drawer, Palette, Picker, Toast } from "./Overlays";
+
+// ---- The pieces of the transcript ----
+
+function ToolCard({ part }: { part: TranscriptEntry["parts"] extends (infer P)[] | undefined ? P : never }) {
+  const status = part.status ?? "running";
+  const input = brief(part.input ?? part.inputText);
+  const output = Array.isArray(part.output)
+    ? part.output.map(item => (item as { text?: string })?.text ?? brief(item)).filter(Boolean).join("\n")
+    : part.output === undefined ? "" : brief(part.output);
+  const lower = (part.name ?? "").toLowerCase();
+  const hasDiff = lower.includes("edit") || lower.includes("write") || lower.includes("patch")
+    || Boolean(part.input && ((part.input as Record<string, unknown>).oldString || (part.input as Record<string, unknown>).old || (part.input as Record<string, unknown>).content));
+  return (
+    <div className={`tool ${status}`}>
+      <div className="tool-head">
+        <span className="tool-name">{part.name ?? "tool"}</span>
+        <span className="tool-status">{status === "completed" ? "done" : status === "error" ? "failed" : status}</span>
+      </div>
+      {input ? <pre className="tool-input">{input}</pre> : null}
+      {output ? <pre className="tool-output">{output.length > 4000 ? `${output.slice(0, 4000)}…` : output}</pre> : null}
+      {part.error ? <div className="tool-error">{errorText(part.error)}</div> : null}
+      {hasDiff ? (
+        <button
+          className="small"
+          onClick={() => {
+            const input_ = (part.input ?? {}) as Record<string, unknown>;
+            const oldText = (input_.oldString ?? input_.old ?? "") as string;
+            const newText = (input_.newString ?? input_.new ?? input_.content ?? part.output ?? "") as string;
+            showDiff(`${part.name ?? "tool"} · ${(input_.filePath ?? input_.path ?? input_.file ?? "") as string}`, oldText, newText);
+          }}
+        >
+          diff
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+export function showDiff(title: string, oldText: string, newText: string) {
+  state.diffOpen = true;
+  state.diffTitle = title;
+  state.diffOld = oldText;
+  state.diffNew = newText;
+}
+
+function AssistantEntry({ entry }: { entry: TranscriptEntry }) {
+  return (
+    <article className="entry assistant">
+      {(entry.parts ?? []).map((part, index) => {
+        if (part.type === "text") return <div key={index} className="text markdown" dangerouslySetInnerHTML={{ __html: renderMarkdown(part.text ?? "") }} />;
+        if (part.type === "reasoning") {
+          return (
+            <details key={index} className="reasoning">
+              <summary className={entry.running ? "shimmer" : ""}>Thinking</summary>
+              <div className="text markdown" dangerouslySetInnerHTML={{ __html: renderMarkdown(part.text ?? "") }} />
+            </details>
+          );
+        }
+        if (part.type === "tool") return <ToolCard key={index} part={part} />;
+        return null;
+      })}
+      <button
+        className="small entry-action"
+        onClick={async () => {
+          if (!state.session) return;
+          try {
+            const { session: branched } = await api<{ session: SessionSummary }>(`/api/sessions/${encodeURIComponent(state.session.id)}/fork`, {
+              method: "POST",
+              body: { before: entry.id },
+            });
+            state.transcripts.delete(branched.id);
+            await loadSessions();
+            await openSession(branched.id);
+          } catch (error) {
+            complain(error);
+          }
+        }}
+      >
+        Fork here
+      </button>
+      {entry.retry ? <div className="entry-meta retry">retrying{entry.retry.attempt ? ` (attempt ${entry.retry.attempt})` : ""}…</div> : null}
+      {entry.error ? <div className="entry-error">{errorText(entry.error)}</div> : null}
+      {entry.cost ? <div className="entry-meta">{entry.model ?? ""} · ${entry.cost.toFixed(4)}</div> : null}
+    </article>
+  );
+}
+
+function AttachmentNode({ file }: { file: Attachment }) {
+  const fromData = file.data ? `data:${file.mime};base64,${file.data}` : null;
+  const fromUri = file.uri ? `/api/raw?path=${encodeURIComponent(decodeURIComponent(String(file.uri).replace(/^file:\/\//, "")))}` : null;
+  const source = fromData ?? fromUri;
+  if (!source) return <span className="attachment-chip">{file.name ?? "file"}</span>;
+  if ((file.mime ?? "").startsWith("image/")) {
+    return <img className="attachment-image" src={source} alt={file.name ?? "image"} onClick={() => window.open(source, "_blank")} />;
+  }
+  return <a className="attachment-chip" href={source} target="_blank" rel="noreferrer">{`${file.name ?? "file"} (${file.mime})`}</a>;
+}
+
+function EntryNodes({ transcript }: { transcript: Transcript }) {
+  return (
+    <>
+      {transcript.entries.map((entry, index) => {
+        const key = entry.id ?? `${entry.kind}-${index}`;
+        if (entry.kind === "user") {
+          return (
+            <article key={key} className="entry user">
+              <div className="text">{entry.text}</div>
+              {(entry.files ?? []).map((file, i) => <AttachmentNode key={i} file={file} />)}
+              {entry.id ? (
+                <button className="small entry-action" title="Take the session back to before this message" onClick={() => void undoFromHere(entry)}>
+                  Undo from here
+                </button>
+              ) : null}
+            </article>
+          );
+        }
+        if (entry.kind === "assistant") return <AssistantEntry key={key} entry={entry} />;
+        if (entry.kind === "notice") return <div key={key} className="notice">{entry.text}</div>;
+        if (entry.kind === "shell") {
+          return (
+            <div key={key} className="shell">
+              <pre>{`$ ${entry.command ?? ""}${entry.exit ? `  — exit ${entry.exit}` : ""}`}</pre>
+              {entry.output ? <pre className="tool-output">{entry.output}</pre> : null}
+            </div>
+          );
+        }
+        if (entry.kind === "idle" && entry.outcome === "failed") {
+          return <div key={key} className="entry-error">{errorText(entry.error) || "The run failed."}</div>;
+        }
+        if (entry.kind === "idle" && entry.outcome === "interrupted") return <div key={key} className="notice">Stopped.</div>;
+        return null;
+      })}
+      {transcript.pending.map(item => (
+        <article key={item.id} className="entry user pending">
+          <div className="text">{item.text}</div>
+          {item.delivery === "queue" ? <div className="entry-meta">queued</div> : null}
+        </article>
+      ))}
+    </>
+  );
+}
+
+// ---- The questions ----
+
+function PermissionCard({ request }: { request: PermissionRequest }) {
+  return (
+    <div className="ask">
+      <div className="ask-head">
+        <strong>{request.action ?? "permission"}</strong>
+        <span>{(request.resources ?? []).join(", ")}</span>
+      </div>
+      {request.message ? <div className="ask-message">{request.message}</div> : null}
+      <div className="ask-buttons">
+        <button className="primary" onClick={() => void answerPermission(request, "once")}>Allow once</button>
+        <button onClick={() => void answerPermission(request, "always")}>Always allow</button>
+        <button className="danger" onClick={() => void answerPermission(request, "reject")}>Reject</button>
+      </div>
+    </div>
+  );
+}
+
+function FormCard({ form }: { form: FormRequest }) {
+  const [values, setValues] = useState<Record<string, unknown>>(() => {
+    const initial: Record<string, unknown> = {};
+    for (const field of form.fields ?? []) {
+      if (field.default !== undefined) initial[field.key] = field.default;
+    }
+    return initial;
+  });
+  const set = (key: string, value: unknown) => setValues(current => ({ ...current, [key]: value }));
+  return (
+    <div className="ask form">
+      <div className="ask-head">
+        <strong>{form.title ?? "A question"}</strong>
+        {form.metadata?.kind === "mcp-elicitation" ? <span className="where">{form.metadata?.server ?? "an MCP server"}</span> : null}
+      </div>
+      {form.metadata?.message ? <div className="ask-message">{form.metadata.message}</div> : null}
+      {(form.fields ?? []).filter(field => !field.hidden).map(field => (
+        <div className="form-field" key={field.key}>
+          <label>
+            <span>{field.title ?? field.key}</span>
+            {field.required ? <span className="warn"> · needed</span> : null}
+          </label>
+          {field.type === "boolean" ? (
+            <input type="checkbox" checked={values[field.key] === true} onChange={event => set(field.key, event.target.checked)} />
+          ) : field.type === "number" || field.type === "integer" ? (
+            <input
+              type="number"
+              value={String(values[field.key] ?? "")}
+              min={field.minimum}
+              max={field.maximum}
+              step={field.type === "integer" ? 1 : undefined}
+              onChange={event => set(field.key, event.target.value === "" ? undefined : Number(event.target.value))}
+            />
+          ) : field.type === "multiselect" ? (
+            <div className="form-choices">
+              {(field.options ?? []).map(option => (
+                <label className="form-choice" key={option.value}>
+                  <input
+                    type="checkbox"
+                    checked={Array.isArray(values[field.key]) && (values[field.key] as string[]).includes(option.value)}
+                    onChange={event => {
+                      const picked = new Set(Array.isArray(values[field.key]) ? (values[field.key] as string[]) : []);
+                      if (event.target.checked) picked.add(option.value); else picked.delete(option.value);
+                      set(field.key, [...picked]);
+                    }}
+                  />
+                  <span>{option.label ?? option.value}</span>
+                </label>
+              ))}
+            </div>
+          ) : field.type === "external" ? (
+            <a className="small" href={field.url} target="_blank" rel="noreferrer">Open the page</a>
+          ) : (field.options ?? []).length ? (
+            <select value={String(values[field.key] ?? "")} onChange={event => set(field.key, event.target.value)}>
+              {!field.required ? <option value="">—</option> : null}
+              {(field.options ?? []).map(option => <option key={option.value} value={option.value}>{option.label ?? option.value}</option>)}
+            </select>
+          ) : (
+            <input type="text" placeholder={field.placeholder ?? ""} value={String(values[field.key] ?? "")} onChange={event => set(field.key, event.target.value)} />
+          )}
+          {field.description ? <div className="where">{field.description}</div> : null}
+        </div>
+      ))}
+      <div className="ask-buttons">
+        <button className="primary" onClick={() => void replyForm(form, values)}>Answer</button>
+        <button className="danger" onClick={() => void dismissForm(form)}>Skip</button>
+      </div>
+    </div>
+  );
+}
+
+// ---- The header ----
+
+function Header() {
+  const running = state.engine?.status === "running";
+  const total = state.session?.tokens?.total ?? 0;
+  const model = state.models.find(item => state.session?.model && `${item.providerID}/${item.id}` === `${state.session.model.providerID}/${state.session.model.id}`);
+  const limit = model?.limit?.context ?? 0;
+  const fraction = limit > 0 ? Math.min(total / limit, 1) : null;
+  const branch = state.vcs?.branch?.current;
+  return (
+    <header>
+      <div className="brand">Kuvo&nbsp;Code</div>
+      <button id="project" className="path" title="Change the project folder" onClick={() => { state.pickerOpen = true; render(); }}>
+        {state.project ?? "choose a folder…"}
+      </button>
+      <div className="spacer" />
+      <button id="toggle-files" className="small" title="Files and terminal" onClick={() => { state.drawerOpen = !state.drawerOpen; render(); }}>Files</button>
+      <button id="split" className={`small ${state.split ? "active" : ""}`} title="Show a second session beside this one" onClick={() => void toggleSplit()}>Split</button>
+      <button id="palette-open" className="small" title="Commands, sessions and files (Ctrl+K)" onClick={() => { state.paletteOpen = true; render(); }}>@</button>
+      <button id="settings-open" className="small" title="Appearance" onClick={() => { state.settingsOpen = true; state.settingsSection = "appearance"; render(); }}>Appearance</button>
+      <button id="export" className="small" title="Export conversation as Markdown" onClick={() => void exportConversation()}>Export</button>
+      <span id="vcs" className="vcs-chip" hidden={!branch}>{branch ?? ""}</span>
+      <button id="changes" className="small" hidden={state.sessionDiff.length === 0} title="The files this session changed" onClick={() => { state.diffOpen = true; render(); }}>
+        {state.sessionDiff.length ? `Changes (${state.sessionDiff.length})` : "Changes"}
+      </button>
+      <div id="context-gauge" className="context-gauge" hidden={!total} title="Context window used">
+        {fraction !== null ? `${Math.round(fraction * 100)}%` : compactTokens(total)}
+      </div>
+      <div id="engine" className={`engine ${running ? "up" : state.engine?.status === "starting" ? "starting" : "down"}`} title="The engine on this machine">
+        {running ? `engine ${state.engine?.version ?? ""}`.trim() : state.engine?.status ?? "…"}
+      </div>
+    </header>
+  );
+}
+
+async function toggleSplit() {
+  const other = state.openSessions.find(id => id !== state.session?.id) ?? state.sessions.find(s => s.id !== state.session?.id)?.id;
+  if (state.split) { state.split = null; render(); return; }
+  if (!other) return;
+  state.split = other;
+  render();
+}
+
+async function exportConversation() {
+  const transcript = state.transcript;
+  if (!transcript) return;
+  const lines: string[] = [];
+  for (const entry of transcript.entries) {
+    if (entry.kind === "user") lines.push(`## You\n\n${entry.text ?? ""}`);
+    else if (entry.kind === "assistant") {
+      for (const part of entry.parts ?? []) if (part.type === "text") lines.push(part.text ?? "");
+    }
+  }
+  const blob = new Blob([lines.join("\n\n")], { type: "text/markdown" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `${state.session?.title ?? "conversation"}.md`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+// ---- The sidebar ----
+
+function Sidebar() {
+  const visible = state.sessionQuery
+    ? state.sessions.filter(s => (s.title || "").toLowerCase().includes(state.sessionQuery))
+    : state.sessions;
+  return (
+    <aside>
+      <div className="aside-head">
+        <span>Sessions</span>
+        <button id="new-session" className="small" onClick={() => void newSession()}>New</button>
+      </div>
+      <input
+        id="session-search"
+        className="file-search"
+        placeholder="Search sessions…"
+        spellCheck={false}
+        value={state.sessionQuery}
+        onChange={event => { state.sessionQuery = event.target.value; render(); }}
+      />
+      <ul id="sessions">
+        {visible.map(session => {
+          const running = state.session?.id === session.id && state.transcript?.running;
+          const unread = Boolean(session.time?.idle && session.time?.viewed && session.time.idle > session.time.viewed && session.id !== state.session?.id);
+          return (
+            <li key={session.id} className={`${session.id === state.session?.id ? "current" : ""} ${unread ? "unread" : ""}`}>
+              <button className="session" data-id={session.id} onClick={() => void openSession(session.id)}>
+                <span className="session-title">{session.title || "Untitled"}</span>
+                <span className="session-sub">{`${running ? "running · " : ""}${when(session.time?.updated)}`}</span>
+              </button>
+              <button className="session-delete" title="Delete this session" onClick={() => void deleteSession(session)}>✕</button>
+            </li>
+          );
+        })}
+      </ul>
+      <div id="sessions-empty" className="aside-empty" hidden={state.sessions.length > 0}>No sessions yet.</div>
+    </aside>
+  );
+}
+
+async function newSession() {
+  try {
+    const { session } = await api<{ session: SessionSummary }>("/api/sessions", { method: "POST", body: {} });
+    await loadSessions();
+    await openSession(session.id);
+  } catch (error) {
+    complain(error);
+  }
+}
+
+// ---- The composer ----
+
+function Composer() {
+  const [text, setText] = useState("");
+  const [files, setFiles] = useState<Attachment[]>([]);
+  const promptRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    const draft = localStorage.getItem("kuvo-undo-draft");
+    if (draft) { setText(draft); localStorage.removeItem("kuvo-undo-draft"); }
+  }, []);
+
+  const queueItems = [
+    ...state.inbox.map(item => ({ id: item.id, text: item.payload?.text ?? "", delivery: item.delivery })),
+    ...(state.transcript?.pending ?? []).filter(item => !state.inbox.some(inboxItem => inboxItem.id === item.id)),
+  ];
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!text.trim() && !files.length) return;
+    const sent = text;
+    setText("");
+    setFiles([]);
+    await sendPrompt(sent, files);
+  };
+
+  return (
+    <form id="composer" className="composer" hidden={!state.session} onSubmit={submit}>
+      <button id="redo" className="small" type="button" hidden={!state.revert} title="Bring back what an undo took away" onClick={() => void redoNow()}>Redo</button>
+      <div id="queue-dock" className="queue-dock" hidden={queueItems.length === 0}>
+        {queueItems.map(item => (
+          <div className="queue-item" key={item.id}>
+            <span className="queue-text">{item.text || "(attachment only)"}</span>
+            <button
+              className="small"
+              title={`Turn into ${item.delivery === "queue" ? "steering" : "queued"}`}
+              onClick={async () => {
+                const next = item.delivery === "queue" ? "steer" : "queue";
+                try {
+                  await api(`/api/sessions/${encodeURIComponent(state.session!.id)}/inbox/${encodeURIComponent(item.id)}`, { method: "PATCH", body: { delivery: next } });
+                  await loadInbox();
+                } catch (error) { complain(error); }
+              }}
+            >
+              {item.delivery === "queue" ? "queued" : "steer"}
+            </button>
+            <button
+              className="small"
+              title="Take it back"
+              onClick={async () => {
+                try {
+                  await api(`/api/sessions/${encodeURIComponent(state.session!.id)}/inbox/${encodeURIComponent(item.id)}`, { method: "DELETE" });
+                  await loadInbox();
+                } catch (error) { complain(error); }
+              }}
+            >
+              ✕
+            </button>
+          </div>
+        ))}
+      </div>
+      <div id="attachments" className="attachments" hidden={files.length === 0}>
+        {files.map((file, index) => (
+          <span className="attachment-chip" key={index}>
+            {file.name}
+            <button className="small" type="button" onClick={() => setFiles(current => current.filter((_, i) => i !== index))}>✕</button>
+          </span>
+        ))}
+      </div>
+      <textarea
+        id="prompt"
+        rows={3}
+        ref={promptRef}
+        placeholder={state.transcript?.running ? "Send while it works — delivered at its next step…" : "Ask for something…  (@ mentions a file, / runs a command)"}
+        value={text}
+        onChange={event => setText(event.target.value)}
+        onKeyDown={event => {
+          if (event.key === "Enter" && !event.shiftKey) {
+            event.preventDefault();
+            void submit(event as unknown as React.FormEvent);
+          }
+        }}
+      />
+      <div className="composer-foot">
+        <button id="attach" type="button" className="small" title="Attach files (also by dropping them here)">📎</button>
+        <select id="agent" title="Agent" hidden>
+          {state.agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name ?? agent.id}</option>)}
+        </select>
+        <select
+          id="model"
+          title="Model"
+          value={state.session?.model ? `${state.session.model.providerID}/${state.session.model.id}` : ""}
+          onChange={async event => {
+            if (!state.session) return;
+            try {
+              await api(`/api/sessions/${encodeURIComponent(state.session.id)}/model`, { method: "POST", body: { model: event.target.value } });
+            } catch (error) { complain(error); }
+          }}
+        >
+          <option value="">The engine's choice</option>
+          {state.models.map(model => <option key={`${model.providerID}/${model.id}`} value={`${model.providerID}/${model.id}`}>{model.name ?? model.id}</option>)}
+        </select>
+        <div className="spacer" />
+        <button id="stop" type="button" className="small" hidden={!state.transcript?.running} onClick={() => void stopRun()}>Stop</button>
+        <button id="send" className="primary" type="submit">Send</button>
+      </div>
+      <input
+        id="attach-input"
+        type="file"
+        multiple
+        hidden
+        onChange={async event => {
+          const picked: Attachment[] = [];
+          for (const file of Array.from(event.target.files ?? [])) {
+            const data = await new Promise<string>(resolve => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
+              reader.readAsDataURL(file);
+            });
+            picked.push({ name: file.name, mime: file.type, data });
+          }
+          setFiles(current => [...current, ...picked]);
+        }}
+      />
+    </form>
+  );
+}
+
+// ---- The app ----
+
+export function App() {
+  useStore();
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    loadLook();
+    boot()
+      .then(() => setReady(true))
+      .catch(error => {
+        setReady(true);
+        complain(error);
+      });
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        state.paletteOpen = !state.paletteOpen;
+        render();
+      }
+      if (event.key === "Escape") {
+        state.paletteOpen = false;
+        state.settingsOpen = false;
+        state.diffOpen = false;
+        render();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const hasSession = state.session !== null;
+  const needsFolder = state.project === null;
+
+  useEffect(() => {
+    if (!state.project) return;
+    void loadVcs();
+    void loadSessionDiff();
+    void loadForms();
+  }, [state.session?.id, state.project]);
+
+  return (
+    <>
+      <Header />
+      <main>
+        <Sidebar />
+        <section id="conversation">
+          <div id="session-tabs" className="session-tabs" hidden={state.openSessions.length < 2}>
+            {state.openSessions.map(id => {
+              const session = state.sessions.find(s => s.id === id) ?? (state.session?.id === id ? state.session : null);
+              return (
+                <div key={id} className={`session-tab ${id === state.session?.id ? "active" : ""}`}>
+                  <span onClick={() => void openSession(id)}>{session?.title || id.slice(0, 8)}</span>
+                  <span className="close" onClick={event => { event.stopPropagation(); closeSessionTab(id); }}>✕</span>
+                </div>
+              );
+            })}
+          </div>
+          <div id="empty" className="empty" hidden={hasSession}>
+            <h1>{needsFolder ? "Start with a folder" : "A session to work in"}</h1>
+            <p>
+              {needsFolder
+                ? "Pick the project to work in, then say what you want done. The agent reads, edits and runs things in that folder, asking first."
+                : "Sessions live in the folder you picked. Start one, then say what you want done in it."}
+            </p>
+            <button id="choose" className="primary" hidden={!needsFolder} onClick={() => { state.pickerOpen = true; render(); }}>Choose a folder</button>
+            <button id="start" className="primary" hidden={needsFolder} onClick={() => void newSession()}>Start a session</button>
+          </div>
+          <div id="entries" className="entries">
+            {state.transcript ? <EntryNodes transcript={state.transcript} /> : null}
+          </div>
+          <div id="asks" className="asks">
+            {(state.transcript?.permissions ?? []).map(request => <PermissionCard key={request.id} request={request} />)}
+          </div>
+          <div id="forms" className="forms" hidden={state.forms.length === 0}>
+            {state.forms.map(form => <FormCard key={form.id} form={form} />)}
+          </div>
+          <Composer />
+        </section>
+        <section id="split-pane" className="split-pane" hidden={!state.split}>
+          <div className="split-head">
+            <select id="split-session" title="The session shown here" value={state.split ?? ""} onChange={event => { state.split = event.target.value; render(); }}>
+              {state.openSessions.map(id => {
+                const session = state.sessions.find(s => s.id === id);
+                return <option key={id} value={id}>{session?.title || id.slice(0, 8)}</option>;
+              })}
+            </select>
+            <button id="split-close" className="small" onClick={() => { state.split = null; render(); }}>✕</button>
+          </div>
+          <div id="split-entries" className="entries">
+            {state.split ? <EntryNodes transcript={state.transcripts.get(state.split) ?? { entries: [], pending: [], permissions: [], running: false }} /> : null}
+          </div>
+        </section>
+      </main>
+      <Palette />
+      <Picker />
+      <Settings />
+      <Drawer />
+      <DiffModal />
+      <Toast />
+      {!ready ? <div className="fatal">Starting…</div> : null}
+    </>
+  );
+}
+
+export { api, loadAgents, loadCommands, loadModels, loadProjects, saveConfig, notify, applyLook };

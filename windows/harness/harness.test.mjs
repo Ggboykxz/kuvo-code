@@ -449,11 +449,14 @@ test("the page and the reducer are served", async t => {
   const { harness, url } = await inFront(engine);
   t.after(() => harness.close());
 
+  // The page is the built one (React) when there is a build, the hand-written one
+  // otherwise; both are the app, and both carry the same ids.
   const page = await fetch(url);
   assert.equal(page.status, 200);
-  assert.match(await page.text(), /Kuvo&nbsp;Code/);
+  assert.match(await page.text(), /Kuvo/);
   const app = await fetch(`${url}app.js`);
-  assert.match(await app.text(), /transcript\.mjs/);
+  assert.equal(app.status, 200);
+  assert.match(await app.text(), /EventSource/);
   const reducer = await fetch(`${url}transcript.mjs`);
   assert.match(await reducer.text(), /export function apply/);
 });

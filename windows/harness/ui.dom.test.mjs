@@ -55,11 +55,23 @@ test("the page, in a DOM, against the real engine", {
   });
   const url = await harness.url();
 
-  // The two scripts the page loads, as a browser would take them: the reducer's exports
-  // become plain names, the import becomes nothing.
-  const html = fs.readFileSync(path.join(here, "ui/index.html"), "utf8");
-  const reducer = fs.readFileSync(path.join(here, "transcript.mjs"), "utf8").replace(/^export /gm, "");
-  const app = fs.readFileSync(path.join(here, "ui/app.js"), "utf8").replace(/^import .*$/m, "");
+  // The page as a browser takes it: the built one (React and TypeScript) when there is
+  // one, the hand-written page otherwise. The built page is one bundle, so it is inlined
+  // the way the browser would fetch it.
+  const built = path.join(here, "ui-build", "index.html");
+  const usingBuild = fs.existsSync(built);
+  let html;
+  let reducer = "";
+  let app = "";
+  if (usingBuild) {
+    const bundle = fs.readFileSync(path.join(here, "ui-build", "app.js"), "utf8");
+    // A function, not a string: the bundle is full of `$` and would be read as a pattern.
+    html = fs.readFileSync(built, "utf8").replace(/<script[^>]*src="\/app\.js"[^>]*><\/script>/, () => `<script>${bundle}</script>`);
+  } else {
+    html = fs.readFileSync(path.join(here, "ui/index.html"), "utf8");
+    reducer = fs.readFileSync(path.join(here, "transcript.mjs"), "utf8").replace(/^export /gm, "");
+    app = fs.readFileSync(path.join(here, "ui/app.js"), "utf8").replace(/^import .*$/m, "");
+  }
 
   /** A page: jsdom with the two browser pieces it lacks, and the page's code run in it. */
   function open() {
@@ -70,6 +82,17 @@ test("the page, in a DOM, against the real engine", {
     const { window } = dom;
     window.fetch = (input, init) => fetch(new URL(input, url), init);
     window.alert = message => errors.push(`alert: ${message}`);
+    // jsdom has no matchMedia; the page asks it about the dark mode.
+    window.matchMedia = query => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener() {},
+      removeEventListener() {},
+      addListener() {},
+      removeListener() {},
+      dispatchEvent: () => false,
+    });
     window.EventSource = class {
       constructor(address) {
         sources.push(this);
@@ -119,41 +142,45 @@ test("the page, in a DOM, against the real engine", {
   const page = open();
 
   // Boot: the folder it was started on, and the engine coming up behind it.
-  await page.seen("the project to show", () => page.element("project").textContent.includes(path.basename(project)), 30_000);
-  await page.seen("the engine to come up", () => page.element("engine").textContent.includes(VERSION), 120_000);
+  await page.seen("the project to show", () => page.element("project")?.textContent.includes(path.basename(project)), 30_000);
+  await page.seen("the engine to come up", () => page.element("engine")?.textContent.includes(VERSION), 120_000);
 
   // A session, made from the empty state.
-  assert.equal(page.element("empty").hidden, false, "the empty state shows first");
-  page.element("start").click();
+  assert.equal(page.element("empty")?.hidden, false, "the empty state shows first");
+  page.element("start")?.click();
   await page.seen("the session to appear", () => page.document.querySelectorAll("#sessions li").length === 1, 30_000);
 
   // The model list (a call scoped to the project folder, sent as a header).
-  await page.seen("the models to load", () => page.element("model").options.length > 1, 30_000);
+  await page.seen("the models to load", () => ((page.element("model")?.options?.length ?? 0) > 1), 30_000);
 
   // A prompt: sent, shown at once, answered by the model, and answered through events.
   const asked = "Reply with exactly: hello from the page";
-  page.element("prompt").value = asked;
-  page.element("composer").requestSubmit();
-  await page.seen("the user's message to show", () => page.element("entries").textContent.includes(asked), 30_000);
-  await page.seen("the answer to arrive", () => /hello from the page/i.test(page.element("entries").textContent));
-  await page.seen("the turn to end", () => page.element("stop").hidden, 60_000);
+  const promptBox = page.element("prompt");
+  const setter = Object.getOwnPropertyDescriptor(page.window.HTMLTextAreaElement.prototype, "value").set;
+  setter.call(promptBox, asked);
+  promptBox.dispatchEvent(new page.window.Event("input", { bubbles: true }));
+  page.element("composer")?.requestSubmit();
+  await page.seen("the user's message to show", () => page.element("entries")?.textContent.includes(asked), 30_000);
+  await page.seen("the answer to arrive", () => /hello from the page/i.test(page.element("entries")?.textContent));
+  await page.seen("the turn to end", () => page.element("stop")?.hidden, 60_000);
 
   // The folder picker: it opens on the project, walks, and closes without changing it.
-  page.element("project").click();
-  await page.seen("the picker to fill", () => page.element("picker-path").value !== "", 15_000);
-  assert.equal(page.element("picker-path").value, project, "the picker opens on the project");
+  page.element("project")?.click();
+  await page.seen("the picker to fill", () => page.element("picker-path")?.value === project, 15_000);
+  assert.equal(page.element("picker-path")?.value, project, "the picker opens on the project");
   assert.deepEqual([...page.document.querySelectorAll("#picker-folders button")].map(node => node.textContent.trim()), ["sub/"], "the folder's insides are listed");
-  page.element("picker-close").click();
-  assert.equal(page.element("picker").hidden, true, "the picker closes again");
+  page.element("picker-close")?.click();
+  // React draws on its own turn of the loop, so the closing is waited for.
+  await page.seen("the picker to close", () => page.element("picker")?.hidden === true, 10_000);
 
   // A reload: the same conversation, read back from what the engine stored.
   const reloaded = open();
-  await reloaded.seen("the stored conversation to read back", () => /hello from the page/i.test(reloaded.element("entries").textContent), 60_000);
-  assert.equal(reloaded.element("project").textContent, project, "the project is remembered");
+  await reloaded.seen("the stored conversation to read back", () => /hello from the page/i.test(reloaded.element("entries")?.textContent), 60_000);
+  assert.equal(reloaded.element("project")?.textContent, project, "the project is remembered");
   assert.equal(reloaded.document.querySelectorAll("#sessions li").length, 1, "the session is listed again");
   // The engine can still call a session active for a moment after a turn; the page reads that
   // the same way the Mac app does, and settles as soon as there's nothing to stop.
-  await reloaded.seen("nothing to be running", () => reloaded.element("stop").hidden, 15_000);
+  await reloaded.seen("nothing to be running", () => reloaded.element("stop")?.hidden, 15_000);
 
   // The settings: the navigation holds only buttons, and every page it can open is a page
   // of the settings itself. (A page once slipped inside the navigation and broke them all.)

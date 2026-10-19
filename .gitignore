@@ -13,3 +13,6 @@ github-token-to-revoke.txt
 
 # Playwright MCP's own logs
 .playwright-mcp/
+
+# The built page (React): an artefact, built by windows/app
+windows/harness/ui-build/

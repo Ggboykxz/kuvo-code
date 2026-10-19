@@ -1,0 +1,240 @@
+// What floats over the conversation: the command palette, the files and terminal drawer,
+// the changes of a session, and the little note that says what happened.
+
+import { useEffect, useRef, useState } from "react";
+import { api } from "./api";
+import { errorText } from "./lib";
+import { complain, loadSessions, notify, openSession, render, state, useStore } from "./store";
+
+// ---- The command palette ----
+
+export function Palette() {
+  useStore();
+  const [query, setQuery] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (state.paletteOpen) {
+      setQuery("");
+      setTimeout(() => inputRef.current?.focus(), 0);
+    }
+  }, [state.paletteOpen]);
+
+  const needle = query.trim().toLowerCase();
+  const sessions = state.sessions.filter(s => !needle || (s.title || "").toLowerCase().includes(needle)).slice(0, 6);
+  const commands = state.commands.filter(c => !needle || c.name.toLowerCase().includes(needle)).slice(0, 6);
+
+  const run = async (action: () => void | Promise<void>) => {
+    state.paletteOpen = false;
+    render();
+    await action();
+  };
+
+  return (
+    <div id="palette" className="palette" hidden={!state.paletteOpen} onClick={event => { if (event.target === event.currentTarget) { state.paletteOpen = false; render(); } }}>
+      <input
+        id="palette-input"
+        placeholder="Search sessions, files and actions…"
+        spellCheck={false}
+        autoComplete="off"
+        value={query}
+        ref={inputRef}
+        onChange={event => setQuery(event.target.value)}
+      />
+      <div id="palette-list" className="palette-list">
+        {sessions.map(session => (
+          <div
+            key={session.id}
+            className="palette-item"
+            onClick={() => void run(async () => { await openSession(session.id); })}
+          >
+            <span className="palette-kind">session</span>
+            <span>{session.title || "Untitled"}</span>
+          </div>
+        ))}
+        {commands.map(command => (
+          <div
+            key={command.name}
+            className="palette-item"
+            onClick={() => void run(async () => {
+              const prompt = document.getElementById("prompt") as HTMLTextAreaElement | null;
+              if (prompt) {
+                prompt.value = `/${command.name} `;
+                prompt.dispatchEvent(new Event("input", { bubbles: true }));
+                prompt.focus();
+              }
+            })}
+          >
+            <span className="palette-kind">command</span>
+            <span>/{command.name}</span>
+          </div>
+        ))}
+        <div className="palette-item" onClick={() => void run(async () => { state.settingsOpen = true; state.settingsSection = "appearance"; render(); })}>
+          <span className="palette-kind">action</span>
+          <span>Appearance</span>
+        </div>
+        <div className="palette-item" onClick={() => void run(async () => { await loadSessions(); notify("Kuvo Code", "Sessions refreshed."); })}>
+          <span className="palette-kind">action</span>
+          <span>Refresh sessions</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- The folder picker ----
+
+export function Picker() {
+  useStore();
+  const [shown, setShown] = useState<string>("");
+  const [parent, setParent] = useState<string | null>(null);
+  const [folders, setFolders] = useState<{ name: string; path: string }[]>([]);
+  const [note, setNote] = useState("");
+  const [typed, setTyped] = useState("");
+
+  const browse = async (folder: string | null) => {
+    try {
+      const answer = await api<{ path: string; parent: string | null; folders: { name: string; path: string }[] }>(
+        `/api/browse?path=${encodeURIComponent(folder ?? "")}`,
+      );
+      setShown(answer.path);
+      setParent(answer.parent);
+      setFolders(answer.folders ?? []);
+      setTyped(answer.path);
+      setNote((answer.folders ?? []).length === 0 ? "No folders inside." : "");
+    } catch (error) {
+      setNote(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  useEffect(() => {
+    if (!state.pickerOpen) return;
+    void browse(state.project ?? null);
+  }, [state.pickerOpen]);
+
+  return (
+    <div id="picker" className="picker-modal" hidden={!state.pickerOpen}>
+      <div className="picker-card">
+        <div className="settings-row">
+          <span>Folder</span>
+          <input id="picker-path" value={typed} onChange={event => setTyped(event.target.value)} onKeyDown={event => { if (event.key === "Enter") void browse(typed); }} />
+        </div>
+        <ul id="picker-folders">
+          {folders.map(child => (
+            <li key={child.path}>
+              <button onClick={() => void browse(child.path)}>{`${child.name}/`}</button>
+            </li>
+          ))}
+        </ul>
+        <div id="picker-note" className="where">{note}</div>
+        <div className="settings-editor-buttons">
+          <button id="picker-up" className="small" disabled={parent === null} onClick={() => parent && void browse(parent)}>↑</button>
+          <button id="picker-go" className="small" onClick={() => void browse(typed)}>Go</button>
+          <button id="picker-use" className="primary" onClick={async () => {
+            try {
+              await api("/api/project", { method: "POST", body: { directory: shown } });
+              state.project = shown;
+              state.session = null;
+              state.transcript = null;
+              state.pickerOpen = false;
+              await loadSessions();
+            } catch (error) {
+              setNote(error instanceof Error ? error.message : String(error));
+            }
+          }}>Use this folder</button>
+          <button id="picker-close" className="small" onClick={() => { state.pickerOpen = false; render(); }}>Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- The drawer: files and terminal ----
+
+export function Drawer() {
+  useStore();
+  const terminalRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!state.drawerOpen || state.drawerTab !== "files" || !state.project) return;
+    void api<{ files: { path: string; name: string; kind: string }[] }>(`/api/files?directory=${encodeURIComponent(state.project)}`)
+      .then(answer => { state.files = answer.files ?? []; render(); })
+      .catch(() => { state.files = []; render(); });
+  }, [state.drawerOpen, state.drawerTab, state.project]);
+
+  return (
+    <div id="drawer" className="drawer" hidden={!state.drawerOpen}>
+      <div className="drawer-head">
+        <div className="drawer-tabs">
+          <button className={`drawer-tab ${state.drawerTab === "files" ? "active" : ""}`} onClick={() => { state.drawerTab = "files"; render(); }}>Files</button>
+          <button className={`drawer-tab ${state.drawerTab === "terminal" ? "active" : ""}`} onClick={() => { state.drawerTab = "terminal"; render(); }}>Terminal</button>
+        </div>
+        <button id="drawer-close" className="small" onClick={() => { state.drawerOpen = false; render(); }}>✕</button>
+      </div>
+      <div id="drawer-files" className="drawer-body" hidden={state.drawerTab !== "files"}>
+        {state.files.map(file => (
+          <div key={file.path} className="file-row">
+            <button className="small" onClick={async () => {
+              try {
+                const { content } = await api<{ content: string }>(`/api/file?path=${encodeURIComponent(file.path)}`);
+                state.openFile = file.path;
+                state.openFileContent = content;
+                render();
+              } catch (error) { complain(error); }
+            }}>{file.name}</button>
+          </div>
+        ))}
+        {state.openFile ? (
+          <pre className="file-view">{state.openFileContent}</pre>
+        ) : null}
+      </div>
+      <div id="drawer-terminal" className="drawer-body" hidden={state.drawerTab !== "terminal"}>
+        <div ref={terminalRef} className="terminal" />
+      </div>
+    </div>
+  );
+}
+
+// ---- The changes of a session ----
+
+export function DiffModal() {
+  useStore();
+  return (
+    <div id="diff-modal" className="diff-modal" hidden={!state.diffOpen} onClick={event => { if (event.target === event.currentTarget) { state.diffOpen = false; render(); } }}>
+      <div className="diff-card">
+        <div className="diff-head">
+          <strong id="diff-title">{state.diffTitle ?? "Changes in this session"}</strong>
+          <button className="small" onClick={() => { state.diffOpen = false; render(); }}>✕</button>
+        </div>
+        <div id="diff-body" className="diff-body">
+          {state.sessionDiff.map(file => (
+            <div key={file.file}>
+              <div className="diff-file">
+                <strong>{file.file}</strong>
+                <span className="where">{`+${file.additions ?? 0} −${file.deletions ?? 0}${file.status ? ` · ${file.status}` : ""}`}</span>
+              </div>
+              {String(file.patch ?? "").split("\n").filter(line => line !== "").map((line, index) => (
+                <div key={index} className={line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : "ctx"}>{line}</div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- The little note ----
+
+export function Toast() {
+  useStore();
+  if (!state.toast) return null;
+  return (
+    <div className="toast" role="status" onClick={() => { state.toast = null; render(); }}>
+      <strong>{state.toast.title}</strong>
+      <span>{state.toast.body}</span>
+    </div>
+  );
+}
+
+export { errorText };

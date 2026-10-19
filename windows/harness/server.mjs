@@ -827,10 +827,16 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
     // alone — no ui/ folder beside it — so the blob is asked first, and disk is the
     // fallback when there is one. Asking disk first would answer "Not found." for the
     // whole page in the packaged app, behind the source tree that masked it in CI.
+    // The built page (React and TypeScript) when there is one, the hand-written page
+    // otherwise. Inside the packed executable the build lives in the blob, so it is asked
+    // there first — a build on disk and a build in the binary are the same page.
+    const built = packed("ui-build/index.html") !== null
+      || fs.existsSync(path.join(here, "ui-build", "index.html"));
+    const base = built ? "ui-build" : "ui";
     let relative;
-    if (url.pathname === "/") relative = "ui/index.html";
+    if (url.pathname === "/") relative = `${base}/index.html`;
     else if (url.pathname === "/transcript.mjs") relative = "transcript.mjs";
-    else relative = "ui" + url.pathname;
+    else relative = base + url.pathname;
     const respond = async body => {
       const type = MIME[relative.split(".").pop().toLowerCase()] ?? "application/octet-stream";
       response.writeHead(200, { "content-type": type, "cache-control": "no-store" });
@@ -838,7 +844,9 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
     };
     const packedBody = packed(relative);
     if (packedBody !== null) return respond(packedBody);
-    const root = relative === "transcript.mjs" ? here : path.join(here, "ui");
+    // The guard follows the folder the file is served from: the build (ui-build) or the
+    // hand-written page (ui), with the reducer beside them.
+    const root = relative === "transcript.mjs" ? here : path.join(here, base);
     const resolved = path.resolve(here, relative);
     const inside = resolved.startsWith(root + path.sep) || resolved === path.join(here, "transcript.mjs");
     if (!inside) {

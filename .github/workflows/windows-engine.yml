@@ -59,6 +59,13 @@ jobs:
       - name: Test the link bridge
         run: node --test "Packages/KuvoLink/Tests/Bridge/*.test.js"
 
+      # The conversation view: React and TypeScript, built into the page the harness serves.
+      - name: Build the app's interface
+        working-directory: windows/app
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+
       # Downloads the pinned Windows build, checks it against npm's checksum, starts it and
       # asks it for its info: the same road a client takes, on the platform it ships to.
       - name: Install and run the pinned engine
@@ -106,7 +113,13 @@ jobs:
         with:
           node-version: 22
 
-      # The shell wraps the harness executable, so build that first.
+      # The shell wraps the harness executable, so build that first — with the page it shows.
+      - name: Build the app's interface
+        working-directory: windows/app
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+
       - name: Build the harness executable
         working-directory: windows/harness
         run: |
