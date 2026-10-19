@@ -105,6 +105,12 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
+  - **2.19 (this change).** The packaged app served nothing: the executable's page
+    files live inside the binary, and the server asked the disk before the blob, so
+    every file came back "Not found." in the installed app (the source tree beside
+    the build hid it in CI). The blob is asked first now, and the smoke runs the
+    executable from a folder with no `ui/` beside it, so this can't pass unnoticed
+    again.
   - **2.18.** Forms (the agent's question tool and MCP servers' asks, answered or
     skipped per field type) and revert (undo to before a user message, the words back in the
     composer, redo brings it all back).

@@ -17,7 +17,10 @@ const exe = process.argv[2] ?? path.join(here, "build", "kuvo-windows-harness.ex
 if (!fs.existsSync(exe)) throw new Error(`there's no executable at ${exe}: build it first (npm run build:exe)`);
 
 const project = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "kuvo-exe-")));
-const child = spawn(exe, ["--project", project, "--port", "0"], { stdio: ["ignore", "pipe", "pipe"] });
+// Run it from somewhere without a ui/ folder beside the work: the page must come out of the
+// binary itself, not from whatever source tree the builder was in when it made the exe.
+const nowhere = fs.mkdtempSync(path.join(os.tmpdir(), "kuvo-exe-nowhere-"));
+const child = spawn(exe, ["--project", project, "--port", "0"], { stdio: ["ignore", "pipe", "pipe"], cwd: nowhere });
 let output = "";
 child.stdout.on("data", chunk => { output += chunk; });
 child.stderr.on("data", chunk => { process.stderr.write(chunk); });
@@ -48,6 +51,10 @@ try {
   assert.match(await get(`${url}app.js`), /new EventSource/, "the page's own script is served");
   assert.match(await get(`${url}transcript.mjs`), /export function apply/, "the reducer is served");
   assert.match(await get(`${url}style.css`), /--accent/, "the stylesheet is served");
+  assert.match(await get(`${url}vendor/xterm.min.js`), /xterm/i, "the terminal's script is served");
+  // The shell loads the page with its own query string; that must be the same page.
+  const withQuery = await get(`${url}?terminalPort=0&shell=1`);
+  assert.match(withQuery, /<title>Kuvo Code<\/title>/, "the page comes with the shell's query string too");
 
   const state = JSON.parse(await get(`${url}api/state`));
   assert.equal(state.project, project, "it answers for the folder it was given");
@@ -58,4 +65,5 @@ try {
   child.kill();
   await new Promise(resolve => child.once("exit", resolve));
   fs.rmSync(project, { recursive: true, force: true });
+  fs.rmSync(nowhere, { recursive: true, force: true });
 }

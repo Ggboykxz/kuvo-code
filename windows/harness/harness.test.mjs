@@ -568,3 +568,27 @@ test("connecting an MCP server again reaches the engine the Mac app's way", asyn
   const stop = engine.asked.find(asked => asked.path.startsWith("/api/experimental/mcp") && asked.path.endsWith("/disconnect"));
   assert.equal(stop.path, "/api/experimental/mcp/jira/disconnect");
 });
+
+test("the page and its files are served, and a file that isn't there is a plain 404", async t => {
+  const engine = await fakeEngine();
+  t.after(engine.close);
+  const { harness, url } = await inFront(engine);
+  t.after(() => harness.close());
+
+  const page = await fetch(url);
+  assert.equal(page.status, 200);
+  assert.match(await page.text(), /<title>Kuvo Code<\/title>/);
+
+  // The shell loads the page with its own query string; that is the same page.
+  const withQuery = await fetch(`${url}?terminalPort=0&shell=1`);
+  assert.equal(withQuery.status, 200);
+  assert.match(await withQuery.text(), /<title>Kuvo Code<\/title>/);
+
+  const script = await fetch(`${url}app.js`);
+  assert.equal(script.status, 200);
+  assert.match(await script.text(), /new EventSource/);
+
+  const missing = await fetch(`${url}nope.js`);
+  assert.equal(missing.status, 404);
+  assert.match(await missing.text(), /not found/i);
+});

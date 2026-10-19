@@ -758,14 +758,25 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
 
   async function serveStatic(request, response, url) {
     // Map a URL to a file we're willing to serve, with a traversal guard. The packed
-    // executable carries these same files inside itself (build-exe.mjs).
+    // executable carries these same files inside itself (build-exe.mjs), and it travels
+    // alone — no ui/ folder beside it — so the blob is asked first, and disk is the
+    // fallback when there is one. Asking disk first would answer "Not found." for the
+    // whole page in the packaged app, behind the source tree that masked it in CI.
     let relative;
     if (url.pathname === "/") relative = "ui/index.html";
     else if (url.pathname === "/transcript.mjs") relative = "transcript.mjs";
     else relative = "ui" + url.pathname;
+    const respond = async body => {
+      const type = MIME[relative.split(".").pop().toLowerCase()] ?? "application/octet-stream";
+      response.writeHead(200, { "content-type": type, "cache-control": "no-store" });
+      return response.end(body);
+    };
+    const packedBody = packed(relative);
+    if (packedBody !== null) return respond(packedBody);
     const root = relative === "transcript.mjs" ? here : path.join(here, "ui");
     const resolved = path.resolve(here, relative);
-    if (!resolved.startsWith(root + path.sep) && resolved !== path.join(here, "transcript.mjs")) {
+    const inside = resolved.startsWith(root + path.sep) || resolved === path.join(here, "transcript.mjs");
+    if (!inside) {
       response.writeHead(404, { "content-type": "text/plain" });
       return response.end("Not found.\n");
     }
@@ -773,10 +784,7 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
       response.writeHead(404, { "content-type": "text/plain" });
       return response.end("Not found.\n");
     }
-    const type = MIME[relative.split(".").pop().toLowerCase()] ?? "application/octet-stream";
-    const body = packed(relative) ?? fs.readFileSync(resolved);
-    response.writeHead(200, { "content-type": type, "cache-control": "no-store" });
-    return response.end(body);
+    return respond(fs.readFileSync(resolved));
   }
 
   async function relayEvents(request, response) {
