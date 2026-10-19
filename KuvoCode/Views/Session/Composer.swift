@@ -6,6 +6,10 @@ import UniformTypeIdentifiers
 /// the mode (Build/Plan) and model pickers, and a send button that turns into
 /// Stop while the agent works.
 struct Composer: View {
+    /// The session it's writing to, where it stays as you go from one to another: what it was
+    /// doing (a recalled message, the "@" or "/" list) is let go, and the cursor goes after the
+    /// draft there.
+    var session: String? = nil
     @Binding var text: String
     @Binding var files: [URL]
     /// What you're replying to, as a card over the text, with a way to drop it.
@@ -270,6 +274,22 @@ struct Composer: View {
             answering = nil
         }
         .onChange(of: quoteFocus) { _, id in answering = id }
+        .onChange(of: session) {
+            historyIndex = nil
+            mentionFiles = []
+            mentionFilesRead = nil
+            mentionIndex = 0
+            dismissedMention = nil
+            commandIndex = 0
+            dismissedCommands = false
+            isTargeted = false
+            // Undoing typing here brings back nothing from the session it was writing to before.
+            if let editor = NSApp.keyWindow?.firstResponder as? NSTextView, editor.isFieldEditor {
+                editor.undoManager?.removeAllActions(withTarget: editor)
+                editor.textStorage.map { editor.undoManager?.removeAllActions(withTarget: $0) }
+            }
+            focusAtEnd()
+        }
         // Where you type is where you work: the window's commands follow.
         .onChange(of: isFocused || answering != nil) { _, focused in if focused { composerFocused?() } }
         .onAppear {

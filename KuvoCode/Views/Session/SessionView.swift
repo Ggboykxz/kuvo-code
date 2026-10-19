@@ -10,6 +10,9 @@ struct SessionView: View {
 
     var body: some View {
         TranscriptView(model: model)
+            // Made anew for each session. What's around it (the composer below) stays as you go
+            // from one to another: it keeps the keyboard, and isn't made again each time.
+            .id(model.id)
             // A bar, not just an inset: the conversation scrolls on under the composer, softly
             // blurred there by the scroll view's edge effect.
             .safeAreaBar(edge: .bottom, spacing: 0) {
@@ -22,7 +25,7 @@ struct SessionView: View {
             .environment(\.isOffline, Self.offlineMachine(of: model, in: app) != nil)
             .navigationTitle(model.session.title ?? "New Session")
             // A conversation as last seen is read once its machine is back.
-            .task { if !model.isLoaded, !model.isCopy { await model.load() } }
+            .task(id: model.id) { if !model.isLoaded, !model.isCopy { await model.load() } }
             .task(id: model.session.location.directory) { await catalog.loadCommands(in: model.session.location.directory) }
     }
 
@@ -140,6 +143,7 @@ private struct BottomStack: View {
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
                 Composer(
+                    session: model.id,
                     text: $model.draftText,
                     files: $model.draftFiles,
                     quotes: $model.draftQuotes,

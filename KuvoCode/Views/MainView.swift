@@ -209,6 +209,9 @@ struct MainView: View {
                             // the conversation flicker and jump.
                             .transaction(value: showsPanel) { $0.animation = nil }
                             .transaction(value: showsSidebar) { $0.animation = nil }
+                            // Another session shows at once, as the tab moves to it: animated, the
+                            // last one faded out row by row under the new one, both drawn meanwhile.
+                            .transaction(value: selection) { $0.animation = nil }
                             .environment(\.windowControlsInset, controlsInset)
                             // With the tab bar hidden, the panel button sits over the rightmost card.
                             .environment(\.windowControlsTrailingInset, !showsTabBar && layout.changes == nil && layout.split == nil ? 36 : 0)
@@ -819,7 +822,6 @@ struct MainView: View {
                         .largeWidgetHost()
                 }
                 .environment(catalog(for: directory))
-                .id(id)
             } else if let id = sessionID, let engine = app.machines.engine(workspace.waitingMachine(for: id)) {
                 Card(title: workspace.remoteTitle(id) ?? "Session", detail: engine.machine.name, isFocused: focus == .conversation) {
                     Image(systemName: "server.rack")
@@ -1591,6 +1593,39 @@ struct MainView: View {
                 }
             }
         }
+        Task { await PerfLayers.run() }
+        // KUVO_PERF_SWITCH=<n>: ten seconds after launch, goes to the next session tab n times,
+        // a second and a half apart, and writes how the main thread kept up to KUVO_PERF_LOG.
+        if let count = environment["KUVO_PERF_SWITCH"].flatMap(Int.init) {
+            Task {
+                try? await Task.sleep(for: .seconds(10))
+                // KUVO_PERF_SWITCH_CHECK: each tab's session with a draft of its own, and after each
+                // switch, whether the composer shows it, and takes what's typed there.
+                let check = environment["KUVO_PERF_SWITCH_CHECK"] != nil
+                if check { for (index, tab) in tabs.enumerated() { workspace.model(for: tab)?.draftText = "draft \(index)" } }
+                var wrong: [String] = []
+                let meter = PerfMeter()
+                meter.start()
+                for step in 0..<count {
+                    cycleTabs(by: 1)
+                    try? await Task.sleep(for: .milliseconds(1500))
+                    if check, let id = selection, let model = workspace.model(for: id),
+                       let editor = NSApp.windows.lazy.compactMap({ $0.firstResponder as? NSTextView }).first(where: \.isFieldEditor) {
+                        if editor.string != model.draftText { wrong.append("step \(step): shows \"\(editor.string)\", draft \"\(model.draftText)\"") }
+                        editor.insertText("+", replacementRange: NSRange(location: (editor.string as NSString).length, length: 0))
+                        try? await Task.sleep(for: .milliseconds(100))
+                        if !model.draftText.hasSuffix("+") { wrong.append("step \(step): typed, draft \"\(model.draftText)\"") }
+                    } else if check {
+                        wrong.append("step \(step): no field editor")
+                    }
+                }
+                let line = "switch x\(count) among \(tabs.count) tabs: " + meter.stop() + (check ? "; check: " + (wrong.isEmpty ? "all right" : wrong.prefix(6).joined(separator: "; ")) : "") + "\n"
+                if let file = environment["KUVO_PERF_STALLS"] { try? meter.stallReport().write(toFile: file, atomically: true, encoding: .utf8) }
+                if let file = environment["KUVO_PERF_LOG"] {
+                    if let handle = FileHandle(forWritingAtPath: file) { handle.seekToEndOfFile(); handle.write(Data(line.utf8)); try? handle.close() } else { FileManager.default.createFile(atPath: file, contents: Data(line.utf8)) }
+                }
+            }
+        }
         // KUVO_DEMO_REOPEN_WINDOW=<seconds>: closes the window after that long, and opens it again.
         if let wait = environment["KUVO_DEMO_REOPEN_WINDOW"].flatMap(Double.init) {
             Task { [app] in
@@ -1752,11 +1787,13 @@ struct MainView: View {
                 }
             }
         }
-        // KUVO_DEMO_TABS: the project's sessions as tabs, the one in view staying in view.
+        // KUVO_DEMO_TABS: the project's sessions as tabs (KUVO_DEMO_TAB_COUNT=<n>: its latest n),
+        // the one in view staying in view.
         if environment["KUVO_DEMO_TABS"] != nil,
            let project = workspace.projects.first(where: { $0.directory == activeDirectory }) ?? workspace.projects.first {
             let current = selection
-            for session in project.sessions.reversed() where !tabs.contains(session.id) { openTab(session.id) }
+            let count = environment["KUVO_DEMO_TAB_COUNT"].flatMap(Int.init) ?? .max
+            for session in project.sessions.prefix(count).reversed() where !tabs.contains(session.id) { openTab(session.id) }
             if let current { openTab(current) }
         }
         // KUVO_DEMO_COMMENT=<path in the project>:<line>:<text> adds a review comment to the
