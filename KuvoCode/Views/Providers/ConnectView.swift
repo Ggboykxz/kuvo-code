@@ -40,6 +40,7 @@ struct ConnectView: View {
     /// A sign-in that finishes by itself, whose page gave a code instead: the field to paste it.
     @State private var isPastingCode = false
     @State private var isCheckingCode = false
+    @State private var codeError: String?
     @State private var isWorking = false
     /// Why the engine didn't take the key, shown under it until you change it.
     @State private var keyError: String?
@@ -292,6 +293,11 @@ struct ConnectView: View {
                                 .keyboardShortcut(.defaultAction)
                                 .disabled(pastedCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
+                        if let codeError {
+                            Text(codeError)
+                                .font(.callout)
+                                .foregroundStyle(.red)
+                        }
                     }
                 }
             }
@@ -451,6 +457,7 @@ struct ConnectView: View {
                     pastedCode = ""
                     isPastingCode = false
                     isCheckingCode = false
+                    codeError = nil
                     signInURL = attempt.url
                     if let code = attempt.userCode { copy(code) }
                     open(attempt.url)
@@ -552,14 +559,14 @@ struct ConnectView: View {
         let code = pastedCode.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let api = catalog.api(forIntegration: integrationID), !code.isEmpty, !isCheckingCode else { return }
         isCheckingCode = true
+        codeError = nil
         Task {
             do {
                 try await api.completeOAuth(integration: integrationID, attempt: attempt.attemptID, code: code)
             } catch {
+                // It may have finished in the browser meanwhile: the poll says how it went.
                 isCheckingCode = false
-                pollTask?.cancel()
-                noteFailure(method: "oauth", Analytics.trouble(error))
-                step = .failed(error.localizedDescription)
+                codeError = error.localizedDescription
             }
         }
     }
