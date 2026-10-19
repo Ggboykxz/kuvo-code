@@ -6,6 +6,8 @@ import SwiftUI
 /// at the next click, scroll or key.
 struct SelectionMenu: ViewModifier {
     let addToChat: (String) -> Void
+    /// A conversation kept hidden (see `SessionView`) has none.
+    @Environment(\.isConversationShown) private var isShown
     /// Where it shows, in the conversation's own space; nil while it doesn't.
     @State private var point: CGPoint?
     @State private var frame: CGRect = .zero
@@ -78,6 +80,10 @@ struct SelectionMenu: ViewModifier {
     }
 
     private func handle(_ event: NSEvent) {
+        guard isShown else {
+            point = nil
+            return
+        }
         guard let window = windowBox.window, event.window === window, let view = window.contentView else { return }
         let location = view.convert(event.locationInWindow, from: nil)
         let inWindow = view.isFlipped ? location : CGPoint(x: location.x, y: view.bounds.height - location.y)
@@ -117,4 +123,9 @@ struct SelectionMenu: ViewModifier {
         var action: Selector? { #selector(NSText.copy(_:)) }
         var tag: Int { 0 }
     }
+}
+
+extension EnvironmentValues {
+    /// The conversation is the one in view, not one kept hidden for going back to.
+    @Entry var isConversationShown = true
 }

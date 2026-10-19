@@ -8,27 +8,68 @@ struct SessionView: View {
     @LastModel private var lastModel
     @State private var height: CGFloat = 0
 
+    /// The conversations seen last, newest first, kept made (hidden) for going back to them.
+    @State private var kept: [SessionModel] = []
+    /// The size each kept one had as it went out of view, which it keeps while hidden: resizing
+    /// the window lays out only the one in view.
+    @State private var hiddenSizes: [String: CGSize] = [:]
+    @State private var size: CGSize = .zero
+
     var body: some View {
-        TranscriptView(model: model)
-            // Made anew for each session. What's around it (the composer below) stays as you go
-            // from one to another: it keeps the keyboard, and isn't made again each time.
-            .id(model.id)
-            // A bar, not just an inset: the conversation scrolls on under the composer, softly
-            // blurred there by the scroll view's edge effect.
-            .safeAreaBar(edge: .bottom, spacing: 0) {
-                BottomStack(model: model, lastModel: $lastModel)
-                    // Room for the composer, the cards' own buttons and a little conversation.
-                    .environment(\.cardRoom, max(160, height - 440))
+        ZStack {
+            // One for each session, kept for the few seen last: going back to one shows it as it
+            // was, rather than making it again. What's around them (the composer below) stays as
+            // you go from one to another: it keeps the keyboard, and isn't made again each time.
+            ForEach(Self.shown(model, kept: kept), id: \.id) { each in
+                let isShown = each.id == model.id
+                let hiddenSize = isShown ? nil : hiddenSizes[each.id]
+                TranscriptView(model: each)
+                    .frame(width: hiddenSize?.width, height: hiddenSize?.height)
+                    // However big that was, the stack is the size it's given.
+                    .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .top)
+                    .opacity(isShown ? 1 : 0)
+                    .allowsHitTesting(isShown)
+                    .accessibilityHidden(!isShown)
+                    .environment(\.isConversationShown, isShown)
+                    .zIndex(isShown ? 1 : 0)
+                    .environment(\.isOffline, Self.offlineMachine(of: each, in: app) != nil)
             }
-            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
-            // Its machine out of reach: the conversation to read, without what needs the engine.
-            .environment(\.isOffline, Self.offlineMachine(of: model, in: app) != nil)
-            .navigationTitle(model.session.title ?? "New Session")
-            // A conversation as last seen is read once its machine is back.
-            // A copy shown while the engine reads (this Mac's) is read too; one waiting for its
-            // machine is read once the machine is back.
-            .task(id: model.id) { if !model.isLoaded, !model.waitsForEngine { await model.load() } }
-            .task(id: model.session.location.directory) { await catalog.loadCommands(in: model.session.location.directory) }
+        }
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { size = $0 }
+        .onChange(of: model.id, initial: true) { old, new in
+            kept = Array(([model] + kept.filter { $0.id != new }).prefix(Self.keptCount))
+            hiddenSizes[old] = size
+            hiddenSizes[new] = nil
+            hiddenSizes = hiddenSizes.filter { id, _ in kept.contains { $0.id == id } }
+        }
+        // A bar, not just an inset: the conversation scrolls on under the composer, softly
+        // blurred there by the scroll view's edge effect.
+        .safeAreaBar(edge: .bottom, spacing: 0) {
+            BottomStack(model: model, lastModel: $lastModel)
+                // Room for the composer, the cards' own buttons and a little conversation.
+                .environment(\.cardRoom, max(160, height - 440))
+        }
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
+        // Its machine out of reach: the conversation to read, without what needs the engine.
+        .environment(\.isOffline, Self.offlineMachine(of: model, in: app) != nil)
+        .navigationTitle(model.session.title ?? "New Session")
+        // A conversation as last seen is read once its machine is back.
+        // A copy shown while the engine reads (this Mac's) is read too; one waiting for its
+        // machine is read once the machine is back.
+        .task(id: model.id) { if !model.isLoaded, !model.waitsForEngine { await model.load() } }
+        .task(id: model.session.location.directory) { await catalog.loadCommands(in: model.session.location.directory) }
+    }
+
+    #if DEBUG
+    /// KUVO_PERF_KEPT=<n>: that many kept instead (1: none but the one in view), to compare.
+    static let keptCount = ProcessInfo.processInfo.environment["KUVO_PERF_KEPT"].flatMap(Int.init) ?? 4
+    #else
+    static let keptCount = 4
+    #endif
+
+    /// The kept conversations, with the one in view among them.
+    private static func shown(_ model: SessionModel, kept: [SessionModel]) -> [SessionModel] {
+        kept.contains { $0.id == model.id } ? kept : [model] + kept.prefix(keptCount - 1)
     }
 
     /// The machine a session runs on, while it can't be reached (connecting again), or its
