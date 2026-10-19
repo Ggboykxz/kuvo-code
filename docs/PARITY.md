@@ -47,7 +47,7 @@ mirrored in `windows/harness/engine.mjs` and typed in `windows/app/src/api.ts`).
 | `OpenQuickly` | ✅ (la palette trouve les fichiers) |
 | `BrowserSession`, `BrowserChrome`, `BrowserAskCard` | ⛔ le navigateur intégré : surface **amont** |
 | `ImageViewer` | ✅ (la visionneuse par-dessus la page) |
-| `AgentBadge` | ⬜ |
+| `AgentBadge` | ⛔ c'est le badge du navigateur intégré (« X navigue », *Take Over*) : il suit le navigateur |
 
 ## The settings
 
@@ -73,7 +73,7 @@ mirrored in `windows/harness/engine.mjs` and typed in `windows/app/src/api.ts`).
 | `PhoneSettings`, `PhoneLink` | ⛔ téléphone : amont |
 | `SiteSignInPage`, `SiteSignIns` | ⛔ comptes du site : amont |
 | `ProvidersView`, `CustomProviders` | ✅ (les fournisseurs du moteur, et les tiens : id, nom, adresse, modèles — **sans la clé**) |
-| `ConnectView` | ⬜ la connexion OAuth d'un fournisseur (les secrets) |
+| `ConnectView` | ⛔ la connexion OAuth d'un fournisseur : **les secrets** (décidé) |
 | `BotEditor`, `GroupEditor`, `GroupChatView` | ⛔ groupes et bots : amont |
 
 ## The rest of the app
@@ -94,8 +94,8 @@ mirrored in `windows/harness/engine.mjs` and typed in `windows/app/src/api.ts`).
 | `Attachments`, `Drafts`, `Quoting` | ✅ (les pièces jointes, la citation ; **les brouillons** : ce qui est tapé mais pas envoyé, par session, d'un lancement à l'autre — et un message qui n'a pas pu partir revient dans la boîte) |
 | `Updates`, `Awake`, `Notifier` | ✅ (via les réglages de la coquille) |
 | `Analytics` | ✅ (l'avis, rien n'est collecté) |
-| `PagePrinter`, `ImageViewer` | ⬜ / ◐ |
-| `UsageAccounts`, `Personalities`, `ProviderCompatibility` | ⬜ |
+| `PagePrinter`, `ImageViewer` | ⛔ / ✅ (l'impression d'une page suit le navigateur intégré) |
+| `UsageAccounts`, `Personalities`, `ProviderCompatibility` | ◐ la **compatibilité des fournisseurs** : les modèles Claude de GitHub Copilot sont nommés dans les réglages du moteur, qui n'ajoute alors pas `thinking.block_binding` (ils le refusent). Les *personalities* suivent les bots ⛔. |
 | `ClaudeCode`, `Bots`, `BotGroups`, `BotRecipe` | ⛔ amont |
 
 ## What the shipped Mac app does now (v0.5.20, v0.5.21)
@@ -113,7 +113,7 @@ or noted:
 | v0.5.20 — a reply's lines no longer overlap after the sidebar opens or closes | ✅ (the transcript is fluid) |
 | v0.5.20 — the sidebar slides in, kept ready while hidden | ✅ (it folds, with the motion layer's timing) |
 | v0.5.20 — picking another model mid-run hands the run over at once | ✅ (the model is posted live) |
-| v0.5.20 — a reply that stops arriving says it is waiting for the model | ⬜ engine-side |
+| v0.5.20 — a reply that stops arriving says it is waiting for the model | ⛔ engine-side : c'est le moteur qui parle |
 
 ## The design
 

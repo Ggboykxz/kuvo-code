@@ -105,6 +105,10 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
+  - **2.54 (this change).** The Mac app's provider compatibility: GitHub Copilot's Claude
+    models from 5.1 on refuse the `thinking.block_binding` the engine adds, and the engine
+    leaves it out only for the models named in its settings — so the app names them, in the
+    settings the engine reads. Nothing else is touched.
   - **2.53 (this change).** The Mac app's drafts: what is typed in a composer but not sent
     is kept, by session, across launches — the attachments that are gone are dropped, and a
     message that could not be sent comes back to the box it was written in.

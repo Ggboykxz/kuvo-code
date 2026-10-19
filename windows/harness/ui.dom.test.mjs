@@ -176,11 +176,23 @@ test("the page, in a DOM, against the real engine", {
   const asked = "Reply with exactly: hello from the page";
   const promptBox = page.element("prompt");
   const setter = Object.getOwnPropertyDescriptor(page.window.HTMLTextAreaElement.prototype, "value").set;
-  setter.call(promptBox, asked);
-  promptBox.dispatchEvent(new page.window.Event("input", { bubbles: true }));
-  page.element("composer")?.requestSubmit();
+  const ask = async () => {
+    setter.call(promptBox, asked);
+    promptBox.dispatchEvent(new page.window.Event("input", { bubbles: true }));
+    page.element("composer")?.requestSubmit();
+  };
+  await ask();
   await page.seen("the user's message to show", () => page.element("entries")?.textContent.includes(asked), 30_000);
-  await page.seen("the answer to arrive", () => /hello from the page/i.test(page.element("entries")?.textContent));
+  // The public model can refuse for a while (a rate limit): the question is asked again,
+  // rather than the build failing on the provider's mood.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const said = page.element("entries")?.textContent ?? "";
+    if (/hello from the page/i.test(said)) break;
+    if (!/rate limit/i.test(said)) break;
+    await wait(20_000);
+    await ask();
+  }
+  await page.seen("the answer to arrive", () => /hello from the page/i.test(page.element("entries")?.textContent), 180_000);
   await page.seen("the turn to end", () => page.element("stop")?.hidden, 60_000);
 
   // The folder picker: it opens on the project, walks, and closes without changing it.

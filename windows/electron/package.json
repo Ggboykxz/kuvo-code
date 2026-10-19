@@ -1,6 +1,6 @@
 {
   "name": "kuvo-code",
-  "version": "0.5.32",
+  "version": "0.5.33",
   "description": "Kuvo Code for Windows: a native shell around the engine and the conversation view.",
   "author": "Ggboykxz",
   "main": "main.js",
@@ -12,7 +12,6 @@
     "smoke": "node smoke.js"
   },
   "dependencies": {
-    "electron-updater": "^6.3.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {

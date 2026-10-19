@@ -107,6 +107,8 @@ export interface Model {
   id: string;
   providerID: string;
   name?: string;
+  /** The family the engine knows it by; a model only the settings name has none. */
+  family?: string;
   limit?: { context?: number };
 }
 

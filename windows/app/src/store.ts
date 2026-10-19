@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { api } from "./api";
 import type { Agent, AppState, Attachment, Command, FormRequest, McpServer, Model, SessionDiff, SessionSummary, Transcript, VcsInfo } from "./api";
 import { apply, emptyTranscript, fromHistory } from "../../harness/transcript.mjs";
+import { compatibilitySettings, copilotClaude } from "./compatibility.mjs";
 
 export const state: AppState = {
   project: null,
@@ -319,6 +320,37 @@ export async function loadModels() {
     state.models = [];
   }
   render();
+  void applyProviderCompatibility();
+}
+
+/// The Mac app's ProviderCompatibility: GitHub Copilot's Claude models from 5.1 on reject the
+/// thinking.block_binding the engine adds for Claude 5.1 and later, and the engine leaves it
+/// out only for the models named in its settings — so the app names them, in the settings
+/// the engine reads. Nothing else is touched.
+async function applyProviderCompatibility() {
+  try {
+    // What the engine's own list says, kept as the Mac keeps it.
+    const copilot = state.models.filter(model => model.providerID === "github-copilot");
+    if (copilot.length > 0) {
+      const learned = copilotClaude(state.models);
+      if (learned.length > 0) localStorage.setItem("copilotClaudeModels", JSON.stringify(learned));
+    }
+    let learned: string[] = [];
+    try { learned = JSON.parse(localStorage.getItem("copilotClaudeModels") ?? "[]") ?? []; } catch { learned = []; }
+    const settings = compatibilitySettings(learned);
+    if (!settings || !state.config) return;
+    let changed = false;
+    for (const model of Object.keys(settings.providers["github-copilot"].models)) {
+      const path = ["providers", "github-copilot", "models", model, "compatibility", "supportsThinkingBlockBinding"];
+      if (cfgGet(path) !== false) {
+        cfgSet(path, false);
+        changed = true;
+      }
+    }
+    if (changed) await saveConfig();
+  } catch {
+    // The engine's settings are the app's own; if they cannot be written, the app goes on.
+  }
 }
 
 export async function loadAgents() {
@@ -550,6 +582,9 @@ export async function boot() {
   void loadAgents();
   void loadCommands();
   void loadProjects();
+  // The app's own settings, the engine's too: the settings page reads them, and the
+  // provider's compatibility is written in them.
+  void bootConfig().then(() => applyProviderCompatibility());
   setInterval(() => {
     void api<{ project: string | null; engine: AppState["engine"] }>("/api/state")
       .then(next => { state.engine = next.engine; render(); })
