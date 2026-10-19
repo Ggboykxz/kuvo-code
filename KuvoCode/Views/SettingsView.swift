@@ -380,6 +380,7 @@ private struct SettingsSidebar: View {
                 .padding(.bottom, 12)
             }
             .scrollIndicators(.never)
+            .fadingScrollEdges()
             // Searching opens the first page it finds.
             .onChange(of: search) {
                 let pages = SettingsPage.shown.filter { $0.matches(search) }

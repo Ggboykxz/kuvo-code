@@ -122,7 +122,10 @@ struct TabStrip: View {
             .fixedSize(horizontal: false, vertical: true)
             .padding(.vertical, -Self.shadowRoom)
             .frame(maxWidth: tracksWidth > 0 ? tracksWidth : nil)
-            .onAppear { proxy.scrollTo(selection) }
+            // Once it's laid out too: before, the room it has, and so where the tab is, isn't known.
+            .onAppear { DispatchQueue.main.async { proxy.scrollTo(selection) } }
+            .onGeometryChange(for: CGFloat.self, of: \.size.width) { _ in proxy.scrollTo(selection) }
+            .onChange(of: tracksWidth) { proxy.scrollTo(selection) }
             .onChange(of: selection) { _, id in withAnimation(.ui) { proxy.scrollTo(id) } }
             .onChange(of: tabs.map(\.id)) { withAnimation(.ui) { proxy.scrollTo(selection) } }
         }

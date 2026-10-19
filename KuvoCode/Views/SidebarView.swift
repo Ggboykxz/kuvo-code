@@ -215,6 +215,7 @@ struct SidebarView: View {
                 .padding(.vertical, 10)
             }
             .scrollIndicators(.never)
+            .fadingScrollEdges()
 
             if !Analytics.shared.noticeShown {
                 AnalyticsNotice()
