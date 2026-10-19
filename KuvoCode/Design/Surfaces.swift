@@ -118,6 +118,16 @@ private struct SpecularRim<S: InsettableShape>: ViewModifier {
     @Environment(\.colorScheme) private var scheme
 
     func body(content: Content) -> some View {
+        #if os(macOS)
+        // Core Animation's layers: SwiftUI draws a gradient stroke on the CPU, and drew it again
+        // on every frame a card moved (the panel sliding in took a fifth of its time there).
+        content
+            .overlay {
+                RimLayers(shape: shape, light: NSColor(Surface.highlight(scheme).opacity(strength)),
+                          hairline: NSColor(Surface.hairline(scheme).opacity(strength)))
+                    .allowsHitTesting(false)
+            }
+        #else
         let light = Surface.highlight(scheme).opacity(strength)
         content
             .overlay {
@@ -142,8 +152,102 @@ private struct SpecularRim<S: InsettableShape>: ViewModifier {
                     .strokeBorder(Surface.hairline(scheme).opacity(strength), lineWidth: 0.5)
                     .allowsHitTesting(false)
             }
+        #endif
     }
 }
+
+#if os(macOS)
+/// The lit edge as layers: the top's light, a gradient seen through the shape's 1-point border,
+/// and the hairline just outside it. Moved, they're moved; resized, only their paths change.
+private struct RimLayers<S: InsettableShape>: NSViewRepresentable {
+    let shape: S
+    let light: NSColor
+    let hairline: NSColor
+
+    func makeNSView(context: Context) -> RimView { RimView() }
+
+    func updateNSView(_ view: RimView, context: Context) {
+        view.paths = { bounds in
+            // As strokeBorder draws: the border's middle half its width inside the edge; the
+            // hairline's half its width inside an edge half a point out.
+            (shape.inset(by: 0.5).path(in: bounds).cgPath, shape.inset(by: -0.25).path(in: bounds).cgPath)
+        }
+        view.colors = (light, hairline)
+    }
+}
+
+final class RimView: NSView {
+    var paths: ((CGRect) -> (CGPath, CGPath))? { didSet { needsLayout = true } }
+    var colors: (light: NSColor, hairline: NSColor)? {
+        didSet { if colors?.light != oldValue?.light || colors?.hairline != oldValue?.hairline { updateColors() } }
+    }
+    private let light = CAGradientLayer()
+    private let border = CAShapeLayer()
+    private let hairline = CAShapeLayer()
+
+    init() {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.masksToBounds = false
+        border.fillColor = nil
+        border.strokeColor = NSColor.black.cgColor
+        border.lineWidth = 1
+        light.mask = border
+        // Top to bottom (the layer's y runs up).
+        light.startPoint = CGPoint(x: 0.5, y: 1)
+        light.endPoint = CGPoint(x: 0.5, y: 0)
+        light.locations = [0, 0.12, 0.45]
+        hairline.fillColor = nil
+        hairline.lineWidth = 0.5
+        layer?.addSublayer(light)
+        layer?.addSublayer(hairline)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        let scale = window?.backingScaleFactor ?? 2
+        for piece in [light, border, hairline] as [CALayer] { piece.contentsScale = scale }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateColors()
+    }
+
+    private func updateColors() {
+        guard let colors else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            let top = colors.light.cgColor
+            light.colors = [top, colors.light.withAlphaComponent(colors.light.alphaComponent * 0.3).cgColor, colors.light.withAlphaComponent(0).cgColor]
+            hairline.strokeColor = colors.hairline.cgColor
+        }
+        CATransaction.commit()
+    }
+
+    override func layout() {
+        super.layout()
+        guard let paths else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        // SwiftUI's paths run down from the top; the layers' y runs up.
+        var flip = CGAffineTransform(scaleX: 1, y: -1).translatedBy(x: 0, y: -bounds.height)
+        let (inner, outer) = paths(CGRect(origin: .zero, size: bounds.size))
+        light.frame = bounds
+        border.frame = light.bounds
+        border.path = inner.copy(using: &flip)
+        hairline.frame = bounds
+        hairline.path = outer.copy(using: &flip)
+        CATransaction.commit()
+    }
+}
+#endif
 
 private struct AccentGlass<S: InsettableShape>: ViewModifier {
     let shape: S
