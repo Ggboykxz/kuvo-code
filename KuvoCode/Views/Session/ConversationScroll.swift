@@ -136,7 +136,7 @@ struct ConversationScroll<Rows: View>: View {
             let end = max(-geometry.contentInsets.top, geometry.contentSize.height + geometry.contentInsets.bottom - geometry.containerSize.height)
             return EndGeometry(atEnd: geometry.visibleRect.maxY >= geometry.contentSize.height - 40, height: geometry.contentSize.height,
                                fits: geometry.contentSize.height <= geometry.containerSize.height + 1,
-                               visible: geometry.containerSize.height, isPastEnd: geometry.contentOffset.y > end + 1)
+                               visible: geometry.containerSize.height, isPastEnd: geometry.contentOffset.y > end + 1, width: geometry.containerSize.width)
         } action: { old, new in
             scroller.fits = new.fits
             // Thinking that was under way is done: for a moment, the conversation getting much
@@ -161,9 +161,19 @@ struct ConversationScroll<Rows: View>: View {
                 }
                 return
             }
+            // Being resized: kept at the end through AppKit's scroll view as it goes, and taken
+            // to it through the lazy stack once it stops. Going to the end through the lazy stack
+            // at every step of a resize laid the conversation out again each time, and made and
+            // dropped the rows at the end over and over: a couple of frames a second.
+            let resizing = new.width != old.width
             // Past the end, with nothing there to see, and you're not the one scrolling: to it.
             if new.isPastEnd, !scrolling.isOn {
-                toEnd(proxy)
+                if resizing {
+                    anchor.scroll(to: nil)
+                    endFollower.follow { settled in if settled { toEnd(proxy) } }
+                } else {
+                    toEnd(proxy)
+                }
                 return
             }
             // Your scrolling decides; growth below the fold doesn't. Set only when it changes: each
@@ -172,10 +182,10 @@ struct ConversationScroll<Rows: View>: View {
             // Shrinking too: the lazy stack's first guess at the height can be too big, and a
             // conversation would then open part of the way up.
             guard scroller.followsEnd, !scrolling.isOn, new.height != old.height else { return }
-            endFollower.follow {
+            endFollower.follow { settled in
                 // Later, you may have started scrolling meanwhile.
                 guard scroller.followsEnd, !scrolling.isOn else { return }
-                toEnd(proxy)
+                if resizing, !settled { anchor.scroll(to: nil) } else { toEnd(proxy) }
             }
         }
         // Where it's scrolled to, for going to a place (a plain value, read only then).
@@ -305,6 +315,8 @@ struct EndGeometry: Equatable {
     /// How tall the view of it is, and whether it's scrolled past its end.
     var visible: CGFloat = 0
     var isPastEnd = false
+    /// How wide the view is: changing, the window or a pane is being resized.
+    var width: CGFloat = 0
 }
 
 /// Keeps the end in view as the conversation grows. Scrolling makes the lazy stack make the rows
@@ -332,20 +344,22 @@ final class EndFollower {
         }
     }
 
-    func follow(_ scroll: @escaping () -> Void) {
+    /// `scroll` now and again a moment later, then once more (`settled`) once it has stopped
+    /// changing for a while.
+    func follow(_ scroll: @escaping (_ settled: Bool) -> Void) {
         if !isBusy {
             isBusy = true
-            scroll()
+            scroll(false)
             DispatchQueue.main.async { [self] in
                 isBusy = false
-                scroll()
+                scroll(false)
             }
         }
         settle?.cancel()
         settle = Task {
             try? await Task.sleep(for: .milliseconds(200))
             guard !Task.isCancelled else { return }
-            scroll()
+            scroll(true)
         }
     }
 }
