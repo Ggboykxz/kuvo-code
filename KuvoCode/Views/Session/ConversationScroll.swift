@@ -178,7 +178,10 @@ struct ConversationScroll<Rows: View>: View {
             // to it through the lazy stack once it stops. Going to the end through the lazy stack
             // at every step of a resize laid the conversation out again each time, and made and
             // dropped the rows at the end over and over: a couple of frames a second.
-            let resizing = new.width != old.width
+            // Only while the window's being resized (a pane opening or closing changes the width
+            // once: to the end through the lazy stack then, as AppKit's end is a guess the lazy
+            // stack hasn't made rows at yet, which showed a blank conversation for a moment).
+            let resizing = new.width != old.width && (anchor.scrollView?.window?.inLiveResize ?? false)
             // Past the end, with nothing there to see, and you're not the one scrolling: to it.
             if new.isPastEnd, !scrolling.isOn {
                 if resizing {
@@ -580,6 +583,12 @@ final class ScrollAnchor {
         } else {
             clip.scroll(to: target)
             scrollView.reflectScrolledClipView(clip)
+            // SwiftUI's scroll view, told once its update is over (as `rowMoved` tells it): else
+            // it may not lay rows out where the view is now, and show nothing there.
+            DispatchQueue.main.async { [weak clip] in
+                guard let clip else { return }
+                NotificationCenter.default.post(name: NSView.boundsDidChangeNotification, object: clip)
+            }
         }
     }
 }
