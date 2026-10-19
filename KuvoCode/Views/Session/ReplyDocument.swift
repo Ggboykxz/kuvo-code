@@ -57,6 +57,31 @@ struct ReplyDocument {
         }
     }
 
+    // MARK: Cache
+
+    /// Documents made lately, by what they were made from: a reply scrolled back into view isn't
+    /// read again.
+    private struct CacheKey: Hashable {
+        var markdown: String
+        var style: Style
+        var folders: [String]
+    }
+
+    private static var cache: [CacheKey: ReplyDocument] = [:]
+    private static var cacheOrder: [CacheKey] = []
+
+    static func cached(markdown: String, parser: FileLinkingParser, style: Style) -> ReplyDocument {
+        // With Find's marks or a group chat's faces, made each time (rarely).
+        guard parser.highlight == nil, parser.mentions.isEmpty else { return ReplyDocument(markdown: markdown, parser: parser, style: style) }
+        let key = CacheKey(markdown: markdown, style: style, folders: parser.folders())
+        if let known = cache[key] { return known }
+        let document = ReplyDocument(markdown: markdown, parser: parser, style: style)
+        cache[key] = document
+        cacheOrder.append(key)
+        if cacheOrder.count > 400 { cache[cacheOrder.removeFirst()] = nil }
+        return document
+    }
+
     // MARK: Building
 
     /// What a block asks for above and below it; the space between two is the larger.
@@ -180,6 +205,17 @@ struct ReplyDocument {
         flushText()
     }
 
+    /// Whether a list item's first paragraph is a task's: "[ ] ", "[x] " or "[X] " ahead of its
+    /// words. Done or not, or nil for a plain item.
+    private static func task(_ content: AttributedSubstring) -> Bool? {
+        let start = String(content.characters.prefix(4))
+        switch start {
+        case "[ ] ": return false
+        case "[x] ", "[X] ": return true
+        default: return nil
+        }
+    }
+
     /// Find's marks in a code block, where they are in its code.
     private static func marks(in content: AttributedSubstring) -> [ReplyCodeMark] {
         var marks: [ReplyCodeMark] = []
@@ -223,6 +259,8 @@ struct ReplyDocument {
         var quoteDepth = 0
         var rule: ReplyRule?
         var table: Int?
+        /// A task's "[ ] " or "[x] ", left out of its words (a box shows it).
+        var dropped = 0
         let list = components.last { component in
             switch component.kind {
             case .orderedList, .unorderedList: true
@@ -256,6 +294,14 @@ struct ReplyDocument {
                         .font: NSFont.monospacedDigitSystemFont(ofSize: size, weight: .regular), .foregroundColor: color,
                         .replyPlainText: plainIndent + "\(ordinal). ",
                     ])
+                } else if let done = Self.task(content) {
+                    // A task: a box, ticked when it's done, in the bullet's place.
+                    dropped = 4
+                    let box = NSMutableAttributedString(string: "\t", attributes: [.font: style.body])
+                    box.append(ReplyAttachments.taskBox(done: done, size: size, font: style.body))
+                    box.append(NSAttributedString(string: "\t", attributes: [.font: style.body]))
+                    box.addAttribute(.replyPlainText, value: plainIndent + (done ? "- [x] " : "- [ ] "), range: NSRange(location: 0, length: box.length))
+                    marker = box
                 } else {
                     let bullet = NSMutableAttributedString(string: "\t", attributes: [.font: style.body])
                     bullet.append(ReplyAttachments.bullet(level: listDepth - 1, size: size, font: style.body))
@@ -312,7 +358,16 @@ struct ReplyDocument {
 
         let text = NSMutableAttributedString()
         if let marker { text.append(marker) }
+        var toDrop = dropped
         for run in content.runs {
+            var runRange = run.range
+            if toDrop > 0 {
+                let available = content[runRange].characters.count
+                let skip = min(toDrop, available)
+                runRange = content.characters.index(runRange.lowerBound, offsetBy: skip)..<runRange.upperBound
+                toDrop -= skip
+                if runRange.isEmpty { continue }
+            }
             let inline = run.inlinePresentationIntent ?? []
             let isCode = inline.contains(.code)
             let runWeight: NSFont.Weight = inline.contains(.stronglyEmphasized) ? .semibold : weight
@@ -334,7 +389,7 @@ struct ReplyDocument {
                 continue
             }
             // A line break inside a paragraph, not a new paragraph.
-            let string = String(content[run.range].characters).replacingOccurrences(of: "\n", with: "\u{2028}")
+            let string = String(content[runRange].characters).replacingOccurrences(of: "\n", with: "\u{2028}")
             text.append(NSAttributedString(string: string, attributes: attributes))
         }
         if let table, case .tableCell(let column)? = components.first(where: { if case .tableCell = $0.kind { true } else { false } })?.kind {
@@ -422,6 +477,18 @@ enum ReplyAttachments {
         guard maxX >= minX else { return CGRect(origin: .zero, size: image.size) }
         // Rows from the top in memory: flipped to the image's bottom-left origin.
         return CGRect(x: CGFloat(minX) / scale, y: CGFloat(height - 1 - maxY) / scale, width: CGFloat(maxX - minX + 1) / scale, height: CGFloat(maxY - minY + 1) / scale)
+    }
+
+    /// A task's box, ticked when it's done: 0.85 of the text's size, secondary, on the middle of
+    /// the first line, as Textual draws it.
+    static func taskBox(done: Bool, size: CGFloat, font: NSFont) -> NSAttributedString {
+        let item = NSTextAttachment()
+        let image = NSImage(systemSymbolName: done ? "checkmark.square" : "square", accessibilityDescription: done ? "Done" : "Not done")?
+            .withSymbolConfiguration(.init(pointSize: size * 0.85, weight: .regular).applying(.init(paletteColors: [NSColor.labelColor.withAlphaComponent(0.7)])))
+        item.image = image
+        let side = image?.size ?? CGSize(width: size * 0.85, height: size * 0.85)
+        item.bounds = CGRect(x: 0, y: (font.capHeight - side.height) / 2, width: side.width, height: side.height)
+        return NSAttributedString(attachment: item)
     }
 
     /// A list's bullet, as Textual's: a dot, a ring, a square, by how deep the list is; a third

@@ -18,9 +18,16 @@ struct ReplyView: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> ReplyPieceView {
-        let view = ReplyPieceView()
+        // One a reply scrolled out of view left: its text views are made already, which is much
+        // of what a piece costs.
+        let view = ReplyPieceView.pool.popLast() ?? ReplyPieceView()
         update(view)
         return view
+    }
+
+    static func dismantleNSView(_ view: ReplyPieceView, coordinator: ()) {
+        view.putAway()
+        if ReplyPieceView.pool.count < 40 { ReplyPieceView.pool.append(view) }
     }
 
     func updateNSView(_ view: ReplyPieceView, context: Context) {
@@ -30,7 +37,7 @@ struct ReplyView: NSViewRepresentable {
     private func update(_ view: ReplyPieceView) {
         view.openURL = openURL
         view.cardIsFocused = cardIsFocused
-        view.show(markdown, parser: parser, style: style)
+        view.show(markdown, document: { ReplyDocument.cached(markdown: markdown, parser: parser, style: style) }, style: style)
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: ReplyPieceView, context: Context) -> CGSize? {
@@ -56,6 +63,9 @@ extension Look.Typeface {
 
 /// A piece's segments, one under another.
 final class ReplyPieceView: NSView {
+    /// Pieces put away, to show another reply.
+    static var pool: [ReplyPieceView] = []
+
     var openURL: (URL) -> Bool = { _ in false }
     var cardIsFocused = true {
         didSet { if cardIsFocused != oldValue { for case let code as ReplyCodeView in segmentViews { code.cardIsFocused = cardIsFocused } } }
@@ -68,10 +78,17 @@ final class ReplyPieceView: NSView {
 
     override var isFlipped: Bool { true }
 
-    func show(_ markdown: String, parser: FileLinkingParser, style: ReplyDocument.Style) {
+    /// Put away: what it showed is let go, and what's selected in it.
+    func putAway() {
+        removeFromSuperview()
+        for case let text as ReplyTextView in segmentViews { text.setSelectedRange(NSRange(location: 0, length: 0)) }
+        openURL = { _ in false }
+    }
+
+    func show(_ markdown: String, document: () -> ReplyDocument, style: ReplyDocument.Style) {
         guard shown?.markdown != markdown || shown?.style != style else { return }
         shown = (markdown, style)
-        let document = ReplyDocument(markdown: markdown, parser: parser, style: style)
+        let document = document()
         var views: [NSView] = []
         for (index, segment) in document.segments.enumerated() {
             // The view in its place already, if it's the same kind: as a reply streams in, its
@@ -165,8 +182,8 @@ final class ReplyTextView: NSTextView, NSTextViewDelegate {
     }
 
     func show(_ text: NSAttributedString) {
-        guard let storage = textStorage, !storage.isEqual(to: text) else { return }
-        storage.setAttributedString(text)
+        guard let storage = textStorage else { return }
+        ReplyText.replace(storage, with: text)
     }
 
     /// How tall it is at `width` (the piece keeps it, by width).
@@ -467,8 +484,7 @@ final class ReplyCodeTextView: NSTextView {
     }
 
     func show(_ text: NSAttributedString) {
-        guard let storage = textStorage, !storage.isEqual(to: text) else { return }
-        storage.setAttributedString(text)
+        guard let storage = textStorage, ReplyText.replace(storage, with: text) else { return }
         cachedSize = nil
         needsDisplay = true
     }
@@ -623,5 +639,38 @@ enum ReplyCodeColors {
         }
         colors[type] = color
         return color
+    }
+}
+
+/// Changing what a text shows.
+enum ReplyText {
+    /// `storage` made `text`: only from the paragraph before the first that's different, when the
+    /// rest is the same (a reply streaming in grows at its end), so TextKit lays out only that.
+    /// Whether anything changed.
+    @discardableResult
+    static func replace(_ storage: NSTextStorage, with text: NSAttributedString) -> Bool {
+        let old = storage.string as NSString
+        let new = text.string as NSString
+        guard old.length > 0, new.length > 0 else {
+            guard storage.length > 0 || text.length > 0 else { return false }
+            storage.setAttributedString(text)
+            return true
+        }
+        // Where they differ, as characters.
+        let limit = min(old.length, new.length)
+        var common = 0
+        while common < limit, old.character(at: common) == new.character(at: common) { common += 1 }
+        if common == old.length, common == new.length, storage.isEqual(to: text) { return false }
+        // From the paragraph before (its space after it changes as one comes after it).
+        var start = old.paragraphRange(for: NSRange(location: min(common, old.length - 1), length: 0)).location
+        if start > 0 { start = old.paragraphRange(for: NSRange(location: start - 1, length: 0)).location }
+        guard start > 0, storage.attributedSubstring(from: NSRange(location: 0, length: start)).isEqual(to: text.attributedSubstring(from: NSRange(location: 0, length: start))) else {
+            storage.setAttributedString(text)
+            return true
+        }
+        storage.beginEditing()
+        storage.replaceCharacters(in: NSRange(location: start, length: old.length - start), with: text.attributedSubstring(from: NSRange(location: start, length: new.length - start)))
+        storage.endEditing()
+        return true
     }
 }
