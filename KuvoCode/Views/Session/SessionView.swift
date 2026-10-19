@@ -82,7 +82,7 @@ struct SessionView: View {
 
 /// Something that didn't work (a message that didn't go, an undo), over the composer until you
 /// dismiss it or send again.
-private struct FailureBar: View {
+struct FailureBar: View {
     let text: String
     let dismiss: () -> Void
 
@@ -134,7 +134,7 @@ private struct BottomStack: View {
 
     /// Subagents its agent handed work to that are at it now.
     private var subagentsAtWork: [SessionModel.Subagent] {
-        model.subagents.filter(workspace.isWorking)
+        model.subagents.filter { workspace.isWorking($0, for: model.id) }
     }
 
     var body: some View {
@@ -178,7 +178,7 @@ private struct BottomStack: View {
                         .transition(.opacity)
                 }
                 if !subagentsAtWork.isEmpty {
-                    SubagentsBar(subagents: subagentsAtWork, folder: model.session.location.directory, session: model.id, isHidden: $model.hidesSubagents)
+                    SubagentsBar(subagents: subagentsAtWork, folder: model.session.location.directory, isHidden: $model.hidesSubagents)
                         .glassEffect(.regular, in: .rect(cornerRadius: Metrics.composerRadius))
                         .glassEffectID("subagents", in: glass)
                         .transition(.opacity)
@@ -292,17 +292,7 @@ private struct BottomStack: View {
             Analytics.shared.firstMessageBlocked("machine_offline")
             return
         }
-        model.failure = nil
-        let commands = catalog.commands(in: model.session.location.directory)
-        // A "!" or "/" command runs as typed; what you were replying to waits for a message.
-        let isCommand = SessionModel.shellCommand(in: model.draftText) != nil || SlashCommands.parse(model.draftText, commands: commands) != nil
-        let text = isCommand ? model.draftText : Quoting.message(quotes: model.draftQuotes, text: model.draftText)
-        let files = model.draftFiles
-        // Emptied first: what can't be sent comes back to it.
-        model.draftText = ""
-        model.draftFiles = []
-        if !isCommand { model.draftQuotes = [] }
-        model.submit(text, files: files, for: catalog.model(model.session.model), queue: queue, commands: commands)
+        model.submitDraft(for: catalog.model(model.session.model), queue: queue, commands: catalog.commands(in: model.session.location.directory))
     }
 }
 

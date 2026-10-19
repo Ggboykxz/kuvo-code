@@ -13,8 +13,33 @@ struct BackgroundBar: View {
     @Binding var isHidden: Bool
     let stop: (ShellJob) -> Void
 
-    private static let rowHeight: CGFloat = 30
-    private static let visibleRows = 4
+    var body: some View {
+        WorkBar(items: jobs, title: jobs.count == 1 ? "Running in the background" : "\(jobs.count) commands running in the background",
+                detail: jobs.count == 1 ? jobs.first.map { job in
+                    Text(job.command.replacingOccurrences(of: "\n", with: " ")).font(.system(size: 12, design: .monospaced))
+                } : nil,
+                showHelp: "Show what runs in the background", hideHelp: "Hide them: this line stays while they run", isHidden: $isHidden) { job in
+            BackgroundJobRow(job: job, api: api, directory: directory) { stop(job) }
+        }
+    }
+}
+
+/// A bar over the composer for work going on there that the conversation doesn't show as it
+/// happens (commands left running, subagents at work): one line that says so, and under it a row
+/// for each, as many as fit before it scrolls. Hidden, the line stays, still drawing itself, with
+/// what the one there is when there's one.
+struct WorkBar<Item: Identifiable, Row: View>: View {
+    let items: [Item]
+    let title: String
+    /// What the only one is, beside the title while the rows are hidden.
+    var detail: Text?
+    let showHelp: String
+    let hideHelp: String
+    @Binding var isHidden: Bool
+    @ViewBuilder let row: (Item) -> Row
+
+    private static var rowHeight: CGFloat { 30 }
+    private static var visibleRows: Int { 4 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -22,19 +47,22 @@ struct BackgroundBar: View {
             if !isHidden {
                 ScrollView {
                     VStack(spacing: 0) {
-                        ForEach(jobs) { job in
-                            BackgroundJobRow(job: job, api: api, directory: directory) { stop(job) }
+                        ForEach(items) { item in
+                            row(item)
+                                // Under the line's words, past its mark.
+                                .padding(.leading, 42)
+                                .padding(.trailing, 10)
                                 .frame(height: Self.rowHeight)
                         }
                     }
                 }
-                .frame(height: CGFloat(min(jobs.count, Self.visibleRows)) * Self.rowHeight)
+                .frame(height: CGFloat(min(items.count, Self.visibleRows)) * Self.rowHeight)
                 .scrollBounceBehavior(.basedOnSize)
                 .padding(.bottom, 6)
                 .transition(.opacity)
             }
         }
-        .animation(.ui, value: jobs.map(\.id))
+        .animation(.ui, value: items.map(\.id))
     }
 
     private var header: some View {
@@ -44,11 +72,10 @@ struct BackgroundBar: View {
             HStack(spacing: 10) {
                 Spinner(size: 14)
                     .frame(width: 18)
-                Text(jobs.count == 1 ? "Running in the background" : "\(jobs.count) commands running in the background")
+                Text(title)
                     .font(.system(size: 13, weight: .medium))
-                if isHidden, jobs.count == 1, let job = jobs.first {
-                    Text(job.command.replacingOccurrences(of: "\n", with: " "))
-                        .font(.system(size: 12, design: .monospaced))
+                if isHidden, let detail {
+                    detail
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -66,8 +93,8 @@ struct BackgroundBar: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .help(isHidden ? "Show what runs in the background" : "Hide them: this line stays while they run")
-        .accessibilityLabel(jobs.count == 1 ? "Running in the background" : "\(jobs.count) commands running in the background")
+        .help(isHidden ? showHelp : hideHelp)
+        .accessibilityLabel(title)
         .accessibilityValue(isHidden ? "Hidden" : "Shown")
     }
 }
@@ -105,9 +132,6 @@ private struct BackgroundJobRow: View {
                 .font(.system(size: 13))
                 .help("Stop it: the agent hears that it ended, with what it printed")
         }
-        // Under the line's words, past its mark.
-        .padding(.leading, 42)
-        .padding(.trailing, 10)
     }
 }
 

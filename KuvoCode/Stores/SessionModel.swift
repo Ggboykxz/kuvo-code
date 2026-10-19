@@ -96,8 +96,9 @@ final class SessionModel {
         if inlineShells != inline { inlineShells = inline }
         let used = Self.contextUsed(in: transcript.messages)
         if contextUsed != used { contextUsed = used }
-        let helpers = Self.subagents(in: transcript.messages)
+        let helpers = subagentsNow(in: transcript.messages)
         if subagents != helpers { subagents = helpers }
+        findUnnamedSubagents()
         // Answers in progress go once their question has (answered, or dismissed).
         if !questionProgress.isEmpty {
             let open = Set(forms.map(\.id))
@@ -106,12 +107,61 @@ final class SessionModel {
         }
     }
 
-    private static func subagents(in messages: [Message]) -> [Subagent] {
-        var found: [Subagent] = []
+    /// Subagents' sessions by the step that started them, for a step under way that the engine
+    /// gave back without its session (read again from the engine mid-step, its stored copy has
+    /// none: only its live events say).
+    @ObservationIgnored private var foundSubagents: [String: String] = [:]
+    @ObservationIgnored private var lookingFor: Set<String> = []
+
+    /// Looks for the session of each subagent step under way that hasn't said which it is: the
+    /// newest of this session's subagents named after its task (the engine names it so).
+    private func findUnnamedSubagents() {
+        guard let last = transcript.messages.last, case .assistant(let step) = last else { return }
+        for case .tool(let call) in step.content where call.name == "subagent" && !call.state.isFinished
+            && call.state.metadata?["sessionID"]?.string == nil && foundSubagents[call.id] == nil && !lookingFor.contains(call.id) {
+            guard let task = call.state.input?["description"]?.string, !task.isEmpty else { continue }
+            lookingFor.insert(call.id)
+            Task {
+                // Once the step has started it.
+                for attempt in 0..<5 where foundSubagents[call.id] == nil {
+                    if attempt > 0 { try? await Task.sleep(for: .seconds(2)) }
+                    if let child = try? await api.children(of: id).first(where: { $0.title == task }) {
+                        foundSubagents[call.id] = child.id
+                        earlierSubagents = nil
+                        transcriptChanged()
+                    }
+                }
+                lookingFor.remove(call.id)
+            }
+        }
+    }
+
+    /// The subagents in all but the last message, by the message before it: while a reply
+    /// streams, only the last one changes, so only it is read again.
+    @ObservationIgnored private var earlierSubagents: (before: String, found: [Subagent])?
+
+    private func subagentsNow(in messages: [Message]) -> [Subagent] {
+        guard let last = messages.last else { return [] }
+        let earlier = messages.dropLast()
+        let found: [Subagent]
+        if let cache = earlierSubagents, cache.before == earlier.last?.id ?? "" {
+            found = cache.found
+        } else {
+            found = Self.subagents(in: earlier, adding: [], known: foundSubagents)
+            // Kept only while every step in them is done: one still under way (a message of
+            // yours came after it) can change yet.
+            let isSettled = earlier.allSatisfy { if case .assistant(let step) = $0 { step.time.completed != nil } else { true } }
+            earlierSubagents = isSettled ? (earlier.last?.id ?? "", found) : nil
+        }
+        return Self.subagents(in: [last], adding: found, known: foundSubagents)
+    }
+
+    private static func subagents(in messages: some Sequence<Message>, adding found: [Subagent], known: [String: String]) -> [Subagent] {
+        var found = found
         for message in messages {
             guard case .assistant(let step) = message else { continue }
             for case .tool(let call) in step.content where call.name == "subagent" {
-                guard let session = call.state.metadata?["sessionID"]?.string else { continue }
+                guard let session = call.state.metadata?["sessionID"]?.string ?? known[call.id] else { continue }
                 let input = call.state.input
                 let subagent = Subagent(id: session, call: call.id, task: input?["description"]?.string ?? "", agent: input?["agent"]?.string,
                                         isBackground: input?["background"]?.bool == true, isStepDone: call.state.isFinished)
@@ -698,6 +748,20 @@ final class SessionModel {
     /// Once the messages on their way have gone to the engine, or come back to the composer.
     func messagesSent() async {
         await sending?.value
+    }
+
+    /// Sends the composer's draft as it is (its text, files and what it replies to), emptying it
+    /// first: what can't be sent comes back to it.
+    func submitDraft(for model: Model?, queue: Bool, commands: [Command]) {
+        failure = nil
+        // A "!" or "/" command runs as typed; what you were replying to waits for a message.
+        let isCommand = Self.shellCommand(in: draftText) != nil || SlashCommands.parse(draftText, commands: commands) != nil
+        let text = isCommand ? draftText : Quoting.message(quotes: draftQuotes, text: draftText)
+        let files = draftFiles
+        draftText = ""
+        draftFiles = []
+        if !isCommand { draftQuotes = [] }
+        submit(text, files: files, for: model, queue: queue, commands: commands)
     }
 
     /// Sends what's in the composer: a message, or a command for "/name arguments". What can't

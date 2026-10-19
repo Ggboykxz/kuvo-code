@@ -269,6 +269,12 @@ public struct OpenCodeAPI: Sendable {
         return page
     }
 
+    /// The sessions a session's agent started (its subagents'), newest first.
+    public func children(of session: String, limit: Int = 50) async throws -> [Session] {
+        let page: Page<Session> = try await get("api/session", query: ["limit": String(limit), "order": "desc", "parentID": session])
+        return page.data.map(appSession)
+    }
+
     /// Every session (the root ones, unless `roots` is false), newest first, page after page.
     public func allSessions(directory: String? = nil, roots: Bool = true) async throws -> [Session] {
         let size = 100

@@ -53,7 +53,7 @@ struct SubagentRow: View {
                 .help(isExpanded ? "Hide its steps" : "Show its steps")
                 if let session {
                     Button("Open") {
-                        app.utilities.showSubagent(session, folder: directory, of: model?.session.parentID ?? session)
+                        app.utilities.showSubagent(session, folder: directory)
                     }
                     .buttonStyle(TextButtonStyle())
                     .font(.callout)

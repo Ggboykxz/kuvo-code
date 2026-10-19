@@ -42,93 +42,36 @@ extension SessionModel {
 }
 
 extension Workspace {
-    /// At work: its step not done yet, or done at once (sent off in the background) while its
-    /// session still runs.
-    func isWorking(_ subagent: SessionModel.Subagent) -> Bool {
-        !subagent.isStepDone || running.contains(subagent.id)
+    /// At work: its session runs, or the step that waits on it isn't done while the conversation
+    /// that started it runs (a step left unfinished by an engine that stopped isn't work).
+    func isWorking(_ subagent: SessionModel.Subagent, for conversation: String) -> Bool {
+        running.contains(subagent.id) || (!subagent.isStepDone && running.contains(conversation))
     }
 }
 
 // MARK: - The bar over the composer
 
 /// The conversation's subagents at work, in a bar over the composer like the one for commands
-/// left running: one line that says so, and under it each one, what it's doing, Open (to watch
-/// and talk to it beside the conversation) and Stop. Hidden, the line stays.
+/// left running: each with what it's doing, Open (to watch and talk to it beside the conversation)
+/// and Stop.
 struct SubagentsBar: View {
     let subagents: [SessionModel.Subagent]
     /// The conversation's folder, where they work.
     let folder: String
-    /// The conversation they work for.
-    let session: String
     @Binding var isHidden: Bool
 
-    private static let rowHeight: CGFloat = 30
-    private static let visibleRows = 4
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            if !isHidden {
-                ScrollView {
-                    VStack(spacing: 0) {
-                        ForEach(subagents) { subagent in
-                            SubagentsBarRow(subagent: subagent, folder: folder, session: session)
-                                .frame(height: Self.rowHeight)
-                        }
-                    }
-                }
-                .frame(height: CGFloat(min(subagents.count, Self.visibleRows)) * Self.rowHeight)
-                .scrollBounceBehavior(.basedOnSize)
-                .padding(.bottom, 6)
-                .transition(.opacity)
-            }
+        WorkBar(items: subagents, title: subagents.count == 1 ? "A subagent is at work" : "\(subagents.count) subagents at work",
+                detail: subagents.count == 1 ? subagents.first.map { Text($0.task).font(.system(size: 12)) } : nil,
+                showHelp: "Show the subagents at work", hideHelp: "Hide them: this line stays while they work", isHidden: $isHidden) { subagent in
+            SubagentsBarRow(subagent: subagent, folder: folder)
         }
-        .animation(.ui, value: subagents.map(\.id))
-    }
-
-    private var title: String {
-        subagents.count == 1 ? "A subagent is at work" : "\(subagents.count) subagents at work"
-    }
-
-    private var header: some View {
-        Button {
-            withAnimation(.ui) { isHidden.toggle() }
-        } label: {
-            HStack(spacing: 10) {
-                Spinner(size: 14)
-                    .frame(width: 18)
-                Text(title)
-                    .font(.system(size: 13, weight: .medium))
-                if isHidden, subagents.count == 1, let subagent = subagents.first {
-                    Text(subagent.task)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                Spacer(minLength: 8)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .rotationEffect(.degrees(isHidden ? 180 : 0))
-                    .accessibilityHidden(true)
-            }
-            .padding(.leading, 14)
-            .padding(.trailing, 16)
-            .frame(height: 36)
-            .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .help(isHidden ? "Show the subagents at work" : "Hide them: this line stays while they work")
-        .accessibilityLabel(title)
-        .accessibilityValue(isHidden ? "Hidden" : "Shown")
     }
 }
 
 private struct SubagentsBarRow: View {
     let subagent: SessionModel.Subagent
     let folder: String
-    let session: String
     @Environment(Workspace.self) private var workspace
     @Environment(AppModel.self) private var app
     @Environment(Catalog.self) private var catalog
@@ -158,7 +101,7 @@ private struct SubagentsBarRow: View {
             .lineLimit(1)
             .frame(maxWidth: .infinity, alignment: .leading)
             Button("Open", systemImage: "sidebar.right") {
-                app.utilities.showSubagent(subagent.id, folder: folder, of: session)
+                app.utilities.showSubagent(subagent.id, folder: folder)
             }
             .buttonStyle(TextButtonStyle())
             .font(.system(size: 13))
@@ -172,9 +115,6 @@ private struct SubagentsBarRow: View {
                 .disabled(model == nil)
                 .help("Stop it: the agent hears it was stopped, and carries on")
         }
-        // Under the line's words, past its mark.
-        .padding(.leading, 42)
-        .padding(.trailing, 10)
         .task(id: subagent.id) {
             let model = await workspace.subagentModel(for: subagent.id, in: folder)
             if let model, !model.isLoaded { await model.load() }
@@ -247,14 +187,8 @@ private struct SubagentConversation: View {
                                 .glassEffect(.regular, in: .rect(cornerRadius: Metrics.composerRadius))
                         }
                         if let failure = model.failure {
-                            Label(failure, systemImage: "exclamationmark.triangle.fill")
-                                .font(.callout)
-                                .lineLimit(3)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 10)
+                            FailureBar(text: failure) { model.failure = nil }
                                 .glassEffect(.regular, in: .rect(cornerRadius: Metrics.composerRadius))
-                                .onTapGesture { model.failure = nil }
                         }
                         composer
                     }
@@ -292,13 +226,8 @@ private struct SubagentConversation: View {
                 .font(.system(size: 12))
                 .lineLimit(1)
             }
+            // Stop is the composer's, as in any conversation.
             Spacer(minLength: 8)
-            if isWorking {
-                Button("Stop", systemImage: "stop.circle", action: model.stop)
-                    .buttonStyle(TextButtonStyle())
-                    .font(.system(size: 13))
-                    .help("Stop it: the agent that started it hears it was stopped, and carries on")
-            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
@@ -325,6 +254,7 @@ private struct SubagentConversation: View {
             hasQueue: !model.waiting.isEmpty,
             history: { model.sentMessages },
             folders: [model.session.location.directory],
+            commands: catalog.commands(in: model.session.location.directory),
             focusRequest: model.composerFocus,
             onSelectAgent: { _ in },
             onSelectApproval: { _ in },
@@ -340,14 +270,7 @@ private struct SubagentConversation: View {
     }
 
     private func send() {
-        model.failure = nil
-        let text = Quoting.message(quotes: model.draftQuotes, text: model.draftText)
-        let files = model.draftFiles
-        // Emptied first: what can't be sent comes back to it.
-        model.draftText = ""
-        model.draftFiles = []
-        model.draftQuotes = []
         Analytics.shared.track("subagent_messaged", ["working": isWorking])
-        model.submit(text, files: files, for: catalog.model(model.session.model), queue: false, commands: [])
+        model.submitDraft(for: catalog.model(model.session.model), queue: false, commands: catalog.commands(in: model.session.location.directory))
     }
 }

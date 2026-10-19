@@ -1439,6 +1439,7 @@ private struct FoldingCard<Header: View, Accessory: View, Content: View>: View {
     @ViewBuilder var header: Header
     @ViewBuilder var accessory: Accessory
     @ViewBuilder var content: Content
+    @State private var isHoveringHeader = false
 
     /// A few lines at most: shown open from the start.
     static func isShort(_ text: String) -> Bool {
@@ -1474,7 +1475,17 @@ private struct FoldingCard<Header: View, Accessory: View, Content: View>: View {
                                 .truncationMode(.tail)
                         }
                     }
+                    // A fill under the pointer that reaches past the words without moving them,
+                    // and the pointing hand, which the conversation's selection layer on top
+                    // would otherwise turn into an I-beam.
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(isHoveringHeader ? Pressable.hoverFill : .clear, in: .rect(cornerRadius: 6))
+                    .background(HoverTracker { isHoveringHeader = $0 })
+                    .padding(.horizontal, -6)
+                    .padding(.vertical, -3)
                     .contentShape(.rect)
+                    .animation(.easeOut(duration: 0.12), value: isHoveringHeader)
                 }
                 .buttonStyle(.plain)
                 .help(open ? "Fold it to its first line" : "Show all of it")

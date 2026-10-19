@@ -474,11 +474,11 @@ final class Utilities {
         close(id)
     }
 
-    /// A subagent of `session`'s in a tab of that conversation's panel (its own, if it has one),
-    /// and the panel in view: you asked to see it.
-    func showSubagent(_ id: String, folder: String, of session: String) {
+    /// A subagent in a tab of the panel in view (its own, if it has one there), and the panel
+    /// shown: you asked to see it, from the conversation you're in.
+    func showSubagent(_ id: String, folder: String) {
         Analytics.shared.track("panel_opened", ["tool": "subagent"])
-        let owner = panelOf(session)
+        let owner = panelKey
         if let tab = tabs.first(where: { $0.owner == owner && $0.kind == .subagent(id, folder: folder) }) {
             selection = tab.id
         } else {
