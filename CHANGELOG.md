@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 - The bar over the composer for commands left running in the background no longer flashes for every command the agent runs, nor adds and drops quick ones from its list while a long one runs: a command shows there once it has run for a couple of seconds.
+- Bring the coding agent you already pay for: Claude Code, Codex, Cursor, Grok and Antigravity, signed in as you, under **Coding Agents** at the top of Settings › Accounts. Pick one of their models for a new session, and that agent does the work, on this Mac, with its replies, edits, permissions and questions in the conversation like any session's.
 
 ## 0.5.22
 

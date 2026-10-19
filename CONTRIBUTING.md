@@ -63,6 +63,7 @@ The engine client and the usage tracker have tests:
 cd Packages/OpenCodeKit && swift test
 cd Packages/UsageKit && swift test
 cd Packages/KuvoLink && swift test && node --test Tests/Bridge/*.test.js
+cd Agents && bun install && bun test && bunx tsc --noEmit
 ```
 
 Recorded engine responses in `Tests/OpenCodeKitTests/Fixtures` drive most of
@@ -88,6 +89,7 @@ README says how.
 | `Packages/OpenCodeKit/` | The engine client: API, models, event stream, transcript reducer, engine installer |
 | `Packages/UsageKit/` | The usage tracker in the menu bar, a fork of [OpenUsage](https://github.com/robinebers/openusage) |
 | `Packages/KuvoLink/` | The phone link: its protocol (`PROTOCOL.md`), the Swift side and the machines' bridge |
+| `Agents/` | The agents bridge (TypeScript): Claude Code, Codex, Cursor, Grok and Antigravity in the engine's API |
 | `Config/App.xcconfig` | The app's name and bundle ID, and signing defaults |
 | `Licenses/` | License texts for code copied into this repository |
 
@@ -130,6 +132,7 @@ without clicking, for trying a change or taking screenshots:
 | Variable | Effect |
 | --- | --- |
 | `KUVO_OPENCODE_BINARY` | Use this opencode binary instead of the pinned download |
+| `KUVO_AGENTS_SCRIPT` | Run the agents bridge from this script (a checkout's `Agents/src/main.ts`) instead of the app's bundle |
 | `KUVO_DEMO_FOLDER`, `KUVO_DEMO_PROMPT`, `KUVO_DEMO_MODEL` | Open a project and start a session with a prompt (`provider/model`) |
 | `KUVO_DEMO_WORKTREE` | Start that session in a worktree of its own |
 | `KUVO_DEMO_DRAFT` | With `KUVO_DEMO_FOLDER` and no prompt: a message typed, not sent, in the new session's composer |
@@ -223,6 +226,29 @@ without clicking, for trying a change or taking screenshots:
 `scripts/icon.py` generates the app icon as an Icon Composer file in
 `KuvoCode/AppIcon.icon`, which Xcode compiles with the app. Run it again after
 changing the icon there.
+
+### The coding agents
+
+Claude Code, Codex, Cursor, Grok and Antigravity run beside the engine, the way
+[T3 Code](https://github.com/pingdotgg/t3code) runs them: each as its maker built it, signed in
+as you. `Agents/src` is a small server, the agents bridge, that `OutsideAgents` starts with the
+engine's Bun as it starts the engine (it prints `{"url": …}`, takes the password in
+`OPENCODE_PASSWORD` and stops when its stdin closes). It answers the app in the engine's own API
+(sessions, messages, events, permissions, questions, models, sign-in), so their sessions use
+the app's usual views; `Workspace` sends a session to it when its metadata names an agent
+(`kuvoAgent`), and the phone reaches it at `kuvo/agents/api/…`.
+
+- **Claude Code**: the Claude Agent SDK, with your `claude` and its sign-in.
+- **Codex**: `codex app-server`, JSON-RPC over stdio.
+- **Cursor**: Cursor's SDK, signed in through it; its sign-in and agents in `agents/cursor`.
+- **Grok** and **Antigravity**: the Agent Client Protocol (`acp.ts`); Antigravity's agent is
+  downloaded from Google, checked against its pinned SHA-256, into `agents/antigravity`.
+
+The SDKs are installed from npm the first time each is needed (`runtime/<agent>`), at the
+versions in the agents' files, and aren't part of the app. After changing `Agents/src`, run
+`./scripts/build-agents.sh` and commit `KuvoCode/Resources/kuvo-agents.js`, the bundle the app
+ships. In a debug build, `KUVO_AGENTS_SCRIPT=<checkout>/Agents/src/main.ts` runs the source
+instead.
 
 ### Dependencies
 

@@ -87,6 +87,13 @@ side panel and the usage menu.
   agent runs still get your own folders (`~/.config` and the like) back,
   through a small plugin in the engine's `plugins` folder, so tools such as
   `gh` find their sign-ins.
+- **The coding agents you already have** (Claude Code, Codex, Cursor, Grok,
+  Antigravity) run beside the engine, each as its maker built it and signed in
+  as you: a small bridge of Kuvo Code's own (`Agents/`, run by the engine's
+  Bun) drives them through the Claude Agent SDK and your `claude`, Codex's
+  app-server, Cursor's SDK, and the Agent Client Protocol for Grok and
+  Antigravity, and answers the app in the engine's own API. What it keeps is in
+  `~/Library/Application Support/run.kuvo.code/agents`.
 - **On a machine you add**, Kuvo Code reaches it with `ssh` and your keys. It
   sends the same engine version's Linux build, downloaded and checked on the
   Mac, to `~/.kuvo-code` there, runs it on the machine's localhost only, and
