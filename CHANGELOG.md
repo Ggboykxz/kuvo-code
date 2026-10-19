@@ -6,6 +6,9 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Going back to one of the last few sessions you had open shows it at once, scrolled where you left it. Switching to a long conversation took up to a quarter of a second, and it opened at the end.
+- Resizing the window with a long conversation open is smoother: it took twice the work, as the conversation was laid out again to keep its end in view at every step, and the sidebar was made again each time too.
+
 ## 0.5.15
 
 - In Ask First, the agent asks before saving a PDF or uploading one of your files to a site. Bots in a group chat can't start sessions, save PDFs or upload your files, as they already couldn't change files or run commands.

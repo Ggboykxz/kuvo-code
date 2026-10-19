@@ -48,7 +48,10 @@ final class Workspace {
     /// The machines you've added. A removed machine's projects leave the sidebar but keep their
     /// settings, for when it's added again.
     var machines: Set<String> = [] {
-        didSet { for machine in machines.subtracting(oldValue) { showLastSeen(machine) } }
+        didSet {
+            projectsChanged()
+            for machine in machines.subtracting(oldValue) { showLastSeen(machine) }
+        }
     }
 
     struct RemoteSession: Codable {
@@ -93,7 +96,10 @@ final class Workspace {
     /// This Mac's as last listed until its engine lists them (it takes a moment to start), so the
     /// sidebar and the conversation open at launch show at once.
     private(set) var sessions: [Session] = SessionCopies.localSessions() {
-        didSet { if isLoaded { keepLocalList() } }
+        didSet {
+            projectsChanged()
+            if isLoaded { keepLocalList() }
+        }
     }
     private(set) var running: Set<String> = [] {
         // While one runs on this Mac, it stays awake (unless you turned that off).
@@ -101,14 +107,22 @@ final class Workspace {
     }
     /// Folders the user opened, even before they have sessions.
     /// A bot's own folder was kept as one by mistake once: it isn't one.
-    private(set) var folders: [String] = (UserDefaults.standard.stringArray(forKey: "projectFolders") ?? []).filter { !Workspace.isBotFolder($0) }
+    private(set) var folders: [String] = (UserDefaults.standard.stringArray(forKey: "projectFolders") ?? []).filter { !Workspace.isBotFolder($0) } {
+        didSet { projectsChanged() }
+    }
     /// Names and other folders of projects, by their primary folder.
-    private(set) var settings: [String: ProjectSettings] = Workspace.loadSettings()
+    private(set) var settings: [String: ProjectSettings] = Workspace.loadSettings() {
+        didSet { projectsChanged() }
+    }
     /// Sessions' own git worktrees, by the folder their sessions run in.
-    private(set) var worktrees: [String: Worktree] = Workspace.loadWorktrees()
+    private(set) var worktrees: [String: Worktree] = Workspace.loadWorktrees() {
+        didSet { projectsChanged() }
+    }
     /// The projects of worktrees removed since, by the folder their sessions ran in: an archived
     /// session there still belongs to its project, and comes back to it if you restore it.
-    private var removedWorktrees: [String: String] = UserDefaults.standard.dictionary(forKey: "removedWorktrees") as? [String: String] ?? [:]
+    private var removedWorktrees: [String: String] = UserDefaults.standard.dictionary(forKey: "removedWorktrees") as? [String: String] ?? [:] {
+        didSet { projectsChanged() }
+    }
     private(set) var isLoaded = false
 
     private var models: [String: SessionModel] = [:]
@@ -180,7 +194,9 @@ final class Workspace {
     }
 
     /// Bots' sessions: each bot's conversation, shown with the bot rather than in its project.
-    var botSessions: Set<String> = []
+    var botSessions: Set<String> = [] {
+        didSet { projectsChanged() }
+    }
     /// Bots' seats in group chats: sessions that never get a row, a tab or a notification.
     var seats: Set<String> = [] {
         didSet { sessions.removeAll { seats.contains($0.id) } }
@@ -247,6 +263,24 @@ final class Workspace {
 
     /// Projects with their sessions, most recently active first.
     var projects: [Project] {
+        // What they're made of, read here so views showing them are updated as it changes.
+        _ = (sessions.count, folders.count, settings.count, worktrees.count, removedWorktrees.count, botSessions.count, machines.count)
+        if let madeProjects { return madeProjects }
+        let projects = makeProjects()
+        madeProjects = projects
+        return projects
+    }
+
+    /// The projects as last made, until what they're made of changes: views showing them (the
+    /// sidebar, every time the window is resized) read them often, and making them groups and
+    /// sorts every session.
+    @ObservationIgnored private var madeProjects: [Project]?
+
+    private func projectsChanged() {
+        madeProjects = nil
+    }
+
+    private func makeProjects() -> [Project] {
         let grouped = Dictionary(grouping: sessions.filter { !Self.isArchived($0) && !botSessions.contains($0.id) && !Self.isChat($0.location.directory) && !Self.isBotFolder($0.location.directory) }, by: projectDirectory(of:))
         let directories = Set(grouped.keys).union(folders).filter { RemoteFolder.machine(of: $0).map(machines.contains) ?? true }
         return directories.map { directory in
