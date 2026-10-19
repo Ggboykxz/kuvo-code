@@ -8,7 +8,7 @@ import type { Auto } from "./auto"
 import type { EngineLink } from "./engine"
 import type { Roster } from "./roster"
 import { emit, feed } from "./events"
-import { isOutdated } from "./maintenance"
+import { isOutdated, type Maintenance } from "./maintenance"
 import { refreshLoginPath } from "./proc"
 import { newID } from "./ids"
 import { BadRequest, NotFound, Sessions } from "./sessions"
@@ -47,12 +47,34 @@ const error = (status: number, message: string) => json({ message }, status)
 
 /** What each agent's account looked like when last asked: a change means other models. */
 const lastSeen = new Map<string, string>()
+/** Each agent's program's version and the newest, as last known. */
+const lastMaintained = new Map<string, Maintenance>()
+
+/**
+ * Its version and the newest, if they come soon (checking may ask Homebrew or npm): what was
+ * known before otherwise, and the account is said again once they do.
+ */
+async function maintainedSoon(agent: Agent, fresh: boolean): Promise<Maintenance | undefined> {
+  if (!agent.maintenance) return undefined
+  let answered = false
+  const asked = agent.maintenance(fresh).then(
+    (value) => {
+      const changed = JSON.stringify(lastMaintained.get(agent.providerID)) !== JSON.stringify(value)
+      lastMaintained.set(agent.providerID, value)
+      if (answered && changed) emit("integration.updated", { integrationID: agent.providerID })
+      return value
+    },
+    () => lastMaintained.get(agent.providerID),
+  )
+  const value = await Promise.race([asked, Bun.sleep(2_000).then(() => lastMaintained.get(agent.providerID))])
+  answered = true
+  return value
+}
 
 export async function integration(agent: Agent, fresh = false): Promise<Integration> {
   const [account, maintained] = await Promise.all([
     agent.account(fresh).catch((error): Account => ({ installed: false, signedIn: false, message: String(error?.message ?? error) })),
-    // Its version, if it says soon enough (it's asked again later).
-    agent.maintenance ? Promise.race([agent.maintenance(fresh).catch(() => undefined), Bun.sleep(15_000).then(() => undefined)]) : undefined,
+    maintainedSoon(agent, fresh),
   ])
   const seen = JSON.stringify([account.installed, account.signedIn, account.label])
   const before = lastSeen.get(agent.providerID)
