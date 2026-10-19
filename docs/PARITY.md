@@ -14,7 +14,7 @@ mirrored in `windows/harness/engine.mjs` and typed in `windows/app/src/api.ts`).
 | --- | --- |
 | `SessionView`, `TranscriptView` | ✅ la vue React (`App.tsx`), même lecture des événements |
 | `Composer` | ✅ envoi, pièces jointes, glisser-déposer, files d'un coup |
-| `ComposerMenus` | ◐ les menus du Mac (modèles, agents) sont des listes simples chez nous |
+| `ComposerMenus` | ✅ (modèles et agents en menus cherchables, groupés par fournisseur) |
 | `ModelPicker` | ✅ sélecteur de modèle (par fournisseur) |
 | `QueueDock` | ✅ la file (steer/queue, reprendre), avec repli |
 | `ContextGauge` | ✅ la jauge + son popover (fenêtre de contexte, coût, compact) |

@@ -852,23 +852,44 @@ function Composer() {
       />
       <div className="composer-foot">
         <button id="attach" type="button" className="small" title="Attach files (also by dropping them here)">📎</button>
-        <select id="agent" title="Agent" hidden>
-          {state.agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name ?? agent.id}</option>)}
-        </select>
-        <select
-          id="model"
-          title="Model"
-          value={state.session?.model ? `${state.session.model.providerID}/${state.session.model.id}` : ""}
-          onChange={async event => {
-            if (!state.session) return;
+        <Choice
+          id="agent"
+          title="Agent"
+          empty="Build"
+          value={state.agent}
+          onPick={async value => {
+            state.agent = value;
+            render();
+            if (!state.session || value === "") return;
             try {
-              await api(`/api/sessions/${encodeURIComponent(state.session.id)}/model`, { method: "POST", body: { model: event.target.value } });
+              await api(`/api/sessions/${encodeURIComponent(state.session.id)}/agent`, { method: "POST", body: { agent: value } });
             } catch (error) { complain(error); }
           }}
-        >
-          <option value="">The engine's choice</option>
-          {state.models.map(model => <option key={`${model.providerID}/${model.id}`} value={`${model.providerID}/${model.id}`}>{model.name ?? model.id}</option>)}
-        </select>
+          groups={[{ name: "", items: state.agents.map(agent => ({ value: agent.id, label: agent.name ?? agent.id, detail: agent.mode })) }]}
+        />
+        <Choice
+          id="model"
+          title="Model"
+          empty="The engine's choice"
+          value={state.session?.model ? `${state.session.model.providerID}/${state.session.model.id}` : ""}
+          onPick={async value => {
+            if (!state.session) return;
+            try {
+              await api(`/api/sessions/${encodeURIComponent(state.session.id)}/model`, { method: "POST", body: { model: value } });
+            } catch (error) { complain(error); }
+          }}
+          groups={[
+            { name: "", items: [{ value: "", label: "The engine's choice" }] },
+            ...[...new Set(state.models.map(model => model.providerID))].map(provider => ({
+              name: provider,
+              items: state.models.filter(model => model.providerID === provider).map(model => ({
+                value: `${model.providerID}/${model.id}`,
+                label: model.name ?? model.id,
+                detail: model.limit?.context ? `${Math.round(model.limit.context / 1000)}k` : undefined,
+              })),
+            })),
+          ]}
+        />
         <div className="spacer" />
         <button id="stop" type="button" className="small" hidden={!state.transcript?.running} onClick={() => void stopRun()}>Stop</button>
         <button id="send" className="primary" type="submit">Send</button>
@@ -919,6 +940,73 @@ function AnalyticsNotice() {
         <button id="analytics-ok" className="primary" onClick={() => { localStorage.setItem("kuvo-analytics-ack", "1"); setOpen(false); }}>Understood</button>
       </div>
     </div>
+  );
+}
+
+/// A choice, the Mac app's way: a button that opens a list you can search in.
+function Choice({ id, title, groups, value, onPick, empty }: {
+  id: string;
+  title: string;
+  groups: { name: string; items: { value: string; label: string; detail?: string }[] }[];
+  value: string;
+  onPick: (value: string) => void;
+  empty: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const needle = query.trim().toLowerCase();
+  const shown = groups
+    .map(group => ({
+      name: group.name,
+      items: group.items.filter(item => !needle || `${item.label} ${item.detail ?? ""} ${group.name}`.toLowerCase().includes(needle)),
+    }))
+    .filter(group => group.items.length > 0);
+  const current = groups.flatMap(group => group.items).find(item => item.value === value);
+
+  useEffect(() => {
+    if (!open) return;
+    const away = (event: MouseEvent) => {
+      if (!(event.target as HTMLElement)?.closest(".choice")) { setOpen(false); setQuery(""); }
+    };
+    document.addEventListener("mousedown", away);
+    return () => document.removeEventListener("mousedown", away);
+  }, [open]);
+
+  return (
+    <span className="choice">
+      <button id={id} className="choice-button" title={title} onClick={() => { setOpen(value => !value); setQuery(""); }}>
+        {current?.label ?? empty}
+      </button>
+      {open ? (
+        <span className="choice-panel">
+          <input
+            className="choice-search"
+            placeholder={`Search ${title.toLowerCase()}…`}
+            value={query}
+            autoFocus
+            onChange={event => setQuery(event.target.value)}
+            onKeyDown={event => { if (event.key === "Escape") { setOpen(false); setQuery(""); } }}
+          />
+          <span className="choice-list">
+            {shown.length === 0 ? <span className="where">Nothing matches.</span> : shown.map(group => (
+              <span key={group.name}>
+                {group.name ? <span className="choice-group">{group.name}</span> : null}
+                {group.items.map(item => (
+                  <button
+                    key={item.value}
+                    className={`choice-item ${item.value === value ? "selected" : ""}`}
+                    onClick={() => { onPick(item.value); setOpen(false); setQuery(""); }}
+                  >
+                    <span>{item.label}</span>
+                    {item.detail ? <span className="where">{item.detail}</span> : null}
+                  </button>
+                ))}
+              </span>
+            ))}
+          </span>
+        </span>
+      ) : null}
+    </span>
   );
 }
 

@@ -150,8 +150,14 @@ test("the page, in a DOM, against the real engine", {
   page.element("start")?.click();
   await page.seen("the session to appear", () => page.document.querySelectorAll("#sessions li").length === 1, 30_000);
 
-  // The model list (a call scoped to the project folder, sent as a header).
-  await page.seen("the models to load", () => ((page.element("model")?.options?.length ?? 0) > 1), 30_000);
+  // The model menu (a call scoped to the project folder, sent as a header).
+  await page.seen("the models to load", () => {
+    const button = page.element("model");
+    if (!button) return false;
+    button.click();
+    return page.document.querySelectorAll("#model ~ * .choice-item, .choice-panel .choice-item").length > 1;
+  }, 30_000);
+  page.element("model")?.click();
 
   // A prompt: sent, shown at once, answered by the model, and answered through events.
   const asked = "Reply with exactly: hello from the page";

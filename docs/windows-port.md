@@ -105,7 +105,10 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
-  - **2.33 (this change).** The formulas, the Mac app's MathText: KaTeX renders $inline$
+  - **2.34 (this change).** The composer's menus, the Mac app's way: the model and the agent
+    are chosen from a searchable list — the models grouped by provider, with their context
+    window — instead of a plain drop-down.
+  - **2.33. The formulas, the Mac app's MathText: KaTeX renders $inline$
     and $$block$$, the code is put aside first so a dollar sign in a snippet stays one, and
     the fonts travel with the page.
   - **2.32. The image viewer: clicking an attached image opens it over the
