@@ -307,7 +307,8 @@ export function handler(context: Context) {
             sessions.selectAgent(id, (await body()).agent)
             return json({})
           case "permission":
-            if (!c) return json({ data: sessions.permissions(id) })
+            // What the engine asks for everyone ("global": its MCP servers') isn't asked here.
+            if (!c) return json({ data: id === "global" ? [] : sessions.permissions(id) })
             if (d === "reply") {
               const { decision } = await body()
               sessions.replyPermission(id, c, decision)
@@ -315,7 +316,7 @@ export function handler(context: Context) {
             }
             break
           case "form":
-            if (!c) return json({ data: sessions.forms(id) })
+            if (!c) return json({ data: id === "global" ? [] : sessions.forms(id) })
             if (d === "reply") {
               sessions.replyForm(id, c, (await body()).answer ?? {})
               return json({})
