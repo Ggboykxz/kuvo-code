@@ -105,6 +105,12 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
+  - **2.56 (this change).** The interface, audited against the craft: your own words are an
+    **accent glass** bubble again — translucent, tinted, the light along its top edge — the
+    Mac app's own material, not a flat chat blue; the marks that stood for icons (a paperclip,
+    a pencil) are drawn now, one stroke; the browser's own surfaces (the selection, the caret,
+    the scrollbars) carry the palette; the press is a small compression, not a bounce; and the
+    stray rule that had been eating the composer's foot is gone.
   - **2.55 (this change).** The update check that works: our releases are prereleases with
     a tag of their own, which electron-updater does not read — so the shell asks GitHub
     itself, compares the versions, and offers the installer. The promise the settings make

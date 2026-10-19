@@ -161,7 +161,12 @@ export function ChangesPanel() {
                     return (
                       <div className={`diff-line ${kind}`} key={index}>
                         <span className="diff-text">{line}</span>
-                        <button className="small diff-comment" title="Say something about this line; it goes to the agent with your next message" onClick={() => comment(file.file, index)}>✎</button>
+                        <button className="small icon diff-comment" title="Say something about this line; it goes to the agent with your next message" aria-label="Say something about this line" onClick={() => comment(file.file, index)}>
+                          {/* A pencil, drawn — one stroke, the same weight as the app's other marks. */}
+                          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <path d="M11.2 2.8 13.2 4.8 5.6 12.4 2.8 13.2 3.6 10.4z" />
+                          </svg>
+                        </button>
                         {draft?.file === file.file && draft.line === index ? (
                           <span className="diff-draft">
                             <input

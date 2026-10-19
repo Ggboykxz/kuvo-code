@@ -896,7 +896,12 @@ function Composer() {
         }}
       />
       <div className="composer-foot">
-        <button id="attach" type="button" className="small" title="Attach files (also by dropping them here)">📎</button>
+        <button id="attach" type="button" className="small icon" title="Attach files (also by dropping them here)" aria-label="Attach files">
+          {/* A paperclip, drawn — one stroke, the same weight as the app's other marks. */}
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M10.6 4.3 5.2 9.7a1.6 1.6 0 0 0 2.3 2.3l5.5-5.5a3 3 0 0 0-4.2-4.2L3 8.3a4.4 4.4 0 0 0 6.2 6.2l4.3-4.3" />
+          </svg>
+        </button>
         <Choice
           id="agent"
           title="Agent"

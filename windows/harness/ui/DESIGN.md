@@ -85,6 +85,14 @@ The Mac app's *structure* — the same pages, the same wording, the same gesture
 three theme choices (light, dark, System). Only the look moves: the Windows app is
 dark-native, flat and precise where the Mac app is warm and glassy. Same app, one canvas.
 
+The materials, in the Mac's own order: a **thin strip** of glass for the chrome (the header,
+the sidebar — 18px), a **card** of it for the composer, the sheets and the drawer (28px), a
+**thick** one for what floats over the conversation (the palette, the gauge, the menus, the
+note — 32px). Your own words are an **accent glass** bubble, apart from the agent's on the
+page: translucent, tinted with the accent, the light along its top edge (the Mac app's
+`BubbleSurface`). Everything the browser still owns — the selection, the caret, the
+scrollbars, the focus rings, the numerals in the tables — is themed from the same palette.
+
 ## Where it lives
 
 `style.css` holds the tokens at the top: `:root` for light, `html[data-theme="dark"]` and
