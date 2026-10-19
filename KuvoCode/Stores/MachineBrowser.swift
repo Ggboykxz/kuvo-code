@@ -649,6 +649,7 @@ final class MachineBrowser {
                 return
             }
             session = id
+            lastSharp = nil
             // In front in its window: a tab behind another (a site's new tab) isn't drawn.
             link.fire("Target.activateTarget", ["targetId": target])
             _ = try await link.send("Page.enable", session: id)
@@ -673,6 +674,7 @@ final class MachineBrowser {
         session = nil
         shownPage = nil
         picture = nil
+        lastSharp = nil
         isLoading = false
         dialog = nil
     }
@@ -737,15 +739,24 @@ final class MachineBrowser {
     @ObservationIgnored private var pictureCount = 0
     @ObservationIgnored private var lastDigest = 0
     @ObservationIgnored private var sharpening: Task<Void, Never>?
+    /// Where the page was scrolled and when, at the last sharp picture, and whether you did
+    /// anything to the page since.
+    @ObservationIgnored private var lastSharp: (scroll: CGPoint, at: ContinuousClock.Instant)?
+    @ObservationIgnored private var inputSinceSharp = true
 
     /// A moment after the page last changed, a picture of it at the screen's scale, for the
-    /// pictures that come at half of it while it moves.
+    /// pictures that come at half of it while it moves. A page that changes on its own (a
+    /// blinking caret, an animation) gets one every couple of seconds, not one per change.
     private func sharpen() {
         sharpening?.cancel()
         guard viewport.scale > 1, let link, let session, let picture else { return }
         let count = pictureCount
+        var wait = Duration.milliseconds(300)
+        if !inputSinceSharp, let lastSharp, lastSharp.scroll == picture.scroll {
+            wait = max(wait, .seconds(2) - (ContinuousClock.now - lastSharp.at))
+        }
         sharpening = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(300))
+            try? await Task.sleep(for: wait)
             guard !Task.isCancelled, let self, self.pictureCount == count, self.session == session else { return }
             guard let result = try? await link.send("Page.captureScreenshot", ["format": "jpeg", "quality": 85, "fromSurface": true], session: session),
                   let base64 = result["data"] as? String else { return }
@@ -756,6 +767,8 @@ final class MachineBrowser {
             // Only if the page is as it was: a picture since is newer.
             guard let image, !Task.isCancelled, self.pictureCount == count, self.session == session else { return }
             self.picture = Picture(image: image, size: picture.size, scroll: picture.scroll)
+            self.lastSharp = (picture.scroll, .now)
+            self.inputSinceSharp = false
         }
     }
 
@@ -1078,6 +1091,7 @@ final class MachineBrowser {
 
     private func fire(_ method: String, _ params: [String: Any] = [:]) {
         guard let link, let session else { return }
+        inputSinceSharp = true
         link.fire(method, params, session: session)
     }
 }
