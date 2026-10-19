@@ -27,7 +27,8 @@ here.
   read, never renewed). A sign-in's token is used as the host's engine keeps it, never refreshed or
   saved here: OpenAI and xAI rotate refresh tokens, so refreshing it would sign the engine out. The
   engine renews it without saying so, so one that has lapsed or is turned away is asked of the host
-  again (`HostAccounts.setReader`). OpenCode also reads the databases of Kuvo Code's private engine,
+  again (`HostAccounts.setReader`). Refreshing starts only once the host has handed its accounts
+  over, so a tool's own login is never read in their place at launch. OpenCode also reads the databases of Kuvo Code's private engine,
   so Kuvo Code's own runs count toward spend, and its OpenCode Go key is found there.
 
 - **Plan limits for the host** (`Embedding/PlanLimits.swift`): the latest limits of one provider,

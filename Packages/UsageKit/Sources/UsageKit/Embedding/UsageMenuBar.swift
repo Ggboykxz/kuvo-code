@@ -129,8 +129,24 @@ public final class UsageMenuBar {
         if showsWelcome {
             controller.clickInterceptor = { [weak self] in self?.showWelcome() ?? false }
         } else {
-            container.startRefreshing()
+            startRefreshing(container)
         }
+    }
+
+    /// Refreshing starts once the host has handed over its accounts (`HostAccounts.update`), which
+    /// its engine has only once it's up: before, Codex and Grok would read the logins their apps
+    /// keep on the Mac in place of the host's sign-ins, and could renew them.
+    private func startRefreshing(_ container: AppContainer) {
+        if HostAccounts.haveArrived { container.startRefreshing() } else { refreshesOnHostAccounts = true }
+    }
+
+    private var refreshesOnHostAccounts = false
+
+    /// The host's accounts are in: refreshing starts, if it was waiting for them.
+    func hostAccountsArrived() {
+        guard refreshesOnHostAccounts, let container else { return }
+        refreshesOnHostAccounts = false
+        container.startRefreshing()
     }
 
     /// While the welcome is pending, a click on the menu bar item opens it instead of the panel.
@@ -165,7 +181,7 @@ public final class UsageMenuBar {
         if container.enablement.enabledIDs?.isEmpty == true {
             container.onboarding.dismissCustomizeHint()
         }
-        container.startRefreshing()
+        startRefreshing(container)
         MenuBarPopover.showHandler?()
     }
 }
