@@ -64,6 +64,11 @@ export class Turn {
     this.model = model
   }
 
+  /** The model it runs on now. */
+  get currentModel(): ModelRef {
+    return this.model
+  }
+
   // MARK: Steps
 
   /** A new model call. Any step still open ends first. */

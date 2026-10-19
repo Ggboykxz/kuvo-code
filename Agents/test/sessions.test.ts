@@ -416,6 +416,68 @@ describe("asks and conversations", () => {
   })
 })
 
+describe("subagents", () => {
+  test("a subagent's work is told in a session of its own under the conversation, linked from its step", async () => {
+    let child = ""
+    a.script = (_input, turn, hooks, thread) => {
+      turn.startStep()
+      turn.toolStart("call_task", "subagent")
+      turn.toolCalled("call_task", { description: "Look around", prompt: "Read the README" })
+      const run = hooks.subagent("call_task", { title: "Look around", prompt: "Read the README", agent: "Explore" })
+      child = run.sessionID
+      run.turn.startStep()
+      run.turn.text("It's a parser.")
+      run.turn.endStep()
+      return new Promise((resolve) => {
+        thread.onStop = () => resolve({ outcome: "interrupted" })
+        setTimeout(() => {
+          run.end("succeeded")
+          turn.toolSucceeded("call_task", "It's a parser.")
+          turn.endStep()
+          resolve({ outcome: "succeeded" })
+        }, 50)
+      })
+    }
+    const id = create()
+    send(id, "what is this project")
+    await until(() => child !== "")
+    expect(sessions.active()).toContain(child)
+    expect(sessions.get(child).parentID).toBe(id)
+    expect(sessions.list(undefined, id).map((session) => session.id)).toEqual([child])
+    expect(sessions.list(undefined, null).map((session) => session.id)).toEqual([id])
+    expect(() => sessions.prompt(child, { id: "msg_test_child", text: "hi", files: [], delivery: "steer" })).toThrow()
+    await settled(id, 1)
+    expect(sessions.active()).not.toContain(child)
+    const step = sessions.messages(id).find((message) => message.type === "assistant") as any
+    expect(step.content.find((content: any) => content.type === "tool").state.metadata.sessionID).toBe(child)
+    const childMessages = sessions.messages(child)
+    expect(childMessages[0]).toMatchObject({ type: "user", text: "Read the README" })
+    expect(childMessages.some((message) => message.type === "assistant")).toBe(true)
+    expect(childMessages.at(-1)).toMatchObject({ type: "idle", outcome: "succeeded" })
+    // It goes with the conversation.
+    await sessions.remove(id)
+    expect(() => sessions.get(child)).toThrow()
+  })
+
+  test("a subagent still at work when the turn is stopped is stopped with it", async () => {
+    let child = ""
+    a.script = (_input, turn, hooks, thread) => {
+      turn.startStep()
+      turn.toolStart("call_task", "subagent")
+      turn.toolCalled("call_task", { description: "Wait" })
+      child = hooks.subagent("call_task", { title: "Wait" }).sessionID
+      return new Promise((resolve) => (thread.onStop = () => resolve({ outcome: "interrupted" })))
+    }
+    const id = create()
+    send(id, "go")
+    await until(() => child !== "")
+    await sessions.interrupt(id)
+    await settled(id, 1)
+    expect(sessions.messages(child).at(-1)).toMatchObject({ type: "idle", outcome: "interrupted" })
+    expect(sessions.active()).not.toContain(child)
+  })
+})
+
 describe("moving between agents", () => {
   test("the next agent gets what it hasn't seen, and the first only what came since", async () => {
     const id = create()

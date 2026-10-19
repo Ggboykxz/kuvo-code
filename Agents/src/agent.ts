@@ -97,6 +97,27 @@ export interface TurnHooks {
   /** Approve All: the agent runs its tools without asking (your rules that deny still hold). */
   approvesAll(): boolean
   signal: AbortSignal
+  /**
+   * A subagent the agent handed a task to, with its tool call: a session of its own under this
+   * one, which its work is told in, as the engine's subagents are. It ends with `end`, or with
+   * the turn.
+   */
+  subagent(toolCallID: string, task: SubagentTask): SubagentRun
+}
+
+export interface SubagentTask {
+  /** What it was asked to do, in a few words. */
+  title: string
+  /** What it was told, whole. */
+  prompt?: string
+  /** The kind of agent it is, when the agent names one ("Explore"). */
+  agent?: string
+}
+
+export interface SubagentRun {
+  sessionID: string
+  turn: Turn
+  end(outcome: Outcome, error?: StructuredError): void
 }
 
 export interface RunResult {

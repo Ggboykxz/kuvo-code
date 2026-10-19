@@ -9,7 +9,7 @@
 
 import { createHash } from "node:crypto"
 import { fileURLToPath } from "node:url"
-import type { Agent, PermissionAsk, PromptFile, QuestionAsk, RunInput, RunResult, Thread, TurnHooks } from "./agent"
+import type { Agent, PermissionAsk, PromptFile, QuestionAsk, RunInput, RunResult, SubagentRun, SubagentTask, Thread, TurnHooks } from "./agent"
 import { failure } from "./agent"
 import { Auto, autoProvider, resetTime, type AutoEntry } from "./auto"
 import { emit } from "./events"
@@ -50,6 +50,8 @@ interface Live {
   idle?: ReturnType<typeof setTimeout>
   /** The slot of the agent that ran last in this turn: it sees the turn's end too. */
   last?: Slot
+  /** Its subagents at work, each a session of its own: their turns, by session. */
+  subagents: Map<string, Turn>
 }
 
 /** What the bridge keeps of each agent's conversation in a session. */
@@ -107,7 +109,7 @@ export class Sessions {
   private state(id: string): Live {
     let live = this.live.get(id)
     if (!live) {
-      live = { threads: new Map(), permissions: new Map(), forms: new Map(), always: [] }
+      live = { threads: new Map(), permissions: new Map(), forms: new Map(), always: [], subagents: new Map() }
       this.live.set(id, live)
     }
     return live
@@ -245,10 +247,12 @@ export class Sessions {
     return session
   }
 
-  list(directory?: string): Session[] {
+  /** Sessions, newest first: in a folder, and under a session (`parentID`; "null" for those under none). */
+  list(directory?: string, parentID?: string | null): Session[] {
     return this.store
       .all()
       .filter((session) => !directory || session.location.directory === directory)
+      .filter((session) => parentID === undefined || (parentID === null ? !session.parentID : session.parentID === parentID))
       .sort((a, b) => b.time.updated - a.time.updated || (a.id < b.id ? 1 : -1))
   }
 
@@ -286,6 +290,8 @@ export class Sessions {
     this.removing.add(id)
     record.agent.inbox = []
     await this.interrupt(id)
+    // Its subagents' sessions go with it.
+    for (const child of this.list(undefined, id)) await this.remove(child.id)
     for (const thread of this.live.get(id)?.threads.values() ?? []) thread.close()
     this.live.delete(id)
     for (const [provider, slot] of Object.entries(this.slots(record))) await this.agent(provider)?.forgetConversation?.(slot.state).catch(() => {})
@@ -302,7 +308,9 @@ export class Sessions {
   }
 
   active(): string[] {
-    return [...this.live.keys()].filter((id) => this.isRunning(id))
+    const ids = [...this.live.keys()].filter((id) => this.isRunning(id))
+    for (const live of this.live.values()) for (const [child, turn] of live.subagents) if (!turn.isEnded) ids.push(child)
+    return ids
   }
 
   setInstruction(id: string, key: string, text: string | undefined) {
@@ -371,6 +379,7 @@ export class Sessions {
   prompt(id: string, input: Input) {
     if (this.removing.has(id)) throw new NotFound(`No session ${id}.`)
     const record = this.record(id)
+    if (record.session.parentID) throw new BadRequest("This subagent works for the conversation that started it: write to it there.")
     const queue = this.queue(record)
     // Sent twice (a retry after a timeout): once is enough.
     if (queue.some((waiting) => waiting.id === input.id) || record.messages.some((message) => message.id === input.id)) return
@@ -476,6 +485,9 @@ export class Sessions {
     const outcome: Outcome = abort.signal.aborted ? "interrupted" : result.outcome
     const before = record.messages[record.messages.length - 1]?.id
     turn.finish(outcome, outcome === "interrupted" ? undefined : result.error)
+    // Subagents still at work end with it.
+    for (const child of [...live.subagents.values()]) child.finish(outcome === "failed" ? "interrupted" : outcome)
+    live.subagents.clear()
     // The agent that ended the turn knows how it ended: that's not news to hand it later.
     if (live.last && live.last.seen === before) live.last.seen = record.messages[record.messages.length - 1]?.id
     live.last = undefined
@@ -704,6 +716,45 @@ export class Sessions {
       approvesAll: () => !plan && !(record.session.permissions ?? []).some((rule) => rule.effect === "ask" || rule.effect === "deny"),
       permission: (ask) => this.askPermission(id, live, turn, ask, plan),
       question: (ask) => this.askQuestion(id, live, turn, ask),
+      subagent: (toolCallID, task) => this.startSubagent(id, live, turn, toolCallID, task),
+    }
+  }
+
+  /** A subagent's session under `id`, for its tool call there: what it's told, and its turn. */
+  private startSubagent(id: string, live: Live, parentTurn: Turn, toolCallID: string, task: SubagentTask): SubagentRun {
+    const parent = this.record(id).session
+    const directory = parent.location.directory
+    const now = Date.now()
+    const model = parentTurn.currentModel
+    const session: Session = {
+      id: newID("ses"),
+      parentID: id,
+      projectID: parent.projectID,
+      agent: task.agent ?? parent.agent,
+      model,
+      cost: 0,
+      tokens: noTokens(),
+      time: { created: now, updated: now },
+      title: task.title || "A subagent's task",
+      location: { directory },
+      metadata: { kuvoAgent: parent.metadata?.kuvoAgent, kuvoSubagent: true },
+    }
+    this.store.add(session)
+    const record = this.store.get(session.id)!
+    if (task.prompt) record.messages.push({ type: "user", id: newID("msg"), time: { created: now }, text: task.prompt })
+    this.store.save(session.id, true)
+    emit("session.created", { sessionID: session.id, session }, directory)
+    const turn = new Turn(this.store, session.id, directory, model, session.agent ?? "build")
+    live.subagents.set(session.id, turn)
+    // Its step in the conversation that started it says which session it is.
+    parentTurn.toolProgress(toolCallID, { sessionID: session.id })
+    return {
+      sessionID: session.id,
+      turn,
+      end: (outcome, error) => {
+        turn.finish(outcome, error)
+        if (live.subagents.get(session.id) === turn) live.subagents.delete(session.id)
+      },
     }
   }
 

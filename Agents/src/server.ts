@@ -242,7 +242,8 @@ export function handler(context: Context) {
         if (!a) {
           if (method === "POST") return json({ data: sessions.create(await body()) })
           const directory = url.searchParams.get("directory") ?? undefined
-          const roots = sessions.list(directory)
+          const under = url.searchParams.get("parentID")
+          const roots = sessions.list(directory, under === null ? undefined : under === "null" ? null : under)
           const ordered = (url.searchParams.get("cursor")?.startsWith("asc") || url.searchParams.get("order") === "asc") ? [...roots].reverse() : roots
           return json(page(ordered, url))
         }
