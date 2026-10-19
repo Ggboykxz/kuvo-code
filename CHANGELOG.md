@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 - A machine's SSH connection closes when Kuvo Code does, even if it crashes or is forced to quit, and so does one it gives up on while connecting. They could stay open in the background for days.
+- On a machine, your settings, with any keys or tokens you gave a server in Settings › MCP Servers, reach its engine in a file only you can read that goes when it stops, not in its environment, where the agent's commands could print them. A project's own opencode.json there now wins over them, as on your Mac.
 
 ## 0.5.17
 

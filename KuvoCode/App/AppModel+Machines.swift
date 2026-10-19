@@ -318,10 +318,12 @@ extension AppModel {
         var environment: [String: String] = [:]
         // Web search that works, as on this Mac, unless the file chose otherwise.
         engineConfig.addDefaults()
-        // What goes in the settings file of the machine's engine, in `~/.kuvo-code`, rather than in
-        // its memory with the rest, which outranks a project's own settings: web search, so a
-        // project there can choose otherwise, as here, and integrations (below). Only which
-        // provider, or none: a choice with more in it (a key, say) stays off its disk.
+        // What goes in the settings file of the machine's engine, in `~/.kuvo-code`, rather than
+        // with the rest: web search, and integrations (below), which the rest and a project's own
+        // settings outrank, as here. Only which provider, or none: a choice with more in it (a
+        // key, say) stays out of that file. The rest, which can hold secrets, goes in a file only
+        // you can read that goes when the engine stops, never in its environment, where the
+        // agent's commands (`env`) would show it.
         var global: [String: JSONValue] = [:]
         if let data = try? Data(contentsOf: engineConfig.file),
            var settings = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
@@ -358,7 +360,7 @@ extension AppModel {
             }
             // Slashes as they are: the engine finds `{file:…}` in the text before it reads it.
             if let json = try? JSONSerialization.data(withJSONObject: settings, options: [.sortedKeys, .withoutEscapingSlashes]) {
-                environment["OPENCODE_CONFIG_CONTENT"] = String(decoding: json, as: UTF8.self)
+                environment[RemoteServer.privateSettingsVariable] = String(decoding: json, as: UTF8.self)
             }
         }
         // Always, so a choice taken back here is taken back there.
