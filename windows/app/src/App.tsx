@@ -593,6 +593,21 @@ function Composer() {
   );
 }
 
+/// What the app does with what it is told, said once.
+function AnalyticsNotice() {
+  const [open, setOpen] = useState(() => !localStorage.getItem("kuvo-analytics-ack"));
+  if (!open) return null;
+  return (
+    <div id="analytics-notice" className="AnalyticsNotice">
+      <div className="analytics-card">
+        <div className="settings-title">Before you start</div>
+        <p className="settings-note">Kuvo Code works entirely on this machine: the engine runs locally, its words go to the model provider you configured, and this app collects nothing and reports nothing anywhere. Close it and everything stops with it.</p>
+        <button id="analytics-ok" className="primary" onClick={() => { localStorage.setItem("kuvo-analytics-ack", "1"); setOpen(false); }}>Understood</button>
+      </div>
+    </div>
+  );
+}
+
 // ---- The app ----
 
 export function App() {
@@ -626,6 +641,7 @@ export function App() {
 
   const hasSession = state.session !== null;
   const needsFolder = state.project === null;
+  const inShell = new URLSearchParams(window.location.search).get("shell") === "1";
 
   useEffect(() => {
     if (!state.project) return;
@@ -636,6 +652,7 @@ export function App() {
 
   return (
     <>
+      {inShell ? <div className="titlebar-drag" /> : null}
       <Header />
       <main>
         <Sidebar />
@@ -693,6 +710,7 @@ export function App() {
       <Drawer />
       <DiffModal />
       <Toast />
+      <AnalyticsNotice />
       {!ready ? <div className="fatal">Starting…</div> : null}
     </>
   );
