@@ -22,6 +22,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Antigravity's **Sign In** shows its download, then opens Google's page when it's ready, rather than seeming to do nothing.
 - A ChatGPT or SuperGrok plan signs in once, through Codex or Grok under Subscriptions; Accounts no longer offers a second way to the same plan. One you connected before keeps working.
 - Markdown files in the side panel open at once, even long ones: they're drawn the way replies are. A link to another of the project's files opens it in the panel.
+- A conversation that comes into view (a bot's, opening it from the sidebar, switching tabs, hiding or showing the sidebar) shows its messages straight away, rather than only once you scroll.
 
 ## 0.5.22
 

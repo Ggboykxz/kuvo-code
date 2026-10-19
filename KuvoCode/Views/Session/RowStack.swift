@@ -112,6 +112,7 @@ final class RowStackView: NSView {
     private var make: ((Int) -> AnyView)?
     private var width: CGFloat = 0
     private var watch: NSObjectProtocol?
+    private weak var watchedClip: NSClipView?
     private var isLayingOut = false
     /// The rows last laid out: scrolling past them lays out again.
     private var laidOut: Range<Int> = 0..<0
@@ -262,6 +263,8 @@ final class RowStackView: NSView {
 
     override func layout() {
         super.layout()
+        // Not told a width yet (SwiftUI asks for the height at one first), but given one.
+        if width == 0, bounds.width > 0 { _ = height(for: bounds.width) }
         guard !isLayingOut, make != nil, width > 0 else { return }
         isLayingOut = true
         defer { isLayingOut = false }
@@ -428,24 +431,68 @@ final class RowStackView: NSView {
 
     // MARK: Scrolling
 
+    /// Watches the scroll view it's in now: one it was in before (SwiftUI can make the scroll
+    /// view again around it) would leave it unaware of scrolling, its rows unmade where you look.
     private func watchScrolling() {
-        guard watch == nil, let clip = enclosingScrollView?.contentView else { return }
+        let clip = enclosingScrollView?.contentView
+        guard clip !== watchedClip else { return }
+        if let watch { NotificationCenter.default.removeObserver(watch) }
+        watch = nil
+        watchedClip = clip
+        guard let clip else { return }
         clip.postsBoundsChangedNotifications = true
         watch = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: clip, queue: nil) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                // Laid out again only when scrolling comes to other rows.
-                if self.shownRange() != self.laidOut { self.needsLayout = true }
-            }
+            MainActor.assumeIsolated { self?.layOutIfRowsMissing() }
         }
     }
 
-    override func viewWillMove(toWindow newWindow: NSWindow?) {
-        super.viewWillMove(toWindow: newWindow)
-        if newWindow == nil, let watch {
-            NotificationCenter.default.removeObserver(watch)
-            self.watch = nil
+    /// Lays out again when what's in view has rows not shown: scrolled to other rows, or come
+    /// into view without having been laid out where it is now.
+    private func layOutIfRowsMissing() {
+        let range = shownRange()
+        if range != laidOut || range.contains(where: { hosts[ids[$0]]?.isShown != true }) { needsLayout = true }
+    }
+
+    // Each way of coming into view lays out again: in a window, shown, resized. Any could come
+    // with no other change that would, and leave the rows unmade until you scrolled.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil {
+            if let watch { NotificationCenter.default.removeObserver(watch) }
+            watch = nil
+            watchedClip = nil
+        } else {
+            needsLayout = true
         }
+    }
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        needsLayout = true
+    }
+
+    override func viewDidUnhide() {
+        super.viewDidUnhide()
+        needsLayout = true
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        let changed = newSize != frame.size
+        super.setFrameSize(newSize)
+        if changed { needsLayout = true }
+    }
+
+    /// Whether rows are shown across what's in view (or there's room under a short
+    /// conversation): what the conversation checks after its width changes, and the tests.
+    func showsRowsInView() -> Bool {
+        guard let clip = enclosingScrollView?.contentView, !ids.isEmpty, width > 0 else { return true }
+        let view = convert(clip.bounds, from: clip).intersection(NSRect(x: 0, y: 0, width: width, height: total))
+        guard view.height > 40 else { return true }
+        let covered = hosts.values.filter { $0.isShown && $0.view.superview === self }.reduce(CGFloat(0)) {
+            $0 + max(0, min($1.view.frame.maxY, view.maxY) - max($1.view.frame.minY, view.minY))
+        }
+        if covered <= view.height * 0.4 { layOutIfRowsMissing() }
+        return covered > view.height * 0.4
     }
 
     #if DEBUG

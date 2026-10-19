@@ -607,6 +607,7 @@ final class ScrollAnchor {
     /// lazy stack could leave the view where it had made no rows, and show nothing there until
     /// you scrolled.
     func showsRows() -> Bool {
+        if let stack { return stack.showsRowsInView() }
         guard let scrollView, let document = scrollView.documentView, !frames.isEmpty else { return true }
         let visible = scrollView.contentView.bounds
         // A conversation shorter than the view has room under it.
