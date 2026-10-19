@@ -497,6 +497,17 @@ final class SessionModel {
     /// they're applied again on top of it (what it has already, they leave as it is).
     @ObservationIgnored private var cameDuringRead: [UUID: [ServerEvent]] = [:]
 
+    /// Its bridge (the coding agents') stopped for good: nothing it asked waits on you, and it isn't
+    /// at work.
+    func bridgeStopped() {
+        live?.permissions = []
+        live?.forms = []
+        live?.isRunning = false
+        transcript.permissions = []
+        transcript.forms = []
+        transcript.isRunning = false
+    }
+
     func load() async {
         guard !waitsForEngine else { return }
         let read = UUID()
