@@ -282,6 +282,9 @@ final class SessionModel {
     /// Messages sent while the agent was idle, until it has them: each starts a run, and the run
     /// begins a moment before the agent takes it, which isn't waiting.
     private var starters: Set<String> = []
+    /// Messages cancelled while still on their way to the engine: they don't go, or are taken
+    /// back if they went meanwhile.
+    @ObservationIgnored private var cancelledLocal: Set<String> = []
 
     private var hasQueue: Bool { transcript.pending.contains { $0.delivery == .queue } }
 
@@ -632,7 +635,9 @@ final class SessionModel {
                 let prepared = await Task.detached { machine.map { Attachments.prepare(files, for: model, machine: $0) } ?? Attachments.prepare(files, for: model) }.value
                 let message = Attachments.text(text, for: prepared)
                 await waitForTools()
+                guard !wasCancelled(id) else { return }
                 try await api.prompt(session: self.id, id: id, text: message, files: prepared.files, delivery: delivery)
+                if wasCancelled(id) { try? await api.cancelInbox(session: self.id, item: id) }
             } catch {
                 editTranscript { $0.removeLocal(id: id) }
                 // It didn't go: back in the composer as it was, ahead of anything written since.
@@ -762,9 +767,21 @@ final class SessionModel {
         for item in steering { try? await api.setDelivery(session: id, item: item.id, delivery: .queue) }
     }
 
+    /// Whether a message on its way was cancelled meanwhile (and forgets it).
+    private func wasCancelled(_ id: String) -> Bool {
+        guard cancelledLocal.contains(id) else { return false }
+        cancelledLocal.remove(id)
+        starters.remove(id)
+        return true
+    }
+
     func cancelPending(_ item: Transcript.Pending) {
         guard canReach else { return }
-        if item.isLocal { editTranscript { $0.removeLocal(id: item.id) }; return }
+        if item.isLocal {
+            cancelledLocal.insert(item.id)
+            editTranscript { $0.removeLocal(id: item.id) }
+            return
+        }
         Task { try? await api.cancelInbox(session: id, item: item.id) }
     }
 
@@ -927,8 +944,10 @@ final class SessionModel {
         isRetrying = true
         Task {
             defer { isRetrying = false }
+            var sentID: String?
+            var user = message
             do {
-                let user = await stored(message)
+                user = await stored(message)
                 let files = (user.files ?? []).compactMap { file -> OpenCodeAPI.PromptFile? in
                     if case .uri(let uri) = file.source { .init(uri: uri, name: file.name) } else { nil }
                 }
@@ -938,11 +957,19 @@ final class SessionModel {
                     return
                 }
                 let id = Identifier.message()
+                sentID = id
                 sentIDs.insert(id)
                 starters.insert(id)
                 editTranscript { $0.addLocal(id: id, text: user.text, delivery: .steer) }
                 try await api.prompt(session: self.id, id: id, text: user.text, files: files)
             } catch {
+                // Its turn was taken back, and it didn't go again: back in the composer, as a
+                // message that couldn't be sent is.
+                if let id = sentID {
+                    editTranscript { $0.removeLocal(id: id) }
+                    starters.remove(id)
+                    restoreDraft(user.text, files: Self.files(of: user))
+                }
                 failure = error.localizedDescription
             }
         }

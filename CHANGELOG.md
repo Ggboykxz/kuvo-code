@@ -6,6 +6,8 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- A message sent again with Try Again that can't go (the engine restarting, a machine dropping) comes back to the composer. It was gone from the conversation, and a "Sending" bubble stayed for good.
+- Cancelling a message while it shows "Sending" stops it. It came back moments later and the agent ran it anyway.
 - An engine waiting on a macOS prompt, like one asking for access to your Desktop folder, is no longer started over after a minute. That took the prompt away and asked again.
 
 ## 0.5.14
