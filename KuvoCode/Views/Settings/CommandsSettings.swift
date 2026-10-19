@@ -111,8 +111,11 @@ struct CommandsSettings: View {
 
     private func removePending() {
         guard let removal else { return }
-        app.engineConfig.set(nil, at: removal)
         self.removal = nil
+        // Once the closing editor's fields have saved what you typed last, or they'd write it
+        // back into a half-made entry.
+        let config = app.engineConfig
+        DispatchQueue.main.async { config.set(nil, at: removal) }
     }
 }
 

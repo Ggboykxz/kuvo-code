@@ -196,8 +196,11 @@ struct MCPSettings: View {
 
     private func removePending() {
         guard let removal else { return }
-        app.engineConfig.set(nil, at: removal)
         self.removal = nil
+        // Once the closing editor's fields have saved what you typed last, or they'd write it
+        // back into a half-made entry.
+        let config = app.engineConfig
+        DispatchQueue.main.async { config.set(nil, at: removal) }
     }
 }
 
@@ -270,6 +273,9 @@ private struct ServerEditor: View {
             return newName.trimmingCharacters(in: .whitespaces).isEmpty ? nil : "A name needs a letter or a number."
         }
         if MCPSettings.builtIn.contains(newID) { return "Kuvo Code uses that name for its own tools." }
+        // Integrations know theirs by name: one of yours by that name would show as it there,
+        // and removing that integration would remove it.
+        if let service = Integrations.service(newID) { return "\(service.title) uses that name: add it in Integrations, or pick another name." }
         let isTaken = config.value(at: MCPSettings.path + [newID]) != nil || taken.contains(newID)
         return isTaken ? "There's a server called \(newID) already." : nil
     }
