@@ -188,14 +188,43 @@ final class ReplyTextView: NSTextView, NSTextViewDelegate {
 
     /// How tall it is at `width` (the piece keeps it, by width).
     func height(for width: CGFloat) -> CGFloat {
-        guard let container = textContainer, let layout = layoutManager else { return 0 }
-        if container.size.width != width { container.size = NSSize(width: width, height: .greatestFiniteMagnitude) }
+        guard let ownContainer = textContainer, let ownLayout = layoutManager, let storage = textStorage else { return 0 }
+        // At the width it's shown at (or before it's shown at all), with its own layout. At any
+        // other, with a second layout of the same text: SwiftUI asks for sizes at widths it then
+        // doesn't use (as a pane opens or closes), and the text shown laid out at those, under a
+        // frame of another width, drew lines over the blocks after it, or left gaps.
+        let shown = frame.width == 0 || frame.width == width
+        let container: NSTextContainer
+        let layout: NSLayoutManager
+        if shown {
+            container = ownContainer
+            layout = ownLayout
+            if container.size.width != width { container.size = NSSize(width: width, height: .greatestFiniteMagnitude) }
+        } else {
+            (layout, container) = measuring(in: storage)
+            if container.size.width != width { container.size = NSSize(width: width, height: .greatestFiniteMagnitude) }
+        }
         layout.ensureLayout(for: container)
         // Without the line spacing TextKit leaves under the last line.
         // (A table's cells make up for it themselves.)
         let last = (textStorage?.length ?? 0) > 0 ? textStorage?.attribute(.paragraphStyle, at: textStorage!.length - 1, effectiveRange: nil) as? NSParagraphStyle : nil
         let trailing = last.map { $0.textBlocks.isEmpty ? $0.lineSpacing : 0 } ?? 0
         return ceil(layout.usedRect(for: container).height - trailing)
+    }
+
+    /// The layout that measures at widths it isn't shown at, made the first time one's asked for.
+    private var measuringLayout: (NSLayoutManager, NSTextContainer)?
+
+    private func measuring(in storage: NSTextStorage) -> (NSLayoutManager, NSTextContainer) {
+        if let measuringLayout { return measuringLayout }
+        let layout = NSLayoutManager()
+        let container = NSTextContainer(size: NSSize(width: 600, height: CGFloat.greatestFiniteMagnitude))
+        container.lineFragmentPadding = 0
+        container.widthTracksTextView = false
+        layout.addTextContainer(container)
+        storage.addLayoutManager(layout)
+        measuringLayout = (layout, container)
+        return (layout, container)
     }
 
     override func setFrameSize(_ newSize: NSSize) {
