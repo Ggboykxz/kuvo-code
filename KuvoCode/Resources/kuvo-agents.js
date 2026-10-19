@@ -1639,20 +1639,28 @@ async function commandSignIn(options) {
   read(child.stdout);
   read(child.stderr);
   let pasted = false;
+  let signedInBefore;
+  const succeed = () => {
+    status = { status: "complete" };
+    options.onComplete?.();
+  };
   child.exited.then(async (code) => {
     rmSync2(urlFile, { force: true });
     if (status.status !== "pending")
       return;
     const signedIn = await options.signedIn().catch(() => false);
-    if (signedIn)
-      status = { status: "complete" };
+    if (status.status !== "pending")
+      return;
+    if (signedIn && (code === 0 || signedInBefore === false))
+      succeed();
     else if (pasted)
       status = { status: "failed", message: "That code didn't work. Start again, and paste the code from the page this sign-in opens." };
     else
       status = { status: "failed", message: lastLines(options.codePrompt ? output.replace(options.codePrompt, "") : output) || `Signing in stopped (exit code ${code}).` };
   });
   (async () => {
-    if (await options.signedIn().catch(() => true))
+    signedInBefore = await options.signedIn().catch(() => true);
+    if (signedInBefore)
       return;
     while (status.status === "pending") {
       await Bun.sleep(3000);
@@ -1661,7 +1669,7 @@ async function commandSignIn(options) {
       if (!await options.signedIn().catch(() => false))
         continue;
       if (status.status === "pending")
-        status = { status: "complete" };
+        succeed();
       child.kill();
     }
   })();
@@ -1690,9 +1698,17 @@ async function commandSignIn(options) {
       if (status.status !== "pending")
         throw new Error("That sign-in is over. Start it again.");
       pasted = true;
+      const from = output.length;
       child.stdin.write(code.trim() + `
 `);
       await child.stdin.flush();
+      for (let waited = 0;waited < 1500 && status.status === "pending"; waited += 100) {
+        await Bun.sleep(100);
+        if (/invalid code/i.test(output.slice(from))) {
+          pasted = false;
+          throw new Error("That code couldn't be read. Copy all of it from the page, and paste it again.");
+        }
+      }
     } : undefined,
     status: () => status,
     cancel() {
@@ -2056,7 +2072,7 @@ async function maintenance(definition, fresh = false) {
   if (!fresh && kept && Date.now() - kept.at < 10 * 60000)
     return kept.value;
   const [installed, updater] = await Promise.all([installedVersion2(definition.executable), resolveUpdater(definition)]);
-  const latest = updater.latest ?? await npmLatest(definition.npmPackage, fresh);
+  const latest = updater.homebrew ? updater.latest : updater.latest ?? await npmLatest(definition.npmPackage, fresh, updater.distTag);
   const value = { installed, latest, command: updater.command, shown: updater.shown, env: updater.env };
   checked.set(definition.executable, { at: Date.now(), value });
   return value;
@@ -2119,14 +2135,15 @@ function compareVersions(a, b) {
     return -1;
   return preA < preB ? -1 : 1;
 }
-async function npmLatest(name, fresh) {
-  const kept = newest.get(name);
+async function npmLatest(name, fresh, tag = "latest") {
+  const key = `${name}@${tag}`;
+  const kept = newest.get(key);
   if (!fresh && kept && Date.now() - kept.at < 6 * 60 * 60000)
     return kept.value;
   try {
-    const response = await fetch(`https://registry.npmjs.org/${name.replace("/", "%2F")}/latest`, { signal: AbortSignal.timeout(1e4) });
+    const response = await fetch(`https://registry.npmjs.org/${name.replace("/", "%2F")}/${tag}`, { signal: AbortSignal.timeout(1e4) });
     const value = response.ok ? (await response.json()).version ?? undefined : undefined;
-    newest.set(name, { at: Date.now(), value });
+    newest.set(key, { at: Date.now(), value });
     return value;
   } catch {
     return kept?.value;
@@ -2139,7 +2156,7 @@ async function resolveUpdater(definition) {
   } catch {}
   const name = basename(definition.executable);
   const native = definition.nativeUpdate;
-  const nativeUpdater = native ? { command: [definition.executable, ...native.args], shown: [name, ...native.args].join(" ") } : {};
+  const nativeUpdater = native ? { command: [definition.executable, ...native.args], shown: [name, ...native.args].join(" "), distTag: native.distTag?.() } : {};
   if (native?.isNative(realPath) || native && native.isNative(definition.executable))
     return nativeUpdater;
   const prefix = npmGlobalPrefix(realPath, definition.npmPackage);
@@ -2171,7 +2188,8 @@ async function resolveUpdater(definition) {
         return {
           command: [brew, "upgrade", ...cask ? ["--cask"] : [], keg.name],
           shown: `brew upgrade ${cask ? "--cask " : ""}${keg.name}`,
-          latest: info ? homebrewLatest(info.stdout, cask) : undefined
+          latest: info ? homebrewLatest(info.stdout, cask) : undefined,
+          homebrew: true
         };
       }
     }
@@ -2329,7 +2347,7 @@ class ClaudeAgent {
       name: "Claude Code",
       executable,
       npmPackage: "@anthropic-ai/claude-code",
-      nativeUpdate: { args: ["update"], isNative: (path) => /\/\.local\/share\/claude\/|\/\.claude\/local\//.test(path) }
+      nativeUpdate: { args: ["update"], isNative: (path) => /\/\.local\/share\/claude\/|\/\.claude\/local\//.test(path), distTag: updateChannel }
     };
   }
   async maintenance(fresh = false) {
@@ -2397,7 +2415,6 @@ class ClaudeAgent {
     const executable = this.executable();
     if (!executable)
       throw new Error("Install Claude Code first: curl -fsSL https://claude.ai/install.sh | bash");
-    this.authFailedAt = undefined;
     return commandSignIn({
       command: executable,
       args: ["auth", "login", methodID === "console" ? "--console" : "--claudeai"],
@@ -2405,8 +2422,9 @@ class ClaudeAgent {
       home: this.context.home,
       temporary: this.context.temporary,
       instructions: "Finish signing in on Claude's page. Claude Code keeps the sign-in, as when you run claude auth login.",
-      signedIn: async () => (await this.account(true)).signedIn,
-      codePrompt: /Paste code here if prompted >\s*/g
+      signedIn: async () => Boolean((await this.readStatus(true)).loggedIn),
+      codePrompt: /Paste code here if prompted >\s*/g,
+      onComplete: () => this.authFailedAt = undefined
     });
   }
   async sdk() {
@@ -2488,6 +2506,15 @@ function modelName(info) {
 }
 function family(name) {
   return "claude-" + (name.split(/\s+/)[0] ?? "").toLowerCase();
+}
+function updateChannel() {
+  try {
+    const folder = process.env.CLAUDE_CONFIG_DIR ?? join8(homedir(), ".claude");
+    const settings = JSON.parse(readFileSync7(join8(folder, "settings.json"), "utf8"));
+    return settings?.autoUpdatesChannel === "stable" ? "stable" : "latest";
+  } catch {
+    return "latest";
+  }
 }
 function fallbackModels(providerID2) {
   return [
@@ -4952,6 +4979,8 @@ class Sessions {
     copy.messages = structuredClone(record.messages.slice(0, at));
     if (record.agent.kuvoInstructions)
       copy.agent.kuvoInstructions = structuredClone(record.agent.kuvoInstructions);
+    if (Array.isArray(record.agent.autoHeld))
+      copy.agent.autoHeld = [...record.agent.autoHeld];
     this.store.save(session.id, true);
     emit("session.created", { sessionID: session.id, session }, session.location.directory);
     return session;
@@ -5166,6 +5195,8 @@ class Sessions {
     let result;
     try {
       const run2 = { text: input.text, files: input.files.map(promptFile), model: model2, plan: session.agent === "plan" };
+      if (model2.providerID !== autoProvider)
+        delete record.agent.autoHeld;
       result = model2.providerID === autoProvider ? await this.runAuto(id, record, live, { ...run2, auto: true }, turn, abort.signal, input.id) : await this.runOn(id, record, live, model2, run2, turn, abort.signal, input.id);
     } catch (error) {
       result = { outcome: "failed", error: failure(error) };
@@ -5266,6 +5297,7 @@ class Sessions {
         turn.notice(`Back on ${this.entryName(entry)}: its limit has reset.`);
       tried.add(Auto.modelKey(entry));
       const model2 = { providerID: entry.providerID, id: entry.modelID, ...entry.variant ? { variant: entry.variant } : {} };
+      const seenBefore = this.slots(record)[entry.providerID]?.seen;
       if (note) {
         turn.stopTools("Stopped: going on with another model.");
         turn.notice(`${note} Going on with ${this.entryName(entry)}.`);
@@ -5278,6 +5310,9 @@ class Sessions {
         const worked = record.messages.slice(from).some((message) => message.type === "assistant" && message.content.some((content) => content.type === "tool" || content.type === "text" && content.text.trim()));
         if (worked)
           return last2;
+        const slot = this.slots(record)[entry.providerID];
+        if (slot)
+          slot.seen = seenBefore;
         note = `${this.entryName(entry)} couldn't take it: ${last2.error?.message ?? "it stopped with an error"}`;
         continue;
       }
@@ -5535,14 +5570,26 @@ var json = (value, status = 200) => new Response(JSON.stringify(value), { status
 var located = (value) => json({ location: { directory: process.cwd() }, data: value });
 var error = (status, message) => json({ message }, status);
 var lastSeen = new Map;
+var lastMaintained = new Map;
+async function maintainedSoon(agent, fresh) {
+  if (!agent.maintenance)
+    return;
+  let answered = false;
+  const asked = agent.maintenance(fresh).then((value2) => {
+    const changed = JSON.stringify(lastMaintained.get(agent.providerID)) !== JSON.stringify(value2);
+    lastMaintained.set(agent.providerID, value2);
+    if (answered && changed)
+      emit("integration.updated", { integrationID: agent.providerID });
+    return value2;
+  }, () => lastMaintained.get(agent.providerID));
+  const value = await Promise.race([asked, Bun.sleep(2000).then(() => lastMaintained.get(agent.providerID))]);
+  answered = true;
+  return value;
+}
 async function integration(agent, fresh = false) {
   const [account, maintained] = await Promise.all([
     agent.account(fresh).catch((error2) => ({ installed: false, signedIn: false, message: String(error2?.message ?? error2) })),
-    agent.maintenance ? Promise.race([agent.maintenance(fresh).catch(() => {
-      return;
-    }), Bun.sleep(15000).then(() => {
-      return;
-    })]) : undefined
+    maintainedSoon(agent, fresh)
   ]);
   const seen = JSON.stringify([account.installed, account.signedIn, account.label]);
   const before = lastSeen.get(agent.providerID);
