@@ -4,7 +4,8 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
-## Unreleased
+## 0.5.21
+
 - Opening or closing the sidebar or the side panel no longer leaves the conversation blank for a moment, or for a few seconds.
 - The sidebar and the side panel slide in and out ahead of the conversation, rather than the conversation jumping to make room first: it moves along with the sidebar, and makes room for the panel once it has slid in. Sliding the panel is smoother too.
 - Commands the agent runs find your own tools' sign-ins and settings, as in your terminal: `gh` said you weren't logged in, and others that keep theirs in `~/.config` or `~/.local/share` didn't find them. On your machines too, and in bots' watches there.
