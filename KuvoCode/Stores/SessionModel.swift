@@ -131,7 +131,8 @@ final class SessionModel {
     /// Goes up when the agent asks something while the composer is empty: it lets go of the
     /// keyboard, for the question.
     private(set) var composerBlur = 0
-    /// Showing the conversation as last seen (its machine is connecting), not the engine's.
+    /// Showing the conversation as last seen (its machine is connecting, or this Mac's engine
+    /// starting), not the engine's.
     private(set) var isCopy = false
     /// Made from a copy: no engine to read from until its machine is back.
     private var waitsForEngine = false
@@ -293,6 +294,14 @@ final class SessionModel {
     private var settledEdits: [String: Bool] = [:]
     private var isRetrying = false
 
+    /// Shows the conversation as last seen while `load` reads the engine's, unless it's read
+    /// already. The engine's takes its place, rather than being added to it.
+    func preview(_ copy: [Message]) {
+        guard !isLoaded, transcript.messages.isEmpty, !copy.isEmpty else { return }
+        transcript.load(messages: copy, inbox: [], permissions: [], forms: [], isRunning: false)
+        isCopy = true
+    }
+
     /// Shows the conversation as last seen, until `load` reads the engine's.
     func show(_ copy: [Message]) {
         discardLive()
@@ -301,10 +310,10 @@ final class SessionModel {
         waitsForEngine = true
     }
 
-    /// A machine's session keeps its conversation as last seen, to show while the machine is
-    /// out of reach (see `SessionCopies`).
+    /// A session keeps its conversation as last seen, to show while its engine can't answer yet
+    /// (its machine is out of reach, or this Mac's engine is starting; see `SessionCopies`).
     private func keepCopy() {
-        guard api.folderPrefix != nil, !isSubagent, !transcript.messages.isEmpty else { return }
+        guard !isSubagent, !transcript.messages.isEmpty else { return }
         // The latest, as opening it reads them: earlier ones are read again as you scroll up.
         SessionCopies.save(.init(session: session, messages: Array(transcript.messages.suffix(Self.pageSize))))
     }
@@ -710,7 +719,9 @@ final class SessionModel {
         if let error {
             failure = error.localizedDescription
         } else if written != nil {
-            failure = "It didn't run: this session's machine can't be reached now."
+            failure = RemoteFolder.isRemote(session.location.directory)
+                ? "It didn't run: this session's machine can't be reached now."
+                : "It didn't run: the engine is still starting. Send it again in a moment."
         }
     }
 

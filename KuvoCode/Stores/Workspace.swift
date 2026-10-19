@@ -38,8 +38,9 @@ final class Workspace {
     /// to connect instead of closing.
     @ObservationIgnored private var remoteSessions: [String: RemoteSession] = {
         let sessions = Workspace.loadRemoteSessions()
-        // Their conversations as last seen, for those tabs meanwhile; the rest are gone.
-        SessionCopies.keep(Set(sessions.keys))
+        // Their conversations as last seen, for those tabs meanwhile, and this Mac's sessions';
+        // the rest are gone.
+        SessionCopies.keep(Set(sessions.keys).union(SessionCopies.localSessions().map(\.id)))
         return sessions
     }()
     /// The machines whose sessions are in the lists.
@@ -89,7 +90,11 @@ final class Workspace {
         return api
     }
 
-    private(set) var sessions: [Session] = []
+    /// This Mac's as last listed until its engine lists them (it takes a moment to start), so the
+    /// sidebar and the conversation open at launch show at once.
+    private(set) var sessions: [Session] = SessionCopies.localSessions() {
+        didSet { if isLoaded { keepLocalList() } }
+    }
     private(set) var running: Set<String> = [] {
         // While one runs on this Mac, it stays awake (unless you turned that off).
         didSet { Awake.shared.agentsWork(running.contains { id in sessionMachines[id] == nil && !(session(id).map { RemoteFolder.isRemote($0.location.directory) } ?? false) }) }
@@ -370,6 +375,10 @@ final class Workspace {
         }
         model.isReachable = reachable(directory)
         models[id] = model
+        // This Mac's conversation as last seen, in its first frame, while the engine's is read
+        // (which takes a moment, longer while it starts): read in place, the same messages,
+        // nothing moves. Reading a copy takes a few milliseconds.
+        if !RemoteFolder.isRemote(directory), let copy = SessionCopies.load(id) { model.preview(copy.messages) }
         Task { await readShellJobs(in: directory) }
         return model
     }
@@ -377,6 +386,20 @@ final class Workspace {
     /// A machine's sessions as they are now, kept for when it's away (see `showLastSeen`): a
     /// moment after they change, as several often change together.
     @ObservationIgnored private var listSaves: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored private var localListSave: Task<Void, Never>?
+    /// This Mac's sessions shown as last seen before its engine was there at all (see `copyModel`).
+    @ObservationIgnored private var beforeEngine: Set<String> = []
+
+    /// This Mac's sessions as they are now, kept for the next launch (see `sessions`), a moment
+    /// after they change.
+    private func keepLocalList() {
+        localListSave?.cancel()
+        localListSave = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard let self, !Task.isCancelled else { return }
+            SessionCopies.saveLocalSessions(sessions.filter { !RemoteFolder.isRemote($0.location.directory) })
+        }
+    }
 
     private func keepList(of machine: String) {
         guard connectedMachines.contains(machine) else { return }
@@ -403,9 +426,24 @@ final class Workspace {
     /// Whether the machine's sessions are live (it's connected and they've been read).
     func isConnected(_ machine: String) -> Bool { connectedMachines.contains(machine) }
 
-    /// A session on a machine that's connecting, from its conversation as last seen, to read
-    /// meanwhile. It takes the machine's engine once it's back (see `refresh`).
+    /// A session on a machine that's connecting, or on this Mac while its engine starts, from its
+    /// conversation as last seen, to read meanwhile. It takes the engine once it's there (see
+    /// `refresh`).
     private func copyModel(for id: String) -> SessionModel? {
+        if api == nil, let session = session(id), !RemoteFolder.isRemote(session.location.directory), let copy = SessionCopies.load(id) {
+            // Nothing answers here; nothing's asked of it before the engine is there.
+            let offline = OpenCodeAPI(endpoint: ServerEndpoint(url: URL(string: "http://127.0.0.1:9")!, username: "", password: nil))
+            let directory = session.location.directory
+            let model = SessionModel(session: session, api: offline) { [weak self] in
+                guard let self else { return [] }
+                return self.extraFolders(self.session(id)?.location.directory ?? directory)
+            }
+            model.isReachable = { [weak self] in self?.api != nil }
+            model.show(copy.messages)
+            models[id] = model
+            beforeEngine.insert(id)
+            return model
+        }
         guard let machine = waitingMachine(for: id), let copy = SessionCopies.load(id) else { return nil }
         // Nothing answers here; nothing's asked of it before the machine is back.
         let offline = OpenCodeAPI(endpoint: ServerEndpoint(url: URL(string: "http://127.0.0.1:9")!, username: "", password: nil), folderPrefix: RemoteFolder.prefix(for: machine))
@@ -668,6 +706,20 @@ final class Workspace {
         do {
             let local = try await api.allSessions().filter { !isHidden($0) }
             sessions = local + sessions.filter { RemoteFolder.isRemote($0.location.directory) }
+            SessionCopies.saveLocalSessions(local)
+            // Conversations shown as last seen while the engine started take it now, and are read
+            // in place (the same messages, so nothing on screen moves); one deleted meanwhile goes.
+            for id in beforeEngine {
+                guard let model = models[id] else { continue }
+                guard let session = local.first(where: { $0.id == id }) else {
+                    models[id] = nil
+                    continue
+                }
+                model.reconnect(api)
+                model.session = session
+                Task { await model.load() }
+            }
+            beforeEngine = []
         } catch { log.error("sessions: \(String(describing: error), privacy: .public)") }
         do {
             let active = try await api.activeSessions()
@@ -970,10 +1022,8 @@ final class Workspace {
         case "session.deleted":
             sessions.removeAll { $0.id == id }
             if let machine { keepList(of: machine) }
-            if remoteSessions.removeValue(forKey: id) != nil {
-                Self.saveRemoteSessions(remoteSessions)
-                SessionCopies.remove(id)
-            }
+            if remoteSessions.removeValue(forKey: id) != nil { Self.saveRemoteSessions(remoteSessions) }
+            SessionCopies.remove(id)
             models[id] = nil
             asking = asking.filter { $0.value != id }
         case "session.execution.started":
