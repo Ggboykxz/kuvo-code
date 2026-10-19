@@ -867,6 +867,14 @@ final class Bots {
         path.hasSuffix("/MEMORY.md") && path.contains("/bots/bot_")
     }
 
+    /// For a bot that works in one of the user's projects: the same folder, and checkout, as
+    /// their own sessions there.
+    private static let projectNote = """
+        You work in one of the user's projects, in the same folder their own sessions use, so leave it the way you found \
+        it. When you work on a branch of your own, go back to the branch the project was on once you're done, so the \
+        user's checkout doesn't move. Never commit or throw away changes you didn't make; leave them and say so.
+        """
+
     /// What the bot's session knows about being a bot: who it is, its job, its memory and how to
     /// wake itself up.
     static func instructions(for bot: Bot) -> String {
@@ -928,7 +936,7 @@ final class Bots {
         GitHub…), use its tools, named after it, never its website.
 
         The user is usually away while you work. When you need a decision from them, say so plainly in a short message and \
-        stop.
+        stop.\(bot.project == nil ? "" : "\n\n" + projectNote)
 
         \(identityNote)
         """
