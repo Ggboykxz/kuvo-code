@@ -24,7 +24,6 @@ export const state: AppState = {
   agent: "",
   split: null,
   projects: [],
-  shortcuts: null,
   contextGauge: null,
   inbox: [],
   vcs: null,
@@ -381,11 +380,13 @@ export async function restartEngineNow() {
 
 // ---- Sending ----
 
-export async function sendPrompt(text: string, files: Attachment[] = []) {
+export async function sendPrompt(text: string, files: Attachment[] = [], delivery: "steer" | "queue" = "steer") {
   if (!state.session) return;
   try {
     const body: Record<string, unknown> = { text };
     if (files.length) body.files = files;
+    // ⌘Return on the Mac queues the message for after the run; here it is the same key.
+    if (delivery === "queue") body.delivery = "queue";
     await api(`/api/sessions/${encodeURIComponent(state.session.id)}/prompt`, { method: "POST", body });
     const transcript = state.transcript ?? emptyTranscript();
     transcript.pending = [...transcript.pending, { id: `local_${Date.now()}`, text, files }];

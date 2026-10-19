@@ -4,6 +4,16 @@
 import { useEffect, useState } from "react";
 import { api } from "./api";
 import {
+  clearShortcut,
+  keyCaps,
+  keysOf,
+  recordShortcut,
+  setRecording,
+  SHORTCUT_GROUPS,
+  specFromEvent,
+  type Shortcut,
+} from "./shortcuts";
+import {
   applyLook,
   bootConfig,
   loadSessions,
@@ -278,37 +288,15 @@ function GeneralPage() {
   );
 }
 
-/// Every keyboard shortcut, by where it's used — the Mac app's own list, for ours.
-const SHORTCUT_GROUPS: [string, [string, string][]][] = [
-  ["General", [
-    ["Ctrl+K", "The command palette: commands, sessions and files"],
-    ["Ctrl+N", "A new session"],
-    ["Ctrl+S", "Save the conversation as Markdown"],
-    ["Ctrl+,", "These settings"],
-    ["Esc", "Close what is open"],
-  ]],
-  ["Sessions", [
-    ["Ctrl+F", "Find in the conversation"],
-    ["Ctrl+.", "Stop the agent"],
-    ["Ctrl+1 – 8", "That session tab"],
-  ]],
-  ["Side panel", [
-    ["Ctrl+Shift+F", "Files and terminal"],
-    ["Ctrl+Shift+C", "The changes of this session"],
-  ]],
-  ["Composer", [
-    ["Return", "Send"],
-    ["Shift+Return", "A new line"],
-    ["/", "At the start: a command"],
-    ["@", "Mention a file"],
-  ]],
-];
-
+/// The shortcuts, by where they are used — the Mac app's own list, in our key names — and the
+/// recorder that changes them. The Mac's page only lists them (the system's own settings
+/// change a menu command's shortcut there); Windows has no such place, so the keys are
+/// recorded here and kept in this app's settings.
 function KeyboardPage() {
   const [search, setSearch] = useState("");
   const needle = search.trim().toLowerCase();
   const groups = SHORTCUT_GROUPS
-    .map(([title, shortcuts]) => [title, shortcuts.filter(([keys, what]) => !needle || `${keys} ${what}`.toLowerCase().includes(needle))] as [string, [string, string][]])
+    .map(([title, shortcuts]) => [title, shortcuts.filter(shortcut => !needle || `${shortcut.keys} ${shortcut.title}`.toLowerCase().includes(needle))] as [string, Shortcut[]])
     .filter(([, shortcuts]) => shortcuts.length > 0);
   return (
     <>
@@ -319,12 +307,72 @@ function KeyboardPage() {
       {groups.length === 0 ? <div className="settings-note">No shortcut matches.</div> : groups.map(([title, shortcuts]) => (
         <div key={title}>
           <h3>{title}</h3>
-          {shortcuts.map(([keys, what]) => (
-            <div className="settings-row" key={keys}><span>{what}</span><kbd>{keys}</kbd></div>
+          {shortcuts.map(shortcut => (
+            <div className="settings-row" key={shortcut.id}><span>{shortcut.title}</span><ShortcutKeys shortcut={shortcut} /></div>
           ))}
         </div>
       ))}
+      <div className="settings-note">To change a shortcut, click its keys and press the new ones.</div>
     </>
+  );
+}
+
+/// The keys of one shortcut, and the recorder that changes them. The recorder takes the
+/// press the way the Mac's does: Esc leaves it, Delete clears the shortcut, and a chord
+/// needs a real modifier (Ctrl or Alt) — Shift alone would take the typing away.
+function ShortcutKeys({ shortcut }: { shortcut: Shortcut }) {
+  const [recording, setIsRecording] = useState(false);
+  const [refused, setRefused] = useState(false);
+  const keys = keysOf(shortcut.id);
+
+  useEffect(() => {
+    if (!recording) return;
+    const onKey = (event: KeyboardEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const bare = !event.ctrlKey && !event.altKey && !event.shiftKey;
+      if (bare && event.key === "Escape") { setIsRecording(false); return; }
+      if (bare && (event.key === "Delete" || event.key === "Backspace")) {
+        setIsRecording(false);
+        void clearShortcut(shortcut.id);
+        return;
+      }
+      const next = specFromEvent(event);
+      if (!next) { setRefused(true); return; }
+      setRefused(false);
+      setIsRecording(false);
+      void recordShortcut(shortcut.id, next);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [recording, shortcut.id]);
+
+  // While the recorder listens, the app's own keys stay quiet — the Mac does the same (it
+  // disables the hotkey for as long as the recorder listens).
+  useEffect(() => {
+    setRecording(recording);
+    return () => setRecording(false);
+  }, [recording]);
+
+  if (shortcut.plain) {
+    return <span className="keycap-row">{keyCaps(keys).map(part => <kbd key={part}>{part}</kbd>)}</span>;
+  }
+
+  return (
+    <span className="keycap-row">
+      <button
+        type="button"
+        className={`keycap-button ${recording ? "recording" : ""}`}
+        title={recording ? "Press the new keys (Esc leaves it)" : "Record Shortcut"}
+        onClick={() => { setRefused(false); setIsRecording(value => !value); }}
+      >
+        {recording ? "Type Shortcut…" : keys}
+      </button>
+      {!recording && keys.length > 0 ? (
+        <button type="button" className="keycap-clear" title="Clear Shortcut" aria-label="Clear Shortcut" onClick={() => void clearShortcut(shortcut.id)}>✕</button>
+      ) : null}
+      {refused ? <span className="settings-note">A shortcut needs Ctrl or Alt.</span> : null}
+    </span>
   );
 }
 

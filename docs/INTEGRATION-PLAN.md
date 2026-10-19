@@ -43,10 +43,12 @@ The Mac ships `AppIcon.icns`; we ship a 16-pixel placeholder. **Needs:** an `.ic
 `windows/harness/ui/` (the window's icon on the taskbar).
 
 ### 2. The shortcut recorder — the Mac lets you *change* the shortcuts
-The Mac's `KeyboardShortcuts` bundle is the recorder UI; our Keyboard page only lists them.
-**Needs:** a settings key per shortcut, stored in the app's own settings, honoured by the
-key handler. **Lands in:** `windows/app/src/App.tsx` (the handler), the Keyboard page, the
-settings file.
+**Done.** The Mac's `KeyboardShortcuts` bundle is the recorder UI; ours is the same: click
+the keys of a shortcut, press the new ones, and they are kept in the app's own settings and
+answered to by the key handler. The list is the Mac's, in the groups it uses, with the keys
+a Windows user reads (⌘ is Ctrl, ⌥ is Alt). **Lands in:** `windows/app/src/keys.mjs` (the
+list and the keys), `windows/app/src/shortcuts.ts` (the app's half), `windows/app/src/App.tsx`
+(the handler), the Keyboard page, the settings file.
 
 ### 3. The usage panel — what the account spent
 The Mac ships `UsageKit` and a usage page. We have the cost per session in the gauge's

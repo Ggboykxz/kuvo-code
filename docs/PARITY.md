@@ -55,7 +55,7 @@ mirrored in `windows/harness/engine.mjs` and typed in `windows/app/src/api.ts`).
 | --- | --- |
 | `GeneralSettings` | ✅ (mises à jour, démarrage à l'login, veille, import opencode) |
 | `AppearanceSettings` | ✅ (accent, thème, taille du texte, mouvement) |
-| `ShortcutsSettings` | ✅ la liste, cherchable ; les raccourcis sont câblés |
+| `ShortcutsSettings` | ✅ la liste, cherchable ; les raccourcis sont câblés et **enregistrables** (l'enregistreur du Mac : clic, puis les touches) |
 | `MCPSettings` | ✅ (état, édition, catalogue, timeouts, import opencode) |
 | `AgentsSettings` | ✅ (défaut, mode, modèle, pas, instructions, règles) |
 | `SkillsSettings` | ✅ (liste, on/off, SKILL.md) |

@@ -165,7 +165,6 @@ export interface AppState {
   agent: string;
   split: string | null;
   projects: string[];
-  shortcuts: unknown;
   contextGauge: unknown;
   inbox: { id: string; delivery?: string; payload?: { text?: string } }[];
   vcs: VcsInfo | null;

@@ -212,6 +212,45 @@ test("the page, in a DOM, against the real engine", {
       `the navigation's "${wanted}" has a page behind it`);
   }
 
+  // The keyboard page: the recorder writes the keys down, they are kept in the app's own
+  // settings, and the app answers to them.
+  page.element("settings-open")?.click();
+  await page.seen("the settings to open", () => page.document.querySelector('.settings-nav button[data-section="keyboard"]') !== null, 10_000);
+  page.document.querySelector('.settings-nav button[data-section="keyboard"]').click();
+  const keyboardPage = () => page.document.querySelector('.settings-page[data-section="keyboard"]');
+  const chip = (text) => [...keyboardPage().querySelectorAll(".keycap-button")].find(node => node.textContent.trim() === text);
+  const paletteRow = () => [...keyboardPage().querySelectorAll(".settings-row")]
+    .find(row => row.querySelector("span")?.textContent === "Command palette");
+  await page.seen("the keyboard page to show", () => keyboardPage() && !keyboardPage().hidden && keyboardPage().textContent.includes("Command palette"), 10_000);
+  // The app's own keys first: a shortcut recorded by an earlier run is cleared, the way a
+  // user clears it.
+  const clear = () => paletteRow()?.querySelector(".keycap-clear");
+  if (clear()) {
+    clear().click();
+    await page.seen("the keys to go back to the app's own", () => chip("Ctrl+K") !== undefined, 10_000);
+  }
+  assert.ok(chip("Ctrl+K"), "the palette's keys are the app's own");
+  chip("Ctrl+K").click();
+  await page.seen("the recorder to listen", () => keyboardPage().querySelector(".keycap-button.recording") !== null, 10_000);
+  // The press: a chord with a real modifier, the way the Mac's recorder takes it.
+  page.document.body.dispatchEvent(new page.window.KeyboardEvent("keydown", { key: "p", ctrlKey: true, altKey: true, bubbles: true }));
+  await page.seen("the keys to be written down", () => chip("Ctrl+Alt+P") !== undefined, 10_000);
+  // The keys are kept in the app's own settings.
+  const settings = await (await fetch(`${url}api/config`)).json();
+  assert.equal(settings.settings?.shortcuts?.palette, "Ctrl+Alt+P", "the settings hold the recorded keys");
+  // And the app answers to them: the palette opens on the new keys, not on the old ones.
+  page.document.body.dispatchEvent(new page.window.KeyboardEvent("keydown", { key: "p", ctrlKey: true, altKey: true, bubbles: true }));
+  await page.seen("the palette to open on the recorded keys", () => page.element("palette")?.hidden === false, 10_000);
+  page.document.body.dispatchEvent(new page.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  await page.seen("the palette to close", () => page.element("palette")?.hidden === true, 10_000);
+  page.document.body.dispatchEvent(new page.window.KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true }));
+  await wait(400);
+  assert.equal(page.element("palette")?.hidden, true, "the old keys do not answer any more");
+  // And the shortcut can be cleared: the app's own keys are back.
+  assert.ok(clear(), "the recorded keys can be cleared");
+  clear().click();
+  await page.seen("the keys to go back to the app's own", () => chip("Ctrl+K") !== undefined, 10_000);
+
   assert.deepEqual([...page.errors, ...reloaded.errors], [], "the page had nothing to complain about");
 
   // Leave the engine as we found it (the hook above closes the pages and the harness).

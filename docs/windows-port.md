@@ -105,6 +105,13 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
+  - **2.49 (this change).** The app wears its own icon, the macOS build's drawing: the
+    `.icns` that ships inside the Mac app is made into the `.ico` Windows gives the
+    executable, the tray, the window and the page's favicon — the same picture, once.
+  - **2.48 (this change).** The Mac app's shortcuts can be *changed* here, the way the Mac's
+    `KeyboardShortcuts` bundle does it: click the keys of a shortcut, press the new ones, and
+    they are kept in this app's own settings and answered to by the app. The list is the
+    Mac's, in the groups it uses, with the keys a Windows user reads (⌘ is Ctrl, ⌥ is Alt).
   - **2.47 (this change).** The Mac app's shipped product inventoried with REA (the bundle:
     157 nodes, complete coverage) and the plan that follows written down in
     `docs/INTEGRATION-PLAN.md`: the icon, the shortcut recorder, the usage panel, the browser

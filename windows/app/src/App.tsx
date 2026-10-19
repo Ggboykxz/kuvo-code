@@ -6,6 +6,7 @@ import { api } from "./api";
 import type { Attachment, FormRequest, PermissionRequest, SessionSummary, Transcript, TranscriptEntry } from "./api";
 import { fromHistory } from "../../harness/transcript.mjs";
 import { brief, compactTokens, errorText, renderMarkdown, when } from "./lib";
+import { isRecording, keysOf, matchesEvent, shortcutFor } from "./shortcuts";
 import {
   answerPermission,
   applyLook,
@@ -762,7 +763,7 @@ function Composer() {
     ...(state.transcript?.pending ?? []).filter(item => !state.inbox.some(inboxItem => inboxItem.id === item.id)),
   ];
 
-  const submit = async (event: React.FormEvent) => {
+  const submit = async (event: React.FormEvent, delivery: "steer" | "queue" = "steer") => {
     event.preventDefault();
     if (!text.trim() && !files.length) return;
     // The notes on the changes go with the message, the way the Mac app sends them.
@@ -773,7 +774,7 @@ function Composer() {
     setText("");
     setFiles([]);
     state.lineComments = [];
-    await sendPrompt(sent, files);
+    await sendPrompt(sent, files, delivery);
     render();
   };
 
@@ -877,13 +878,23 @@ function Composer() {
             if (event.key === "Escape") { setMentions([]); return; }
             if (event.key === "ArrowDown") { event.preventDefault(); setMentionIndex(index => (index + 1) % mentions.length); return; }
             if (event.key === "ArrowUp") { event.preventDefault(); setMentionIndex(index => (index - 1 + mentions.length) % mentions.length); return; }
-            if (event.key === "Enter") {
+            // A chord belongs to the composer itself (⌘Return queues), so the mention is
+            // only taken when the key is pressed plain.
+            if (event.key === "Enter" && !event.ctrlKey && !event.metaKey && !event.altKey) {
               event.preventDefault();
               chooseMention(mentions[mentionIndex]);
               return;
             }
           }
-          if (event.key === "Enter" && !event.shiftKey) {
+          if (event.key !== "Enter") return;
+          // Return sends; Shift-Return starts a new line; Ctrl-Return queues.
+          if (matchesEvent(keysOf("queue"), event)) {
+            event.preventDefault();
+            void submit(event as unknown as React.FormEvent, "queue");
+            return;
+          }
+          if (matchesEvent(keysOf("newline"), event)) return;
+          if (matchesEvent(keysOf("send"), event)) {
             event.preventDefault();
             void submit(event as unknown as React.FormEvent);
           }
@@ -1070,6 +1081,59 @@ function Choice({ id, title, groups, value, onPick, empty }: {
 
 // ---- The app ----
 
+/// What a shortcut does. The keys are the ones the user recorded, or the ones the app
+/// ships with; the Mac's own list is the same, in the Mac's key names.
+function runShortcut(id: string) {
+  switch (id) {
+    case "palette":
+      state.paletteOpen = !state.paletteOpen;
+      render();
+      return;
+    case "new-session":
+      if (state.project) void newSession();
+      return;
+    case "save":
+      void exportConversation();
+      return;
+    case "find":
+      (document.getElementById("find") as HTMLInputElement | null)?.focus();
+      return;
+    case "settings":
+      state.settingsOpen = true;
+      state.settingsSection = "appearance";
+      render();
+      return;
+    case "stop":
+      void stopRun();
+      return;
+    case "sidebar":
+      state.sidebarOpen = state.sidebarOpen === false;
+      render();
+      return;
+    case "panel":
+      state.drawerOpen = !state.drawerOpen;
+      render();
+      return;
+    case "files":
+      state.drawerOpen = true;
+      state.drawerTab = "files";
+      render();
+      return;
+    case "changes":
+      state.drawerOpen = true;
+      state.drawerTab = "changes";
+      render();
+      return;
+    case "terminal":
+      state.drawerOpen = true;
+      state.drawerTab = "terminal";
+      render();
+      return;
+    default:
+      return;
+  }
+}
+
 export function App() {
   useStore();
   const [ready, setReady] = useState(false);
@@ -1109,44 +1173,13 @@ export function App() {
         complain(error);
       });
     const onKey = (event: KeyboardEvent) => {
-      const command = event.ctrlKey || event.metaKey;
-      if (command && event.key.toLowerCase() === "k") {
+      // While a shortcut is being recorded, the keys belong to the recorder.
+      if (isRecording()) return;
+      // The shortcuts the user recorded, or the ones the app ships with.
+      const shortcut = shortcutFor(event);
+      if (shortcut) {
         event.preventDefault();
-        state.paletteOpen = !state.paletteOpen;
-        render();
-        return;
-      }
-      if (command && event.key.toLowerCase() === "n") {
-        event.preventDefault();
-        if (state.project) void newSession();
-        return;
-      }
-      if (command && event.key.toLowerCase() === "s") {
-        event.preventDefault();
-        void exportConversation();
-        return;
-      }
-      if (command && event.key.toLowerCase() === "f") {
-        event.preventDefault();
-        (document.getElementById("find") as HTMLInputElement | null)?.focus();
-        return;
-      }
-      if (command && event.key === ",") {
-        event.preventDefault();
-        state.settingsOpen = true;
-        state.settingsSection = "appearance";
-        render();
-        return;
-      }
-      if (command && event.key === ".") {
-        event.preventDefault();
-        void stopRun();
-        return;
-      }
-      if (command && event.key === "0") {
-        event.preventDefault();
-        state.sidebarOpen = state.sidebarOpen === false;
-        render();
+        runShortcut(shortcut.id);
         return;
       }
       if (event.key === "Escape") {
