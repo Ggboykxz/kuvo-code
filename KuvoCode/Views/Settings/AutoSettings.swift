@@ -114,7 +114,9 @@ private struct AutoEntryRow: View {
             return limit.isWholeAccount ? "Its account is at its limit \(until)" : "At its limit \(until)"
         }
         if catalog.isLoaded, catalog.offeredModel(entry.ref) == nil {
-            return OutsideAgents.isAgent(entry.providerID) ? "Not signed in: Auto passes it by" : "Not available now: Auto passes it by"
+            // Its account signed in but the model gone, or the account signed out.
+            let signedIn = catalog.integrations.first { $0.id == entry.providerID }?.isConnected ?? false
+            return OutsideAgents.isAgent(entry.providerID) && !signedIn ? "Not signed in: Auto passes it by" : "Not available now: Auto passes it by"
         }
         return nil
     }

@@ -149,9 +149,10 @@ extension Integration {
     /// The ways to sign in Accounts offers. A ChatGPT plan is used through Codex and a SuperGrok
     /// plan through Grok's CLI (Coding Agents), so the engine's own sign-ins with those plans
     /// aren't offered: two ways to one plan read as two accounts. One made before still works,
-    /// and shows as connected.
+    /// shows as connected, and can be signed in to again.
     var offeredSignInMethods: [Method] {
-        signInMethods.filter { method in
+        if isConnected { return signInMethods }
+        return signInMethods.filter { method in
             guard case .oauth(let id, _, _) = method else { return true }
             switch self.id {
             case "openai": return !id.hasPrefix("chatgpt")
