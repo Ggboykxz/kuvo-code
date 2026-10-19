@@ -3245,7 +3245,11 @@ class CodexAgent {
     for (const thread of this.threads.values())
       if (thread.nativeID === nativeID)
         return thread;
-    return;
+    return this.spawned.get(nativeID);
+  }
+  spawned = new Map;
+  adopt(threadID, thread) {
+    this.spawned.set(threadID, thread);
   }
   async account(fresh = false) {
     if (!this.executable())
@@ -3453,7 +3457,7 @@ ${others.map((path) => `- ${path}`).join(`
       collaborationMode: { mode: input.plan ? "plan" : "default", settings: { model: input.model.id, reasoning_effort: effort ?? null, developer_instructions: null } }
     };
     return new Promise((resolve) => {
-      const active = { turn, hooks, resolve, streamed: new Set, changes: new Map, output: new Map, toolsSinceText: false, auto: input.auto, model: input.model.id };
+      const active = { turn, hooks, resolve, streamed: new Set, changes: new Map, output: new Map, toolsSinceText: false, subagents: new Map, spawning: [], auto: input.auto, model: input.model.id };
       this.active = active;
       turn.startStep();
       rpc.request("turn/start", params, 60000).then((result) => {
@@ -3471,6 +3475,8 @@ ${others.map((path) => `- ${path}`).join(`
     const active = this.active;
     if (!active)
       return;
+    if (params?.threadId && this.nativeID && params.threadId !== this.nativeID)
+      return this.subagentNotification(active, params.threadId, method, params);
     const turn = active.turn;
     const turnID = params?.turnId ?? params?.turn?.id;
     if (active.turnID && turnID && turnID !== active.turnID)
@@ -3547,17 +3553,111 @@ ${others.map((path) => `- ${path}`).join(`
       }
     }
   }
-  words(active) {
-    if (!active.toolsSinceText)
-      return;
-    active.toolsSinceText = false;
-    active.turn.endStep({ tokens: active.usage });
-    active.usage = undefined;
-    active.turn.startStep();
+  subagentNotification(active, threadID, method, params) {
+    let lane = active.subagents.get(threadID);
+    if (!lane) {
+      const call = active.spawning[0];
+      if (!call)
+        return;
+      lane = this.linkSubagent(active, call, threadID);
+    }
+    if (lane.ended) {
+      if (method !== "turn/started")
+        return;
+      lane = this.continueSubagent(active, threadID, lane);
+    }
+    const turn = lane.turn;
+    switch (method) {
+      case "item/agentMessage/delta":
+        this.words(lane);
+        lane.streamed.add(params.itemId);
+        turn.text(params.delta ?? "");
+        return;
+      case "item/reasoning/summaryTextDelta":
+        this.words(lane);
+        turn.reasoning(params.delta ?? "");
+        return;
+      case "item/commandExecution/outputDelta": {
+        const output = ((lane.output.get(params.itemId) ?? "") + (params.delta ?? "")).slice(-outputLimit4);
+        lane.output.set(params.itemId, output);
+        turn.toolProgress(params.itemId, { output });
+        return;
+      }
+      case "item/started":
+        return this.itemStarted(lane, params.item);
+      case "item/completed":
+        return this.itemCompleted(lane, params.item);
+      case "thread/tokenUsage/updated": {
+        const last2 = params.tokenUsage?.last;
+        if (last2)
+          lane.usage = { input: Math.max(0, (last2.inputTokens ?? 0) - (last2.cachedInputTokens ?? 0)), output: Math.max(0, (last2.outputTokens ?? 0) - (last2.reasoningOutputTokens ?? 0)), reasoning: last2.reasoningOutputTokens ?? 0, cache: { read: last2.cachedInputTokens ?? 0, write: last2.cacheWriteInputTokens ?? 0 } };
+        return;
+      }
+      case "turn/completed": {
+        const status = params.turn?.status;
+        this.endSubagent(lane, status === "failed" ? "failed" : status === "interrupted" ? "interrupted" : "succeeded", params.turn?.error?.message);
+        return;
+      }
+    }
   }
-  itemStarted(active, item) {
-    const turn = active.turn;
+  linkSubagent(active, call, threadID, prompt) {
+    const known = active.subagents.get(threadID);
+    if (known)
+      return known;
+    active.spawning = active.spawning.filter((waiting) => waiting !== call);
+    const input = active.turn.toolInput(call) ?? {};
+    const title = String(input.description ?? "") || "A spawned agent's task";
+    const run2 = active.hooks.subagent(call, { title, prompt: prompt ?? input.prompt });
+    const lane = { turn: run2.turn, streamed: new Set, changes: new Map, output: new Map, toolsSinceText: false, run: run2, call, title, ended: false };
+    active.subagents.set(threadID, lane);
+    this.agent.adopt(threadID, this);
+    return lane;
+  }
+  continueSubagent(active, threadID, lane) {
+    const run2 = active.hooks.subagent(lane.call, { title: lane.title, sessionID: lane.run.sessionID });
+    const next = { turn: run2.turn, streamed: new Set, changes: new Map, output: new Map, toolsSinceText: false, run: run2, call: lane.call, title: lane.title, ended: false };
+    active.subagents.set(threadID, next);
+    return next;
+  }
+  endSubagent(lane, outcome, message) {
+    if (lane.ended)
+      return;
+    lane.ended = true;
+    lane.turn.endStep({ tokens: lane.usage });
+    lane.run.end(outcome, outcome === "failed" ? { type: "agent", message: message ?? "The agent stopped with an error." } : undefined);
+  }
+  words(lane) {
+    if (!lane.toolsSinceText)
+      return;
+    lane.toolsSinceText = false;
+    lane.turn.endStep({ tokens: lane.usage });
+    lane.usage = undefined;
+    lane.turn.startStep();
+  }
+  itemStarted(lane, item) {
+    const active = lane;
+    const turn = lane.turn;
     switch (item?.type) {
+      case "collabAgentToolCall": {
+        if (item.tool !== "spawnAgent" || !this.active || lane !== this.active)
+          return;
+        const main = this.active;
+        lane.toolsSinceText = true;
+        const prompt = typeof item.prompt === "string" ? item.prompt : "";
+        turn.toolStart(item.id, "subagent", { description: firstLine(prompt) || "A spawned agent's task", prompt, background: true });
+        main.spawning.push(item.id);
+        const thread = item.receiverThreadIds?.[0];
+        if (thread)
+          this.linkSubagent(main, item.id, thread, prompt);
+        return;
+      }
+      case "subAgentActivity": {
+        const main = this.active;
+        const spawned = main && lane === main ? main.subagents.get(item.agentThreadId) : undefined;
+        if (spawned && (item.kind === "completed" || item.kind === "interrupted"))
+          this.endSubagent(spawned, item.kind === "completed" ? "succeeded" : "interrupted");
+        return;
+      }
       case "commandExecution":
         active.toolsSinceText = true;
         turn.toolStart(item.id, "shell", { command: unwrapShell(item.command ?? ""), cwd: item.cwd });
@@ -3583,9 +3683,29 @@ ${others.map((path) => `- ${path}`).join(`
         return;
     }
   }
-  itemCompleted(active, item) {
-    const turn = active.turn;
+  itemCompleted(lane, item) {
+    const active = lane;
+    const turn = lane.turn;
     switch (item?.type) {
+      case "collabAgentToolCall": {
+        if (item.tool !== "spawnAgent" || !this.active || lane !== this.active)
+          return;
+        const main = this.active;
+        const thread = item.receiverThreadIds?.[0];
+        const spawned = thread ? this.linkSubagent(main, item.id, thread, typeof item.prompt === "string" ? item.prompt : undefined) : undefined;
+        if (item.status === "failed" || !spawned)
+          turn.toolFailed(item.id, "The agent couldn't be started.");
+        else
+          turn.toolSucceeded(item.id, "Started.", { sessionID: spawned.run.sessionID });
+        return;
+      }
+      case "subAgentActivity": {
+        const main = this.active;
+        const spawned = main && lane === main ? main.subagents.get(item.agentThreadId) : undefined;
+        if (spawned && (item.kind === "completed" || item.kind === "interrupted"))
+          this.endSubagent(spawned, item.kind === "completed" ? "succeeded" : "interrupted");
+        return;
+      }
       case "agentMessage":
         if (!active.streamed.has(item.id) && item.text) {
           this.words(active);
@@ -3662,7 +3782,8 @@ ${others.map((path) => `- ${path}`).join(`
         return { decision: decision === "always" ? "acceptForSession" : decision === "once" ? "accept" : "decline" };
       }
       case "item/fileChange/requestApproval": {
-        const changes = active.changes.get(params.itemId) ?? [];
+        const lane = (params.threadId && params.threadId !== this.nativeID ? active.subagents.get(params.threadId) : undefined) ?? active;
+        const changes = lane.changes.get(params.itemId) ?? [];
         const files = changes.map((change) => fromPatch(change.path, change.diff, change.kind === "add" ? "added" : change.kind === "delete" ? "deleted" : "modified"));
         const decision = await hooks.permission({
           toolCallID: params.itemId,
@@ -3796,6 +3917,11 @@ function unwrapShell(command) {
     return command;
   const inner = match[2];
   return match[1] === '"' ? inner.replace(/\\(["\\$`])/g, "$1") : inner.replace(/'"'"'/g, "'");
+}
+function firstLine(text) {
+  const line = text.trim().split(`
+`)[0] ?? "";
+  return line.length > 80 ? line.slice(0, 79) + "\u2026" : line;
 }
 
 // Agents/src/agents/cursor.ts
@@ -5566,6 +5692,14 @@ class Sessions {
     const directory = parent.location.directory;
     const now = Date.now();
     const model2 = parentTurn.currentModel;
+    const before = task.sessionID ? this.store.get(task.sessionID) : undefined;
+    if (before && before.session.parentID === id) {
+      if (task.prompt)
+        before.messages.push({ type: "user", id: newID("msg"), time: { created: now }, text: task.prompt });
+      before.session.time.updated = now;
+      this.store.save(before.session.id, true);
+      return this.subagentRun(live, parentTurn, toolCallID, before.session);
+    }
     const session = {
       id: newID("ses"),
       parentID: id,
@@ -5585,7 +5719,11 @@ class Sessions {
       record.messages.push({ type: "user", id: newID("msg"), time: { created: now }, text: task.prompt });
     this.store.save(session.id, true);
     emit("session.created", { sessionID: session.id, session }, directory);
-    const turn = new Turn(this.store, session.id, directory, model2, session.agent ?? "build");
+    return this.subagentRun(live, parentTurn, toolCallID, session);
+  }
+  subagentRun(live, parentTurn, toolCallID, session) {
+    live.subagents.get(session.id)?.finish("succeeded");
+    const turn = new Turn(this.store, session.id, session.location.directory, parentTurn.currentModel, session.agent ?? "build");
     live.subagents.set(session.id, turn);
     parentTurn.toolProgress(toolCallID, { sessionID: session.id });
     return {

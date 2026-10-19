@@ -726,6 +726,14 @@ export class Sessions {
     const directory = parent.location.directory
     const now = Date.now()
     const model = parentTurn.currentModel
+    const before = task.sessionID ? this.store.get(task.sessionID) : undefined
+    if (before && before.session.parentID === id) {
+      // The same subagent, given more to do: its session goes on.
+      if (task.prompt) before.messages.push({ type: "user", id: newID("msg"), time: { created: now }, text: task.prompt })
+      before.session.time.updated = now
+      this.store.save(before.session.id, true)
+      return this.subagentRun(live, parentTurn, toolCallID, before.session)
+    }
     const session: Session = {
       id: newID("ses"),
       parentID: id,
@@ -744,7 +752,12 @@ export class Sessions {
     if (task.prompt) record.messages.push({ type: "user", id: newID("msg"), time: { created: now }, text: task.prompt })
     this.store.save(session.id, true)
     emit("session.created", { sessionID: session.id, session }, directory)
-    const turn = new Turn(this.store, session.id, directory, model, session.agent ?? "build")
+    return this.subagentRun(live, parentTurn, toolCallID, session)
+  }
+
+  private subagentRun(live: Live, parentTurn: Turn, toolCallID: string, session: Session): SubagentRun {
+    live.subagents.get(session.id)?.finish("succeeded")
+    const turn = new Turn(this.store, session.id, session.location.directory, parentTurn.currentModel, session.agent ?? "build")
     live.subagents.set(session.id, turn)
     // Its step in the conversation that started it says which session it is.
     parentTurn.toolProgress(toolCallID, { sessionID: session.id })

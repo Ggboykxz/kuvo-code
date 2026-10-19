@@ -6,7 +6,7 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, rmSync, sy
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { providerID, type AgentAccount } from "../accounts"
-import type { Agent, AgentContext, Account, RunInput, RunResult, SignInAttempt, Thread, TurnHooks } from "../agent"
+import type { Agent, AgentContext, Account, RunInput, RunResult, SignInAttempt, SubagentRun, Thread, TurnHooks } from "../agent"
 import type { Limit } from "../auto"
 import { accountName, failure, model } from "../agent"
 import { fromPatch } from "../diff"
@@ -177,7 +177,14 @@ export class CodexAgent implements Agent {
 
   private threadFor(nativeID: string): CodexThread | undefined {
     for (const thread of this.threads.values()) if (thread.nativeID === nativeID) return thread
-    return undefined
+    return this.spawned.get(nativeID)
+  }
+
+  /** Threads of agents a session's Codex spawned: their events and approvals go to that session. */
+  private spawned = new Map<string, CodexThread>()
+
+  adopt(threadID: string, thread: CodexThread) {
+    this.spawned.set(threadID, thread)
   }
 
   async account(fresh = false): Promise<Account> {
@@ -274,9 +281,35 @@ export class CodexAgent implements Agent {
 
 // MARK: A session
 
-interface Active {
+/** Where Codex's items are told: the turn's own, or a spawned agent's session. */
+interface Lane {
   turn: Turn
+  /** Items whose words came as deltas (their completion doesn't add them again). */
+  streamed: Set<string>
+  /** File changes, by item, for their approval and their result. */
+  changes: Map<string, { path: string; kind: string; diff: string }[]>
+  /** A command's output so far, by item. */
+  output: Map<string, string>
+  /** A tool ran since the last words: the next words start a new step. */
+  toolsSinceText: boolean
+  usage?: TokenUsage
+}
+
+/** An agent Codex spawned: its thread's work, told in a session of its own. */
+interface SubagentLane extends Lane {
+  run: SubagentRun
+  /** The spawn call that started it. */
+  call: string
+  title: string
+  ended: boolean
+}
+
+interface Active extends Lane {
   hooks: TurnHooks
+  /** The agents it spawned, by their thread. */
+  subagents: Map<string, SubagentLane>
+  /** Spawn calls under way whose thread isn't known yet, oldest first. */
+  spawning: string[]
   resolve: (result: RunResult) => void
   turnID?: string
   /** On Auto: a limit ends the turn rather than being waited out. */
@@ -288,15 +321,6 @@ interface Active {
   /** Auto stopped it at a limit, to go on with the next model. */
   stoppedForLimit?: boolean
   model: string
-  /** Items whose words came as deltas (their completion doesn't add them again). */
-  streamed: Set<string>
-  /** File changes, by item, for their approval and their result. */
-  changes: Map<string, { path: string; kind: string; diff: string }[]>
-  /** A command's output so far, by item. */
-  output: Map<string, string>
-  /** A tool ran since the last words: the next words start a new step. */
-  toolsSinceText: boolean
-  usage?: TokenUsage
   problem?: string
 }
 
@@ -419,7 +443,7 @@ class CodexThread implements Thread {
       collaborationMode: { mode: input.plan ? "plan" : "default", settings: { model: input.model.id, reasoning_effort: effort ?? null, developer_instructions: null } },
     }
     return new Promise<RunResult>((resolve) => {
-      const active: Active = { turn, hooks, resolve, streamed: new Set(), changes: new Map(), output: new Map(), toolsSinceText: false, auto: input.auto, model: input.model.id }
+      const active: Active = { turn, hooks, resolve, streamed: new Set(), changes: new Map(), output: new Map(), toolsSinceText: false, subagents: new Map(), spawning: [], auto: input.auto, model: input.model.id }
       this.active = active
       turn.startStep()
       rpc.request("turn/start", params, 60_000).then(
@@ -438,6 +462,8 @@ class CodexThread implements Thread {
   notification(method: string, params: any) {
     const active = this.active
     if (!active) return
+    // An agent it spawned: told in its session.
+    if (params?.threadId && this.nativeID && params.threadId !== this.nativeID) return this.subagentNotification(active, params.threadId, method, params)
     const turn = active.turn
     // Another turn's (one stopped before, ending late).
     const turnID = params?.turnId ?? params?.turn?.id
@@ -514,18 +540,113 @@ class CodexThread implements Thread {
     }
   }
 
-  /** Words after a tool begin a new step, as a model's next answer does. */
-  private words(active: Active) {
-    if (!active.toolsSinceText) return
-    active.toolsSinceText = false
-    active.turn.endStep({ tokens: active.usage })
-    active.usage = undefined
-    active.turn.startStep()
+  /** What a spawned agent's thread says, in its session (made as it first speaks, if its spawn hasn't said which it is). */
+  private subagentNotification(active: Active, threadID: string, method: string, params: any) {
+    let lane = active.subagents.get(threadID)
+    if (!lane) {
+      const call = active.spawning[0]
+      if (!call) return
+      lane = this.linkSubagent(active, call, threadID)
+    }
+    if (lane.ended) {
+      // Given more to do: its session goes on.
+      if (method !== "turn/started") return
+      lane = this.continueSubagent(active, threadID, lane)
+    }
+    const turn = lane.turn
+    switch (method) {
+      case "item/agentMessage/delta":
+        this.words(lane)
+        lane.streamed.add(params.itemId)
+        turn.text(params.delta ?? "")
+        return
+      case "item/reasoning/summaryTextDelta":
+        this.words(lane)
+        turn.reasoning(params.delta ?? "")
+        return
+      case "item/commandExecution/outputDelta": {
+        const output = ((lane.output.get(params.itemId) ?? "") + (params.delta ?? "")).slice(-outputLimit)
+        lane.output.set(params.itemId, output)
+        turn.toolProgress(params.itemId, { output })
+        return
+      }
+      case "item/started":
+        return this.itemStarted(lane, params.item)
+      case "item/completed":
+        return this.itemCompleted(lane, params.item)
+      case "thread/tokenUsage/updated": {
+        const last = params.tokenUsage?.last
+        if (last) lane.usage = { input: Math.max(0, (last.inputTokens ?? 0) - (last.cachedInputTokens ?? 0)), output: Math.max(0, (last.outputTokens ?? 0) - (last.reasoningOutputTokens ?? 0)), reasoning: last.reasoningOutputTokens ?? 0, cache: { read: last.cachedInputTokens ?? 0, write: last.cacheWriteInputTokens ?? 0 } }
+        return
+      }
+      case "turn/completed": {
+        const status = params.turn?.status
+        this.endSubagent(lane, status === "failed" ? "failed" : status === "interrupted" ? "interrupted" : "succeeded", params.turn?.error?.message)
+        return
+      }
+    }
   }
 
-  private itemStarted(active: Active, item: any) {
-    const turn = active.turn
+  /** A spawned agent's session, for its spawn call and thread. */
+  private linkSubagent(active: Active, call: string, threadID: string, prompt?: string): SubagentLane {
+    const known = active.subagents.get(threadID)
+    if (known) return known
+    active.spawning = active.spawning.filter((waiting) => waiting !== call)
+    const input = (active.turn.toolInput(call) ?? {}) as Record<string, any>
+    const title = String(input.description ?? "") || "A spawned agent's task"
+    const run = active.hooks.subagent(call, { title, prompt: prompt ?? input.prompt })
+    const lane: SubagentLane = { turn: run.turn, streamed: new Set(), changes: new Map(), output: new Map(), toolsSinceText: false, run, call, title, ended: false }
+    active.subagents.set(threadID, lane)
+    // Its approvals come to this session's.
+    this.agent.adopt(threadID, this)
+    return lane
+  }
+
+  private continueSubagent(active: Active, threadID: string, lane: SubagentLane): SubagentLane {
+    const run = active.hooks.subagent(lane.call, { title: lane.title, sessionID: lane.run.sessionID })
+    const next: SubagentLane = { turn: run.turn, streamed: new Set(), changes: new Map(), output: new Map(), toolsSinceText: false, run, call: lane.call, title: lane.title, ended: false }
+    active.subagents.set(threadID, next)
+    return next
+  }
+
+  private endSubagent(lane: SubagentLane, outcome: "succeeded" | "failed" | "interrupted", message?: string) {
+    if (lane.ended) return
+    lane.ended = true
+    lane.turn.endStep({ tokens: lane.usage })
+    lane.run.end(outcome, outcome === "failed" ? { type: "agent", message: message ?? "The agent stopped with an error." } : undefined)
+  }
+
+  /** Words after a tool begin a new step, as a model's next answer does. */
+  private words(lane: Lane) {
+    if (!lane.toolsSinceText) return
+    lane.toolsSinceText = false
+    lane.turn.endStep({ tokens: lane.usage })
+    lane.usage = undefined
+    lane.turn.startStep()
+  }
+
+  private itemStarted(lane: Lane, item: any) {
+    const active = lane
+    const turn = lane.turn
     switch (item?.type) {
+      case "collabAgentToolCall": {
+        // Another agent spawned for part of the work: a subagent, at work beside this one.
+        if (item.tool !== "spawnAgent" || !this.active || lane !== this.active) return
+        const main = this.active
+        lane.toolsSinceText = true
+        const prompt = typeof item.prompt === "string" ? item.prompt : ""
+        turn.toolStart(item.id, "subagent", { description: firstLine(prompt) || "A spawned agent's task", prompt, background: true })
+        main.spawning.push(item.id)
+        const thread = item.receiverThreadIds?.[0]
+        if (thread) this.linkSubagent(main, item.id, thread, prompt)
+        return
+      }
+      case "subAgentActivity": {
+        const main = this.active
+        const spawned = main && lane === main ? main.subagents.get(item.agentThreadId) : undefined
+        if (spawned && (item.kind === "completed" || item.kind === "interrupted")) this.endSubagent(spawned, item.kind === "completed" ? "succeeded" : "interrupted")
+        return
+      }
       case "commandExecution":
         active.toolsSinceText = true
         turn.toolStart(item.id, "shell", { command: unwrapShell(item.command ?? ""), cwd: item.cwd })
@@ -552,9 +673,25 @@ class CodexThread implements Thread {
     }
   }
 
-  private itemCompleted(active: Active, item: any) {
-    const turn = active.turn
+  private itemCompleted(lane: Lane, item: any) {
+    const active = lane
+    const turn = lane.turn
     switch (item?.type) {
+      case "collabAgentToolCall": {
+        if (item.tool !== "spawnAgent" || !this.active || lane !== this.active) return
+        const main = this.active
+        const thread = item.receiverThreadIds?.[0]
+        const spawned = thread ? this.linkSubagent(main, item.id, thread, typeof item.prompt === "string" ? item.prompt : undefined) : undefined
+        if (item.status === "failed" || !spawned) turn.toolFailed(item.id, "The agent couldn't be started.")
+        else turn.toolSucceeded(item.id, "Started.", { sessionID: spawned.run.sessionID })
+        return
+      }
+      case "subAgentActivity": {
+        const main = this.active
+        const spawned = main && lane === main ? main.subagents.get(item.agentThreadId) : undefined
+        if (spawned && (item.kind === "completed" || item.kind === "interrupted")) this.endSubagent(spawned, item.kind === "completed" ? "succeeded" : "interrupted")
+        return
+      }
       case "agentMessage":
         if (!active.streamed.has(item.id) && item.text) {
           this.words(active)
@@ -619,7 +756,9 @@ class CodexThread implements Thread {
         return { decision: decision === "always" ? "acceptForSession" : decision === "once" ? "accept" : "decline" }
       }
       case "item/fileChange/requestApproval": {
-        const changes = active.changes.get(params.itemId) ?? []
+        // A spawned agent's change: its session has it.
+        const lane: Lane = (params.threadId && params.threadId !== this.nativeID ? active.subagents.get(params.threadId) : undefined) ?? active
+        const changes = lane.changes.get(params.itemId) ?? []
         const files = changes.map((change) => fromPatch(change.path, change.diff, change.kind === "add" ? "added" : change.kind === "delete" ? "deleted" : "modified"))
         const decision = await hooks.permission({
           toolCallID: params.itemId,
@@ -750,4 +889,10 @@ export function unwrapShell(command: string): string {
   if (!match) return command
   const inner = match[2]
   return match[1] === '"' ? inner.replace(/\\(["\\$`])/g, "$1") : inner.replace(/'"'"'/g, "'")
+}
+
+/** The first line of a prompt, short enough for a title. */
+function firstLine(text: string): string {
+  const line = text.trim().split("\n")[0] ?? ""
+  return line.length > 80 ? line.slice(0, 79) + "…" : line
 }

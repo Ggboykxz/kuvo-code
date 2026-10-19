@@ -112,6 +112,8 @@ export interface SubagentTask {
   prompt?: string
   /** The kind of agent it is, when the agent names one ("Explore"). */
   agent?: string
+  /** Its session from before, when the agent gives the same subagent more to do. */
+  sessionID?: string
 }
 
 export interface SubagentRun {
