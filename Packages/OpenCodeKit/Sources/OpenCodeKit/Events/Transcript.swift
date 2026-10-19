@@ -13,6 +13,9 @@ public struct Transcript: Sendable, Equatable {
     public var permissions: [PermissionRequest] = []
     public var forms: [FormRequest] = []
     public var isRunning = false
+    /// When the model last sent anything in this session (a step starting, its words, its
+    /// thinking, a tool's input): for telling a reply that stalled partway from one being written.
+    public var lastHeard: Milliseconds?
     /// The engine's own notices waiting to go in, like a background command's end: shown when
     /// they do, as a read would have them.
     var waitingNotices: [String: Message.Notice] = [:]
@@ -110,6 +113,11 @@ public struct Transcript: Sendable, Equatable {
     }
 
     private static let streamed: Set<String> = ["session.text.delta", "session.reasoning.delta", "session.tool.input.delta", "session.tool.progress"]
+    /// What the model sends as it answers (a tool's progress is the tool's, not the model's).
+    private static let heard: Set<String> = [
+        "session.step.started", "session.text.started", "session.text.delta", "session.reasoning.started",
+        "session.reasoning.delta", "session.tool.input.started", "session.tool.input.delta",
+    ]
     private static let applied: Set<String> = [
         "permission.asked", "permission.replied", "form.created", "form.replied", "form.cancelled",
         "session.inbox.enqueued", "session.inbox.delivered", "session.inbox.cancelled", "session.inbox.delivery.changed",
@@ -170,6 +178,7 @@ public struct Transcript: Sendable, Equatable {
     private mutating func reduce(_ event: ServerEvent) throws {
         let now = event.created ?? Date().timeIntervalSince1970 * 1000
         let messageID = "msg_" + event.id.dropFirst("evt_".count)
+        if event.sessionID == sessionID, Self.heard.contains(event.type) { lastHeard = now }
 
         switch event.type {
         case "permission.asked":
