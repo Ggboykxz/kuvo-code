@@ -538,6 +538,21 @@ export class Sessions {
 
   /** The message on the first model of your Auto list that isn't at a limit, and on down it while they reach theirs. */
   private async runAuto(id: string, record: Record_, live: Live, input: RunInput, turn: Turn, signal: AbortSignal, userMessage: string): Promise<RunResult> {
+    // Held back at a limit when this session's last message on Auto ended: one that runs this
+    // one is back (its limit reset), and the session says so.
+    const heldBefore = new Set(Array.isArray(record.agent.autoHeld) ? (record.agent.autoHeld as string[]) : [])
+    try {
+      return await this.runAutoList(id, record, live, input, turn, signal, userMessage, heldBefore)
+    } finally {
+      record.agent.autoHeld = this.auto
+        .list()
+        .filter((entry) => this.auto.isHeld(entry))
+        .map((entry) => Auto.modelKey(entry))
+      this.store.save(id)
+    }
+  }
+
+  private async runAutoList(id: string, record: Record_, live: Live, input: RunInput, turn: Turn, signal: AbortSignal, userMessage: string, heldBefore: Set<string>): Promise<RunResult> {
     const tried = new Set<string>()
     let last: RunResult | undefined
     let note: string | undefined
@@ -550,6 +565,7 @@ export class Sessions {
         if (last?.limit) return { outcome: "failed", error: { type: "limit", message: `Every model in your Auto list is at a usage limit for now${this.nextReset()}.` } }
         return last ?? { outcome: "failed", error: { type: "limit", message: `No model in your Auto list can run now: each is at a limit, or its agent isn't signed in${this.nextReset()}. Edit the list in Settings › Auto.` } }
       }
+      if (!tried.size && heldBefore.has(Auto.modelKey(entry))) turn.notice(`Back on ${this.entryName(entry)}: its limit has reset.`)
       tried.add(Auto.modelKey(entry))
       const model: ModelRef = { providerID: entry.providerID, id: entry.modelID, ...(entry.variant ? { variant: entry.variant } : {}) }
       if (note) {

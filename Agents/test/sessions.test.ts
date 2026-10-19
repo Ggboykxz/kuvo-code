@@ -534,6 +534,68 @@ describe("Auto", () => {
     expect(b.runs).toHaveLength(2)
   })
 
+  test("back on the first model once its limit resets, and the session says so", async () => {
+    auto.set([
+      { providerID: "alpha", modelID: "one" },
+      { providerID: "beta", modelID: "one" },
+    ])
+    a.script = async (input, turn, hooks, thread) => {
+      const result = await limited("provider")(input, turn, hooks, thread)
+      return { ...result, limit: { scope: "provider", resetsAt: Date.now() + 3_600_000 } }
+    }
+    const id = create({ providerID: "auto", id: "auto" })
+    send(id, "do it")
+    await settled(id, 1)
+    expect(b.runs).toHaveLength(1)
+    const notes = () => sessions.messages(id).flatMap((message) => (message.type === "synthetic" ? [message.text] : []))
+    expect(notes()).toHaveLength(1)
+
+    // Its limit reset (as when it's over): alpha runs again, first, and says it's back.
+    auto.clearLimits()
+    a.script = replies
+    send(id, "again")
+    await settled(id, 2)
+    expect(a.runs.at(-1)?.text).toContain("again")
+    expect(b.runs).toHaveLength(1)
+    expect(notes()).toHaveLength(2)
+    expect(notes()[1]).toBe("Back on Alpha (one): its limit has reset.")
+
+    // Not said again while it stays.
+    send(id, "and again")
+    await settled(id, 3)
+    expect(notes()).toHaveLength(2)
+  })
+
+  test("on the fourth with three at their limits: the second, once it resets, though the first is still held", async () => {
+    auto.set([
+      { providerID: "alpha", modelID: "one" },
+      { providerID: "alpha", modelID: "two" },
+      { providerID: "beta", modelID: "one" },
+      { providerID: "beta", modelID: "two" },
+    ])
+    const heldUntil = (resetsAt: number): Script => async (input, turn, hooks, thread) => {
+      const result = await limited("model")(input, turn, hooks, thread)
+      return { ...result, limit: { scope: "model", resetsAt } }
+    }
+    const soon = Date.now() + 400
+    a.script = (input, turn, hooks, thread) => heldUntil(input.model.id === "two" ? soon : Date.now() + 3_600_000)(input, turn, hooks, thread)
+    b.script = (input, turn, hooks, thread) => (input.model.id === "one" ? heldUntil(Date.now() + 3_600_000)(input, turn, hooks, thread) : replies(input, turn, hooks, thread))
+    const id = create({ providerID: "auto", id: "auto" })
+    send(id, "do it")
+    await settled(id, 1)
+    expect(b.runs.map((run) => run.model)).toEqual(["one", "two"])
+
+    await until(() => Date.now() > soon + 50)
+    a.script = (input, turn, hooks, thread) => (input.model.id === "two" ? replies(input, turn, hooks, thread) : heldUntil(Date.now() + 3_600_000)(input, turn, hooks, thread))
+    send(id, "again")
+    await settled(id, 2)
+    // The first is still held; the second runs, and says it's back.
+    expect(a.runs.map((run) => run.model)).toEqual(["one", "two", "two"])
+    expect(b.runs).toHaveLength(2)
+    const notes = sessions.messages(id).flatMap((message) => (message.type === "synthetic" ? [message.text] : []))
+    expect(notes.at(-1)).toBe("Back on Alpha (two): its limit has reset.")
+  })
+
   test("an account's limit skips all of its models", async () => {
     auto.set([
       { providerID: "alpha", modelID: "one" },
