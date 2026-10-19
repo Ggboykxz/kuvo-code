@@ -191,6 +191,7 @@ export interface AppState {
   openFileContent?: string;
   toast: { title: string; body: string } | null;
   lineComments?: { file: string; line: number; text: string }[];
+  quote?: string;
 }
 
 /// One fetch, the way the page talks to the harness.

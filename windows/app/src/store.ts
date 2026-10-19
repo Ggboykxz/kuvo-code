@@ -53,6 +53,7 @@ export const state: AppState = {
   openFileContent: undefined,
   toast: null,
   lineComments: [],
+  quote: undefined,
 };
 
 // ---- The redraw ----

@@ -1214,3 +1214,21 @@ li.unread .session { position: relative; padding-left: 16px; }
   font-size: var(--text-sm); text-align: left; color: var(--ink);
 }
 .changes-file-toggle:hover { background: transparent; }
+
+/* The conversation follows the newest words; when you scroll away, it offers to come back. */
+#jump-latest {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  bottom: var(--space-4); z-index: 5;
+  background: var(--panel); border: 1px solid var(--line);
+  box-shadow: var(--shadow-lifted); color: var(--ink-soft);
+}
+#jump-latest:hover { color: var(--ink); background: var(--hover); }
+
+/* The selection menu: quote a passage of the answer. */
+.quote-button {
+  position: absolute; z-index: 4;
+  background: var(--panel); border: 1px solid var(--line);
+  box-shadow: var(--shadow-lifted); color: var(--ink);
+}
+.quote-button:hover { color: var(--accent); border-color: var(--accent); }
+.entry.assistant { position: relative; }

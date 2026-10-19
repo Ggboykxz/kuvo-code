@@ -105,7 +105,11 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
-  - **2.29 (this change).** More of the Mac app, in React: the long messages fold with a
+  - **2.30 (this change).** Two more of the Mac app's behaviours: the conversation follows
+    the newest words (and offers to come back when you scroll up to read), and selecting a
+    passage of the answer offers to *quote* it into the composer, where it joins your next
+    message.
+  - **2.29. More of the Mac app, in React: the long messages fold with a
     *Show more*, the palette finds the project's files and renames the session, and the
     Changes panel puts a file back as it was. `docs/PARITY.md` now says, feature by
     feature, where the Windows client stands against the Mac app.

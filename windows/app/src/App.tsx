@@ -100,8 +100,23 @@ function LongText({ text }: { text: string }) {
 }
 
 function AssistantEntry({ entry }: { entry: TranscriptEntry }) {
+  const [quote, setQuote] = useState<{ text: string; top: number; left: number } | null>(null);
+  const blockRef = useRef<HTMLElement>(null);
+
+  // The Mac app's selection menu: select a passage, and ask for it in your own message.
+  const onSelect = () => {
+    const selection = window.getSelection();
+    const text = selection?.toString().trim() ?? "";
+    if (!text || !blockRef.current?.contains(selection?.anchorNode ?? null)) { setQuote(null); return; }
+    const range = selection?.getRangeAt(0);
+    const box = range?.getBoundingClientRect();
+    const host = blockRef.current?.getBoundingClientRect();
+    if (!box || !host) { setQuote(null); return; }
+    setQuote({ text, top: box.top - host.top - 22, left: box.left - host.left });
+  };
+
   return (
-    <article className="entry assistant">
+    <article className="entry assistant" ref={blockRef} onMouseUp={onSelect}>
       {(entry.parts ?? []).map((part, index) => {
         if (part.type === "text") return <LongText key={index} text={part.text ?? ""} />;
         if (part.type === "reasoning") {
@@ -115,6 +130,21 @@ function AssistantEntry({ entry }: { entry: TranscriptEntry }) {
         if (part.type === "tool") return <ToolCard key={index} part={part} />;
         return null;
       })}
+      {quote ? (
+        <button
+          className="small quote-button"
+          style={{ top: quote.top, left: quote.left }}
+          onMouseDown={event => event.preventDefault()}
+          onClick={() => {
+            state.quote = quote.text;
+            window.getSelection()?.removeAllRanges();
+            setQuote(null);
+            render();
+          }}
+        >
+          Quote
+        </button>
+      ) : null}
       <button
         className="small entry-action"
         onClick={async () => {
@@ -576,6 +606,14 @@ function Composer() {
     if (draft) { setText(draft); localStorage.removeItem("kuvo-undo-draft"); }
   }, []);
 
+  // A passage quoted from the answer comes to the composer, the Mac app's way.
+  useEffect(() => {
+    if (!state.quote) return;
+    setText(current => (current ? `${current}\n\n> ${state.quote}\n` : `> ${state.quote}\n`));
+    state.quote = undefined;
+    promptRef.current?.focus();
+  }, [state.quote]);
+
   const queueItems = [
     ...state.inbox.map(item => ({ id: item.id, text: item.payload?.text ?? "", delivery: item.delivery })),
     ...(state.transcript?.pending ?? []).filter(item => !state.inbox.some(inboxItem => inboxItem.id === item.id)),
@@ -773,6 +811,32 @@ function AnalyticsNotice() {
 export function App() {
   useStore();
   const [ready, setReady] = useState(false);
+  const entriesRef = useRef<HTMLDivElement>(null);
+  const [showLatest, setShowLatest] = useState(false);
+  const pinned = useRef(true);
+
+  // The conversation follows the newest words — unless you have scrolled up to read.
+  const scrollToLatest = (force = false) => {
+    const box = entriesRef.current;
+    if (!box) return;
+    if (!force && !pinned.current) return;
+    // scrollTop everywhere; the smooth scroll where the browser has it.
+    if (typeof box.scrollTo === "function") box.scrollTo({ top: box.scrollHeight, behavior: force ? "auto" : "smooth" });
+    else box.scrollTop = box.scrollHeight;
+    setShowLatest(false);
+  };
+  useEffect(() => {
+    const box = entriesRef.current;
+    if (!box) return;
+    const onScroll = () => {
+      const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+      pinned.current = atBottom;
+      setShowLatest(!atBottom);
+    };
+    box.addEventListener("scroll", onScroll, { passive: true });
+    return () => box.removeEventListener("scroll", onScroll);
+  }, []);
+  useEffect(() => { scrollToLatest(); });
 
   useEffect(() => {
     loadLook();
@@ -867,9 +931,18 @@ export function App() {
             <button id="choose" className="primary" hidden={!needsFolder} onClick={() => { state.pickerOpen = true; render(); }}>Choose a folder</button>
             <button id="start" className="primary" hidden={needsFolder} onClick={() => void newSession()}>Start a session</button>
           </div>
-          <div id="entries" className="entries">
+          <div id="entries" className="entries" ref={entriesRef}>
             {state.transcript ? <EntryNodes transcript={state.transcript} /> : null}
           </div>
+          <button
+            id="jump-latest"
+            className="small"
+            hidden={!showLatest}
+            title="Go to the latest words"
+            onClick={() => { scrollToLatest(true); }}
+          >
+            ↓ Latest
+          </button>
           <div id="asks" className="asks">
             {(state.transcript?.permissions ?? []).map(request => <PermissionCard key={request.id} request={request} />)}
           </div>
