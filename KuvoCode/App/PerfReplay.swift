@@ -834,6 +834,39 @@ enum PerfCopyTest {
     }
 }
 
+/// KUVO_PERF_LAYOUT_CHECK=<file>: for 30 seconds after launch, twice a second, each TextKit reply
+/// text in the window whose text isn't laid out at its own width, or doesn't fit its frame (lines
+/// drawn over what's under it, or a gap), written to the file; "all right" at the end if none.
+@MainActor
+enum PerfLayoutCheck {
+    static func run() {
+        guard let file = ProcessInfo.processInfo.environment["KUVO_PERF_LAYOUT_CHECK"] else { return }
+        Task {
+            var problems: [String] = []
+            var looks = 0
+            for _ in 0..<60 {
+                try? await Task.sleep(for: .milliseconds(500))
+                func texts(in view: NSView) -> [ReplyTextView] { (view as? ReplyTextView).map { [$0] } ?? view.subviews.flatMap(texts) }
+                for view in NSApp.windows.compactMap(\.contentView).flatMap(texts) where view.window != nil && view.frame.width > 0 {
+                    looks += 1
+                    guard let container = view.textContainer, let layout = view.layoutManager else { continue }
+                    if abs(container.size.width - view.frame.width) > 0.5 {
+                        problems.append("laid out at \(Int(container.size.width)) in a frame \(Int(view.frame.width)) wide")
+                        continue
+                    }
+                    layout.ensureLayout(for: container)
+                    let used = layout.usedRect(for: container).height
+                    if used > view.frame.height + 8 { problems.append("text \(Int(used)) tall in a frame \(Int(view.frame.height)) tall (over what's under it)") }
+                    if used < view.frame.height - 12 { problems.append("text \(Int(used)) tall in a frame \(Int(view.frame.height)) tall (a gap)") }
+                }
+                // As it goes, so it's there whenever the app is quit.
+                let out = "\(looks) looks: " + (problems.isEmpty ? "all right" : "\(problems.count) wrong\n" + problems.prefix(20).joined(separator: "\n")) + "\n"
+                try? out.write(toFile: file, atomically: true, encoding: .utf8)
+            }
+        }
+    }
+}
+
 /// TextKit's own view, for comparing.
 private struct PlainTextView: NSViewRepresentable {
     let text: NSAttributedString

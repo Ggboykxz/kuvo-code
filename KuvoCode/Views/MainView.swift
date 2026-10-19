@@ -1694,12 +1694,16 @@ struct MainView: View {
                 }
                 let sidebar = PerfMeter()
                 sidebar.start()
-                for _ in 0..<(count * 2) {
+                // KUVO_PERF_TOGGLE_ONLY=panel: the panel alone (and its profile alone).
+                let panelOnly = environment["KUVO_PERF_TOGGLE_ONLY"] == "panel"
+                for _ in 0..<(panelOnly ? 0 : count * 2) {
                     withAnimation(.ui) { showSidebar(!showsSidebar) }
                     try? await Task.sleep(for: .seconds(1))
                 }
-                log("toggle sidebar x\(count * 2): " + sidebar.stop() + "\n")
-                if let file = environment["KUVO_PERF_STALLS"] { try? sidebar.stallReport().write(toFile: file, atomically: true, encoding: .utf8) }
+                if !panelOnly {
+                    log("toggle sidebar x\(count * 2): " + sidebar.stop() + "\n")
+                    if let file = environment["KUVO_PERF_STALLS"] { try? sidebar.stallReport().write(toFile: file, atomically: true, encoding: .utf8) }
+                }
                 let panel = PerfMeter()
                 panel.start()
                 for _ in 0..<(count * 2) {

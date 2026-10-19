@@ -143,6 +143,7 @@ struct TranscriptView: View {
         .task { await PerfDrag.run() }
         .onAppear { PerfCompare.run() }
         .onAppear { PerfCopyTest.run() }
+        .onAppear { PerfLayoutCheck.run() }
         // KUVO_DEMO_WANDER=<seconds>: that long after it opens, scrolls up a screen or two and back
         // down, again and again, as you would reading what streams in, for KUVO_DEMO_WANDER_FOR
         // seconds: scroll gestures, as a trackpad sends them, through AppKit.
