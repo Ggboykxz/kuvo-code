@@ -196,6 +196,7 @@ export interface AppState {
   lineComments?: { file: string; line: number; text: string }[];
   quote?: string;
   viewing?: { source: string; name: string } | null;
+  sidebarOpen?: boolean;
 }
 
 /// One fetch, the way the page talks to the harness.

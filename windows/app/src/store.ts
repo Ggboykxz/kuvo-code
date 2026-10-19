@@ -55,6 +55,7 @@ export const state: AppState = {
   lineComments: [],
   quote: undefined,
   viewing: null,
+  sidebarOpen: true,
 };
 
 // ---- The redraw ----

@@ -438,6 +438,14 @@ function Header() {
       </button>
       <div className="spacer" />
       <button id="toggle-files" className="small" title="Files and terminal" onClick={() => { state.drawerOpen = !state.drawerOpen; render(); }}>Files</button>
+      <button
+        id="toggle-sidebar"
+        className="small"
+        title="Show or hide the sidebar"
+        onClick={() => { state.sidebarOpen = !state.sidebarOpen; render(); }}
+      >
+        {state.sidebarOpen === false ? "Show sessions" : "Hide sessions"}
+      </button>
       <button id="split" className={`small ${state.split ? "active" : ""}`} title="Show a second session beside this one" onClick={() => void toggleSplit()}>Split</button>
       <button id="palette-open" className="small" title="Commands, sessions and files (Ctrl+K)" onClick={() => { state.paletteOpen = true; render(); }}>@</button>
       <button id="settings-open" className="small" title="Appearance" onClick={() => { state.settingsOpen = true; state.settingsSection = "appearance"; render(); }}>Appearance</button>
@@ -1085,6 +1093,12 @@ export function App() {
         void stopRun();
         return;
       }
+      if (command && event.key === "0") {
+        event.preventDefault();
+        state.sidebarOpen = state.sidebarOpen === false;
+        render();
+        return;
+      }
       if (event.key === "Escape") {
         state.paletteOpen = false;
         state.settingsOpen = false;
@@ -1111,7 +1125,7 @@ export function App() {
     <>
       {inShell ? <div className="titlebar-drag" /> : null}
       <Header />
-      <main>
+      <main className={state.sidebarOpen === false ? "sidebar-hidden" : ""}>
         <Sidebar />
         <section id="conversation">
           <div id="session-tabs" className="session-tabs" hidden={state.openSessions.length < 2}>

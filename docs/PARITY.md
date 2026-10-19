@@ -96,6 +96,21 @@ mirrored in `windows/harness/engine.mjs` and typed in `windows/app/src/api.ts`).
 | `UsageAccounts`, `Personalities`, `ProviderCompatibility` | ⬜ |
 | `ClaudeCode`, `Bots`, `BotGroups`, `BotRecipe` | ⛔ amont |
 
+## What the shipped Mac app does now (v0.5.20, v0.5.21)
+
+The upstream releases after ours carry behaviours we read in the release notes and ported
+or noted:
+
+| Upstream | Here |
+| --- | --- |
+| v0.5.21 — the sidebar and the side panel slide ahead of the conversation, which moves along | ◐ the panel slides; the sidebar now folds away (Ctrl+0) and the conversation moves with it |
+| v0.5.21 — opening or closing them no longer leaves the conversation blank | ✅ (the layout reflows) |
+| v0.5.21 — the agent's commands find *your* sign-ins and settings, as in a terminal | ⛔ not ours to fix: it needs the engine to hand the commands the user's environment, while it reads its settings from this app's own folder. Measured: pointing the engine at the user's config home makes it lose this app's skills. |
+| v0.5.20 — a reply's lines no longer overlap after the sidebar opens or closes | ✅ (the transcript is fluid) |
+| v0.5.20 — the sidebar slides in, kept ready while hidden | ✅ (it folds, with the motion layer's timing) |
+| v0.5.20 — picking another model mid-run hands the run over at once | ✅ (the model is posted live) |
+| v0.5.20 — a reply that stops arriving says it is waiting for the model | ⬜ engine-side |
+
 ## The design
 
 The view is bound to **OpenDesign's design direction `modern-minimal`** ("Modern minimal —

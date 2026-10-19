@@ -105,7 +105,9 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
-  - **2.36 (this change).** The Changes panel's pull request, the Mac app's way: the
+  - **2.37 (this change).** The upstream's v0.5.20 behaviour: the sidebar folds away (and
+    the conversation moves with it, Ctrl+0), the way the Mac app's does since 0.5.20.
+  - **2.36. The Changes panel's pull request, the Mac app's way: the
     branch is pushed, the session's model writes the title and the description (with the
     Git settings' instructions), and the host's pull request page opens with them filled in.
   - **2.35. The import reads opencode's own settings when they are

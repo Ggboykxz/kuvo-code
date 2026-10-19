@@ -44,6 +44,10 @@ export function engineFolders(root = path.join(dataRoot(), "opencode"), temporar
 /// The environment ServerProcess hands the engine, with Windows' own names for the temporary
 /// folder beside TMPDIR.
 export function engineEnvironment(folders, password, platform = process.platform) {
+  // The engine's own folders: this app's settings, its skills, its data. The Mac app's
+  // v0.5.21 lets the commands the agent runs find the user's own sign-ins, by sharing the
+  // user's config home with the engine; that would cost us our settings and our skills
+  // (the engine reads them from this folder), so it stays ours for now.
   const environment = {
     XDG_DATA_HOME: path.join(folders.root, "data"),
     XDG_CONFIG_HOME: path.join(folders.root, "config"),

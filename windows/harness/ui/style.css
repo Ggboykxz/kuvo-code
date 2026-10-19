@@ -289,6 +289,11 @@ header {
 
 /* ---- Layout ---- */
 main { flex: 1; display: grid; grid-template-columns: 270px 1fr; min-height: 0; }
+/* The sidebar folds away, and the conversation moves along with it, as the Mac app's does. */
+main { transition: grid-template-columns var(--motion-base) var(--ease-standard); }
+main.sidebar-hidden { grid-template-columns: 0 1fr; }
+main.sidebar-hidden aside { overflow: hidden; opacity: 0; }
+aside { transition: opacity var(--motion-fast) var(--ease-standard); }
 
 aside {
   border-right: 1px solid var(--line);
