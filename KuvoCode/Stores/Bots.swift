@@ -580,7 +580,14 @@ final class Bots {
     func wakeNow(_ wake: Wakes.Pending, of bot: Bot) async throws {
         guard let api = app?.workspace.api(forFolder: bot.directory) else { throw Failure.notConnected(bot.machine ?? "This Mac's engine") }
         await api.waitForTools(in: bot.directory)
-        try await api.prompt(session: bot.sessionID, id: Identifier.message(), text: Wakes.marker + wake.note, delivery: .queue)
+        var note = wake.note
+        // A machine's are listed cut short, on one line: the whole note, as its time would send it.
+        if let machine = bot.machine {
+            let file = ((bot.folder as NSString).appendingPathComponent("wakes") as NSString).appendingPathComponent(wake.id)
+            let output = await Task.detached { RemoteShell.run("cat \(SSHConnection.quoted(file))", on: machine) }.value
+            if let output, case let whole = String(decoding: output, as: UTF8.self), !whole.isEmpty { note = whole }
+        }
+        try await api.prompt(session: bot.sessionID, id: Identifier.message(), text: Wakes.marker + note, delivery: .queue)
         // One that repeats keeps its time. (One whose machine went away since stays listed.)
         if wake.every == nil { try? await cancelWake(wake, of: bot) }
     }

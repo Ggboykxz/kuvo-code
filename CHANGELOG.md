@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Wake Up Now on a bot on a machine sends its whole note. It sent the shortened one from the list, on one line. And a watch whose check won't stop at its minute is killed, so the wake-ups after it still come.
 - A group chat that finished on its last allowed turn no longer offers Keep Going, and Keep Going shows once the wrap-up is done, when it works.
 - After you undo a message in a group chat, the bots are told to set aside what was taken back. The note never reached them, so they went on as if it still stood.
 - Typing Japanese, Chinese or Korean, Return picks the input method's candidate, and Escape and the arrow keys stay with it, rather than sending the message, stopping the agent or going back through messages. Group chats, review comments and Find too.
