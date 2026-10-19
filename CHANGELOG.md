@@ -6,6 +6,8 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Codex in the usage item, and its limits next to a session and in Usage Remaining, are the ChatGPT account you connected in Kuvo Code. They came from the Codex app's sign-in on your Mac: without one, Codex said you weren't signed in, and with one on another account, they were that account's. And with SuperGrok connected, Kuvo Code no longer renews the Grok CLI's sign-in, which could sign it out.
+
 ## 0.5.16
 
 - Cards above the composer stay while the agent waits, even if reading them again fails (over a slow link), and a form you'd half filled keeps its answers when you come back from another conversation. Clearing "Something else…" in a question leaves no answer behind, and a sign-in or code card no longer takes the keyboard while you're typing a message.

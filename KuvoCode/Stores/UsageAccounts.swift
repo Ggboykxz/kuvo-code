@@ -6,8 +6,9 @@ import os
 private let log = Logger(subsystem: "run.kuvo.code", category: "usage")
 
 /// Connects the usage panel in the menu bar (UsageKit, our fork of OpenUsage) to this app: accounts
-/// connected here (Copilot, OpenRouter, Z.ai, OpenCode Go) count there, and so do the engine's own
-/// agent runs, which UsageKit reads from the engine's database like any OpenCode install.
+/// connected here (ChatGPT, SuperGrok, Copilot, OpenRouter, Z.ai, OpenCode Go) count there, and so
+/// do the engine's own agent runs, which UsageKit reads from the engine's database like any
+/// OpenCode install.
 @Observable
 final class UsageAccounts {
     var api: OpenCodeAPI?
@@ -16,6 +17,8 @@ final class UsageAccounts {
     /// Puts the usage item in the menu bar. `engineData` is the engine's opencode data folder.
     func start(engineData: URL, openApp: @escaping @MainActor () -> Void) {
         HostAccounts.setOpenCodeDataDirectories([engineData.path])
+        // The engine renews a sign-in's token without an event; the panel asks when its copy lapses.
+        HostAccounts.setReader { [weak self] in await self?.sync() }
         UsageMenuBar.shared.start(openHostApp: openApp)
     }
 
@@ -27,14 +30,21 @@ final class UsageAccounts {
             let credentials = try await api.credentialSecrets()
             HostAccounts.update(credentials.filter(\.active).compactMap { credential in
                 guard let secret = credential.value.access ?? credential.value.key, !secret.isEmpty else { return nil }
-                return HostCredential(integrationID: credential.integrationID, secret: secret)
+                // ChatGPT's sign-in names its account, which the usage requests send.
+                return HostCredential(integrationID: credential.integrationID, secret: secret,
+                                      signedIn: Self.isSignIn(credential),
+                                      accountID: credential.value.metadata?["accountID"]?.string)
             })
             HostAccounts.setConnectedProviders(Set(credentials.filter(\.active).compactMap {
-                Self.usageProvider(for: $0.integrationID, signedIn: $0.value.type == "oauth" || $0.value.access != nil)
+                Self.usageProvider(for: $0.integrationID, signedIn: Self.isSignIn($0))
             }))
         } catch {
             log.error("credentials: \(String(describing: error), privacy: .public)")
         }
+    }
+
+    private static func isSignIn(_ credential: CredentialSecret) -> Bool {
+        credential.value.type == "oauth" || credential.value.access != nil
     }
 
     /// The usage panel's provider for an account connected here, if it has one: a plan with limits
