@@ -98,7 +98,7 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 
 | ID | Job | Status |
 | --- | --- | --- |
-| L1 | "Every morning, send me the top 5 tech news stories with links" (browsing several sources, deduplicating, a short digest) | ⏳ |
+| L1 | "Every morning, send me the top 5 tech news stories with links" (browsing several sources, deduplicating, a short digest) | ✅ it searched the web several times, checked each link answered, sent five different stories (AI, chips, big tech, policy) from CNBC, the BBC, NBC, Modal and the Straits Times, and set one daily wake-up at 8:00, with the job in its memory |
 | L2 | "Compare the price of the Sony WH-1000XM6 at three stores and tell me the cheapest" | ⚠️ an answer with links, but 50 steps and 5 minutes (it pressed Tab through Amazon's page) |
 | L3 | "Read this article (a URL) and give me the five key points" | ✅ GLM, Wikipedia via webfetch |
 | L4 | "What changed in the latest release of a GitHub project? Summarize its release notes" | ✅ GLM, through GitHub's API |
@@ -116,7 +116,7 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 | L11 | "Watch this RSS feed and send me new posts" | ✅ a 5-minute watch on the feed; posts already there kept as seen |
 | L12 | "Tell me when this file in my project changes" | ✅ Pip set a kuvo-wake watch (every 30m, its choice) on the file and noted it in its job; a change woke it and it reported the new line. Its first reply, after setting it up, had no words |
 | L13 | "Warn me 30 days before this domain's certificate expires" | ✅ a warning 30 days before, and a daily watch in case the certificate changes |
-| L14 | "Check my CI every hour and tell me when it fails" | ⏳ |
+| L14 | "Check my CI every hour and tell me when it fails" | ❌→✅ for opencode's dev branch it wrote a check script and set an hourly watch that wakes it only when failures change, and said dev was green; but it said `gh` wasn't logged in, as every command the agent ran did, since they got the engine's own `XDG_CONFIG_HOME`. Now commands get your own folders back (an engine plugin), and `gh auth status` from the agent says signed in |
 
 ### Schedules
 
