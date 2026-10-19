@@ -25,6 +25,7 @@ extension AppModel {
     private func copySignIns(with engine: MachineEngine) async {
         guard let mac = api, let remote = engine.api else { return }
         await signOutWhileAway(engine, api: remote)
+        await replaceWhileAway(engine, api: remote)
         async let macServers = mac.mcpServers()
         async let remoteServers = remote.mcpServers()
         async let macEntries = mac.credentialEntries()
@@ -47,7 +48,10 @@ extension AppModel {
         let accounts = Set(integrations.filter { !$0.isMCP }.map(\.id))
         for mine in ours where mine.active && accounts.contains(mine.integrationID) {
             let yours = theirs.first { $0.integrationID == mine.integrationID && $0.active }
-            await exchange(mine, yours, here: mine.integrationID, there: mine.integrationID, mac: mac, remote: remote)
+            // Two of your accounts with one label here (two GitLab accounts on one host): the label
+            // can't say which the machine's copy is of.
+            let byLabel = ours.filter { $0.integrationID == mine.integrationID && $0.label == mine.label }.count == 1
+            await exchange(mine, yours, here: mine.integrationID, there: mine.integrationID, mac: mac, remote: remote, byLabel: byLabel)
         }
     }
 
@@ -57,8 +61,8 @@ extension AppModel {
     /// the machine's (one you switched to here), or another key, this Mac's.
     @discardableResult
     private func exchange(_ mine: CredentialEntry, _ yours: CredentialEntry?, here local: String, there far: String,
-                          mac: OpenCodeAPI, remote: OpenCodeAPI) async -> Bool? {
-        if let yours, Self.isSameAccount(mine, yours) {
+                          mac: OpenCodeAPI, remote: OpenCodeAPI, byLabel: Bool = true) async -> Bool? {
+        if let yours, Self.isSameAccount(mine, yours, byLabel: byLabel) {
             // Each side renews its own sign-in with the same refresh token: only a new one (from a
             // service that hands out a new one each time) has to go to the other.
             if Self.lasting(mine) == Self.lasting(yours) { return nil }
@@ -81,10 +85,15 @@ extension AppModel {
     }
 
     /// Copies of one sign-in: the same account, as the service names it, or else the same label
-    /// (a copy keeps it).
-    private static func isSameAccount(_ one: CredentialEntry, _ other: CredentialEntry) -> Bool {
-        if let a = one.value["accountId"]?.string, let b = other.value["accountId"]?.string { return a == b }
-        return one.label == other.label
+    /// (a copy keeps it), when the label names one account.
+    private static func isSameAccount(_ one: CredentialEntry, _ other: CredentialEntry, byLabel: Bool = true) -> Bool {
+        if let a = accountID(one), let b = accountID(other) { return a == b }
+        return byLabel && one.label == other.label
+    }
+
+    /// The account a sign-in is for, as its service names it (the engine keeps it in its metadata).
+    private static func accountID(_ entry: CredentialEntry) -> String? {
+        entry.value["metadata"]?["accountID"]?.string ?? entry.value["accountId"]?.string
     }
 
     /// Connects an integration's server again after a sign-in (or a Try Again), in every folder
@@ -143,6 +152,41 @@ extension AppModel {
         let left = (pending[id] ?? []).filter { !done.contains($0) }
         pending[id] = left.isEmpty ? nil : left
         Self.pendingSignOuts = pending
+    }
+
+    /// You removed one of several accounts with `integration` here: each machine's copy (maybe of
+    /// the one removed) goes, and the one in use here is copied in its place, now or when the
+    /// machine next connects.
+    func replaceSignIn(_ integration: String) {
+        var pending = Self.pendingReplacements.filter { id, _ in machines.list.contains { $0.id == id } }
+        for machine in machines.list where !(pending[machine.id] ?? []).contains(integration) {
+            pending[machine.id, default: []].append(integration)
+        }
+        Self.pendingReplacements = pending
+        syncSignIns()
+    }
+
+    /// The copies each machine still has to drop, by machine.
+    private static var pendingReplacements: [String: [String]] {
+        get { UserDefaults.standard.dictionary(forKey: "machineReplacements") as? [String: [String]] ?? [:] }
+        set { UserDefaults.standard.set(newValue.isEmpty ? nil : newValue, forKey: "machineReplacements") }
+    }
+
+    private func replaceWhileAway(_ engine: MachineEngine, api remote: OpenCodeAPI) async {
+        let id = engine.machine.id
+        guard let integrations = Self.pendingReplacements[id], let theirs = try? await remote.credentialEntries() else { return }
+        var done: Set<String> = []
+        for integration in Set(integrations) {
+            var removed = true
+            for entry in theirs where entry.integrationID == integration {
+                if (try? await remote.removeCredential(entry.id)) == nil { removed = false }
+            }
+            if removed { done.insert(integration) }
+        }
+        var pending = Self.pendingReplacements
+        let left = (pending[id] ?? []).filter { !done.contains($0) }
+        pending[id] = left.isEmpty ? nil : left
+        Self.pendingReplacements = pending
     }
 
     /// Every connected machine, after a sign-in here (or one renewed by itself).

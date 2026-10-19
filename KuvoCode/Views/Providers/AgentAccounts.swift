@@ -535,7 +535,10 @@ private struct PlanAccountRow: View {
         if accounts.count <= 1 {
             app.forgetSignIn(plan.id)
         } else {
-            Task { try? await app.api?.removeCredential(id) }
+            Task {
+                try? await app.api?.removeCredential(id)
+                app.replaceSignIn(plan.id)
+            }
         }
     }
 }
