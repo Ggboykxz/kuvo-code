@@ -528,17 +528,15 @@ private struct PlanAccountRow: View {
     }
 
     /// The last of your accounts with it goes from your machines too (they have a copy of it);
-    /// with others left, the machines get the one in use next.
+    /// with others left, the machines get the one in use next (the sync knows which account each
+    /// machine's copy was made of).
     private func remove() {
         guard let id = connection.credentialID else { return }
         let accounts = plan.connections.filter { $0.type == "credential" }
         if accounts.count <= 1 {
             app.forgetSignIn(plan.id)
         } else {
-            Task {
-                try? await app.api?.removeCredential(id)
-                app.replaceSignIn(plan.id)
-            }
+            Task { try? await app.api?.removeCredential(id) }
         }
     }
 }
