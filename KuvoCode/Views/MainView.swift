@@ -1642,6 +1642,38 @@ struct MainView: View {
                 }
             }
         }
+        // KUVO_PERF_SIDEBAR=<n>: ten seconds after launch, the sidebar scrolled down and back up,
+        // n frames each way, as a trackpad does; then ten seconds left alone. How the main thread
+        // kept up with each goes to KUVO_PERF_LOG.
+        if let count = environment["KUVO_PERF_SIDEBAR"].flatMap(Int.init) {
+            Task {
+                try? await Task.sleep(for: .seconds(10))
+                func scrollViews(in view: NSView) -> [NSScrollView] { ((view as? NSScrollView).map { [$0] } ?? []) + view.subviews.flatMap(scrollViews) }
+                guard let window = NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain }), let content = window.contentView,
+                      let sidebar = scrollViews(in: content).first(where: { $0.convert($0.bounds, to: nil).minX < 60 && $0.frame.height > 200 }) else { return }
+                func log(_ line: String) {
+                    guard let file = environment["KUVO_PERF_LOG"] else { return }
+                    if let handle = FileHandle(forWritingAtPath: file) { handle.seekToEndOfFile(); handle.write(Data(line.utf8)); try? handle.close() } else { FileManager.default.createFile(atPath: file, contents: Data(line.utf8)) }
+                }
+                let meter = PerfMeter()
+                meter.start()
+                let range = max(0, (sidebar.documentView?.frame.height ?? 0) - sidebar.contentView.bounds.height)
+                for step in 0..<(count * 2) {
+                    let done = Double(step < count ? step + 1 : count * 2 - step - 1) / Double(count)
+                    let clip = sidebar.contentView
+                    clip.scroll(to: NSPoint(x: 0, y: range * done))
+                    sidebar.reflectScrolledClipView(clip)
+                    try? await Task.sleep(for: .milliseconds(16))
+                }
+                log("sidebar scroll x\(count * 2) over \(Int(range)) pt: " + meter.stop() + "\n")
+                // KUVO_PERF_SIDEBAR_IDLE=0: not the idle part (whose profile would replace this one's).
+                guard environment["KUVO_PERF_SIDEBAR_IDLE"] != "0" else { log("sidebar idle skipped\n"); return }
+                let idle = PerfMeter()
+                idle.start()
+                try? await Task.sleep(for: .seconds(10))
+                log("sidebar idle 10 s: " + idle.stop() + "\n")
+            }
+        }
         // KUVO_PERF_RESIZE=<n>: ten seconds after launch, goes through the next three session tabs
         // and back, then makes the window narrower and wider again, n frames each way, and writes
         // how the main thread kept up to KUVO_PERF_LOG.
