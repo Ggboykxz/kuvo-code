@@ -65,7 +65,7 @@ real open-source projects cloned into the run's folder. Status: ✅ passes, ⚠�
 
 | ID | Case | Status |
 | --- | --- | --- |
-| E1 | "Find the latest release of X and what changed" (the agent browses and reads) | ⏳ |
+| E1 | "Find the latest release of X and what changed" (the agent browses and reads) | ✅ it read GitHub's releases API, compared the release with the one before, read the pull request, and summed up the one change |
 | E2 | "Fill in this form with …" on a real form page | ✅ httpbin's pizza form: seven fields, submitted, the echo matches |
 | E3 | Upload a file to a website for you (a bot on this Mac) | ✅ see L22 |
 | E4 | Download a file from a page and work with it | ✅ downloaded through the browser and read; the e2e copy now downloads into its run's folder |
@@ -144,9 +144,9 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 | ID | Job | Status |
 | --- | --- | --- |
 | L26 | "Keep this project's build green: run the tests every hour; when they fail, fix it on a branch and tell me" | ⏳ |
-| L27 | "Review the changes on this branch before I merge" (Lens) | ⏳ |
+| L27 | "Review the changes on this branch before I merge" (Lens) | ✅ asked in a session: it found the planted bug (page_count rounding down, so last_page is wrong), showed the failing cases, and left the code alone |
 | L28 | "Check every week whether this project's dependencies are out of date" | ⏳ |
-| L29 | "Write the release notes from the commits since the last tag" | ⏳ |
+| L29 | "Write the release notes from the commits since the last tag" | ✅ found the tag, read the commits since, and wrote user-facing notes, leaving out the version bump |
 | L30 | "Find the TODOs in this project and list them by priority" | ✅ five TODOs across three files, sorted by priority |
 
 ### The web, by hand
@@ -167,7 +167,7 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 | --- | --- | --- |
 | L38 | It needs a decision: it asks plainly and stops, and carries on when you answer | ✅ asks what it needs (a question card) before booking |
 | L39 | "Ask Sage to research X and tell me what it finds" (bot to bot, and the answer back) | ✅ asked Reader and relayed its answer (Reader's answer itself was wrong: a model mistake) |
-| L40 | A bot reports back to the session that asked it for something | ⏳ |
+| L40 | A bot reports back to the session that asked it for something | ✅ a session asked Reader through send_message, waited for its answer, and relayed it with the reasons |
 | L41 | It finishes while you're in another app: a notification you can answer | ⏳ |
 
 ### Memory and the job
