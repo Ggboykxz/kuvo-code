@@ -78,6 +78,8 @@ public final class UsageMenuBar {
         for card in container.providers.map(\.provider.id) where added.contains(ProviderAccountID.family(of: card)) {
             container.enablement.setEnabled(true, for: card)
         }
+        // Ones turned on before their account was connected, refreshed now that it is.
+        if !added.isEmpty { Task { await container.dataStore.refreshAll() } }
     }
 
     private var pendingConnected: Set<String>?

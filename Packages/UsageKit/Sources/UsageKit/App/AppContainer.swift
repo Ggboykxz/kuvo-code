@@ -90,7 +90,8 @@ final class AppContainer {
         let dataStore = WidgetDataStore(
             registry: registry,
             providers: providers,
-            isProviderEnabled: { [enablement] in enablement.isEnabled($0) },
+            // Refreshed only once its account is connected in the host, whatever's turned on.
+            isProviderEnabled: { [enablement, availability] in enablement.isEnabled($0) && availability.isKnownConnected($0) },
             orderedDescriptors: { [layout] in layout.visiblePlaced.compactMap { layout.descriptor(for: $0) } },
             notificationSettings: { notificationSettings },
             providerIdentityKeys: accountAssembly.identityKeysByCard

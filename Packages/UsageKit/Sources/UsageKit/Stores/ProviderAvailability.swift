@@ -32,6 +32,13 @@ final class ProviderAvailability {
         connected?.contains(ProviderAccountID.family(of: providerID)) ?? true
     }
 
+    /// Connected in the host, as it has said, before nil means "every provider": a refresh reads
+    /// a provider's login on this Mac and may renew it, and one whose account isn't connected here
+    /// belongs to another app (Claude Code's, the Codex CLI's), whose sign-in it could break.
+    func isKnownConnected(_ providerID: String) -> Bool {
+        connected?.contains(ProviderAccountID.family(of: providerID)) == true
+    }
+
     func isAvailable(_ providerID: String) -> Bool {
         isConnected(providerID) && reasons[providerID] == nil
     }
