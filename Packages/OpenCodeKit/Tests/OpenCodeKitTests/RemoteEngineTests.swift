@@ -161,6 +161,8 @@ struct LiveRemoteEngineTests {
         #expect(!environment.contains(secret))
         #expect(!environment.contains(RemoteServer.privateSettingsVariable))
         #expect(environment.contains("OPENCODE_CONFIG="))
+        // Bots' wake-ups are found under this root, not the app's own.
+        #expect(environment.contains("KUVO_BOTS=") && environment.contains("/.kuvo-code-test/bots"))
         let file = "\"$HOME/.kuvo-code-test/keys/settings.json\""
         #expect(try await connection.run("stat -c %a \(file)").trimmingCharacters(in: .whitespacesAndNewlines) == "600")
 

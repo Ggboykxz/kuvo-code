@@ -348,6 +348,8 @@ public final class RemoteServer: @unchecked Sendable {
         \(Wakes.installScript)
         \(Launcher.installScript)
         export PATH="$K/bin:$PATH"
+        # Bots' folders under this root, for `kuvo-wake` (its default is the app's own root).
+        export KUVO_BOTS="$K/bots"
         cd "$K/workspace"
         touch "$R/attached"
         setsid "$K/engine/\(OpenCodeEngine.version)/opencode" serve --port "$port" --hostname 127.0.0.1 >"$R/engine.log" 2>&1 </dev/null &

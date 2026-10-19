@@ -85,7 +85,7 @@ real open-source projects cloned into the run's folder. Status: ✅ passes, ⚠�
 | F6 | Change a bot's job by telling it; change its look, name, personality and model | ✅ told a new job in its conversation: job and memory updated, a weekday 10:00 wake-up set; renamed, new look, personality and model in Edit Bot, and it answers as its new self on the new model |
 | F7 | Export a bot and import it as a new one | ✅ a .kuvobot opened from Finder starts New Bot with its name, look and personality, its job waiting in the composer; Export's save panel runs in a system process the driver can't reach, so the file was written in its format |
 | F8 | Delete a bot | ✅ Delete Bot… asks first; the bot, its conversation and folder go (the folder to the Trash) |
-| F9 | A bot on a machine: works and wakes while the Mac's app is closed | ⏳ |
+| F9 | A bot on a machine: works and wakes while the Mac's app is closed | ✅ Waker on lokum-local set a wake-up for 3 minutes, the app quit, the engine stayed up and woke it on time; under Ask First its command waited for an answer, and reopening showed the card, then "Done"; ❌→✅ on a copy with its own machine root (test, demo) kuvo-wake looked in ~/.kuvo-code/bots and couldn't add a wake-up |
 | F10 | Bots writing to each other: one asks another for something and gets an answer | ✅ Advisor found Reader with list_agents, asked which library the chat picked, waited, and relayed "date-fns" |
 
 ## L. What bots can get done
@@ -183,7 +183,7 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 
 | ID | Job | Status |
 | --- | --- | --- |
-| L46 | A bot on a machine does a job and wakes itself up while the Mac's app is closed | ⏳ |
+| L46 | A bot on a machine does a job and wakes itself up while the Mac's app is closed | ✅ see F9 |
 | L47 | Upload and download on a machine's browser | ⏳ |
 | L48 | The site it uses is down: it says so, and tries again later | ✅ the browser said "Could not connect to the server", curl was refused three times a second apart, and it said nothing listens on the port and offered to try another |
 | L49 | A long job (many steps, many pages) finishes without losing the thread | ⏳ |
