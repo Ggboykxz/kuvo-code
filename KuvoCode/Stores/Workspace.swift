@@ -621,7 +621,8 @@ final class Workspace {
     func removeWorktree(_ directory: String, discardingChanges: Bool = true) async throws {
         guard let api = api(forFolder: directory), let tree = worktrees[directory] else { return }
         // Looked at again now: an agent may have written more since you were asked.
-        if sessions.contains(where: { worktrees[$0.location.directory]?.root == tree.root && models[$0.id]?.isRunning == true }) {
+        // Any session there, opened or not, with its subagents and background commands.
+        if sessions.contains(where: { worktrees[$0.location.directory]?.root == tree.root && isWorking($0.id) }) {
             throw GitFailure(message: "An agent is still working in the worktree of \(tree.branch), so it stays. Stop it first, then remove the worktree.")
         }
         if !discardingChanges, await Task.detached(operation: { Git.hasUncommittedChanges(in: tree.root) }).value {

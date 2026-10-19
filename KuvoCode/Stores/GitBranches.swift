@@ -75,9 +75,12 @@ nonisolated extension Git {
     static func merge(_ branch: String, into directory: String, environment: [String: String]) -> MergeResult {
         guard let failure = report(["merge", "--no-edit", branch], in: directory, environment: environment) else { return .merged }
         let conflicted = (run(["diff", "--name-only", "--diff-filter=U"], in: directory) ?? "").split(separator: "\n").map(String.init)
-        guard !conflicted.isEmpty else { return .failed(failure) }
-        _ = report(["merge", "--abort"], in: directory, environment: environment)
-        return .conflict(conflicted)
+        // Stopped partway for another reason (a hook, signing the commit): taken back too, or the
+        // folder stays in the middle of a merge.
+        if run(["rev-parse", "-q", "--verify", "MERGE_HEAD"], in: directory) != nil {
+            _ = report(["merge", "--abort"], in: directory, environment: environment)
+        }
+        return conflicted.isEmpty ? .failed(failure) : .conflict(conflicted)
     }
 
     /// Pushes what `directory` has checked out to `origin`, and returns the page that opens a
