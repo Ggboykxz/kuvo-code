@@ -24,14 +24,14 @@ mirrored in `windows/harness/engine.mjs` and typed in `windows/app/src/api.ts`).
 | `ToolCallView`, `ShellRow` | ✅ (outils, shell, diff par outil) |
 | `DiffView` | ✅ la vue des changements d'un fichier |
 | `FindBar` | ✅ (le header) |
-| `QuoteList`, `SelectionMenu` | ⬜ citer un passage de la réponse |
-| `LongText` | ⬜ replier les messages longs |
+| `QuoteList`, `SelectionMenu` | ✅ (sélectionner, *Quote*, la citation part avec le message) |
+| `LongText` | ✅ (repliés, *Show more*) |
 | `MathText` | ⬜ le rendu des formules |
 | `MarkdownChunks` | ✅ (marked, assaini) |
 | `CodeTextView` | ✅ (copie, surlignage) |
 | `FileLinks` | ◐ les liens de fichiers (la recherche de fichiers existe) |
 | `WidgetView` | ⬜ |
-| `ConversationScroll` | ⬜ (le suivi du bas, les sauts) |
+| `ConversationScroll` | ✅ (la conversation suit le bas ; *↓ Latest* quand on relit) |
 
 ## The side panel and the window
 
@@ -44,7 +44,7 @@ mirrored in `windows/harness/engine.mjs` and typed in `windows/app/src/api.ts`).
 | `ProjectChanges` | ✅ les portées uncommitted / unstaged / staged / branch / session |
 | `TitleBar`, `RootView`, `MainView` | ✅ la coque, la bande de titre |
 | `CommandPalette` | ✅ (Ctrl+K) — il reste la recherche de fichiers à y ajouter |
-| `OpenQuickly` | ⬜ |
+| `OpenQuickly` | ✅ (la palette trouve les fichiers) |
 | `BrowserSession`, `BrowserChrome`, `BrowserAskCard` | ⛔ le navigateur intégré : surface **amont** |
 | `ImageViewer` | ◐ (l'image s'ouvre dans un onglet) |
 | `AgentBadge` | ⬜ |
@@ -87,6 +87,7 @@ mirrored in `windows/harness/engine.mjs` and typed in `windows/app/src/api.ts`).
 | `ProjectFiles`, `ProjectFolders` | ✅ (l'arbre, le sélecteur de dossier) |
 | `GitBranches` | ✅ (la portée branch) |
 | `ReviewComments` | ✅ (les notes de ligne du panneau Changes) |
+| `ProjectChanges` (revert) | ✅ (remettre un fichier comme il était) |
 | `Attachments`, `Drafts`, `Quoting` | ◐ |
 | `Updates`, `Awake`, `Notifier` | ✅ (via les réglages de la coquille) |
 | `Analytics` | ✅ (l'avis, rien n'est collecté) |
