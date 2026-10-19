@@ -33,6 +33,9 @@ frame after it appeared, and the conversation jumped while you scrolled up into 
 - **Code colored at once.** Tokens are kept in a cache (`TokenCache`), so a code block made
   again is colored from its first frame, and `CodeHighlighting.prepare(markdown:)` reads code
   blocks into it ahead of time.
+- **Images from files only, when asked.** `AttachmentLoader.localImage(relativeTo:)` loads a
+  document's own pictures and refuses anything that isn't a file, so a previewed README doesn't
+  reach the hosts its badges name.
 
 ## Updating
 

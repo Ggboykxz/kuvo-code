@@ -49,8 +49,11 @@ nonisolated enum ProjectFiles {
     /// git's list (tracked and new, without ignored files) in a repository; otherwise a
     /// walk that skips the usual heavy folders.
     private static func listFiles(in root: URL) -> [String] {
-        if let listed = Git.run(["ls-files", "--cached", "--others", "--exclude-standard"], in: RemoteFolder.folder(of: root)) {
-            return listed.split(separator: "\n").map(String.init)
+        // Names as they are (git quotes ones with accents, CJK or emoji otherwise), once each (a
+        // file in conflict is listed for each side), as many as a walk gives.
+        if let listed = Git.run(["-c", "core.quotepath=off", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], in: RemoteFolder.folder(of: root)) {
+            var seen = Set<String>()
+            return listed.split(separator: "\0").map(String.init).filter { seen.insert($0).inserted }.prefix(20_000).map { $0 }
         }
         let skip: Set<String> = [".git", "node_modules", "build", "DerivedData", ".build", "Pods", "dist", ".next"]
         if !root.isFileURL { return RemoteShell.files(in: root, skipping: skip, limit: 20_000) ?? [] }

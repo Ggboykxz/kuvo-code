@@ -28,16 +28,20 @@ struct FilesView: View {
         _tree = State(initialValue: FileTree(roots: roots.map(RemoteFolder.url)))
     }
 
+    /// Each folder's path as its files' URLs have it: a machine's folder is named "ssh://…".
+    private var rootPaths: [String] { roots.map { RemoteFolder.url($0).path } }
+
     /// The folder `file` is in, for its breadcrumb.
     private func root(of file: URL) -> String {
-        roots.first { file.path.hasPrefix($0 + "/") } ?? roots[0]
+        rootPaths.firstIndex { file.path.hasPrefix($0 + "/") }.map { roots[$0] } ?? roots[0]
     }
 
     /// How a message names `file`, as "@" does: its path in the primary folder, after its
     /// folder's name in the others, in full anywhere else.
     private func mention(of file: URL) -> String {
-        guard let index = roots.firstIndex(where: { file.path.hasPrefix($0 + "/") }) else { return file.path }
-        let relative = String(file.path.dropFirst(roots[index].count + 1))
+        let paths = rootPaths
+        guard let index = paths.firstIndex(where: { file.path.hasPrefix($0 + "/") }) else { return file.path }
+        let relative = String(file.path.dropFirst(paths[index].count + 1))
         return index == 0 ? relative : RemoteFolder.url(roots[index]).lastPathComponent + "/" + relative
     }
 
@@ -360,6 +364,9 @@ private struct FileViewer: View {
                 case .text(let text) where isMarkdown && !showsSource:
                     ScrollView {
                         StructuredText(text, parser: MathMarkdownParser())
+                            // Its own pictures, beside it; none from the web (a README's badges and
+                            // tracking pixels would reach their hosts as you open it).
+                            .textual.imageAttachmentLoader(.localImage(relativeTo: url.deletingLastPathComponent()))
                             .transcriptFont()
                             .textual.codeBlockStyle(CopyableCodeBlockStyle())
                             .textual.listItemStyle(.firstLine)
@@ -392,7 +399,26 @@ private struct FileViewer: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .task(id: url) { content = await Self.load(url) }
+        .task(id: "\(url.absoluteString)\n\(app.utilities.fileShown)") {
+            content = await Self.load(url)
+            // Changed on disk (by the agent, say): shown again as it is. A machine's file is read
+            // again when it's shown again, which reading it each time would cost a round trip for.
+            guard url.isFileURL else { return }
+            var seen = Self.modified(url)
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                let now = Self.modified(url)
+                if now != seen {
+                    seen = now
+                    content = await Self.load(url)
+                }
+            }
+        }
+    }
+
+    /// Read from the disk each time (a URL keeps the values it was asked for).
+    private static func modified(_ url: URL) -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
     }
 
     private var header: some View {

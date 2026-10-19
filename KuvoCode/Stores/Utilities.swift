@@ -502,6 +502,9 @@ final class Utilities {
         show(url, isFolder: isFolder)
     }
 
+    /// Counts each time a file already open is shown again, for its tab to read it again.
+    private(set) var fileShown = 0
+
     /// A folder in the Files tab, open down to it, or a file in a tab of its own, and the panel in
     /// view: what an agent showed you, again from its step in the conversation.
     func show(_ url: URL, isFolder: Bool) {
@@ -509,6 +512,8 @@ final class Utilities {
             showFiles()
         } else if let tab = visibleTabs.first(where: { $0.kind == .file(url) }) {
             selection = tab.id
+            // Shown again: as it is now (the agent may have changed it since).
+            fileShown += 1
         } else {
             add(Tab(kind: .file(url), owner: panelKey))
         }
