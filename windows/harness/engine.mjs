@@ -160,6 +160,66 @@ export class EngineClient {
     return (await this.request("GET", "api/command", { directory })).data ?? [];
   }
 
+  // ---- The rest of the engine's surface the harness knows but hadn't used ----
+
+  /// The folder's VCS: provider and current branch, shown in the header like the Mac app's.
+  async vcs(directory) {
+    return (await this.request("GET", "api/vcs", { directory })).data;
+  }
+
+  /// The files this session changed, as patches.
+  async sessionDiff(session) {
+    return (await this.request("GET", `api/session/${encodeURIComponent(session)}/diff`)).data ?? [];
+  }
+
+  /// The session's waiting messages, with their steering mode.
+  async inbox(session) {
+    return (await this.request("GET", `api/session/${encodeURIComponent(session)}/inbox`)).data ?? [];
+  }
+
+  async setDelivery(session, item, delivery) {
+    await this.request("PATCH", `api/session/${encodeURIComponent(session)}/inbox/${encodeURIComponent(item)}`, { body: { delivery } });
+  }
+
+  async cancelInbox(session, item) {
+    await this.request("DELETE", `api/session/${encodeURIComponent(session)}/inbox/${encodeURIComponent(item)}`);
+  }
+
+  /// Squeezes the conversation into a summary when it nears the context window.
+  async compact(session) {
+    await this.request("POST", `api/session/${encodeURIComponent(session)}/compact`, { body: {} });
+  }
+
+  /// Marks the session read up to its last run (the unread badge's source).
+  async markViewed(session, idle) {
+    await this.request("POST", `api/session/${encodeURIComponent(session)}/view`, { body: { idle } });
+  }
+
+  async savedPermissions() {
+    return (await this.request("GET", "api/permission/saved")).data ?? [];
+  }
+
+  async removeSavedPermission(id) {
+    await this.request("DELETE", `api/permission/saved/${encodeURIComponent(id)}`);
+  }
+
+  /// The engine's own read-only lists for the settings page.
+  async skills(directory) {
+    return (await this.request("GET", "api/skill", { directory })).data ?? [];
+  }
+
+  async mcpServers(directory) {
+    return (await this.request("GET", "api/mcp", { directory })).data ?? [];
+  }
+
+  async providers(directory) {
+    return (await this.request("GET", "api/provider", { directory })).data ?? [];
+  }
+
+  async defaultModel(directory) {
+    return (await this.request("GET", "api/model/default", { directory })).data;
+  }
+
   /// The models usable in a folder (an engine's list can differ per project).
   async models(directory) {
     return (await this.request("GET", "api/model", { directory })).data ?? [];

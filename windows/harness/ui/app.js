@@ -137,6 +137,9 @@ const state = {
   projects: [],
   shortcuts: null,
   contextGauge: null,
+  inbox: [],
+  vcs: null,
+  sessionDiff: [],
 };
 
 let renderQueued = false;
@@ -170,7 +173,8 @@ function renderSessions() {
   const visibleSessions = state.sessionQuery ? state.sessions.filter(s => (s.title || "").toLowerCase().includes(state.sessionQuery)) : state.sessions;
   for (const session of visibleSessions) {
     const running = state.session?.id === session.id && state.transcript?.running;
-    const item = el("li", { class: session.id === state.session?.id ? "current" : "" },
+    const unread = session.time?.idle && session.time?.viewed && session.time.idle > session.time.viewed && session.id !== state.session?.id;
+    const item = el("li", { class: `${session.id === state.session?.id ? "current" : ""} ${unread ? "unread" : ""}` },
       el("button", { class: "session", "data-id": session.id, onclick: () => openSession(session.id) },
         el("span", { class: "session-title", text: session.title || "Untitled" }),
         el("span", { class: "session-sub", text: `${running ? "running · " : ""}${when(session.time?.updated)}` }),
@@ -362,23 +366,98 @@ function attachmentNode(file) {
   return el("a", { class: "attachment-chip", href: source, target: "_blank", text: `${file.name ?? "file"} (${file.mime})` });
 }
 
-// ---- Queue dock (the Mac app's QueueDock) ----
+// ---- The session's own changes (the files it edited, patches from the engine) ----
+
+async function loadSessionDiff() {
+  if (!state.session) { state.sessionDiff = []; $("changes").hidden = true; return; }
+  try {
+    const { diff } = await api(`/api/sessions/${encodeURIComponent(state.session.id)}/diff`);
+    state.sessionDiff = Array.isArray(diff) ? diff : [];
+  } catch {
+    state.sessionDiff = [];
+  }
+  $("changes").hidden = state.sessionDiff.length === 0;
+  $("changes").textContent = state.sessionDiff.length > 0 ? `Changes (${state.sessionDiff.length})` : "Changes";
+  render();
+}
+
+function showSessionDiff() {
+  const body = $("diff-body");
+  body.innerHTML = "";
+  if (!state.sessionDiff.length) return;
+  for (const file of state.sessionDiff) {
+    const head = el("div", { class: "diff-file" },
+      el("strong", { text: file.file }),
+      el("span", { class: "where", text: `+${file.additions ?? 0} −${file.deletions ?? 0}${file.status ? ` · ${file.status}` : ""}` }),
+    );
+    body.append(head);
+    for (const line of String(file.patch ?? "").split("\n")) {
+      if (line === "") continue;
+      body.append(el("div", { class: line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : "ctx", text: line }));
+    }
+  }
+  $("diff-title").textContent = "Changes in this session";
+  $("diff-modal").hidden = false;
+}
+
+$("changes").addEventListener("click", showSessionDiff);
+
+// ---- Queue dock (the Mac app's QueueDock, backed by the engine's inbox) ----
+
+async function loadInbox() {
+  if (!state.session || !state.transcript) { state.inbox = []; return; }
+  try {
+    const { inbox } = await api(`/api/sessions/${encodeURIComponent(state.session.id)}/inbox`);
+    state.inbox = Array.isArray(inbox) ? inbox : [];
+  } catch {
+    state.inbox = [];
+  }
+  // What the transcript knows that the engine's list doesn't (optimistic sends) stays.
+  render();
+}
+
+async function toggleDelivery(item) {
+  const next = item.delivery === "queue" ? "steer" : "queue";
+  try {
+    await api(`/api/sessions/${encodeURIComponent(state.session.id)}/inbox/${encodeURIComponent(item.id)}`, { method: "PATCH", body: { delivery: next } });
+    await loadInbox();
+  } catch (error) {
+    complain(null, error);
+  }
+}
+
+async function cancelInboxItem(item) {
+  try {
+    await api(`/api/sessions/${encodeURIComponent(state.session.id)}/inbox/${encodeURIComponent(item.id)}`, { method: "DELETE" });
+    state.transcript.pending = state.transcript.pending.filter(what => what.id !== item.id);
+    await loadInbox();
+  } catch (error) {
+    complain(null, error);
+  }
+}
 
 function renderQueueDock() {
   const dock = $("queue-dock");
-  const pending = state.transcript?.pending ?? [];
-  dock.hidden = pending.length === 0;
-  if (pending.length === 0) { dock.innerHTML = ""; return; }
+  const engineItems = state.inbox.map(item => ({ id: item.id, text: item.payload?.text ?? "", delivery: item.delivery, engine: true }));
+  const localOnly = (state.transcript?.pending ?? []).filter(item => !state.inbox.some(inboxItem => inboxItem.id === item.id));
+  const items = engineItems.concat(localOnly);
+  dock.hidden = items.length === 0;
+  if (items.length === 0) { dock.innerHTML = ""; return; }
   dock.innerHTML = "";
   const open = dock.classList.contains("open");
-  for (const item of pending) {
+  for (const item of items) {
     if (!open && dock.querySelector(".queue-item")) continue;
-    dock.append(el("div", { class: "queue-item" },
+    const row = el("div", { class: "queue-item" },
       el("span", { class: "queue-text", text: item.text || "(attachment only)" }),
-      el("span", { class: "queue-meta", text: item.delivery === "queue" ? "queued" : "steer" }),
-    ));
+    );
+    const toggle = el("button", { class: "small", text: item.delivery === "queue" ? "queued" : "steer", title: `Turn into ${item.delivery === "queue" ? "steering" : "queued"}` });
+    toggle.addEventListener("click", () => toggleDelivery(item));
+    row.append(toggle,
+      el("button", { class: "small", text: "✕", title: "Take it back", onclick: () => cancelInboxItem(item).catch(() => {}) }),
+    );
+    dock.append(row);
   }
-  dock.append(el("button", { class: "small", text: open ? "↑" : `↓ ${pending.length} waiting`, onclick: () => { dock.classList.toggle("open"); renderQueueDock(); } }));
+  dock.append(el("button", { class: "small", text: open ? "↑" : `↓ ${items.length} waiting`, onclick: () => { dock.classList.toggle("open"); renderQueueDock(); } }));
 }
 
 // The agent switch is live: like the Mac app's selectAgent, the session turns right away.
@@ -522,6 +601,15 @@ function renderGaugeDetails() {
     info.limit ? el("div", { class: "gauge-line", text: `${compactTokens(info.total)} of ${compactTokens(info.limit)} tokens` }) : null,
     el("div", { class: "gauge-line", text: `Session cost so far: $${info.cost.toFixed(4)}` }),
     el("div", { class: "gauge-line faint", text: info.model }),
+    el("button", { class: "small", text: "Compact context", title: "Squeeze the conversation into a summary, like the Mac app's compact",
+      onclick: async () => {
+        if (!state.session) return;
+        try {
+          await api(`/api/sessions/${encodeURIComponent(state.session.id)}/compact`, { method: "POST", body: {} });
+          pop.hidden = true;
+          await openSession(state.session.id);
+        } catch (error) { complain(null, error); }
+      } }),
   );
 }
 
@@ -548,6 +636,10 @@ async function openSession(id) {
     state.transcript = cached || fromHistory(id, detail.messages, detail.permissions, detail.running);
     if (!cached) state.transcripts.set(id, state.transcript);
     selectModelInPicker();
+    api(`/api/sessions/${encodeURIComponent(id)}/view`, { method: "POST", body: { idle: Date.now() } }).catch(() => {});
+    loadInbox().catch(() => {});
+    loadVcs().catch(() => {});
+    loadSessionDiff().catch(() => {});
     render();
     $("prompt").focus();
   } catch (error) {
@@ -786,6 +878,26 @@ $("new-session").addEventListener("click", async () => {
   }
 });
 
+// ---- The folder's git, from the engine (branch in the header, like the Mac app) ----
+
+async function loadVcs() {
+  try {
+    const { vcs } = await api("/api/vcs");
+    state.vcs = vcs?.branch?.current ? vcs : null;
+  } catch {
+    state.vcs = null;
+  }
+  renderVcs();
+}
+
+function renderVcs() {
+  const chip = $("vcs");
+  const branch = state.vcs?.branch?.current;
+  chip.hidden = !branch;
+  chip.textContent = branch ? `⎇ ${branch}` : "";
+  chip.title = state.vcs?.provider ? `${state.vcs.provider} · ${branch}` : branch;
+}
+
 // ---- Projects (the Mac app keeps a list; so does the harness) ----
 
 async function loadProjects() {
@@ -958,6 +1070,7 @@ function handleEvent(event) {
       try {
         await openSession(state.session.id);
         await loadSessions();
+        loadSessionDiff().catch(() => {});
       } catch {}
     }, 250);
   }
@@ -1444,7 +1557,7 @@ const lookAccents = {
   graphite: { color: "#8e8e93", title: "Graphite" },
 };
 
-const look = { accent: "system", textSize: "14", motion: "full" };
+const look = { accent: "system", textSize: "14", motion: "full", theme: "system" };
 
 function saveLook() {
   localStorage.setItem(LOOK_KEY, JSON.stringify(look));
@@ -1462,8 +1575,11 @@ function applyLook() {
   }
   root.style.setProperty("--text-base", `${look.textSize}px`);
   root.classList.toggle("reduced-motion", look.motion === "reduced");
+  if (look.theme === "system") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.dataset.theme = look.theme;
   $("setting-text-size").value = look.textSize;
   $("setting-motion").value = look.motion;
+  $("setting-theme").value = look.theme;
   for (const swatch of document.querySelectorAll("#accent-swatches .swatch")) {
     swatch.classList.toggle("selected", swatch.dataset.accent === look.accent);
   }
@@ -1498,6 +1614,41 @@ async function renderSystemSettings() {
   }
 }
 
+async function renderSavedPermissions() {
+  const list = $("saved-permissions");
+  list.innerHTML = "";
+  let saved = [];
+  try { ({ saved } = await api("/api/permission/saved")); } catch { saved = []; }
+  if (!saved.length) { list.append(el("div", { class: "where", text: "Nothing saved — the agent's always-allowed list is empty." })); return; }
+  for (const item of saved) {
+    const row = el("div", { class: "shortcut-row" },
+      el("span", { text: item.action }),
+      el("span", { class: "where", text: item.resource ?? "" }),
+      el("button", { class: "small", text: "Forget", onclick: async () => {
+        try { await api("/api/permission/saved", { method: "DELETE", body: { id: item.id } }); await renderSavedPermissions(); }
+        catch (error) { complain(null, error); }
+      } }),
+    );
+    list.append(row);
+  }
+}
+
+async function renderConfigLists() {
+  const box = $("config-lists");
+  try {
+    const { skills, mcp, providers } = await api("/api/config-lists");
+    const name = list => Array.isArray(list) && list.length ? list.slice(0, 6).map(item => item.name ?? item.id).join(", ") + (list.length > 6 ? ` … +${list.length - 6}` : "") : "none";
+    box.innerHTML = "";
+    box.append(
+      el("div", { class: "gauge-line", text: `Providers: ${name(providers)}` }),
+      el("div", { class: "gauge-line", text: `MCP servers: ${name(mcp)}` }),
+      el("div", { class: "gauge-line", text: `Skills: ${name(skills)}` }),
+    );
+  } catch {
+    box.textContent = "";
+  }
+}
+
 function openSettings() {
   applyLook();
   $("settings-modal").hidden = false;
@@ -1511,6 +1662,8 @@ function openSettings() {
   renderShortcutEditor();
   renderProjects();
   renderSystemSettings();
+  renderSavedPermissions();
+  renderConfigLists();
   for (const button of document.querySelectorAll(".settings-nav button")) button.onclick = () => {
     state.settingsSection = button.dataset.section;
     openSettings();
@@ -1526,12 +1679,14 @@ $("settings-close").addEventListener("click", closeSettings);
 $("settings-modal").addEventListener("click", event => { if (event.target === $("settings-modal")) closeSettings(); });
 $("setting-text-size").addEventListener("change", event => { look.textSize = event.target.value; applyLook(); });
 $("setting-motion").addEventListener("change", event => { look.motion = event.target.value; applyLook(); });
+$("setting-theme").addEventListener("change", event => { look.theme = event.target.value; applyLook(); });
 
 try {
   const stored = JSON.parse(localStorage.getItem(LOOK_KEY) || "{}");
   if (stored.accent in lookAccents) look.accent = stored.accent;
   if (["13", "14", "16"].includes(stored.textSize)) look.textSize = stored.textSize;
   if (["full", "reduced"].includes(stored.motion)) look.motion = stored.motion;
+  if (["system", "light", "dark"].includes(stored.theme)) look.theme = stored.theme;
 } catch {}
 
 // ---- Keyboard shortcuts, editable like the Mac app's ShortcutsSettings ----

@@ -9,3 +9,4 @@ build/
 Config/Signing.local.xcconfig
 CLAUDE.md
 dist/
+github-token-to-revoke.txt

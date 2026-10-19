@@ -105,6 +105,12 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
+  - **2.16 (latest).** Engine-surface parity: header branch chip (`api/vcs`),
+    per-session changed files (`api/session/:id/diff`), the real queue dock on
+    the engine's inbox (steer/queue toggle, take back), context compaction,
+    read/unread sessions (`api/session/:id/view`), saved-permission rules
+    viewer, the engine's read-only lists in settings, and a manual
+    light/dark/system appearance mode.
 - **Stage 3.** The rest: usage tray, notifications, machines over SSH, phone
   link, packaging, update feed, signing.
 

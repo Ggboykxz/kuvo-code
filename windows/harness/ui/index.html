@@ -19,6 +19,8 @@
   <button id="palette-open" class="small" title="Commands, sessions and files (Ctrl+K)">@</button>
   <button id="settings-open" class="small" title="Appearance">Appearance</button>
   <button id="export" class="small" title="Export conversation as Markdown">Export</button>
+  <span id="vcs" class="vcs-chip" hidden></span>
+  <button id="changes" class="small" hidden title="The files this session changed">Changes</button>
   <div id="context-gauge" class="context-gauge" hidden title="Context window used"></div>
   <div id="gauge-pop" class="gauge-pop" hidden></div>
   <input id="find" class="file-search header-find" placeholder="Find in conversation…" spellcheck="false">
@@ -94,11 +96,20 @@
         <button data-section="appearance" class="active">Appearance</button>
         <button data-section="keyboard">Keyboard</button>
         <button data-section="projects">Projects</button>
+        <button data-section="permissions">Permissions</button>
         <button data-section="system">Engine &amp; storage</button>
       </nav>
       <div class="settings-pages">
         <div class="settings-page" data-section="appearance">
           <div class="settings-row"><span>Accent</span><div id="accent-swatches" class="swatches"></div></div>
+          <div class="settings-row">
+            <span>Mode</span>
+            <select id="setting-theme">
+              <option value="system" selected>System</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+          </div>
           <div class="settings-row">
             <span>Text size</span>
             <select id="setting-text-size">
@@ -124,10 +135,15 @@
           <div id="projects-settings-list" class="project-settings"></div>
           <div class="settings-note">Switch with a click, forget with the ✕. The same list is in the folder picker.</div>
         </div>
+        <div class="settings-page" data-section="permissions" hidden>
+          <div id="saved-permissions" class="saved-permissions"></div>
+          <div class="settings-note">What this session's agent was once told it may always do, as the engine remembers it.</div>
+        </div>
         <div class="settings-page" data-section="system" hidden>
           <div id="engine-line" class="gauge-line big"></div>
           <div id="storage-log" class="gauge-line"></div>
           <div id="storage-attachments" class="gauge-line"></div>
+          <div id="config-lists" class="gauge-line"></div>
           <div class="settings-note">Where this machine keeps things, and what the engine is running — what the Mac app's Engine and Storage settings show.</div>
         </div>
       </div>

@@ -507,6 +507,61 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
       return json({ path: target, name });
     }
 
+    if (url.pathname === "/api/vcs" && request.method === "GET") {
+      return json({ vcs: await client.vcs(currentProject ?? undefined) });
+    }
+
+    if (url.pathname === "/api/permission/saved" && request.method === "GET") {
+      return json({ saved: await client.savedPermissions() });
+    }
+    if (url.pathname === "/api/permission/saved" && request.method === "DELETE") {
+      const body = await readBody(request);
+      await client.removeSavedPermission(body.id);
+      return json({ ok: true });
+    }
+
+    // The engine's read-only lists, for the settings page.
+    if (url.pathname === "/api/config-lists" && request.method === "GET") {
+      const [skills, mcp, providers] = await Promise.all([
+        client.skills(currentProject ?? undefined).catch(() => []),
+        client.mcpServers(currentProject ?? undefined).catch(() => []),
+        client.providers(currentProject ?? undefined).catch(() => []),
+      ]);
+      return json({ skills, mcp, providers });
+    }
+
+    const diff = route(/^\/api\/sessions\/([^/]+)\/diff$/);
+    if (diff && request.method === "GET") {
+      return json({ diff: await client.sessionDiff(diff[0]) });
+    }
+
+    const compact = route(/^\/api\/sessions\/([^/]+)\/compact$/);
+    if (compact && request.method === "POST") {
+      await client.compact(compact[0]);
+      return json({ ok: true });
+    }
+
+    const viewed = route(/^\/api\/sessions\/([^/]+)\/view$/);
+    if (viewed && request.method === "POST") {
+      const body = await readBody(request);
+      await client.markViewed(viewed[0], body.idle ?? Date.now());
+      return json({ ok: true });
+    }
+
+    const inbox = route(/^\/api\/sessions\/([^/]+)\/inbox(?:\/([^/]+))?$/);
+    if (inbox && request.method === "GET") {
+      return json({ inbox: await client.inbox(inbox[0]) });
+    }
+    if (inbox && inbox[1] && request.method === "PATCH") {
+      const body = await readBody(request);
+      await client.setDelivery(inbox[0], inbox[1], body.delivery === "queue" ? "queue" : "steer");
+      return json({ ok: true });
+    }
+    if (inbox && inbox[1] && request.method === "DELETE") {
+      await client.cancelInbox(inbox[0], inbox[1]);
+      return json({ ok: true });
+    }
+
     const rename = route(/^\/api\/sessions\/([^/]+)\/rename$/);
     if (rename && request.method === "POST") {
       const body = await readBody(request);
