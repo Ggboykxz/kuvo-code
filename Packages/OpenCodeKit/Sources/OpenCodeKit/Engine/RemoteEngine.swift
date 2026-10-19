@@ -304,12 +304,20 @@ public final class RemoteServer: @unchecked Sendable {
         throw lastError
     }
 
+    /// Settings for the engine that stay out of its environment (see `launchScript`).
+    public static let privateSettingsVariable = "KUVO_PRIVATE_SETTINGS"
+
     /// Reads the settings from the input, gives the engine its own folders under `~/.kuvo-code`,
     /// starts it in a session of its own on the machine's localhost, writes down how to find it,
     /// and starts its watchdog. Prints its process once it listens.
     ///
     /// `KUVO_SETTINGS`, when it's given, becomes the engine's settings file there (its global
     /// settings, which a project's own outrank), in place of what was there.
+    ///
+    /// `privateSettingsVariable`, when it's given, is the rest of your settings, which can hold
+    /// secrets (a server's environment or headers): written to a file only this user can read in
+    /// `keys`, which the engine reads (`OPENCODE_CONFIG`, above its settings file and below a
+    /// project's own), never left in its environment.
     ///
     /// Integrations' keys (`KUVO_KEY_…`) go in files only this user can read, in `keys`, which the
     /// settings name with `{file:…}`, never in the engine's environment, where the agent's own
@@ -333,6 +341,10 @@ public final class RemoteServer: @unchecked Sendable {
         for v in $(env | sed -n 's/^\\(KUVO_KEY_[A-Za-z0-9_]*\\)=.*/\\1/p'); do
           (umask 077; printf '%s' "$(printenv "$v")" >"$K/keys/$v"); unset "$v"
         done
+        if [ -n "${\(privateSettingsVariable)+set}" ]; then
+          (umask 077; printenv \(privateSettingsVariable) >"$K/keys/settings.json")
+          export OPENCODE_CONFIG="$K/keys/settings.json"; unset \(privateSettingsVariable)
+        fi
         \(Wakes.installScript)
         \(Launcher.installScript)
         export PATH="$K/bin:$PATH"

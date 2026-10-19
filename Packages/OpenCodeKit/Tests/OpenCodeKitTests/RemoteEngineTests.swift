@@ -144,4 +144,37 @@ struct LiveRemoteEngineTests {
         _ = try await connection.run("pkill -f '[/]\\.kuvo-code-test/run' || true; rm -rf \"$HOME/.kuvo-code-test\"")
         #expect(try await connection.run("[ -e \"$HOME/.kuvo-code-test\" ] && echo left || true").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
+
+    /// Settings that can hold secrets (a server's environment) reach the engine in a file only you
+    /// can read, never its environment, which the agent's `env` would print.
+    @Test func privateSettingsStayOutOfTheEnvironment() async throws {
+        let cache = FileManager.default.temporaryDirectory.appending(path: "opencodekit-remote-cache")
+        defer { try? FileManager.default.removeItem(at: cache) }
+        try await RemoteEngineInstaller(connection: connection, cache: cache).install()
+        try await RemoteServer.stop(on: connection)
+
+        let secret = "kuvo-test-secret-" + UUID().uuidString.prefix(8)
+        let settings = #"{"mcp":{"servers":{"private-test":{"type":"local","command":["true"],"disabled":true,"environment":{"TOKEN":"\#(secret)"}}}}}"#
+        let engine = try await RemoteServer.launch(on: connection, environment: [RemoteServer.privateSettingsVariable: settings])
+        let environment = try await connection.run("tr '\\0' '\\n' </proc/\(engine.pid)/environ")
+        #expect(!environment.isEmpty)
+        #expect(!environment.contains(secret))
+        #expect(!environment.contains(RemoteServer.privateSettingsVariable))
+        #expect(environment.contains("OPENCODE_CONFIG="))
+        let file = "\"$HOME/.kuvo-code-test/keys/settings.json\""
+        #expect(try await connection.run("stat -c %a \(file)").trimmingCharacters(in: .whitespacesAndNewlines) == "600")
+
+        // The engine has them.
+        let server = try await RemoteServer.attach(to: engine, on: connection)
+        let client = HTTPClient(endpoint: server.endpoint)
+        let config = try await client.send(client.request("GET", "api/config"), as: JSONValue.self)
+        let text = String(decoding: try JSONEncoder().encode(config), as: UTF8.self)
+        #expect(text.contains("private-test"))
+        server.disconnect()
+
+        // And they go with it.
+        try await RemoteServer.stop(on: connection)
+        #expect(try await connection.run("[ -e \(file) ] && echo left || true").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        _ = try await connection.run("pkill -f '[/]\\.kuvo-code-test/run' || true; rm -rf \"$HOME/.kuvo-code-test\"")
+    }
 }
