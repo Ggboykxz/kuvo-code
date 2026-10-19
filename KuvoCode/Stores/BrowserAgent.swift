@@ -110,9 +110,13 @@ final class BrowserAgent {
         var total = 0
         for path in paths {
             let url = URL(filePath: (path as NSString).expandingTildeInPath)
-            guard let data = try? Data(contentsOf: url) else { return "Can't read \(path) on this Mac. Give its full path." }
-            total += data.count
+            // Its size first, and only a plain file: a huge one, or a device or pipe, would hold
+            // the app while it was read.
+            let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+            guard values?.isRegularFile == true, let size = values?.fileSize else { return "Can't read \(path) on this Mac. Give the full path of a file." }
+            total += size
             guard total <= 25_000_000 else { return "That's too much to attach at once (25 MB at most)." }
+            guard let data = await Task.detached(operation: { try? Data(contentsOf: url) }).value else { return "Can't read \(path) on this Mac. Give its full path." }
             let type = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
             files.append(["name": url.lastPathComponent, "type": type, "data": data.base64EncodedString()])
         }
@@ -154,11 +158,11 @@ final class BrowserAgent {
             if owner == nil, let caller, !utilities.isFree(chosen.id, for: caller) {
                 return "Another conversation's agent is using tab [\(number)]. Pick another, or open one with browser_new_tab."
             }
+            if chosen.browser.isHeld { return "The user took tab [\(number)] over and has it now. Pick another, or carry on without it." }
             if action == "close" {
                 utilities.close(chosen.id)
                 return "Closed tab [\(number)]. " + list(utilities.browserTabs(of: panel))
             }
-            if chosen.browser.isHeld { return "The user took tab [\(number)] over and has it now. Pick another, or carry on without it." }
             if owner != nil { use = chosen.browser }
             if owner == nil, let caller { utilities.agentWorks(caller, in: chosen.browser) }
             if owner != nil || caller.map(utilities.bringsForward) ?? true { utilities.reveal(chosen.browser) }
@@ -344,6 +348,11 @@ final class BrowserAgent {
         let browser = browser()
         guard let host = Self.site(of: browser.url) else { return "Open the sign-in page first." }
         guard username != nil || password != nil else { return "Name the username field, the password field, or both, by number." }
+        // The address shows a page on its way before its document arrives: the card names the
+        // site whose page it is, or none.
+        guard await Self.documentSite(in: browser) == host else {
+            return "The page is still on its way to \(host). Wait for it, take a browser_snapshot, and call browser_sign_in again."
+        }
         if let problem = await checkFields(username: username, password: password, in: browser) { return problem }
         switch await ask(.signIn(username: username != nil, password: password != nil), host: host, in: browser, for: caller) {
         case .signIn(let user, let secret):
@@ -356,12 +365,12 @@ final class BrowserAgent {
             if let problem = await checkFields(username: username, password: password, in: browser) { return Self.changed + problem }
             var filled: [String] = []
             if let username, let user {
-                let outcome = await run(Self.fillScript, ["index": username, "value": user, "wanted": "text"], in: browser)
+                let outcome = await run(Self.fillScript, ["index": username, "value": user, "wanted": "text", "site": host], in: browser)
                 guard outcome == "ok" else { return outcome }
                 filled.append("the username")
             }
             if let password, let secret {
-                let outcome = await run(Self.fillScript, ["index": password, "value": secret, "wanted": "password"], in: browser)
+                let outcome = await run(Self.fillScript, ["index": password, "value": secret, "wanted": "password", "site": host], in: browser)
                 guard outcome == "ok" else { return outcome }
                 filled.append("the password")
             }
@@ -427,6 +436,12 @@ final class BrowserAgent {
         let now = Self.site(of: browser.url)
         guard now == host else { return Self.changed + "It's on \(now ?? "another page") now, not \(host). Take a fresh browser_snapshot, and ask again on the page that asks." }
         return nil
+    }
+
+    /// The site of the document the page shows, as `site(of:)` names it.
+    static func documentSite(in browser: BrowserSession) async -> String? {
+        let script = "return location.protocol === 'file:' ? 'a file on this Mac' : location.hostname"
+        return try? await browser.webView.callAsyncJavaScript(script, arguments: [:], contentWorld: world) as? String
     }
 
     /// The site a page is on, as the ask names it and Passwords keeps it: its host, or for a page
@@ -914,6 +929,12 @@ final class BrowserAgent {
     static let fillScript = """
     const element = find(index);
     if (!element) return missing(index);
+    // Only into a page of the site the user was asked about: its address may already show the
+    // next site while this document is still the last one's.
+    const where = element.ownerDocument.location;
+    if (typeof site === 'string' && (site === 'a file on this Mac' ? where.protocol !== 'file:' : where.hostname !== site)) {
+      return `The page isn't on ${site} now, so nothing was filled in. Take a fresh browser_snapshot and ask again.`;
+    }
     const kind = kindOf(element);
     if (wanted === 'password' ? kind !== 'password' : wanted === 'code' ? kind === 'other' : kind !== 'text') {
       return wanted === 'password'

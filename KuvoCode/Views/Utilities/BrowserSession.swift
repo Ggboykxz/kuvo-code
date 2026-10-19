@@ -236,7 +236,7 @@ final class BrowserSession: NSObject {
     func fill(_ login: Passwords.Login) {
         guard let password = Passwords.password(for: login) else { return }
         Task {
-            _ = try? await webView.callAsyncJavaScript(Passwords.fillScript, arguments: ["username": login.account, "secret": password], contentWorld: Passwords.world)
+            _ = try? await webView.callAsyncJavaScript(Passwords.fillScript, arguments: ["username": login.account, "secret": password, "host": login.host], contentWorld: Passwords.world)
         }
     }
 

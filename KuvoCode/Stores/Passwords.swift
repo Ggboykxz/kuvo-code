@@ -144,6 +144,8 @@ nonisolated enum Passwords {
     /// Fills the page's sign-in fields: the password field, and the username field before it (or,
     /// on a page that asks for the username first, the first one there is).
     static let fillScript = """
+    // Only on the site the login is for: the toolbar's list can be a page behind.
+    if (location.hostname !== host) return false;
     const fields = [...document.querySelectorAll('input')].filter((field) => !field.disabled && field.type !== 'hidden');
     const set = (field, value) => {
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
