@@ -592,6 +592,11 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
         updates: settings.autoUpdate !== false,
         startAtLogin: Boolean(settings.autoStart),
         keepAwake: Boolean(settings.keepAwake),
+        git: {
+          branchPrefix: typeof settings.git?.branchPrefix === "string" ? settings.git.branchPrefix : "",
+          commitInstructions: typeof settings.git?.commitInstructions === "string" ? settings.git.commitInstructions : "",
+          pullRequestInstructions: typeof settings.git?.pullRequestInstructions === "string" ? settings.git.pullRequestInstructions : "",
+        },
         recentProjects: Array.isArray(settings.recentProjects) ? settings.recentProjects : [],
       };
     };
@@ -602,6 +607,7 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
       if (typeof next.updates === "boolean") settings.autoUpdate = next.updates;
       if (typeof next.startAtLogin === "boolean") settings.autoStart = next.startAtLogin;
       if (typeof next.keepAwake === "boolean") settings.keepAwake = next.keepAwake;
+      if (next.git && typeof next.git === "object") settings.git = { ...(settings.git ?? {}), ...next.git };
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, JSON.stringify(settings, null, 2));
     };
@@ -613,6 +619,112 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
       const body = await readBody(request);
       writeShellConfig(body ?? {});
       return json(readShellConfig());
+    }
+
+    // ---- The project's changes, the way the Mac app's Changes panel reads them ----
+
+    /// git, in a folder: what it says, and what it is told to do.
+    const git = async (directory, args, input) => {
+      const { execFile } = await import("node:child_process");
+      const { promisify } = await import("node:util");
+      const run = promisify(execFile);
+      const { stdout } = await run("git", ["-C", directory, ...args], {
+        encoding: "utf8",
+        maxBuffer: 32 * 1024 * 1024,
+        ...(input ? { input } : {}),
+      });
+      return stdout;
+    };
+
+    const isGitProject = async directory => {
+      try {
+        await git(directory, ["rev-parse", "--is-inside-work-tree"]);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    /// The files git says have changed, with their patches: the same three scopes the Mac
+    /// app offers (what is not committed, what is not staged, what is staged).
+    const gitChanges = async (directory, scope) => {
+      if (!directory || !(await isGitProject(directory))) return [];
+      const files = [];
+      const add = async (path, patch, status) => {
+        if (!patch) return;
+        const lines = patch.split("\n");
+        const additions = lines.filter(line => line.startsWith("+") && !line.startsWith("+++")).length;
+        const deletions = lines.filter(line => line.startsWith("-") && !line.startsWith("---")).length;
+        files.push({ file: path, patch, additions, deletions, status });
+      };
+      if (scope === "unstaged") {
+        const names = (await git(directory, ["diff", "--name-only"])).split("\n").filter(Boolean);
+        for (const name of names) await add(name, await git(directory, ["diff", "--", name]), "modified");
+      } else if (scope === "staged") {
+        const names = (await git(directory, ["diff", "--cached", "--name-only"])).split("\n").filter(Boolean);
+        for (const name of names) await add(name, await git(directory, ["diff", "--cached", "--", name]), "staged");
+      } else {
+        const names = (await git(directory, ["diff", "HEAD", "--name-only"])).split("\n").filter(Boolean);
+        for (const name of names) await add(name, await git(directory, ["diff", "HEAD", "--", name]), "modified");
+        // New files are not in the diff until they are added: their whole content is the change.
+        const others = (await git(directory, ["ls-files", "--others", "--exclude-standard"])).split("\n").filter(Boolean);
+        for (const name of others) {
+          const content = await git(directory, ["diff", "--no-index", "--", "/dev/null", name]).catch(() => "");
+          const patch = content || `--- /dev/null\n+++ b/${name}\n@@ -0,0 +1,${content.split("\n").length} @@\n${content.split("\n").map(line => `+${line}`).join("\n")}`;
+          await add(name, patch, "added");
+        }
+      }
+      return files;
+    };
+
+    if (url.pathname === "/api/changes" && request.method === "GET") {
+      const directory = url.searchParams.get("directory") ?? currentProject ?? "";
+      const scope = url.searchParams.get("scope") ?? "uncommitted";
+      if (!directory) return json({ files: [], scope, git: false });
+      const git_ = await isGitProject(directory);
+      if (!git_) return json({ files: [], scope, git: false });
+      try {
+        return json({ files: await gitChanges(directory, scope), scope, git: true });
+      } catch (error) {
+        return json({ files: [], scope, git: true, problem: error.message });
+      }
+    }
+
+    // The commit message the session's model writes, the way the Mac app asks for it.
+    if (url.pathname === "/api/changes/suggest" && request.method === "POST") {
+      const body = await readBody(request);
+      const directory = body?.directory ?? currentProject;
+      const session = body?.session;
+      if (!directory) throw new HttpError(400, "No folder to read.");
+      if (!session) throw new HttpError(400, "No session to ask.");
+      const scope = body?.scope ?? "uncommitted";
+      const files = (await isGitProject(directory)) ? await gitChanges(directory, scope) : [];
+      const diff = files.map(file => `--- a/${file.file}\n+++ b/${file.file}\n${file.patch ?? ""}`).join("\n");
+      const instructions = typeof body?.instructions === "string" ? body.instructions.trim() : "";
+      const prompt = [
+        instructions ? `${instructions}\n\n` : "",
+        "Write a git commit message for the changes below. A summary line in the imperative mood, under 72 characters; then, only if it helps, a blank line and a few short lines on what changed and why. Reply with the message alone: no quotes, no code fences.",
+        "",
+        diff,
+      ].join("\n");
+      const text = await client.generate(session, prompt);
+      return json({ message: text.trim().replace(/^[`"']+|[`"']+$/g, "") });
+    }
+
+    // Committing: what the panel's Commit button does. The message is the model's or yours.
+    if (url.pathname === "/api/changes/commit" && request.method === "POST") {
+      const body = await readBody(request);
+      const directory = body?.directory ?? currentProject;
+      const message = typeof body?.message === "string" ? body.message.trim() : "";
+      if (!directory) throw new HttpError(400, "No folder to commit in.");
+      if (!message) throw new HttpError(400, "A commit needs a message.");
+      if (!(await isGitProject(directory))) throw new HttpError(400, "That folder is not a git project.");
+      const files = Array.isArray(body?.files) ? body.files.filter(name => typeof name === "string") : [];
+      if (files.length) await git(directory, ["add", "--", ...files]);
+      else await git(directory, ["add", "-A"]);
+      await git(directory, ["commit", "-m", message]);
+      const head = await git(directory, ["rev-parse", "--short", "HEAD"]);
+      return json({ ok: true, commit: head.trim(), message });
     }
 
     // ---- The engine's settings file, as the Mac app's engine config is ----

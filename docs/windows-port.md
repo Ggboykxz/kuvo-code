@@ -105,7 +105,12 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
-  - **2.26 (this change).** The motion layer, in the direction's own hand: the overlays
+  - **2.27 (this change).** The Mac app's Changes panel: an extra tab in the side panel
+    with the project's changes, read from git (uncommitted, unstaged, staged) or from the
+    session's own edits, each file folded to its changes, a note written on a line that
+    goes to the agent with the next message, a commit message the session's model writes
+    ("Suggest a Message") and the commit itself.
+  - **2.26. The motion layer, in the direction's own hand: the overlays
     rise, the drawer slides, the entries and the questions arrive gently, the engine's dot
     breathes while it works, the scrollbars are thin and quiet. Every duration comes from
     the tokens, so "Motion: Reduced" — and the system's own preference — stop all of it at

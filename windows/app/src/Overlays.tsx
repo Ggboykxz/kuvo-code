@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { errorText } from "./lib";
+import { ChangesPanel } from "./Changes";
 import { complain, loadSessions, notify, openSession, render, state, useStore } from "./store";
 
 // ---- The command palette ----
@@ -253,6 +254,7 @@ export function Drawer() {
       <div className="drawer-head">
         <div className="drawer-tabs">
           <button className={`drawer-tab ${state.drawerTab === "files" ? "active" : ""}`} onClick={() => { state.drawerTab = "files"; render(); }}>Files</button>
+          <button className={`drawer-tab ${state.drawerTab === "changes" ? "active" : ""}`} onClick={() => { state.drawerTab = "changes"; render(); }}>Changes</button>
           <button className={`drawer-tab ${state.drawerTab === "terminal" ? "active" : ""}`} onClick={() => { state.drawerTab = "terminal"; render(); }}>Terminal</button>
         </div>
         <button id="drawer-close" className="small" onClick={() => { state.drawerOpen = false; render(); }}>✕</button>
@@ -289,6 +291,9 @@ export function Drawer() {
         {state.openFile ? (
           <pre className="file-view">{state.openFileContent}</pre>
         ) : null}
+      </div>
+      <div id="drawer-changes" className="drawer-body" hidden={state.drawerTab !== "changes"}>
+        <ChangesPanel />
       </div>
       <div id="drawer-terminal" className="drawer-body" hidden={state.drawerTab !== "terminal"}>
         <div id="terminal" ref={terminalRef} className="terminal" />

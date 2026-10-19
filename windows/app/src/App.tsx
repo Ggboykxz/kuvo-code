@@ -568,10 +568,16 @@ function Composer() {
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!text.trim() && !files.length) return;
-    const sent = text;
+    // The notes on the changes go with the message, the way the Mac app sends them.
+    const notes = state.lineComments ?? [];
+    const sent = notes.length
+      ? `${text}\n\n${notes.map(note => `On ${note.file} (line ${note.line + 1}): ${note.text}`).join("\n")}`
+      : text;
     setText("");
     setFiles([]);
+    state.lineComments = [];
     await sendPrompt(sent, files);
+    render();
   };
 
   return (

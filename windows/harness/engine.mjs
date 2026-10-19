@@ -231,6 +231,13 @@ export class EngineClient {
     return await this.request("GET", "api/config", { directory });
   }
 
+  /// One answer from the session's model, outside the conversation — how the Mac app asks
+  /// for a commit message.
+  async generate(session, prompt) {
+    const answer = await this.request("POST", `api/session/${encodeURIComponent(session)}/generate`, { body: { prompt } });
+    return answer?.data?.text ?? "";
+  }
+
   /// The questions waiting on a session: the agent's question tool, or an MCP server's.
   async forms(session) {
     return (await this.request("GET", `api/session/${encodeURIComponent(session)}/form`)).data ?? [];

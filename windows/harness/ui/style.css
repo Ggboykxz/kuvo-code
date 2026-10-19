@@ -1140,3 +1140,64 @@ li.unread .session { position: relative; padding-left: 16px; }
 
 /* Files dropped on the composer: the composer says so. */
 .composer.dropping { outline: 2px dashed var(--accent); outline-offset: -4px; background: var(--accent-soft); }
+
+/* ---- The Changes panel: the project's work, folded, the way the Mac app shows it ---- */
+.changes-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.changes-head {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--line-soft);
+}
+.changes-head select {
+  padding: 2px var(--space-2);
+  border: 1px solid var(--line); border-radius: var(--radius-xs);
+  background: var(--panel); color: var(--ink); font-size: var(--text-sm);
+}
+.changes-files { flex: 1; overflow-y: auto; padding: var(--space-1) 0; min-height: 0; }
+.changes-file { border-bottom: 1px solid var(--line-soft); }
+.changes-file-head {
+  display: flex; align-items: center; gap: var(--space-2); width: 100%;
+  padding: var(--space-2) var(--space-3);
+  background: transparent; border: 0; border-radius: 0;
+  font-size: var(--text-sm); text-align: left; color: var(--ink);
+}
+.changes-file-head:hover { background: var(--hover); }
+.changes-file-name {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--font-mono); font-size: var(--text-xs);
+}
+.changes-file-head .where { font-variant-numeric: tabular-nums; }
+.changes-diff {
+  font-family: var(--font-mono); font-size: var(--text-xs); line-height: 1.55;
+  border-top: 1px solid var(--line-soft);
+  background: var(--code-bg);
+}
+.diff-line { display: flex; align-items: baseline; gap: var(--space-2); padding: 0 var(--space-3); position: relative; }
+.diff-line .diff-text { flex: 1; white-space: pre-wrap; word-break: break-word; }
+.diff-line.add { background: color-mix(in oklab, var(--ok), transparent 88%); }
+.diff-line.del { background: color-mix(in oklab, var(--danger), transparent 90%); }
+.diff-line.ctx { color: var(--ink-soft); }
+.diff-comment {
+  opacity: 0; border: 0; background: transparent; color: var(--ink-faint);
+  padding: 0 var(--space-1); font-size: var(--text-xs);
+}
+.diff-line:hover .diff-comment { opacity: 1; }
+.diff-comment:hover { color: var(--accent); }
+.diff-draft { display: inline-flex; gap: var(--space-1); align-items: center; }
+.diff-draft input {
+  width: 220px; padding: 2px var(--space-2);
+  border: 1px solid var(--accent); border-radius: var(--radius-xs);
+  background: var(--panel); color: var(--ink); font-size: var(--text-xs);
+}
+.changes-foot {
+  border-top: 1px solid var(--line-soft);
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  display: flex; flex-direction: column; gap: var(--space-2);
+}
+.changes-foot input[type="text"] {
+  width: 100%; padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--panel); color: var(--ink); font-size: var(--text-sm);
+}
+.changes-buttons { display: flex; align-items: center; gap: var(--space-2); }
+.changes-buttons .where { display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--text-xs); }

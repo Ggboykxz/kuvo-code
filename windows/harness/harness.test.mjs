@@ -704,3 +704,49 @@ test("a session can be put away and brought back, the way the Mac app does it", 
   });
   assert.equal(back.status, 200);
 });
+
+test("the project's changes are read from git, and a commit is really made", async t => {
+  const engine = await fakeEngine();
+  t.after(engine.close);
+  const { execFileSync } = await import("node:child_process");
+  const project = fs.mkdtempSync(path.join(home, "git-project-"));
+  const git = (...args) => execFileSync("git", ["-C", project, ...args], { encoding: "utf8" });
+  git("init", "-q");
+  git("config", "user.email", "kuvo@example.test");
+  git("config", "user.name", "Kuvo");
+  fs.writeFileSync(path.join(project, "a.txt"), "one\n");
+  git("add", "-A");
+  git("commit", "-q", "-m", "first");
+
+  const { harness, url } = await inFront(engine);
+  t.after(() => harness.close());
+
+  // Nothing changed yet.
+  let answer = await (await fetch(`${url}api/changes?directory=${encodeURIComponent(project)}&scope=uncommitted`)).json();
+  assert.equal(answer.git, true);
+  assert.equal(answer.files.length, 0);
+
+  // A change, and a new file.
+  fs.writeFileSync(path.join(project, "a.txt"), "one\ntwo\n");
+  fs.writeFileSync(path.join(project, "b.txt"), "new\n");
+  answer = await (await fetch(`${url}api/changes?directory=${encodeURIComponent(project)}&scope=uncommitted`)).json();
+  const names = answer.files.map(file => file.file).sort();
+  assert.deepEqual(names, ["a.txt", "b.txt"]);
+  const changed = answer.files.find(file => file.file === "a.txt");
+  assert.ok(changed.patch.includes("+two"), "the patch carries the new line");
+  assert.equal(changed.additions, 1);
+
+  // A commit, for real.
+  const committed = await fetch(`${url}api/changes/commit`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ directory: project, message: "Add a second line" }),
+  });
+  assert.equal(committed.status, 200);
+  const result = await committed.json();
+  assert.equal(result.ok, true);
+  assert.equal(git("log", "-1", "--pretty=%s").trim(), "Add a second line");
+
+  // And the panel is empty again.
+  answer = await (await fetch(`${url}api/changes?directory=${encodeURIComponent(project)}&scope=uncommitted`)).json();
+  assert.equal(answer.files.length, 0);
+});

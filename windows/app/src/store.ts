@@ -52,6 +52,7 @@ export const state: AppState = {
   pickerOpen: false,
   openFileContent: undefined,
   toast: null,
+  lineComments: [],
 };
 
 // ---- The redraw ----

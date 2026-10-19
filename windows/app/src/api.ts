@@ -154,7 +154,7 @@ export interface AppState {
   models: Model[];
   agents: Agent[];
   commands: Command[];
-  drawerTab: "files" | "terminal";
+  drawerTab: "files" | "terminal" | "changes";
   sessionQuery: string;
   openSessions: string[];
   transcripts: Map<string, Transcript>;
@@ -190,6 +190,7 @@ export interface AppState {
   pickerOpen: boolean;
   openFileContent?: string;
   toast: { title: string; body: string } | null;
+  lineComments?: { file: string; line: number; text: string }[];
 }
 
 /// One fetch, the way the page talks to the harness.
