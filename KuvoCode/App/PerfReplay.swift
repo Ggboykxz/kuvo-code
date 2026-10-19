@@ -412,7 +412,9 @@ enum PerfOpen {
                 let end = lastRow()
                 let insets = scroll.map { "insets \(Int($0.contentInsets.top))/\(Int($0.contentInsets.bottom)), view \(Int($0.contentView.bounds.height))" } ?? ""
                 let lastFrame = end.flatMap { RowProbe.frames[$0] }.map { ", last row \(Int($0.minY))…\(Int($0.maxY))" } ?? ""
-                let state = "at \(origin) of \(height), \(shown.count) rows in view\(end.map { shown.contains($0) ? ", the last among them" : ", not the last" } ?? ""), \(insets)\(lastFrame)"
+                // KUVO_PERF_OPEN_ROWS: each row in view too, where it is and how tall.
+                let each = ProcessInfo.processInfo.environment["KUVO_PERF_OPEN_ROWS"] == nil ? "" : "; " + shown.compactMap { id in RowProbe.frames[id].map { (id, $0) } }.sorted { $0.1.minY < $1.1.minY }.map { "\($0.0.suffix(8)) \(Int($0.1.minY))+\(Int($0.1.height))" }.joined(separator: ", ")
+                let state = "at \(origin) of \(height), \(shown.count) rows in view\(end.map { shown.contains($0) ? ", the last among them" : ", not the last" } ?? ""), \(insets)\(lastFrame)\(each)"
                 if state != last {
                     lines.append(String(format: "%5.0f ms ", (ContinuousClock.now - began) / .milliseconds(1)) + state)
                     last = state
