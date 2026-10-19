@@ -50,7 +50,7 @@ const TAB_IDLE = Number(process.env.KUVO_BROWSER_TAB_IDLE || 12 * 3600) * 1000;
 
 // Goes up with every change to the keeper (host mode): a newer one replaces one that's running
 // (its pages close, its sign-ins stay), and an older one never replaces a newer.
-const KEEPER = 22;
+const KEEPER = 23;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -526,11 +526,12 @@ async function host() {
       internal("Target.closeTarget", { targetId });
     }
   }, Math.min(30 * 60_000, TAB_IDLE / 2)).unref();
-  // A build an update put in `current` takes over once nobody uses this one (no agent at work,
-  // no page taken over or shown, nothing asked): what's open is kept, and opens again when the
-  // next client starts the browser from there. Otherwise one started before the update arrived
-  // would run the old build for as long as the engine does.
+  // A build an update put in `current` takes over once nobody uses this one (no agent at work or
+  // between its steps lately, no page taken over or shown, nothing asked): what's open is kept,
+  // and opens again when the next client starts the browser from there. Otherwise one started
+  // before the update arrived would run the old build for as long as the engine does.
   const runsFrom = path.dirname(chrome.spawnfile);
+  const usedLately = () => [...claims.values()].some((claim) => Date.now() - claim.at < 10 * 60_000);
   setInterval(() => {
     let installed;
     try {
@@ -538,7 +539,7 @@ async function host() {
     } catch {
       return;
     }
-    if (installed === runsFrom || everyStatus().working || held.size || asks.size || viewers()) return;
+    if (installed === runsFrom || everyStatus().working || usedLately() || held.size || asks.size || viewers()) return;
     stop();
   }, 60_000).unref();
 

@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- A machine's browser no longer restarts for an update in the middle of an agent's task there, between its steps. It waits until no agent has used it for ten minutes.
 - Closing Kuvo Code's window and opening it again no longer leaves empty Terminal and New Tab tabs in each conversation's panel, and deleting the conversation in view no longer leaves a browser tab running behind it.
 - Closing a terminal tab ends its shell and whatever runs in it, like a dev server holding its port. They kept running until Kuvo Code quit.
 - Web search works in every session: agents search with Exa, which needs no key. The default picked a service at random for each session, and one of them (Firecrawl) answers every search with nothing without a key, so about one session in five couldn't search. Settings › Engine still lets you choose another service, or any.
