@@ -248,7 +248,8 @@ struct WakesTests {
             try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.appending(path: name).path)
         }
         try executable("date", "#!/bin/sh\nif [ \"$1\" = +%s ]; then cat \"$K/clock\"; else exec /bin/date \"$@\"; fi\n")
-        if gnuTimeout { try executable("timeout", "#!/bin/sh\nshift\nexec \"$@\"\n") }
+        // As GNU's takes them: its options (-k 5, -s KILL), then the time, then the command.
+        if gnuTimeout { try executable("timeout", "#!/bin/sh\nwhile [ \"$1\" = -k ] || [ \"$1\" = -s ]; do shift 2; done\nshift\nexec \"$@\"\n") }
         // A curl that prints what it's given and exits with it: with the network down, `curl -s`
         // prints nothing and exits 6 or 7, or prints 000 when asked for its status code.
         try executable("curl", "#!/bin/sh\ncat \"$K/out\"\nexit \"$(cat \"$K/code\")\"\n")

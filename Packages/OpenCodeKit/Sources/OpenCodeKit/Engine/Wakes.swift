@@ -445,7 +445,9 @@ public enum Wakes {
     # 128 and the signal when killed. One that ignores the minute's TERM is killed 5 s later:
     # left running, it held up every wake-up after it.
     limited() {
-      if command -v timeout >/dev/null 2>&1; then timeout -k 5 60 sh -c "$@"
+      if command -v timeout >/dev/null 2>&1; then
+        # An older busybox's timeout has no -k: the minute alone there.
+        if timeout -k 1 1 true 2>/dev/null; then timeout -k 5 60 sh -c "$@"; else timeout 60 sh -c "$@"; fi
       elif command -v perl >/dev/null 2>&1; then
         # In a group of its own, so the minute's end stops the whole pipeline, not just sh.
         perl -e 'my $p = fork; if (!$p) { setpgrp; exec @ARGV; exit 127 } $SIG{ALRM} = sub { kill "TERM", -$p; sleep 1; kill "KILL", -$p; exit 124 }; alarm 60; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' sh -c "$@"
