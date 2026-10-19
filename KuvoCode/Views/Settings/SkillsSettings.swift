@@ -481,7 +481,7 @@ private struct RepositorySkills: View {
 
     /// Its files, saying so when some are scripts.
     static func summary(of skill: SkillLibrary.RemoteSkill) -> String {
-        let names = skill.files.map { String($0.dropFirst(skill.path.count + 1)) }
+        let names = skill.files.map { skill.relative($0) }
         let scripts = names.filter { ["sh", "py", "js", "ts", "rb", "pl", "bash", "zsh"].contains(($0 as NSString).pathExtension.lowercased()) }
         var lines = names.prefix(12).map { "• " + $0 }
         if names.count > 12 { lines.append("and \(names.count - 12) more") }
