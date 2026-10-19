@@ -5,6 +5,7 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- With anonymous usage on, the app also sends an empty note every couple of minutes while it's open and has sent nothing else, so it's known how many people have it open at a time. It carries nothing new about you.
 - Showing the sidebar again slides it straight in: it stays ready while hidden, bots included, rather than being drawn again first, which made the start of the slide stutter.
 
 - Scrolling the sidebar, and everything else that moves in the window, takes less work: macOS no longer works out where the window can be dragged from each time something moves, only while the pointer is on the title bar. Scrolling the sidebar took about half the work in tests.
