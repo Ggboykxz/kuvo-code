@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Closing Kuvo Code's window and opening it again no longer leaves empty Terminal and New Tab tabs in each conversation's panel, and deleting the conversation in view no longer leaves a browser tab running behind it.
 - Closing a terminal tab ends its shell and whatever runs in it, like a dev server holding its port. They kept running until Kuvo Code quit.
 - Web search works in every session: agents search with Exa, which needs no key. The default picked a service at random for each session, and one of them (Firecrawl) answers every search with nothing without a key, so about one session in five couldn't search. Settings › Engine still lets you choose another service, or any.
 - A conversation shows at once when you open Kuvo Code, and when you open one you haven't yet since: its latest messages, as last seen, show while the engine reads them (which took a second or more at launch, with a blank card meanwhile). The sidebar's sessions show at once too.

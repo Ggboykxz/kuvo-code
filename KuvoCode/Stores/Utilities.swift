@@ -320,12 +320,15 @@ final class Utilities {
     /// opened included), and none for a page that closed.
     func syncMachinePages(_ machine: String, _ pages: [MachineBrowser.Page]) {
         let open = Set(pages.map(\.id))
-        let shown = tabs.first { $0.id == (place == machine ? selection : chosen[machine]) }
+        // The tab its conversation's panel shows at that machine, in view or to come back to.
+        func isShown(_ tab: Tab) -> Bool {
+            (place == machine && selection == tab.id) || chosen[chosenKey(tab.owner, machine)] == tab.id
+        }
         for tab in tabs {
             guard case .machinePage(machine, let page?) = tab.kind, !open.contains(page) else { continue }
             // A window that closed (a sign-in's popup, done) gives way to the page that opened it.
             let opener = openers.removeValue(forKey: page).flatMap { opener in tabs.first { $0.kind == .machinePage(machine, opener) } }
-            let wasShown = shown?.id == tab.id
+            let wasShown = isShown(tab)
             remove(tab.id)
             if wasShown, let opener { show(opener, on: machine) }
         }
@@ -344,7 +347,7 @@ final class Utilities {
             // A window the page in view opened comes forward, as a browser shows it.
             if let opener = page.opener {
                 openers[page.id] = opener
-                if case .machinePage(machine, opener)? = shown?.kind { show(tab, on: machine) }
+                if let opening = tabs.first(where: { $0.kind == .machinePage(machine, opener) }), isShown(opening) { show(tab, on: machine) }
             }
         }
         // The page an agent started browsing in has its tab now: show it.
@@ -638,11 +641,11 @@ final class Utilities {
     }
 
     /// Closes a tab, and what it shows: its terminal, its page (on a machine too).
-    func close(_ id: UUID) {
+    func close(_ id: UUID, refills: Bool = true) {
         if let tab = tabs.first(where: { $0.id == id }), case .machinePage(let machine, let page?) = tab.kind {
             machineBrowser?(machine)?.close(page)
         }
-        remove(id)
+        remove(id, refills: refills)
     }
 
     /// A new session's draft became the session: the tabs you opened while writing it are its.
@@ -654,13 +657,14 @@ final class Utilities {
 
     /// Closes a conversation's panel: the bot or session was deleted.
     func closeTabs(of owner: String) {
-        for tab in tabs where tab.owner == owner { close(tab.id) }
+        for tab in tabs where tab.owner == owner { close(tab.id, refills: false) }
         chosen = chosen.filter { !$0.key.hasPrefix(owner + "|") }
         kept[owner] = nil
     }
 
-    /// Takes a tab out of the strip; the tab beside it takes its place.
-    private func remove(_ id: UUID) {
+    /// Takes a tab out of the strip; the tab beside it takes its place. A panel that's going
+    /// (its conversation was deleted) isn't refilled.
+    private func remove(_ id: UUID, refills: Bool = true) {
         guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
         let at = visibleTabs.firstIndex { $0.id == id }
         let wasSelected = selected?.id == id
@@ -673,7 +677,7 @@ final class Utilities {
             selection = at.flatMap { rest.indices.contains($0) ? rest[$0].id : nil } ?? rest.last?.id
         }
         // The panel always has a tab: closing the last one leaves a new tab in its place.
-        if visibleTabs.isEmpty { newTab() }
+        if refills, visibleTabs.isEmpty { newTab() }
     }
 
     /// Ends every terminal and page, and starts the panel over: the window is closing, and its
@@ -686,6 +690,13 @@ final class Utilities {
         browsers = [:]
         agentClaims = [:]
         runs = [:]
+        // Every conversation's panel starts over when it's next in view.
+        tabs.removeAll { tab in
+            if case .machinePage = tab.kind { return false }
+            return true
+        }
+        chosen = [:]
+        selection = nil
         let place = place
         self.place = nil
         startOver()
