@@ -19,7 +19,18 @@ struct ChangesPanel: View {
     /// Syntax colors, per file, worked out off the main thread.
     @State private var highlighting: [String: DiffHighlighting] = [:]
 
-    struct DraftTarget: Equatable { var file: String; var line: Int }
+    /// The line a comment is being written on, as it read then: the list can change under it (the
+    /// agent edits the file), and the comment stays with that line, not its place.
+    struct DraftTarget: Equatable {
+        var file: String
+        var side: ReviewComment.Side
+        var number: Int
+        var text: String
+
+        func isFor(_ line: DiffLine, in file: String) -> Bool {
+            self.file == file && side == (line.kind == .removed ? .old : .new) && number == line.number && text == line.text
+        }
+    }
     @Environment(AppModel.self) private var app
     @Environment(Workspace.self) private var workspace
     @Environment(Catalog.self) private var catalog
@@ -738,15 +749,17 @@ private struct FileBody: View {
                 case .line(let index):
                     let line = file.lines[index]
                     DiffLineRow(line: line, runs: highlighted?.runs(for: line, at: index), gutterWidth: gutter,
-                                comment: addComment == nil ? nil : { draft = .init(file: file.id, line: index) })
+                                comment: addComment == nil ? nil : {
+                                    draft = .init(file: file.id, side: line.kind == .removed ? .old : .new, number: line.number, text: line.text)
+                                })
                     ForEach(comments.filter { $0.matches(line) }) { comment in
                         CommentCard(comment: comment) { deleteComment(comment) }
                     }
-                    if draft == .init(file: file.id, line: index) {
+                    if let target = draft, target.isFor(line, in: file.id) {
                         CommentEditor {
                             draft = nil
                         } save: { text in
-                            addComment?(ReviewComment(file: file.path, line: line.number, side: line.kind == .removed ? .old : .new, snippet: line.text.trimmingCharacters(in: .whitespaces), text: text))
+                            addComment?(ReviewComment(file: file.path, line: target.number, side: target.side, snippet: target.text.trimmingCharacters(in: .whitespaces), text: text))
                             draft = nil
                         }
                     }
@@ -824,8 +837,11 @@ private struct ImageDiff: View {
 }
 
 extension ReviewComment {
+    /// The line it was written on: by its number, and, once the file has changed, by its text,
+    /// so it doesn't slide onto another line.
     func matches(_ line: DiffLine) -> Bool {
         side == (line.kind == .removed ? .old : .new) && self.line == line.number
+            && line.text.trimmingCharacters(in: .whitespaces) == snippet
     }
 }
 
