@@ -53,9 +53,11 @@ nonisolated extension Git {
         return nil
     }
 
-    /// Changes that aren't committed, new files included.
+    /// Changes that aren't committed, new files included; and, when git can't say (a machine's
+    /// connection dropped), as if there were, so nothing is thrown away on a guess.
     static func hasUncommittedChanges(in directory: String) -> Bool {
-        !(run(["status", "--porcelain"], in: directory) ?? "").isEmpty
+        guard let status = run(["status", "--porcelain"], in: directory) else { return true }
+        return !status.isEmpty
     }
 
     /// How many commits `directory`'s branch has that `base` doesn't.

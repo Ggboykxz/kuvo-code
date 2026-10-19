@@ -99,7 +99,13 @@ struct GeneralSettings: View {
         reading = true
         Task {
             defer { reading = false }
-            let connected = Set(((try? await api.credentials()) ?? []).map(\.integrationID))
+            // What's connected already stays as it is: without knowing, nothing is planned (every
+            // key would be, and replace the one in use).
+            guard let credentials = try? await api.credentials() else {
+                importNote = "Couldn’t read your accounts here, so nothing was brought over. Try again in a moment."
+                return
+            }
+            let connected = Set(credentials.map(\.integrationID))
             do {
                 let plan = try await OpencodeImport.plan(engine: engine, config: app.engineConfig.settings, connected: connected)
                 if plan.isEmpty, plan.signIns.isEmpty {

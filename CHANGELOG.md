@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- A worktree with changes isn't removed when git can't tell (a machine's connection dropping). And Bring Over in Settings › General no longer replaces accounts you've connected when it can't read them, no longer puts opencode's permission rules ahead of yours, and leaves no copy of opencode's settings behind when it fails.
 - The usage item in the menu bar only refreshes accounts connected in Kuvo Code. It could also refresh, and renew the logins of, tools you hadn't connected (Claude Code, the Codex CLI), which could sign them out. And limits next to a session or in the sidebar no longer show an old reading, or one whose window has reset, as current.
 - A GitHub repository that is a single skill (its SKILL.md at the top) shows that skill to add. It said the repository had none.
 - Integrations: Change Key keeps how you set an integration up (turned off, Code Mode, your headers), a settings file Kuvo Code can't change says so on the page rather than failing quietly, Remove always signs you out, keys keep working when Kuvo Code runs for days, and a sign-in the engine lost stops waiting.

@@ -663,7 +663,8 @@ final class Workspace {
             throw GitFailure(message: "The worktree of \(tree.branch) has changes that aren’t committed, so it stays. Commit them, or remove it in Settings › Worktrees, which throws them away.")
         }
         let project = try await api.location(directory: tree.project).project
-        try await api.removeWorktree(project: project.id, directory: tree.root, force: true)
+        // Forced only when you were told its changes go: otherwise git itself keeps one that has some.
+        try await api.removeWorktree(project: project.id, directory: tree.root, force: discardingChanges)
         // Git deletes only a branch that's merged.
         _ = await Task.detached { Git.run(["branch", "-d", tree.branch], in: tree.project) }.value
         for (folder, removed) in worktrees where removed.root == tree.root { removedWorktrees[folder] = removed.project }

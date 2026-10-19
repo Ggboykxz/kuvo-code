@@ -98,15 +98,21 @@ enum OpencodeImport {
         guard !present.isEmpty || !folders.isEmpty else { return nil }
         let root = manager.temporaryDirectory.appending(path: Bundle.main.bundleIdentifier ?? "run.kuvo.code").appending(path: "opencode-import-\(UUID().uuidString)")
         let copy = root.appending(path: "config/opencode")
-        try manager.createDirectory(at: copy, withIntermediateDirectories: true)
-        try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
-        for name in present { try manager.copyItem(at: configFolder.appending(path: name), to: copy.appending(path: name)) }
-        for name in folders { try manager.copyItem(at: configFolder.appending(path: name), to: copy.appending(path: name)) }
-        let home = root.appending(path: "home")
-        try manager.createDirectory(at: home, withIntermediateDirectories: true)
-
         let engineFolders = EngineFolders(root: root)
-        let server = try await ServerProcess.start(executable: engine, folders: engineFolders, environment: ["PATH": "/usr/bin:/bin", "HOME": home.path])
+        let server: ServerProcess
+        do {
+            try manager.createDirectory(at: copy, withIntermediateDirectories: true)
+            try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+            for name in present { try manager.copyItem(at: configFolder.appending(path: name), to: copy.appending(path: name)) }
+            for name in folders { try manager.copyItem(at: configFolder.appending(path: name), to: copy.appending(path: name)) }
+            let home = root.appending(path: "home")
+            try manager.createDirectory(at: home, withIntermediateDirectories: true)
+            server = try await ServerProcess.start(executable: engine, folders: engineFolders, environment: ["PATH": "/usr/bin:/bin", "HOME": home.path])
+        } catch {
+            // The copy holds opencode's settings, keys and all: it doesn't stay behind.
+            try? manager.removeItem(at: root)
+            throw error
+        }
         let sources = try? await OpenCodeAPI(endpoint: server.endpoint).configSources(directory: engineFolders.workspace.path)
         // Its folder goes once it has stopped.
         server.stop()
@@ -228,7 +234,8 @@ enum OpencodeImport {
             case "plugins", "instructions", "permissions":
                 let ours = config.value(at: [key])?.array ?? []
                 let new = (value.array ?? []).filter { !ours.contains($0) }
-                if !new.isEmpty { changes.append(([key], .array(ours + new))) }
+                // The last permission rule that matches wins: yours stay after the ones brought over.
+                if !new.isEmpty { changes.append(([key], .array(key == "permissions" ? new + ours : ours + new))) }
                 count += new.count
             default:
                 for (name, entry) in value.object ?? [:] {
