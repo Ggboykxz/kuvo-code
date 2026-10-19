@@ -573,7 +573,7 @@ final class SessionModel {
             isCopy = false
             keepCopy()
         } catch {
-            failure = error.localizedDescription
+            fail(error)
             // Its machine is back but this one couldn't be read: no longer waiting, so the
             // failure shows (and what you do goes to the engine, which may answer now).
             if !waitsForEngine { isCopy = false }
@@ -766,7 +766,7 @@ final class SessionModel {
                 // It didn't go: back in the composer as it was, ahead of anything written since.
                 let (quotes, text) = Quoting.draft(of: written)
                 restore(text: text, files: files, quotes: quotes, comments: comments)
-                failure = error.localizedDescription
+                fail(error)
             }
         }
     }
@@ -860,7 +860,7 @@ final class SessionModel {
     private func notRun(_ written: String?, files: [URL] = [], because error: Error? = nil) {
         if let written { restore(text: written, files: files) }
         if let error {
-            failure = error.localizedDescription
+            fail(error)
         } else if written != nil {
             failure = RemoteFolder.isRemote(session.location.directory)
                 ? "It didn't run: this session's machine can't be reached now."
@@ -940,7 +940,7 @@ final class SessionModel {
             do {
                 try await api.setDelivery(session: id, item: item.id, delivery: .steer)
             } catch {
-                failure = error.localizedDescription
+                fail(error)
             }
         }
     }
@@ -959,7 +959,7 @@ final class SessionModel {
                 if item.delivery == .queue { try await api.setDelivery(session: id, item: item.id, delivery: .steer) }
                 if running || item.delivery == .steer { try await api.interrupt(session: id, resume: true) }
             } catch {
-                failure = error.localizedDescription
+                fail(error)
             }
         }
     }
@@ -978,7 +978,7 @@ final class SessionModel {
             do {
                 try await api.cancelInbox(session: id, item: item.id)
             } catch {
-                failure = error.localizedDescription
+                fail(error)
                 return
             }
             // The engine says which won: the cancel, or the agent taking it first (a cancel
@@ -1074,7 +1074,7 @@ final class SessionModel {
                 restoreDraft(CommandMessages.shared.text(of: copy), files: Self.files(of: message, stored: copy))
                 undone = (before, composerState)
             } catch {
-                failure = error.localizedDescription
+                fail(error)
             }
         }
     }
@@ -1114,7 +1114,7 @@ final class SessionModel {
                     starters.remove(id)
                     restoreDraft(user.text, files: Self.files(of: user))
                 }
-                failure = error.localizedDescription
+                fail(error)
             }
         }
     }
@@ -1139,9 +1139,17 @@ final class SessionModel {
                 if let undone, composerState == undone.after { composerState = undone.before }
                 undone = nil
             } catch {
-                failure = error.localizedDescription
+                fail(error)
             }
         }
+    }
+
+    /// Says what went wrong, over the composer; not a request that was called off (the engine
+    /// started over meanwhile, say), which isn't something that went wrong: shown, it said only
+    /// "cancelled", the next time you opened the conversation.
+    private func fail(_ error: any Error) {
+        if error is CancellationError || (error as? URLError)?.code == .cancelled { return }
+        failure = error.localizedDescription
     }
 
     /// Edits the message that would go last, if there is one.
@@ -1159,7 +1167,7 @@ final class SessionModel {
         session.agent = "build"
         Task {
             do { try await api.selectAgent(session: id, agent: "build") } catch {
-                failure = error.localizedDescription
+                fail(error)
                 return
             }
             send("Go ahead and build it, as planned.", for: nil)
@@ -1170,7 +1178,7 @@ final class SessionModel {
     func compact() {
         guard canReach else { return }
         Task {
-            do { try await api.compact(session: id) } catch { failure = error.localizedDescription }
+            do { try await api.compact(session: id) } catch { fail(error) }
         }
     }
 
@@ -1216,7 +1224,7 @@ final class SessionModel {
                     try await api.interrupt(session: id, resume: true)
                 }
             } catch {
-                failure = error.localizedDescription
+                fail(error)
             }
         }
     }
@@ -1234,7 +1242,7 @@ final class SessionModel {
         let rules = approval.rules(settings: settings) + (session.permissions ?? []).filter(ToolApproval.isParticular)
         session.permissions = rules
         Task {
-            do { try await api.setPermissions(session: id, rules: rules) } catch { failure = error.localizedDescription }
+            do { try await api.setPermissions(session: id, rules: rules) } catch { fail(error) }
         }
     }
 
@@ -1256,7 +1264,7 @@ final class SessionModel {
                 try await api.setInstruction(session: id, key: ProjectFolders.instructionKey, text: ProjectFolders.instructions(primary: api.enginePath(session.location.directory), folders: folders))
             }
         } catch {
-            failure = error.localizedDescription
+            fail(error)
         }
     }
 
@@ -1265,7 +1273,7 @@ final class SessionModel {
         guard agent != session.agent else { return }
         session.agent = agent
         Task {
-            do { try await api.selectAgent(session: id, agent: agent) } catch { failure = error.localizedDescription }
+            do { try await api.selectAgent(session: id, agent: agent) } catch { fail(error) }
         }
     }
 
@@ -1274,7 +1282,7 @@ final class SessionModel {
         Analytics.shared.track("permission_answered", ["action": Analytics.action(request.action), "decision": decision.rawValue])
         Task {
             // In the session that asked: a subagent's own, for one of its asks shown here.
-            do { try await api.reply(session: request.sessionID, permission: request.id, decision: decision, message: message) } catch { failure = error.localizedDescription }
+            do { try await api.reply(session: request.sessionID, permission: request.id, decision: decision, message: message) } catch { fail(error) }
         }
     }
 
@@ -1290,7 +1298,7 @@ final class SessionModel {
         guard canReach else { return }
         Analytics.shared.track("question_answered", ["kind": form.isQuestion ? "question" : "form"])
         Task {
-            do { try await api.reply(session: form.sessionID, form: form.id, answer: answer, directory: folder(of: form)) } catch { failure = error.localizedDescription }
+            do { try await api.reply(session: form.sessionID, form: form.id, answer: answer, directory: folder(of: form)) } catch { fail(error) }
         }
     }
 

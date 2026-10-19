@@ -5,6 +5,7 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- A conversation no longer opens with "Something went wrong: cancelled" over the composer: when Kuvo Code started its engine over while reading a conversation (or a request was called off for another reason), that showed as an error.
 - After **Build It** leaves Plan mode, the conversation no longer shows "Plan mode: it explores and plans" under the "Build mode" line.
 - The bar over the composer for commands left running in the background no longer flashes for every command the agent runs, nor adds and drops quick ones from its list while a long one runs: a command shows there once it has run for a couple of seconds.
 - Bring the coding agent you already pay for: Claude Code, Codex, Cursor, Grok and Antigravity, signed in as you, under **Subscriptions** at the top of Settings › Accounts. Pick one of their models for a new session, and that agent does the work, on this Mac, with its replies, edits, permissions and questions in the conversation like any session's.
