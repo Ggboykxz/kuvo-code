@@ -19,6 +19,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - The engine's download on first launch tries again by itself, from where it stopped, when the connection drops or stalls; and when the server or a proxy turns it away, it says so, with what it answered, rather than with an error code.
 - The sidebar's rows no longer show under the window's buttons and the sidebar button when you scroll it with the tab bar hidden: the list ends below them, fading out at its top and bottom while there's more to scroll to. Settings' sidebar too.
 - The side panel makes room as it slides in and out, as the sidebar does: the conversation narrows and widens along with it, rather than waiting under the panel and then jumping to its new width.
+- Conversations lay out their messages themselves now, rather than through SwiftUI's lazy list, which guessed the whole conversation's height again at every width. Opening and closing the side panel no longer flashes a blank conversation or makes the text flicker as it settles, sliding is smoother, and scrolling through long conversations and group chats is lighter.
 
 ## 0.5.21
 

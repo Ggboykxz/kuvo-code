@@ -1,0 +1,476 @@
+import AppKit
+import SwiftUI
+
+/// A conversation's rows, laid out here rather than by a lazy stack: each row in view is a
+/// SwiftUI view of its own, measured at the width it's shown at, and the rows out of view keep
+/// the height they were last measured at (or a guess, never measured). The lazy stack guessed
+/// the whole conversation's height again at each new width, and could swing from a screen to
+/// tens of thousands of points in a frame; it made and dropped rows on the way and could leave
+/// the view where it had none. Here what's in view is laid out first, and stays where it is.
+struct RowStack<Item, Row: View>: NSViewRepresentable {
+    let items: [Item]
+    let id: (Item) -> String
+    var spacing: CGFloat = 0
+    /// Whether a row is drawn the same as it was (so it isn't measured again).
+    let same: (Item, Item) -> Bool
+    /// A row's height before it's been measured.
+    let estimate: (Item) -> CGFloat
+    /// Rows added come in, rising a little as they fade in (not a whole history arriving).
+    var animatesNew = true
+    @ViewBuilder let row: (Item, Int) -> Row
+
+    final class Coordinator {
+        var items: [String: Item] = [:]
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> RowStackView { RowStackView() }
+
+    func updateNSView(_ view: RowStackView, context: Context) {
+        let old = context.coordinator.items
+        var now: [String: Item] = [:]
+        var ids: [String] = []
+        var changed: Set<String> = []
+        ids.reserveCapacity(items.count)
+        now.reserveCapacity(items.count)
+        for item in items {
+            let key = id(item)
+            ids.append(key)
+            now[key] = item
+            if let before = old[key], same(before, item) { continue }
+            changed.insert(key)
+        }
+        context.coordinator.items = now
+        let items = items, row = row, estimate = estimate
+        let environment = context.environment
+        view.scrollAnchor = environment.scrollAnchor
+        environment.scrollAnchor?.stack = view
+        view.apply(ids: ids, changed: changed, spacing: spacing, animatesNew: animatesNew && !old.isEmpty, estimate: { estimate(items[$0]) }) { index in
+            AnyView(row(items[index], index).environment(\.self, environment))
+        }
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: RowStackView, context: Context) -> CGSize? {
+        guard let width = proposal.width, width.isFinite, width > 0 else { return nil }
+        return CGSize(width: width, height: nsView.height(for: width))
+    }
+}
+
+final class RowStackView: NSView {
+    override var isFlipped: Bool { true }
+
+    /// One row's view.
+    private final class Host {
+        let controller: NSHostingController<AnyView>
+        var isShown = false
+        /// Put away since its row changed: given its view again as it comes back.
+        var isStale = false
+
+        init(_ root: AnyView) {
+            #if DEBUG
+            ScrollFrameMonitor.rowsMade += 1
+            #endif
+            controller = NSHostingController(rootView: root)
+            controller.sizingOptions = []
+            // A row has no safe area of its own: kept, it was worked out again at every step of
+            // a scroll, as the row moved under the window's title bar.
+            controller.safeAreaRegions = []
+            controller.view.translatesAutoresizingMaskIntoConstraints = true
+        }
+
+        var view: NSView { controller.view }
+
+        func height(at width: CGFloat) -> CGFloat {
+            ceil(controller.sizeThatFits(in: CGSize(width: width, height: 0)).height)
+        }
+    }
+
+    private struct Height {
+        var value: CGFloat
+        /// The width it was measured at; 0 for a guess, -1 measured but changed since.
+        var width: CGFloat
+    }
+
+    weak var scrollAnchor: ScrollAnchor?
+    private var ids: [String] = []
+    private var rowIndex: [String: Int] = [:]
+    private var heights: [String: Height] = [:]
+    private var tops: [CGFloat] = []
+    private var total: CGFloat = 0
+    private var spacing: CGFloat = 0
+    private var hosts: [String: Host] = [:]
+    /// Rows put away lately, latest last: kept, out of the window, for scrolling back to them.
+    private var keptOrder: [String] = []
+    /// Rows added that haven't come in yet.
+    private var fresh: Set<String> = []
+    private var make: ((Int) -> AnyView)?
+    private var width: CGFloat = 0
+    private var watch: NSObjectProtocol?
+    private var isLayingOut = false
+    /// The rows last laid out: scrolling past them lays out again.
+    private var laidOut: Range<Int> = 0..<0
+    /// Rows below one that changed height from within (a part opening) move to their new
+    /// places, rather than jumping there.
+    private var movesRows = false
+    /// The row to keep in view where it was, through a change of width: how far the view's top
+    /// was into it, as a fraction of its height.
+    private var keptThroughWidth: (id: String, offset: CGFloat)?
+    /// Half a screen's worth above and below what's in view is made too, so scrolling finds
+    /// rows made.
+    private static let overscan: CGFloat = 500
+    private static let kept = 40
+
+    private var isFollowingEnd: Bool { scrollAnchor?.isFollowingEnd ?? true }
+
+    // MARK: Rows
+
+    func apply(ids newIDs: [String], changed: Set<String>, spacing: CGFloat, animatesNew: Bool, estimate: (Int) -> CGFloat, make: @escaping (Int) -> AnyView) {
+        self.make = make
+        // What you're reading stays where it is (earlier messages coming in above, rows above
+        // changing), unless the end is followed.
+        let kept = isFollowingEnd ? nil : rowAtTop()
+        if newIDs != ids {
+            let before = Set(ids)
+            ids = newIDs
+            rowIndex = Dictionary(newIDs.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
+            for (id, host) in hosts where rowIndex[id] == nil {
+                host.view.removeFromSuperview()
+                hosts[id] = nil
+            }
+            for id in heights.keys where rowIndex[id] == nil { heights[id] = nil }
+            keptOrder.removeAll { rowIndex[$0] == nil }
+            fresh = fresh.filter { rowIndex[$0] != nil }
+            if animatesNew, let last = newIDs.last, !before.contains(last) {
+                // Only rows added at the end come in; earlier messages put ahead are just there.
+                for id in newIDs.reversed() {
+                    guard !before.contains(id) else { break }
+                    fresh.insert(id)
+                }
+            }
+        }
+        self.spacing = spacing
+        for (index, id) in ids.enumerated() where heights[id] == nil {
+            heights[id] = Height(value: estimate(index), width: 0)
+        }
+        // The rows made get their views again: what's changed in them, and what they're shown
+        // with (the environment) may have. Changed rows out of view are measured when they come.
+        for (id, host) in hosts {
+            guard let index = rowIndex[id] else { continue }
+            // Those put away, once they come back (a reply being written changes the view of
+            // every row, many times a second).
+            guard host.isShown else {
+                host.isStale = true
+                if changed.contains(id), heights[id]?.width ?? 0 > 0 { heights[id]?.width = -1 }
+                continue
+            }
+            host.controller.rootView = root(id, make(index))
+            if changed.contains(id), width > 0 {
+                heights[id] = Height(value: host.height(at: width), width: width)
+            }
+        }
+        for id in changed where hosts[id] == nil && heights[id]?.width ?? 0 > 0 {
+            heights[id]?.width = -1
+        }
+        place()
+        if let kept { restore(kept) }
+        invalidateIntrinsicContentSize()
+        needsLayout = true
+    }
+
+    /// Row `index`'s view, made or given its view again if it changed while put away.
+    private func host(at index: Int) -> Host {
+        let id = ids[index]
+        if let host = hosts[id] {
+            if host.isStale, let make {
+                host.controller.rootView = root(id, make(index))
+                host.isStale = false
+            }
+            return host
+        }
+        let host = Host(root(id, make?(index) ?? AnyView(EmptyView())))
+        hosts[id] = host
+        return host
+    }
+
+    /// The row's view, telling of its height as it changes from within (a part opening).
+    private func root(_ id: String, _ content: AnyView) -> AnyView {
+        AnyView(
+            content
+                .fixedSize(horizontal: false, vertical: true)
+                .onGeometryChange(for: CGFloat.self) { ceil($0.size.height) } action: { [weak self] height in
+                    self?.rowResized(id, to: height)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        )
+    }
+
+    private func rowResized(_ id: String, to height: CGFloat) {
+        if isLayingOut {
+            DispatchQueue.main.async { [weak self] in self?.rowResized(id, to: height) }
+            return
+        }
+        guard let known = heights[id], abs(known.value - height) > 0.5, width > 0, hosts[id]?.isShown == true,
+              let index = rowIndex[id] else { return }
+        keepInPlace(changedAt: tops[index], by: height - known.value) {
+            heights[id] = Height(value: height, width: width)
+            place()
+        }
+        movesRows = true
+        invalidateIntrinsicContentSize()
+        needsLayout = true
+    }
+
+    /// The rows' tops, and the whole height.
+    private func place() {
+        tops.removeAll(keepingCapacity: true)
+        var y: CGFloat = 0
+        for (index, id) in ids.enumerated() {
+            if index > 0 { y += spacing }
+            tops.append(y)
+            y += heights[id]?.value ?? 0
+        }
+        total = y
+    }
+
+    private func frame(at index: Int) -> NSRect {
+        NSRect(x: 0, y: tops[index], width: width, height: heights[ids[index]]?.value ?? 0)
+    }
+
+    // MARK: Size
+
+    func height(for width: CGFloat) -> CGFloat {
+        guard width != self.width else { return total }
+        let first = self.width == 0
+        keptThroughWidth = first || isFollowingEnd ? nil : rowAtTop(asFraction: true)
+        self.width = width
+        // What's in view is measured at the new width now; the rest as it comes into view.
+        for (id, host) in hosts where host.isShown {
+            heights[id] = Height(value: host.height(at: width), width: width)
+        }
+        place()
+        needsLayout = true
+        return total
+    }
+
+    // MARK: Layout
+
+    override func layout() {
+        super.layout()
+        guard !isLayingOut, make != nil, width > 0 else { return }
+        isLayingOut = true
+        defer { isLayingOut = false }
+        watchScrolling()
+        if let anchor = keptThroughWidth {
+            keptThroughWidth = nil
+            restore(anchor, asFraction: true)
+        }
+        // Rows coming into view measured at this width: those above what's in view move it.
+        var range = shownRange()
+        var measuredAny = false
+        for index in range {
+            let id = ids[index]
+            guard let height = heights[id], height.width != width else { continue }
+            let measured = host(at: index).height(at: width)
+            measuredAny = true
+            keepInPlace(changedAt: tops[index], by: measured - height.value) {
+                heights[id] = Height(value: measured, width: width)
+                place()
+            }
+        }
+        if measuredAny {
+            invalidateIntrinsicContentSize()
+            range = shownRange()
+        }
+        laidOut = range
+        let moves = movesRows
+        movesRows = false
+        for index in range {
+            let id = ids[index]
+            let host = host(at: index)
+            let view = host.view
+            let frame = frame(at: index)
+            let cameNow = !host.isShown
+            if view.superview !== self { addSubview(view) }
+            host.isShown = true
+            if cameNow { keptOrder.removeAll { $0 == id } }
+            if fresh.remove(id) != nil {
+                comeIn(view, at: frame)
+            } else if moves, !cameNow, view.frame.size.width == frame.width, view.frame.origin.y != frame.origin.y {
+                move(view, to: frame)
+            } else if view.frame != frame {
+                view.frame = frame
+            }
+        }
+        // Out of view: put away, the latest few kept for coming back to.
+        for (id, host) in hosts where host.isShown {
+            guard let index = rowIndex[id], !range.contains(index) else { continue }
+            host.isShown = false
+            // Out of the window, not just hidden: a row in it hears of each step of a scroll
+            // (rows that light up under the pointer, or have glass, follow where they are),
+            // and lays out and draws again for it.
+            host.view.removeFromSuperview()
+            keptOrder.append(id)
+        }
+        while keptOrder.count > Self.kept {
+            let id = keptOrder.removeFirst()
+            hosts[id]?.view.removeFromSuperview()
+            hosts[id] = nil
+        }
+    }
+
+    /// A row added: rising a little as it fades in, as the lazy stack's rows did.
+    private func comeIn(_ view: NSView, at frame: NSRect) {
+        view.frame = frame.offsetBy(dx: 0, dy: 8)
+        view.alphaValue = 0
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.3
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1)
+            context.allowsImplicitAnimation = true
+            view.animator().frame = frame
+            view.animator().alphaValue = 1
+        }
+    }
+
+    private func move(_ view: NSView, to frame: NSRect) {
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.3
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1)
+            view.animator().frame = frame
+        }
+    }
+
+    /// What's in view of this, with room above and below.
+    private func visibleArea() -> NSRect {
+        guard let clip = enclosingScrollView?.contentView else { return bounds }
+        return convert(clip.bounds, from: clip).insetBy(dx: 0, dy: -Self.overscan)
+    }
+
+    private func shownRange() -> Range<Int> {
+        guard !ids.isEmpty else { return 0..<0 }
+        let area = visibleArea()
+        let first = max(0, tops.partitioningIndex { $0 > area.minY } - 1)
+        let end = min(ids.count, tops.partitioningIndex { $0 >= area.maxY })
+        return first..<max(first, end)
+    }
+
+    // MARK: Keeping what you read in place
+
+    /// The row at the top of the view, and how far the view's top is into it (in points, or as
+    /// a fraction of its height).
+    private func rowAtTop(asFraction: Bool = false) -> (id: String, offset: CGFloat)? {
+        guard let clip = enclosingScrollView?.contentView, !ids.isEmpty, width > 0 else { return nil }
+        let top = convert(clip.bounds, from: clip).minY
+        guard top >= 0 else { return nil }
+        let index = min(ids.count - 1, max(0, tops.partitioningIndex { $0 > top } - 1))
+        let offset = top - tops[index]
+        return (ids[index], asFraction ? offset / max(1, heights[ids[index]]?.value ?? 1) : offset)
+    }
+
+    private func restore(_ anchor: (id: String, offset: CGFloat), asFraction: Bool = false) {
+        guard let index = rowIndex[anchor.id], let clip = enclosingScrollView?.contentView else { return }
+        let into = asFraction ? anchor.offset * (heights[anchor.id]?.value ?? 0) : anchor.offset
+        let now = convert(clip.bounds, from: clip).minY
+        scroll(by: tops[index] + into - now)
+    }
+
+    /// A row at `y` changed height by `delta` (`change`): if it's above what's in view, the view
+    /// moves with what's under it. Not while the end is followed: that keeps to the end.
+    private func keepInPlace(changedAt y: CGFloat, by delta: CGFloat, _ change: () -> Void) {
+        guard abs(delta) > 0.5, !isFollowingEnd, let clip = enclosingScrollView?.contentView else { change(); return }
+        let top = convert(clip.bounds, from: clip).minY
+        change()
+        if y < top - 0.5 { scroll(by: delta) }
+    }
+
+    /// The view this far down; what the conversation doesn't reach yet (it grows in this same
+    /// pass, and SwiftUI sizes it after), once it does.
+    private func scroll(by delta: CGFloat) {
+        guard abs(delta) > 0.5, let scrollView = enclosingScrollView else { return }
+        let clip = scrollView.contentView
+        let origin = clip.bounds.origin
+        let target = max(0, origin.y + delta)
+        clip.scroll(to: NSPoint(x: origin.x, y: target))
+        scrollView.reflectScrolledClipView(clip)
+        let short = target - clip.bounds.origin.y
+        DispatchQueue.main.async { [weak scrollView] in
+            guard let scrollView else { return }
+            let clip = scrollView.contentView
+            if abs(short) > 0.5 {
+                clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: clip.bounds.origin.y + short))
+                scrollView.reflectScrolledClipView(clip)
+            }
+            // SwiftUI's scroll view, told once its update is over: else it puts the view back
+            // where it last knew it to be, the next time the conversation's size changes.
+            NotificationCenter.default.post(name: NSView.boundsDidChangeNotification, object: clip)
+        }
+    }
+
+    // MARK: Going to a row
+
+    /// Where row `id` is, in the scroll view's document, measured at this width.
+    func frameInDocument(of id: String) -> NSRect? {
+        guard let index = rowIndex[id], let document = enclosingScrollView?.documentView, width > 0 else { return nil }
+        if heights[id]?.width != width {
+            let host = host(at: index)
+            if !host.isShown, !keptOrder.contains(id) { keptOrder.append(id) }
+            heights[id] = Height(value: host.height(at: width), width: width)
+            place()
+            invalidateIntrinsicContentSize()
+        }
+        return convert(frame(at: index), to: document)
+    }
+
+    // MARK: Scrolling
+
+    private func watchScrolling() {
+        guard watch == nil, let clip = enclosingScrollView?.contentView else { return }
+        clip.postsBoundsChangedNotifications = true
+        watch = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: clip, queue: nil) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                // Laid out again only when scrolling comes to other rows.
+                if self.shownRange() != self.laidOut { self.needsLayout = true }
+            }
+        }
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        super.viewWillMove(toWindow: newWindow)
+        if newWindow == nil, let watch {
+            NotificationCenter.default.removeObserver(watch)
+            self.watch = nil
+        }
+    }
+
+    #if DEBUG
+    /// The rows in view, where they are in the window (from its top, as SwiftUI's global space
+    /// has it) and in the scroll view's document, for the tests.
+    func shownFrames() -> (window: [String: CGRect], document: [String: CGRect]) {
+        var window: [String: CGRect] = [:], document: [String: CGRect] = [:]
+        guard let root = self.window?.contentView, let doc = enclosingScrollView?.documentView else { return ([:], [:]) }
+        for (id, host) in hosts where host.isShown {
+            guard let index = rowIndex[id] else { continue }
+            let rect = frame(at: index)
+            let inWindow = convert(rect, to: nil)
+            window[id] = CGRect(x: inWindow.minX, y: root.bounds.height - inWindow.maxY, width: rect.width, height: rect.height)
+            document[id] = convert(rect, to: doc)
+        }
+        return (window, document)
+    }
+    #endif
+}
+
+extension Array {
+    /// The first index whose element `belongs`, in an array where those come after all the
+    /// others.
+    func partitioningIndex(where belongs: (Element) -> Bool) -> Int {
+        var low = 0, high = count
+        while low < high {
+            let mid = (low + high) / 2
+            if belongs(self[mid]) { high = mid } else { low = mid + 1 }
+        }
+        return low
+    }
+}
+

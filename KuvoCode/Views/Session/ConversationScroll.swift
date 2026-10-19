@@ -172,7 +172,7 @@ struct ConversationScroll<Rows: View>: View {
             // the row's old room, and following "the bottom" lands below the rows, looking at
             // nothing, each time a little less. So first to the row's top, which is where it's
             // laid out, so the rows from there are measured, then to the end.
-            if let folded = fold.folded, folded.until > .now, !scrolling.isOn,
+            if anchor.stack == nil, let folded = fold.folded, folded.until > .now, !scrolling.isOn,
                new.isPastEnd || (scroller.followsEnd && old.height - new.height > new.visible) {
                 fold.folded = nil
                 endFollower.settle {
@@ -272,6 +272,22 @@ extension ConversationScroll {
     /// are measured as they're made, so it's asked again once they have been; meanwhile what's
     /// in view isn't kept in place (that would keep it from getting there). Then `then`.
     fileprivate func go(to id: String, anchor point: UnitPoint, _ proxy: ScrollViewProxy, then: @escaping () -> Void) {
+        // Rows laid out by a stack of their own: it knows where the row is.
+        if let stack = anchor.stack {
+            func scroll() {
+                guard let frame = stack.frameInDocument(of: id) else { return }
+                anchor.scroll(to: max(0, frame.minY + frame.height * point.y - spot.geometry.height * point.y))
+            }
+            scroll()
+            Task {
+                // Again once the rows on the way are measured, which may have moved it.
+                try? await Task.sleep(for: .milliseconds(60))
+                scroll()
+                try? await Task.sleep(for: .milliseconds(40))
+                then()
+            }
+            return
+        }
         anchor.hold(for: .milliseconds(500))
         proxy.scrollTo(id, anchor: point)
         #if DEBUG
@@ -490,6 +506,9 @@ final class ScrollAnchor {
     private var boundsWatch: NSObjectProtocol?
     #endif
     var isFollowingEnd = true
+    /// The rows, when they're laid out by a `RowStack` rather than the lazy stack: it keeps
+    /// them in place itself, and knows where each is.
+    weak var stack: RowStackView?
 
     /// The rows laid out, where they are in the conversation, and those shown now. A row that
     /// goes and comes back where it was (the whole conversation hidden a moment) isn't told its
@@ -505,7 +524,7 @@ final class ScrollAnchor {
     /// What it did lately, the one in use, and where its rows are, for the scrolling test.
     static var notes: [String] = []
     static weak var latest: ScrollAnchor?
-    var conversationFrames: [String: CGRect] { frames }
+    var conversationFrames: [String: CGRect] { stack?.shownFrames().document ?? frames }
     func noteWhere(_ id: String, _ when: String) {
         let origin = Int(scrollView?.contentView.bounds.origin.y ?? -1)
         let frame = frames[id].map { "\(Int($0.minY))…\(Int($0.maxY))" } ?? "not made"
@@ -588,7 +607,7 @@ final class ScrollAnchor {
     /// lazy stack could leave the view where it had made no rows, and show nothing there until
     /// you scrolled.
     func showsRows() -> Bool {
-        guard let scrollView, let document = scrollView.documentView else { return true }
+        guard let scrollView, let document = scrollView.documentView, !frames.isEmpty else { return true }
         let visible = scrollView.contentView.bounds
         // A conversation shorter than the view has room under it.
         guard document.frame.height > visible.height + 40 else { return true }

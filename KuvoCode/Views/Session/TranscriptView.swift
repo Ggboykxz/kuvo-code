@@ -52,22 +52,15 @@ struct TranscriptView: View {
                 .id("earlier")
                 .onAppear { loadEarlier() }
             }
-            ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                RowView(row: row, directory: model.session.location.directory, folders: model.folders, cancel: model.cancelPending, undo: model.undo(from:), redo: model.redo, fork: fork, retry: model.retry(_:), buildPlan: model.agent == "plan" && !isOffline ? { model.buildPlan() } as () -> Void : nil, reply: model.reply(to:))
-                    .equatable()
-                    .environment(\.findHighlight, find.highlight(for: row.id))
-                    .conversationRow(row.id)
-                    .id(row.id)
-                    #if DEBUG
-                    .onAppear {
-                        ScrollFrameMonitor.rowsMade += 1
-                        ScrollFrameMonitor.rowsMadeByID[row.id, default: 0] += 1
-                    }
-                    .modifier(RowProbe(id: row.id))
-                    #endif
-                    .padding(.top, index == 0 ? 0 : row.spacing(after: rows[index - 1]))
-                    .transition(Self.rowTransition)
+            #if DEBUG
+            if Perf.lazy {
+                stackRows(rows)
+            } else {
+                rowStack(rows)
             }
+            #else
+            rowStack(rows)
+            #endif
         }
         // The reply being written draws its words from it.
         .environment(model.writing)
@@ -194,6 +187,51 @@ struct TranscriptView: View {
     /// The rows' words, for Find.
     private func findRows() -> [ConversationFind.Row] {
         rows.map { ConversationFind.Row(id: $0.id, parts: $0.findParts) }
+    }
+
+    /// The rows, laid out by a stack of their own (see `RowStack`).
+    private func rowStack(_ rows: [Row]) -> some View {
+        RowStack(items: rows, id: \.id, same: ==, estimate: Self.estimate, animatesNew: !rowCache.isBulk) { row, index in
+            RowView(row: row, directory: model.session.location.directory, folders: model.folders, cancel: model.cancelPending, undo: model.undo(from:), redo: model.redo, fork: fork, retry: model.retry(_:), buildPlan: model.agent == "plan" && !isOffline ? { model.buildPlan() } as () -> Void : nil, reply: model.reply(to:))
+                .equatable()
+                .environment(\.findHighlight, find.highlight(for: row.id))
+                .padding(.top, index == 0 ? 0 : row.spacing(after: rows[index - 1]))
+        }
+    }
+
+    #if DEBUG
+    /// The rows, in the lazy stack (KUVO_PERF_LAZY).
+    @ViewBuilder private func stackRows(_ rows: [Row]) -> some View {
+        ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+            RowView(row: row, directory: model.session.location.directory, folders: model.folders, cancel: model.cancelPending, undo: model.undo(from:), redo: model.redo, fork: fork, retry: model.retry(_:), buildPlan: model.agent == "plan" && !isOffline ? { model.buildPlan() } as () -> Void : nil, reply: model.reply(to:))
+                .equatable()
+                .environment(\.findHighlight, find.highlight(for: row.id))
+                .conversationRow(row.id)
+                .id(row.id)
+                #if DEBUG
+                .onAppear {
+                    ScrollFrameMonitor.rowsMade += 1
+                    ScrollFrameMonitor.rowsMadeByID[row.id, default: 0] += 1
+                }
+                .modifier(RowProbe(id: row.id))
+                #endif
+                .padding(.top, index == 0 ? 0 : row.spacing(after: rows[index - 1]))
+                .transition(Self.rowTransition)
+        }
+    }
+    #endif
+
+    /// A row's height before it's measured: about what its words take at a column's width.
+    private static func estimate(_ row: Row) -> CGFloat {
+        switch row {
+        case .assistant(let message, _), .more(let message, _):
+            let characters = message.content.reduce(0) { if case .text(let part) = $1 { $0 + part.text.count } else { $0 } }
+            return 24 + CGFloat(characters / 95 + 1) * 24
+        case .user: return 90
+        case .steps: return 40
+        case .turnEnd: return 34
+        default: return 60
+        }
     }
 
     /// The messages before those read, put ahead of them: what you're reading stays where it is.
@@ -1645,6 +1683,8 @@ enum Perf {
     static let noAnimation = ProcessInfo.processInfo.environment["KUVO_PERF_NO_ANIM"] != nil
     /// KUVO_PERF_TEXTUAL: replies drawn by Textual, as they were, instead of TextKit (`ReplyView`).
     static let textual = ProcessInfo.processInfo.environment["KUVO_PERF_TEXTUAL"] != nil
+    /// KUVO_PERF_LAZY: rows in the lazy stack, as they were, instead of `RowStack`.
+    static let lazy = ProcessInfo.processInfo.environment["KUVO_PERF_LAZY"] != nil
 }
 #endif
 

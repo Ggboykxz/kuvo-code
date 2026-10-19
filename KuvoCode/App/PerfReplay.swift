@@ -420,12 +420,13 @@ enum PerfOpen {
                 let height = Int(scroll?.documentView?.frame.height ?? -1)
                 let view = scroll.map { $0.convert($0.bounds, to: nil) } ?? .zero
                 let top = (scroll?.window?.contentView?.bounds.height ?? 0) - view.maxY
-                let shown = RowProbe.frames.filter { $0.value.maxY > top + 40 && $0.value.minY < top + view.height - 100 }.keys
+                let probed = ScrollAnchor.latest?.stack?.shownFrames().window ?? RowProbe.frames
+                let shown = probed.filter { $0.value.maxY > top + 40 && $0.value.minY < top + view.height - 100 }.keys
                 let end = lastRow()
                 let insets = scroll.map { "insets \(Int($0.contentInsets.top))/\(Int($0.contentInsets.bottom)), view \(Int($0.contentView.bounds.height))" } ?? ""
-                let lastFrame = end.flatMap { RowProbe.frames[$0] }.map { ", last row \(Int($0.minY))…\(Int($0.maxY))" } ?? ""
+                let lastFrame = end.flatMap { probed[$0] }.map { ", last row \(Int($0.minY))…\(Int($0.maxY))" } ?? ""
                 // KUVO_PERF_OPEN_ROWS: each row in view too, where it is and how tall.
-                let each = ProcessInfo.processInfo.environment["KUVO_PERF_OPEN_ROWS"] == nil ? "" : "; " + shown.compactMap { id in RowProbe.frames[id].map { (id, $0) } }.sorted { $0.1.minY < $1.1.minY }.map { "\($0.0.suffix(8)) \(Int($0.1.minY))+\(Int($0.1.height))" }.joined(separator: ", ")
+                let each = ProcessInfo.processInfo.environment["KUVO_PERF_OPEN_ROWS"] == nil ? "" : "; " + shown.compactMap { id in probed[id].map { (id, $0) } }.sorted { $0.1.minY < $1.1.minY }.map { "\($0.0.suffix(8)) \(Int($0.1.minY))+\(Int($0.1.height))" }.joined(separator: ", ")
                 let state = "at \(origin) of \(height), \(shown.count) rows in view\(end.map { shown.contains($0) ? ", the last among them" : ", not the last" } ?? ""), \(insets)\(lastFrame)\(each)"
                 if state != last {
                     lines.append(String(format: "%5.0f ms ", (ContinuousClock.now - began) / .milliseconds(1)) + state)
@@ -476,7 +477,8 @@ enum PerfRead {
             // (from the top), less the edges under the header and the composer.
             let rect = scroll.convert(scroll.bounds, to: nil)
             let top = root.bounds.height - rect.maxY
-            return Snapshot(frames: RowProbe.frames, inConversation: ScrollAnchor.latest?.conversationFrames ?? [:], origin: scroll.contentView.bounds.origin.y,
+            let stacked = ScrollAnchor.latest?.stack?.shownFrames()
+            return Snapshot(frames: stacked?.window ?? RowProbe.frames, inConversation: stacked?.document ?? ScrollAnchor.latest?.conversationFrames ?? [:], origin: scroll.contentView.bounds.origin.y,
                             height: scroll.documentView?.frame.height ?? 0, view: (top + 60)...(top + rect.height - 120))
         }
         func send(_ delta: CGFloat, phase: CGScrollPhase) {

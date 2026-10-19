@@ -27,15 +27,13 @@ struct GroupChatView: View {
         ConversationScroll(scroller: scroller, spacing: 18, change: [messages.last?.id, speaker?.id, String(messages.count)], quote: { text in
             addQuote(text, how: "selection")
         }) {
-            ForEach(messages) { message in
+            // Laid out by a stack of their own, as a session's rows are (see `RowStack`).
+            RowStack(items: messages, id: \.id, spacing: 18, same: ==, estimate: { 70 + CGFloat($0.text.count / 95) * 24 }) { message, _ in
                 GroupMessageRow(message: message, author: message.author.flatMap { bots.bot($0) }, members: members,
                                 reply: { reply(to: message) }, undo: { undo(from: message) },
                                 startWork: message.tasks?.contains { $0.state == .proposed } == true ? { groups.startWork(message.id, in: group.id) } : nil)
                     .equatable()
                     .environment(\.findHighlight, find.highlight(for: message.id))
-                    .conversationRow(message.id)
-                    .id(message.id)
-                    .transition(.opacity.combined(with: .offset(y: 8)))
             }
             if let speaker {
                 TypingRow(bot: speaker)
