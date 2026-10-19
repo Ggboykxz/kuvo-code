@@ -25,7 +25,9 @@ struct SessionView: View {
             .environment(\.isOffline, Self.offlineMachine(of: model, in: app) != nil)
             .navigationTitle(model.session.title ?? "New Session")
             // A conversation as last seen is read once its machine is back.
-            .task(id: model.id) { if !model.isLoaded, !model.isCopy { await model.load() } }
+            // A copy shown while the engine reads (this Mac's) is read too; one waiting for its
+            // machine is read once the machine is back.
+            .task(id: model.id) { if !model.isLoaded, !model.waitsForEngine { await model.load() } }
             .task(id: model.session.location.directory) { await catalog.loadCommands(in: model.session.location.directory) }
     }
 

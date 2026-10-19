@@ -135,7 +135,7 @@ final class SessionModel {
     /// starting), not the engine's.
     private(set) var isCopy = false
     /// Made from a copy: no engine to read from until its machine is back.
-    private var waitsForEngine = false
+    private(set) var waitsForEngine = false
     /// Whether its engine can be reached (a machine's is connected); set by the workspace.
     @ObservationIgnored var isReachable: () -> Bool = { true }
     /// What's done here waits while its engine can't be reached: it would only fail.
