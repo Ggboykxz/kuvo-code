@@ -4,7 +4,7 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
-## Unreleased
+## 0.5.14
 
 - Models show once the engine has finished starting, even when that takes longer than a minute, like when a macOS folder prompt is answered late. The composer could stay on "Choose a Model".
 - The live view of a machine's browser no longer misses a change that left the picture the same size, like a box ticked or a letter typed.
