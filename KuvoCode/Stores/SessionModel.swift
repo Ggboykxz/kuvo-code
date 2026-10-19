@@ -59,9 +59,28 @@ final class SessionModel {
     private(set) var inlineShells: Set<String> = []
     /// The background commands' bar shows only its line, which still says they run.
     var hidesBackgroundJobs = false
+    /// The subagents' bar shows only its line, which still says they work.
+    var hidesSubagents = false
     private(set) var forms: [FormRequest] = []
     /// How much of the context window the last step used.
     private(set) var contextUsed: Int?
+    /// The subagents its agent handed work to, in the order it did, once each has a session.
+    private(set) var subagents: [Subagent] = []
+
+    /// A subagent this conversation's agent handed a task to: its own session, which you can
+    /// watch, message, stop and give another model.
+    struct Subagent: Equatable, Identifiable {
+        /// Its session.
+        var id: String
+        /// The step that handed it the task.
+        var call: String
+        var task: String
+        var agent: String?
+        /// Sent off to work on its own while the agent goes on (the step is done at once).
+        var isBackground: Bool
+        /// The step that waits on it is done: it is too, unless it was sent off in the background.
+        var isStepDone: Bool
+    }
 
     private func transcriptChanged() {
         transcriptVersion &+= 1
@@ -77,12 +96,30 @@ final class SessionModel {
         if inlineShells != inline { inlineShells = inline }
         let used = Self.contextUsed(in: transcript.messages)
         if contextUsed != used { contextUsed = used }
+        let helpers = Self.subagents(in: transcript.messages)
+        if subagents != helpers { subagents = helpers }
         // Answers in progress go once their question has (answered, or dismissed).
         if !questionProgress.isEmpty {
             let open = Set(forms.map(\.id))
             let kept = questionProgress.filter { open.contains($0.key) }
             if kept.count != questionProgress.count { questionProgress = kept }
         }
+    }
+
+    private static func subagents(in messages: [Message]) -> [Subagent] {
+        var found: [Subagent] = []
+        for message in messages {
+            guard case .assistant(let step) = message else { continue }
+            for case .tool(let call) in step.content where call.name == "subagent" {
+                guard let session = call.state.metadata?["sessionID"]?.string else { continue }
+                let input = call.state.input
+                let subagent = Subagent(id: session, call: call.id, task: input?["description"]?.string ?? "", agent: input?["agent"]?.string,
+                                        isBackground: input?["background"]?.bool == true, isStepDone: call.state.isFinished)
+                // One the agent picked up again (by its session) is where it was first, as it is now.
+                if let index = found.firstIndex(where: { $0.id == session }) { found[index] = subagent } else { found.append(subagent) }
+            }
+        }
+        return found
     }
 
     /// Only the last messages: what runs now is at the end.
@@ -1073,7 +1110,9 @@ final class SessionModel {
         // Another model while it works: the step under way stops and the run goes on with the new
         // one at once (or says why it can't), rather than the switch waiting for the next step,
         // which a stalled step never reaches. Not while it waits on you: that would lose the ask.
-        let switchesNow = transcript.isRunning && !model.sameModel(as: session.model) && permissions.isEmpty && forms.isEmpty
+        // A subagent's model changes from its next step: stopping its step, even to resume, ends
+        // the wait of the agent that started it, which then gives up on it.
+        let switchesNow = !isSubagent && transcript.isRunning && !model.sameModel(as: session.model) && permissions.isEmpty && forms.isEmpty
         session.model = model
         Task {
             do {

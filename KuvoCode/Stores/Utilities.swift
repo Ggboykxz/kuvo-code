@@ -20,6 +20,9 @@ final class Utilities {
         case browser
         /// A page of a machine's browser; nil for a new tab that hasn't gone anywhere yet.
         case machinePage(String, String?)
+        /// A subagent at work for the conversation, by its session, with the folder it works in:
+        /// what it does as it does it, and a composer to talk to it.
+        case subagent(String, folder: String)
     }
 
     struct Tab: Identifiable, Hashable {
@@ -469,6 +472,19 @@ final class Utilities {
             tabs.insert(added, at: tabs.firstIndex(where: { $0.id == id }) ?? tabs.count)
         }
         close(id)
+    }
+
+    /// A subagent of `session`'s in a tab of that conversation's panel (its own, if it has one),
+    /// and the panel in view: you asked to see it.
+    func showSubagent(_ id: String, folder: String, of session: String) {
+        Analytics.shared.track("panel_opened", ["tool": "subagent"])
+        let owner = panelOf(session)
+        if let tab = tabs.first(where: { $0.owner == owner && $0.kind == .subagent(id, folder: folder) }) {
+            selection = tab.id
+        } else {
+            add(Tab(kind: .subagent(id, folder: folder), owner: owner))
+        }
+        revealRequest += 1
     }
 
     /// Shows the Changes tab and brings the panel into view: you asked to see it.

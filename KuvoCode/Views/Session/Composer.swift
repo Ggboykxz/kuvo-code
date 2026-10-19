@@ -56,6 +56,15 @@ struct Composer: View {
     /// ↑ in an empty composer brings back the last waiting message; false if there's none.
     var onEditLast: () -> Bool = { false }
     var onStop: () -> Void
+    /// The mode and approval chip: hidden where they're not yours to pick (a subagent's are its
+    /// agent's).
+    var showsMode = true
+    /// The models its picker offers, when they aren't the session's (a subagent's: the engine's).
+    var scope: ModelScope?
+    /// Takes the keyboard as it shows; a subagent's beside the conversation leaves it there.
+    var focusesOnAppear = true
+    /// What the empty field says, when it isn't the usual.
+    var prompt: String?
 
     @Environment(Catalog.self) private var catalog
     @Environment(Workspace.self) private var workspace
@@ -68,6 +77,7 @@ struct Composer: View {
     /// The models its picker offers: a session's own agent's (an outside agent can't hand over
     /// partway) or the engine's; for a new session, both, on this Mac (the outside agents run here).
     private var modelScope: ModelScope {
+        if let scope { return scope }
         if let session, let current = workspace.session(session) {
             if OutsideAgents.isAgentSession(current), let provider = current.model?.providerID { return .agent(provider) }
             return .engine
@@ -254,8 +264,10 @@ struct Composer: View {
                         .buttonStyle(.plain)
                         .help("Attach Files… You can also drop files here, or paste them.")
                         // Set on the engine: not while it's out of reach.
-                        ModeChip(agent: agent, approval: approval, onSelectAgent: onSelectAgent, onSelectApproval: onSelectApproval)
-                            .disabled(isOffline)
+                        if showsMode {
+                            ModeChip(agent: agent, approval: approval, onSelectAgent: onSelectAgent, onSelectApproval: onSelectApproval)
+                                .disabled(isOffline)
+                        }
                         ModelChip(selection: model, onSelect: onSelectModel, scope: modelScope)
                             .disabled(isOffline)
                         if let worktree {
@@ -313,7 +325,7 @@ struct Composer: View {
         // Where you type is where you work: the window's commands follow.
         .onChange(of: isFocused || answering != nil) { _, focused in if focused { composerFocused?() } }
         .onAppear {
-            focusAtEnd()
+            if focusesOnAppear { focusAtEnd() }
             #if DEBUG
             // KUVO_DEMO_COMPOSER_FILES: comma-separated paths to show as attached.
             if files.isEmpty, let list = ProcessInfo.processInfo.environment["KUVO_DEMO_COMPOSER_FILES"] {
@@ -366,6 +378,7 @@ struct Composer: View {
     }
 
     private var placeholder: String {
+        if let prompt { return prompt }
         if isRunning { return "Add to the task, or ⌘↩ to queue a follow-up…" }
         if let bot { return bot.job.isEmpty ? "Tell \(bot.name) its job…" : "Message \(bot.name)…" }
         if folders.first.map(Workspace.isChat) == true { return "Ask anything…" }

@@ -132,6 +132,11 @@ private struct BottomStack: View {
         (workspace.shellJobs[model.id] ?? []).filter { workspace.lastingShellJobs.contains($0.id) && !model.inlineShells.contains($0.id) }
     }
 
+    /// Subagents its agent handed work to that are at it now.
+    private var subagentsAtWork: [SessionModel.Subagent] {
+        model.subagents.filter(workspace.isWorking)
+    }
+
     var body: some View {
         GlassEffectContainer(spacing: 12) {
             VStack(spacing: 12) {
@@ -170,6 +175,12 @@ private struct BottomStack: View {
                     MachineOfflineBar(engine: engine)
                         .glassEffect(.regular, in: .rect(cornerRadius: Metrics.composerRadius))
                         .glassEffectID("offline", in: glass)
+                        .transition(.opacity)
+                }
+                if !subagentsAtWork.isEmpty {
+                    SubagentsBar(subagents: subagentsAtWork, folder: model.session.location.directory, session: model.id, isHidden: $model.hidesSubagents)
+                        .glassEffect(.regular, in: .rect(cornerRadius: Metrics.composerRadius))
+                        .glassEffectID("subagents", in: glass)
                         .transition(.opacity)
                 }
                 if !backgroundJobs.isEmpty {
@@ -234,6 +245,7 @@ private struct BottomStack: View {
             }
             .animation(.ui, value: model.waiting.isEmpty)
             .animation(.ui, value: backgroundJobs.map(\.id))
+            .animation(.ui, value: subagentsAtWork.map(\.id))
             .animation(.ui, value: offlineMachine == nil)
             .animation(.ui, value: model.failure)
             .animation(.ui, value: app.browserAsks.asks(for: model.session.id).map(\.id))

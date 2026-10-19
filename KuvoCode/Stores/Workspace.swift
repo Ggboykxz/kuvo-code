@@ -357,6 +357,11 @@ final class Workspace {
         return model
     }
 
+    /// A subagent's task, as its session is called, once it's been read.
+    func subagentTitle(_ id: String) -> String? {
+        models[id]?.session.title
+    }
+
     /// Each session's conversation as text, for searching it, until the session changes.
     @ObservationIgnored private var conversationTexts: [String: (updated: Double, text: String)] = [:]
 

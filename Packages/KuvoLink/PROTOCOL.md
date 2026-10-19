@@ -178,6 +178,12 @@ itself. A host serves:
   `GET api/shell` (those running in the folder `x-opencode-directory` names), `GET
   api/shell/<id>` and `GET api/shell/<id>/output?cursor=&limit=`; running one or removing it is
   refused. Their `shell.created`, `shell.exited` and `shell.deleted` come with `api/event`.
+  A subagent's session (`metadata.sessionID` of the `subagent` step that started it) is a session
+  like any other, which is how the phone watches and talks to one, as the Mac's subagent tab does:
+  read its messages, prompt it (`steer` while it works: it reads it at its next step; once it's
+  done, it carries on), `POST api/session/<id>/interrupt` to stop it (the agent waiting on it
+  hears it was cancelled, and carries on), and choose its model. Choose it without interrupting:
+  an interrupt, even with `resume`, ends that agent's wait, and it gives up on the subagent.
 - `POST kuvo/shell/<id>/stop` (`{"session": "ses_…"}`, which may be left out): stops a command an
   agent left running, as Stop over the Mac's composer does: SIGTERM to its process group, so the
   engine sees it end and tells the agent, with what it printed; only if that can't be sent, the

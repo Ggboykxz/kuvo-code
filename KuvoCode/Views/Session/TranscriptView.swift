@@ -619,6 +619,9 @@ private struct RowView: View, Equatable {
             if let work = GroupWork.parse(CommandMessages.shared.text(of: message)) {
                 GroupWorkRow(id: message.id, chat: work.chat, chatID: work.id, task: work.task, at: message.time.created)
             }
+        case .user(let message) where SubagentTask.parse(CommandMessages.shared.text(of: message)) != nil:
+            // A subagent's task, in its own tab: the agent's words, not yours.
+            AgentMessageRow(id: message.id, from: "the main agent", session: "", text: SubagentTask.parse(CommandMessages.shared.text(of: message)) ?? "", at: message.time.created)
         case .user(let message) where CommandMessages.shared.text(of: message).hasPrefix(Wakes.marker):
             WakeRow(note: String(CommandMessages.shared.text(of: message).dropFirst(Wakes.marker.count)), at: message.time.created)
         case .user(let message):

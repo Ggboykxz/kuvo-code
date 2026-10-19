@@ -9,6 +9,8 @@ struct SubagentRow: View {
     let call: Message.ToolCall
     let directory: String
     @Environment(Workspace.self) private var workspace
+    @Environment(AppModel.self) private var app
+    @Environment(Catalog.self) private var catalog
     @State private var model: SessionModel?
     @State private var isExpanded = false
 
@@ -30,8 +32,7 @@ struct SubagentRow: View {
     private var failure: StructuredError? {
         guard !isWorking else { return nil }
         if case .failed(_, let error, _, _) = call.state { return error }
-        guard let model, case .assistant(let step)? = model.transcript.messages.last(where: { if case .assistant = $0 { true } else { false } }) else { return nil }
-        return step.error
+        return model?.lastStepError
     }
 
     private var title: String {
@@ -41,14 +42,24 @@ struct SubagentRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button {
-                withAnimation(.ui) { isExpanded.toggle() }
-            } label: {
-                header
+            HStack(spacing: 6) {
+                Button {
+                    withAnimation(.ui) { isExpanded.toggle() }
+                } label: {
+                    header
+                }
+                .buttonStyle(TextButtonStyle(outset: true))
+                .disabled(session == nil)
+                .help(isExpanded ? "Hide its steps" : "Show its steps")
+                if let session {
+                    Button("Open") {
+                        app.utilities.showSubagent(session, folder: directory, of: model?.session.parentID ?? session)
+                    }
+                    .buttonStyle(TextButtonStyle())
+                    .font(.callout)
+                    .help("Open it beside the conversation: watch it, talk to it, stop it or give it another model")
+                }
             }
-            .buttonStyle(TextButtonStyle(outset: true))
-            .disabled(session == nil)
-            .help(isExpanded ? "Hide its steps" : "Show its steps")
 
             if isExpanded, let session {
                 SubagentSteps(id: session, task: input?["prompt"]?.string, directory: directory)
@@ -82,7 +93,8 @@ struct SubagentRow: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             if let agent = input?["agent"]?.string {
-                Text(agent)
+                // As the agent is called, as everywhere else ("General").
+                Text(catalog.agents.first { $0.id == agent }?.name ?? agent)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -131,13 +143,6 @@ struct SubagentRow: View {
 
     /// "Ran a command", "Thinking…": its latest step, in a few words.
     private var currentStep: String {
-        guard let model, case .assistant(let step)? = model.transcript.messages.last(where: { if case .assistant = $0 { true } else { false } }),
-              let block = step.content.last else { return "Working…" }
-        switch block {
-        case .tool(let call): return StepsSummary.summary(of: [call])
-        case .reasoning: return "Thinking…"
-        case .text: return "Writing…"
-        default: return "Working…"
-        }
+        model?.currentStep ?? "Working…"
     }
 }
