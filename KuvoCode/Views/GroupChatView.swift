@@ -504,6 +504,7 @@ private struct GroupComposer: View {
                 .accessibilityIdentifier("composer")
                 .onChange(of: focusRequest) { focusAtEnd() }
                 .onKeyPress(.return, phases: .down) { press in
+                    if Composer.isComposing { return .ignored }
                     // Return sends; Shift-Return starts a new line.
                     if press.modifiers.contains(.shift) || press.modifiers.contains(.option) {
                         Composer.newLine(in: $text)

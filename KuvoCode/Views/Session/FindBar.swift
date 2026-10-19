@@ -271,6 +271,7 @@ struct FindBar: View {
                     .textFieldStyle(.plain)
                     .focused($isFocused)
                     .onKeyPress(.return, phases: .down) { press in
+                        if Composer.isComposing { return .ignored }
                         find.step(press.modifiers.contains(.shift) ? -1 : 1)
                         return .handled
                     }

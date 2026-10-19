@@ -1117,7 +1117,11 @@ private struct CommentEditor: View {
                 .font(.system(size: 13))
                 .lineLimit(2...8)
                 .focused($focused)
-                .onKeyPress(.escape) { cancel(); return .handled }
+                .onKeyPress(.escape) {
+                    if Composer.isComposing { return .ignored }
+                    cancel()
+                    return .handled
+                }
                 // Here, not on the button: a button's ⌘Return would take it from the composer too.
                 .onKeyPress(.return, phases: .down) { press in
                     guard press.modifiers.contains(.command) else { return .ignored }

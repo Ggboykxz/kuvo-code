@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Typing Japanese, Chinese or Korean, Return picks the input method's candidate, and Escape and the arrow keys stay with it, rather than sending the message, stopping the agent or going back through messages. Group chats, review comments and Find too.
 - Stop keeps what you sent for the agent's next step ahead of the messages you queued, so Resume sends it first, and Redo after an undo takes back the quotes the undone message brought to the composer.
 - A message sent again with Try Again that can't go (the engine restarting, a machine dropping) comes back to the composer. It was gone from the conversation, and a "Sending" bubble stayed for good.
 - Cancelling a message while it shows "Sending" stops it. It came back moments later and the agent ran it anyway.

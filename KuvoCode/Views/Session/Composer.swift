@@ -141,6 +141,7 @@ struct Composer: View {
                 .lineLimit(1...12)
                 .focused($isFocused)
                 .onKeyPress(.return, phases: .down) { press in
+                    if Self.isComposing { return .ignored }
                     if let commandMatches, press.modifiers.isEmpty {
                         runCommand(commandMatches[min(commandIndex, commandMatches.count - 1)])
                         return .handled
@@ -162,6 +163,7 @@ struct Composer: View {
                     return .handled
                 }
                 .onKeyPress(.tab) {
+                    if Self.isComposing { return .ignored }
                     if let commandMatches {
                         text = "/" + commandMatches[min(commandIndex, commandMatches.count - 1)].name + " "
                         return .handled
@@ -171,6 +173,7 @@ struct Composer: View {
                     return .handled
                 }
                 .onKeyPress(.escape) {
+                    if Self.isComposing { return .ignored }
                     // Closes the "/" or "@" list first; otherwise stops the agent, as ⌘. does.
                     if commandMatches != nil {
                         dismissedCommands = true
@@ -185,6 +188,7 @@ struct Composer: View {
                     return .handled
                 }
                 .onKeyPress(.upArrow) {
+                    if Self.isComposing { return .ignored }
                     if let commandMatches {
                         commandIndex = max(0, min(commandIndex, commandMatches.count - 1) - 1)
                         return .handled
@@ -198,6 +202,7 @@ struct Composer: View {
                     return recall(-1) ? .handled : .ignored
                 }
                 .onKeyPress(.downArrow) {
+                    if Self.isComposing { return .ignored }
                     if let commandMatches {
                         commandIndex = min(commandMatches.count - 1, commandIndex + 1)
                         return .handled
@@ -311,6 +316,14 @@ struct Composer: View {
     private func focusAtEnd() {
         isFocused = true
         Self.cursorToEnd(of: text)
+    }
+
+    /// An input method is composing in the field that has the keyboard (Japanese, Chinese,
+    /// Korean…): Return picks its candidate, Escape cancels it and the arrows move through its
+    /// list, rather than sending, stopping the agent or going back through messages. For every
+    /// composer.
+    static var isComposing: Bool {
+        (NSApp.keyWindow?.firstResponder as? NSTextView)?.hasMarkedText() == true
     }
 
     /// A new line where the cursor is (Shift-Return), in the field that has the keyboard; at the
