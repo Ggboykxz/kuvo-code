@@ -119,12 +119,15 @@ private struct SubagentsBarRow: View {
             // Whole, in a narrow conversation too: the step gives way first.
             .fixedSize()
             .help("Watch it beside the conversation, and talk to it")
-            Button("Stop", systemImage: "stop.circle") { model?.stop() }
-                .buttonStyle(TextButtonStyle())
-                .font(.system(size: 13))
-                .fixedSize()
-                .disabled(model == nil)
-                .help("Stop it: the agent hears it was stopped, and carries on")
+            // A coding agent's subagent stops with the conversation it works for.
+            if !(model.map { OutsideAgents.isAgentSession($0.session) } ?? false) {
+                Button("Stop", systemImage: "stop.circle") { model?.stop() }
+                    .buttonStyle(TextButtonStyle())
+                    .font(.system(size: 13))
+                    .fixedSize()
+                    .disabled(model == nil)
+                    .help("Stop it: the agent hears it was stopped, and carries on")
+            }
         }
         .task(id: subagent.id) {
             let model = await workspace.subagentModel(for: subagent.id, in: folder)
@@ -184,6 +187,8 @@ private struct SubagentConversation: View {
     @LastModel private var lastModel
 
     private var isWorking: Bool { model.isRunning || workspace.running.contains(model.id) }
+    /// A coding agent's (Claude Code's, say): its agent runs it, and it can't be written to here.
+    private var isAgentsOwn: Bool { OutsideAgents.isAgentSession(model.session) }
     /// Its machine is out of reach: you can write, not send.
     private var isOffline: Bool { SessionView.offlineMachine(of: model, in: app) != nil }
 
@@ -213,7 +218,19 @@ private struct SubagentConversation: View {
                             FailureBar(text: failure) { model.failure = nil }
                                 .glassEffect(.regular, in: .rect(cornerRadius: Metrics.composerRadius))
                         }
-                        composer
+                        if isAgentsOwn {
+                            // Its agent runs it for the conversation that started it, and takes
+                            // nothing from elsewhere.
+                            Label("Its agent runs it for the conversation that started it: write there to steer it, or stop it.", systemImage: "info.circle")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 10)
+                                .glassEffect(.regular, in: .rect(cornerRadius: Metrics.composerRadius))
+                        } else {
+                            composer
+                        }
                     }
                     .padding(.horizontal, 12)
                     .padding(.bottom, 12)

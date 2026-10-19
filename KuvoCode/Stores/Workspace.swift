@@ -366,7 +366,18 @@ final class Workspace {
     /// or tab of its own; its model gets its events like any other.
     func subagentModel(for id: String, in folder: String) async -> SessionModel? {
         if let model = models[id] { return model }
-        guard let api = api(forFolder: folder), let session = try? await api.session(id) else { return nil }
+        // A coding agent's subagent is its bridge's; any other, the engine's of its folder.
+        let bridge = agents?.api
+        let places = bridgeSessions.contains(id) ? [bridge, api(forFolder: folder)] : [api(forFolder: folder), bridge]
+        var found: (api: OpenCodeAPI, session: Session)?
+        for case let place? in places {
+            if let session = try? await place.session(id) {
+                found = (place, session)
+                break
+            }
+        }
+        guard let (api, session) = found else { return nil }
+        if OutsideAgents.isAgentSession(session) { bridgeSessions.insert(id) }
         if let model = models[id] { return model }
         let model = SessionModel(session: session, api: api)
         model.isReachable = reachable(folder)
