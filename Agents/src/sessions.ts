@@ -698,7 +698,8 @@ export class Sessions {
   private askPermission(id: string, live: Live, turn: Turn, ask: PermissionAsk, plan: boolean): Promise<Decision> {
     const session = this.record(id).session
     if (plan && changes.has(ask.action)) return Promise.resolve("reject")
-    const effect = evaluate(session.permissions, ask.action, ask.resources)
+    // The engine's asks were weighed by it already: without a rule of yours, they're yours to answer.
+    const effect = ask.weighed ? ruled(session.permissions, ask.action, ask.resources) : evaluate(session.permissions, ask.action, ask.resources)
     if (effect === "deny") return Promise.resolve("reject")
     const allowedBefore = live.always.some((rule) => rule.action === ask.action && ask.resources.every((resource) => rule.patterns.some((pattern) => matches(pattern, resource))))
     if (effect === "allow" || allowedBefore) return Promise.resolve("once")

@@ -10,7 +10,12 @@ export function matches(pattern: string, value: string): boolean {
 }
 
 export function evaluate(rules: PermissionRule[] | undefined, action: string, resources: string[]): "allow" | "deny" | "ask" {
-  let effect: "allow" | "deny" | "ask" = "allow"
+  return ruled(rules, action, resources) ?? "allow"
+}
+
+/** What your rules say, if any of them is about it. */
+export function ruled(rules: PermissionRule[] | undefined, action: string, resources: string[]): "allow" | "deny" | "ask" | undefined {
+  let effect: "allow" | "deny" | "ask" | undefined
   for (const rule of rules ?? []) {
     if (!matches(rule.action, action)) continue
     const targets = resources.length ? resources : ["*"]

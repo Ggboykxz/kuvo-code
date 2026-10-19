@@ -117,9 +117,11 @@ export class EngineLink {
   private dispatch(event: EngineEvent) {
     const data = event.data ?? {}
     if (event.type === "session.created") {
+      // The engine says it flat (`sessionID`, `parentID`); older ones, with the session.
       const session = data.session ?? data.info
-      const parent = session?.parentID
-      if (parent && (this.listeners.has(parent) || this.children.has(parent))) this.children.set(session.id, this.children.get(parent) ?? parent)
+      const child: string | undefined = data.sessionID ?? session?.id
+      const parent: string | undefined = data.parentID ?? session?.parentID
+      if (child && parent && (this.listeners.has(parent) || this.children.has(parent))) this.children.set(child, this.children.get(parent) ?? parent)
       return
     }
     let sessionID: string | undefined = data.sessionID ?? data.form?.sessionID
@@ -307,6 +309,7 @@ class EngineThread implements Thread {
         save: data.save,
         metadata: data.metadata,
         message: data.message,
+        weighed: true,
       }
       let decision: Decision = "reject"
       try {
