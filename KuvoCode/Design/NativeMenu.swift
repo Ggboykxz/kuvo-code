@@ -23,6 +23,7 @@ struct NativeMenuButton<Label: View>: View {
             label()
         }
         .buttonStyle(.plain)
+        .clickablePointer()
         .background(AnchorView(anchor: anchor))
         #if DEBUG
         .task {

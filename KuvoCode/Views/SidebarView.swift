@@ -700,6 +700,7 @@ private struct ConversationResultRow: View {
             .modifier(RowHighlight(isSelected: isSelected))
         }
         .buttonStyle(.plain)
+        .clickablePointer()
     }
 }
 
@@ -783,6 +784,7 @@ private struct SidebarRow<Icon: View, Title: View, Accessory: View>: View {
         } else {
             Button(action: action) { row }
                 .buttonStyle(.plain)
+                .clickablePointer()
         }
     }
 
@@ -852,6 +854,7 @@ private struct ProjectRow: View {
             .hoverHighlight(selected: false)
         }
         .buttonStyle(.plain)
+        .clickablePointer()
         .overlay(alignment: .trailing) {
             Button(action: newSession) {
                 Image(systemName: "square.and.pencil")
@@ -961,6 +964,7 @@ private struct FaceRow<Face: View, Subtitle: View, Trailing: View>: View {
             .modifier(RowHighlight(isSelected: isSelected))
         }
         .buttonStyle(.plain)
+        .clickablePointer()
     }
 }
 
@@ -1085,6 +1089,7 @@ private struct SectionHeader<Trailing: View>: View {
                     .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
+                .clickablePointer()
                 .help(isFolded.wrappedValue ? "Show \(title)" : "Hide \(title)")
                 .accessibilityValue(isFolded.wrappedValue ? "Collapsed" : "Expanded")
             } else {

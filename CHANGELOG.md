@@ -9,6 +9,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Bring the coding agent you already pay for: Claude Code, Codex, Cursor, Grok and Antigravity, signed in as you, under **Coding Agents** at the top of Settings › Accounts. Pick one of their models for a new session, and that agent does the work, on this Mac, with its replies, edits, permissions and questions in the conversation like any session's.
 - Keep up with subagents while they work: a bar over the composer lists the ones at work, with the step each is on, **Open** and **Stop**. **Open** (on its row in the conversation too) shows a subagent in a tab of the side panel, with everything it does as it does it and a composer of its own: tell it something while it works, give it another model, or stop it.
 - Making an agent in Settings › Agents is one page now: name it (it keeps the name as you write it), describe it, give it instructions and choose what it may do, then **Create Agent**. **What It May Do** has a plain choice for each kind of action, like Don't Allow for editing files, and **Add Rule** adds as many rules as you like; a rule without a pattern, or one for all commands, says so instead of vanishing.
+- Buttons and other controls no longer show the text pointer, in the conversation, the side panel or Settings: conversations kept out of sight still set it over what you pointed at. Controls without a border show the pointing hand.
 
 ## 0.5.22
 

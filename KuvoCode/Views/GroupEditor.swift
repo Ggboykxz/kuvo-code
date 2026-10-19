@@ -341,6 +341,7 @@ private struct MemberRow: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
+        .clickablePointer()
         .onHover { isHovering = $0 }
         .animation(.easeOut(duration: 0.12), value: isHovering)
         .accessibilityAddTraits(isOn ? .isSelected : [])

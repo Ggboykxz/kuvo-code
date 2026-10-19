@@ -33,6 +33,7 @@ struct ContextGauge: View {
                 .hoverHighlight(in: RoundedRectangle(cornerRadius: 7), selected: showsDetails)
             }
             .buttonStyle(.plain)
+            .clickablePointer()
             .animation(.ui, value: fraction)
             .help("Context window: \(used.compactTokens) of \(limit.compactTokens) tokens")
             .popover(isPresented: $showsDetails, arrowEdge: .bottom) {

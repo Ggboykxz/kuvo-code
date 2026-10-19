@@ -124,6 +124,7 @@ private struct QueueRow: View {
                 }
                 .menuStyle(.button)
                 .buttonStyle(.plain)
+                .clickablePointer()
                 .menuIndicator(.hidden)
                 .fixedSize()
                 .help(isRunning && isQueued ? "Send Now (stops the current step), Edit, Remove" : "Edit, Remove")

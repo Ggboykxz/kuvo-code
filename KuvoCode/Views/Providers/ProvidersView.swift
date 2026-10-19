@@ -264,6 +264,7 @@ private struct ProviderRow: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
+        .clickablePointer()
         .onHover { isHovering = $0 }
     }
 }

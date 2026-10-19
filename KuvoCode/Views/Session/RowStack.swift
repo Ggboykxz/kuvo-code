@@ -28,6 +28,11 @@ struct RowStack<Item, Row: View>: NSViewRepresentable {
     func makeNSView(context: Context) -> RowStackView { RowStackView() }
 
     func updateNSView(_ view: RowStackView, context: Context) {
+        // A conversation out of sight (kept for coming back to, or under Settings) is hidden for
+        // AppKit too: its rows are views of their own, which would still follow the pointer and
+        // set it (an I-beam over their text) under what's in sight, from buttons to the panel.
+        let isShown = context.environment.isConversationShown
+        if view.isHidden == isShown { view.isHidden = !isShown }
         let old = context.coordinator.items
         var now: [String: Item] = [:]
         var ids: [String] = []

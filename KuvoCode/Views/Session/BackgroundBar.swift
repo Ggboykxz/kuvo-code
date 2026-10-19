@@ -93,6 +93,7 @@ struct WorkBar<Item: Identifiable, Row: View>: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
+        .clickablePointer()
         .help(isHidden ? showHelp : hideHelp)
         .accessibilityLabel(title)
         .accessibilityValue(isHidden ? "Hidden" : "Shown")

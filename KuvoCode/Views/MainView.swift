@@ -286,6 +286,9 @@ struct MainView: View {
             }
             // Settings take the window's place. The sessions stay underneath, hidden and out of
             // reach, so the panel's terminals and pages carry on and everything is where it was.
+            // Out of sight to the conversations too, whose rows (each a view of its own) would
+            // otherwise still follow the pointer and set it, under Settings' controls.
+            .environment(\.isConversationShown, !app.showsSettings)
             .opacity(app.showsSettings ? 0 : 1)
             .allowsHitTesting(!app.showsSettings)
             .disabled(app.showsSettings)

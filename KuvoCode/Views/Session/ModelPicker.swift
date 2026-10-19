@@ -154,6 +154,7 @@ struct ModelPicker: View {
                         .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
+                .clickablePointer()
                 .foregroundStyle(.secondary)
                 .help("Back")
                 Image(systemName: "magnifyingglass")
@@ -240,6 +241,7 @@ struct ModelPicker: View {
             .contentShape(.rect(cornerRadius: 10))
         }
         .buttonStyle(.plain)
+        .clickablePointer()
         .onHover { if $0 { highlight = id } }
         .id(id)
     }
@@ -260,6 +262,7 @@ struct ModelPicker: View {
             .contentShape(.rect(cornerRadius: 10))
         }
         .buttonStyle(.plain)
+        .clickablePointer()
         .onHover { if $0 { highlight = id } }
     }
 
@@ -289,6 +292,7 @@ struct ModelPicker: View {
                     .contentShape(.rect(cornerRadius: 12))
                 }
                 .buttonStyle(.plain)
+                .clickablePointer()
                 .help("Choose another model")
                 // Room for the logo and the reset button beside it, outside what opens the list.
                 .padding(.horizontal, 32)
@@ -307,6 +311,7 @@ struct ModelPicker: View {
                             .contentShape(.rect)
                     }
                     .buttonStyle(.plain)
+                    .clickablePointer()
                     .foregroundStyle(.secondary)
                     .opacity(variant == nil ? 0 : 1)
                     .disabled(variant == nil)

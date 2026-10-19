@@ -262,6 +262,7 @@ struct Composer: View {
                                 .hoverHighlight(in: Capsule(), mutesInk: true)
                         }
                         .buttonStyle(.plain)
+                        .clickablePointer()
                         .help("Attach Files… You can also drop files here, or paste them.")
                         // Set on the engine: not while it's out of reach.
                         if showsMode {

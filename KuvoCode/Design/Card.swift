@@ -159,6 +159,7 @@ struct CardActionStyle: ButtonStyle {
             .background(configuration.isPressed ? Pressable.pressedFill : isHovering ? Pressable.hoverFill : .clear, in: .rect(cornerRadius: 6))
             .contentShape(.rect)
             .onHover { isHovering = $0 }
+            .clickablePointer()
     }
 }
 

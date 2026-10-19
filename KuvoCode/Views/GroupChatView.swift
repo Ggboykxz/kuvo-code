@@ -329,6 +329,7 @@ private struct WorkList: View {
                     .hoverHighlight(in: RoundedRectangle(cornerRadius: 8), mutesInk: true)
                 }
                 .buttonStyle(.plain)
+                .clickablePointer()
                 .disabled(!opens)
                 .help(opens ? "Open \(bot?.name ?? "the bot")’s conversation, where it works on this" : "")
             }
@@ -528,6 +529,7 @@ private struct GroupComposer: View {
                             .hoverHighlight(in: Capsule(), mutesInk: true)
                     }
                     .buttonStyle(.plain)
+                    .clickablePointer()
                     .help("Ask \(bot.name)")
                     .accessibilityLabel("Ask \(bot.name)")
                 }

@@ -466,6 +466,7 @@ private struct ChoiceRow: View {
             .background(isSelected ? accent.opacity(0.14) : isHovering ? Pressable.hoverFill : .clear, in: .rect(cornerRadius: 10))
         }
         .buttonStyle(.plain)
+        .clickablePointer()
         .onHover { isHovering = $0 }
         .animation(.easeOut(duration: 0.12), value: isHovering)
     }

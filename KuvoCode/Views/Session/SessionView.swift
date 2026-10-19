@@ -3,6 +3,8 @@ import SwiftUI
 
 struct SessionView: View {
     let model: SessionModel
+    /// Whether the window shows the conversations at all (not with Settings over them).
+    @Environment(\.isConversationShown) private var isInSight
     @Environment(Catalog.self) private var catalog
     @Environment(AppModel.self) private var app
     @LastModel private var lastModel
@@ -30,7 +32,7 @@ struct SessionView: View {
                     .opacity(isShown ? 1 : 0)
                     .allowsHitTesting(isShown)
                     .accessibilityHidden(!isShown)
-                    .environment(\.isConversationShown, isShown)
+                    .environment(\.isConversationShown, isShown && isInSight)
                     .zIndex(isShown ? 1 : 0)
                     .environment(\.isOffline, Self.offlineMachine(of: each, in: app) != nil)
             }

@@ -589,6 +589,7 @@ private struct TemplatePicker: View {
                 .contentShape(.rect(cornerRadius: 10))
             }
             .buttonStyle(.plain)
+            .clickablePointer()
             .onHover { isHovering = $0 }
             .animation(.easeOut(duration: 0.12), value: isHovering)
             .accessibilityAddTraits(isOn ? .isSelected : [])
@@ -621,6 +622,7 @@ private struct LookPicker: View {
                             .contentShape(.circle)
                     }
                     .buttonStyle(.plain)
+                    .clickablePointer()
                     .help(tint.title)
                     .accessibilityLabel(tint.title)
                     .accessibilityAddTraits(look.color == tint ? .isSelected : [])
@@ -678,6 +680,7 @@ private struct LookPicker: View {
                     .contentShape(.rect(cornerRadius: 10))
             }
             .buttonStyle(.plain)
+            .clickablePointer()
             .onHover { isHovering = $0 }
             .animation(.easeOut(duration: 0.12), value: isHovering)
             .help(help)
@@ -845,6 +848,7 @@ private struct PersonalityPicker: View {
                 .contentShape(.rect(cornerRadius: 8))
             }
             .buttonStyle(.plain)
+            .clickablePointer()
             .onHover { isHovering = $0 }
             .animation(.easeOut(duration: 0.12), value: isHovering)
             .accessibilityAddTraits(isOn ? .isSelected : [])

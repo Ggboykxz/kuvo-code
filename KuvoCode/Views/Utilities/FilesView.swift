@@ -290,6 +290,7 @@ private struct TreeRow: View {
             .hoverHighlight(in: RoundedRectangle(cornerRadius: 6), selected: isSelected)
         }
         .buttonStyle(.plain)
+        .clickablePointer()
         .contextMenu {
             if entry.url.isFileURL {
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([entry.url]) }
@@ -324,6 +325,7 @@ private struct MatchRow: View {
             .hoverHighlight(in: RoundedRectangle(cornerRadius: 6), selected: isSelected)
         }
         .buttonStyle(.plain)
+        .clickablePointer()
     }
 }
 
@@ -437,6 +439,7 @@ private struct FileViewer: View {
             if isMarkdown {
                 Button(showsSource ? "View Rendered" : "View Source") { showsSource.toggle() }
                     .buttonStyle(.plain)
+                    .clickablePointer()
                     .font(.system(size: 12, weight: .medium))
                     .padding(.horizontal, 10)
                     .frame(height: 26)

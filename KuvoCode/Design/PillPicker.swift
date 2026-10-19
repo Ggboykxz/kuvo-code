@@ -37,6 +37,7 @@ struct PillPicker<Value: Hashable>: View {
                     .hoverHighlight(in: Capsule(), mutesInk: true)
                 }
                 .buttonStyle(.plain)
+                .clickablePointer()
                 .background {
                     if isOn {
                         ActivePill()

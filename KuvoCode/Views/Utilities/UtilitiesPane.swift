@@ -321,6 +321,7 @@ struct PanelIconStyle: ButtonStyle {
             .opacity(configuration.isPressed ? 0.6 : 1)
             .contentShape(.rect)
             .onHover { isHovering = $0 }
+            .clickablePointer()
     }
 }
 

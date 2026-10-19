@@ -370,6 +370,7 @@ private struct SettingsSidebar: View {
                                     .modifier(RowHighlight(isSelected: page == selection))
                                 }
                                 .buttonStyle(.plain)
+                                .clickablePointer()
                                 .contextMenu {
                                     Button("Open in New Tab") { openInNewTab(page) }
                                 }

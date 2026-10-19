@@ -210,6 +210,7 @@ struct ModelChip<Label: View>: View {
             label(current, variant)
         }
         .buttonStyle(.plain)
+        .clickablePointer()
         .help(isUnavailable ? "\(catalog.model(selection)?.name ?? selection?.id ?? "") isn't available now: choose another model" : "Model and effort")
         .background(ScreenRoomReader(room: anchor))
         .popover(isPresented: $isOpen, arrowEdge: placement.below ? .bottom : .top) {
