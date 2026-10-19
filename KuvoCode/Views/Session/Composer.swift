@@ -58,11 +58,22 @@ struct Composer: View {
     var onStop: () -> Void
 
     @Environment(Catalog.self) private var catalog
+    @Environment(Workspace.self) private var workspace
     @Environment(\.colorScheme) private var scheme
     @Environment(\.cardIsFocused) private var cardIsFocused
     @Environment(\.messageFont) private var messageFont
     @Environment(\.bot) private var bot
     @FocusState private var isFocused: Bool
+
+    /// The models its picker offers: a session's own agent's (an outside agent can't hand over
+    /// partway) or the engine's; for a new session, both, on this Mac (the outside agents run here).
+    private var modelScope: ModelScope {
+        if let session, let current = workspace.session(session) {
+            if OutsideAgents.isAgentSession(current), let provider = current.model?.providerID { return .agent(provider) }
+            return .engine
+        }
+        return folders.first.map(RemoteFolder.isRemote) == true ? .engine : .all
+    }
     @FocusState private var answering: UUID?
     @Environment(\.composerFocused) private var composerFocused
     @State private var isTargeted = false
@@ -245,7 +256,7 @@ struct Composer: View {
                         // Set on the engine: not while it's out of reach.
                         ModeChip(agent: agent, approval: approval, onSelectAgent: onSelectAgent, onSelectApproval: onSelectApproval)
                             .disabled(isOffline)
-                        ModelChip(selection: model, onSelect: onSelectModel)
+                        ModelChip(selection: model, onSelect: onSelectModel, scope: modelScope)
                             .disabled(isOffline)
                         if let worktree {
                             WorkplaceChip(worktree: worktree, attempts: attempts, onSelect: onSelectWorktree, onSelectAttempts: onSelectAttempts)

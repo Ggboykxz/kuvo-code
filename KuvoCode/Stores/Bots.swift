@@ -208,7 +208,7 @@ final class Bots {
         // The one picked, if you can use it where it lives; otherwise the last one used, or that
         // engine's default. Before its models are known (just after launch), the one picked or
         // last used, as it is.
-        bot.model = catalog.startingModel(model, LastModel.current)
+        bot.model = catalog.startingModel(model, LastModel.current, scope: .engine)
         let session = try await api.createSession(directory: bot.directory, title: name, model: bot.model, permissions: rules)
         made(session.id, api)
         // The bot's from the start: not a project's session for the moment it takes to set up.

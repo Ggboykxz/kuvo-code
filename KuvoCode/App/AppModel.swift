@@ -37,6 +37,9 @@ final class AppModel {
     let groups = BotGroups()
     /// Kuvo Code for iPhone's way in (off until it's switched on; see PhoneLink).
     let phoneLink = PhoneLink()
+    /// The coding agents you already have (Claude Code, Codex, Cursor, Grok, Antigravity), run by
+    /// the agents bridge beside the engine.
+    let agents = OutsideAgents()
     /// The engine's settings file, for Settings.
     @ObservationIgnored private(set) lazy var engineConfig = EngineConfig(file: engineFolders.configFile)
     /// Engines to start again with new settings once nothing's at work in them: "" for this Mac's,
@@ -265,9 +268,11 @@ final class AppModel {
             phoneLink.groups = groups
             phoneLink.workspace = workspace
             phoneLink.machineName = { [weak self] id in self?.machines.list.first { $0.id == id }?.name }
+            phoneLink.agents = agents
             phoneLink.start(endpoint: server.endpoint)
             Analytics.shared.trackOnce("engine_ready", ["seconds": Int((SuspendingClock.now - began).components.seconds), "downloaded": downloaded])
             listen(to: api)
+            startAgents(engine: binary)
             Task { await usage.sync() }
             // In parallel: the catalog can wait on the engine's plugins (and they on a
             // macOS permission prompt); sessions shouldn't wait with it.
@@ -305,6 +310,24 @@ final class AppModel {
             engineStoppedWhileRunning = !automaticRestarts.isEmpty
             engine = .failed(reason)
         }
+    }
+
+    /// The agents bridge, with the engine's Bun, once: it goes on through the engine's restarts.
+    private func startAgents(engine binary: URL) {
+        workspace.agents = agents
+        catalog.outsideAgents = agents
+        agents.onEvent = { [weak self] event in
+            self?.catalog.handle(event)
+            self?.workspace.handle(event)
+        }
+        agents.onConnected = { [weak self] in
+            Task {
+                await self?.catalog.refreshAgents()
+                await self?.workspace.refreshAgents()
+            }
+        }
+        let environment = shellEnvironment
+        Task { await agents.start(engine: binary, environment: environment) }
     }
 
     /// `config` merged over any inline config already in the environment.

@@ -23,6 +23,8 @@ struct ModelPicker: View {
     let selection: ModelRef?
     let onSelect: (ModelRef) -> Void
     let close: () -> Void
+    /// Whose models it offers: the engine's, an outside agent's (Claude Code…), or both.
+    var scope: ModelScope = .engine
     var startsExpanded = false
     /// On the model list rather than the effort (KUVO_DEMO_MENU=list).
     var startsOnList = false
@@ -131,7 +133,7 @@ struct ModelPicker: View {
             } else {
                 rows
             }
-            if !catalog.modelsByProvider.isEmpty {
+            if !groups.isEmpty {
                 Divider()
                     .padding(.horizontal, 16)
                     .padding(.vertical, 5)
@@ -171,7 +173,7 @@ struct ModelPicker: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 1) {
                         if query.isEmpty {
-                            ForEach(catalog.modelsByProvider, id: \.provider) { group in
+                            ForEach(groups, id: \.provider) { group in
                                 Text(group.provider)
                                     .font(.system(size: 11, weight: .medium))
                                     .foregroundStyle(.tertiary)
@@ -353,7 +355,7 @@ struct ModelPicker: View {
     }
 
     private func pickHighlighted() {
-        let models = page == .models ? shortList : (query.isEmpty ? catalog.modelsByProvider.flatMap(\.models) : results)
+        let models = page == .models ? shortList : (query.isEmpty ? groups.flatMap(\.models) : results)
         if let model = models.first(where: { row($0) == highlight }) ?? (page == .all && !query.isEmpty ? results.first : nil) {
             pick(model)
         } else if highlight == "more" {
@@ -371,8 +373,8 @@ struct ModelPicker: View {
             return .handled
         case .downArrow, .upArrow:
             guard page != .effort else { return .ignored }
-            var ids = (page == .models ? shortList : (query.isEmpty ? catalog.modelsByProvider.flatMap(\.models) : results)).map(row)
-            if page == .models, !catalog.modelsByProvider.isEmpty { ids.append("more") }
+            var ids = (page == .models ? shortList : (query.isEmpty ? groups.flatMap(\.models) : results)).map(row)
+            if page == .models, !groups.isEmpty { ids.append("more") }
             guard !ids.isEmpty else { return .handled }
             let at = highlight.flatMap { ids.firstIndex(of: $0) }
             let next = press.key == .downArrow ? (at.map { min($0 + 1, ids.count - 1) } ?? 0) : (at.map { max($0 - 1, 0) } ?? ids.count - 1)
@@ -400,11 +402,14 @@ struct ModelPicker: View {
 
     private func row(_ model: Model) -> String { model.key }
 
+    /// The models it offers, by provider.
+    private var groups: [(provider: String, models: [Model])] { catalog.modelGroups(scope) }
+
     /// Every model that matches what you typed, by provider as in More Models.
     private var results: [Model] {
         let words = query.lowercased().split(separator: " ").map(String.init)
         guard !words.isEmpty else { return [] }
-        return catalog.modelsByProvider.flatMap(\.models).filter { model in
+        return groups.flatMap(\.models).filter { model in
             let text = "\(model.name) \(model.id) \(model.family ?? "") \(catalog.providerName(model.providerID))".lowercased()
             return words.allSatisfy { text.contains($0) }
         }
@@ -416,7 +421,7 @@ struct ModelPicker: View {
     /// Opus, GPT Sol, Gemini Flash, …) from each provider, accounts you connected before the free
     /// OpenCode Zen models.
     private var shortList: [Model] {
-        let enabled = catalog.offered
+        let enabled = catalog.offered.filter { scope.allows($0.providerID) }
         let recent = recentStorage.split(separator: ",").compactMap { key in enabled.first { $0.key == key } }
         var newestByFamily: [String: Model] = [:]
         for model in enabled {
@@ -428,13 +433,18 @@ struct ModelPicker: View {
             .mapValues { Array($0.sorted { $0.time.released > $1.time.released }.prefix(4)) }
         let providers = perProvider.keys.sorted { lhs, rhs in
             // Free models last: someone who connected an account wants its models first.
-            (lhs == "opencode" ? 1 : 0, Catalog.featuredOrder[lhs] ?? 99, lhs) < (rhs == "opencode" ? 1 : 0, Catalog.featuredOrder[rhs] ?? 99, rhs)
+            (lhs == "opencode" ? 1 : 0, Self.order(lhs), lhs) < (rhs == "opencode" ? 1 : 0, Self.order(rhs), rhs)
         }
         var seen = Set<String>()
         // The model in use leads as the card opens; picking another doesn't reorder the list.
-        let leading = catalog.isUnavailable(selection) ? nil : catalog.model(selection) ?? catalog.defaultModel
+        let leading = (catalog.isUnavailable(selection) ? nil : catalog.model(selection) ?? catalog.defaultModel).flatMap { scope.allows($0.providerID) ? $0 : nil }
         let candidates = [leading].compactMap(\.self) + recent + providers.flatMap { perProvider[$0] ?? [] }
         return candidates.filter { seen.insert($0.key).inserted }.prefix(8).map { $0 }
+    }
+
+    /// The outside agents first (you brought them), then the providers people use most.
+    private static func order(_ providerID: String) -> Int {
+        OutsideAgents.order.firstIndex(of: providerID).map { $0 - 100 } ?? Catalog.featuredOrder[providerID] ?? 99
     }
 
     private func remember(_ model: Model) {

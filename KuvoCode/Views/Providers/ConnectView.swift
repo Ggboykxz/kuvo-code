@@ -106,7 +106,7 @@ struct ConnectView: View {
                         .font(.system(size: 28, weight: .medium))
                         .foregroundStyle(.primary)
                 } else {
-                    ProviderLogo(id: integrationID, size: 40)
+                    ProviderLogo(id: OutsideAgents.logo(integrationID), size: 40)
                 }
             }
             .frame(width: 72, height: 72)
@@ -396,7 +396,7 @@ struct ConnectView: View {
     }
 
     private func proceed(_ method: Integration.Method) {
-        guard let api = app.api else { return }
+        guard let api = catalog.api(forIntegration: integrationID) else { return }
         let answer = FormFieldsView.payload(method.form, answers)
         isWorking = true
         Task {
@@ -429,7 +429,7 @@ struct ConnectView: View {
     private func connectKey(_ method: Integration.Method) {
         // Return in the field gets here too, past the disabled button.
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let api = app.api, !trimmed.isEmpty, FormFieldsView.isComplete(method.form, answers), !isWorking else { return }
+        guard let api = catalog.api(forIntegration: integrationID), !trimmed.isEmpty, FormFieldsView.isComplete(method.form, answers), !isWorking else { return }
         let answer = FormFieldsView.payload(method.form, answers)
         isWorking = true
         Task {
@@ -455,7 +455,7 @@ struct ConnectView: View {
             var misses = 0
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
-                guard !Task.isCancelled, let api = app.api else { return }
+                guard !Task.isCancelled, let api = catalog.api(forIntegration: integrationID) else { return }
                 guard let status = try? await api.oauthStatus(integration: integrationID, attempt: attempt.attemptID) else {
                     misses += 1
                     if misses >= 10 {
@@ -484,7 +484,7 @@ struct ConnectView: View {
 
     private func complete(_ attempt: OAuthAttempt) {
         let code = pastedCode.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let api = app.api, !code.isEmpty, !isWorking else { return }
+        guard let api = catalog.api(forIntegration: integrationID), !code.isEmpty, !isWorking else { return }
         isWorking = true
         Task {
             defer { isWorking = false }
@@ -524,7 +524,7 @@ struct ConnectView: View {
     private func cancelAttempt() {
         pollTask?.cancel()
         pollTask = nil
-        if case .waiting(let attempt) = step, let api = app.api {
+        if case .waiting(let attempt) = step, let api = catalog.api(forIntegration: integrationID) {
             noteFailure(method: "oauth", "cancelled")
             Task { try? await api.cancelOAuth(integration: integrationID, attempt: attempt.attemptID) }
         }

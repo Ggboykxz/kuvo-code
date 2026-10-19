@@ -184,6 +184,9 @@ struct ModelChip<Label: View>: View {
     let selection: ModelRef?
     let onSelect: (ModelRef) -> Void
     var opensBelow = false
+    /// Whose models it offers: the engine's (a bot's, a machine's session), an outside agent's
+    /// (a session with Claude Code…), or both (a new session on this Mac).
+    var scope: ModelScope = .engine
     /// Drawn with the model in use and its effort.
     @ViewBuilder let label: (Model?, String?) -> Label
     @State private var isOpen = false
@@ -195,7 +198,7 @@ struct ModelChip<Label: View>: View {
 
     /// The model picked can't be used now: the chip asks for another rather than show the
     /// default as if it were in use.
-    private var isUnavailable: Bool { catalog.isUnavailable(selection) }
+    private var isUnavailable: Bool { catalog.isUnavailable(selection) || selection.map { !scope.allows($0.providerID) } == true }
     private var current: Model? { isUnavailable ? nil : catalog.model(selection) ?? catalog.defaultModel }
     private var variant: String? { current.flatMap { model in selection?.sameModel(as: model.ref) == true ? selection?.variant : nil } }
 
@@ -210,7 +213,7 @@ struct ModelChip<Label: View>: View {
         .help(isUnavailable ? "\(catalog.model(selection)?.name ?? selection?.id ?? "") isn't available now: choose another model" : "Model and effort")
         .background(ScreenRoomReader(room: anchor))
         .popover(isPresented: $isOpen, arrowEdge: placement.below ? .bottom : .top) {
-            ModelPicker(catalog: catalog, selection: selection, onSelect: onSelect, close: { isOpen = false }, startsExpanded: startsExpanded, startsOnList: startsOnList, maxHeight: placement.height)
+            ModelPicker(catalog: catalog, selection: selection, onSelect: onSelect, close: { isOpen = false }, scope: scope, startsExpanded: startsExpanded, startsOnList: startsOnList, maxHeight: placement.height)
         }
         .onAppear { LogoImages.shared.prefetch(catalog.models.flatMap { [$0.makerLogoID, $0.providerID] }) }
         #if DEBUG
@@ -233,8 +236,8 @@ struct ModelChip<Label: View>: View {
 }
 
 extension ModelChip where Label == ModelChipLabel {
-    init(selection: ModelRef?, onSelect: @escaping (ModelRef) -> Void) {
-        self.init(selection: selection, onSelect: onSelect) { ModelChipLabel(model: $0, variant: $1) }
+    init(selection: ModelRef?, onSelect: @escaping (ModelRef) -> Void, scope: ModelScope = .engine) {
+        self.init(selection: selection, onSelect: onSelect, scope: scope) { ModelChipLabel(model: $0, variant: $1) }
     }
 }
 

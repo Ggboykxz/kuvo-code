@@ -1182,7 +1182,7 @@ private struct AccountsRow: View {
                 } else {
                     HStack(spacing: 8) {
                         ForEach(catalog.connectedProviders.prefix(3)) { provider in
-                            ProviderLogo(id: provider.id, size: 18, colored: true)
+                            ProviderLogo(id: OutsideAgents.logo(provider.id), size: 18, colored: true)
                         }
                     }
                 }

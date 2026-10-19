@@ -15,7 +15,7 @@ final class Workspace {
         // read it again once it's live.
         didSet {
             guard let api, let oldValue, oldValue.client.endpoint != api.client.endpoint else { return }
-            for model in models.values where !RemoteFolder.isRemote(model.session.location.directory) { model.reconnect(api) }
+            for model in models.values where !RemoteFolder.isRemote(model.session.location.directory) && !OutsideAgents.isAgentSession(model.session) { model.reconnect(api) }
         }
     }
     /// A session an agent started (its start_session tool), to show beside the conversation that
@@ -29,6 +29,10 @@ final class Workspace {
     }
     var besideRequest: BesideRequest?
     @ObservationIgnored private var askedBeside: Set<String> = []
+
+    /// The agents bridge: sessions with Claude Code, Codex, Cursor, Grok and Antigravity go to it,
+    /// whatever their folder (on this Mac).
+    @ObservationIgnored var agents: OutsideAgents?
 
     /// A machine's engine, by its name, for projects on it (folders written `ssh://machine/path`).
     @ObservationIgnored var machineAPI: (String) -> OpenCodeAPI? = { _ in nil }
@@ -88,9 +92,14 @@ final class Workspace {
 
     /// The engine a session runs on.
     func api(forSession id: String) -> OpenCodeAPI? {
-        if let session = session(id) { return api(forFolder: session.location.directory) }
+        if let session = session(id) { return api(for: session) }
         if let machine = sessionMachines[id] { return machineAPI(machine) }
         return api
+    }
+
+    /// What a session runs on: the agents bridge for an outside agent's, else its folder's engine.
+    func api(for session: Session) -> OpenCodeAPI? {
+        OutsideAgents.isAgentSession(session) ? agents?.api : api(forFolder: session.location.directory)
     }
 
     /// This Mac's as last listed until its engine lists them (it takes a moment to start), so the
@@ -247,7 +256,9 @@ final class Workspace {
     /// Moves a chat into the project at `directory`: its conversation goes along, and from then on
     /// it works in that project's folders. If it's working, the move comes at its next step.
     func move(_ id: String, toProject directory: String) async throws {
-        guard let session = session(id), let api = api(forFolder: directory) else { return }
+        guard let session = session(id) else { return }
+        if OutsideAgents.isAgentSession(session) { throw OutsideAgents.Failure.unavailable("Moving a chat into a project") }
+        guard let api = api(forFolder: directory) else { return }
         try await api.moveSession(id, to: directory)
         let extra = settings[directory]?.folders ?? []
         try? await api.setPermissions(session: id, rules: ProjectFolders.permissions(session.permissions ?? [], folders: extra))
@@ -320,7 +331,7 @@ final class Workspace {
     }
 
     private func setFlag(_ key: String, _ value: Bool, of id: String) async {
-        guard let index = sessions.firstIndex(where: { $0.id == id }), let api = api(forFolder: sessions[index].location.directory) else { return }
+        guard let index = sessions.firstIndex(where: { $0.id == id }), let api = api(for: sessions[index]) else { return }
         var metadata = sessions[index].metadata?.object ?? [:]
         // Written either way: the engine may merge metadata rather than replace it.
         metadata[key] = .bool(value)
@@ -355,7 +366,7 @@ final class Workspace {
         let candidates = sessions.sorted { $0.time.updated > $1.time.updated }
         // Each with its engine; a machine that isn't connected is skipped until it is.
         let missing = candidates.filter { conversationTexts[$0.id]?.updated != $0.time.updated }
-            .compactMap { session in api(forFolder: session.location.directory).map { (session, $0) } }
+            .compactMap { session in api(for: session).map { (session, $0) } }
         await withTaskGroup(of: (Session, [Message])?.self) { group in
             var queue = missing.makeIterator()
             func next() {
@@ -391,7 +402,7 @@ final class Workspace {
 
     /// A session's conversation as Markdown, to share.
     func markdown(of id: String) async throws -> String? {
-        guard let session = session(id), let api = api(forFolder: session.location.directory) else { return nil }
+        guard let session = session(id), let api = api(for: session) else { return nil }
         let messages = try await ConversationExport.messages(of: session, api: api)
         return ConversationExport.markdown(title: session.title ?? "New Session", messages: messages, directory: session.location.directory)
     }
@@ -400,7 +411,7 @@ final class Workspace {
     /// switching back is instant.
     func model(for id: String) -> SessionModel? {
         if let model = models[id] { return model }
-        guard let session = session(id), let api = api(forFolder: session.location.directory) else { return copyModel(for: id) }
+        guard let session = session(id), let api = api(for: session) else { return copyModel(for: id) }
         let directory = session.location.directory
         // The project's folders where the session is now: a chat moved into a project gets its folders.
         let model = SessionModel(session: session, api: api) { [weak self] in
@@ -464,7 +475,9 @@ final class Workspace {
     /// conversation as last seen, to read meanwhile. It takes the engine once it's there (see
     /// `refresh`).
     private func copyModel(for id: String) -> SessionModel? {
-        if api == nil, let session = session(id), !RemoteFolder.isRemote(session.location.directory), let copy = SessionCopies.load(id) {
+        // An agent's session waits for the bridge as this Mac's do for the engine.
+        let isAgents = session(id).map(OutsideAgents.isAgentSession) ?? false
+        if isAgents ? agents?.api == nil : api == nil, let session = session(id), !RemoteFolder.isRemote(session.location.directory), let copy = SessionCopies.load(id) {
             // Nothing answers here; nothing's asked of it before the engine is there.
             let offline = OpenCodeAPI(endpoint: ServerEndpoint(url: URL(string: "http://127.0.0.1:9")!, username: "", password: nil))
             let directory = session.location.directory
@@ -472,7 +485,7 @@ final class Workspace {
                 guard let self else { return [] }
                 return self.extraFolders(self.session(id)?.location.directory ?? directory)
             }
-            model.isReachable = { [weak self] in self?.api != nil }
+            model.isReachable = { [weak self] in isAgents ? self?.agents?.api != nil : self?.api != nil }
             model.show(copy.messages)
             models[id] = model
             beforeEngine.insert(id)
@@ -572,7 +585,10 @@ final class Workspace {
 
     /// A new session in the project at `directory`, or with `worktree`, in a new worktree of it.
     func createSession(in directory: String, model: ModelRef?, agent: String?, approval: ToolApproval = .approveAll, worktree: Bool = false) async throws -> Session {
-        guard let api = api(forFolder: directory) else { throw CancellationError() }
+        // A model of an outside agent (Claude Code, Codex…): the session is that agent's, here.
+        let isAgents = OutsideAgents.isAgent(model?.providerID)
+        if isAgents, RemoteFolder.isRemote(directory) { throw OutsideAgents.Failure.onlyOnThisMac(OutsideAgents.name(model?.providerID)) }
+        guard let api = isAgents ? agents?.api : api(forFolder: directory) else { throw CancellationError() }
         let directory = addFolder(directory)
         let folder = worktree ? try await makeWorktree(of: directory) : directory
         let extra = settings[directory]?.folders ?? []
@@ -662,7 +678,7 @@ final class Workspace {
             for (key, value) in worktrees where value.root == tree.root { worktrees[key]?.branch = renamed }
             saveWorktrees()
             if let tree = worktrees[folder] {
-                try? await api(forFolder: session.location.directory)?.setInstruction(session: session.id, key: Self.worktreeInstructionKey, text: Self.instructions(for: tree))
+                try? await api(for: session)?.setInstruction(session: session.id, key: Self.worktreeInstructionKey, text: Self.instructions(for: tree))
             }
             await loadBranch(for: folder)
         }
@@ -766,12 +782,13 @@ final class Workspace {
         guard let api else { return }
         do {
             let local = try await api.allSessions().filter { !isHidden($0) }
-            sessions = local + sessions.filter { RemoteFolder.isRemote($0.location.directory) }
-            SessionCopies.saveLocalSessions(local)
+            let theAgents = sessions.filter(OutsideAgents.isAgentSession)
+            sessions = local + theAgents + sessions.filter { RemoteFolder.isRemote($0.location.directory) }
+            SessionCopies.saveLocalSessions(local + theAgents)
             // Conversations shown as last seen while the engine started take it now, and are read
             // in place (the same messages, so nothing on screen moves); one deleted meanwhile goes.
             for id in beforeEngine {
-                guard let model = models[id] else { continue }
+                guard let model = models[id], !OutsideAgents.isAgentSession(model.session) else { continue }
                 guard let session = local.first(where: { $0.id == id }) else {
                     models[id] = nil
                     continue
@@ -780,13 +797,38 @@ final class Workspace {
                 model.session = session
                 Task { await model.load() }
             }
-            beforeEngine = []
+            beforeEngine = beforeEngine.filter { models[$0].map { OutsideAgents.isAgentSession($0.session) } ?? false }
         } catch { log.error("sessions: \(String(describing: error), privacy: .public)") }
         do {
             let active = try await api.activeSessions()
-            running = active.union(running.filter { id in session(id).map { RemoteFolder.isRemote($0.location.directory) } ?? false })
+            running = active.union(running.filter { id in session(id).map { RemoteFolder.isRemote($0.location.directory) || OutsideAgents.isAgentSession($0) } ?? false })
         } catch { log.error("active sessions: \(String(describing: error), privacy: .public)") }
         isLoaded = true
+    }
+
+    /// The outside agents' sessions, from the bridge (when it starts, or its feed comes back), in
+    /// place of what was known of them. Conversations open meanwhile take it and are read again.
+    func refreshAgents() async {
+        guard let api = agents?.api else { return }
+        do {
+            let listed = try await api.allSessions().filter { !isHidden($0) }
+            sessions = sessions.filter { !OutsideAgents.isAgentSession($0) } + listed
+            for (id, model) in models where OutsideAgents.isAgentSession(model.session) {
+                guard let session = listed.first(where: { $0.id == id }) else {
+                    models[id] = nil
+                    continue
+                }
+                model.reconnect(api)
+                model.session = session
+                Task { await model.load() }
+            }
+            beforeEngine = beforeEngine.filter { id in !listed.contains { $0.id == id } }
+            if let active = try? await api.activeSessions() {
+                running = running.filter { id in !(session(id).map(OutsideAgents.isAgentSession) ?? false) }.union(active)
+            }
+        } catch {
+            log.error("agents' sessions: \(String(describing: error), privacy: .public)")
+        }
     }
 
     /// The folders of the sessions open or at work on `machine` (nil: this Mac): folders its

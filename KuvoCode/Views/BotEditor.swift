@@ -148,7 +148,7 @@ struct BotEditor: View {
                 }
             }
             // A bot made before bots had a model: the one its conversation uses.
-            if model == nil { model = bot.flatMap { workspace.session($0.sessionID)?.model } ?? placeCatalog.startingModel(lastModel) }
+            if model == nil { model = bot.flatMap { workspace.session($0.sessionID)?.model } ?? placeCatalog.startingModel(lastModel, scope: .engine) }
         }
         .alert("Delete \(bot?.name ?? "This Bot")?", isPresented: $confirmsDelete) {
             Button("Delete", role: .destructive) {

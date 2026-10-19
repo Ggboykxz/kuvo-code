@@ -18,8 +18,18 @@ final class Catalog {
         self.isMac = isMac
     }
 
+    /// The outside agents' bridge (Claude Code, Codex…), on this Mac's catalog: their accounts and
+    /// models join the engine's.
+    @ObservationIgnored var outsideAgents: OutsideAgents?
+
+    /// The engine's integrations, and the outside agents' after them.
     private(set) var integrations: [Integration] = []
+    /// The engine's models, and the outside agents' after them.
     private(set) var models: [Model] = []
+    @ObservationIgnored private var engineIntegrations: [Integration] = []
+    @ObservationIgnored private var engineModels: [Model] = []
+    @ObservationIgnored private var agentIntegrations: [Integration] = []
+    @ObservationIgnored private var agentModels: [Model] = []
     private(set) var defaultModel: Model?
     private(set) var agents: [Agent] = []
     private(set) var commands: [Command] = []
@@ -47,6 +57,11 @@ final class Catalog {
 
     var connectedProviders: [Integration] {
         providers.filter(\.isConnected)
+    }
+
+    /// The outside agents (Claude Code, Codex, Cursor, Grok, Antigravity), as the bridge lists them.
+    var codingAgents: [Integration] {
+        integrations.filter { OutsideAgents.isAgent($0.id) }
     }
 
     var primaryAgents: [Agent] {
@@ -78,10 +93,22 @@ final class Catalog {
 
     /// Models grouped by provider, providers in the order people tend to look for them.
     var modelsByProvider: [(provider: String, models: [Model])] {
-        let groups = Dictionary(grouping: offered, by: \.providerID)
+        let groups = Dictionary(grouping: offered.filter { !OutsideAgents.isAgent($0.providerID) }, by: \.providerID)
         return groups.keys
             .sorted { (Self.featuredOrder[$0] ?? 99, $0) < (Self.featuredOrder[$1] ?? 99, $1) }
             .map { id in (providerName(id), groups[id]!.sorted { $0.time.released > $1.time.released }) }
+    }
+
+    /// The models a picker offers, by provider: the engine's, an outside agent's, or both (a new
+    /// session on this Mac), the agents' first.
+    func modelGroups(_ scope: ModelScope) -> [(provider: String, models: [Model])] {
+        let agents = OutsideAgents.order.compactMap { id -> (provider: String, models: [Model])? in
+            guard scope.allows(id) else { return nil }
+            let models = offered.filter { $0.providerID == id }
+            return models.isEmpty ? nil : (providerName(id), models)
+        }
+        if case .agent = scope { return agents }
+        return scope == .all ? agents + modelsByProvider : modelsByProvider
     }
 
     func model(_ ref: ModelRef?) -> Model? {
@@ -105,8 +132,8 @@ final class Catalog {
     /// picked last) you can use now; else the engine's default, if you can; else the first model
     /// you can use. A model whose account you signed out of would only fail. Before the models are
     /// known (just after launch), the first of `wanted` as it is.
-    func startingModel(_ wanted: ModelRef?...) -> ModelRef? {
-        let wanted = wanted.compactMap(\.self)
+    func startingModel(_ wanted: ModelRef?..., scope: ModelScope = .all) -> ModelRef? {
+        let wanted = wanted.compactMap(\.self).filter { scope.allows($0.providerID) }
         guard isLoaded else { return wanted.first ?? defaultModel?.ref }
         if let ref = wanted.first(where: { offeredModel($0) != nil }) { return ref }
         if let model = offeredModel(defaultModel?.ref) { return model.ref }
@@ -133,12 +160,12 @@ final class Catalog {
         async let defaultModel = api.defaultModel()
         async let agents = api.agents()
         async let commands = api.commands()
-        do { self.integrations = try await integrations } catch { log.error("integrations: \(String(describing: error), privacy: .public)") }
+        do { engineIntegrations = try await integrations } catch { log.error("integrations: \(String(describing: error), privacy: .public)") }
         var starting = false
         do {
-            self.models = try await models
-            if isMac { ProviderCompatibility.learn(from: self.models) }
-            LogoImages.shared.prefetch(self.models.flatMap { [$0.makerLogoID, $0.providerID] })
+            engineModels = try await models
+            if isMac { ProviderCompatibility.learn(from: engineModels) }
+            LogoImages.shared.prefetch(engineModels.flatMap { [$0.makerLogoID, $0.providerID] })
         } catch {
             log.error("models: \(String(describing: error), privacy: .public)")
             starting = (error as? ServerError)?.status == 503
@@ -147,8 +174,30 @@ final class Catalog {
         do { self.agents = try await agents } catch { log.error("agents: \(String(describing: error), privacy: .public)") }
         do { self.commands = try await commands } catch { log.error("commands: \(String(describing: error), privacy: .public)") }
         for directory in projectCommands.keys { await loadCommands(in: directory) }
+        merge()
         isLoaded = true
+        await refreshAgents()
         if starting { waitForEngine() } else { unavailableSince = nil }
+    }
+
+    /// The outside agents' accounts and models, from their bridge.
+    func refreshAgents() async {
+        guard let api = outsideAgents?.api else { return }
+        async let integrations = api.integrations()
+        async let models = api.models()
+        do { agentIntegrations = try await integrations } catch { log.error("agents: \(String(describing: error), privacy: .public)") }
+        do { agentModels = try await models } catch { log.error("agents' models: \(String(describing: error), privacy: .public)") }
+        merge()
+    }
+
+    private func merge() {
+        integrations = engineIntegrations + agentIntegrations
+        models = engineModels + agentModels
+    }
+
+    /// Where an account signs in: the agents bridge for an outside agent's, else the engine.
+    func api(forIntegration id: String) -> OpenCodeAPI? {
+        OutsideAgents.isAgent(id) ? outsideAgents?.api : api
     }
 
     /// The engine is still starting: the models again in a moment, or, when it's been too long,
@@ -204,7 +253,24 @@ final class Catalog {
     }
 
     /// Shown first, in this order. Everything else follows alphabetically.
+    /// (The outside agents have their own place, before these: `OutsideAgents.order`.)
     static let featured = ["openai", "github-copilot", "anthropic", "google", "xai", "openrouter", "opencode", "deepseek", "mistral", "groq"]
     static let featuredOrder = Dictionary(uniqueKeysWithValues: featured.enumerated().map { ($1, $0) })
     private static let searchServices: Set = ["exa", "firecrawl", "parallel", "tavily", "tinyfish"]
+}
+
+/// Which models a picker offers: the engine's (a session on it, a bot), one outside agent's (a
+/// session with it: it can't change agents partway), or both (a new session on this Mac).
+enum ModelScope: Equatable {
+    case engine
+    case agent(String)
+    case all
+
+    func allows(_ providerID: String) -> Bool {
+        switch self {
+        case .all: true
+        case .engine: !OutsideAgents.isAgent(providerID)
+        case .agent(let id): providerID == id
+        }
+    }
 }

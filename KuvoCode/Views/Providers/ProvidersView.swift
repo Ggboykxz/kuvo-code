@@ -50,12 +50,16 @@ struct ProvidersView: View {
             VStack(alignment: .leading, spacing: 26) {
                 SearchField(text: $search, prompt: "Search \(catalog.providers.count) providers")
 
-                if search.isEmpty, !catalog.connectedProviders.isEmpty {
+                if search.isEmpty {
+                    CodingAgentsSection { connecting = $0 }
+                }
+
+                if search.isEmpty, !connected.isEmpty {
                     section("Connected") {
                         VStack(spacing: 0) {
-                            ForEach(catalog.connectedProviders) { provider in
+                            ForEach(connected) { provider in
                                 ConnectedRow(provider: provider) { connecting = provider }
-                                if provider.id != catalog.connectedProviders.last?.id {
+                                if provider.id != connected.last?.id {
                                     Divider().padding(.leading, 56)
                                 }
                             }
@@ -108,6 +112,11 @@ struct ProvidersView: View {
         }
     }
 
+    /// Accounts connected, but the coding agents': they have their own section.
+    private var connected: [Integration] {
+        catalog.connectedProviders.filter { !OutsideAgents.isAgent($0.id) }
+    }
+
     private var featured: [Integration] {
         Catalog.featured.compactMap { id in catalog.providers.first { $0.id == id && !$0.isConnected } }
     }
@@ -117,7 +126,7 @@ struct ProvidersView: View {
         if query.isEmpty {
             // Your own are listed in their own section.
             let shown = Set(Catalog.featured).union(app.engineConfig.value(at: CustomProvidersSection.path)?.object?.keys ?? [:].keys)
-            return catalog.providers.filter { !shown.contains($0.id) && !$0.isConnected }
+            return catalog.providers.filter { !shown.contains($0.id) && !$0.isConnected && !OutsideAgents.isAgent($0.id) }
         }
         return catalog.providers.filter { $0.name.localizedCaseInsensitiveContains(query) || $0.id.localizedCaseInsensitiveContains(query) }
     }
