@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Models show once the engine has finished starting, even when that takes longer than a minute, like when a macOS folder prompt is answered late. The composer could stay on "Choose a Model".
 - The live view of a machine's browser no longer misses a change that left the picture the same size, like a box ticked or a letter typed.
 - A machine's browser no longer restarts for an update in the middle of an agent's task there, between its steps. It waits until no agent has used it for ten minutes.
 - Closing Kuvo Code's window and opening it again no longer leaves empty Terminal and New Tab tabs in each conversation's panel, and deleting the conversation in view no longer leaves a browser tab running behind it.

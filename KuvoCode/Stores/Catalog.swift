@@ -152,19 +152,21 @@ final class Catalog {
     }
 
     /// The engine is still starting: the models again in a moment, or, when it's been too long,
-    /// the engine started over.
+    /// the engine started over (once a launch, see AppModel), and the models asked for again, less
+    /// often: one waiting on a macOS prompt finishes when it's answered.
     private func waitForEngine() {
         let since = unavailableSince ?? .now
         unavailableSince = since
-        guard ContinuousClock.now - since < Self.stallLimit else {
+        var wait = Duration.seconds(5)
+        if ContinuousClock.now - since >= Self.stallLimit {
             log.error("the engine hasn't finished starting in \(Self.stallLimit, privacy: .public): starting it over")
             unavailableSince = nil
             onStalled?()
-            return
+            wait = .seconds(15)
         }
         refreshTask?.cancel()
         refreshTask = Task {
-            try? await Task.sleep(for: .seconds(5))
+            try? await Task.sleep(for: wait)
             guard !Task.isCancelled else { return }
             await refresh()
         }
