@@ -90,6 +90,7 @@ struct ConversationScroll<Rows: View>: View {
     @State private var spot = ScrollSpot()
     @State private var fold = FoldWatch()
     @State private var anchor = ScrollAnchor()
+    @State private var rowsCheck = RowsCheck()
     #if DEBUG
     @Environment(\.isConversationShown) private var isShown
     #endif
@@ -124,7 +125,10 @@ struct ConversationScroll<Rows: View>: View {
                 ScrollViewFinder {
                     anchor.scrollView = $0
                     #if DEBUG
-                    if isShown { ScrollAnchor.shownScrollView = $0 }
+                    if isShown {
+                        ScrollAnchor.shownScrollView = $0
+                        ScrollAnchor.shownAnchor = anchor
+                    }
                     #endif
                 }
             }
@@ -136,7 +140,11 @@ struct ConversationScroll<Rows: View>: View {
         // crawled, then snapped back. Following the end is done below, only while idle.
         .defaultScrollAnchor(.bottom, for: .initialOffset)
         #if DEBUG
-        .onChange(of: isShown) { if isShown { ScrollAnchor.shownScrollView = anchor.scrollView } }
+        .onChange(of: isShown) {
+            guard isShown else { return }
+            ScrollAnchor.shownScrollView = anchor.scrollView
+            ScrollAnchor.shownAnchor = anchor
+        }
         #endif
         .onScrollPhaseChange { _, phase in
             scrolling.isOn = phase != .idle
@@ -182,6 +190,7 @@ struct ConversationScroll<Rows: View>: View {
             // once: to the end through the lazy stack then, as AppKit's end is a guess the lazy
             // stack hasn't made rows at yet, which showed a blank conversation for a moment).
             let resizing = new.width != old.width && (anchor.scrollView?.window?.inLiveResize ?? false)
+            if new.width != old.width, !resizing { makeSureOfRows(proxy) }
             // Past the end, with nothing there to see, and you're not the one scrolling: to it.
             if new.isPastEnd, !scrolling.isOn {
                 if resizing {
@@ -291,9 +300,52 @@ extension ConversationScroll {
         }
     }
 
+    /// Once a width change has settled: if no row is laid out where the view is, to the end
+    /// again (or, scrolled up, a nudge), and a nudge if that didn't do it.
+    fileprivate func makeSureOfRows(_ proxy: ScrollViewProxy) {
+        // At each step of a slide too, once it's laid out: the lazy stack guesses the height
+        // again at every width, by far more than a screen, and a guess can leave the view where
+        // it has no rows. To the last row it showed, which it lays out where the view is.
+        DispatchQueue.main.async { [anchor] in
+            guard !scrolling.isOn, !anchor.showsRows(), let row = anchor.lastKnownRow else { return }
+            #if DEBUG
+            ScrollAnchor.blankRecoveries += 1
+            #endif
+            proxy.scrollTo(row, anchor: .bottom)
+        }
+        // Once the width has stopped changing (a slide changes it every frame).
+        rowsCheck.task?.cancel()
+        rowsCheck.task = Task {
+            for step in 0..<4 {
+                try? await Task.sleep(for: .milliseconds(150))
+                guard !Task.isCancelled, !scrolling.isOn, !anchor.showsRows() else { return }
+                #if DEBUG
+                ScrollAnchor.blankRecoveries += 1
+                #endif
+                switch step {
+                // Where it guessed the end was, there may be no rows: to the last one it has
+                // made, which it lays out (and measures again from), then to the end.
+                case 0, 2:
+                    if let row = anchor.lastKnownRow {
+                        proxy.scrollTo(row, anchor: .bottom)
+                    } else {
+                        anchor.nudge()
+                    }
+                default:
+                    if scroller.followsEnd { toEnd(proxy) } else { anchor.nudge() }
+                }
+            }
+        }
+    }
+
     fileprivate func toEnd(_ proxy: ScrollViewProxy) {
         proxy.scrollTo(ScrollAnchor.end, anchor: .bottom)
     }
+}
+
+/// The check that rows are laid out where the view is, after the width changes.
+final class RowsCheck {
+    var task: Task<Void, Never>?
 }
 
 /// Where the conversation is scrolled to, read only when going to a place.
@@ -422,8 +474,12 @@ final class ScrollAnchor {
         }
     }
     #if DEBUG
-    /// The scroll view of the conversation in view, not one kept hidden, for the tests.
+    /// The scroll view of the conversation in view, not one kept hidden, for the tests, and
+    /// its anchor.
     static weak var shownScrollView: NSScrollView?
+    static weak var shownAnchor: ScrollAnchor?
+    /// How often a conversation was found showing no rows and was brought back.
+    static var blankRecoveries = 0
     /// The conversation's scroll view, for the tests: the one in view, else the tallest.
     static func conversationScrollView() -> NSScrollView? {
         if let shownScrollView, shownScrollView.window != nil { return shownScrollView }
@@ -434,6 +490,7 @@ final class ScrollAnchor {
     private var boundsWatch: NSObjectProtocol?
     #endif
     var isFollowingEnd = true
+
     /// The rows laid out, where they are in the conversation, and those shown now. A row that
     /// goes and comes back where it was (the whole conversation hidden a moment) isn't told its
     /// place again, so where it was is kept.
@@ -526,6 +583,57 @@ final class ScrollAnchor {
         Self.note("\(id) moved \(Int(shift))\(abs(short) > 0.5 ? ", \(Int(short)) of it later" : "")")
         #endif
     }
+
+    /// Whether any row is laid out where the view is. Given a very different width at once, the
+    /// lazy stack could leave the view where it had made no rows, and show nothing there until
+    /// you scrolled.
+    func showsRows() -> Bool {
+        guard let scrollView, let document = scrollView.documentView else { return true }
+        let visible = scrollView.contentView.bounds
+        // A conversation shorter than the view has room under it.
+        guard document.frame.height > visible.height + 40 else { return true }
+        // How much of the view rows cover: with a row peeking in at its bottom only (and nothing
+        // above it), it's still blank.
+        let spans = frames.filter { shown.contains($0.key) }.map { max($0.value.minY, visible.minY)...max(min($0.value.maxY, visible.maxY), max($0.value.minY, visible.minY)) }
+            .filter { $0.upperBound > $0.lowerBound }.sorted { $0.lowerBound < $1.lowerBound }
+        var covered: CGFloat = 0
+        var end = visible.minY
+        for span in spans where span.upperBound > end {
+            covered += span.upperBound - max(span.lowerBound, end)
+            end = span.upperBound
+        }
+        return covered > visible.height * 0.4
+    }
+
+    /// The lowest row laid out so far: one the lazy stack has, to go to when it has none where
+    /// the view is.
+    var lastKnownRow: String? {
+        frames.max { $0.value.maxY < $1.value.maxY }?.key
+    }
+
+    /// Moves the view a point and back, so SwiftUI lays out rows where it is.
+    func nudge() {
+        guard let scrollView else { return }
+        let clip = scrollView.contentView
+        let origin = clip.bounds.origin
+        clip.scroll(to: NSPoint(x: origin.x, y: max(0, origin.y - 1)))
+        scrollView.reflectScrolledClipView(clip)
+        clip.scroll(to: origin)
+        scrollView.reflectScrolledClipView(clip)
+        NotificationCenter.default.post(name: NSView.boundsDidChangeNotification, object: clip)
+    }
+
+    #if DEBUG
+    /// Where the view is and the rows across it, for the tests.
+    func describeView() -> String {
+        guard let scrollView, let document = scrollView.documentView else { return "no scroll view" }
+        let visible = scrollView.contentView.bounds
+        let across = frames.filter { shown.contains($0.key) && $0.value.maxY > visible.minY && $0.value.minY < visible.maxY }
+            .sorted { $0.value.minY < $1.value.minY }
+            .map { "\($0.key.suffix(6)) \(Int($0.value.minY))…\(Int($0.value.maxY))" }
+        return "view \(Int(visible.minY))…\(Int(visible.maxY)) of \(Int(document.frame.height)), \(shown.count) rows shown, across it: \(across.joined(separator: ", "))"
+    }
+    #endif
 
     func rowCame(_ id: String) {
         if frames[id] != nil { shown.insert(id) }

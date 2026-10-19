@@ -11,6 +11,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - A Settings page you open comes in a preview tab, its name in italics, as in VS Code: the next page you open replaces it, unless you've clicked or typed in it, and then it gets a tab of its own. ⌘-click still opens one right away.
 - The engine's download on first launch tries again by itself, from where it stopped, when the connection drops or stalls; and when the server or a proxy turns it away, it says so, with what it answered, rather than with an error code.
 - The sidebar's rows no longer show under the window's buttons and the sidebar button when you scroll it with the tab bar hidden: the list ends below them, fading out at its top and bottom while there's more to scroll to. Settings' sidebar too.
+- The side panel makes room as it slides in and out, as the sidebar does: the conversation narrows and widens along with it, rather than waiting under the panel and then jumping to its new width.
 
 ## 0.5.21
 

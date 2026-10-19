@@ -33,11 +33,6 @@ struct MainView: View {
     @State private var keptSplit: String?
     /// The room the conversation and the panel share: what the panel takes, expanded.
     @State private var mainAreaWidth: CGFloat = 0
-    /// The room the conversation leaves the panel: it follows the panel a moment later, so the
-    /// panel slides in over the conversation (and out from over it) and the conversation's text
-    /// wraps once after, rather than at every step of the slide or all at once ahead of it.
-    @State private var panelRoom: Double?
-    @State private var panelRoomChange: Task<Void, Never>?
     @AppStorage("sessionsWidth") private var sessionsWidth = 280.0
     @AppStorage("changesWidth") private var changesWidth = 420.0
     @AppStorage(Notifier.badgeKey) private var showsBadge = true
@@ -250,12 +245,12 @@ struct MainView: View {
                         }
                         // The panel's room, with the gap before it; the panel itself is over it, so
                         // expanding only makes it wider, the one card it is. Growing and shrinking
-                        // with the panel's slide, as the sidebar's does.
+                        // with the panel's slide, as the sidebar's does, so the conversation makes
+                        // room as the panel comes in rather than ahead of it.
                         Color.clear
-                            .frame(width: panelRoom.map { $0 + Metrics.paneGap } ?? 0)
-                            .onChange(of: layout.changes, initial: true) { old, new in followPanel(from: old, to: new) }
+                            .frame(width: layout.changes.map { $0 + Metrics.paneGap } ?? 0)
                             .overlay(alignment: .leading) {
-                                if let width = layout.changes, panelRoom != nil {
+                                if let width = layout.changes {
                                     PaneResizer(
                                         width: Binding(get: { width }, set: { changesWidth = $0 }),
                                         range: PaneLayout.changesRange.lowerBound...max(PaneLayout.changesRange.lowerBound, layout.changesMax),
@@ -960,23 +955,6 @@ struct MainView: View {
     /// The panel's and the sidebar's buttons, which show what's on screen.
     private var panelToggle: Binding<Bool> { Binding(get: { panelOnScreen }, set: { showPanel($0) }) }
     private var sidebarToggle: Binding<Bool> { Binding(get: { sidebarOnScreen }, set: { showSidebar($0) }) }
-
-    /// The panel's room to `new`: at once when it's there before and after (the panel or the
-    /// window resized), a moment later when the panel comes or goes, once it has slid.
-    private func followPanel(from old: Double?, to new: Double?) {
-        panelRoomChange?.cancel()
-        guard (old == nil) != (new == nil), panelRoom != new else {
-            panelRoom = new
-            return
-        }
-        panelRoomChange = Task {
-            try? await Task.sleep(for: .milliseconds(320))
-            guard !Task.isCancelled else { return }
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) { panelRoom = new }
-        }
-    }
 
     private func keep(_ pane: PaneLayout.Pane) {
         givesWay.removeAll { $0 == pane }

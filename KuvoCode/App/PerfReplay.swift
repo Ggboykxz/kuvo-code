@@ -844,6 +844,8 @@ enum PerfLayoutCheck {
         Task {
             var problems: [String] = []
             var looks = 0
+            var blankFor = 0
+            var trace: [String] = []
             for _ in 0..<60 {
                 try? await Task.sleep(for: .milliseconds(500))
                 func texts(in view: NSView) -> [ReplyTextView] { (view as? ReplyTextView).map { [$0] } ?? view.subviews.flatMap(texts) }
@@ -859,9 +861,18 @@ enum PerfLayoutCheck {
                     if used > view.frame.height + 8 { problems.append("text \(Int(used)) tall in a frame \(Int(view.frame.height)) tall (over what's under it)") }
                     if used < view.frame.height - 12 { problems.append("text \(Int(used)) tall in a frame \(Int(view.frame.height)) tall (a gap)") }
                 }
+                if let anchor = ScrollAnchor.shownAnchor { trace.append(String(format: "%.1f ", CACurrentMediaTime()) + anchor.describeView()) }
+                // The conversation in view showing no rows, for a second or more.
+                if let anchor = ScrollAnchor.shownAnchor, !anchor.showsRows() {
+                    blankFor += 1
+                    if blankFor == 2 { problems.append("the conversation showed no rows for a second: " + anchor.describeView()) }
+                } else {
+                    blankFor = 0
+                }
                 // As it goes, so it's there whenever the app is quit.
-                let out = "\(looks) looks: " + (problems.isEmpty ? "all right" : "\(problems.count) wrong\n" + problems.prefix(20).joined(separator: "\n")) + "\n"
+                let out = "\(looks) looks, \(ScrollAnchor.blankRecoveries) blank conversations brought back: " + (problems.isEmpty ? "all right" : "\(problems.count) wrong\n" + problems.prefix(20).joined(separator: "\n")) + "\n"
                 try? out.write(toFile: file, atomically: true, encoding: .utf8)
+                try? trace.suffix(40).joined(separator: "\n").write(toFile: file + ".trace", atomically: true, encoding: .utf8)
             }
         }
     }
