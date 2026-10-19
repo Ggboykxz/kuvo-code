@@ -105,7 +105,12 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
-  - **2.21 (this change).** The look is bound to OpenDesign's design direction `modern-minimal`
+  - **2.22 (this change).** The conversation view is React and TypeScript: `windows/app`
+    holds the source, `npm run build` bundles it into the page the harness serves, and the
+    packed executable carries that build. The state stays a plain object the way the page
+    has always kept it; React draws it. The hand-written page stays as a fallback when
+    there is no build, so the app never shows nothing.
+  - **2.21. The look is bound to OpenDesign's design direction `modern-minimal`
     ("Modern minimal — Linear / Vercel"), read with the tool that ships it
     (`od tools directions --id modern-minimal --json`): system fonts, hairline borders, no
     shadows except what floats, tabular numerals, one accent. The binding is written down in
