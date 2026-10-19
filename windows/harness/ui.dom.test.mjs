@@ -155,6 +155,20 @@ test("the page, in a DOM, against the real engine", {
   // the same way the Mac app does, and settles as soon as there's nothing to stop.
   await reloaded.seen("nothing to be running", () => reloaded.element("stop").hidden, 15_000);
 
+  // The settings: the navigation holds only buttons, and every page it can open is a page
+  // of the settings itself. (A page once slipped inside the navigation and broke them all.)
+  const nav = page.document.querySelector(".settings-nav");
+  const pages = page.document.querySelector(".settings-pages");
+  assert.ok(nav, "the settings have a navigation");
+  assert.ok(pages, "the settings have their pages");
+  assert.equal(nav.querySelectorAll(".settings-page").length, 0, "no page sits inside the navigation");
+  assert.equal([...page.document.querySelectorAll(".settings-page")].filter(node => !node.closest(".settings-pages")).length, 0, "every page belongs to the settings");
+  for (const button of nav.querySelectorAll("button")) {
+    const wanted = button.dataset.section;
+    assert.ok([...pages.querySelectorAll(".settings-page")].some(node => node.dataset.section === wanted),
+      `the navigation's "${wanted}" has a page behind it`);
+  }
+
   assert.deepEqual([...page.errors, ...reloaded.errors], [], "the page had nothing to complain about");
 
   // Leave the engine as we found it (the hook above closes the pages and the harness).

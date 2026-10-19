@@ -103,7 +103,50 @@
         <button data-section="commands">Commands</button>
         <button data-section="projects">Projects</button>
         <button data-section="permissions">Permissions</button>
-        <button         <!-- The config file the engine reads: loaded once, edited page by page, saved whole. -->
+        <button data-section="system">Engine &amp; storage</button>
+
+      </nav>
+      <div class="settings-pages">
+        <div class="settings-page" data-section="appearance">
+          <div class="settings-row"><span>Accent</span><div id="accent-swatches" class="swatches"></div></div>
+          <div class="settings-row">
+            <span>Mode</span>
+            <select id="setting-theme">
+              <option value="system" selected>System</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+          </div>
+          <div class="settings-row">
+            <span>Text size</span>
+            <select id="setting-text-size">
+              <option value="13">Small</option>
+              <option value="14" selected>Default</option>
+              <option value="16">Large</option>
+            </select>
+          </div>
+          <div class="settings-row">
+            <span>Motion</span>
+            <select id="setting-motion">
+              <option value="full" selected>Full</option>
+              <option value="reduced">Reduced</option>
+            </select>
+          </div>
+          <div class="settings-note">Like the Mac app's Appearance settings: the accent colors the interface, the text size sets how messages read, and reduced motion stills the shimmer and springs.</div>
+        </div>
+        <div class="settings-page" data-section="keyboard" hidden>
+          <div id="shortcut-list" class="shortcut-list"></div>
+          <div class="settings-note">Press the new keys after Change. Ctrl+S still saves an open file first.</div>
+        </div>
+        <div class="settings-page" data-section="projects" hidden>
+          <div id="projects-settings-list" class="project-settings"></div>
+          <div class="settings-note">Switch with a click, forget with the ✕. The same list is in the folder picker.</div>
+        </div>
+        <div class="settings-page" data-section="permissions" hidden>
+          <div id="saved-permissions" class="saved-permissions"></div>
+          <div class="settings-note">What this session's agent was once told it may always do, as the engine remembers it.</div>
+        </div>
+        <!-- The config file the engine reads: loaded once, edited page by page, saved whole. -->
         <div class="settings-page" data-section="editor" hidden>
           <div class="cfg-problem" id="cfg-problem" hidden></div>
           <div id="editor-title" class="settings-detail-title"></div>
@@ -160,48 +203,6 @@
           <div class="settings-note">Type / and a command's name at the start of a message to run it. What you type after the name fills in $ARGUMENTS; $1, $2 and so on are its words. !`command` puts in a command's output.</div>
         </div>
 
-data-section="system">Engine &amp; storage</button>
-      </nav>
-      <div class="settings-pages">
-        <div class="settings-page" data-section="appearance">
-          <div class="settings-row"><span>Accent</span><div id="accent-swatches" class="swatches"></div></div>
-          <div class="settings-row">
-            <span>Mode</span>
-            <select id="setting-theme">
-              <option value="system" selected>System</option>
-              <option value="light">Light</option>
-              <option value="dark">Dark</option>
-            </select>
-          </div>
-          <div class="settings-row">
-            <span>Text size</span>
-            <select id="setting-text-size">
-              <option value="13">Small</option>
-              <option value="14" selected>Default</option>
-              <option value="16">Large</option>
-            </select>
-          </div>
-          <div class="settings-row">
-            <span>Motion</span>
-            <select id="setting-motion">
-              <option value="full" selected>Full</option>
-              <option value="reduced">Reduced</option>
-            </select>
-          </div>
-          <div class="settings-note">Like the Mac app's Appearance settings: the accent colors the interface, the text size sets how messages read, and reduced motion stills the shimmer and springs.</div>
-        </div>
-        <div class="settings-page" data-section="keyboard" hidden>
-          <div id="shortcut-list" class="shortcut-list"></div>
-          <div class="settings-note">Press the new keys after Change. Ctrl+S still saves an open file first.</div>
-        </div>
-        <div class="settings-page" data-section="projects" hidden>
-          <div id="projects-settings-list" class="project-settings"></div>
-          <div class="settings-note">Switch with a click, forget with the ✕. The same list is in the folder picker.</div>
-        </div>
-        <div class="settings-page" data-section="permissions" hidden>
-          <div id="saved-permissions" class="saved-permissions"></div>
-          <div class="settings-note">What this session's agent was once told it may always do, as the engine remembers it.</div>
-        </div>
         <div class="settings-page" data-section="system" hidden>
           <div id="engine-line" class="gauge-line big"></div>
           <div id="storage-log" class="gauge-line"></div>
