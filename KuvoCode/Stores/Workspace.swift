@@ -1426,13 +1426,20 @@ final class Workspace {
             var session = session(id)
             let api = api(forSession: id)
             let unlisted = session == nil ? try? await api?.session(id) : nil
-            // The engine's run for a session with the coding agents: that session asks you itself.
-            if let unlisted, Self.isEngineRun(unlisted) { return }
+            var isEngineRun = unlisted.map(Self.isEngineRun) ?? false
             var parent = unlisted?.parentID
-            for _ in 0..<5 where session == nil {
+            for _ in 0..<5 where session == nil && !isEngineRun {
                 guard let next = parent else { break }
                 session = self.session(next)
-                parent = session == nil ? (try? await api?.session(next))?.parentID : nil
+                guard session == nil, let fetched = try? await api?.session(next) else { break }
+                isEngineRun = Self.isEngineRun(fetched)
+                parent = fetched.parentID
+            }
+            // The engine's run for a session with the coding agents, or a subagent of it: that
+            // session asks you itself, and counts once on the Dock.
+            if isEngineRun {
+                asking[request] = nil
+                return
             }
             Notifier.shared.notify(session: session?.id ?? id, title: session.flatMap { botName?($0.id) } ?? session?.title ?? AppInfo.name,
                                    subtitle: session.flatMap { botName?($0.id) == nil ? projectName($0.location.directory) : nil }, body: body,
