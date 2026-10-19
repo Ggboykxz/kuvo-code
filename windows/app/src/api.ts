@@ -6,7 +6,8 @@ export type Json = unknown;
 export interface SessionSummary {
   id: string;
   title?: string | null;
-  time?: { created?: number; updated?: number; idle?: number; viewed?: number };
+  time?: { created?: number; updated?: number; idle?: number; viewed?: number; archived?: number };
+  metadata?: Record<string, unknown> | null;
   tokens?: { input?: number; output?: number; reasoning?: number; total?: number };
   model?: { providerID?: string; id?: string } | null;
   parentID?: string | null;

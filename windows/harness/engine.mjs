@@ -142,6 +142,12 @@ export class EngineClient {
     await this.request("PATCH", `api/session/${encodeURIComponent(session)}`, { body: { title } });
   }
 
+  /// Changes a session — its title, or a note in its metadata (how the Mac app archives
+  /// one: a mark of its own, "kuvo.archived").
+  async updateSession(session, changes) {
+    await this.request("PATCH", `api/session/${encodeURIComponent(session)}`, { body: changes });
+  }
+
   async forkSession(session, { before } = {}) {
     return (await this.request("POST", `api/session/${encodeURIComponent(session)}/fork`, { body: { before } })).data;
   }

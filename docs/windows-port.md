@@ -105,7 +105,11 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
-  - **2.24 (this change).** The Mac app's searching, in the React view: the sidebar finds
+  - **2.25 (this change).** The Mac app's way of putting a session away: a mark of the
+    app's own, so it leaves the sidebar but stays searchable — Settings › Archived sessions
+    brings it back or deletes it. The Keyboard page lists every shortcut, by where it is
+    used, and the ones that were missing work now (Ctrl+N, Ctrl+S, Ctrl+F, Ctrl+,, Ctrl+.).
+  - **2.24. The Mac app's searching, in the React view: the sidebar finds
     what was said in any session, the drawer finds the project's files by what is written
     in them, and *Find in conversation* narrows what the export carries.
   - **2.23. The Mac app's General settings on Windows: automatic updates,

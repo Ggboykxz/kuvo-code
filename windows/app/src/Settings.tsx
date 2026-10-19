@@ -6,6 +6,7 @@ import { api } from "./api";
 import {
   applyLook,
   bootConfig,
+  loadSessions,
   cfgGet,
   cfgSet,
   complain,
@@ -28,6 +29,7 @@ const PAGES = [
   ["skills", "Skills"],
   ["commands", "Commands"],
   ["projects", "Projects"],
+  ["archived", "Archived sessions"],
   ["permissions", "Permissions"],
   ["system", "Engine & storage"],
 ] as const;
@@ -124,6 +126,7 @@ export function Settings() {
       case "skills": return <SkillsPage />;
       case "commands": return <CommandsPage />;
       case "projects": return <ProjectsPage />;
+      case "archived": return <ArchivedPage />;
       case "permissions": return <PermissionsPage permissions={savedPermissions} onChange={setSavedPermissions} />;
       default: return <SystemPage system={system} />;
     }
@@ -262,17 +265,51 @@ function GeneralPage() {
   );
 }
 
-function KeyboardPage() {
-  const shortcuts: [string, string][] = [
-    ["Ctrl+K", "Commands, sessions and files"],
+/// Every keyboard shortcut, by where it's used — the Mac app's own list, for ours.
+const SHORTCUT_GROUPS: [string, [string, string][]][] = [
+  ["General", [
+    ["Ctrl+K", "The command palette: commands, sessions and files"],
+    ["Ctrl+N", "A new session"],
     ["Ctrl+S", "Save the conversation as Markdown"],
-    ["Ctrl+Shift+A", "Ask the agent a question"],
+    ["Ctrl+,", "These settings"],
     ["Esc", "Close what is open"],
-  ];
+  ]],
+  ["Sessions", [
+    ["Ctrl+F", "Find in the conversation"],
+    ["Ctrl+.", "Stop the agent"],
+    ["Ctrl+1 – 8", "That session tab"],
+  ]],
+  ["Side panel", [
+    ["Ctrl+Shift+F", "Files and terminal"],
+    ["Ctrl+Shift+C", "The changes of this session"],
+  ]],
+  ["Composer", [
+    ["Return", "Send"],
+    ["Shift+Return", "A new line"],
+    ["/", "At the start: a command"],
+    ["@", "Mention a file"],
+  ]],
+];
+
+function KeyboardPage() {
+  const [search, setSearch] = useState("");
+  const needle = search.trim().toLowerCase();
+  const groups = SHORTCUT_GROUPS
+    .map(([title, shortcuts]) => [title, shortcuts.filter(([keys, what]) => !needle || `${keys} ${what}`.toLowerCase().includes(needle))] as [string, [string, string][]])
+    .filter(([, shortcuts]) => shortcuts.length > 0);
   return (
     <>
-      {shortcuts.map(([keys, what]) => (
-        <div className="settings-row" key={keys}><span>{what}</span><kbd>{keys}</kbd></div>
+      <div className="settings-row">
+        <span>Search</span>
+        <input type="text" value={search} placeholder="Search shortcuts" onChange={event => setSearch(event.target.value)} />
+      </div>
+      {groups.length === 0 ? <div className="settings-note">No shortcut matches.</div> : groups.map(([title, shortcuts]) => (
+        <div key={title}>
+          <h3>{title}</h3>
+          {shortcuts.map(([keys, what]) => (
+            <div className="settings-row" key={keys}><span>{what}</span><kbd>{keys}</kbd></div>
+          ))}
+        </div>
       ))}
     </>
   );
@@ -291,6 +328,66 @@ function ProjectsPage() {
         </div>
       ))}
       <div className="settings-note">The folders this machine has worked in, newest first.</div>
+    </>
+  );
+}
+
+/// The sessions that are put away: out of the sidebar, still here, brought back or deleted.
+function ArchivedPage() {
+  const [sessions, setSessions] = useState<{ id: string; title?: string | null; time?: { updated?: number } }[]>([]);
+  const [query, setQuery] = useState("");
+
+  const load = async () => {
+    try {
+      const { sessions } = await api<{ sessions: { id: string; title?: string | null; time?: { updated?: number; archived?: number }; metadata?: Record<string, unknown> | null }[] }>(`/api/sessions?directory=${encodeURIComponent(state.project ?? "")}`);
+      setSessions((sessions ?? []).filter(session => Boolean(session.time?.archived) || session.metadata?.["kuvo.archived"] === true));
+    } catch {
+      setSessions([]);
+    }
+  };
+  useEffect(() => { void load(); }, [state.project]);
+
+  const shown = sessions.filter(session => !query || (session.title || "").toLowerCase().includes(query.toLowerCase()));
+  return (
+    <>
+      <div className="settings-row">
+        <span>Search archived sessions</span>
+        <input type="text" value={query} placeholder="Search" onChange={event => setQuery(event.target.value)} />
+      </div>
+      {shown.length === 0 ? (
+        <div className="settings-note">None yet. Put a session away with the ⇩ button beside it, and it comes here.</div>
+      ) : shown.map(session => (
+        <div className="cfg-row" key={session.id}>
+          <div className="cfg-row-main">
+            <div className="cfg-row-title"><strong>{session.title || "Untitled"}</strong></div>
+          </div>
+          <button
+            className="small"
+            onClick={async () => {
+              try {
+                await api(`/api/sessions/${encodeURIComponent(session.id)}/archive`, { method: "POST", body: { archived: false } });
+                await load();
+                await loadSessions();
+              } catch (error) { complain(error); }
+            }}
+          >
+            Unarchive
+          </button>
+          <button
+            className="small"
+            title="Delete it for good"
+            onClick={async () => {
+              if (!confirm("Delete it for good?")) return;
+              try {
+                await api(`/api/sessions/${encodeURIComponent(session.id)}`, { method: "DELETE" });
+                await load();
+              } catch (error) { complain(error); }
+            }}
+          >
+            ✕
+          </button>
+        </div>
+      ))}
     </>
   );
 }

@@ -805,6 +805,15 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
       return json({ ok: true });
     }
 
+    // Archiving: a mark of the app's own, as the Mac app keeps it.
+    const archive = route(/^\/api\/sessions\/([^/]+)\/archive$/);
+    if (archive && request.method === "POST") {
+      const body = await readBody(request);
+      const archived = body?.archived !== false;
+      await client.updateSession(archive[0], { metadata: { "kuvo.archived": archived } });
+      return json({ ok: true, archived });
+    }
+
     const rename = route(/^\/api\/sessions\/([^/]+)\/rename$/);
     if (rename && request.method === "POST") {
       const body = await readBody(request);

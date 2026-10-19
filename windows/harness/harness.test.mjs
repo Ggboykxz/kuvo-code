@@ -72,6 +72,7 @@ function fakeEngine({ password = PASSWORD, session = null } = {}) {
       return send({ data: made });
     }
     if (url.pathname === `/api/session/${engine.session.id}` && request.method === "GET") return send({ data: engine.session });
+    if (url.pathname === `/api/session/${engine.session.id}` && request.method === "PATCH") return send({ data: engine.session });
     if (url.pathname === `/api/session/${engine.session.id}/message`) return send({ data: engine.messages, cursor: null });
     if (url.pathname === `/api/session/${engine.session.id}/permission`) return send({ data: engine.permissions });
     if (url.pathname.endsWith("/prompt")) return send({ ok: true });
@@ -681,4 +682,25 @@ test("the shell's own settings are read and written, so the page can speak to th
   assert.equal(written.updates, false);
   assert.equal(written.keepAwake, true);
   assert.equal(written.startAtLogin, first.startAtLogin);
+});
+
+test("a session can be put away and brought back, the way the Mac app does it", async t => {
+  const engine = await fakeEngine();
+  t.after(engine.close);
+  const { harness, url } = await inFront(engine);
+  t.after(() => harness.close());
+
+  const archived = await fetch(`${url}api/sessions/${engine.session.id}/archive`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ archived: true }),
+  });
+  assert.equal(archived.status, 200);
+  assert.deepEqual(await archived.json(), { ok: true, archived: true });
+  const change = engine.asked.find(asked => asked.method === "PATCH" && asked.path.includes(engine.session.id));
+  assert.ok(change, "the engine was asked to change the session");
+  assert.equal(change.body.metadata["kuvo.archived"], true);
+
+  const back = await fetch(`${url}api/sessions/${engine.session.id}/archive`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ archived: false }),
+  });
+  assert.equal(back.status, 200);
 });

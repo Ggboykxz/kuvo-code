@@ -375,9 +375,12 @@ async function exportConversation() {
 // ---- The sidebar ----
 
 function Sidebar() {
-  const visible = state.sessionQuery
-    ? state.sessions.filter(s => (s.title || "").toLowerCase().includes(state.sessionQuery))
-    : state.sessions;
+  const archived = (session: SessionSummary) => Boolean(session.time?.archived) || session.metadata?.["kuvo.archived"] === true;
+  const visible = state.sessions
+    .filter(session => !archived(session))
+    .filter(s => (state.sessionQuery
+      ? (s.title || "").toLowerCase().includes(state.sessionQuery)
+      : true));
   return (
     <aside>
       <div className="aside-head">
@@ -402,6 +405,19 @@ function Sidebar() {
               <button className="session" data-id={session.id} onClick={() => void openSession(session.id)}>
                 <span className="session-title">{session.title || "Untitled"}</span>
                 <span className="session-sub">{`${running ? "running · " : ""}${when(session.time?.updated)}`}</span>
+              </button>
+              <button
+                className="session-delete"
+                title="Put this session away (Settings › Archived sessions brings it back)"
+                onClick={async () => {
+                  try {
+                    await api(`/api/sessions/${encodeURIComponent(session.id)}/archive`, { method: "POST", body: { archived: true } });
+                    if (state.session?.id === session.id) { state.session = null; state.transcript = null; }
+                    await loadSessions();
+                  } catch (error) { complain(error); }
+                }}
+              >
+                ⇩
               </button>
               <button className="session-delete" title="Delete this session" onClick={() => void deleteSession(session)}>✕</button>
             </li>
@@ -706,10 +722,39 @@ export function App() {
         complain(error);
       });
     const onKey = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+      const command = event.ctrlKey || event.metaKey;
+      if (command && event.key.toLowerCase() === "k") {
         event.preventDefault();
         state.paletteOpen = !state.paletteOpen;
         render();
+        return;
+      }
+      if (command && event.key.toLowerCase() === "n") {
+        event.preventDefault();
+        if (state.project) void newSession();
+        return;
+      }
+      if (command && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        void exportConversation();
+        return;
+      }
+      if (command && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        (document.getElementById("find") as HTMLInputElement | null)?.focus();
+        return;
+      }
+      if (command && event.key === ",") {
+        event.preventDefault();
+        state.settingsOpen = true;
+        state.settingsSection = "appearance";
+        render();
+        return;
+      }
+      if (command && event.key === ".") {
+        event.preventDefault();
+        void stopRun();
+        return;
       }
       if (event.key === "Escape") {
         state.paletteOpen = false;
