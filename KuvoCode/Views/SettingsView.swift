@@ -135,7 +135,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     static let storageKey = "settings.tab"
 
     case general, appearance, notifications, phone, shortcuts, privacy, storage
-    case accounts, usage
+    case accounts, auto, usage
     case agents, permissions, commands, skills, integrations, mcp, engine
     case git, worktrees, archived, machines
     case panel, browser, passwords
@@ -158,7 +158,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     var group: Group {
         switch self {
         case .general, .appearance, .notifications, .phone, .shortcuts, .privacy, .storage: .app
-        case .accounts, .usage: .models
+        case .accounts, .auto, .usage: .models
         case .agents, .permissions, .commands, .skills, .integrations, .mcp, .engine: .agent
         case .git, .worktrees, .archived, .machines: .projects
         case .panel, .browser, .passwords: .panel
@@ -175,6 +175,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .privacy: "Privacy"
         case .storage: "Storage"
         case .accounts: "Accounts"
+        case .auto: "Auto"
         case .usage: "Usage"
         case .agents: "Agents"
         case .permissions: "Permissions"
@@ -203,6 +204,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .privacy: "hand.raised"
         case .storage: "internaldrive"
         case .accounts: "person.crop.circle"
+        case .auto: "list.number"
         case .usage: "gauge.with.dots.needle.50percent"
         case .agents: "person.2"
         case .permissions: "checkmark.shield"
@@ -232,6 +234,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .privacy: "What Kuvo Code shares, and what stays on this Mac."
         case .storage: "What Kuvo Code keeps on this Mac, and room you can get back."
         case .accounts: "Sign in with a subscription you already have, or add an API key. Credentials stay on this Mac."
+        case .auto: "Your order of models to go through when one reaches a usage limit."
         case .usage: nil
         case .agents: "The agents you pick in the composer, and the subagents they hand work to."
         case .permissions: "What the agent may do without asking you first."
@@ -261,6 +264,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .privacy: "analytics anonymous usage data"
         case .storage: "disk space size clean up delete old sessions logs cache"
         case .accounts: "providers sign in api key login models openai anthropic copilot"
+        case .auto: "fallback failover rate usage limit order chain switch models"
         case .usage: "limits spend menu bar plan"
         case .agents: "modes build plan subagents default model title"
         case .permissions: "allow ask deny approve rules"
@@ -295,6 +299,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .privacy: PrivacySettings()
         case .storage: StorageSettings()
         case .accounts: ProvidersView()
+        case .auto: AutoSettings()
         case .usage: UsageSettings()
         case .agents: AgentsSettings()
         case .permissions: PermissionsSettings()

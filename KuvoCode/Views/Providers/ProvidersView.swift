@@ -220,14 +220,14 @@ private struct ProviderTile: View {
     /// The headline way in: "Sign in with ChatGPT", "Sign in", "API key".
     /// ("Login with" is the engine's wording for some; one wording reads better side by side.)
     private var hint: String {
-        for method in provider.signInMethods {
+        for method in provider.offeredSignInMethods {
             if case .oauth(_, let label, _) = method, !label.localizedCaseInsensitiveContains("legacy") {
                 // Under the provider's name, its name again ("OpenCode Console account") says nothing.
                 if label.localizedCaseInsensitiveContains(provider.name) { return "Sign in" }
                 return label.replacingOccurrences(of: "Login with", with: "Sign in with")
             }
         }
-        return provider.signInMethods.contains { $0.id == "key" } ? "API key" : "Connect"
+        return provider.offeredSignInMethods.contains { $0.id == "key" } ? "API key" : "Connect"
     }
 }
 

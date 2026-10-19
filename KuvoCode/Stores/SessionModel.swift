@@ -702,7 +702,8 @@ final class SessionModel {
     @ObservationIgnored private var toolsChecked = false
 
     private func waitForTools() async {
-        guard !toolsChecked else { return }
+        // The coding agents bring their own tools.
+        guard !toolsChecked, !OutsideAgents.isAgentSession(session) else { return }
         toolsChecked = true
         await api.waitForTools(in: session.location.directory)
     }
@@ -806,6 +807,7 @@ final class SessionModel {
     /// there if the command can't run.
     func runShell(_ command: String, written: String? = nil) {
         guard canReach else { return notRun(written) }
+        if OutsideAgents.isAgentSession(session) { return notRun(written, because: OutsideAgents.Failure.unavailable("Running a command yourself with !")) }
         Analytics.shared.track("shell_run")
         let previous = sending
         sending = Task {
@@ -1045,6 +1047,8 @@ final class SessionModel {
     /// send again. Redo brings it all back, until the next message makes it final.
     func undo(from message: Message.User) {
         guard canReach else { return }
+        // A coding agent changes files itself: there's nothing here to take them back with.
+        guard !OutsideAgents.isAgentSession(session) else { return }
         Analytics.shared.track("undo_used")
         Task {
             do {
@@ -1079,7 +1083,8 @@ final class SessionModel {
                 let files = (user.files ?? []).compactMap { file -> OpenCodeAPI.PromptFile? in
                     if case .uri(let uri) = file.source { .init(uri: uri, name: file.name) } else { nil }
                 }
-                _ = try await api.stageRevert(session: id, messageID: user.id)
+                // A coding agent's turn stays (there's no taking it back): the message goes again after it.
+                if !OutsideAgents.isAgentSession(session) { _ = try await api.stageRevert(session: id, messageID: user.id) }
                 if let command = CommandMessages.shared[user.id], let (name, arguments) = SlashCommands.split(command) {
                     runCommand(name, arguments: arguments, files: Self.files(of: user))
                     return

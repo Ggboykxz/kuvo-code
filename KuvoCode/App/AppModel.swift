@@ -40,6 +40,7 @@ final class AppModel {
     /// The coding agents you already have (Claude Code, Codex, Cursor, Grok, Antigravity), run by
     /// the agents bridge beside the engine.
     let agents = OutsideAgents()
+    @ObservationIgnored private var agentsActivation: (any NSObjectProtocol)?
     /// The engine's settings file, for Settings.
     @ObservationIgnored private(set) lazy var engineConfig = EngineConfig(file: engineFolders.configFile)
     /// Engines to start again with new settings once nothing's at work in them: "" for this Mac's,
@@ -272,6 +273,7 @@ final class AppModel {
             phoneLink.start(endpoint: server.endpoint)
             Analytics.shared.trackOnce("engine_ready", ["seconds": Int((SuspendingClock.now - began).components.seconds), "downloaded": downloaded])
             listen(to: api)
+            agents.engineEndpoint = server.endpoint
             startAgents(engine: binary)
             Task { await usage.sync() }
             // In parallel: the catalog can wait on the engine's plugins (and they on a
@@ -318,7 +320,7 @@ final class AppModel {
         catalog.outsideAgents = agents
         agents.onEvent = { [weak self] event in
             self?.catalog.handle(event)
-            self?.workspace.handle(event)
+            self?.workspace.handleAgents(event)
         }
         agents.onConnected = { [weak self] in
             Task {
@@ -328,6 +330,12 @@ final class AppModel {
         }
         let environment = shellEnvironment
         Task { await agents.start(engine: binary, environment: environment) }
+        // Back in the app, you may have installed an agent or signed in to one in Terminal.
+        if agentsActivation == nil {
+            agentsActivation = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.catalog.refreshAgentsIfStale() }
+            }
+        }
     }
 
     /// `config` merged over any inline config already in the environment.

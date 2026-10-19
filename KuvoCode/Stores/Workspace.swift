@@ -94,7 +94,18 @@ final class Workspace {
     func api(forSession id: String) -> OpenCodeAPI? {
         if let session = session(id) { return api(for: session) }
         if let machine = sessionMachines[id] { return machineAPI(machine) }
+        // One the agents bridge told of before it has a row (made on your phone, say).
+        if bridgeSessions.contains(id) { return agents?.api }
         return api
+    }
+
+    /// Sessions the agents bridge has told of: theirs, wherever they were made.
+    @ObservationIgnored private var bridgeSessions: Set<String> = []
+
+    /// An event from the agents bridge: its session is the bridge's.
+    func handleAgents(_ event: ServerEvent) {
+        if let id = event.sessionID ?? Self.formSessionID(event) { bridgeSessions.insert(id) }
+        handle(event)
     }
 
     /// What a session runs on: the agents bridge for an outside agent's, else its folder's engine.
@@ -217,7 +228,13 @@ final class Workspace {
     }
 
     private func isHidden(_ session: Session) -> Bool {
-        seats.contains(session.id) || Self.isSeat(session)
+        seats.contains(session.id) || Self.isSeat(session) || Self.isEngineRun(session)
+    }
+
+    /// The engine's session for a model of the engine's run in a session with the agents (Auto's,
+    /// say): that session shows what it does, so it never gets a row of its own.
+    static func isEngineRun(_ session: Session) -> Bool {
+        session.metadata?["kuvo"]?["engineFor"] != nil
     }
 
     #if DEBUG
@@ -599,9 +616,13 @@ final class Workspace {
 
     /// A new session in the project at `directory`, or with `worktree`, in a new worktree of it.
     func createSession(in directory: String, model: ModelRef?, agent: String?, approval: ToolApproval = .approveAll, worktree: Bool = false) async throws -> Session {
-        // A model of an outside agent (Claude Code, Codex…): the session is that agent's, here.
-        let isAgents = OutsideAgents.isAgent(model?.providerID)
-        if isAgents, RemoteFolder.isRemote(directory) { throw OutsideAgents.Failure.onlyOnThisMac(OutsideAgents.name(model?.providerID)) }
+        // A model of an outside agent (Claude Code, Codex…), or Auto: the session is the agents
+        // bridge's, here.
+        let isAgents = OutsideAgents.runsInBridge(model?.providerID)
+        if isAgents, RemoteFolder.isRemote(directory) {
+            throw OutsideAgents.Failure.onlyOnThisMac(model?.providerID == OutsideAgents.autoProvider ? "Auto" : OutsideAgents.name(model?.providerID))
+        }
+        if isAgents, agents?.api == nil { throw OutsideAgents.Failure.notRunning(agents?.failure) }
         guard let api = isAgents ? agents?.api : api(forFolder: directory) else { throw CancellationError() }
         let directory = addFolder(directory)
         let folder = worktree ? try await makeWorktree(of: directory) : directory

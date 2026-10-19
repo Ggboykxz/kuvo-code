@@ -43,6 +43,10 @@ struct ConnectView: View {
     @State private var copied = false
     @State private var copyReset: Task<Void, Never>?
     @State private var pollTask: Task<Void, Never>?
+    /// The page to sign in on, once known: the attempt's, or one its status brought later.
+    @State private var signInURL = ""
+    /// How a sign-in that's getting ready is going ("Downloading… 40%").
+    @State private var progress: String?
     /// The page was closed: a sign-in still starting then is called off, not opened.
     @State private var left = false
 
@@ -217,6 +221,12 @@ struct ConnectView: View {
 
     private func waiting(_ attempt: OAuthAttempt) -> some View {
         VStack(spacing: 18) {
+            if let progress {
+                Text(progress)
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.secondary)
+                    .contentTransition(.numericText())
+            }
             if let code = attempt.userCode {
                 VStack(spacing: 10) {
                     Text("Enter this code on the page that opened")
@@ -232,7 +242,7 @@ struct ConnectView: View {
                         .buttonStyle(TextButtonStyle())
                         .contentTransition(.symbolEffect(.replace))
                 }
-            } else if attempt.mode == .auto {
+            } else if attempt.mode == .auto, progress == nil {
                 Text("Finish signing in with your browser. This updates on its own.")
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.secondary)
@@ -265,7 +275,9 @@ struct ConnectView: View {
             }
 
             HStack(spacing: 16) {
-                Button("Open the Page Again") { open(attempt.url) }
+                if !signInURL.isEmpty {
+                    Button("Open the Page Again") { open(signInURL) }
+                }
                 // In a sheet, Cancel leaves it; here it goes back to the ways to sign in.
                 if onCancel == nil {
                     Button("Cancel") {
@@ -364,7 +376,7 @@ struct ConnectView: View {
     // MARK: Actions
 
     private var supportedMethods: [Integration.Method] {
-        integration?.signInMethods.filter(isSupported) ?? []
+        integration?.offeredSignInMethods.filter(isSupported) ?? []
     }
 
     private func chooseOnlyMethod() {
@@ -410,6 +422,8 @@ struct ConnectView: View {
                         return
                     }
                     step = .waiting(attempt)
+                    progress = nil
+                    signInURL = attempt.url
                     if let code = attempt.userCode { copy(code) }
                     open(attempt.url)
                     if attempt.mode == .auto { poll(attempt) }
@@ -467,7 +481,14 @@ struct ConnectView: View {
                 }
                 misses = 0
                 switch status.status {
-                case .pending: continue
+                case .pending:
+                    // The page came later (an agent was downloaded first): opened once, as it comes.
+                    if let url = status.url, !url.isEmpty, url != signInURL {
+                        signInURL = url
+                        open(url)
+                    }
+                    withAnimation(.ui) { progress = status.url == nil ? status.message : nil }
+                    continue
                 case .complete: finish(method: "oauth"); return
                 case .failed:
                     noteFailure(method: "oauth", Analytics.trouble(status: nil, status.message ?? ""))
@@ -531,7 +552,8 @@ struct ConnectView: View {
     }
 
     private func open(_ url: String) {
-        if let url = URL(string: url) { NSWorkspace.shared.open(url) }
+        guard !url.isEmpty, let url = URL(string: url) else { return }
+        NSWorkspace.shared.open(url)
     }
 
     /// Copies the code, and says so for a moment.

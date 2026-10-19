@@ -5,6 +5,11 @@ import SwiftUI
 /// A message you sent, in a session or a group chat: its bubble, and under the pointer when it
 /// went and what you can do with it (Copy, Undo From Here, and New Session From Here in a
 /// session), which a right-click offers too.
+extension EnvironmentValues {
+    /// Messages here can be undone, with the changes made since (see `YourMessage`).
+    @Entry var undoesChanges = true
+}
+
 struct YourMessage: View {
     let text: String
     /// Words with styling of their own (a group chat's mentions).
@@ -19,6 +24,9 @@ struct YourMessage: View {
     let undoNote: String
     /// Its engine out of reach: what needs it waits.
     var isOffline = false
+    /// Undo From Here takes the conversation and its files back: not in a session with a coding
+    /// agent, which changes files itself.
+    @Environment(\.undoesChanges) private var undoesChanges
     @State private var hovering = false
     @State private var confirmsUndo = false
 
@@ -75,8 +83,10 @@ struct YourMessage: View {
                     MessageActionButton(symbol: "arrow.triangle.branch", help: "New Session From Here", action: fork)
                         .disabled(isOffline)
                 }
-                MessageActionButton(symbol: "arrow.uturn.backward", help: "Undo From Here…") { confirmsUndo = true }
-                    .disabled(isOffline)
+                if undoesChanges {
+                    MessageActionButton(symbol: "arrow.uturn.backward", help: "Undo From Here…") { confirmsUndo = true }
+                        .disabled(isOffline)
+                }
             }
             .opacity(isHovering ? 1 : 0)
             .animation(.easeOut(duration: 0.12), value: isHovering)
@@ -93,8 +103,10 @@ struct YourMessage: View {
                 Button("New Session From Here", action: fork)
                     .disabled(isOffline)
             }
-            Button("Undo From Here…") { confirmsUndo = true }
-                .disabled(isOffline)
+            if undoesChanges {
+                Button("Undo From Here…") { confirmsUndo = true }
+                    .disabled(isOffline)
+            }
         }
         // With VoiceOver: the message, read as one, with what shows under the pointer and in its
         // menu as its actions.
@@ -103,7 +115,7 @@ struct YourMessage: View {
         .accessibilityActions {
             if !text.isEmpty { Button("Copy") { Clipboard.copy(text) } }
             if let fork, !isOffline { Button("New Session From Here", action: fork) }
-            if !isOffline { Button("Undo From Here…") { confirmsUndo = true } }
+            if !isOffline, undoesChanges { Button("Undo From Here…") { confirmsUndo = true } }
         }
         .alert("Undo from this message?", isPresented: $confirmsUndo) {
             Button("Undo", action: undo)

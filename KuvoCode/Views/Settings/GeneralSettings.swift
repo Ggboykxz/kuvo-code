@@ -110,7 +110,7 @@ struct GeneralSettings: View {
                 let plan = try await OpencodeImport.plan(engine: engine, config: app.engineConfig.settings, connected: connected)
                 if plan.isEmpty {
                     // Nothing to bring: no page to look over, only what's left to sign in to.
-                    let signIns = plan.signIns.map(catalog.providerName)
+                    let signIns = plan.signIns.map(catalog.signInName)
                     importNote = "Everything in your opencode setup is here already."
                         + (signIns.isEmpty ? "" : " Sign in to \(ListFormatter.localizedString(byJoining: signIns)) again in Settings › Accounts.")
                 } else {
@@ -148,7 +148,7 @@ private struct OpencodeImportReview: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("These aren’t in Kuvo Code yet; what it has already stays as it is. API keys are copied into Kuvo Code’s engine, and skills are found where opencode keeps them. The engine starts again to use them.")
                     if !plan.signIns.isEmpty {
-                        Text("Sign in to \(ListFormatter.localizedString(byJoining: plan.signIns.map(names))) again in Settings › Accounts: a sign-in copied over would be refreshed by both apps, which can sign both out.")
+                        Text("Sign in to \(ListFormatter.localizedString(byJoining: plan.signIns.map { Catalog.planName($0) ?? names($0) })) again in Settings › Accounts: a sign-in copied over would be refreshed by both apps, which can sign both out.")
                     }
                 }
                 .foregroundStyle(.secondary)

@@ -37,13 +37,14 @@ struct ContextGauge: View {
             .animation(.ui, value: fraction)
             .help("Context window: \(used.compactTokens) of \(limit.compactTokens) tokens")
             .popover(isPresented: $showsDetails, arrowEdge: .bottom) {
-                ContextDetails(used: used, limit: limit, cost: model.session.cost, plan: planLimits) {
+                // A coding agent makes room in its own context, as it does in its own app.
+                ContextDetails(used: used, limit: limit, cost: model.session.cost, plan: planLimits, openUsage: {
                     showsDetails = false
                     UsageMenuBar.shared.open(.dashboard)
-                } summarize: {
+                }, summarize: OutsideAgents.isAgentSession(model.session) ? nil : {
                     showsDetails = false
                     model.compact()
-                }
+                })
             }
         }
     }
@@ -52,7 +53,9 @@ struct ContextGauge: View {
     private var used: Int? { model.contextUsed }
 
     private var limit: Int? {
-        catalog.model(model.session.model)?.limit.context
+        // On Auto, each model in your list has a window of its own: no one number to show.
+        guard model.session.model?.providerID != OutsideAgents.autoProvider else { return nil }
+        return catalog.model(model.session.model)?.limit.context
     }
 
     /// The limits of the account the session runs on, from the usage tracker in the menu bar.
@@ -104,7 +107,7 @@ private struct ContextDetails: View {
     let cost: Double
     let plan: PlanLimits?
     let openUsage: () -> Void
-    let summarize: () -> Void
+    let summarize: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -114,10 +117,12 @@ private struct ContextDetails: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Button("Summarize Now", action: summarize)
-                    .buttonStyle(.link)
-                    .font(.caption.weight(.medium))
-                    .help("Summarize the conversation so far, to free up the context window")
+                if let summarize {
+                    Button("Summarize Now", action: summarize)
+                        .buttonStyle(.link)
+                        .font(.caption.weight(.medium))
+                        .help("Summarize the conversation so far, to free up the context window")
+                }
             }
 
             if let plan {

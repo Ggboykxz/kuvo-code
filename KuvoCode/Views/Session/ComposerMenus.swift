@@ -181,12 +181,15 @@ struct WorkplaceChip: View {
 /// its own.
 struct ModelChip<Label: View>: View {
     @Environment(Catalog.self) private var catalog
+    @Environment(AppModel.self) private var app
     let selection: ModelRef?
     let onSelect: (ModelRef) -> Void
     var opensBelow = false
-    /// Whose models it offers: the engine's (a bot's, a machine's session), an outside agent's
-    /// (a session with Claude Code…), or both (a new session on this Mac).
+    /// Whose models it offers: the engine's (a bot's, a machine's session), or every one with the
+    /// coding agents' and Auto (a session with the agents, a new one on this Mac).
     var scope: ModelScope = .engine
+    /// Auto among them (not in your Auto list's own picker).
+    var offersAuto = true
     /// Drawn with the model in use and its effort.
     @ViewBuilder let label: (Model?, String?) -> Label
     @State private var isOpen = false
@@ -214,7 +217,8 @@ struct ModelChip<Label: View>: View {
         .help(isUnavailable ? "\(catalog.model(selection)?.name ?? selection?.id ?? "") isn't available now: choose another model" : "Model and effort")
         .background(ScreenRoomReader(room: anchor))
         .popover(isPresented: $isOpen, arrowEdge: placement.below ? .bottom : .top) {
-            ModelPicker(catalog: catalog, selection: selection, onSelect: onSelect, close: { isOpen = false }, scope: scope, startsExpanded: startsExpanded, startsOnList: startsOnList, maxHeight: placement.height)
+            ModelPicker(catalog: catalog, selection: selection, onSelect: onSelect, close: { isOpen = false }, scope: scope, offersAuto: offersAuto,
+                        startsExpanded: startsExpanded, startsOnList: startsOnList, maxHeight: placement.height, openSettings: { app.openSettings($0) })
         }
         .onAppear { LogoImages.shared.prefetch(catalog.models.flatMap { [$0.makerLogoID, $0.providerID] }) }
         #if DEBUG
@@ -237,8 +241,8 @@ struct ModelChip<Label: View>: View {
 }
 
 extension ModelChip where Label == ModelChipLabel {
-    init(selection: ModelRef?, onSelect: @escaping (ModelRef) -> Void, scope: ModelScope = .engine) {
-        self.init(selection: selection, onSelect: onSelect, scope: scope) { ModelChipLabel(model: $0, variant: $1) }
+    init(selection: ModelRef?, onSelect: @escaping (ModelRef) -> Void, scope: ModelScope = .engine, offersAuto: Bool = true) {
+        self.init(selection: selection, onSelect: onSelect, scope: scope, offersAuto: offersAuto) { ModelChipLabel(model: $0, variant: $1) }
     }
 }
 

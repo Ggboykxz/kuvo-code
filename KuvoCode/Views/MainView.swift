@@ -674,6 +674,7 @@ struct MainView: View {
         } content: {
             SessionView(model: model)
                 .environment(\.bot, bot)
+                .environment(\.undoesChanges, !OutsideAgents.isAgentSession(model.session))
                 // Return and Esc answer its cards once you've clicked or typed into it.
                 .environment(\.takesCardKeys, focus == .split)
                 .environment(\.composerFocused) { focus = .split }
@@ -850,6 +851,7 @@ struct MainView: View {
                 } content: {
                     SessionView(model: model)
                         .environment(\.bot, bot)
+                        .environment(\.undoesChanges, !OutsideAgents.isAgentSession(model.session))
                         .environment(\.takesCardKeys, !(focus == .split && besideID != nil))
                         // Typing here is working here, however the keyboard got here.
                         .environment(\.composerFocused) { focus = .conversation }

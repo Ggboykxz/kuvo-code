@@ -91,7 +91,7 @@ final class Catalog {
         }
     }
 
-    /// Models grouped by provider, providers in the order people tend to look for them.
+    /// The engine's models grouped by provider, providers in the order people tend to look for them.
     var modelsByProvider: [(provider: String, models: [Model])] {
         let groups = Dictionary(grouping: offered.filter { !OutsideAgents.isAgent($0.providerID) }, by: \.providerID)
         return groups.keys
@@ -99,28 +99,75 @@ final class Catalog {
             .map { id in (providerName(id), groups[id]!.sorted { $0.time.released > $1.time.released }) }
     }
 
-    /// The models a picker offers, by provider: the engine's, an outside agent's, or both (a new
-    /// session on this Mac), the agents' first.
-    func modelGroups(_ scope: ModelScope) -> [(provider: String, models: [Model])] {
-        let agents = OutsideAgents.order.compactMap { id -> (provider: String, models: [Model])? in
-            guard scope.allows(id) else { return nil }
-            let models = offered.filter { $0.providerID == id }
-            return models.isEmpty ? nil : (providerName(id), models)
+    /// A provider in the model picker's rail: one of your accounts with a coding agent, or one of
+    /// the engine's providers you can use.
+    struct PickerProvider: Identifiable {
+        let id: String
+        let name: String
+        /// Its mark: the agent's maker's, or the provider's.
+        let logo: String
+        /// Newest first.
+        let models: [Model]
+        /// An account with a coding agent.
+        let isAgent: Bool
+        /// Why it has no models now (not signed in, not installed), for an agent's account.
+        let unavailable: String?
+    }
+
+    /// The picker's providers: your coding agents' accounts (each its own), then the engine's
+    /// providers you can use. An agent's account without models shows, to say why.
+    func pickerProviders(_ scope: ModelScope) -> [PickerProvider] {
+        var agents: [PickerProvider] = []
+        if scope == .all {
+            let accounts = codingAgents.sorted { lhs, rhs in
+                let left = OutsideAgents.order.firstIndex(of: OutsideAgents.base(lhs.id)) ?? 99
+                let right = OutsideAgents.order.firstIndex(of: OutsideAgents.base(rhs.id)) ?? 99
+                // An agent's own sign-in before the accounts you added, in the order you added them.
+                return (left, OutsideAgents.account(lhs.id) == nil ? 0 : 1) < (right, OutsideAgents.account(rhs.id) == nil ? 0 : 1)
+            }
+            for account in accounts {
+                let models = offered.filter { $0.providerID == account.id }.sorted { $0.time.released > $1.time.released }
+                // An agent you don't have and haven't signed in to stays out of the way.
+                if models.isEmpty, account.metadata?["installed"]?.bool == false, OutsideAgents.account(account.id) == nil { continue }
+                let why = models.isEmpty ? (account.isConnected ? "Its models are loading." : account.metadata?["message"]?.string ?? "Sign in to it in Settings › Accounts.") : nil
+                agents.append(PickerProvider(id: account.id, name: account.name, logo: OutsideAgents.logo(account.id), models: models, isAgent: true, unavailable: why))
+            }
         }
-        if case .agent = scope { return agents }
-        return scope == .all ? agents + modelsByProvider : modelsByProvider
+        let engine = modelsByProvider.compactMap { group -> PickerProvider? in
+            guard let first = group.models.first else { return nil }
+            return PickerProvider(id: first.providerID, name: group.provider, logo: first.providerID, models: group.models, isAgent: false, unavailable: nil)
+        }
+        return agents + engine
     }
 
     func model(_ ref: ModelRef?) -> Model? {
         guard let ref else { return nil }
+        if ref.providerID == OutsideAgents.autoProvider { return Self.autoModel }
         return models.first { $0.id == ref.id && $0.providerID == ref.providerID }
     }
 
     /// The model, if it's one you can use now (see `offered`).
     func offeredModel(_ ref: ModelRef?) -> Model? {
         guard let ref else { return nil }
+        if ref.providerID == OutsideAgents.autoProvider { return isAutoAvailable ? Self.autoModel : nil }
         return offered.first { $0.id == ref.id && $0.providerID == ref.providerID }
     }
+
+    // MARK: Auto
+
+    /// Your Auto list, and what's held back at a limit.
+    var auto: AutoList { outsideAgents?.auto ?? AutoList() }
+
+    /// Auto can be picked: the bridge is up and your list has models in it.
+    var isAutoAvailable: Bool { outsideAgents?.api != nil && !auto.entries.isEmpty }
+
+    /// Auto, as a model the composer's chip and the picker show.
+    static let autoModel: Model = {
+        let json = #"{"id":"auto","providerID":"auto","name":"Auto","capabilities":{"tools":true,"input":["text","image"],"output":["text"]},"variants":[],"time":{"released":0},"cost":[{"input":0,"output":0}],"status":"active","enabled":true,"limit":{"context":200000,"output":32000}}"#
+        return try! JSONDecoder().decode(Model.self, from: Data(json.utf8))
+    }()
+
+    static var autoRef: ModelRef { ModelRef(id: "auto", providerID: OutsideAgents.autoProvider) }
 
     /// A model picked that you can't use now (gone from its provider, or its account signed out
     /// of): it would only fail. Not before the models are known.
@@ -140,12 +187,34 @@ final class Catalog {
         return modelsByProvider.first?.models.first?.ref
     }
 
+    /// What to sign in to again for an account opencode had: a ChatGPT or SuperGrok plan is
+    /// signed in to as its coding agent here.
+    func signInName(_ id: String) -> String {
+        Self.planName(id) ?? providerName(id)
+    }
+
+    static func planName(_ id: String) -> String? {
+        switch id {
+        case "openai": "Codex (your ChatGPT plan, under Coding Agents)"
+        case "xai": "Grok (your SuperGrok plan, under Coding Agents)"
+        default: nil
+        }
+    }
+
     func providerName(_ id: String) -> String {
         if id == "opencode" { return "OpenCode Zen" }
+        if id == OutsideAgents.autoProvider { return "Auto" }
         return integrations.first { $0.id == id }?.name ?? id
     }
 
     func refresh() async {
+        await refreshEngine()
+        // Apart from the engine's: an agent slow to answer (Codex starting) isn't the engine
+        // still loading.
+        await refreshAgents()
+    }
+
+    private func refreshEngine() async {
         guard let api else { return }
         let slowness = Task {
             try await Task.sleep(for: .seconds(3))
@@ -176,18 +245,34 @@ final class Catalog {
         for directory in projectCommands.keys { await loadCommands(in: directory) }
         merge()
         isLoaded = true
-        await refreshAgents()
         if starting { waitForEngine() } else { unavailableSince = nil }
     }
 
     /// The outside agents' accounts and models, from their bridge.
-    func refreshAgents() async {
+    /// `fresh`: each agent is asked anew whether it's installed and signed in (you refreshed, or
+    /// came back to the app: you may have installed one or signed in meanwhile), rather than
+    /// answering from what it knew a moment ago.
+    func refreshAgents(fresh: Bool = false) async {
         guard let api = outsideAgents?.api else { return }
-        async let integrations = api.integrations()
-        async let models = api.models()
-        do { agentIntegrations = try await integrations } catch { log.error("agents: \(String(describing: error), privacy: .public)") }
-        do { agentModels = try await models } catch { log.error("agents' models: \(String(describing: error), privacy: .public)") }
+        if fresh {
+            isRefreshingAgents = true
+            lastFreshAgents = .now
+        }
+        defer { if fresh { isRefreshingAgents = false } }
+        // The accounts first: one that changed has other models.
+        do { agentIntegrations = try await api.agentIntegrations(fresh: fresh) } catch { log.error("agents: \(String(describing: error), privacy: .public)") }
+        do { agentModels = try await api.models() } catch { log.error("agents' models: \(String(describing: error), privacy: .public)") }
         merge()
+    }
+
+    /// True while the agents are being asked anew.
+    private(set) var isRefreshingAgents = false
+    @ObservationIgnored private var lastFreshAgents: ContinuousClock.Instant?
+
+    /// The agents asked anew, unless they were a moment ago: when you come back to the app.
+    func refreshAgentsIfStale() {
+        if let lastFreshAgents, ContinuousClock.now - lastFreshAgents < .seconds(60) { return }
+        Task { await refreshAgents(fresh: true) }
     }
 
     private func merge() {
@@ -259,18 +344,17 @@ final class Catalog {
     private static let searchServices: Set = ["exa", "firecrawl", "parallel", "tavily", "tinyfish"]
 }
 
-/// Which models a picker offers: the engine's (a session on it, a bot), one outside agent's (a
-/// session with it: it can't change agents partway), or both (a new session on this Mac).
+/// Which models a picker offers: the engine's (a session on it, a bot, a machine's), or every
+/// model with the coding agents' and Auto (a session with the agents, a new one on this Mac),
+/// which the agents bridge runs.
 enum ModelScope: Equatable {
     case engine
-    case agent(String)
     case all
 
     func allows(_ providerID: String) -> Bool {
         switch self {
         case .all: true
-        case .engine: !OutsideAgents.isAgent(providerID)
-        case .agent(let id): providerID == id
+        case .engine: !OutsideAgents.runsInBridge(providerID)
         }
     }
 }

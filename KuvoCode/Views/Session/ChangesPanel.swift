@@ -187,7 +187,10 @@ struct ChangesPanel: View {
                     .font(.system(size: 12, weight: .medium))
                     .help("Commit the changes, and push them if you like")
                     .popover(isPresented: $isCommitting, arrowEdge: .bottom) {
-                        CommitForm(changes: changes, environment: app.shellEnvironment, api: model.flatMap { workspace.api(forSession: $0.id) } ?? app.api, session: model?.id, model: model?.session.model) { isCommitting = false }
+                        // A coding agent's session can't write one: the engine's default model does.
+                        let isAgents = model.map { OutsideAgents.isAgentSession($0.session) } ?? false
+                        CommitForm(changes: changes, environment: app.shellEnvironment, api: isAgents ? app.api : model.flatMap { workspace.api(forSession: $0.id) } ?? app.api,
+                                   session: isAgents ? nil : model?.id, model: isAgents ? nil : model?.session.model) { isCommitting = false }
                     }
             }
             Button {
@@ -530,6 +533,7 @@ private struct BranchMenu: View {
     /// branch's commits and diff; as it was, without a session or an answer.
     private func described(_ page: URL) async -> URL {
         guard let session = model?.id, let api = workspace.api(forSession: session) else { return page }
+        let isAgents = model.map { OutsideAgents.isAgentSession($0.session) } ?? false
         let base = tree.base, directory = directory
         let summary = await Task.detached { Git.pullRequestSummary(against: base, in: directory) }.value
         let prompt = GitPreferences.prompt("""
@@ -537,7 +541,9 @@ private struct BranchMenu: View {
 
         \(summary)
         """, instructionsKey: GitPreferences.pullRequestInstructionsKey)
-        guard let text = try? await api.generate(prompt, session: session), let pull = Git.parsePullRequest(text) else { return page }
+        // A coding agent's session can't write one: the engine's default model does.
+        let written = isAgents ? try? await app.api?.generate(prompt) : try? await api.generate(prompt, session: session)
+        guard let text = written, let pull = Git.parsePullRequest(text) else { return page }
         return Git.pullRequestPage(page, title: pull.title, body: pull.body)
     }
 }

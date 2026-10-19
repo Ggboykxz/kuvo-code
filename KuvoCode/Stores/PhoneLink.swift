@@ -295,6 +295,8 @@ final class PhoneLink {
             if request.path.hasPrefix(Self.agentsPrefix) {
                 var forwarded = request
                 forwarded.path = String(request.path.dropFirst(Self.agentsPrefix.count))
+                // Where the engine is, the Mac says: not something to set from elsewhere.
+                if forwarded.path.hasPrefix("api/kuvo/engine") { return Self.unavailable() }
                 guard let bridge = agents?.endpoint else { return Self.unavailable() }
                 let base = bridge.url.absoluteString.hasSuffix("/") ? bridge.url : URL(string: bridge.url.absoluteString + "/")!
                 return EngineRoutes.forward(forwarded, to: base, password: bridge.password)

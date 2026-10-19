@@ -255,6 +255,9 @@ public struct OAuthAttempt: Codable, Sendable, Hashable {
 public struct OAuthStatus: Codable, Sendable, Hashable {
     public var status: Status
     public var message: String?
+    /// The page to sign in on, when it comes after the attempt started (the agents bridge has an
+    /// agent to download first); while pending, `message` says how it's going.
+    public var url: String?
 
     public enum Status: String, Codable, Sendable {
         case pending, complete, failed, expired
