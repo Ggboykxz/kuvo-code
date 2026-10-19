@@ -64,6 +64,19 @@ final class TerminalSession: NSObject {
 
     func terminate() {
         guard isRunning else { return }
+        // Hung up, as closing a terminal window does: SwiftTerm doesn't know the shell's process
+        // (it starts it through Subprocess) and sends at most a SIGTERM, which an interactive
+        // shell ignores, so it stayed running after its tab closed, with whatever it ran (a dev
+        // server holding its port). The terminal knows: what runs in front, and the shell that
+        // leads it.
+        if let terminal = view.process?.childfd, terminal >= 0 {
+            let front = tcgetpgrp(terminal)
+            if front > 0 {
+                let shell = getsid(front)
+                killpg(front, SIGHUP)
+                if shell > 0 { kill(shell, SIGHUP) }
+            }
+        }
         view.terminate()
         isRunning = false
     }
