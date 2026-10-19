@@ -4,6 +4,8 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
+## Unreleased
+
 ## 0.5.22
 
 - Commands the agent runs no longer get the settings Kuvo Code gives the engine, which hold the key to its browser tools: a command that printed its environment showed it, there for the model to read.
