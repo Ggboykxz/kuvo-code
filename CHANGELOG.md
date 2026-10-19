@@ -7,6 +7,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 ## Unreleased
 - Long conversations scroll more smoothly and use less memory: replies are drawn with macOS's own text system, looking as they did. In tests, reading through a long conversation had a quarter as many late frames, and resizing the window with one open stalled for half as long. Right-clicking selected words in a reply also offers Look Up and Translate, and copying a table gives a line for each row.
 - A checklist in a reply ("- [ ] Gather ingredients", "- [x] Done") shows checkboxes, ticked or not, rather than bullets followed by brackets.
+- Save to Mac, for a file a machine's browser downloaded, puts it in your Downloads folder once it has all arrived. A half-copied file showed there under its name meanwhile, and stayed if Kuvo Code quit.
 
 ## 0.5.18
 

@@ -184,7 +184,7 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 | ID | Job | Status |
 | --- | --- | --- |
 | L46 | A bot on a machine does a job and wakes itself up while the Mac's app is closed | ✅ see F9 |
-| L47 | Upload and download on a machine's browser | ⏳ |
+| L47 | Upload and download on a machine's browser | ✅ on lokum-local: report.txt from the project went into a page's file field and the page got it (29 bytes, its first line); a link's CSV downloaded into the browser's folder there, and Save to Mac copied it whole; before the browser was there, the tools said so and the agent waited; ❌→✅ Save to Mac wrote into Downloads as it copied; one run downloaded the file twice from one click, not seen again in two repeats |
 | L48 | The site it uses is down: it says so, and tries again later | ✅ the browser said "Could not connect to the server", curl was refused three times a second apart, and it said nothing listens on the port and offered to try another |
 | L49 | A long job (many steps, many pages) finishes without losing the thread | ✅ followed a chain of 24 pages by their links, one word each, and gave the whole sentence in order and the page count, in under 2 minutes |
 | L50 | The app quits mid-job; on reopening, the job carries on or says where it stopped | ❌→✅ it ended on "Ran a command (1 failed)" with nothing said; now "(1 stopped)" and "Interrupted before it finished: send a message to carry on", and "Carry on." ran the job to the end |

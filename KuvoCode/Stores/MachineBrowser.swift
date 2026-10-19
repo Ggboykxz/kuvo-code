@@ -936,11 +936,14 @@ final class MachineBrowser {
         guard let index = downloads.firstIndex(where: { $0.id == id }) else { return }
         let download = downloads[index]
         downloads[index].state = .saving
-        let destination = BrowserSession.free(BrowserSession.safeName(download.name), in: BrowserSession.downloadsFolder)
         let connection = machine.connection
         Task {
             let outcome: Download.State = await Task.detached {
-                guard FileManager.default.createFile(atPath: destination.path, contents: nil), let handle = try? FileHandle(forWritingTo: destination) else {
+                // Copied into the app's temporary folder first, and into Downloads once it's all
+                // there: never a half-copied file under its name, nor one left if the app quits.
+                let partial = FileManager.default.temporaryDirectory.appending(path: "kuvo-download-\(UUID().uuidString)")
+                defer { try? FileManager.default.removeItem(at: partial) }
+                guard FileManager.default.createFile(atPath: partial.path, contents: nil), let handle = try? FileHandle(forWritingTo: partial) else {
                     return .failed("Couldn't write to Downloads.")
                 }
                 let process = Process()
@@ -953,10 +956,9 @@ final class MachineBrowser {
                     process.waitUntilExit()
                 } catch {}
                 try? handle.close()
-                guard process.terminationStatus == 0 else {
-                    try? FileManager.default.removeItem(at: destination)
-                    return .failed("The file isn't on the machine any more.")
-                }
+                guard process.terminationStatus == 0 else { return .failed("The file isn't on the machine any more.") }
+                let destination = BrowserSession.free(BrowserSession.safeName(download.name), in: BrowserSession.downloadsFolder)
+                do { try FileManager.default.moveItem(at: partial, to: destination) } catch { return .failed("Couldn't write to Downloads.") }
                 return .saved(destination)
             }.value
             if let index = downloads.firstIndex(where: { $0.id == id }) { downloads[index].state = outcome }
