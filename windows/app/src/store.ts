@@ -406,6 +406,41 @@ export async function stopRun() {
   }
 }
 
+/// A new session, in the project that is open.
+export async function newSession() {
+  try {
+    const { session } = await api<{ session: { id: string } }>("/api/sessions", { method: "POST", body: {} });
+    await loadSessions();
+    await openSession(session.id);
+  } catch (error) {
+    complain(error);
+  }
+}
+
+/// The conversation as Markdown, the way the Mac app writes it out.
+export async function exportConversation() {
+  const transcript = state.transcript;
+  if (!transcript) return;
+  const lines: string[] = [];
+  const query = state.findQuery.trim().toLowerCase();
+  const visible = query
+    ? transcript.entries.filter(entry => (entry.parts ?? []).map(part => part.text ?? "").join(" ").toLowerCase().includes(query))
+    : transcript.entries;
+  for (const entry of visible) {
+    if (entry.kind === "user") lines.push(`## You\n\n${entry.text ?? ""}`);
+    else if (entry.kind === "assistant") {
+      for (const part of entry.parts ?? []) if (part.type === "text") lines.push(part.text ?? "");
+    }
+  }
+  const blob = new Blob([lines.join("\n\n")], { type: "text/markdown" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `${state.session?.title ?? "conversation"}.md`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 export async function undoFromHere(entry: { id?: string; text?: string }) {
   if (!state.session || !entry.id) return;
   try {

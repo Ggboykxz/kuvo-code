@@ -5,7 +5,8 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { errorText } from "./lib";
 import { ChangesPanel } from "./Changes";
-import { complain, loadSessions, notify, openSession, render, state, useStore } from "./store";
+import { complain, loadSessions, notify, openSession, render, state, useStore, newSession, exportConversation, stopRun } from "./store";
+import { keysOf } from "./shortcuts";
 
 // ---- The command palette ----
 
@@ -32,18 +33,29 @@ export function Palette() {
       .then(answer => setFiles((answer.files ?? []).slice(0, 6)))
       .catch(() => setFiles([]));
   }, [state.paletteOpen, needle, state.project]);
-  const actions: [string, () => void | Promise<void>][] = [
-    ["Appearance", async () => { state.settingsOpen = true; state.settingsSection = "appearance"; render(); }],
-    ["Rename this session", async () => {
+  // The palette finds a session, a file or a command — and the things that can be done, with
+  // the keys that do them, the Mac app's way (it is where one learns the shortcuts).
+  const everything: [string, string | null, () => void | Promise<void>][] = [
+    ["Appearance", "settings", async () => { state.settingsOpen = true; state.settingsSection = "appearance"; render(); }],
+    ["New session", "new-session", async () => { await newSession(); }],
+    ["Save the conversation as Markdown", "save", async () => { await exportConversation(); }],
+    ["Find in the conversation", "find", () => { (document.getElementById("find") as HTMLInputElement | null)?.focus(); }],
+    ["Stop the agent", "stop", async () => { await stopRun(); }],
+    ["Files", "files", () => { state.drawerOpen = true; state.drawerTab = "files"; render(); }],
+    ["Changes", "changes", () => { state.drawerOpen = true; state.drawerTab = "changes"; render(); }],
+    ["New terminal", "terminal", () => { state.drawerOpen = true; state.drawerTab = "terminal"; render(); }],
+    ["Show or hide the sidebar", "sidebar", () => { state.sidebarOpen = state.sidebarOpen === false; render(); }],
+    ["Rename this session", null, async () => {
       const title = prompt("Name this session", state.session?.title ?? "");
       if (!title) return;
       await api(`/api/sessions/${encodeURIComponent(state.session!.id)}/rename`, { method: "POST", body: { title } });
       await loadSessions();
     }],
-    ["Refresh sessions", async () => { await loadSessions(); notify("Kuvo Code", "Sessions refreshed."); }],
+    ["Refresh sessions", null, async () => { await loadSessions(); notify("Kuvo Code", "Sessions refreshed."); }],
   ];
+  // What is typed is looked for in the things that can be done, as in the sessions and the files.
+  const actions = everything.filter(([title]) => !needle || title.toLowerCase().includes(needle));
   const total = sessions.length + commands.length + files.length + actions.length;
-
   const run = async (action: () => void | Promise<void>) => {
     state.paletteOpen = false;
     render();
@@ -71,7 +83,7 @@ export function Palette() {
                 const prompt = document.getElementById("prompt") as HTMLTextAreaElement | null;
                 if (prompt) { prompt.value = `/${command.name} `; prompt.dispatchEvent(new Event("input", { bubbles: true })); prompt.focus(); }
               }),
-              ...actions.map(([, action]) => action),
+              ...actions.map(([, , action]) => action),
             ];
             void run(rows[index] ?? (() => {}));
           }
@@ -119,7 +131,7 @@ export function Palette() {
             <span>{file.relative}</span>
           </div>
         ))}
-        {actions.map(([title, action], position) => (
+        {actions.map(([title, shortcut, action], position) => (
           <div
             key={title}
             className={`palette-item ${sessions.length + commands.length + files.length + position === index ? "selected" : ""}`}
@@ -127,6 +139,7 @@ export function Palette() {
           >
             <span className="palette-kind">action</span>
             <span>{title}</span>
+            {shortcut ? <span className="palette-keys">{keysOf(shortcut)}</span> : null}
           </div>
         ))}
       </div>

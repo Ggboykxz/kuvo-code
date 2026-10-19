@@ -260,6 +260,16 @@ test("the page, in a DOM, against the real engine", {
   const usage = page.document.querySelector('.settings-page[data-section="usage"]');
   assert.match(usage.textContent, /\$\d+\.\d{4}/, "the usage page shows what the agent spent");
 
+  // The palette: it finds things, and it shows the keys that do the things.
+  page.document.body.dispatchEvent(new page.window.KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true }));
+  await page.seen("the palette to open", () => page.element("palette")?.hidden === false, 10_000);
+  const paletteRows = [...page.document.querySelectorAll("#palette-list .palette-item")];
+  const newSessionRow = paletteRows.find(row => row.textContent.includes("New session"));
+  assert.ok(newSessionRow, "the palette offers a new session");
+  assert.match(newSessionRow.textContent, /Ctrl\+N/, "the palette shows the keys that do it");
+  page.document.body.dispatchEvent(new page.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  await page.seen("the palette to close", () => page.element("palette")?.hidden === true, 10_000);
+
   assert.deepEqual([...page.errors, ...reloaded.errors], [], "the page had nothing to complain about");
 
   // Leave the engine as we found it (the hook above closes the pages and the harness).

@@ -105,6 +105,9 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
+  - **2.51 (this change).** The palette teaches the keys: it offers what can be done —
+    a new session, the conversation as Markdown, the files, the changes, a new terminal — and
+    says the keys that do it, the Mac app's way, the keys you recorded included.
   - **2.50 (this change).** What the agent has spent: Settings ▸ Usage shows what the
     engine ran and what it cost, by model and by session, read from the engine's own
     sessions. The Mac's menu-bar panel also follows each provider's *plan* — that asks the
