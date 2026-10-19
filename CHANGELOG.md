@@ -10,6 +10,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Opening a shared bot can't give it a hidden job through its name (a name with line breaks wrote one into its memory), a file that isn't a bot is refused at once rather than read without end, and Cancel leaves none of its personality behind. A bot that can't be made, say when its machine drops, leaves no folder or conversation behind.
 - The Files tab lists names as the Finder does, file3 before file29, as on your phone.
 - A server you add in Settings › MCP Servers can't take an integration's name: it showed as that integration, and removing the integration removed it. And removing a server, agent or command right after typing in it no longer brings it back half made.
+- ⌘K and the Dock menu list chats too. Run and Edit Project don't take a chat or a bot's own folder for a project, and New Project on a folder that's one already keeps its name, run command and folders.
 
 ## 0.5.16
 

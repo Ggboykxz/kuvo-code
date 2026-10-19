@@ -96,10 +96,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let first = folders.first { model.open(.folder(first.path(percentEncoded: false))) }
     }
 
-    /// The Dock icon's menu: the latest sessions, and a new one.
+    /// The Dock icon's menu: the latest sessions and chats, and a new session.
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
         let menu = NSMenu()
-        let sessions = model.workspace.projects.flatMap(\.sessions).filter { !Workspace.isArchived($0) }
+        let sessions = (model.workspace.projects.flatMap(\.sessions) + model.workspace.chats).filter { !Workspace.isArchived($0) }
             .sorted { $0.time.updated > $1.time.updated }.prefix(5)
         for session in sessions {
             let id = session.id

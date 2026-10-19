@@ -162,6 +162,11 @@ struct MainView: View {
         activeModel?.session.location.directory ?? draftDirectory
     }
 
+    /// The active tab's folder when it's a project's: not the chats' folder or a bot's own.
+    private var activeProject: String? {
+        activeDirectory.flatMap { Workspace.isChat($0) || Workspace.isBotFolder($0) ? nil : $0 }
+    }
+
     /// A bot's workspace: the folder of its own it works in when it has no project.
     private func isBotsOwnFolder(_ directory: String) -> Bool {
         bots.list.contains { $0.project == nil && $0.directory == directory }
@@ -749,6 +754,14 @@ struct MainView: View {
                         .help("Close")
                 } content: {
                     ProjectEditor(project: request.project, folders: request.folders, focusesRun: request.focusesRun) { primary, settings in
+                        var settings = settings
+                        // A new project on a folder that's one already adds to what it has.
+                        if request.project == nil, let existing = workspace.settings[workspace.folderPath(primary)] {
+                            func given(_ text: String?) -> String? { text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? text : nil }
+                            settings.name = given(settings.name) ?? existing.name
+                            settings.folders = existing.folders + settings.folders.filter { !existing.folders.contains($0) }
+                            settings.run = given(settings.run) ?? existing.run
+                        }
                         let primary = workspace.saveProject(primary, settings: settings)
                         if request.project == nil { newSession(in: primary) }
                     } close: {
@@ -1245,7 +1258,7 @@ struct MainView: View {
         let model = focusedModel
         return SessionActions(
             hasSession: model != nil,
-            hasProject: activeDirectory != nil,
+            hasProject: activeProject != nil,
             canStop: model?.isRunning == true,
             canReopenTab: closedTabs.contains(where: canReopen),
             newSession: { newSession(in: nil) },
@@ -1301,9 +1314,9 @@ struct MainView: View {
     private static let demoPaletteQuery = ""
     #endif
 
-    /// Every session not put away, the latest first, with its project.
+    /// Every session and chat not put away, the latest first, with its project.
     private var paletteSessions: [PaletteItem] {
-        workspace.projects.flatMap(\.sessions).sorted { $0.time.updated > $1.time.updated }.map { session in
+        (workspace.projects.flatMap(\.sessions) + workspace.chats).sorted { $0.time.updated > $1.time.updated }.map { session in
             PaletteItem(id: "session:" + session.id, kind: .session, title: session.title ?? "New Session", detail: workspace.projectName(session.location.directory),
                         symbol: workspace.worktrees[session.location.directory] == nil ? "bubble.left" : "arrow.triangle.branch") { openTab(session.id) }
         }
@@ -1334,7 +1347,7 @@ struct MainView: View {
         add("New Project…", "folder.badge.plus", "⇧⌘N", actions.newProject)
         add("New Bot…", "face.smiling", nil) { openBotEditor(bot: nil) }
         add("Open Folder…", "folder", "⌘O", actions.openFolder)
-        if let directory = activeDirectory {
+        if let directory = activeProject {
             let primary = workspace.projectDirectory(directory)
             add("Edit Project…", "slider.horizontal.3", detail: workspace.projectName(primary)) {
                 openProjectEditor(ProjectEditorRequest(project: workspace.projects.first { $0.directory == primary } ?? Workspace.Project(directory: primary, sessions: [], settings: workspace.settings[primary] ?? .init())))
@@ -1362,13 +1375,13 @@ struct MainView: View {
 
     /// The active project's run command, if it has one.
     private var runCommand: String? {
-        activeDirectory.flatMap { workspace.settings[workspace.projectDirectory($0)]?.run }
+        activeProject.flatMap { workspace.settings[workspace.projectDirectory($0)]?.run }
     }
 
     /// Runs the project's run command in a terminal, in the session's folder (its worktree, if it
     /// has one). Without a command yet, Edit Project opens to set one.
     private func runProject() {
-        guard let directory = activeDirectory else { return }
+        guard let directory = activeProject else { return }
         guard let command = runCommand else {
             let primary = workspace.projectDirectory(directory)
             let project = workspace.projects.first { $0.directory == primary } ?? Workspace.Project(directory: primary, sessions: [], settings: workspace.settings[primary] ?? .init())
