@@ -224,11 +224,15 @@ struct ConnectView: View {
 
     private func waiting(_ attempt: OAuthAttempt) -> some View {
         VStack(spacing: 18) {
+            // Getting ready (an agent downloading first): what it's doing, not yet waiting on you.
             if let progress {
-                Text(progress)
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.secondary)
-                    .contentTransition(.numericText())
+                HStack(spacing: 8) {
+                    Spinner(size: 16)
+                    Text(progress)
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.secondary)
+                        .contentTransition(.numericText())
+                }
             }
             if let code = attempt.userCode {
                 VStack(spacing: 10) {
@@ -269,7 +273,7 @@ struct ConnectView: View {
                     .controlSize(.large)
                     .padding(.top, 8)
                 }
-            } else {
+            } else if progress == nil {
                 HStack(spacing: 8) {
                     Spinner(size: 16)
                     Text(isCheckingCode ? "Checking the code…" : "Waiting for you to finish…")
@@ -296,7 +300,7 @@ struct ConnectView: View {
                 if !signInURL.isEmpty {
                     Button("Open the Page Again") { open(signInURL) }
                 }
-                if attempt.mode == .auto, attempt.acceptsCode == true, !isPastingCode {
+                if attempt.mode == .auto, attempt.acceptsCode == true, !isPastingCode, progress == nil {
                     Button("Paste a Code") { isPastingCode = true }
                 }
                 // In a sheet, Cancel leaves it; here it goes back to the ways to sign in.
