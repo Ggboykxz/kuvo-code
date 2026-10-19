@@ -83,10 +83,10 @@ final class ReplyPieceView: NSView {
                 view.openURL = { [weak self] url in self?.openURL(url) ?? false }
                 view.show(text)
                 views.append(view)
-            case .code(let code, let language):
+            case .code(let code, let language, let marks):
                 let view = existing as? ReplyCodeView ?? ReplyCodeView()
                 view.cardIsFocused = cardIsFocused
-                view.show(code: code, language: language, style: style)
+                view.show(code: code, language: language, marks: marks, style: style)
                 views.append(view)
             case .math(let latex):
                 let drawn = MathText.drawable(latex) ?? latex
@@ -199,6 +199,38 @@ final class ReplyTextView: NSTextView, NSTextViewDelegate {
     override func scrollWheel(with event: NSEvent) {
         nextResponder?.scrollWheel(with: event)
     }
+
+    /// Copied as plain text, as Textual copies: a list's markers as "- " and "1. ", a formula
+    /// as it's written, the pictures that are only decoration (a file's icon) left out.
+    override func writeSelection(to pboard: NSPasteboard, types: [NSPasteboard.PasteboardType]) -> Bool {
+        guard let storage = textStorage else { return false }
+        let text = selectedRanges.map { Self.plain(storage, in: $0.rangeValue) }.joined(separator: "\n")
+        guard !text.isEmpty else { return false }
+        pboard.clearContents()
+        return pboard.setString(text, forType: .string)
+    }
+
+    override var writablePasteboardTypes: [NSPasteboard.PasteboardType] { [.string] }
+
+    static func plain(_ storage: NSAttributedString, in range: NSRange) -> String {
+        var text = ""
+        storage.enumerateAttribute(.replyPlainText, in: range) { value, run, _ in
+            if let plain = value as? String {
+                text += plain
+            } else {
+                text += storage.attributedSubstring(from: run).string
+            }
+        }
+        return text.replacingOccurrences(of: "\u{2028}", with: "\n").replacingOccurrences(of: "\u{200B}", with: "---")
+    }
+
+    // Another text taking the keyboard leaves this one's selection behind; clear it, so only
+    // one selection shows at a time, as in Textual.
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned, selectedRange().length > 0 { setSelectedRange(NSRange(location: selectedRange().location, length: 0)) }
+        return resigned
+    }
 }
 
 /// Draws what TextKit doesn't: inline code's rounded background, a quote's bar, a heading's line
@@ -285,7 +317,7 @@ final class ReplyCodeView: NSView {
     private let code = ReplyCodeTextView()
     private let language = NSTextField(labelWithString: "")
     private let copy = ReplyCopyButton()
-    private var shown: (code: String, language: String?, style: ReplyDocument.Style)?
+    private var shown: (code: String, language: String?, marks: [ReplyCodeMark], style: ReplyDocument.Style)?
     private var lineCount = 1
     private var firstLine = ""
     private var style = ReplyDocument.Style()
@@ -334,9 +366,9 @@ final class ReplyCodeView: NSView {
 
     override var wantsUpdateLayer: Bool { true }
 
-    func show(code text: String, language hint: String?, style: ReplyDocument.Style) {
-        guard shown?.code != text || shown?.language != hint || shown?.style != style else { return }
-        shown = (text, hint, style)
+    func show(code text: String, language hint: String?, marks: [ReplyCodeMark], style: ReplyDocument.Style) {
+        guard shown?.code != text || shown?.language != hint || shown?.marks != marks || shown?.style != style else { return }
+        shown = (text, hint, marks, style)
         self.style = style
         lineCount = text.reduce(1) { $1 == "\n" ? $0 + 1 : $0 }
         firstLine = String(text.prefix { $0 != "\n" })
@@ -352,12 +384,12 @@ final class ReplyCodeView: NSView {
         let name = hint?.trimmingCharacters(in: .whitespaces)
         let isWriting = name?.hasPrefix(CodeLanguage.writing) ?? false
         let cached = name.flatMap { isWriting ? nil : CodeHighlighting.cachedTokens(of: text, in: $0) }
-        code.show(ReplyCodeColors.colored(text, tokens: cached, style: style))
+        code.show(ReplyCodeColors.colored(text, tokens: cached, marks: marks, style: style))
         tokenTask?.cancel()
         if cached == nil, let name, !name.isEmpty, !isWriting {
             tokenTask = Task { [weak self] in
                 guard let tokens = await CodeHighlighting.tokens(of: text, in: name), !Task.isCancelled, let self, self.shown?.code == text else { return }
-                self.code.show(ReplyCodeColors.colored(text, tokens: tokens, style: style))
+                self.code.show(ReplyCodeColors.colored(text, tokens: tokens, marks: marks, style: style))
             }
         }
         needsLayout = true
@@ -560,16 +592,24 @@ final class ReplyCopyButton: NSButton {
 enum ReplyCodeColors {
     private static var colors: [String: NSColor] = [:]
 
-    static func colored(_ code: String, tokens: [CodeHighlighting.Token]?, style: ReplyDocument.Style) -> NSAttributedString {
+    static func colored(_ code: String, tokens: [CodeHighlighting.Token]?, marks: [ReplyCodeMark] = [], style: ReplyDocument.Style) -> NSAttributedString {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineSpacing = style.codeLineSpacing
         let base: [NSAttributedString.Key: Any] = [.font: style.code, .foregroundColor: ReplyDocument.Colors.primary, .paragraphStyle: paragraph]
-        guard let tokens else { return NSAttributedString(string: code, attributes: base) }
         let text = NSMutableAttributedString()
-        for token in tokens {
-            var attributes = base
-            if let color = color(for: token.type) { attributes[.foregroundColor] = color }
-            text.append(NSAttributedString(string: token.text, attributes: attributes))
+        if let tokens, tokens.reduce(0, { $0 + $1.text.utf16.count }) == code.utf16.count {
+            for token in tokens {
+                var attributes = base
+                if let color = color(for: token.type) { attributes[.foregroundColor] = color }
+                text.append(NSAttributedString(string: token.text, attributes: attributes))
+            }
+        } else {
+            text.append(NSAttributedString(string: code, attributes: base))
+        }
+        // Find's marks, over the colors.
+        for mark in marks where NSMaxRange(mark.range) <= text.length {
+            text.addAttribute(.backgroundColor, value: mark.background, range: mark.range)
+            if let foreground = mark.foreground { text.addAttribute(.foregroundColor, value: foreground, range: mark.range) }
         }
         return text
     }

@@ -9,8 +9,8 @@ struct ReplyDocument {
     enum Segment {
         /// Prose: paragraphs, headings, lists, quotes, tables and rules.
         case text(NSAttributedString)
-        /// A code block, without its last line break.
-        case code(code: String, language: String?)
+        /// A code block, without its last line break, and Find's marks in it.
+        case code(code: String, language: String?, marks: [ReplyCodeMark])
         /// A formula on its own line (`$$…$$`).
         case math(latex: String)
     }
@@ -142,7 +142,7 @@ struct ReplyDocument {
                 if language == MathText.blockLanguage || language?.lowercased() == "math" {
                     segments.append(.math(latex: code.trimmingCharacters(in: .whitespacesAndNewlines)))
                 } else {
-                    segments.append(.code(code: code, language: language))
+                    segments.append(.code(code: code, language: language, marks: Self.marks(in: content)))
                 }
                 gaps.append(segments.count == 1 ? 0 : gap)
                 last = (Spacing(top: 0, bottom: 16), nil, nil, nil)
@@ -178,6 +178,20 @@ struct ReplyDocument {
         }
         context.sizeTables()
         flushText()
+    }
+
+    /// Find's marks in a code block, where they are in its code.
+    private static func marks(in content: AttributedSubstring) -> [ReplyCodeMark] {
+        var marks: [ReplyCodeMark] = []
+        var offset = 0
+        for run in content.runs {
+            let length = content[run.range].characters.reduce(0) { $0 + $1.utf16.count }
+            if let background = run.swiftUI.backgroundColor {
+                marks.append(ReplyCodeMark(range: NSRange(location: offset, length: length), background: NSColor(background), foreground: run.swiftUI.foregroundColor.map { NSColor($0) }))
+            }
+            offset += length
+        }
+        return marks
     }
 
     private static func codeLanguage(_ components: [PresentationIntent.IntentType]) -> String?? {
@@ -236,12 +250,17 @@ struct ReplyDocument {
                     if index > 0, case .orderedList = outward[index - 1].kind { return true }
                     return false
                 }()
+                let plainIndent = String(repeating: "  ", count: listDepth - 1)
                 if isOrdered {
-                    marker = NSAttributedString(string: "\t\(ordinal).\t", attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: size, weight: .regular), .foregroundColor: color])
+                    marker = NSAttributedString(string: "\t\(ordinal).\t", attributes: [
+                        .font: NSFont.monospacedDigitSystemFont(ofSize: size, weight: .regular), .foregroundColor: color,
+                        .replyPlainText: plainIndent + "\(ordinal). ",
+                    ])
                 } else {
                     let bullet = NSMutableAttributedString(string: "\t", attributes: [.font: style.body])
                     bullet.append(ReplyAttachments.bullet(level: listDepth - 1, size: size, font: style.body))
                     bullet.append(NSAttributedString(string: "\t", attributes: [.font: style.body]))
+                    bullet.addAttribute(.replyPlainText, value: plainIndent + "- ", range: NSRange(location: 0, length: bullet.length))
                     marker = bullet
                 }
                 paragraph.tabStops = [NSTextTab(textAlignment: .right, location: markerRight), NSTextTab(textAlignment: .left, location: indent)]
@@ -332,6 +351,13 @@ struct ReplyDocument {
     }
 }
 
+/// Find's mark on a code block's code.
+struct ReplyCodeMark: Equatable {
+    var range: NSRange
+    var background: NSColor
+    var foreground: NSColor?
+}
+
 /// A heading's line under it, or a line on its own (`---`).
 nonisolated enum ReplyRule {
     case underline(gap: CGFloat)
@@ -345,11 +371,58 @@ extension NSAttributedString.Key {
     nonisolated static let replyQuote = NSAttributedString.Key("kuvo.reply.quote")
     /// A rule under a heading, or one on its own.
     nonisolated static let replyRule = NSAttributedString.Key("kuvo.reply.rule")
+    /// What it is as plain text, copied (a list's marker, a picture in the text).
+    nonisolated static let replyPlainText = NSAttributedString.Key("kuvo.reply.plainText")
 }
 
 /// Textual's attachments (a file's icon, a formula, a bot's face) as pictures in the text.
 enum ReplyAttachments {
     private static var images: [String: NSImage] = [:]
+
+    /// A file's icon, the symbol filling its slot in the text as Textual draws it, in the accent.
+    private static func fileIcon(_ size: CGSize) -> NSImage {
+        let key = "file-icon|\(size.width)x\(size.height)"
+        if let known = images[key] { return known }
+        let symbol = NSImage(systemSymbolName: "doc", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: size.height * 2, weight: .light))
+        let image = NSImage(size: size, flipped: false) { rect in
+            guard let symbol else { return false }
+            // The symbol's glyph fills the slot, not the room around it.
+            let glyph = inkBounds(of: symbol)
+            let scale = min(rect.width / max(glyph.width, 1), rect.height / max(glyph.height, 1))
+            let drawn = CGRect(x: rect.midX - glyph.midX * scale, y: rect.midY - glyph.midY * scale, width: symbol.size.width * scale, height: symbol.size.height * scale)
+            let tinted = NSImage(size: symbol.size, flipped: false) { inner in
+                symbol.draw(in: inner)
+                NSColor.controlAccentColor.set()
+                inner.fill(using: .sourceAtop)
+                return true
+            }
+            tinted.draw(in: drawn)
+            return true
+        }
+        images[key] = image
+        return image
+    }
+
+    /// Where an image has ink, in its own points (bottom-left origin).
+    private static func inkBounds(of image: NSImage) -> CGRect {
+        let scale: CGFloat = 4
+        let width = Int(image.size.width * scale), height = Int(image.size.height * scale)
+        guard width > 0, height > 0, let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                                                             space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+              let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return CGRect(origin: .zero, size: image.size) }
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let data = context.data?.assumingMemoryBound(to: UInt8.self) else { return CGRect(origin: .zero, size: image.size) }
+        var minX = width, minY = height, maxX = -1, maxY = -1
+        for y in 0..<height {
+            for x in 0..<width where data[(y * width + x) * 4 + 3] > 8 {
+                minX = min(minX, x); maxX = max(maxX, x); minY = min(minY, y); maxY = max(maxY, y)
+            }
+        }
+        guard maxX >= minX else { return CGRect(origin: .zero, size: image.size) }
+        // Rows from the top in memory: flipped to the image's bottom-left origin.
+        return CGRect(x: CGFloat(minX) / scale, y: CGFloat(height - 1 - maxY) / scale, width: CGFloat(maxX - minX + 1) / scale, height: CGFloat(maxY - minY + 1) / scale)
+    }
 
     /// A list's bullet, as Textual's: a dot, a ring, a square, by how deep the list is; a third
     /// of the text's size, on the middle of its first line.
@@ -365,24 +438,30 @@ enum ReplyAttachments {
 
     static func attachment(for attachment: AnyAttachment, attributes: [NSAttributedString.Key: Any], size: CGFloat) -> NSAttributedString {
         let item = NSTextAttachment()
+        // Sized and set on the line as Textual sets it, by its own measures at the text's size.
+        let environment = TextEnvironmentValues(font: .system(size: size))
+        let bounds = attachment.sizeThatFits(.unspecified, in: environment)
+        let offset = attachment.baselineOffset(in: environment)
         if attachment.base is FileIconAttachment {
-            item.image = NSImage(systemSymbolName: "doc", accessibilityDescription: nil)?
-                .withSymbolConfiguration(.init(pointSize: size * 0.85, weight: .light).applying(.init(paletteColors: [.controlAccentColor])))
-            item.bounds = CGRect(x: 0, y: -size * 0.12, width: size * 0.78, height: size * 0.92)
+            item.image = fileIcon(bounds)
         } else {
-            let key = "\(attachment.description)|\(size)"
-            let image = images[key] ?? {
-                let renderer = ImageRenderer(content: attachment.body.font(.system(size: size)).fixedSize())
-                renderer.scale = NSScreen.main?.backingScaleFactor ?? 2
+            let dark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            let key = "\(attachment.hashValue)|\(bounds.width)x\(bounds.height)|\(dark)"
+            item.image = images[key] ?? {
+                // Drawn at its own size, which can be larger than it shows (a formula is), and
+                // scaled into its place in the text.
+                let ink = dark ? Color(white: 1, opacity: 0.85) : Color(white: 0, opacity: 0.85)
+                let renderer = ImageRenderer(content: attachment.body.foregroundStyle(ink).environment(\.colorScheme, dark ? .dark : .light))
+                renderer.scale = 2 * max(1, (NSScreen.main?.backingScaleFactor ?? 2) / 2)
                 let image = renderer.nsImage ?? NSImage()
                 images[key] = image
                 return image
             }()
-            item.image = image
-            item.bounds = CGRect(x: 0, y: -size * 0.2, width: image.size.width, height: image.size.height)
         }
+        item.bounds = CGRect(x: 0, y: offset, width: bounds.width, height: bounds.height)
         let text = NSMutableAttributedString(attachment: item)
-        let kept = attributes.filter { $0.key != .backgroundColor && $0.key != .replyInlineCode }
+        var kept = attributes.filter { $0.key != .backgroundColor && $0.key != .replyInlineCode }
+        kept[.replyPlainText] = attachment.description
         text.addAttributes(kept, range: NSRange(location: 0, length: text.length))
         return text
     }

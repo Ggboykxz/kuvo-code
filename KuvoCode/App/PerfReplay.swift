@@ -782,9 +782,11 @@ enum PerfCompare {
         guard window == nil, let path = ProcessInfo.processInfo.environment["KUVO_PERF_COMPARE"],
               let markdown = try? String(contentsOfFile: path, encoding: .utf8) else { return }
         let width: CGFloat = 640
+        // KUVO_PERF_COMPARE_FOLDER: a project folder, for links to its files.
+        let folders = ProcessInfo.processInfo.environment["KUVO_PERF_COMPARE_FOLDER"].map { [$0] } ?? []
         let view = ScrollView {
             HStack(alignment: .top, spacing: 40) {
-                StructuredText(markdown, parser: FileLinkingParser(folders: { [] }))
+                StructuredText(markdown, parser: FileLinkingParser(folders: { folders }))
                     .transcriptFont()
                     .textual.codeBlockStyle(CopyableCodeBlockStyle())
                     .textual.listItemStyle(.firstLine)
@@ -793,7 +795,7 @@ enum PerfCompare {
                     .textual.structuredTextStyle(.gitHub)
                     .textual.textSelection(.enabled)
                     .frame(width: width, alignment: .topLeading)
-                ReplyView(markdown: markdown, parser: FileLinkingParser(folders: { [] }))
+                ReplyView(markdown: markdown, parser: FileLinkingParser(folders: { folders }))
                     .frame(width: width, alignment: .topLeading)
             }
             .padding(30)
