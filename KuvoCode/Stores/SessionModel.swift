@@ -1204,12 +1204,20 @@ extension OpenCodeAPI {
     /// sooner reaches a model without their tools.
     func waitForTools(in directory: String) async {
         let deadline = ContinuousClock.now + .seconds(20)
+        // A folder it has only just opened lists no servers at first, for a moment, before they're
+        // pending: none for a while more means it has none.
+        let listed = ContinuousClock.now + .seconds(3)
         var waited = false
         while ContinuousClock.now < deadline {
             guard let servers = try? await mcpServers(directory: directory) else { return }
+            if servers.isEmpty, ContinuousClock.now < listed {
+                waited = true
+                try? await Task.sleep(for: .milliseconds(100))
+                continue
+            }
             if !servers.contains(where: { $0.status.status == "pending" }) {
                 // Connected only just now: the engine takes a moment more to hand its tools out.
-                if waited { try? await Task.sleep(for: .milliseconds(1500)) }
+                if waited, !servers.isEmpty { try? await Task.sleep(for: .milliseconds(1500)) }
                 return
             }
             waited = true

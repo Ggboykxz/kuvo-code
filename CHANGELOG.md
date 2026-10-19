@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 - Commands the agent runs no longer get the settings Kuvo Code gives the engine, which hold the key to its browser tools: a command that printed its environment showed it, there for the model to read.
+- The first message in a project after Kuvo Code starts has the browser's and your integrations' tools: it could go out just before they were connected, and the agent said it had no browser.
 
 ## 0.5.21
 
