@@ -25,13 +25,23 @@ enum AppLocation {
         guard isReadOnly(running), !UserDefaults.standard.bool(forKey: declinedKey) else { return }
         let source = originalLocation(of: running) ?? running
         let fromDiskImage = source.path.hasPrefix("/Volumes/") && isReadOnly(source)
+        let destination = applications.appending(path: source.lastPathComponent, directoryHint: .isDirectory)
+        // In Applications already, run from a hidden copy because it came as a download (and
+        // wasn't moved there by Finder): nothing to move, only that to clear.
+        let inPlace = source.resolvingSymlinksInPath().path == destination.resolvingSymlinksInPath().path
 
         let alert = NSAlert()
-        alert.messageText = "Move \(AppInfo.name) to Applications?"
-        alert.informativeText = fromDiskImage
-            ? "It's open from the disk image, so it can't update itself, and it's gone once you eject the disk image. Moved to your Applications folder, it opens from there."
-            : "It's open from where it was downloaded, so it can't update itself. Moved to your Applications folder, it opens from there."
-        alert.addButton(withTitle: "Move to Applications")
+        if inPlace {
+            alert.messageText = "Open \(AppInfo.name) again from Applications?"
+            alert.informativeText = "macOS runs it from a temporary copy, as it does a download it hasn't seen opened, so it can't update itself. Opened again, it runs from your Applications folder."
+            alert.addButton(withTitle: "Open Again")
+        } else {
+            alert.messageText = "Move \(AppInfo.name) to Applications?"
+            alert.informativeText = fromDiskImage
+                ? "It's open from the disk image, so it can't update itself, and it's gone once you eject the disk image. Moved to your Applications folder, it opens from there."
+                : "It's open from where it was downloaded, so it can't update itself. Moved to your Applications folder, it opens from there."
+            alert.addButton(withTitle: "Move to Applications")
+        }
         alert.addButton(withTitle: "Not Now")
         alert.showsSuppressionButton = true
         alert.suppressionButton?.title = "Don't ask again"
@@ -41,7 +51,11 @@ enum AppLocation {
         if alert.suppressionButton?.state == .on { UserDefaults.standard.set(true, forKey: declinedKey) }
         guard answer == .alertFirstButtonReturn else { return }
 
-        let destination = applications.appending(path: source.lastPathComponent, directoryHint: .isDirectory)
+        if inPlace {
+            clearDownloadMark(destination)
+            relaunch(destination, ejecting: nil)
+            return
+        }
         do {
             try move(source, to: destination)
         } catch {
@@ -73,9 +87,14 @@ enum AppLocation {
         } else {
             try files.moveItem(at: source, to: destination)
         }
-        // You opened it already: opened again from Applications, it isn't a new download.
-        let inside = files.enumerator(at: destination, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []
-        for file in [destination] + inside {
+        clearDownloadMark(destination)
+    }
+
+    /// You opened it already: opened again from Applications, it isn't a new download, so macOS
+    /// neither asks again nor runs it from a temporary copy.
+    private static func clearDownloadMark(_ app: URL) {
+        let inside = FileManager.default.enumerator(at: app, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []
+        for file in [app] + inside {
             removexattr(file.path, "com.apple.quarantine", XATTR_NOFOLLOW)
         }
     }
