@@ -532,7 +532,10 @@ private struct FormCard: View {
             .scrollBounceBehavior(.basedOnSize)
             HStack {
                 Spacer()
-                Button("Answer") { submit(answers) }
+                Button("Answer") {
+                    FormCard.kept[form.id] = nil
+                    submit(answers)
+                }
                     .buttonStyle(.glassProminent)
                     .controlSize(.large)
                     .keyboardShortcut(takesKeys ? .defaultAction : nil)
@@ -540,8 +543,13 @@ private struct FormCard: View {
             }
         }
         .padding(16)
-        .onAppear { answers = FormFieldsView.defaults(for: form.fields) }
+        // What you'd filled in, back after another conversation was in view (its card made again).
+        .onAppear { answers = Self.kept[form.id] ?? FormFieldsView.defaults(for: form.fields) }
+        .onChange(of: answers) { _, now in Self.kept[form.id] = now }
     }
+
+    /// Each form's answers so far, until it's answered: kept here for the app's run.
+    static var kept: [String: FormAnswer] = [:]
 
     /// An integration's forms go by its name ("Outlook and Microsoft 365 needs an answer"); your
     /// own MCP servers' by theirs.

@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Cards above the composer stay while the agent waits, even if reading them again fails (over a slow link), and a form you'd half filled keeps its answers when you come back from another conversation. Clearing "Something else…" in a question leaves no answer behind, and a sign-in or code card no longer takes the keyboard while you're typing a message.
 - A permission notification names every command it covers, not just the first, since Allow approves them all. And notifications go when what they ask is answered elsewhere (on your phone, say), is no longer asked, or a browser's ask ends.
 - What a subagent asks you (a permission, a question, a sign-in or a code in the browser) shows in the conversation it works for, which waits on you with the orange hand. It showed nowhere, and the subagent waited until it gave up.
 - Files with accents, Turkish letters, CJK or emoji in their names show and open in Open Quickly, ⌘K and @-mentions. They came out as escape codes. A file open in the panel shows the agent's changes as they're made, line numbers stay right in files with Windows line endings, a Markdown file's own pictures show in its preview, and its preview loads nothing from the web.

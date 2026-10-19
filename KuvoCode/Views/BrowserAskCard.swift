@@ -43,6 +43,11 @@ struct BrowserAskCard: View {
     @State private var allowsAgents = false
     @FocusState private var focus: Field?
 
+    /// A text field with something in it has the keyboard.
+    private static var typingElsewhere: Bool {
+        (NSApp.keyWindow?.firstResponder as? NSTextView).map { !$0.string.isEmpty } ?? false
+    }
+
     private enum Field { case username, password, code }
 
     private var saved: [Passwords.Login] { Passwords.logins(for: ask.host) }
@@ -63,12 +68,15 @@ struct BrowserAskCard: View {
         }
         .padding(16)
         .onAppear {
+            // Not while you're writing something else (a message, the other half's card): what you
+            // type next would go into the field, and Return into the page.
+            let mayFocus = takesKeys && !Self.typingElsewhere
             switch ask.kind {
             case .signIn:
                 if let login = saved.first { use(login) }
                 saves = saved.isEmpty && Passwords.offersToSave && !Passwords.neverSites.contains(ask.host)
-                focus = username.isEmpty ? .username : .password
-            case .code: focus = .code
+                if mayFocus { focus = username.isEmpty ? .username : .password }
+            case .code: if mayFocus { focus = .code }
             case .action: break
             }
         }

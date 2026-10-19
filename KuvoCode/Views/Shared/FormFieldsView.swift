@@ -93,7 +93,12 @@ private struct FieldView: View {
                 if allowsCustom {
                     TextField("Something else…", text: $custom)
                         .wellField()
-                        .onChange(of: custom) { _, text in if !text.isEmpty { value = .string(text) } }
+                        .onChange(of: custom) { old, text in
+                            if !text.isEmpty { value = .string(text) }
+                            // Cleared: no answer, rather than its last letter (a choice picked
+                            // since, which empties this, stays).
+                            else if stringValue == old { value = nil }
+                        }
                 }
             } else if format == "password" {
                 SecureField(placeholder ?? "", text: stringBinding)

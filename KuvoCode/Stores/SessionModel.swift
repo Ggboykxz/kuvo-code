@@ -424,8 +424,12 @@ final class SessionModel {
             // All of the read is in before anything changes: what streams in meanwhile goes to the
             // copy on screen, and must not land between that copy going and the read replacing it.
             let waiting = (try? await inbox) ?? []
-            let asked = (try? await permissions) ?? []
-            let open = ((try? await forms) ?? []) + ((try? await shared) ?? [])
+            // What's asked as it was, for a read that failed (over SSH, say): no card goes for
+            // one the agent still waits on, which no event would bring back.
+            let asked = (try? await permissions) ?? transcript.permissions
+            let readForms = try? await forms
+            let readShared = try? await shared
+            let open = readForms.flatMap { own in readShared.map { own + $0 } } ?? transcript.forms
             let running = (try? await active).map { $0.contains(id) }
             // Earlier messages read as you scrolled up stay, ahead of the latest: only those this
             // read, not a saved copy's (whose start it doesn't know), and only when they reach the
