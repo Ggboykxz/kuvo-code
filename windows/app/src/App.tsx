@@ -99,6 +99,102 @@ function LongText({ text }: { text: string }) {
   );
 }
 
+/// How the agent's work shows between its replies: "Thought for 40s, ran 6 commands, read
+/// 3 files (1 failed)" — the Mac app's words, word for word.
+const stepKind = (name: string) => {
+  const lower = (name ?? "").toLowerCase();
+  if (lower.startsWith("kuvo-browser_browser_") || lower.startsWith("browser_")) return "browser";
+  switch (lower) {
+    case "grep": case "glob": case "list": return "search";
+    case "bash": case "shell": return "shell";
+    case "edit": case "write": case "patch": return "edit";
+    case "kuvo-browser_show_in_panel": return "show";
+    case "kuvo-browser_send_message": return "message";
+    case "kuvo-browser_list_agents": return "agents";
+    default: return lower;
+  }
+};
+
+const stepPhrase = (kind: string, count: number) => {
+  const many = count > 1;
+  switch (kind) {
+    case "websearch": return many ? `searched the web ${count} times` : "searched the web";
+    case "webfetch": return many ? `fetched ${count} pages` : "fetched a page";
+    case "read": return many ? `read ${count} files` : "read a file";
+    case "search": return many ? `searched the files ${count} times` : "searched the files";
+    case "shell": return many ? `ran ${count} commands` : "ran a command";
+    case "edit": return many ? `edited files ${count} times` : "edited a file";
+    case "browser": return many ? `used the browser (${count} steps)` : "used the browser";
+    case "subagent": return many ? `handed off ${count} tasks` : "handed off a task";
+    case "question": return many ? `asked you ${count} questions` : "asked you a question";
+    case "show": return many ? `showed you ${count} things` : "showed you something";
+    case "message": return many ? `wrote to other agents ${count} times` : "wrote to another agent";
+    case "agents": return "looked up the other agents";
+    case "todowrite": case "todoread": return "kept its to-do list";
+    default: return many ? `used ${kind} ${count} times` : `used ${kind}`;
+  }
+};
+
+const duration = (seconds: number) => {
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} min`;
+  return `${Math.round(minutes / 60)} h`;
+};
+
+function stepsSummary(entry: TranscriptEntry): string {
+  const parts = entry.parts ?? [];
+  const calls = parts.filter(part => part.type === "tool");
+  const thought = parts
+    .filter(part => part.type === "reasoning")
+    .reduce((total, part) => {
+      const times = part as unknown as { created?: number; completed?: number };
+      if (!times.created || !times.completed) return total;
+      return total + (times.completed - times.created) / 1000;
+    }, 0);
+  const pieces: string[] = [];
+  if (parts.some(part => part.type === "reasoning")) pieces.push(`thought for ${duration(Math.max(1, Math.round(thought)))}`);
+  if (calls.length) {
+    const order: string[] = [];
+    const counts = new Map<string, number>();
+    for (const call of calls) {
+      const kind = stepKind(call.name ?? "");
+      if (!counts.has(kind)) order.push(kind);
+      counts.set(kind, (counts.get(kind) ?? 0) + 1);
+    }
+    pieces.push(order.map(kind => stepPhrase(kind, counts.get(kind) ?? 1)).join(", "));
+  }
+  const failed = calls.filter(call => call.status === "error").length;
+  const text = pieces.join(", ") + (failed > 0 ? ` (${failed} failed)` : "");
+  return text ? text[0].toUpperCase() + text.slice(1) : "";
+}
+
+/// The row itself: the summary, and each step when it is opened.
+function StepsRow({ entry }: { entry: TranscriptEntry }) {
+  const [open, setOpen] = useState(false);
+  const summary = stepsSummary(entry);
+  if (!summary) return null;
+  const calls = (entry.parts ?? []).filter(part => part.type === "tool");
+  return (
+    <div className="steps-row">
+      <button className="steps-summary" onClick={() => setOpen(value => !value)} title={open ? "Hide the steps" : "Show each step"}>
+        <span className="where">{open ? "▾" : "▸"}</span>
+        <span>{summary}</span>
+      </button>
+      {open ? (
+        <ul className="steps-list">
+          {calls.map((call, index) => (
+            <li key={call.id ?? index}>
+              <span className={call.status === "error" ? "entry-error" : ""}>{call.name ?? "tool"}</span>
+              {call.status === "error" ? <span className="where"> · failed</span> : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
 function AssistantEntry({ entry }: { entry: TranscriptEntry }) {
   const [quote, setQuote] = useState<{ text: string; top: number; left: number } | null>(null);
   const blockRef = useRef<HTMLElement>(null);
@@ -117,6 +213,7 @@ function AssistantEntry({ entry }: { entry: TranscriptEntry }) {
 
   return (
     <article className="entry assistant" ref={blockRef} onMouseUp={onSelect}>
+      <StepsRow entry={entry} />
       {(entry.parts ?? []).map((part, index) => {
         if (part.type === "text") return <LongText key={index} text={part.text ?? ""} />;
         if (part.type === "reasoning") {

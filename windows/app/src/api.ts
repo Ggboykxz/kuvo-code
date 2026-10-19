@@ -16,7 +16,10 @@ export interface SessionSummary {
 
 export interface MessagePart {
   type: string;
+  id?: string;
   text?: string;
+  created?: number;
+  completed?: number;
   name?: string;
   status?: string;
   input?: Record<string, unknown>;

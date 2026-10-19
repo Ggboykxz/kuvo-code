@@ -23,7 +23,10 @@ function messageEntry(message) {
       const entry = { kind: "assistant", id: message.id, created, parts: [], agent: message.agent, model: message.model?.id, error: message.error, finish: message.finish, cost: message.cost, tokens: message.tokens };
       (message.content ?? []).forEach((block, ordinal) => {
         if (block.type === "text") entry.parts.push({ type: "text", ordinal, text: block.text ?? "", done: !!block.time?.completed });
-        else if (block.type === "reasoning") entry.parts.push({ type: "reasoning", ordinal, text: block.text ?? "", done: !!block.time?.completed });
+        else if (block.type === "reasoning") entry.parts.push({
+          type: "reasoning", ordinal, text: block.text ?? "", done: !!block.time?.completed,
+          created: block.time?.created ?? 0, completed: block.time?.completed ?? 0,
+        });
         else if (block.type === "tool") entry.parts.push({
           type: "tool",
           id: block.id,

@@ -1232,3 +1232,17 @@ li.unread .session { position: relative; padding-left: 16px; }
 }
 .quote-button:hover { color: var(--accent); border-color: var(--accent); }
 .entry.assistant { position: relative; }
+
+/* The steps row: what the agent did between two replies, in one line. */
+.steps-row { margin-bottom: var(--space-1); }
+.steps-summary {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  padding: 2px var(--space-2); border: 0; border-radius: var(--radius-xs);
+  background: transparent; color: var(--ink-soft); font-size: var(--text-xs);
+}
+.steps-summary:hover { background: var(--hover); color: var(--ink); }
+.steps-list {
+  margin: var(--space-1) 0 0; padding: 0 0 0 var(--space-4);
+  list-style: none; font-size: var(--text-xs); color: var(--ink-soft);
+}
+.steps-list li { padding: 1px 0; font-family: var(--font-mono); }

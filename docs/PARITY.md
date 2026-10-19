@@ -18,7 +18,7 @@ mirrored in `windows/harness/engine.mjs` and typed in `windows/app/src/api.ts`).
 | `ModelPicker` | ✅ sélecteur de modèle (par fournisseur) |
 | `QueueDock` | ✅ la file (steer/queue, reprendre), avec repli |
 | `ContextGauge` | ✅ la jauge + son popover (fenêtre de contexte, coût, compact) |
-| `StepsRow` | ⬜ la ligne d'étapes du Mac |
+| `StepsRow` | ✅ (le résumé des étapes, dépliable) |
 | `AttentionCards` | ✅ les demandes de permission et les formulaires |
 | `YourMessage`, `AttachmentViews` | ✅ (pièces jointes, images) |
 | `ToolCallView`, `ShellRow` | ✅ (outils, shell, diff par outil) |

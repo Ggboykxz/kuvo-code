@@ -105,7 +105,10 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
-  - **2.30 (this change).** Two more of the Mac app's behaviours: the conversation follows
+  - **2.31 (this change).** The Mac app's steps row: between two replies, one line says what
+    the agent did — "Thought for 40s, ran 6 commands, read 3 files (1 failed)" — and it opens
+    to each step, with the Mac's own words.
+  - **2.30. Two more of the Mac app's behaviours: the conversation follows
     the newest words (and offers to come back when you scroll up to read), and selecting a
     passage of the answer offers to *quote* it into the composer, where it joins your next
     message.
