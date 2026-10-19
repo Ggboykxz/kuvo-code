@@ -147,7 +147,7 @@ extension Integration {
 
 extension Integration {
     /// The ways to sign in Accounts offers. A ChatGPT plan is used through Codex and a SuperGrok
-    /// plan through Grok's CLI (Coding Agents), so the engine's own sign-ins with those plans
+    /// plan through Grok's CLI (Subscriptions), so the engine's own sign-ins with those plans
     /// aren't offered: two ways to one plan read as two accounts. One made before still works,
     /// shows as connected, and can be signed in to again.
     var offeredSignInMethods: [Method] {

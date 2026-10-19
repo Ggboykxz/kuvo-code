@@ -202,8 +202,8 @@ final class Catalog {
 
     static func planName(_ id: String) -> String? {
         switch id {
-        case "openai": "Codex (your ChatGPT plan, under Coding Agents)"
-        case "xai": "Grok (your SuperGrok plan, under Coding Agents)"
+        case "openai": "Codex (your ChatGPT plan, under Subscriptions)"
+        case "xai": "Grok (your SuperGrok plan, under Subscriptions)"
         default: nil
         }
     }
