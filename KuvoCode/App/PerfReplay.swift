@@ -401,7 +401,8 @@ enum PerfOpen {
             var lines: [String] = []
             var last = ""
             func scrollViews(in view: NSView) -> [NSScrollView] { (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(scrollViews) }
-            while ContinuousClock.now - began < .seconds(4) {
+            // KUVO_PERF_OPEN_FOR: that many seconds instead.
+            while ContinuousClock.now - began < .seconds(ProcessInfo.processInfo.environment["KUVO_PERF_OPEN_FOR"].flatMap(Double.init) ?? 4) {
                 let scroll = NSApp.windows.compactMap(\.contentView).flatMap(scrollViews).max { ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0) }
                 let origin = Int(scroll?.contentView.bounds.origin.y ?? -1)
                 let height = Int(scroll?.documentView?.frame.height ?? -1)

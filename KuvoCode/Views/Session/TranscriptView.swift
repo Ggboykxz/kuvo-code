@@ -15,6 +15,7 @@ struct TranscriptView: View {
     #endif
     let model: SessionModel
     @Environment(Workspace.self) private var workspace
+    @Environment(Catalog.self) private var catalog
     @Environment(\.isOffline) private var isOffline
     @AppStorage(StepsDetail.key) private var stepsDetail = StepsDetail.summary
     @State private var scroller = ConversationScroller()
@@ -124,7 +125,11 @@ struct TranscriptView: View {
         }
         // Once, whatever happens to this view meanwhile (the test notes it if it's made again).
         .onAppear { PerfRead.start() }
-        .onAppear { PerfOpen.start { rowCache.rows.last?.id } }
+        .onAppear {
+            // The session asked for (KUVO_DEMO_SESSION), once it's the one in view.
+            guard ProcessInfo.processInfo.environment["KUVO_DEMO_SESSION"].map({ $0 == model.id }) ?? true else { return }
+            PerfOpen.start { rowCache.rows.last?.id }
+        }
         // KUVO_DEMO_FIND_STEPS=<n>: once Find is open, Next that many times, a second and a half apart.
         .task {
             guard let steps = ProcessInfo.processInfo.environment["KUVO_DEMO_FIND_STEPS"].flatMap(Int.init) else { return }
@@ -318,7 +323,8 @@ struct TranscriptView: View {
                 rows.append(.turnEnd(idle, turn, isLast: index == last))
                 turn = TurnStats()
             case .modelSwitched(let change):
-                rows.append(.notice(change.id, "cpu", "Switched to \(change.model.id)" + (change.model.variant.map { " · \(EffortLevel.title($0))" } ?? "")))
+                // By its name, as the model menu shows it ("Big Pickle", not big-pickle).
+                rows.append(.notice(change.id, "cpu", "Switched to \(catalog.model(change.model)?.name ?? change.model.id)" + (change.model.variant.map { " · \(EffortLevel.title($0))" } ?? "")))
             case .agentSwitched(let change):
                 rows.append(.notice(change.id, change.agent == "plan" ? "list.bullet.clipboard" : "hammer", "\(change.agent.capitalized) mode"))
             case .compaction(let compaction):
