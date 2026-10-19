@@ -2587,7 +2587,7 @@ class ClaudeThread {
     if (hooks.signal.aborted)
       return { outcome: "interrupted" };
     return new Promise((resolve) => {
-      this.active = { turn, hooks, resolve, streamed: new Set, blockTools: new Map, calls: new Map, auto: input.auto };
+      this.active = { turn, hooks, resolve, streamed: new Set, blockTools: new Map, calls: new Map, subagents: new Map, auto: input.auto };
       this.input.push(userMessage(input));
     });
   }
@@ -2656,12 +2656,13 @@ class ClaudeThread {
     const active = this.active;
     if (!active)
       return;
-    if (message.parent_tool_use_id)
+    const lane = message.parent_tool_use_id ? this.subagentLane(active, message.parent_tool_use_id) : active;
+    if (!lane)
       return;
-    const turn = active.turn;
+    const turn = lane.turn;
     switch (message.type) {
       case "stream_event":
-        return this.stream(active, message.event);
+        return this.stream(lane, message.event);
       case "assistant": {
         const content = message.message?.content ?? [];
         const id = message.message?.id;
@@ -2671,19 +2672,21 @@ class ClaudeThread {
         }
         for (const block of content) {
           if (block.type === "tool_use") {
-            active.calls.set(block.id, { name: block.name, input: block.input ?? {} });
+            lane.calls.set(block.id, { name: block.name, input: block.input ?? {} });
             const tool = kuvoTool2(block.name, block.input ?? {});
             if (!turn.hasTool(block.id))
               turn.toolStart(block.id, tool.name);
             turn.toolCalled(block.id, tool.input);
-          } else if (!id || !active.streamed.has(id)) {
+            if (lane === active && tool.name === "subagent")
+              this.subagentLane(active, block.id);
+          } else if (!id || !lane.streamed.has(id)) {
             if (block.type === "text" && block.text)
               turn.text(block.text);
             else if (block.type === "thinking" && block.thinking)
               turn.reasoning(block.thinking);
           }
         }
-        if (id && !active.streamed.has(id))
+        if (id && !lane.streamed.has(id))
           turn.endBlock();
         return;
       }
@@ -2691,10 +2694,12 @@ class ClaudeThread {
         const content = Array.isArray(message.message?.content) ? message.message.content : [];
         const results = content.filter((block) => block.type === "tool_result");
         for (const block of results)
-          this.result(active, block, results.length === 1 ? message.tool_use_result : undefined);
+          this.result(active, lane, block, results.length === 1 ? message.tool_use_result : undefined);
         return;
       }
       case "rate_limit_event": {
+        if (lane !== active)
+          return;
         const info = message.rate_limit_info ?? {};
         if (info.status !== "rejected" || info.overageInUse || info.isUsingOverage)
           return;
@@ -2707,37 +2712,52 @@ class ClaudeThread {
         return;
       }
       case "system":
-        if (message.subtype === "api_retry" && (message.error === "rate_limit" || message.error === "billing_error") && active.auto) {
+        if (lane === active && message.subtype === "api_retry" && (message.error === "rate_limit" || message.error === "billing_error") && active.auto) {
           active.limit ??= message.error === "billing_error" ? { scope: "provider" } : { scope: "model", brief: true };
           active.problem ??= "Claude's API is rate limiting this model.";
           this.query?.interrupt().catch(() => {});
         }
         return;
       case "result":
+        if (lane !== active)
+          return;
         return this.finish(active, message);
     }
   }
-  stream(active, event) {
-    const turn = active.turn;
+  subagentLane(active, callID) {
+    const known = active.subagents.get(callID);
+    if (known)
+      return known;
+    const call = active.calls.get(callID);
+    const input = call?.input ?? active.turn.toolInput(callID) ?? {};
+    if (call && kuvoTool2(call.name, input).name !== "subagent")
+      return;
+    const run2 = active.hooks.subagent(callID, { title: String(input.description ?? ""), prompt: typeof input.prompt === "string" ? input.prompt : undefined, agent: input.subagent_type });
+    const lane = { turn: run2.turn, streamed: new Set, blockTools: new Map, calls: new Map, run: run2, background: input.run_in_background === true };
+    active.subagents.set(callID, lane);
+    return lane;
+  }
+  stream(lane, event) {
+    const turn = lane.turn;
     switch (event?.type) {
       case "message_start": {
-        active.streamed.add(event.message?.id);
-        active.blockTools.clear();
+        lane.streamed.add(event.message?.id);
+        lane.blockTools.clear();
         const usage = event.message?.usage ?? {};
-        active.usage = {
+        lane.usage = {
           input: usage.input_tokens ?? 0,
           output: usage.output_tokens ?? 0,
           reasoning: 0,
           cache: { read: usage.cache_read_input_tokens ?? 0, write: usage.cache_creation_input_tokens ?? 0 }
         };
-        active.stopReason = undefined;
+        lane.stopReason = undefined;
         turn.startStep();
         return;
       }
       case "content_block_start": {
         const block = event.content_block;
         if (block?.type === "tool_use") {
-          active.blockTools.set(event.index, block.id);
+          lane.blockTools.set(event.index, block.id);
           turn.toolStart(block.id, kuvoTool2(block.name, {}).name);
         }
         return;
@@ -2749,7 +2769,7 @@ class ClaudeThread {
         else if (delta?.type === "thinking_delta")
           turn.reasoning(delta.thinking);
         else if (delta?.type === "input_json_delta") {
-          const id = active.blockTools.get(event.index);
+          const id = lane.blockTools.get(event.index);
           if (id)
             turn.toolInputDelta(id, delta.partial_json ?? "");
         }
@@ -2759,23 +2779,28 @@ class ClaudeThread {
         turn.endBlock();
         return;
       case "message_delta":
-        if (active.usage && event.usage?.output_tokens !== undefined)
-          active.usage.output = event.usage.output_tokens;
-        active.stopReason = event.delta?.stop_reason ?? active.stopReason;
+        if (lane.usage && event.usage?.output_tokens !== undefined)
+          lane.usage.output = event.usage.output_tokens;
+        lane.stopReason = event.delta?.stop_reason ?? lane.stopReason;
         return;
       case "message_stop":
-        turn.endStep({ tokens: active.usage, finish: active.stopReason === "tool_use" ? "tool-calls" : active.stopReason ?? "stop" });
+        turn.endStep({ tokens: lane.usage, finish: lane.stopReason === "tool_use" ? "tool-calls" : lane.stopReason ?? "stop" });
         return;
     }
   }
-  result(active, block, structured) {
-    const turn = active.turn;
+  result(active, lane, block, structured) {
+    const turn = lane.turn;
     const id = block.tool_use_id;
-    const call = active.calls.get(id);
+    const call = lane.calls.get(id);
     let text = toolText(block.content);
     if (text.length > outputLimit3)
       text = text.slice(0, outputLimit3) + `
 \u2026`;
+    const subagent = lane === active ? active.subagents.get(id) : undefined;
+    if (subagent && !subagent.background) {
+      subagent.run.end(block.is_error ? "failed" : "succeeded", block.is_error ? { type: "agent", message: text || "The subagent failed." } : undefined);
+      active.subagents.delete(id);
+    }
     if (block.is_error) {
       turn.toolFailed(id, text || "The tool failed.");
       return;
@@ -4637,6 +4662,9 @@ class Turn {
   setModel(model2) {
     this.model = model2;
   }
+  get currentModel() {
+    return this.model;
+  }
   startStep(model2) {
     if (this.ended)
       return "";
@@ -4959,7 +4987,7 @@ class Sessions {
   state(id) {
     let live = this.live.get(id);
     if (!live) {
-      live = { threads: new Map, permissions: new Map, forms: new Map, always: [] };
+      live = { threads: new Map, permissions: new Map, forms: new Map, always: [], subagents: new Map };
       this.live.set(id, live);
     }
     return live;
@@ -5087,8 +5115,8 @@ class Sessions {
     emit("session.created", { sessionID: session.id, session }, session.location.directory);
     return session;
   }
-  list(directory) {
-    return this.store.all().filter((session) => !directory || session.location.directory === directory).sort((a, b) => b.time.updated - a.time.updated || (a.id < b.id ? 1 : -1));
+  list(directory, parentID) {
+    return this.store.all().filter((session) => !directory || session.location.directory === directory).filter((session) => parentID === undefined || (parentID === null ? !session.parentID : session.parentID === parentID)).sort((a, b) => b.time.updated - a.time.updated || (a.id < b.id ? 1 : -1));
   }
   get(id) {
     return this.record(id).session;
@@ -5120,6 +5148,8 @@ class Sessions {
     this.removing.add(id);
     record.agent.inbox = [];
     await this.interrupt(id);
+    for (const child of this.list(undefined, id))
+      await this.remove(child.id);
     for (const thread of this.live.get(id)?.threads.values() ?? [])
       thread.close();
     this.live.delete(id);
@@ -5136,7 +5166,12 @@ class Sessions {
     this.store.save(id);
   }
   active() {
-    return [...this.live.keys()].filter((id) => this.isRunning(id));
+    const ids = [...this.live.keys()].filter((id) => this.isRunning(id));
+    for (const live of this.live.values())
+      for (const [child, turn] of live.subagents)
+        if (!turn.isEnded)
+          ids.push(child);
+    return ids;
   }
   setInstruction(id, key, text) {
     const record = this.record(id);
@@ -5200,6 +5235,8 @@ class Sessions {
     if (this.removing.has(id))
       throw new NotFound(`No session ${id}.`);
     const record = this.record(id);
+    if (record.session.parentID)
+      throw new BadRequest("This subagent works for the conversation that started it: write to it there.");
     const queue = this.queue(record);
     if (queue.some((waiting) => waiting.id === input.id) || record.messages.some((message) => message.id === input.id))
       return;
@@ -5306,6 +5343,9 @@ class Sessions {
     const outcome = abort.signal.aborted ? "interrupted" : result.outcome;
     const before = record.messages[record.messages.length - 1]?.id;
     turn.finish(outcome, outcome === "interrupted" ? undefined : result.error);
+    for (const child of [...live.subagents.values()])
+      child.finish(outcome === "failed" ? "interrupted" : outcome);
+    live.subagents.clear();
     if (live.last && live.last.seen === before)
       live.last.seen = record.messages[record.messages.length - 1]?.id;
     live.last = undefined;
@@ -5517,7 +5557,45 @@ class Sessions {
 `),
       approvesAll: () => !plan && !(record.session.permissions ?? []).some((rule) => rule.effect === "ask" || rule.effect === "deny"),
       permission: (ask) => this.askPermission(id, live, turn, ask, plan),
-      question: (ask) => this.askQuestion(id, live, turn, ask)
+      question: (ask) => this.askQuestion(id, live, turn, ask),
+      subagent: (toolCallID, task) => this.startSubagent(id, live, turn, toolCallID, task)
+    };
+  }
+  startSubagent(id, live, parentTurn, toolCallID, task) {
+    const parent = this.record(id).session;
+    const directory = parent.location.directory;
+    const now = Date.now();
+    const model2 = parentTurn.currentModel;
+    const session = {
+      id: newID("ses"),
+      parentID: id,
+      projectID: parent.projectID,
+      agent: task.agent ?? parent.agent,
+      model: model2,
+      cost: 0,
+      tokens: noTokens(),
+      time: { created: now, updated: now },
+      title: task.title || "A subagent's task",
+      location: { directory },
+      metadata: { kuvoAgent: parent.metadata?.kuvoAgent, kuvoSubagent: true }
+    };
+    this.store.add(session);
+    const record = this.store.get(session.id);
+    if (task.prompt)
+      record.messages.push({ type: "user", id: newID("msg"), time: { created: now }, text: task.prompt });
+    this.store.save(session.id, true);
+    emit("session.created", { sessionID: session.id, session }, directory);
+    const turn = new Turn(this.store, session.id, directory, model2, session.agent ?? "build");
+    live.subagents.set(session.id, turn);
+    parentTurn.toolProgress(toolCallID, { sessionID: session.id });
+    return {
+      sessionID: session.id,
+      turn,
+      end: (outcome, error) => {
+        turn.finish(outcome, error);
+        if (live.subagents.get(session.id) === turn)
+          live.subagents.delete(session.id);
+      }
     };
   }
   askPermission(id, live, turn, ask, plan) {
@@ -5869,7 +5947,8 @@ function handler(context) {
           if (method === "POST")
             return json({ data: sessions.create(await body()) });
           const directory = url.searchParams.get("directory") ?? undefined;
-          const roots = sessions.list(directory);
+          const under = url.searchParams.get("parentID");
+          const roots = sessions.list(directory, under === null ? undefined : under === "null" ? null : under);
           const ordered = url.searchParams.get("cursor")?.startsWith("asc") || url.searchParams.get("order") === "asc" ? [...roots].reverse() : roots;
           return json(page(ordered, url));
         }
