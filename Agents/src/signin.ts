@@ -1,7 +1,8 @@
 // Signing in by running an agent's own sign-in command (`claude auth login`, `codex login`,
 // `grok login`): it opens its maker's page in your browser and finishes by itself. The page it
 // would open is caught (its BROWSER is a little script that writes it down), so the app opens it,
-// once, and can open it again.
+// once, and can open it again. Some also print a page to use when no browser opens, which ends on
+// a code to paste back (Claude Code's): that's taken too, typed into the command.
 
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
@@ -20,6 +21,8 @@ export interface CommandSignInOptions {
   /** Whether you're signed in now (asked once the command ends). */
   signedIn: () => Promise<boolean>
   instructions: string
+  /** The command's prompt for a code from its page, when it takes one: a pasted code is typed there. */
+  codePrompt?: RegExp
 }
 
 /** The catcher, in the temporary folder: a path without spaces (Python splits BROWSER on them). */
@@ -49,11 +52,14 @@ export async function commandSignIn(options: CommandSignInOptions): Promise<Sign
   }
   void read(child.stdout)
   void read(child.stderr)
+  let pasted = false
   void child.exited.then(async (code) => {
     rmSync(urlFile, { force: true })
     if (status.status !== "pending") return
     const signedIn = await options.signedIn().catch(() => false)
-    status = signedIn ? { status: "complete" } : { status: "failed", message: lastLines(output) || `Signing in stopped (exit code ${code}).` }
+    if (signedIn) status = { status: "complete" }
+    else if (pasted) status = { status: "failed", message: "That code didn't work. Start again, and paste the code from the page this sign-in opens." }
+    else status = { status: "failed", message: lastLines(options.codePrompt ? output.replace(options.codePrompt, "") : output) || `Signing in stopped (exit code ${code}).` }
   })
   // Signed in while the command lingers (it waits on something after the page): done then.
   // Not when it was signed in already (signing in again, another way): its end says.
@@ -68,11 +74,16 @@ export async function commandSignIn(options: CommandSignInOptions): Promise<Sign
     }
   })()
 
-  // The page to open: what the command handed its browser, or printed.
+  // The page to open: what the command handed its browser, which comes back to it by itself. What
+  // it printed is for when no browser opens (Claude Code's ends on a code to paste), so it's only
+  // taken when nothing reaches the browser a few seconds after it.
   let url = ""
+  let printedAt: number | undefined
   for (let waited = 0; waited < 15_000 && !url; waited += 200) {
     if (existsSync(urlFile)) url = readFileSync(urlFile, "utf8").split("\n")[0].trim()
-    url ||= firstURL(output) ?? ""
+    const printed = firstURL(output)
+    if (printed) printedAt ??= waited
+    if (!url && printed && waited - printedAt! >= 3_000) url = printed
     if (!url) await Bun.sleep(200)
     if (status.status !== "pending") break
   }
@@ -80,6 +91,15 @@ export async function commandSignIn(options: CommandSignInOptions): Promise<Sign
     url,
     instructions: options.instructions,
     mode: "auto",
+    acceptsCode: Boolean(options.codePrompt),
+    complete: options.codePrompt
+      ? async (code: string) => {
+          if (status.status !== "pending") throw new Error("That sign-in is over. Start it again.")
+          pasted = true
+          child.stdin.write(code.trim() + "\n")
+          await child.stdin.flush()
+        }
+      : undefined,
     status: () => status,
     cancel() {
       if (status.status === "pending") status = { status: "failed", message: "Cancelled." }

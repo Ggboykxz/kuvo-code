@@ -223,6 +223,9 @@ public struct OAuthAttempt: Codable, Sendable, Hashable {
     public var url: String
     public var instructions: String
     public var mode: Mode
+    /// With `.auto`: the page may end on a code to paste instead, when it couldn't come back by
+    /// itself (Claude Code's sign-in, through the coding agents).
+    public var acceptsCode: Bool?
     public var time: Window
 
     public enum Mode: String, Codable, Sendable {

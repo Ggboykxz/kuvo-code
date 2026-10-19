@@ -150,6 +150,7 @@ export class ClaudeAgent implements Agent {
       temporary: this.context.temporary,
       instructions: "Finish signing in on Claude's page. Claude Code keeps the sign-in, as when you run claude auth login.",
       signedIn: async () => (await this.account(true)).signedIn,
+      codePrompt: /Paste code here if prompted >\s*/g,
     })
   }
 

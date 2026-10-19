@@ -221,6 +221,8 @@ export interface OAuthAttempt {
   url: string
   instructions: string
   mode: "auto" | "code"
+  /** With `auto`: the page may end on a code to paste instead. */
+  acceptsCode?: boolean
   time: { created: Millis; expires: Millis }
 }
 

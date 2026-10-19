@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { subscribe } from "../src/events"
@@ -11,6 +11,7 @@ import { fileDiff, fromPatch, unified } from "../src/diff"
 import { messageID, newID } from "../src/ids"
 import { compareVersions, homebrewKeg, npmGlobalPrefix, versionIn } from "../src/maintenance"
 import { evaluate, matches } from "../src/rules"
+import { commandSignIn } from "../src/signin"
 
 describe("diffs", () => {
   test("a changed line, with the lines around it", () => {
@@ -134,6 +135,84 @@ describe("blocks an agent keeps apart", () => {
       ])
       expect(seen.filter((event) => event.type === "session.text.ended")).toHaveLength(1)
       expect(seen.filter((event) => event.type === "session.reasoning.ended")).toHaveLength(1)
+    } finally {
+      rmSync(folder, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("signing in with an agent's command", () => {
+  // Like Claude Code's: prints a page for when no browser opens (ending on a code), then hands its
+  // browser the page that comes back by itself, and takes a pasted code.
+  function fakeLogin(folder: string) {
+    const script = join(folder, "login")
+    writeFileSync(
+      script,
+      `#!/bin/sh
+echo "If the browser didn't open, visit: https://example.com/printed?redirect=code"
+sleep 0.5
+"$BROWSER" "https://example.com/browser?redirect=localhost"
+printf "Paste code here if prompted > "
+read code
+[ "$code" = "good" ] && echo signed > "${join(folder, "account")}" && exit 0
+echo "Login failed: Request failed with status code 400"
+exit 1
+`,
+    )
+    chmodSync(script, 0o755)
+    return script
+  }
+
+  async function attempt(folder: string) {
+    return commandSignIn({
+      command: fakeLogin(folder),
+      args: [],
+      home: folder,
+      temporary: folder,
+      instructions: "",
+      signedIn: async () => existsSync(join(folder, "account")),
+      codePrompt: /Paste code here if prompted >\s*/g,
+    })
+  }
+
+  async function settled(sign: Awaited<ReturnType<typeof attempt>>) {
+    for (let waited = 0; waited < 10_000 && sign.status().status === "pending"; waited += 100) await Bun.sleep(100)
+    return sign.status()
+  }
+
+  test("opens the page handed to the browser, not the one printed first", async () => {
+    const folder = mkdtempSync(join(process.env.KUVO_TEST_ROOT ?? tmpdir(), "kuvo-signin-"))
+    try {
+      const sign = await attempt(folder)
+      expect(sign.url).toBe("https://example.com/browser?redirect=localhost")
+      expect(sign.acceptsCode).toBe(true)
+      sign.cancel()
+    } finally {
+      rmSync(folder, { recursive: true, force: true })
+    }
+  })
+
+  test("a pasted code is typed into the command", async () => {
+    const folder = mkdtempSync(join(process.env.KUVO_TEST_ROOT ?? tmpdir(), "kuvo-signin-"))
+    try {
+      const sign = await attempt(folder)
+      await sign.complete!("good\n")
+      expect((await settled(sign)).status).toBe("complete")
+      expect(readFileSync(join(folder, "account"), "utf8").trim()).toBe("signed")
+    } finally {
+      rmSync(folder, { recursive: true, force: true })
+    }
+  })
+
+  test("a wrong code says so, without the command's prompt", async () => {
+    const folder = mkdtempSync(join(process.env.KUVO_TEST_ROOT ?? tmpdir(), "kuvo-signin-"))
+    try {
+      const sign = await attempt(folder)
+      await sign.complete!("bad")
+      const status = await settled(sign)
+      expect(status.status).toBe("failed")
+      expect(status.message).toContain("That code didn't work")
+      await expect(sign.complete!("good")).rejects.toThrow()
     } finally {
       rmSync(folder, { recursive: true, force: true })
     }

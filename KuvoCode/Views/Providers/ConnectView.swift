@@ -37,6 +37,9 @@ struct ConnectView: View {
     @State private var answers: FormAnswer = [:]
     @State private var key = ""
     @State private var pastedCode = ""
+    /// A sign-in that finishes by itself, whose page gave a code instead: the field to paste it.
+    @State private var isPastingCode = false
+    @State private var isCheckingCode = false
     @State private var isWorking = false
     /// Why the engine didn't take the key, shown under it until you change it.
     @State private var keyError: String?
@@ -269,14 +272,32 @@ struct ConnectView: View {
             } else {
                 HStack(spacing: 8) {
                     Spinner(size: 16)
-                    Text("Waiting for you to finish…")
+                    Text(isCheckingCode ? "Checking the code…" : "Waiting for you to finish…")
                         .foregroundStyle(.secondary)
+                }
+                if attempt.acceptsCode == true, isPastingCode, !isCheckingCode {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("If the page gave you a code, paste it here.")
+                            .foregroundStyle(.secondary)
+                        HStack(spacing: 8) {
+                            TextField("Paste the code", text: $pastedCode)
+                                .wellField()
+                                .onSubmit { submitCode(attempt) }
+                            Button("Continue") { submitCode(attempt) }
+                                .buttonStyle(.glassProminent)
+                                .keyboardShortcut(.defaultAction)
+                                .disabled(pastedCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+                    }
                 }
             }
 
             HStack(spacing: 16) {
                 if !signInURL.isEmpty {
                     Button("Open the Page Again") { open(signInURL) }
+                }
+                if attempt.mode == .auto, attempt.acceptsCode == true, !isPastingCode {
+                    Button("Paste a Code") { isPastingCode = true }
                 }
                 // In a sheet, Cancel leaves it; here it goes back to the ways to sign in.
                 if onCancel == nil {
@@ -423,6 +444,9 @@ struct ConnectView: View {
                     }
                     step = .waiting(attempt)
                     progress = nil
+                    pastedCode = ""
+                    isPastingCode = false
+                    isCheckingCode = false
                     signInURL = attempt.url
                     if let code = attempt.userCode { copy(code) }
                     open(attempt.url)
@@ -513,6 +537,23 @@ struct ConnectView: View {
                 try await api.completeOAuth(integration: integrationID, attempt: attempt.attemptID, code: code)
                 finish(method: "oauth")
             } catch {
+                noteFailure(method: "oauth", Analytics.trouble(error))
+                step = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    /// The code the page gave, typed into the sign-in; how it went comes with the next status.
+    private func submitCode(_ attempt: OAuthAttempt) {
+        let code = pastedCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let api = catalog.api(forIntegration: integrationID), !code.isEmpty, !isCheckingCode else { return }
+        isCheckingCode = true
+        Task {
+            do {
+                try await api.completeOAuth(integration: integrationID, attempt: attempt.attemptID, code: code)
+            } catch {
+                isCheckingCode = false
+                pollTask?.cancel()
                 noteFailure(method: "oauth", Analytics.trouble(error))
                 step = .failed(error.localizedDescription)
             }

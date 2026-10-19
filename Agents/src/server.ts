@@ -159,7 +159,7 @@ export function handler(context: Context) {
             // Long enough for a download first (Antigravity's agent) on a slow connection.
             const expires = created + 30 * 60_000
             attempts.set(id, { agent, attempt, created, expires })
-            return located({ attemptID: id, url: attempt.url, instructions: attempt.instructions, mode: attempt.mode, time: { created, expires } })
+            return located({ attemptID: id, url: attempt.url, instructions: attempt.instructions, mode: attempt.mode, acceptsCode: attempt.acceptsCode || undefined, time: { created, expires } })
           }
           const pending = d ? attempts.get(d) : undefined
           if (!pending) return error(404, "That sign-in is over. Start it again.")

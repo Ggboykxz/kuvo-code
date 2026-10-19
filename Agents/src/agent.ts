@@ -31,8 +31,10 @@ export interface SignInAttempt {
   url: string
   instructions: string
   mode: "auto" | "code"
+  /** For `auto`: the page may end on a code to paste instead (when it couldn't come back by itself). */
+  acceptsCode?: boolean
   status(): OAuthStatus
-  /** For `code`: the code the sign-in page gave you. */
+  /** For `code`, or `auto` with `acceptsCode`: the code the sign-in page gave you. */
   complete?(code: string): Promise<void>
   cancel(): void
 }
