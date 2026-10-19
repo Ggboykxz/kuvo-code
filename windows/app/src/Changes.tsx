@@ -132,11 +132,27 @@ export function ChangesPanel() {
           const isOpen = open.includes(file.file);
           return (
             <div className="changes-file" key={file.file}>
-              <button className="changes-file-head" onClick={() => toggle(file.file)}>
-                <span className="where">{isOpen ? "▾" : "▸"}</span>
-                <span className="changes-file-name">{file.file}</span>
-                <span className="where">{`+${file.additions ?? 0} −${file.deletions ?? 0}`}</span>
-              </button>
+              <div className="changes-file-head">
+                <button className="changes-file-toggle" onClick={() => toggle(file.file)}>
+                  <span className="where">{isOpen ? "▾" : "▸"}</span>
+                  <span className="changes-file-name">{file.file}</span>
+                  <span className="where">{`+${file.additions ?? 0} −${file.deletions ?? 0}`}</span>
+                </button>
+                {scope !== "session" ? (
+                  <button
+                    className="small"
+                    title="Put this file back as it was"
+                    onClick={async () => {
+                      if (!confirm(`Put ${file.file} back as it was?`)) return;
+                      try {
+                        await api("/api/changes/revert", { method: "POST", body: { directory: state.project, file: file.file } });
+                      } catch (error) { complain(error); }
+                    }}
+                  >
+                    Revert
+                  </button>
+                ) : null}
+              </div>
               {isOpen ? (
                 <div className="changes-diff">
                   {String(file.patch ?? "").split("\n").map((line, index) => {

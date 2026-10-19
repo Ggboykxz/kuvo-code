@@ -83,11 +83,27 @@ export function showDiff(title: string, oldText: string, newText: string) {
   state.diffNew = newText;
 }
 
+/// A long message folds, the way the Mac app's does: the first lines, and a way to see
+/// the rest.
+function LongText({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const long = text.length > 900;
+  if (!long || open) return <div className="text markdown" dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }} />;
+  const cut = text.slice(0, 700);
+  const line = cut.lastIndexOf("\n", 700);
+  return (
+    <div className="text markdown">
+      <div dangerouslySetInnerHTML={{ __html: renderMarkdown(cut.slice(0, line > 200 ? line : 700)) }} />
+      <button className="small long-more" onClick={() => setOpen(true)}>Show more</button>
+    </div>
+  );
+}
+
 function AssistantEntry({ entry }: { entry: TranscriptEntry }) {
   return (
     <article className="entry assistant">
       {(entry.parts ?? []).map((part, index) => {
-        if (part.type === "text") return <div key={index} className="text markdown" dangerouslySetInnerHTML={{ __html: renderMarkdown(part.text ?? "") }} />;
+        if (part.type === "text") return <LongText key={index} text={part.text ?? ""} />;
         if (part.type === "reasoning") {
           return (
             <details key={index} className="reasoning">

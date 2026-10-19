@@ -1201,3 +1201,16 @@ li.unread .session { position: relative; padding-left: 16px; }
 }
 .changes-buttons { display: flex; align-items: center; gap: var(--space-2); }
 .changes-buttons .where { display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--text-xs); }
+
+/* The long message folds; the "show more" says so. */
+.long-more { margin-top: var(--space-1); color: var(--ink-soft); }
+.long-more:hover { color: var(--accent); border-color: var(--line); }
+
+/* The file's own line in the Changes panel: its name folds, its action sits beside it. */
+.changes-file-head { display: flex; align-items: center; gap: var(--space-2); padding: 0 var(--space-3); }
+.changes-file-toggle {
+  display: flex; align-items: center; gap: var(--space-2); flex: 1; min-width: 0;
+  padding: var(--space-2) 0; background: transparent; border: 0;
+  font-size: var(--text-sm); text-align: left; color: var(--ink);
+}
+.changes-file-toggle:hover { background: transparent; }

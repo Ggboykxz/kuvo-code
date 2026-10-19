@@ -25,11 +25,24 @@ export function Palette() {
   const needle = query.trim().toLowerCase();
   const sessions = state.sessions.filter(s => !needle || (s.title || "").toLowerCase().includes(needle)).slice(0, 6);
   const commands = state.commands.filter(c => !needle || c.name.toLowerCase().includes(needle)).slice(0, 6);
+  const [files, setFiles] = useState<{ path: string; name: string; relative: string }[]>([]);
+  useEffect(() => {
+    if (!state.paletteOpen || !state.project) return;
+    void api<{ files: { path: string; name: string; relative: string }[] }>(`/api/search?q=${encodeURIComponent(needle)}`)
+      .then(answer => setFiles((answer.files ?? []).slice(0, 6)))
+      .catch(() => setFiles([]));
+  }, [state.paletteOpen, needle, state.project]);
   const actions: [string, () => void | Promise<void>][] = [
     ["Appearance", async () => { state.settingsOpen = true; state.settingsSection = "appearance"; render(); }],
+    ["Rename this session", async () => {
+      const title = prompt("Name this session", state.session?.title ?? "");
+      if (!title) return;
+      await api(`/api/sessions/${encodeURIComponent(state.session!.id)}/rename`, { method: "POST", body: { title } });
+      await loadSessions();
+    }],
     ["Refresh sessions", async () => { await loadSessions(); notify("Kuvo Code", "Sessions refreshed."); }],
   ];
-  const total = sessions.length + commands.length + actions.length;
+  const total = sessions.length + commands.length + files.length + actions.length;
 
   const run = async (action: () => void | Promise<void>) => {
     state.paletteOpen = false;
@@ -92,10 +105,24 @@ export function Palette() {
             <span>/{command.name}</span>
           </div>
         ))}
+        {files.map(file => (
+          <div
+            key={file.path}
+            className={`palette-item ${sessions.length + commands.length + files.indexOf(file) === index ? "selected" : ""}`}
+            onClick={() => void run(async () => {
+              state.drawerOpen = true;
+              state.drawerTab = "files";
+              render();
+            })}
+          >
+            <span className="palette-kind">file</span>
+            <span>{file.relative}</span>
+          </div>
+        ))}
         {actions.map(([title, action], position) => (
           <div
             key={title}
-            className={`palette-item ${sessions.length + commands.length + position === index ? "selected" : ""}`}
+            className={`palette-item ${sessions.length + commands.length + files.length + position === index ? "selected" : ""}`}
             onClick={() => void run(action)}
           >
             <span className="palette-kind">action</span>

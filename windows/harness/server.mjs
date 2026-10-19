@@ -723,6 +723,18 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
       }
     }
 
+    // Putting a file back as it was: the panel's per-file action.
+    if (url.pathname === "/api/changes/revert" && request.method === "POST") {
+      const body = await readBody(request);
+      const directory = body?.directory ?? currentProject;
+      const file = typeof body?.file === "string" ? body.file : "";
+      if (!directory) throw new HttpError(400, "No folder to change.");
+      if (!file) throw new HttpError(400, "No file to put back.");
+      if (!(await isGitProject(directory))) throw new HttpError(400, "That folder is not a git project.");
+      await git(directory, ["checkout", "--", file]);
+      return json({ ok: true, file });
+    }
+
     // The commit message the session's model writes, the way the Mac app asks for it.
     if (url.pathname === "/api/changes/suggest" && request.method === "POST") {
       const body = await readBody(request);

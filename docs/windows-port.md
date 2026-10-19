@@ -105,7 +105,11 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
-  - **2.28 (this change).** The Changes panel's Branch scope: what the branch added since
+  - **2.29 (this change).** More of the Mac app, in React: the long messages fold with a
+    *Show more*, the palette finds the project's files and renames the session, and the
+    Changes panel puts a file back as it was. `docs/PARITY.md` now says, feature by
+    feature, where the Windows client stands against the Mac app.
+  - **2.28. The Changes panel's Branch scope: what the branch added since
     it left its base (the repository's default branch, and the point where they parted), and
     the Mac app's Git settings — the branch prefix and the instructions the model writes
     commit and pull-request messages with.
