@@ -105,7 +105,10 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
-  - **2.43 (this change).** A run that failed offers **Try Again** — the Mac app's, with its
+  - **2.44 (this change).** The glass, the Mac app's own: the header and the sidebar are
+    strips of it, the composer and the sheets are cards of it, and a card catches the light
+    along its top edge. The direction's flatness kept, the Mac's translucence restored.
+  - **2.43. A run that failed offers **Try Again** — the Mac app's, with its
     wording — and sends your last message again.
   - **2.42. The image viewer zooms, the Mac app's way: a click zooms it in,
     a click again brings it back, Escape closes it, and +/− zoom from the keyboard.

@@ -190,11 +190,25 @@ body::before {
 }
 
 /* ---- Glass panels (header, sidebar, composer, drawer) ---- */
-.glass {
+/* The glass: the Mac app's translucent panels, over the app's own background. The header
+   and the sidebar are strips of it, the composer and the sheets are cards of it. */
+.glass,
+header,
+aside,
+.composer,
+.drawer,
+.settings-card {
   background: var(--panel-glass);
-  backdrop-filter: blur(20px) saturate(1.4);
-  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  backdrop-filter: blur(20px) saturate(1.6);
+  -webkit-backdrop-filter: blur(20px) saturate(1.6);
 }
+
+/* The header floats over the conversation, held by a hairline. */
+header {
+  position: sticky; top: 0; z-index: 20;
+  border-bottom: 1px solid var(--line-soft);
+}
+aside { border-right: 1px solid var(--line-soft); }
 
 /* ---- Cards: a raised surface, a hairline, and no shadow theatre ---- */
 .card {
@@ -461,6 +475,17 @@ aside {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+  /* A card of glass, the Mac app's composer. */
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  margin: var(--space-2) var(--gutter) var(--space-4);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+  transition: border-color var(--motion-fast) var(--ease-standard), box-shadow var(--motion-fast) var(--ease-standard);
+}
+.composer:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.16), 0 0 0 3px var(--accent-soft);
+}
   border-top: 1px solid var(--line);
 }
 .composer textarea {
@@ -1071,6 +1096,17 @@ li.unread .session { position: relative; padding-left: 16px; }
 .form-choices { display: flex; flex-wrap: wrap; gap: var(--space-3); }
 .form-choice { display: inline-flex; gap: var(--space-1); align-items: center; font-size: var(--text-sm); }
 #redo { align-self: flex-start; }
+
+/* The lit edge: a hairline of light along the top of a card, the Mac app's tell. */
+.card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: var(--lit);
+  border-radius: var(--radius) var(--radius) 0 0;
+  pointer-events: none;
+}
 
 /* ---- Motion: the direction's own, and the Mac app's spring where it is the signature ----
    Every duration comes from the tokens, so the setting "Motion: Reduced" (which makes them
