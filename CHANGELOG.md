@@ -5,6 +5,8 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- Opening or closing the sidebar or the side panel no longer leaves the conversation blank for a moment, or for a few seconds.
+- The sidebar and the side panel slide in and out ahead of the conversation, rather than the conversation jumping to make room first: it moves along with the sidebar, and makes room for the panel once it has slid in. Sliding the panel is smoother too.
 
 ## 0.5.20
 
