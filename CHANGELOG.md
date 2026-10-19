@@ -4,6 +4,8 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
+## Unreleased
+
 ## 0.5.16
 
 - Cards above the composer stay while the agent waits, even if reading them again fails (over a slow link), and a form you'd half filled keeps its answers when you come back from another conversation. Clearing "Something else…" in a question leaves no answer behind, and a sign-in or code card no longer takes the keyboard while you're typing a message.
