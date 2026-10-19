@@ -344,6 +344,10 @@ final class Catalog {
         }
     }
 
+    /// Plans you sign in to with an account, as you do a coding agent: shown with them in
+    /// Accounts' Subscriptions, not among the providers.
+    static let planProviders = ["github-copilot", "gitlab", "poe", "opencode"]
+
     /// Shown first, in this order. Everything else follows alphabetically.
     /// (The outside agents have their own place, before these: `OutsideAgents.order`.)
     static let featured = ["openai", "github-copilot", "anthropic", "google", "xai", "openrouter", "opencode", "deepseek", "mistral", "groq"]

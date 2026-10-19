@@ -1970,7 +1970,7 @@ class AntigravityAgent {
 
 // Agents/src/agents/claude.ts
 import { randomUUID } from "crypto";
-import { existsSync as existsSync6, readFileSync as readFileSync7 } from "fs";
+import { existsSync as existsSync6, readFileSync as readFileSync7, statSync } from "fs";
 import { homedir } from "os";
 import { join as join8 } from "path";
 
@@ -2238,6 +2238,7 @@ class ClaudeAgent {
   }
   install = "curl -fsSL https://claude.ai/install.sh | bash";
   status;
+  authFailedAt;
   modelList;
   loadingModels;
   constructor(context, instance = { id: "default" }) {
@@ -2299,6 +2300,9 @@ class ClaudeAgent {
     const status = await this.readStatus(fresh);
     if (!status.loggedIn)
       return { installed: true, signedIn: false, message: "Sign in to Claude Code with your Claude plan or an Anthropic Console account." };
+    if (this.authFailedAt && this.settingsWritten() <= this.authFailedAt + 60000) {
+      return { installed: true, signedIn: false, ended: true, message: "Claude ended this sign-in. Sign in again." };
+    }
     const plan = status.subscriptionType ? `${status.subscriptionType.charAt(0).toUpperCase()}${status.subscriptionType.slice(1)} plan` : undefined;
     const who = status.email ?? (status.apiProvider && status.apiProvider !== "firstParty" ? status.apiProvider : undefined);
     return { installed: true, signedIn: true, label: [who, plan].filter(Boolean).join(" \xB7 ") || "Claude Code" };
@@ -2307,10 +2311,19 @@ class ClaudeAgent {
     const method = this.status?.status.authMethod ?? "";
     return method !== "" && method !== "claude.ai";
   }
+  settingsWritten() {
+    const folder = this.instance.home ?? homedir();
+    try {
+      return statSync(join8(folder, ".claude.json")).mtimeMs;
+    } catch {
+      return 0;
+    }
+  }
   async signIn(methodID) {
     const executable = this.executable();
     if (!executable)
       throw new Error("Install Claude Code first: curl -fsSL https://claude.ai/install.sh | bash");
+    this.authFailedAt = undefined;
     return commandSignIn({
       command: executable,
       args: ["auth", "login", methodID === "console" ? "--console" : "--claudeai"],
@@ -2522,6 +2535,7 @@ class ClaudeThread {
         const content = message.message?.content ?? [];
         const id = message.message?.id;
         if (message.error === "authentication_failed" || message.message?.error === "authentication_failed") {
+          this.agent.authFailedAt = Date.now();
           active.problem = "Claude Code isn't signed in. Sign in again in Settings \u203A Accounts.";
         }
         for (const block of content) {
@@ -5333,6 +5347,7 @@ async function integration(agent, fresh = false) {
       accountLabel: agent.instance.label,
       installed: account.installed,
       message: account.message,
+      signInEnded: account.ended ?? false,
       account: account.label,
       install: agent.install,
       signsOut: Boolean(agent.signOut),

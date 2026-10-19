@@ -72,6 +72,7 @@ export async function integration(agent: Agent, fresh = false): Promise<Integrat
       accountLabel: agent.instance.label,
       installed: account.installed,
       message: account.message,
+      signInEnded: account.ended ?? false,
       account: account.label,
       install: agent.install,
       signsOut: Boolean(agent.signOut),

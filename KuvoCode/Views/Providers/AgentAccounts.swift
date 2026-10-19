@@ -1,24 +1,31 @@
 import OpenCodeKit
 import SwiftUI
 
-/// Accounts' first section: the coding agents you may already pay for (Claude Code, Codex,
-/// Cursor, Grok, Antigravity), each signed in as you, the way its maker's own app signs in. Their
-/// models then show in the model picker of a new session on this Mac. Each can have more accounts
-/// than its own sign-in (work and personal, say): each shows in the picker as its own.
-struct CodingAgentsSection: View {
-    /// Opens an agent's sign-in, in the page's place.
+/// Accounts' first section: the plans you may already pay for, each signed in as you. The coding
+/// agents (Claude Code, Codex, Cursor, Grok, Antigravity) run on this Mac as their makers built
+/// them; the plans (GitHub Copilot, GitLab Duo, Poe, OpenCode) bring their models to Kuvo Code's
+/// own agent.
+///
+/// What you use is in a card, a product to a block: its name with what it needs from you on the
+/// right (an update), and under it your accounts with it, side by side (none is the main one). The
+/// rest are tiles below, to sign in to with a click.
+struct SubscriptionsSection: View {
+    /// Opens a sign-in, in the page's place.
     let connect: (Integration) -> Void
     @Environment(Catalog.self) private var catalog
     @Environment(AppModel.self) private var app
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
+        let products = self.products
+        let used = products.filter(\.hasAccounts)
+        let more = products.filter { !$0.hasAccounts }
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Coding Agents")
+                    Text("Subscriptions")
                         .font(.headline)
-                    Text("Use the plan you already have. Sessions with these agents run on this Mac, signed in as you.")
+                    Text("Sign in with a plan or account you already have.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -29,64 +36,113 @@ struct CodingAgentsSection: View {
                     Task { await catalog.refreshAgents(fresh: true) }
                 } label: {
                     if catalog.isRefreshingAgents {
-                        Spinner(size: 14)
+                        Spinner(size: 13)
                     } else {
-                        Label("Refresh", systemImage: "arrow.clockwise")
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 13, weight: .medium))
                     }
                 }
-                .buttonStyle(.glass)
+                .buttonStyle(IconButtonStyle(width: 28, height: 26))
                 .disabled(catalog.isRefreshingAgents || app.agents.api == nil)
+                .accessibilityLabel("Refresh")
                 .help("Check again which agents are installed and signed in")
             }
-            let agents = Self.ordered(catalog.codingAgents)
-            if agents.isEmpty {
-                Group {
-                    if let failure = app.agents.failure {
-                        ErrorCard(message: "The coding agents couldn't start. \(failure)")
-                    } else {
-                        HStack(spacing: 8) {
-                            Spinner(size: 14)
-                            Text("Looking for your coding agents…")
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(.vertical, 6)
-                    }
+            if let failure = app.agents.failure, catalog.codingAgents.isEmpty {
+                ErrorCard(message: "The coding agents couldn't start. \(failure)")
+            } else if catalog.codingAgents.isEmpty {
+                HStack(spacing: 8) {
+                    Spinner(size: 14)
+                    Text("Looking for your coding agents…")
+                        .foregroundStyle(.secondary)
                 }
-            } else {
+                .padding(.vertical, 6)
+            }
+            if !used.isEmpty {
                 VStack(spacing: 0) {
-                    ForEach(agents) { agent in
-                        AgentRow(agent: agent, connect: { connect(agent) }, connectAdded: connectAdded)
-                        if agent.id != agents.last?.id {
-                            Divider().padding(.leading, 56)
+                    ForEach(used) { product in
+                        ProductBlock(product: product, connect: connect)
+                        if product.id != used.last?.id {
+                            Divider().padding(.leading, 58)
                         }
                     }
                 }
                 .background(Surface.cardFill(scheme, focused: false), in: .rect(cornerRadius: Metrics.cardRadius))
                 .specularRim(RoundedRectangle(cornerRadius: Metrics.cardRadius))
             }
+            if !more.isEmpty {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 200), spacing: 10)], spacing: 10) {
+                    ForEach(more) { product in
+                        SubscriptionTile(product: product, connect: connect)
+                    }
+                }
+                .padding(.top, used.isEmpty ? 0 : 4)
+            }
         }
         .task(id: app.agents.api != nil) { await catalog.refreshAgents(fresh: true) }
     }
 
-    /// Each agent's own sign-in, then the accounts you added to it, in the order you added them.
-    static func ordered(_ agents: [Integration]) -> [Integration] {
-        agents.enumerated().sorted { lhs, rhs in
-            let left = OutsideAgents.order.firstIndex(of: OutsideAgents.base(lhs.element.id)) ?? 99
-            let right = OutsideAgents.order.firstIndex(of: OutsideAgents.base(rhs.element.id)) ?? 99
-            let leftAdded = OutsideAgents.account(lhs.element.id) == nil ? 0 : 1
-            let rightAdded = OutsideAgents.account(rhs.element.id) == nil ? 0 : 1
-            return (left, leftAdded, lhs.offset) < (right, rightAdded, rhs.offset)
+    /// In a fixed order: the coding agents, then the plans.
+    private var products: [Product] {
+        var all: [Product] = []
+        for base in OutsideAgents.order {
+            let accounts = catalog.codingAgents.filter { OutsideAgents.base($0.id) == base }
+            guard let own = accounts.first(where: { OutsideAgents.account($0.id) == nil }) else { continue }
+            let added = accounts.filter { OutsideAgents.account($0.id) != nil }
+            all.append(Product(kind: .agent(own: own, added: added)))
         }
-        .map(\.element)
+        for id in Catalog.planProviders {
+            guard let plan = catalog.providers.first(where: { $0.id == id }) else { continue }
+            all.append(Product(kind: .plan(plan)))
+        }
+        return all
+    }
+}
+
+/// A coding agent with your accounts with it, or a plan the engine signs in to.
+struct Product: Identifiable {
+    enum Kind {
+        /// The agent's own sign-in (where its command-line tool keeps it), and the ones you added.
+        case agent(own: Integration, added: [Integration])
+        case plan(Integration)
     }
 
-    /// An account just added: its sign-in opens, once the bridge lists it.
-    private func connectAdded(_ providerID: String) {
-        Task {
-            await catalog.refreshAgents(fresh: true)
-            if let added = catalog.codingAgents.first(where: { $0.id == providerID }) { connect(added) }
+    let kind: Kind
+
+    var id: String {
+        switch kind {
+        case .agent(let own, _): own.id
+        case .plan(let plan): plan.id
         }
     }
+
+    /// What its name, mark and actions read from: an agent's own sign-in, or the plan.
+    var main: Integration {
+        switch kind {
+        case .agent(let own, _): own
+        case .plan(let plan): plan
+        }
+    }
+
+    var isAgent: Bool {
+        if case .agent = kind { return true }
+        return false
+    }
+
+    var title: String { isAgent ? OutsideAgents.name(main.id) : main.name }
+    var logo: String { isAgent ? OutsideAgents.logo(main.id) : main.id }
+
+    var hasAccounts: Bool {
+        switch kind {
+        case .agent(let own, let added): own.isListed || !added.isEmpty
+        case .plan(let plan): plan.isConnected
+        }
+    }
+}
+
+extension Integration {
+    /// An agent's own sign-in shows among your accounts while it's signed in, and once its sign-in
+    /// has ended (to sign in again); never signed in, it's the product's Sign In.
+    var isListed: Bool { isConnected || metadata?["signInEnded"]?.bool == true }
 }
 
 extension Integration {
@@ -106,72 +162,86 @@ extension Integration {
     }
 }
 
-private struct AgentRow: View {
-    let agent: Integration
-    let connect: () -> Void
-    /// Opens the sign-in of an account just added.
-    let connectAdded: (String) -> Void
+// MARK: A product
+
+private struct ProductBlock: View {
+    let product: Product
+    let connect: (Integration) -> Void
     @Environment(AppModel.self) private var app
     @Environment(Catalog.self) private var catalog
     @State private var copied = false
-    @State private var isSigningOut = false
-    /// Adding another account, or renaming this one: the name being typed.
-    @State private var naming: Naming?
-    @State private var name = ""
-    @State private var confirmsRemove = false
-    @State private var failure: String?
     @State private var isUpdating = false
     @State private var updateFailure: String?
+    /// Naming an account you're adding (an agent's: each gets a folder and a name of its own).
+    @State private var naming = false
+    @State private var name = ""
+    @State private var failure: String?
 
-    private enum Naming { case add, rename }
-
-    /// One you added, rather than the agent's own sign-in.
-    private var isAdded: Bool { OutsideAgents.account(agent.id) != nil }
-    /// The bridge's name for the agent: `claude`, `codex`…
-    private var kind: String? { agent.metadata?["agent"]?.string }
-    private var agentName: String { OutsideAgents.name(agent.id) }
-
-    private var isInstalled: Bool { agent.metadata?["installed"]?.bool ?? false }
-    private var installCommand: String? { agent.metadata?["install"]?.string }
-    private var signsOut: Bool { agent.metadata?["signsOut"]?.bool ?? false }
-
-    private var detail: String {
-        if let status = agent.connections.first?.status { return status.message }
-        return agent.metadata?["message"]?.string ?? (isInstalled ? "Not signed in" : "Not installed")
-    }
+    private var main: Integration { product.main }
+    private var isAgent: Bool { product.isAgent }
+    private var title: String { product.title }
+    private var isInstalled: Bool { main.metadata?["installed"]?.bool ?? true }
+    private var installCommand: String? { main.metadata?["install"]?.string }
+    private var version: String? { main.metadata?["version"]?.string }
+    private var latest: String? { main.metadata?["outdated"]?.bool == true ? main.metadata?["latestVersion"]?.string : nil }
+    private var updates: Bool { main.metadata?["updates"]?.bool == true }
+    private var updateCommand: String? { main.metadata?["updateCommand"]?.string }
 
     var body: some View {
-        HStack(spacing: 12) {
-            ProviderLogo(id: OutsideAgents.logo(agent.id), size: 22)
-                .frame(width: 32)
-                // An account you added sits under its agent's own.
-                .padding(.leading, isAdded ? 18 : 0)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(agent.name)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 14) {
+                ProviderLogo(id: product.logo, size: 22)
+                    .frame(width: 32)
+                Text(title)
                     .font(.body.weight(.medium))
-                Text(detail)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .textSelection(.enabled)
-                // Its program is behind: an old one lists old models. (Accounts you added run the same program.)
-                if !isAdded, agent.metadata?["outdated"]?.bool == true, let latest = agent.metadata?["latestVersion"]?.string {
-                    updateLine(latest: latest)
+                    .help(version.map { "Version \($0)" } ?? "")
+                Spacer(minLength: 12)
+                actions
+            }
+            VStack(alignment: .leading, spacing: 0) {
+                switch product.kind {
+                case .agent(let own, let added):
+                    if own.isListed { AgentAccountRow(account: own, connect: { connect(own) }) }
+                    ForEach(added) { account in
+                        AgentAccountRow(account: account, connect: { connect(account) })
+                    }
+                case .plan(let plan):
+                    ForEach(Array(plan.connections.enumerated()), id: \.element.id) { index, connection in
+                        PlanAccountRow(plan: plan, connection: connection, isInUse: index == 0, isOnly: plan.connections.count == 1, connect: { connect(plan) })
+                    }
                 }
             }
-            Spacer(minLength: 8)
-            if agent.isConnected {
-                Button("Sign In Again", action: connect)
-                    .buttonStyle(.glass)
-                if signsOut {
-                    Button("Sign Out", role: .destructive, action: signOut)
-                        .buttonStyle(.glass)
-                        .disabled(isSigningOut)
-                }
-            } else if isInstalled || installCommand == nil {
-                Button("Sign In", action: connect)
-                    .buttonStyle(.glassProminent)
-            } else if let installCommand {
+            // Under the product's name.
+            .padding(.leading, 46)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+        .alert("Add Another \(title) Account", isPresented: $naming) {
+            TextField("Name, like Work or Personal", text: $name)
+            Button("Add") { addNamed() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("It signs in on its own, and its models show in the model picker apart from your other \(title) accounts.")
+        }
+        .alert("Couldn't Add the Account", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(failure ?? "")
+        }
+        .alert("Couldn't Update \(title)", isPresented: Binding(get: { updateFailure != nil }, set: { if !$0 { updateFailure = nil } })) {
+            if let updateCommand {
+                Button("Copy Command") { Clipboard.copy(updateCommand) }
+            }
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(updateFailure ?? "")
+        }
+    }
+
+    /// What it needs from you, on the product's line: installing again, or an update; and another account.
+    private var actions: some View {
+        HStack(spacing: 10) {
+            if isAgent, !isInstalled, let installCommand {
                 Button(copied ? "Copied" : "Copy Install Command", systemImage: copied ? "checkmark" : "doc.on.doc") {
                     Clipboard.copy(installCommand)
                     withAnimation(.ui) { copied = true }
@@ -181,40 +251,216 @@ private struct AgentRow: View {
                     }
                 }
                 .buttonStyle(.glass)
-                .help("Run it in Terminal, then sign in here.")
-            }
-            Menu {
-                if isAdded {
-                    Button("Rename…") {
-                        name = agent.metadata?["accountLabel"]?.string ?? ""
-                        naming = .rename
+                .controlSize(.small)
+                .help("It isn't installed now. Run this in Terminal, then click Refresh.")
+            } else if let latest {
+                if isUpdating {
+                    HStack(spacing: 6) {
+                        Spinner(size: 12)
+                        Text("Updating…")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
                     }
-                    Divider()
-                    Button("Remove Account…", role: .destructive) { confirmsRemove = true }
+                } else if updates {
+                    Button(action: update) {
+                        Label("Update to \(latest)", systemImage: "arrow.down.circle")
+                            .font(.callout)
+                    }
+                    .buttonStyle(TextButtonStyle())
+                    .help("You have \(version ?? "an older version"). Newer models may need the newer version. Runs \(updateCommand ?? "its update").")
                 } else {
-                    Button("Add Another \(agentName) Account…") {
-                        name = ""
-                        naming = .add
-                    }
+                    Text("\(latest) is out")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .help("You have \(version ?? "an older version"). Update it the way you installed it.")
                 }
-            } label: {
-                Image(systemName: "ellipsis")
             }
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("More")
-            .disabled(kind == nil || app.agents.api == nil)
+            Button(action: addAccount) {
+                Label("Add Account", systemImage: "plus")
+                    .font(.callout)
+            }
+            .buttonStyle(TextButtonStyle())
+            .disabled(isAgent && app.agents.api == nil)
+            .help(isAgent ? "Another \(title) account, signed in on its own: each shows in the model picker" : "Another \(title) account: the engine uses one at a time")
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .alert(naming == .rename ? "Rename This Account" : "Add Another \(agentName) Account", isPresented: Binding(get: { naming != nil }, set: { if !$0 { naming = nil } })) {
+    }
+
+    // MARK: Doing
+
+    /// Another account: an agent's own sign-in first, while it has none; then one with a name and
+    /// a folder of its own. A plan's: the engine signs in to another.
+    private func addAccount() {
+        guard isAgent else { return connect(main) }
+        if !main.isListed, main.metadata?["installed"]?.bool != false { return connect(main) }
+        name = ""
+        naming = true
+    }
+
+    private func addNamed() {
+        guard let kind = main.metadata?["agent"]?.string else { return }
+        let label = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        Task {
+            do {
+                let providerID = try await app.agents.addAccount(agent: kind, label: label)
+                await catalog.refreshAgents(fresh: true)
+                if let added = catalog.codingAgents.first(where: { $0.id == providerID }) { connect(added) }
+            } catch {
+                failure = error.localizedDescription
+            }
+        }
+    }
+
+    private func update() {
+        isUpdating = true
+        Task {
+            defer { isUpdating = false }
+            do {
+                let result = try await app.agents.update(main.id)
+                if !result.updated, let message = result.message { updateFailure = message }
+            } catch {
+                updateFailure = error.localizedDescription
+            }
+            // Its version and models, as they are now.
+            await catalog.refreshAgents(fresh: true)
+        }
+    }
+}
+
+/// A product you haven't signed in to: a click signs in (or, for an agent that isn't installed,
+/// copies the command that installs it). The same tile as the page's popular providers.
+private struct SubscriptionTile: View {
+    let product: Product
+    let connect: (Integration) -> Void
+    @Environment(AppModel.self) private var app
+    @Environment(\.colorScheme) private var scheme
+    @State private var isHovering = false
+    @State private var copied = false
+
+    private var installCommand: String? {
+        guard product.isAgent, product.main.metadata?["installed"]?.bool == false else { return nil }
+        return product.main.metadata?["install"]?.string
+    }
+
+    private var hint: String {
+        if copied { return "Copied: run it in Terminal" }
+        if installCommand != nil { return "Install first" }
+        return product.isAgent ? "Coding agent" : "Your plan's models"
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ProviderLogo(id: product.logo, size: 18)
+                .frame(width: 32, height: 32)
+                .background(Surface.well(scheme), in: .rect(cornerRadius: 8))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(product.title)
+                    .font(.body.weight(.semibold))
+                    .lineLimit(1)
+                Text(hint)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .background(Surface.cardFill(scheme, focused: false), in: .rect(cornerRadius: Metrics.cardRadius))
+        .specularRim(RoundedRectangle(cornerRadius: Metrics.cardRadius))
+        // Under the pointer, an accent edge: the whole tile signs in.
+        .overlay {
+            RoundedRectangle(cornerRadius: Metrics.cardRadius)
+                .strokeBorder(.tint, lineWidth: 1.5)
+                .opacity(isHovering ? 1 : 0)
+        }
+        .contentShape(.rect)
+        .onTapGesture(perform: open)
+        .onHover { hovering in withAnimation(.easeOut(duration: 0.15)) { isHovering = hovering } }
+        .pointerStyle(.link)
+        .help(installCommand.map { "Copies \($0): run it in Terminal, then click Refresh" } ?? product.main.metadata?["message"]?.string ?? "Sign in to \(product.title)")
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction(.default, open)
+    }
+
+    private func open() {
+        if let installCommand {
+            Clipboard.copy(installCommand)
+            withAnimation(.ui) { copied = true }
+            Task {
+                try? await Task.sleep(for: .seconds(3))
+                withAnimation(.ui) { copied = false }
+            }
+            return
+        }
+        if product.isAgent, app.agents.api == nil { return }
+        connect(product.main)
+    }
+}
+
+// MARK: Accounts
+
+/// One of your accounts with an agent: who it is, the name you gave it, and what you can do with
+/// it. Its own sign-in (the agent's, shared with its tool in Terminal) and the ones you added sit
+/// side by side.
+private struct AgentAccountRow: View {
+    let account: Integration
+    let connect: () -> Void
+    @Environment(AppModel.self) private var app
+    @Environment(Catalog.self) private var catalog
+    @State private var renaming = false
+    @State private var name = ""
+    @State private var confirmsRemove = false
+    @State private var failure: String?
+
+    private var isAdded: Bool { OutsideAgents.account(account.id) != nil }
+    private var label: String? { account.metadata?["accountLabel"]?.string }
+    private var agentName: String { OutsideAgents.name(account.id) }
+    /// Who's signed in, as the agent says: "you@example.com · Max plan".
+    private var who: String? { account.connections.first?.label }
+    private var signsOut: Bool { account.metadata?["signsOut"]?.bool ?? false }
+    /// Its maker ended the sign-in.
+    private var ended: Bool { account.metadata?["signInEnded"]?.bool == true }
+
+    /// The command-line tool that shares the agent's own sign-in.
+    private var tool: String? {
+        switch OutsideAgents.base(account.id) {
+        case "claude-code": "claude"
+        case "codex-cli": "codex"
+        case "grok-cli": "grok"
+        default: nil
+        }
+    }
+
+    var body: some View {
+        AccountLine(label: label, who: account.isConnected ? (who ?? "Signed in") : nil,
+                    note: account.isConnected || ended ? nil : "Not signed in",
+                    problem: ended ? "Sign-in ended" : nil,
+                    signIn: account.isConnected ? nil : connect) {
+            Button("Sign In Again…", action: connect)
+            if isAdded {
+                Button("Rename…") {
+                    name = label ?? ""
+                    renaming = true
+                }
+                Divider()
+                Button("Remove Account…", role: .destructive) { confirmsRemove = true }
+            } else if signsOut {
+                Divider()
+                Button("Sign Out", role: .destructive, action: signOut)
+            } else if let tool {
+                Divider()
+                // Why it can't be removed here: it's the agent's own.
+                Text("Shared with \(tool) in Terminal")
+            }
+        }
+        .alert("Rename This Account", isPresented: $renaming) {
             TextField("Name, like Work or Personal", text: $name)
-            Button(naming == .rename ? "Rename" : "Add") { save() }
+            Button("Rename") { rename() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text(naming == .rename ? "The name it goes by in Accounts and the model picker." : "It signs in on its own, and its models show in the model picker apart from your other \(agentName) account's.")
+            Text("The name it goes by here and in the model picker.")
         }
-        .alert("Remove \(agent.name)?", isPresented: $confirmsRemove) {
+        .alert("Remove \(account.name)?", isPresented: $confirmsRemove) {
             Button("Remove", role: .destructive) { remove() }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -227,66 +473,12 @@ private struct AgentRow: View {
         }
     }
 
-    private func updateLine(latest: String) -> some View {
-        let installed = agent.metadata?["version"]?.string
-        let command = agent.metadata?["updateCommand"]?.string
-        return HStack(spacing: 8) {
-            Text("Version \(latest) is out\(installed.map { "; you have \($0)" } ?? ""). Newer models may need it.")
-                .font(.callout)
-                .foregroundStyle(.orange)
-            if isUpdating {
-                Spinner(size: 12)
-                Text("Updating…")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            } else if agent.metadata?["updates"]?.bool == true {
-                Button("Update", action: update)
-                    .buttonStyle(.glass)
-                    .controlSize(.small)
-                    .help(command.map { "Runs \($0)" } ?? "Updates it the way it was installed")
-            } else {
-                Text("Update it the way you installed it.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .alert("Couldn't Update \(agentName)", isPresented: Binding(get: { updateFailure != nil }, set: { if !$0 { updateFailure = nil } })) {
-            if let command {
-                Button("Copy Command") { Clipboard.copy(command) }
-            }
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(updateFailure ?? "")
-        }
-    }
-
-    private func update() {
-        isUpdating = true
-        Task {
-            defer { isUpdating = false }
-            do {
-                let result = try await app.agents.update(agent.id)
-                if !result.updated, let message = result.message { updateFailure = message }
-            } catch {
-                updateFailure = error.localizedDescription
-            }
-            // Its version and models, as they are now.
-            await catalog.refreshAgents(fresh: true)
-        }
-    }
-
-    private func save() {
+    private func rename() {
         let label = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let mode = naming
-        naming = nil
         Task {
             do {
-                if mode == .rename {
-                    try await app.agents.renameAccount(agent.id, label: label)
-                    await catalog.refreshAgents()
-                } else if let kind {
-                    connectAdded(try await app.agents.addAccount(agent: kind, label: label))
-                }
+                try await app.agents.renameAccount(account.id, label: label)
+                await catalog.refreshAgents()
             } catch {
                 failure = error.localizedDescription
             }
@@ -296,7 +488,7 @@ private struct AgentRow: View {
     private func remove() {
         Task {
             do {
-                try await app.agents.removeAccount(agent.id)
+                try await app.agents.removeAccount(account.id)
                 await catalog.refreshAgents()
             } catch {
                 failure = error.localizedDescription
@@ -305,11 +497,121 @@ private struct AgentRow: View {
     }
 
     private func signOut() {
-        isSigningOut = true
         Task {
-            defer { isSigningOut = false }
-            try? await app.agents.signOut(agent.id)
+            try? await app.agents.signOut(account.id)
             await catalog.refreshAgents()
         }
+    }
+}
+
+/// One of your accounts with a plan the engine signs in to: the engine uses one at a time.
+private struct PlanAccountRow: View {
+    let plan: Integration
+    let connection: Integration.Connection
+    let isInUse: Bool
+    let isOnly: Bool
+    let connect: () -> Void
+    @Environment(AppModel.self) private var app
+
+    private var needsSignIn: Bool { connection.status?.status == "needs_auth" }
+
+    private var who: String {
+        if connection.type == "env" { return "From \(connection.name ?? "the environment")" }
+        return connection.label ?? (connection.method == "key" ? "API key" : "Signed in")
+    }
+
+    var body: some View {
+        AccountLine(label: nil, who: needsSignIn ? nil : who, note: nil, problem: needsSignIn ? "Sign-in ended" : nil, signIn: needsSignIn ? connect : nil,
+                    badge: isInUse && !isOnly ? "In use" : nil) {
+            if connection.type == "credential" {
+                if !isInUse, let id = connection.credentialID {
+                    Button("Use This Account") { Task { try? await app.api?.activateCredential(id) } }
+                }
+                Button("Sign In Again…", action: connect)
+                Divider()
+                Button("Remove Account", role: .destructive) {
+                    guard let id = connection.credentialID else { return }
+                    Task { try? await app.api?.removeCredential(id) }
+                }
+            } else {
+                Text("Set in your shell's environment")
+            }
+        }
+    }
+}
+
+/// An account's line: the name you gave it, who's signed in, a note when it's in use, and its
+/// menu at the right edge, where every account's is. Not signed in, it says so, with Sign In;
+/// a sign-in that ended says so in orange.
+private struct AccountLine<Menu: View>: View {
+    let label: String?
+    let who: String?
+    /// How it stands, quietly: "Not signed in".
+    let note: String?
+    let problem: String?
+    let signIn: (() -> Void)?
+    var badge: String? = nil
+    @ViewBuilder let menu: () -> Menu
+    @State private var isHovering = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if let label, !label.isEmpty {
+                Text(label)
+                    .font(.callout.weight(.medium))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(Color.primary.opacity(0.08), in: .capsule)
+            }
+            if let who {
+                Text(who)
+                    .font(.callout)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+            }
+            if let note {
+                Text(note)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            if let problem {
+                Text(problem)
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+            }
+            if let badge {
+                Text(badge)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            if let signIn {
+                Button("Sign In", action: signIn)
+                    .buttonStyle(.glass)
+                    .controlSize(.small)
+            }
+            // Under the pointer only, in its place at the right edge: at rest, an account is its
+            // name. Right-click has the same.
+            SwiftUI.Menu(content: menu) {
+                Image(systemName: "ellipsis")
+                    .frame(width: 22, height: 22)
+                    .contentShape(.rect)
+            }
+            .menuStyle(.button)
+            .buttonStyle(IconButtonStyle(width: 26, height: 22))
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .opacity(isHovering ? 1 : 0)
+            .help("More")
+        }
+        .frame(minHeight: 30)
+        .padding(.horizontal, 8)
+        .background(isHovering ? Pressable.hoverFill : .clear, in: .rect(cornerRadius: 7))
+        .padding(.horizontal, -8)
+        .contentShape(.rect)
+        .onHover { isHovering = $0 }
+        .contextMenu(menuItems: menu)
+        .animation(.easeOut(duration: 0.12), value: isHovering)
     }
 }

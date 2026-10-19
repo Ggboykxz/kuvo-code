@@ -23,6 +23,8 @@ export interface Account {
   label?: string
   /** What's missing, in words: how to install it, or that it needs a sign-in. */
   message?: string
+  /** It was signed in, and its maker ended the sign-in (it's to be signed in again). */
+  ended?: boolean
 }
 
 export interface SignInAttempt {

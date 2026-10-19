@@ -3,7 +3,7 @@
 // by message, its replies streamed into the session as the engine's own would be.
 
 import { randomUUID } from "node:crypto"
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, readFileSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { providerID, type AgentAccount } from "../accounts"
@@ -40,6 +40,12 @@ export class ClaudeAgent implements Agent {
   }
   install = "curl -fsSL https://claude.ai/install.sh | bash"
   private status?: { at: number; status: Status }
+  /**
+   * When Claude last turned its sign-in away in a run ("OAuth access token has been revoked"):
+   * `claude auth status` still says signed in then. Until Claude Code writes its settings again
+   * (as signing in does), the account says it needs a sign-in.
+   */
+  authFailedAt?: number
   private modelList?: { at: number; models: Model[] }
   private loadingModels?: Promise<void>
 
@@ -106,6 +112,10 @@ export class ClaudeAgent implements Agent {
     }
     const status = await this.readStatus(fresh)
     if (!status.loggedIn) return { installed: true, signedIn: false, message: "Sign in to Claude Code with your Claude plan or an Anthropic Console account." }
+    // (The run that was turned away writes them too as it ends: a minute's grace for that.)
+    if (this.authFailedAt && this.settingsWritten() <= this.authFailedAt + 60_000) {
+      return { installed: true, signedIn: false, ended: true, message: "Claude ended this sign-in. Sign in again." }
+    }
     const plan = status.subscriptionType ? `${status.subscriptionType.charAt(0).toUpperCase()}${status.subscriptionType.slice(1)} plan` : undefined
     const who = status.email ?? (status.apiProvider && status.apiProvider !== "firstParty" ? status.apiProvider : undefined)
     return { installed: true, signedIn: true, label: [who, plan].filter(Boolean).join(" · ") || "Claude Code" }
@@ -117,9 +127,21 @@ export class ClaudeAgent implements Agent {
     return method !== "" && method !== "claude.ai"
   }
 
+  /** When Claude Code last wrote its settings (signing in does). */
+  private settingsWritten(): number {
+    const folder = this.instance.home ?? homedir()
+    try {
+      return statSync(join(folder, ".claude.json")).mtimeMs
+    } catch {
+      return 0
+    }
+  }
+
   async signIn(methodID: string): Promise<SignInAttempt> {
     const executable = this.executable()
     if (!executable) throw new Error("Install Claude Code first: curl -fsSL https://claude.ai/install.sh | bash")
+    // Signing in again: its end says how it went (another Claude Code writing its settings meanwhile isn't it).
+    this.authFailedAt = undefined
     return commandSignIn({
       command: executable,
       args: ["auth", "login", methodID === "console" ? "--console" : "--claudeai"],
@@ -364,6 +386,7 @@ class ClaudeThread implements Thread {
         const content = message.message?.content ?? []
         const id = message.message?.id
         if (message.error === "authentication_failed" || message.message?.error === "authentication_failed") {
+          this.agent.authFailedAt = Date.now()
           active.problem = "Claude Code isn't signed in. Sign in again in Settings › Accounts."
         }
         for (const block of content) {
