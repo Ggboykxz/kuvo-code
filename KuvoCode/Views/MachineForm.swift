@@ -130,6 +130,12 @@ struct MachineForm: View {
     private func add() {
         let destination = trimmed
         guard !destination.isEmpty, !isChecking else { return }
+        // A machine's folders are named "<destination>/<path>", and an address with a port or
+        // a path in it (ssh://…, an IPv6 address) can't be told apart from them.
+        if let problem = Self.problem(with: destination) {
+            failure = problem
+            return
+        }
         if app.machines.engine(destination) != nil {
             added(destination)
             return
@@ -147,6 +153,15 @@ struct MachineForm: View {
             app.addMachine(destination)
             added(destination)
         }
+    }
+}
+
+extension MachineForm {
+    /// Why a destination can't name a machine here, or nil: a host, or user@host, as `ssh` takes
+    /// one, or a Host from ~/.ssh/config.
+    static func problem(with destination: String) -> String? {
+        let fits = !destination.hasPrefix("-") && destination.rangeOfCharacter(from: CharacterSet(charactersIn: "/:").union(.whitespacesAndNewlines)) == nil
+        return fits ? nil : "Give a host name, or user@host. For a port or an IPv6 address, add a Host for the machine to ~/.ssh/config and give its name."
     }
 }
 

@@ -905,6 +905,11 @@ final class Workspace {
             models = models.filter { RemoteFolder.machine(of: $0.value.session.location.directory) != machine }
             remoteSessions = remoteSessions.filter { $0.value.machine != machine }
             Self.saveRemoteSessions(remoteSessions)
+            // What its sessions asked goes with them, from the Dock's count and the notifications.
+            for (request, session) in asking where gone.contains(session) || sessionMachines[session] == machine {
+                asking[request] = nil
+                Notifier.shared.clear(request: request)
+            }
             sessionMachines = sessionMachines.filter { $0.value != machine }
         }
     }

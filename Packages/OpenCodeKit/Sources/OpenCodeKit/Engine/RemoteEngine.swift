@@ -27,6 +27,12 @@ public struct SSHConnection: Sendable, Hashable, Codable {
     static var sharing: [String] {
         let folder = "/tmp/kuvo-ssh-\(getuid())"
         try? FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        // Only a folder that's really this user's alone: one another account made first could
+        // hold a socket of its own, which ssh would hand what it sends (launch secrets on stdin).
+        var info = stat()
+        guard lstat(folder, &info) == 0, info.st_mode & S_IFMT == S_IFDIR, info.st_uid == getuid(), info.st_mode & 0o077 == 0 else {
+            return separate
+        }
         return ["-o", "ControlMaster=auto", "-o", "ControlPath=\(folder)/%C", "-o", "ControlPersist=120"]
     }
 
@@ -207,8 +213,9 @@ public struct RemoteEngineInstaller: Sendable {
 /// the machine's localhost only, behind a password, and this Mac reaches it through an SSH tunnel.
 /// Its settings and secrets
 /// (the password, accounts) go over the session's input rather than a command line, so other users
-/// of the machine can't read them in its process list, and the accounts are never written to its
-/// disk. What's needed to find it again (its process, port and password) is kept in
+/// of the machine can't read them in its process list. Accounts copied there are kept in its
+/// engine's own store, in `~/.kuvo-code/data`, readable by that user only, and signed out when the
+/// machine is removed. What's needed to find it again (its process, port and password) is kept in
 /// `~/.kuvo-code/run/engine.json`, readable by that user only, who could read it from the engine's
 /// process anyway. If the app hasn't been connected for a day, the engine stops by itself.
 public final class RemoteServer: @unchecked Sendable {

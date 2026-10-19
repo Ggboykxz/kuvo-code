@@ -336,7 +336,10 @@ nonisolated enum Git {
     private static func process(_ arguments: [String], in directory: String, environment: [String: String]) -> Process {
         let process = Process()
         if let remote = RemoteFolder.parse(directory) {
-            let settings = environment.filter { $0.key.hasPrefix("GIT_") }.map { "\($0.key)=\(SSHConnection.quoted($0.value))" }.sorted()
+            // Only git's settings that mean the same there: a command, key or config file named
+            // here (GIT_SSH_COMMAND, GIT_CONFIG_GLOBAL…) is a path on this Mac.
+            let portable = ["GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_TERMINAL_PROMPT", "GIT_OPTIONAL_LOCKS"]
+            let settings = environment.filter { portable.contains($0.key) }.map { "\($0.key)=\(SSHConnection.quoted($0.value))" }.sorted()
             let command = (["exec", "env"] + settings + ["git"] + arguments.map(SSHConnection.quoted)).joined(separator: " ")
             process.executableURL = URL(filePath: "/usr/bin/ssh")
             process.arguments = SSHConnection(destination: remote.machine).arguments(running: "cd \(SSHConnection.quoted(remote.path)) && \(command)")

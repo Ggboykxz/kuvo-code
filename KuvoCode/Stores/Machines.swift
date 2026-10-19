@@ -269,6 +269,17 @@ final class MachineEngine {
         try? await RemoteServer.stop(on: machine.connection)
     }
 
+    /// Signs out of every account the machine's engine has (copied from this Mac), and deletes
+    /// what integrations' servers kept there (a sign-in's tokens).
+    func forgetAccounts() async {
+        if let api, let credentials = try? await api.credentials() {
+            for credential in credentials { try? await api.removeCredential(credential.id) }
+        }
+        let kept = "\"$HOME/\(RemoteEngineInstaller.root)/integrations\""
+        let machine = machine.id
+        _ = await Task.detached { RemoteShell.run("rm -rf \(kept)", on: machine) }.value
+    }
+
     /// The machine's engine stops by itself after a day without the app: say it's still here.
     private func keepAlive() {
         heartbeatTask?.cancel()
@@ -351,7 +362,8 @@ final class MachineEngine {
     }
 
     private func exited(status: Int32) {
-        guard !isStopping else { return }
+        // Not yet connected: the start that's under way says what went wrong, in its own words.
+        guard !isStopping, server != nil else { return }
         let output = server?.recentOutput.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         log.error("\(self.machine.destination, privacy: .public) closed with status \(status): \(output, privacy: .public)")
         lost("The connection to \(machine.name) was lost.\(output.isEmpty ? "" : "\n\n" + String(output.suffix(400)))")
@@ -387,7 +399,9 @@ final class Machines {
     }
 
     func remove(_ id: String) {
-        if let engine = engines[id] { Task { await engine.stopEngine() } }
+        // Its sessions stay there, for when it's added again; your accounts and integrations'
+        // sign-ins don't.
+        if let engine = engines[id] { Task { await engine.forgetAccounts(); await engine.stopEngine() } }
         engines[id] = nil
         list.removeAll { $0.id == id }
         save()

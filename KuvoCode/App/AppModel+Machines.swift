@@ -164,6 +164,9 @@ extension AppModel {
         engine.onReconnect = { [weak self] in _ = await self?.workspace.refresh(engine) }
         engine.onExit = { [weak self] in
             self?.workspace.forget(machine)
+            // One way back at a time: a connection lost while one is tried is that one's to retry.
+            guard !engine.isRetrying else { return }
+            engine.isRetrying = true
             Task { await self?.reconnect(engine) }
         }
         Task { await start(engine) }
