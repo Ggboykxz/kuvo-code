@@ -2,9 +2,10 @@
 // Auto down its list, and what a session keeps. Each test has a folder of its own, removed after.
 
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { AcpThread } from "../src/acp"
 import type { Agent, RunInput, RunResult, Thread, TurnHooks } from "../src/agent"
 import { Auto } from "../src/auto"
 import { subscribe } from "../src/events"
@@ -140,7 +141,7 @@ const texts = (id: string) =>
   sessions
     .messages(id)
     .flatMap((message) => (message.type === "assistant" ? message.content.flatMap((content) => (content.type === "text" ? [content.text] : [])) : []))
-const settled = (id: string, count: number) => until(() => idles(id).length >= count && !sessions.active().includes(id))
+const settled = (id: string, count: number, ms?: number) => until(() => idles(id).length >= count && !sessions.active().includes(id), ms)
 
 describe("what's waiting", () => {
   test("a message starts at once, and one sent meanwhile waits for it", async () => {
@@ -634,6 +635,91 @@ describe("Auto", () => {
     await settled(id, 3)
     const notes = sessions.messages(id).flatMap((message) => (message.type === "synthetic" ? [message.text] : []))
     expect(notes.some((note) => note.startsWith("Back on"))).toBe(false)
+  })
+
+  test("a model you picked that couldn't take your message: the next gets it, not just what came after", async () => {
+    a.script = (input, turn, hooks, thread) =>
+      input.model.id === "one" ? Promise.resolve({ outcome: "failed", error: { type: "model", message: "Cannot use this model" } }) : replies(input, turn, hooks, thread)
+    const id = create({ providerID: "alpha", id: "one" })
+    send(id, "build the thing")
+    await settled(id, 1)
+    sessions.selectModel(id, { providerID: "alpha", id: "two" })
+    send(id, "try again")
+    await settled(id, 2)
+    expect(a.runs[1].text).toContain("build the thing")
+    expect(a.runs[1].text).toContain("try again")
+  })
+
+  test("an ACP agent that turned a message away gets the app's instructions with the next", async () => {
+    // A small ACP agent: it turns away prompts on model "one", and writes down each prompt.
+    const folder = mkdtempSync(join(root, "acp-"))
+    const log = join(folder, "prompts.log")
+    const script = join(folder, "agent.js")
+    writeFileSync(
+      script,
+      `const { appendFileSync } = require("node:fs")
+let buffer = "", model = ""
+const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n")
+process.stdin.on("data", (chunk) => {
+  buffer += chunk
+  let at
+  while ((at = buffer.indexOf("\\n")) >= 0) {
+    const line = buffer.slice(0, at)
+    buffer = buffer.slice(at + 1)
+    if (!line.trim()) continue
+    const message = JSON.parse(line)
+    if (message.method === "initialize") send({ id: message.id, result: { protocolVersion: 1, authMethods: [] } })
+    else if (message.method === "session/new") send({ id: message.id, result: { sessionId: "s1" } })
+    else if (message.method === "session/set_model") { model = message.params.modelId; send({ id: message.id, result: {} }) }
+    else if (message.method === "session/prompt") {
+      const text = message.params.prompt.find((part) => part.type === "text").text
+      appendFileSync(${JSON.stringify(log)}, JSON.stringify({ model, text }) + "\\n")
+      if (model === "one") send({ id: message.id, error: { code: -32602, message: "Cannot use this model" } })
+      else {
+        send({ method: "session/update", params: { sessionId: "s1", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "done" } } } })
+        send({ id: message.id, result: { stopReason: "end_turn" } })
+      }
+    } else if (message.id !== undefined) send({ id: message.id, result: {} })
+  }
+})
+`,
+    )
+    const gamma: Agent = {
+      id: "acp",
+      providerID: "gamma",
+      name: "Gamma",
+      instance: { id: "default" },
+      methods: () => [],
+      account: async () => ({ installed: true, signedIn: true }),
+      models: async () => [],
+      thread: (session, state) =>
+        new AcpThread(
+          {
+            fileSystem: false,
+            authMethod: () => undefined,
+            command: async () => ({ argv: [process.execPath, script], cwd: folder }),
+            selectModel: async (rpc, sessionId, modelId) => {
+              await rpc.request("session/set_model", { sessionId, modelId })
+            },
+          },
+          session,
+          state,
+          "Gamma",
+        ),
+    }
+    sessions = new Sessions(store, { find: (provider: string | undefined) => (provider === "gamma" ? gamma : undefined) } as unknown as Roster, auto)
+    auto.set([
+      { providerID: "gamma", modelID: "one" },
+      { providerID: "gamma", modelID: "two" },
+    ])
+    const id = create({ providerID: "auto", id: "auto" })
+    sessions.setInstruction(id, "worktree", "WORK IN THE WORKTREE")
+    send(id, "build the thing")
+    await settled(id, 1, 15_000)
+    const prompts = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { model: string; text: string })
+    expect(prompts.map((prompt) => prompt.model)).toEqual(["one", "two"])
+    expect(prompts[1].text).toContain("WORK IN THE WORKTREE")
+    expect(prompts[1].text).toContain("build the thing")
   })
 
   test("an account's limit skips all of its models", async () => {

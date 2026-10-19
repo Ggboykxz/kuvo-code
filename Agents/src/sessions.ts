@@ -72,6 +72,11 @@ export const timing = { stopGrace: 8_000, idleClose: 15 * 60_000 }
 /** In plan mode, what changes files: refused, whatever your rules say. */
 const changes = new Set(["edit", "write", "patch"])
 
+/** A step of the agent's that did something: wrote to you, or used a tool. */
+function didWork(message: Message): boolean {
+  return message.type === "assistant" && message.content.some((content) => content.type === "tool" || (content.type === "text" && content.text.trim() !== ""))
+}
+
 export class Sessions {
   private live = new Map<string, Live>()
   /** Sessions being deleted: nothing is taken or started for them any more. */
@@ -521,10 +526,13 @@ export class Sessions {
     const abandoned = new Promise<RunResult>((resolve) => (abandon = () => resolve({ outcome: "interrupted" })))
     const running = { provider: model.providerID, thread, abandon }
     live.running = running
+    const from = record.messages.length
     try {
       const result = await Promise.race([thread.run({ ...input, model, text, files }, turn, this.hooks(id, live, turn, signal, slot, input.plan)), abandoned])
-      // It has seen all of it now, its own replies too.
-      slot.seen = record.messages[record.messages.length - 1]?.id
+      // It has seen all of it now, its own replies too; but one that failed with nothing done
+      // couldn't take your message (its model is gone, it was turned away), and doesn't count as
+      // having it: the next time, it or another model of its agent gets it.
+      if (result.outcome !== "failed" || record.messages.slice(from).some(didWork)) slot.seen = record.messages[record.messages.length - 1]?.id
       live.last = slot
       return result
     } catch (error) {
@@ -571,8 +579,6 @@ export class Sessions {
       if (!tried.size && heldBefore.has(Auto.modelKey(entry))) turn.notice(`Back on ${this.entryName(entry)}: its limit has reset.`)
       tried.add(Auto.modelKey(entry))
       const model: ModelRef = { providerID: entry.providerID, id: entry.modelID, ...(entry.variant ? { variant: entry.variant } : {}) }
-      // What this agent had seen: one that couldn't take your message doesn't count as having it.
-      const seenBefore = this.slots(record)[entry.providerID]?.seen
       if (note) {
         turn.stopTools("Stopped: going on with another model.")
         turn.notice(`${note} Going on with ${this.entryName(entry)}.`)
@@ -584,11 +590,7 @@ export class Sessions {
         // It couldn't take the message at all (its model is gone, its sign-in ended): the next
         // one does, as nothing was done. Once it had done something, the error stands: going
         // on with another could do it twice.
-        const worked = record.messages.slice(from).some((message) => message.type === "assistant" && message.content.some((content) => content.type === "tool" || (content.type === "text" && content.text.trim())))
-        if (worked) return last
-        // The next of its models gets your message itself, not "carry on".
-        const slot = this.slots(record)[entry.providerID]
-        if (slot) slot.seen = seenBefore
+        if (record.messages.slice(from).some(didWork)) return last
         note = `${this.entryName(entry)} couldn't take it: ${last.error?.message ?? "it stopped with an error"}`
         continue
       }
