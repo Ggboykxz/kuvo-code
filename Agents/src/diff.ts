@@ -5,15 +5,42 @@ import type { FileDiff } from "./wire"
 
 type Op = { kind: " " | "-" | "+"; line: string }
 
+/** Past this many changed lines, what's between the unchanged start and end shows as rewritten. */
+const searchLimit = 2_000
+
 /** The shortest edit from `a` to `b` (Myers), as kept, removed and added lines. */
 function edits(a: string[], b: string[]): Op[] {
+  // What's the same at the start and at the end is kept as it is; only between is compared.
+  let start = 0
+  while (start < a.length && start < b.length && a[start] === b[start]) start++
+  let endA = a.length
+  let endB = b.length
+  while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) {
+    endA--
+    endB--
+  }
+  const ops: Op[] = []
+  for (let i = 0; i < start; i++) ops.push({ kind: " ", line: a[i] })
+  for (const op of middle(a.slice(start, endA), b.slice(start, endB))) ops.push(op)
+  for (let i = endA; i < a.length; i++) ops.push({ kind: " ", line: a[i] })
+  return ops
+}
+
+function middle(a: string[], b: string[]): Op[] {
   const n = a.length
   const m = b.length
+  const removed = (): Op[] => a.map((line) => ({ kind: "-", line }))
+  const added = (): Op[] => b.map((line) => ({ kind: "+", line }))
+  if (!n) return added()
+  if (!m) return removed()
   const max = n + m
+  const limit = Math.min(max, searchLimit)
   const v = new Int32Array(2 * max + 2)
+  // For each round, the furthest points before it, for diagonals -d…d: all the way back needs.
   const trace: Int32Array[] = []
-  outer: for (let d = 0; d <= max; d++) {
-    trace.push(v.slice())
+  let found = false
+  outer: for (let d = 0; d <= limit; d++) {
+    trace.push(v.slice(max - d, max + d + 1))
     for (let k = -d; k <= d; k += 2) {
       let x = k === -d || (k !== d && v[max + k - 1] < v[max + k + 1]) ? v[max + k + 1] : v[max + k - 1] + 1
       let y = x - k
@@ -22,19 +49,28 @@ function edits(a: string[], b: string[]): Op[] {
         y++
       }
       v[max + k] = x
-      if (x >= n && y >= m) break outer
+      if (x >= n && y >= m) {
+        found = true
+        break outer
+      }
     }
   }
+  // Too different to be worth finding the shortest way: rewritten.
+  if (!found) return [...removed(), ...added()]
   const ops: Op[] = []
   let x = n
   let y = m
   for (let d = trace.length - 1; d >= 0; d--) {
     const t = trace[d]
+    const at = (k: number) => t[k + d]
     const k = x - y
-    const prevK = k === -d || (k !== d && t[max + k - 1] < t[max + k + 1]) ? k + 1 : k - 1
-    const prevX = t[max + prevK]
+    const prevK = k === -d || (k !== d && at(k - 1) < at(k + 1)) ? k + 1 : k - 1
+    const prevX = d === 0 ? 0 : at(prevK)
     const prevY = prevX - prevK
-    while (x > prevX && y > prevY) ops.push({ kind: " ", line: a[--x] }) && y--
+    while (x > prevX && y > prevY) {
+      ops.push({ kind: " ", line: a[--x] })
+      y--
+    }
     if (d > 0) {
       if (x === prevX) ops.push({ kind: "+", line: b[--y] })
       else ops.push({ kind: "-", line: a[--x] })
