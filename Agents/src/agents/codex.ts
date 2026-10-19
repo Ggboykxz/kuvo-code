@@ -2,10 +2,13 @@
 // `codex login` keeps), driven through its app-server (JSON-RPC over stdio). One app-server
 // serves every Codex session; each session is one of its threads.
 
+import { existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, rmSync, symlinkSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { providerID, type AgentAccount } from "../accounts"
 import type { Agent, AgentContext, Account, RunInput, RunResult, SignInAttempt, Thread, TurnHooks } from "../agent"
-import { failure, model } from "../agent"
+import type { Limit } from "../auto"
+import { accountName, failure, model } from "../agent"
 import { fromPatch } from "../diff"
 import { which } from "../proc"
 import { RPC, RPCError } from "../rpc"
@@ -17,8 +20,10 @@ const outputLimit = 30_000
 
 export class CodexAgent implements Agent {
   id = "codex"
-  providerID = "codex-cli"
-  name = "Codex"
+  readonly providerID: string
+  get name() {
+    return accountName("Codex", this.instance)
+  }
   install = "npm install -g @openai/codex"
   private server?: RPC
   private starting?: Promise<RPC>
@@ -26,8 +31,15 @@ export class CodexAgent implements Agent {
   private logins = new Map<string, (status: OAuthStatus) => void>()
   private accountCache?: { at: number; account: Account }
   private modelList?: { at: number; models: Model[] }
+  /** Your plan's usage windows as Codex last said, by limit ("codex" is the plan's; others, a model's). */
+  rateLimits = new Map<string, any>()
 
-  constructor(readonly context: AgentContext) {}
+  constructor(
+    readonly context: AgentContext,
+    readonly instance: AgentAccount = { id: "default" },
+  ) {
+    this.providerID = providerID("codex", instance.id)
+  }
 
   executable(): string | undefined {
     return which("codex", places)
@@ -40,8 +52,17 @@ export class CodexAgent implements Agent {
     ]
   }
 
+  private lastUse = 0
+  private idleCheck?: ReturnType<typeof setInterval>
+
   /** The app-server, started the first time it's needed and again after it stops. */
   async rpc(): Promise<RPC> {
+    this.lastUse = Date.now()
+    // Stopped when nothing has used it for a while (no session, no sign-in).
+    this.idleCheck ??= setInterval(() => {
+      if (!this.server || this.threads.size || this.logins.size || Date.now() - this.lastUse < 15 * 60_000) return
+      this.shutdown()
+    }, 60_000)
     if (this.server && !this.server.isClosed) return this.server
     this.starting ??= this.start().finally(() => (this.starting = undefined))
     return this.starting
@@ -50,7 +71,9 @@ export class CodexAgent implements Agent {
   private async start(): Promise<RPC> {
     const executable = this.executable()
     if (!executable) throw new Error("Install Codex first: npm install -g @openai/codex")
-    const rpc = new RPC([executable, "app-server"], { cwd: this.context.temporary })
+    // An added account's own CODEX_HOME, with your Codex settings in it: only its sign-in is its own.
+    if (this.instance.home) shadowHome(this.instance.home)
+    const rpc = new RPC([executable, "app-server"], { cwd: this.context.temporary, env: this.instance.home ? { CODEX_HOME: this.instance.home } : undefined })
     rpc.onNotification = (method, params) => this.notification(method, params)
     rpc.onRequest = (method, params) => this.request(method, params)
     rpc.onExit = () => {
@@ -75,6 +98,11 @@ export class CodexAgent implements Agent {
     }
     if (method === "account/updated") {
       this.accountCache = undefined
+      return
+    }
+    if (method === "account/rateLimits/updated") {
+      const snapshot = params?.rateLimits
+      if (snapshot) this.rateLimits.set(snapshot.limitId ?? "codex", snapshot)
       return
     }
     const threadID = params?.threadId
@@ -161,6 +189,15 @@ export class CodexAgent implements Agent {
     return models
   }
 
+  forgetModels() {
+    this.modelList = undefined
+  }
+
+  shutdown() {
+    this.server?.kill()
+    this.server = undefined
+  }
+
   thread(session: Session, state: Record<string, unknown>): Thread {
     const thread = new CodexThread(this, session, state)
     this.threads.set(session.id, thread)
@@ -179,6 +216,13 @@ interface Active {
   hooks: TurnHooks
   resolve: (result: RunResult) => void
   turnID?: string
+  /** On Auto: a limit ends the turn rather than being waited out. */
+  auto?: boolean
+  /** A usage limit it reached (Auto goes on with the next model). */
+  limit?: Limit
+  /** You pressed Stop. */
+  stopping?: boolean
+  model: string
   /** Items whose words came as deltas (their completion doesn't add them again). */
   streamed: Set<string>
   /** File changes, by item, for their approval and their result. */
@@ -194,6 +238,8 @@ interface Active {
 class CodexThread implements Thread {
   nativeID?: string
   private loaded = false
+  /** The app's added instructions the thread was loaded with. */
+  private instructions?: string | null
   private active?: Active
 
   constructor(
@@ -221,8 +267,10 @@ class CodexThread implements Thread {
 
   private async ensureThread(input: RunInput, hooks: TurnHooks) {
     const rpc = await this.agent.rpc()
-    if (this.nativeID && this.loaded) return rpc
     const instructions = hooks.instructions() || null
+    // Loaded again with what the app adds to its instructions, when that changed.
+    if (this.nativeID && this.loaded && instructions === this.instructions) return rpc
+    this.instructions = instructions
     const common = { cwd: this.session.location.directory, model: input.model.id, developerInstructions: instructions }
     if (this.nativeID) {
       try {
@@ -249,6 +297,8 @@ class CodexThread implements Thread {
 
   async run(input: RunInput, turn: Turn, hooks: TurnHooks): Promise<RunResult> {
     const rpc = await this.ensureThread(input, hooks)
+    // Stopped while Codex was starting.
+    if (hooks.signal.aborted) return { outcome: "interrupted" }
     const items: any[] = [{ type: "text", text: input.text, text_elements: [] }]
     const others: string[] = []
     for (const file of input.files) {
@@ -273,7 +323,7 @@ class CodexThread implements Thread {
       collaborationMode: { mode: input.plan ? "plan" : "default", settings: { model: input.model.id, reasoning_effort: effort ?? null, developer_instructions: null } },
     }
     return new Promise<RunResult>((resolve) => {
-      const active: Active = { turn, hooks, resolve, streamed: new Set(), changes: new Map(), output: new Map(), toolsSinceText: false }
+      const active: Active = { turn, hooks, resolve, streamed: new Set(), changes: new Map(), output: new Map(), toolsSinceText: false, auto: input.auto, model: input.model.id }
       this.active = active
       turn.startStep()
       rpc.request("turn/start", params, 60_000).then(
@@ -293,7 +343,9 @@ class CodexThread implements Thread {
     const active = this.active
     if (!active) return
     const turn = active.turn
-    if (active.turnID && params?.turnId && params.turnId !== active.turnID) return
+    // Another turn's (one stopped before, ending late).
+    const turnID = params?.turnId ?? params?.turn?.id
+    if (active.turnID && turnID && turnID !== active.turnID) return
     switch (method) {
       case "turn/started":
         active.turnID ??= params.turn?.id
@@ -329,14 +381,26 @@ class CodexThread implements Thread {
         }
         return
       }
-      case "error":
+      case "error": {
+        const limit = this.limitOf(params.error, active.model)
+        if (limit) {
+          active.limit = limit
+          active.problem = params.error?.message || "You've reached your Codex usage limit for now."
+          // On Auto, the next model goes on rather than waiting for Codex to try again.
+          if (active.auto && params.willRetry) void this.stopTurn(active)
+          return
+        }
         if (!params.willRetry) active.problem = params.error?.additionalDetails || params.error?.message
         return
+      }
       case "turn/completed": {
         this.active = undefined
         turn.endStep({ tokens: active.usage })
         const status = params.turn?.status
-        if (active.hooks.signal.aborted || status === "interrupted") active.resolve({ outcome: "interrupted" })
+        const limit = active.limit ?? this.limitOf(params.turn?.error, active.model)
+        if (limit && !active.stopping && !active.hooks.signal.aborted) {
+          active.resolve({ outcome: "failed", error: { type: "limit", message: active.problem ?? params.turn?.error?.message ?? "You've reached your Codex usage limit for now." }, limit })
+        } else if (active.hooks.signal.aborted || status === "interrupted") active.resolve({ outcome: "interrupted" })
         else if (status === "failed") active.resolve({ outcome: "failed", error: failure(params.turn?.error?.message ?? active.problem ?? "Codex stopped with an error.") })
         else active.resolve({ outcome: "succeeded" })
         return
@@ -498,9 +562,35 @@ class CodexThread implements Thread {
     throw new RPCError(-32601, `Method not found: ${method}`)
   }
 
+  /** A usage or rate limit in Codex's error: the plan's, or one model's (its own limit). */
+  private limitOf(error: any, model: string): Limit | undefined {
+    const info = error?.codexErrorInfo
+    if (info !== "usageLimitExceeded" && info !== "rateLimitExceeded") return undefined
+    const reached = (snapshot: any) =>
+      Boolean(snapshot?.rateLimitReachedType) || [snapshot?.primary, snapshot?.secondary].some((window) => (window?.usedPercent ?? 0) >= 100)
+    const resets = (snapshot: any) => {
+      const times = [snapshot?.primary, snapshot?.secondary].filter((window) => (window?.usedPercent ?? 0) >= 100 && window?.resetsAt).map((window) => window.resetsAt * 1000)
+      return times.length ? Math.max(...times) : undefined
+    }
+    // A model with a limit of its own, at it: only that model waits.
+    for (const [id, snapshot] of this.agent.rateLimits) {
+      if (id === "codex" || !reached(snapshot)) continue
+      if (!snapshot.normalModelSlug || model.startsWith(snapshot.normalModelSlug) || snapshot.normalModelSlug.startsWith(model)) return { scope: "model", resetsAt: resets(snapshot), message: error?.message }
+    }
+    const plan = this.agent.rateLimits.get("codex")
+    if (info === "rateLimitExceeded" && !reached(plan)) return { scope: "model", message: error?.message }
+    return { scope: "provider", resetsAt: resets(plan), message: error?.message }
+  }
+
+  private async stopTurn(active: Active) {
+    const rpc = await this.agent.rpc().catch(() => undefined)
+    if (rpc && active.turnID && this.nativeID) await rpc.request("turn/interrupt", { threadId: this.nativeID, turnId: active.turnID }, 10_000).catch(() => {})
+  }
+
   async interrupt() {
     const active = this.active
     if (!active || !this.nativeID) return
+    active.stopping = true
     const rpc = await this.agent.rpc().catch(() => undefined)
     for (let waited = 0; waited < 10_000 && !active.turnID && this.active === active; waited += 100) await Bun.sleep(100)
     if (rpc && active.turnID) await rpc.request("turn/interrupt", { threadId: this.nativeID, turnId: active.turnID }, 10_000).catch(() => {})
@@ -514,6 +604,36 @@ class CodexThread implements Thread {
   close() {
     this.agent.forget(this.session.id)
     if (this.nativeID && this.loaded) void this.agent.rpc().then((rpc) => rpc.request("thread/unsubscribe", { threadId: this.nativeID }).catch(() => {}), () => {})
+  }
+}
+
+/**
+ * An added account's Codex folder: your own Codex's settings, instructions, skills and history in
+ * it as links (as T3 Code makes one), but its own sign-in and its own list of models.
+ */
+function shadowHome(home: string) {
+  const own = join(homedir(), ".codex")
+  const kept = new Set(["auth.json", "models_cache.json"])
+  mkdirSync(home, { recursive: true, mode: 0o700 })
+  const wanted = existsSync(own) ? readdirSync(own).filter((name) => !kept.has(name)) : []
+  for (const name of wanted) {
+    const link = join(home, name)
+    const target = join(own, name)
+    try {
+      const stat = lstatSync(link, { throwIfNoEntry: false })
+      if (stat?.isSymbolicLink() && readlinkSync(link) === target) continue
+      // Something of its own there already (it made it before there was one of yours): kept.
+      if (stat && !stat.isSymbolicLink()) continue
+      if (stat) rmSync(link, { force: true })
+      symlinkSync(target, link)
+    } catch {}
+  }
+  // Links to what's gone from yours: gone too.
+  for (const name of readdirSync(home)) {
+    const link = join(home, name)
+    try {
+      if (lstatSync(link).isSymbolicLink() && !wanted.includes(name)) rmSync(link, { force: true })
+    } catch {}
   }
 }
 

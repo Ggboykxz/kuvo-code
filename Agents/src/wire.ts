@@ -122,7 +122,15 @@ export interface ModelSwitchMessage {
   previous?: ModelRef
 }
 
-export type Message = UserMessage | AssistantMessage | NoticeMessage | IdleMessage | ModelSwitchMessage
+export interface AgentSwitchMessage {
+  type: "agent-switched"
+  id: string
+  time: MessageTime
+  agent: string
+  previous?: string
+}
+
+export type Message = UserMessage | AssistantMessage | NoticeMessage | IdleMessage | ModelSwitchMessage | AgentSwitchMessage
 
 export interface FileDiff {
   file: string
@@ -219,6 +227,8 @@ export interface OAuthAttempt {
 export interface OAuthStatus {
   status: "pending" | "complete" | "failed" | "expired"
   message?: string
+  /** The sign-in page, when it comes after the attempt started (an agent downloaded first). */
+  url?: string
 }
 
 export interface ServerEvent {

@@ -2,34 +2,69 @@
 // sign-in, answered for outside agents. Anything else is "not here", which the app takes as it
 // takes an engine without that feature.
 
+import { kinds, type AgentKind } from "./accounts"
 import type { Account, Agent, SignInAttempt } from "./agent"
-import { feed } from "./events"
+import type { Auto } from "./auto"
+import type { EngineLink } from "./engine"
+import type { Roster } from "./roster"
+import { emit, feed } from "./events"
+import { refreshLoginPath } from "./proc"
 import { newID } from "./ids"
 import { BadRequest, NotFound, Sessions } from "./sessions"
 import type { Integration, Model } from "./wire"
 
 export interface Context {
-  agents: Agent[]
+  roster: Roster
   sessions: Sessions
+  auto: Auto
+  link: EngineLink
   password: string
   version: string
 }
 
 const attempts = new Map<string, { agent: Agent; attempt: SignInAttempt; created: number; expires: number }>()
 
+/** Sign-ins still waiting, given up on (the bridge is stopping). */
+export function cancelSignIns() {
+  for (const pending of attempts.values()) pending.attempt.cancel()
+  attempts.clear()
+}
+
+// Sign-ins left waiting past their time: stopped, with what they started.
+setInterval(() => {
+  for (const [id, pending] of attempts) {
+    if (Date.now() < pending.expires + 60_000) continue
+    pending.attempt.cancel()
+    attempts.delete(id)
+  }
+}, 60_000).unref?.()
+
 const json = (value: unknown, status = 200) =>
   new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } })
 const located = (value: unknown) => json({ location: { directory: process.cwd() }, data: value })
 const error = (status: number, message: string) => json({ message }, status)
 
+/** What each agent's account looked like when last asked: a change means other models. */
+const lastSeen = new Map<string, string>()
+
 export async function integration(agent: Agent, fresh = false): Promise<Integration> {
   const account: Account = await agent.account(fresh).catch((error) => ({ installed: false, signedIn: false, message: String(error?.message ?? error) }))
+  const seen = JSON.stringify([account.installed, account.signedIn, account.label])
+  const before = lastSeen.get(agent.providerID)
+  lastSeen.set(agent.providerID, seen)
+  if (before !== undefined && before !== seen) {
+    agent.forgetModels?.()
+    emit("integration.updated", { integrationID: agent.providerID })
+  }
   return {
     id: agent.providerID,
     name: agent.name,
     metadata: {
       source: "agent",
       agent: agent.id,
+      // Which of your accounts with it: `default` is the agent's own sign-in.
+      accountID: agent.instance.id,
+      accountLabel: agent.instance.label,
       installed: account.installed,
       message: account.message,
       account: account.label,
@@ -75,8 +110,8 @@ function page<T extends { id: string }>(items: T[], url: URL): { data: T[]; curs
 
 export function handler(context: Context) {
   const expected = "Basic " + Buffer.from(`opencode:${context.password}`).toString("base64")
-  const { sessions, agents } = context
-  const agentFor = (id: string) => agents.find((agent) => agent.providerID === id)
+  const { sessions, roster, auto, link } = context
+  const agentFor = (id: string) => roster.find(id)
 
   return async (request: Request): Promise<Response> => {
     if (request.headers.get("authorization") !== expected) return error(401, "Unauthorized")
@@ -93,7 +128,12 @@ export function handler(context: Context) {
 
       // Sign-in
       if (area === "integration") {
-        if (!a) return located(await Promise.all(agents.map((agent) => integration(agent))))
+        if (!a) {
+          // `fresh`: asked anew (you refreshed, or came back to the app), with your shell's PATH read again.
+          const fresh = url.searchParams.get("fresh") === "1"
+          if (fresh) await refreshLoginPath()
+          return located(await Promise.all(roster.all().map((agent) => integration(agent, fresh))))
+        }
         const agent = agentFor(a)
         if (!agent) return error(404, `No agent ${a}.`)
         if (!b) return located(await integration(agent, true))
@@ -104,14 +144,17 @@ export function handler(context: Context) {
             const attempt = await agent.signIn(methodID)
             const id = newID("att")
             const created = Date.now()
-            const expires = created + 10 * 60_000
+            // Long enough for a download first (Antigravity's agent) on a slow connection.
+            const expires = created + 30 * 60_000
             attempts.set(id, { agent, attempt, created, expires })
             return located({ attemptID: id, url: attempt.url, instructions: attempt.instructions, mode: attempt.mode, time: { created, expires } })
           }
           const pending = d ? attempts.get(d) : undefined
           if (!pending) return error(404, "That sign-in is over. Start it again.")
           if (method === "GET" && !e) {
-            const status = Date.now() > pending.expires ? { status: "expired" } : pending.attempt.status()
+            const expired = Date.now() > pending.expires
+            const status = expired ? { status: "expired" } : pending.attempt.status()
+            if (expired) pending.attempt.cancel()
             if (status.status !== "pending") attempts.delete(d!)
             return located(status)
           }
@@ -143,7 +186,7 @@ export function handler(context: Context) {
       // Catalog
       if (area === "model") {
         if (a === "default") return located(null)
-        return located(await models(agents))
+        return located(await models(roster.all()))
       }
       if (area === "agent" || area === "command" || area === "skill" || area === "mcp") return located([])
       if (area === "provider") return located([])
@@ -186,10 +229,19 @@ export function handler(context: Context) {
               sessions.cancelInput(id, c)
               return json({})
             }
+            if (method === "PATCH" && c) {
+              sessions.setDelivery(id, c, (await body()).delivery)
+              return json({})
+            }
             return json({ data: sessions.inbox(id) })
           case "prompt": {
             const input = await body()
             sessions.prompt(id, { id: input.id ?? newID("msg"), text: String(input.text ?? ""), files: input.files ?? [], delivery: input.delivery ?? "steer" })
+            return json({})
+          }
+          case "synthetic": {
+            const input = await body()
+            sessions.synthetic(id, String(input.text ?? ""), typeof input.description === "string" ? input.description : undefined)
             return json({})
           }
           case "command": {
@@ -199,7 +251,7 @@ export function handler(context: Context) {
             return json({})
           }
           case "interrupt":
-            return json({ interrupted: await sessions.interrupt(id) })
+            return json({ interrupted: await sessions.interrupt(id, url.searchParams.get("resume") === "true") })
           case "model":
             sessions.selectModel(id, (await body()).model)
             return json({})
@@ -233,6 +285,61 @@ export function handler(context: Context) {
           case "diff":
             return json({ data: [] })
         }
+      }
+
+      // Your accounts with the agents: adding one (it then signs in as any does), naming one, removing one.
+      if (area === "kuvo" && a === "accounts") {
+        if (method === "POST" && !b) {
+          const { agent, label } = await body()
+          if (!kinds.includes(agent)) return error(400, "That isn't one of the coding agents.")
+          const record = roster.accounts.add(agent as AgentKind, label)
+          roster.sync()
+          const added = roster.all().find((each) => each.instance.id === record.id && each.id === agent)!
+          emit("integration.updated", { integrationID: added.providerID })
+          return json({ data: { providerID: added.providerID } })
+        }
+        const target = b ? roster.find(b) : undefined
+        if (!target) return error(404, "No such account.")
+        if (target.instance.id === "default") return error(400, "That's the agent's own sign-in: sign out of it where you signed in.")
+        if (method === "PATCH") {
+          roster.accounts.rename(target.providerID, (await body()).label)
+          roster.sync()
+          emit("integration.updated", { integrationID: target.providerID })
+          return json({})
+        }
+        if (method === "DELETE") {
+          sessions.forgetProvider(target.providerID)
+          await target.removeAccount?.().catch(() => {})
+          target.shutdown?.()
+          roster.accounts.remove(target.providerID)
+          roster.sync()
+          emit("integration.updated", { integrationID: target.providerID })
+          emit("model.updated", {})
+          return json({})
+        }
+      }
+
+      // Where the engine is (the app says each time it starts), for its models in sessions here.
+      if (area === "kuvo" && a === "engine" && method === "PUT") {
+        const { url: address, password } = await body()
+        link.configure(typeof address === "string" && address ? address : undefined, typeof password === "string" ? password : undefined)
+        return json({})
+      }
+
+      // Auto: your list of models, and the ones held back at a limit until it resets.
+      if (area === "kuvo" && a === "auto") {
+        if (b === "limits" && method === "DELETE") {
+          auto.clearLimits()
+          emit("kuvo.auto.updated", {})
+          return json({})
+        }
+        if (!b && method === "PUT") {
+          const { entries } = await body()
+          if (!Array.isArray(entries)) return error(400, "Send the list as entries.")
+          auto.set(entries)
+          emit("kuvo.auto.updated", {})
+        }
+        if (!b && (method === "GET" || method === "PUT")) return json({ data: { entries: auto.list(), limits: auto.limits() } })
       }
 
       if (area === "experimental" && a === "session" && b) {

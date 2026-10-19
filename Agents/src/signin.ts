@@ -55,6 +55,18 @@ export async function commandSignIn(options: CommandSignInOptions): Promise<Sign
     const signedIn = await options.signedIn().catch(() => false)
     status = signedIn ? { status: "complete" } : { status: "failed", message: lastLines(output) || `Signing in stopped (exit code ${code}).` }
   })
+  // Signed in while the command lingers (it waits on something after the page): done then.
+  // Not when it was signed in already (signing in again, another way): its end says.
+  void (async () => {
+    if (await options.signedIn().catch(() => true)) return
+    while (status.status === "pending") {
+      await Bun.sleep(3_000)
+      if (status.status !== "pending") return
+      if (!(await options.signedIn().catch(() => false))) continue
+      if (status.status === "pending") status = { status: "complete" }
+      child.kill()
+    }
+  })()
 
   // The page to open: what the command handed its browser, or printed.
   let url = ""

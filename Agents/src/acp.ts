@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname } from "node:path"
 import type { RunInput, RunResult, Thread, TurnHooks } from "./agent"
 import { failure } from "./agent"
+import type { Limit } from "./auto"
 import { fileDiff } from "./diff"
 import { RPC, RPCError } from "./rpc"
 import type { Turn } from "./turn"
@@ -51,6 +52,8 @@ export interface AcpFlavor {
   promptMeta?(): Record<string, unknown> | undefined
   /** Restart the agent after a stop (it can't stop a turn and go on). */
   restartAfterInterrupt?: boolean
+  /** What a usage limit holds back: the whole account (the default), or the model. */
+  limitScope?: "provider" | "model"
 }
 
 export interface AcpContext {
@@ -64,6 +67,10 @@ interface Active {
   turn: Turn
   hooks: TurnHooks
   resolve: (result: RunResult) => void
+  /** The agent process it runs on. */
+  rpc: RPC
+  /** Its to-do list's tool call, kept up to date until the turn ends. */
+  plan?: { id: string; todos: unknown[] }
   /** Tool calls as the agent last told them, merged update by update. */
   tools: Map<string, any>
   toolsSinceText: boolean
@@ -77,6 +84,8 @@ export class AcpThread implements Thread {
   private spawnedWith?: string
   private active?: Active
   private loading = false
+  /** A process that was stopped mid-turn and can't go on: the next message starts another. */
+  private stale?: RPC
 
   constructor(
     private readonly flavor: AcpFlavor,
@@ -88,7 +97,7 @@ export class AcpThread implements Thread {
   private async open(input: RunInput, hooks: TurnHooks) {
     const mode = { approvesAll: hooks.approvesAll(), plan: input.plan }
     const key = JSON.stringify(mode)
-    if (this.rpc && !this.rpc.isClosed && this.spawnedWith === key) return this.rpc
+    if (this.rpc && !this.rpc.isClosed && this.spawnedWith === key && this.rpc !== this.stale) return this.rpc
     // Started again for another approval mode (the agent takes it as it starts).
     this.close()
     const launch = await this.flavor.command(mode)
@@ -117,8 +126,9 @@ export class AcpThread implements Thread {
     rpc.onExit = () => {
       launch.onExit?.()
       if (this.rpc === rpc) this.rpc = undefined
+      // The turn this process ran, not one a newer process runs.
       const active = this.active
-      if (active && !active.ended) this.end(active, "failed", rpc.stderr.trim().split("\n").slice(-3).join("\n") || `${this.name} stopped.`)
+      if (active && !active.ended && active.rpc === rpc) this.end(active, "failed", rpc.stderr.trim().split("\n").slice(-3).join("\n") || `${this.name} stopped.`)
     }
     this.rpc = rpc
     this.spawnedWith = key
@@ -190,6 +200,8 @@ export class AcpThread implements Thread {
 
   async run(input: RunInput, turn: Turn, hooks: TurnHooks): Promise<RunResult> {
     const rpc = await this.open(input, hooks)
+    // Stopped while the agent was starting.
+    if (hooks.signal.aborted) return { outcome: "interrupted" }
     const sessionId = this.sessionID!
     await this.flavor.selectModel(rpc, sessionId, input.model.id, this.setup).catch(() => {})
     await this.flavor.selectMode?.(rpc, sessionId, { approvesAll: hooks.approvesAll(), plan: input.plan }, this.setup).catch(() => {})
@@ -202,32 +214,47 @@ export class AcpThread implements Thread {
     }
     let text = input.text
     const instructions = hooks.instructions()
-    if (instructions && !this.state.acpInstructed) {
-      // The agent's own instructions can't be added to: they go with the first message.
-      text = `${instructions}\n\n${text}`
-      this.state.acpInstructed = true
+    // The agent's own instructions can't be added to: they go with the first message, and again
+    // when they change (a worktree, the project's other folders).
+    const sent = typeof this.state.acpInstructions === "string" ? this.state.acpInstructions : this.state.acpInstructed ? undefined : ""
+    if (instructions !== sent && (instructions || sent)) {
+      if (instructions) text = `${sent ? "Your instructions from Kuvo Code changed. They're now:\n\n" : ""}${instructions}\n\n${text}`
+      this.state.acpInstructions = instructions
+      delete this.state.acpInstructed
       hooks.saveState()
     }
     if (others.length) text += `\n\nAttached files:\n${others.map((path) => `- ${path}`).join("\n")}`
     prompt.unshift({ type: "text", text })
     return new Promise<RunResult>((resolve) => {
-      const active: Active = { turn, hooks, resolve, tools: new Map(), toolsSinceText: false, ended: false }
+      const active: Active = { turn, hooks, resolve, rpc, tools: new Map(), toolsSinceText: false, ended: false }
       this.active = active
       turn.startStep()
       const meta = this.flavor.promptMeta?.()
       rpc.request("session/prompt", { sessionId, prompt, ...(meta ? { _meta: meta } : {}) }).then(
-        (result: any) => this.end(active, result?.stopReason === "cancelled" ? "interrupted" : "succeeded"),
-        (error) => this.end(active, "failed", error instanceof RPCError && error.code === -32003 ? `You've reached your ${this.name} usage limit for now.` : errorText(error)),
+        (result: any) => {
+          if (result?.stopReason === "rate_limit") this.end(active, "failed", `You've reached your ${this.name} usage limit for now.`, this.limit())
+          else this.end(active, result?.stopReason === "cancelled" ? "interrupted" : "succeeded")
+        },
+        (error) => {
+          const limited = (error instanceof RPCError && error.code === -32003) || /RESOURCE_EXHAUSTED|quota|usage limit|rate.?limit/i.test(errorText(error))
+          this.end(active, "failed", limited ? `You've reached your ${this.name} usage limit for now.` : errorText(error), limited ? this.limit(errorText(error)) : undefined)
+        },
       )
     })
   }
 
-  private end(active: Active, outcome: RunResult["outcome"], message?: string) {
+  private limit(message?: string): Limit {
+    return { scope: this.flavor.limitScope ?? "provider", message }
+  }
+
+  private end(active: Active, outcome: RunResult["outcome"], message?: string, limit?: Limit) {
     if (active.ended) return
     active.ended = true
     if (this.active === active) this.active = undefined
+    if (active.plan) active.turn.toolSucceeded(active.plan.id, "", { todos: active.plan.todos })
     active.turn.endStep()
     if (active.hooks.signal.aborted) active.resolve({ outcome: "interrupted" })
+    else if (limit) active.resolve({ outcome: "failed", error: { type: "limit", message: message ?? `You've reached your ${this.name} usage limit for now.` }, limit })
     else active.resolve(outcome === "failed" ? { outcome, error: failure(message ?? `${this.name} stopped with an error.`) } : { outcome })
   }
 
@@ -237,7 +264,7 @@ export class AcpThread implements Thread {
       turn: active?.turn,
       hooks: active?.hooks,
       endPrompt: (stopReason, error) => {
-        if (active) this.end(active, error ? "failed" : stopReason === "cancelled" ? "interrupted" : "succeeded", error)
+        if (active) this.end(active, error ? "failed" : stopReason === "cancelled" ? "interrupted" : "succeeded", error, stopReason === "rate_limit" ? this.limit(error) : undefined)
       },
     }
   }
@@ -265,10 +292,12 @@ export class AcpThread implements Thread {
       case "tool_call_update":
         return this.tool(active, update)
       case "plan": {
+        // One to-do list a turn, brought up to date as the agent works through it.
         const todos = (update.entries ?? []).map((entry: any) => ({ content: entry.content, status: entry.status === "in_progress" ? "in_progress" : entry.status }))
-        const id = `plan-${turn.started}`
+        const id = active.plan?.id ?? `plan-${turn.started}`
+        active.plan = { id, todos }
         if (!turn.hasTool(id)) turn.toolStart(id, "todowrite", { todos })
-        turn.toolSucceeded(id, "", { todos })
+        else turn.toolCalled(id, { todos })
         return
       }
     }
@@ -363,14 +392,16 @@ export class AcpThread implements Thread {
 
   async interrupt() {
     const active = this.active
-    const rpc = this.rpc
+    const rpc = active?.rpc
     if (!active || !rpc || !this.sessionID) return
+    // It can't go on after a stop: the next message starts it again.
+    if (this.flavor.restartAfterInterrupt) this.stale = rpc
     rpc.notify("session/cancel", { sessionId: this.sessionID })
     for (let waited = 0; waited < 15_000 && !active.ended; waited += 100) await Bun.sleep(100)
-    if (!active.ended || this.flavor.restartAfterInterrupt) {
-      this.end(active, "interrupted")
-      this.close()
-    }
+    if (active.ended) return
+    this.end(active, "interrupted")
+    // Only this turn's process, if nothing newer runs on it.
+    if (this.rpc === rpc && (!this.active || this.active.rpc !== rpc)) this.close()
   }
 
   close() {

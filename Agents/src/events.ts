@@ -16,6 +16,12 @@ export function emit(type: string, data: Record<string, unknown>, directory?: st
   return event
 }
 
+/** Every event as it's sent, to a listener of the bridge's own (its tests). */
+export function subscribe(listener: Listener): () => void {
+  listeners.add(listener)
+  return () => listeners.delete(listener)
+}
+
 export function feed(): Response {
   const encoder = new TextEncoder()
   let listener: Listener | undefined

@@ -5,8 +5,10 @@
 
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs"
 import { join } from "node:path"
+import { providerID, type AgentAccount } from "../accounts"
 import type { Agent, AgentContext, Account, RunInput, RunResult, SignInAttempt, Thread, TurnHooks } from "../agent"
-import { failure, model } from "../agent"
+import { accountName, failure, model } from "../agent"
+import type { Limit } from "../auto"
 import { fromPatch } from "../diff"
 import type { Turn } from "../turn"
 import type { Model, OAuthStatus, Session } from "../wire"
@@ -17,16 +19,24 @@ const outputLimit = 30_000
 
 export class CursorAgent implements Agent {
   id = "cursor"
-  providerID = "cursor"
-  name = "Cursor"
+  readonly providerID: string
+  get name() {
+    return accountName("Cursor", this.instance)
+  }
   private accountCache?: { at: number; account: Account }
   private modelList?: { at: number; key: string; models: Model[] }
   private primed = false
 
-  constructor(readonly context: AgentContext) {}
+  constructor(
+    readonly context: AgentContext,
+    readonly instance: AgentAccount = { id: "default" },
+  ) {
+    this.providerID = providerID("cursor", instance.id)
+  }
 
+  /** This account's folder: its sign-in and its agents' conversations. */
   private get folder() {
-    return join(this.context.home, "cursor")
+    return this.instance.home ?? join(this.context.home, "cursor")
   }
 
   /** Where the SDK's sign-in is kept: a file only you can read, in the bridge's folder. */
@@ -53,7 +63,8 @@ export class CursorAgent implements Agent {
 
   /** The key to run with: CURSOR_API_KEY's, or the one your sign-in made, while it lasts. */
   async apiKey(sdk?: any): Promise<string | undefined> {
-    const fromEnvironment = process.env.CURSOR_API_KEY?.trim()
+    // CURSOR_API_KEY is your own account's; an added one has only its sign-in.
+    const fromEnvironment = this.instance.home ? undefined : process.env.CURSOR_API_KEY?.trim()
     if (fromEnvironment) return fromEnvironment
     if (!existsSync(this.authFile)) return undefined
     const loaded = await (await this.store(sdk ?? (await this.sdk()))).load()
@@ -63,7 +74,7 @@ export class CursorAgent implements Agent {
   }
 
   async account(fresh = false): Promise<Account> {
-    if (!process.env.CURSOR_API_KEY && !existsSync(this.authFile)) {
+    if ((this.instance.home || !process.env.CURSOR_API_KEY) && !existsSync(this.authFile)) {
       return { installed: true, signedIn: false, message: "Sign in with your Cursor account. Kuvo Code downloads Cursor's agent the first time." }
     }
     if (!fresh && this.accountCache && Date.now() - this.accountCache.at < 60_000) return this.accountCache.account
@@ -86,7 +97,7 @@ export class CursorAgent implements Agent {
   }
 
   async signIn(): Promise<SignInAttempt> {
-    if (process.env.CURSOR_API_KEY) throw new Error("CURSOR_API_KEY is set in your environment: Kuvo Code uses that key.")
+    if (!this.instance.home && process.env.CURSOR_API_KEY) throw new Error("CURSOR_API_KEY is set in your environment: Kuvo Code uses that key.")
     const sdk = await this.sdk()
     const pending = new sdk.InMemoryCredentialStore()
     const abort = new AbortController()
@@ -151,6 +162,10 @@ export class CursorAgent implements Agent {
     return models
   }
 
+  forgetModels() {
+    this.modelList = undefined
+  }
+
   /** The SDK decides once whether sandboxing works, and the first agent without it would say no. */
   async prime(sdk: any, apiKey: string, cwd: string) {
     if (this.primed) return
@@ -199,6 +214,7 @@ class CursorThread implements Thread {
     const sdk = await this.owner.sdk()
     const apiKey = await this.owner.apiKey(sdk)
     if (!apiKey) return { outcome: "failed", error: { type: "auth", message: "Sign in to Cursor in Settings › Accounts." } }
+    if (hooks.signal.aborted) return { outcome: "interrupted" }
     const cwd = this.session.location.directory
     const approvesAll = hooks.approvesAll()
     const selection = { id: input.model.id, ...(input.model.variant ? { params: [{ id: "effort", value: input.model.variant }] } : {}) }
@@ -218,6 +234,12 @@ class CursorThread implements Thread {
       },
     }
     if (approvesAll) await this.owner.prime(sdk, apiKey, cwd)
+    // Cursor's SDK can't stop to ask: said once, so Ask First isn't taken for what it does.
+    if (!approvesAll && !input.plan && !this.state.cursorAskNoted) {
+      turn.notice("Cursor can't stop to ask you before it acts here: it runs what its sandbox allows and declines the rest. Use Plan mode to have it propose changes first.")
+      this.state.cursorAskNoted = true
+      hooks.saveState()
+    }
     if (!this.agent) {
       const id = this.state.cursorAgent as string | undefined
       this.agent = id ? await sdk.Agent.resume(id, options).catch(() => undefined) : undefined
@@ -234,12 +256,16 @@ class CursorThread implements Thread {
     let text = input.text
     const others = input.files.filter((file) => !file.mime.startsWith("image/") && file.path).map((file) => file.path!)
     if (others.length) text += `\n\nAttached files:\n${others.map((path) => `- ${path}`).join("\n")}`
+    // The app's added instructions go with the first message, and again when they change.
     const instructions = hooks.instructions()
-    if (instructions && !this.state.cursorInstructed) {
-      text = `${instructions}\n\n${text}`
-      this.state.cursorInstructed = true
+    const sent = typeof this.state.cursorInstructions === "string" ? this.state.cursorInstructions : this.state.cursorInstructed ? undefined : ""
+    if (instructions !== sent && (instructions || sent)) {
+      if (instructions) text = `${sent ? "Your instructions from Kuvo Code changed. They're now:\n\n" : ""}${instructions}\n\n${text}`
+      this.state.cursorInstructions = instructions
+      delete this.state.cursorInstructed
       hooks.saveState()
     }
+    if (hooks.signal.aborted) return { outcome: "interrupted" }
     const active: Active = { turn, hooks, toolsSinceText: false, sawText: false, output: new Map() }
     this.active = active
     turn.startStep()
@@ -261,11 +287,17 @@ class CursorThread implements Thread {
           : undefined,
       })
       if (hooks.signal.aborted || result?.status === "cancelled") return { outcome: "interrupted" }
-      if (result?.status === "error") return { outcome: "failed", error: failure(result.error?.message ?? "Cursor stopped with an error.") }
+      if (result?.status === "error") {
+        const message = String(result.error?.message ?? "Cursor stopped with an error.")
+        const limit = limitOf(message, result.error)
+        return limit ? { outcome: "failed", error: { type: "limit", message }, limit } : { outcome: "failed", error: failure(message) }
+      }
       return { outcome: "succeeded" }
     } catch (error: any) {
       if (hooks.signal.aborted) return { outcome: "interrupted" }
       const message = String(error?.message ?? error)
+      const limit = limitOf(message, error)
+      if (limit) return { outcome: "failed", error: { type: "limit", message }, limit }
       if (/Cannot use this model/i.test(message)) return { outcome: "failed", error: failure(`Cursor can't run ${input.model.id} with your account. Pick another of its models.`) }
       return { outcome: "failed", error: failure(error) }
     } finally {
@@ -348,6 +380,13 @@ class CursorThread implements Thread {
     } catch {}
     this.agent = undefined
   }
+}
+
+/** A usage or rate limit in Cursor's error: your plan's. */
+function limitOf(message: string, error: any): Limit | undefined {
+  const code = String(error?.code ?? error?.name ?? "")
+  if (/resource_exhausted|RateLimit/i.test(code) || /resource.?exhausted|rate.?limit|usage limit|quota/i.test(message)) return { scope: "provider", message }
+  return undefined
 }
 
 function kuvoTool(call: any): { name: string; input: Record<string, unknown> } {

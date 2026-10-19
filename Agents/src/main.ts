@@ -5,15 +5,14 @@
 // password in OPENCODE_PASSWORD, and stops when its stdin closes (so it can't outlive the app).
 // It keeps what it has in KUVO_AGENTS_HOME.
 
-import { mkdirSync } from "node:fs"
+import { mkdirSync, readdirSync, rmSync } from "node:fs"
 import { join } from "node:path"
-import { AntigravityAgent } from "./agents/antigravity"
-import { ClaudeAgent } from "./agents/claude"
-import { CodexAgent } from "./agents/codex"
-import { CursorAgent } from "./agents/cursor"
-import { GrokAgent } from "./agents/grok"
+import { Accounts, parseProvider } from "./accounts"
+import { Auto } from "./auto"
 import { Deps } from "./deps"
-import { handler } from "./server"
+import { EngineAgent, EngineLink } from "./engine"
+import { Roster } from "./roster"
+import { cancelSignIns, handler } from "./server"
 import { Sessions } from "./sessions"
 import { Store } from "./store"
 
@@ -28,21 +27,40 @@ if (!home || !password) {
 // folder in its own temporary folder.
 const temporary = process.env.TMPDIR?.replace(/\/$/, "") || join(home, "tmp")
 mkdirSync(temporary, { recursive: true })
+// What an agent left unpacked when the bridge last stopped without cleaning up (Antigravity's
+// agent unpacks itself, about 1 GB, for each run), and half-finished downloads.
+rmSync(join(temporary, "antigravity"), { recursive: true, force: true })
+try {
+  for (const name of readdirSync(join(home, "antigravity"))) if (name.startsWith(".install-")) rmSync(join(home, "antigravity", name), { recursive: true, force: true })
+} catch {}
+
+// The engine's binary runs this as Bun when told to: the agents it starts aren't told so.
+delete process.env.BUN_BE_BUN
 
 // An SDK's promise nobody waits for, rejected (Cursor's when a shell fails to start), stops nothing.
 process.on("unhandledRejection", (reason) => console.error("unhandled:", reason))
 
 const deps = new Deps(join(home, "runtime"), join(home, "cache"))
 const context = { home, temporary, deps }
-const agents = [new ClaudeAgent(context), new CodexAgent(context), new CursorAgent(context), new GrokAgent(context), new AntigravityAgent(context)]
+const roster = new Roster(new Accounts(home), context)
 const store = new Store(join(home, "sessions"))
-const sessions = new Sessions(store, agents)
+const auto = new Auto(home)
+// The engine's own models, run in sessions here (the app says where the engine is).
+const link = new EngineLink()
+const engineAgents = new Map<string, EngineAgent>()
+function engineAgent(providerID: string): EngineAgent | undefined {
+  if (!link.ready || parseProvider(providerID)) return undefined
+  let agent = engineAgents.get(providerID)
+  if (!agent) engineAgents.set(providerID, (agent = new EngineAgent(link, providerID)))
+  return agent
+}
+const sessions = new Sessions(store, roster, auto, engineAgent)
 
 const server = Bun.serve({
   hostname: "127.0.0.1",
   port: 0,
   idleTimeout: 0,
-  fetch: handler({ agents, sessions, password, version }),
+  fetch: handler({ roster, sessions, auto, link, password, version }),
 })
 console.log(JSON.stringify({ url: `http://127.0.0.1:${server.port}` }))
 
@@ -50,6 +68,7 @@ let stopping = false
 function stop() {
   if (stopping) return
   stopping = true
+  cancelSignIns()
   sessions.closeAll()
   store.flush()
   server.stop(true)

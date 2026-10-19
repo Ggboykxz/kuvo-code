@@ -5,8 +5,9 @@
 import { createHash } from "node:crypto"
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
+import { providerID, type AgentAccount } from "../accounts"
 import type { Agent, AgentContext, Account, SignInAttempt, Thread } from "../agent"
-import { failure, model } from "../agent"
+import { accountName, failure, model } from "../agent"
 import { AcpThread } from "../acp"
 import { newID } from "../ids"
 import { run } from "../proc"
@@ -51,11 +52,20 @@ const scrubbed = [
 
 export class AntigravityAgent implements Agent {
   id = "antigravity"
-  providerID = "antigravity"
-  name = "Antigravity"
+  readonly providerID: string
+  get name() {
+    return accountName("Antigravity", this.instance)
+  }
   private installing?: Promise<void>
+  /** How far the download has got, while it runs. */
+  private downloaded?: { bytes: number; total: number }
 
-  constructor(readonly context: AgentContext) {}
+  constructor(
+    readonly context: AgentContext,
+    readonly instance: AgentAccount = { id: "default" },
+  ) {
+    this.providerID = providerID("antigravity", instance.id)
+  }
 
   private get root() {
     return join(this.context.home, "antigravity")
@@ -65,9 +75,9 @@ export class AntigravityAgent implements Agent {
     return join(this.root, version)
   }
 
-  /** Its home (GEMINI_HOME): your sign-in, its settings and conversations. */
+  /** Its home (GEMINI_HOME): your sign-in, its settings and conversations; an added account's in its own folder. */
   private get profile() {
-    return join(this.root, "profile")
+    return this.instance.home ? join(this.instance.home, "profile") : join(this.root, "profile")
   }
 
   private get tokenFile() {
@@ -118,10 +128,12 @@ export class AntigravityAgent implements Agent {
       const hash = createHash("sha256")
       const writer = Bun.file(archive).writer()
       let bytes = 0
+      this.downloaded = { bytes, total: release.bytes }
       for await (const chunk of response.body) {
         hash.update(chunk)
         writer.write(chunk)
         bytes += chunk.byteLength
+        this.downloaded = { bytes, total: release.bytes }
       }
       await writer.end()
       if (bytes !== release.bytes || hash.digest("hex") !== release.sha256) throw new Error("Antigravity's agent didn't download whole. Try again.")
@@ -140,6 +152,7 @@ export class AntigravityAgent implements Agent {
         if (name !== version && name !== "profile" && /^\d/.test(name)) rmSync(join(this.root, name), { recursive: true, force: true })
       }
     } finally {
+      this.downloaded = undefined
       rmSync(staging, { recursive: true, force: true })
     }
   }
@@ -167,16 +180,14 @@ export class AntigravityAgent implements Agent {
   }
 
   async signIn(): Promise<SignInAttempt> {
+    // It answers at once: the download (the first time) and Google's page come with its status,
+    // which the app shows and opens as they come.
     let status: OAuthStatus = { status: "pending" }
     let link = ""
     let rpc: RPC | undefined
     let cancelled = false
-    let resolveLink: (url: string) => void = () => {}
-    const linked = new Promise<string>((resolve) => (resolveLink = resolve))
     const found = (url: string) => {
-      if (link) return
-      link = url
-      resolveLink(url)
+      if (!link && url.startsWith("https://")) link = url
     }
     const flow = async () => {
       await this.ensureInstalled()
@@ -203,21 +214,20 @@ export class AntigravityAgent implements Agent {
         launch.onExit()
         rmSync(cwd, { recursive: true, force: true })
       }
-      // Or it hands the link to its "browser", which writes it down.
+      // It hands the page to its "browser", which writes it down (or says it on a line of its own).
       const watch = setInterval(() => {
         try {
-          const url = readFileSync(launch.env.KUVO_URL_FILE!, "utf8").split("\n")[0].trim()
-          if (url) found(url)
+          found(readFileSync(launch.env.KUVO_URL_FILE!, "utf8").split("\n")[0].trim())
         } catch {}
       }, 300)
       try {
         await rpc.request("initialize", { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: false }, clientInfo: { name: "kuvo-code", version: "1" } }, 120_000)
-        await rpc.request("authenticate", { methodId: "oauth-personal" }, 300_000)
+        await rpc.request("authenticate", { methodId: "oauth-personal" }, 600_000)
         // Signed in: a session to check it works, and to learn your models; then it goes.
         const setup: any = await rpc.request("session/new", { cwd, mcpServers: [] }, 120_000)
         this.saveModels(setup)
         if (setup?.sessionId) this.removeSessionFiles(setup.sessionId)
-        status = { status: "complete" }
+        if (!cancelled) status = { status: "complete" }
       } finally {
         clearInterval(watch)
         rpc.kill()
@@ -237,19 +247,20 @@ export class AntigravityAgent implements Agent {
               : failure(error).message,
       }
     })
-    // The page to open, once there is one (the first time, after the download).
-    const url = await Promise.race([linked, Bun.sleep(20_000).then(() => "")])
-    if (!url) {
-      // It comes later: opened here, as the app has already shown the waiting page.
-      void linked.then((later) => run("/usr/bin/open", [later]))
-    }
     return {
-      url,
-      instructions: this.isInstalled
-        ? "Finish signing in with Google in your browser."
-        : "Downloading Google's Antigravity agent (about 110 MB). Google's sign-in opens in your browser once it's ready.",
+      url: "",
+      instructions: "Finish signing in with Google in your browser.",
       mode: "auto",
-      status: () => status,
+      status: () => {
+        if (status.status !== "pending") return status
+        const downloading = this.downloaded
+        if (downloading) {
+          const percent = Math.floor((downloading.bytes / downloading.total) * 100)
+          return { status: "pending", message: `Downloading Google's Antigravity agent… ${percent}%` }
+        }
+        if (!link) return { status: "pending", message: "Starting Google's Antigravity agent…" }
+        return { status: "pending", url: link, message: "Finish signing in with Google in your browser." }
+      },
       cancel: () => {
         cancelled = true
         if (status.status === "pending") status = { status: "failed", message: "Cancelled." }
@@ -299,6 +310,8 @@ export class AntigravityAgent implements Agent {
         fileSystem: true,
         authenticatesFirst: true,
         resumes: true,
+        // Google's quotas are each model's own.
+        limitScope: "model",
         authMethod: () => "oauth-personal",
         async command() {
           if (!agent.isInstalled) throw new Error("Sign in to Antigravity in Settings › Accounts first.")

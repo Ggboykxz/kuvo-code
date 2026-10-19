@@ -1,12 +1,224 @@
 // @bun
 // Agents/src/main.ts
-import { mkdirSync as mkdirSync7 } from "fs";
-import { join as join10 } from "path";
+import { mkdirSync as mkdirSync10, readdirSync as readdirSync4, rmSync as rmSync7 } from "fs";
+import { join as join12 } from "path";
 
-// Agents/src/agents/antigravity.ts
-import { createHash } from "crypto";
-import { chmodSync as chmodSync2, existsSync as existsSync3, mkdirSync as mkdirSync3, readdirSync, readFileSync as readFileSync3, renameSync, rmSync as rmSync2, writeFileSync as writeFileSync3 } from "fs";
+// Agents/src/accounts.ts
+import { randomBytes } from "crypto";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
+import { join } from "path";
+var kinds = ["claude", "codex", "cursor", "grok", "antigravity"];
+var baseProvider = {
+  claude: "claude-code",
+  codex: "codex-cli",
+  cursor: "cursor",
+  grok: "grok-cli",
+  antigravity: "antigravity"
+};
+function providerID(kind, id) {
+  return id === "default" ? baseProvider[kind] : `${baseProvider[kind]}@${id}`;
+}
+function parseProvider(provider) {
+  const [base, id] = provider.split("@", 2);
+  const kind = kinds.find((kind) => baseProvider[kind] === base);
+  if (!kind)
+    return;
+  return { kind, id: id ?? "default" };
+}
+
+class Accounts {
+  root;
+  records = [];
+  constructor(root) {
+    this.root = root;
+    try {
+      const saved = JSON.parse(readFileSync(this.file, "utf8"));
+      this.records = saved.filter((record) => kinds.includes(record.kind) && record.id && record.id !== "default");
+    } catch {}
+  }
+  get file() {
+    return join(this.root, "accounts.json");
+  }
+  all() {
+    return [...kinds.map((kind) => ({ kind, id: "default" })), ...this.records];
+  }
+  home(record) {
+    return record.id === "default" ? undefined : join(this.root, record.kind, "accounts", record.id);
+  }
+  add(kind, label) {
+    const record = { kind, id: randomBytes(4).toString("hex"), label: label?.trim() || undefined };
+    mkdirSync(this.home(record), { recursive: true, mode: 448 });
+    this.records.push(record);
+    this.save();
+    return record;
+  }
+  rename(provider, label) {
+    const parsed = parseProvider(provider);
+    const record = this.records.find((record) => record.kind === parsed?.kind && record.id === parsed?.id);
+    if (!record)
+      return;
+    record.label = label?.trim() || undefined;
+    this.save();
+  }
+  remove(provider) {
+    const parsed = parseProvider(provider);
+    const index = this.records.findIndex((record) => record.kind === parsed?.kind && record.id === parsed?.id);
+    if (index < 0)
+      return;
+    const [record] = this.records.splice(index, 1);
+    this.save();
+    rmSync(this.home(record), { recursive: true, force: true });
+    return record;
+  }
+  save() {
+    mkdirSync(this.root, { recursive: true });
+    writeFileSync(this.file + ".new", JSON.stringify(this.records, null, 2));
+    renameSync(this.file + ".new", this.file);
+  }
+}
+
+// Agents/src/auto.ts
+import { mkdirSync as mkdirSync2, readFileSync as readFileSync2, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "fs";
+import { join as join2 } from "path";
+var autoProvider = "auto";
+var unknownReset = 30 * 60000;
+
+class Auto {
+  root;
+  entries = [];
+  held = [];
+  constructor(root) {
+    this.root = root;
+    try {
+      const saved = JSON.parse(readFileSync2(this.file, "utf8"));
+      this.entries = (saved.entries ?? []).filter((entry) => entry?.providerID && entry?.modelID);
+      this.held = (saved.limits ?? []).filter((held) => held?.key && held.until > Date.now());
+    } catch {}
+  }
+  get file() {
+    return join2(this.root, "auto.json");
+  }
+  list() {
+    return this.entries.map((entry) => ({ ...entry }));
+  }
+  set(entries) {
+    this.entries = entries.filter((entry) => entry && typeof entry.providerID === "string" && typeof entry.modelID === "string" && entry.providerID !== autoProvider).map((entry) => ({ providerID: entry.providerID, modelID: entry.modelID, ...entry.variant ? { variant: entry.variant } : {} }));
+    this.save();
+  }
+  limits() {
+    this.prune();
+    return this.held.map((held) => ({ ...held }));
+  }
+  clearLimits() {
+    this.held = [];
+    this.save();
+  }
+  prune() {
+    const before = this.held.length;
+    this.held = this.held.filter((held) => held.until > Date.now());
+    if (this.held.length !== before)
+      this.save();
+  }
+  static providerKey(providerID) {
+    return providerID;
+  }
+  static modelKey(entry) {
+    return `${entry.providerID}/${entry.modelID}`;
+  }
+  isHeld(entry) {
+    this.prune();
+    return this.held.find((held) => held.key === Auto.providerKey(entry.providerID) || held.key === Auto.modelKey(entry));
+  }
+  hold(entry, limit) {
+    const key = limit.scope === "provider" ? Auto.providerKey(entry.providerID) : Auto.modelKey(entry);
+    const known = Boolean(limit.resetsAt && limit.resetsAt > Date.now());
+    const until = known ? limit.resetsAt : Date.now() + unknownReset;
+    this.held = this.held.filter((held) => held.key !== key);
+    this.held.push({ key, until, scope: limit.scope, known });
+    this.save();
+  }
+  save() {
+    mkdirSync2(this.root, { recursive: true });
+    writeFileSync2(this.file + ".new", JSON.stringify({ entries: this.entries, limits: this.held }, null, 2));
+    renameSync2(this.file + ".new", this.file);
+  }
+}
+function resetTime(at) {
+  const date = new Date(at);
+  const today = new Date;
+  const time = date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  if (date.toDateString() === today.toDateString())
+    return time;
+  return `${date.toLocaleDateString("en-US", { month: "short", day: "numeric" })}, ${time}`;
+}
+
+// Agents/src/deps.ts
+import { existsSync, mkdirSync as mkdirSync3, readFileSync as readFileSync3, writeFileSync as writeFileSync3 } from "fs";
 import { join as join3 } from "path";
+var installing = new Map;
+
+class Deps {
+  root;
+  cache;
+  constructor(root, cache) {
+    this.root = root;
+    this.cache = cache;
+  }
+  folder(agent) {
+    return join3(this.root, agent);
+  }
+  has(agent, packages) {
+    return packages.every((pkg) => installedVersion(this.folder(agent), pkg.name) === pkg.version);
+  }
+  async ensure(agent, packages, options = {}) {
+    const folder = this.folder(agent);
+    if (this.has(agent, packages))
+      return folder;
+    let pending = installing.get(agent);
+    if (!pending) {
+      pending = this.install(folder, packages, options.optional ?? true).finally(() => installing.delete(agent));
+      installing.set(agent, pending);
+    }
+    await pending;
+    return folder;
+  }
+  async install(folder, packages, optional) {
+    mkdirSync3(folder, { recursive: true });
+    const manifest = { name: "kuvo-agents-runtime", private: true, dependencies: Object.fromEntries(packages.map((pkg) => [pkg.name, pkg.version])) };
+    writeFileSync3(join3(folder, "package.json"), JSON.stringify(manifest, null, 2));
+    const args = [process.execPath, "install", "--no-save", "--no-progress", "--silent"];
+    if (!optional)
+      args.push("--omit", "optional");
+    const child = Bun.spawn(args, {
+      cwd: folder,
+      env: {
+        ...process.env,
+        BUN_BE_BUN: "1",
+        BUN_INSTALL: this.cache,
+        BUN_INSTALL_CACHE_DIR: join3(this.cache, "install")
+      },
+      stdout: "pipe",
+      stderr: "pipe"
+    });
+    const [code, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
+    if (code !== 0)
+      throw new Error(`Couldn't download what the agent needs (${packages.map((pkg) => pkg.name).join(", ")}): ${stderr.trim().slice(-400)}`);
+  }
+  async load(agent, name) {
+    const entry = Bun.resolveSync(name, this.folder(agent));
+    return await import(entry);
+  }
+}
+function installedVersion(folder, name) {
+  const file = join3(folder, "node_modules", name, "package.json");
+  if (!existsSync(file))
+    return;
+  try {
+    return JSON.parse(readFileSync3(file, "utf8")).version;
+  } catch {
+    return;
+  }
+}
 
 // Agents/src/agent.ts
 function model(providerID, id, name, options = {}) {
@@ -16,7 +228,7 @@ function model(providerID, id, name, options = {}) {
     name,
     family: options.family,
     capabilities: { tools: true, input: options.images ? ["text", "image"] : ["text"], output: ["text"] },
-    variants: (options.variants ?? []).map((id2) => ({ id: id2 })),
+    variants: (options.variants ?? []).map((id) => ({ id })),
     time: { released: options.released ?? 0 },
     cost: [{ input: 0, output: 0 }],
     status: "active",
@@ -24,48 +236,547 @@ function model(providerID, id, name, options = {}) {
     limit: { context: options.context ?? 200000, output: 32000 }
   };
 }
+function accountName(name, account) {
+  if (account.id === "default")
+    return name;
+  return `${name} \xB7 ${account.label ?? "Another account"}`;
+}
 function failure(error, type = "agent") {
   const message = error instanceof Error ? error.message : typeof error === "string" ? error : JSON.stringify(error);
   return { type, message: message || "The agent stopped with an error." };
 }
 
+// Agents/src/ids.ts
+var alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+var last = { timestamp: 0, counter: 0 };
+function ascending() {
+  const timestamp = Date.now();
+  if (last.timestamp !== timestamp)
+    last = { timestamp, counter: 0 };
+  last.counter += 1;
+  const value = BigInt(timestamp) * 0x1000n + BigInt(last.counter) & 0xffffffffffffn;
+  const time = value.toString(16).padStart(12, "0");
+  let random = "";
+  const bytes = crypto.getRandomValues(new Uint8Array(14));
+  for (const byte of bytes)
+    random += alphabet[byte % alphabet.length];
+  return time + random;
+}
+var newID = (prefix) => `${prefix}_${ascending()}`;
+var messageID = (eventID) => "msg_" + eventID.slice("evt_".length);
+
+// Agents/src/engine.ts
+class EngineLink {
+  url;
+  authorization;
+  generation = 0;
+  listeners = new Map;
+  children = new Map;
+  names = new Map;
+  get ready() {
+    return Boolean(this.url);
+  }
+  configure(url, password) {
+    const authorization = password ? "Basic " + Buffer.from(`opencode:${password}`).toString("base64") : undefined;
+    if (url === this.url && authorization === this.authorization)
+      return;
+    this.url = url?.replace(/\/$/, "");
+    this.authorization = authorization;
+    this.names.clear();
+    const generation = ++this.generation;
+    if (this.url)
+      this.feed(generation);
+    for (const set of this.listeners.values())
+      for (const listener of set)
+        listener.reconnected();
+  }
+  async request(method, path, body, timeout = 30000) {
+    if (!this.url)
+      throw new Error("The engine isn't running.");
+    const response = await fetch(this.url + path, {
+      method,
+      headers: { Authorization: this.authorization ?? "", ...body === undefined ? {} : { "Content-Type": "application/json" } },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(timeout)
+    });
+    const text = await response.text();
+    let value;
+    try {
+      value = text ? JSON.parse(text) : undefined;
+    } catch {
+      value = text;
+    }
+    if (!response.ok) {
+      const error = new EngineError(value?.message ?? `The engine answered ${response.status}.`);
+      error.status = response.status;
+      throw error;
+    }
+    return value;
+  }
+  providerName(providerID) {
+    if (!this.names.size && this.url) {
+      this.names.set("", "");
+      this.request("GET", "/api/provider").then((answer) => {
+        for (const provider of answer?.data ?? [])
+          if (provider?.id && provider?.name)
+            this.names.set(provider.id, provider.name);
+      }).catch(() => this.names.clear());
+    }
+    return this.names.get(providerID);
+  }
+  listen(sessionID, listener) {
+    let set = this.listeners.get(sessionID);
+    if (!set)
+      this.listeners.set(sessionID, set = new Set);
+    set.add(listener);
+    return () => {
+      set.delete(listener);
+      if (!set.size)
+        this.listeners.delete(sessionID);
+      for (const [child, parent] of this.children)
+        if (parent === sessionID)
+          this.children.delete(child);
+    };
+  }
+  dispatch(event) {
+    const data = event.data ?? {};
+    if (event.type === "session.created") {
+      const session = data.session ?? data.info;
+      const parent = session?.parentID;
+      if (parent && (this.listeners.has(parent) || this.children.has(parent)))
+        this.children.set(session.id, this.children.get(parent) ?? parent);
+      return;
+    }
+    let sessionID = data.sessionID ?? data.form?.sessionID;
+    if (!sessionID)
+      return;
+    sessionID = this.children.get(sessionID) ?? sessionID;
+    for (const listener of this.listeners.get(sessionID) ?? [])
+      listener.event(event);
+  }
+  async feed(generation) {
+    let first = true;
+    while (generation === this.generation && this.url) {
+      try {
+        const response = await fetch(this.url + "/api/event", { headers: { Authorization: this.authorization ?? "", Accept: "text/event-stream" } });
+        if (!response.ok || !response.body)
+          throw new Error(`feed ${response.status}`);
+        if (!first)
+          for (const set of this.listeners.values())
+            for (const listener of set)
+              listener.reconnected();
+        first = false;
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder;
+        let buffer = "";
+        while (generation === this.generation) {
+          const read = await Promise.race([reader.read(), new Promise((done) => setTimeout(() => done("quiet"), 45000))]);
+          if (read === "quiet" || read.done)
+            break;
+          buffer += decoder.decode(read.value, { stream: true });
+          let end;
+          while ((end = buffer.indexOf(`
+
+`)) >= 0) {
+            const chunk = buffer.slice(0, end);
+            buffer = buffer.slice(end + 2);
+            const data = chunk.split(`
+`).filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trimStart()).join(`
+`);
+            if (!data)
+              continue;
+            try {
+              this.dispatch(JSON.parse(data));
+            } catch {}
+          }
+        }
+        await reader.cancel().catch(() => {});
+      } catch {}
+      if (generation !== this.generation)
+        return;
+      first = false;
+      await Bun.sleep(1000);
+    }
+  }
+}
+
+class EngineError extends Error {
+  status;
+}
+
+class EngineAgent {
+  link;
+  providerID;
+  id = "engine";
+  instance = { id: "default" };
+  constructor(link, providerID) {
+    this.link = link;
+    this.providerID = providerID;
+  }
+  get name() {
+    return this.link.providerName(this.providerID) || this.providerID;
+  }
+  methods() {
+    return [];
+  }
+  async account() {
+    return { installed: true, signedIn: this.link.ready };
+  }
+  async models() {
+    return [];
+  }
+  thread(session, state) {
+    return new EngineThread(this.link, session, state);
+  }
+  async forgetConversation(state) {
+    const id = state.engineSession;
+    if (id)
+      await this.link.request("DELETE", `/api/session/${encodeURIComponent(id)}`).catch(() => {});
+  }
+}
+var outputLimit = 64000;
+
+class EngineThread {
+  link;
+  session;
+  state;
+  stop;
+  constructor(link, session, state) {
+    this.link = link;
+    this.session = session;
+    this.state = state;
+  }
+  async engineSession(input, hooks) {
+    const existing = this.state.engineSession;
+    if (existing) {
+      try {
+        await this.link.request("GET", `/api/session/${encodeURIComponent(existing)}`);
+        return existing;
+      } catch (error) {
+        if (error.status !== 404)
+          throw error;
+      }
+    }
+    const created = await this.link.request("POST", "/api/session", {
+      title: this.session.title ? `Kuvo Code: ${this.session.title}` : "Kuvo Code",
+      location: { directory: this.session.location.directory },
+      model: input.model,
+      agent: input.plan ? "plan" : "build",
+      permissions: this.session.permissions ?? [],
+      metadata: { kuvo: { engineFor: this.session.id } }
+    });
+    const id = created?.data?.id;
+    if (!id)
+      throw new Error("The engine didn't start a session.");
+    this.state.engineSession = id;
+    delete this.state.engineInstructions;
+    hooks.saveState();
+    return id;
+  }
+  async run(input, turn, hooks) {
+    if (!this.link.ready)
+      return { outcome: "failed", error: { type: "engine", message: "The engine isn't running: wait for it to start, or restart Kuvo Code." } };
+    const id = await this.engineSession(input, hooks);
+    const path = `/api/session/${encodeURIComponent(id)}`;
+    await this.link.request("PATCH", path, { permissions: this.session.permissions ?? [] });
+    await this.link.request("POST", `${path}/model`, { model: input.model });
+    await this.link.request("POST", `${path}/agent`, { agent: input.plan ? "plan" : "build" });
+    const instructions = hooks.instructions();
+    if (instructions !== (this.state.engineInstructions ?? "")) {
+      if (instructions)
+        await this.link.request("PUT", `/api/experimental/session/${encodeURIComponent(id)}/instructions/entries/kuvo`, { value: instructions });
+      else
+        await this.link.request("DELETE", `/api/experimental/session/${encodeURIComponent(id)}/instructions/entries/kuvo`).catch(() => {});
+      this.state.engineInstructions = instructions;
+      hooks.saveState();
+    }
+    const active = await this.link.request("GET", "/api/session/active").catch(() => {
+      return;
+    });
+    if (active?.data?.[id])
+      await this.link.request("POST", `${path}/interrupt`).catch(() => {});
+    const inputID = newID("msg");
+    let step;
+    let delivered = false;
+    let limit;
+    const shells = new Map;
+    const stopShell = (tool) => {
+      clearInterval(shells.get(tool));
+      shells.delete(tool);
+    };
+    let settle;
+    const settled = new Promise((resolve) => settle = resolve);
+    let done = false;
+    const finish = (result) => {
+      if (done)
+        return;
+      done = true;
+      settle(result);
+    };
+    const interrupt = async () => {
+      await this.link.request("POST", `${path}/interrupt`).catch(() => {});
+      setTimeout(() => finish({ outcome: "interrupted" }), 1e4);
+    };
+    this.stop = interrupt;
+    const answerPermission = async (data) => {
+      const ask = {
+        toolCallID: data.source?.id,
+        action: data.action,
+        resources: data.resources ?? [],
+        save: data.save,
+        metadata: data.metadata,
+        message: data.message
+      };
+      let decision = "reject";
+      try {
+        decision = await hooks.permission(ask);
+      } catch {}
+      await this.link.request("POST", `/api/session/${encodeURIComponent(data.sessionID)}/permission/${encodeURIComponent(data.id)}/reply`, { decision }).catch(() => {});
+    };
+    const answerForm = async (form) => {
+      let answer = null;
+      try {
+        answer = await hooks.question({ title: form.title ?? "A question", fields: form.fields ?? [] });
+      } catch {}
+      const formPath = `/api/session/${encodeURIComponent(form.sessionID)}/form/${encodeURIComponent(form.id)}`;
+      if (answer)
+        await this.link.request("POST", `${formPath}/reply`, { answer }).catch(() => {});
+      else
+        await this.link.request("DELETE", formPath).catch(() => {});
+    };
+    const followShell = (tool, shellID) => {
+      if (shells.has(tool))
+        return;
+      const read = async () => {
+        const answer = await this.link.request("GET", `/api/shell/${encodeURIComponent(shellID)}/output`).catch(() => {
+          return;
+        });
+        const output = String(answer?.data?.output ?? "");
+        if (output)
+          turn.toolProgress(tool, { output: output.length > outputLimit ? output.slice(-outputLimit) : output });
+      };
+      shells.set(tool, setInterval(read, 1000));
+    };
+    const onEvent = (event) => {
+      const data = event.data;
+      const ownSession = data.sessionID === id;
+      switch (event.type) {
+        case "permission.asked":
+          answerPermission(data);
+          return;
+        case "form.created":
+          if (data.form)
+            answerForm(data.form);
+          return;
+      }
+      if (!ownSession)
+        return;
+      switch (event.type) {
+        case "session.inbox.delivered":
+          if (data.inboxID === inputID)
+            delivered = true;
+          return;
+        case "session.step.started":
+          if (data.assistantMessageID === step)
+            return;
+          step = data.assistantMessageID;
+          turn.startStep(data.model ?? input.model);
+          return;
+        case "session.text.delta":
+          turn.text(String(data.delta ?? ""));
+          return;
+        case "session.reasoning.delta":
+          turn.reasoning(String(data.delta ?? ""));
+          return;
+        case "session.tool.input.started":
+          turn.toolStart(data.id, data.name);
+          return;
+        case "session.tool.input.delta":
+          turn.toolInputDelta(data.id, String(data.delta ?? ""));
+          return;
+        case "session.tool.called":
+          turn.toolCalled(data.id, data.input);
+          return;
+        case "session.tool.progress": {
+          const { shellID, ...rest } = data.metadata ?? {};
+          if (typeof shellID === "string")
+            followShell(data.id, shellID);
+          if (Object.keys(rest).length)
+            turn.toolProgress(data.id, rest);
+          return;
+        }
+        case "session.tool.success": {
+          stopShell(data.id);
+          const { shellID: _, ...metadata } = data.metadata ?? {};
+          turn.toolSucceeded(data.id, data.content ?? [], metadata);
+          return;
+        }
+        case "session.tool.failed": {
+          stopShell(data.id);
+          const { shellID: _, ...metadata } = data.metadata ?? {};
+          const error = data.error ?? {};
+          turn.toolFailed(data.id, error.message ?? "", metadata, error.type ?? "tool");
+          return;
+        }
+        case "session.step.ended":
+        case "session.step.failed":
+          if (data.assistantMessageID !== step)
+            return;
+          step = undefined;
+          turn.endStep({ tokens: data.tokens, cost: data.cost, finish: data.finish, error: data.error });
+          return;
+        case "session.retry.scheduled": {
+          const reached = limitOf(data.error);
+          if (input.auto && reached) {
+            limit = reached;
+            interrupt();
+          }
+          return;
+        }
+        case "session.execution.succeeded":
+          if (delivered)
+            finish({ outcome: "succeeded" });
+          return;
+        case "session.execution.interrupted":
+          if (delivered || limit)
+            finish(limit ? { outcome: "failed", error: { type: "limit", message: "A usage limit was reached." }, limit } : { outcome: "interrupted" });
+          return;
+        case "session.execution.failed": {
+          const error = data.error ?? { type: "engine", message: "The engine stopped with an error." };
+          finish({ outcome: "failed", error, limit: limit ?? limitOf(error) });
+          return;
+        }
+      }
+    };
+    const onReconnected = async () => {
+      if (done)
+        return;
+      const active = await this.link.request("GET", "/api/session/active").catch(() => {
+        return;
+      });
+      if (active?.data?.[id])
+        return;
+      const session = await this.link.request("GET", path).catch(() => {
+        return;
+      });
+      const outcome = session?.data?.outcome;
+      finish(outcome === "succeeded" ? { outcome } : { outcome: "failed", error: { type: "engine", message: "The engine restarted during this message." } });
+    };
+    const unlisten = this.link.listen(id, { event: onEvent, reconnected: () => void onReconnected() });
+    const abort = () => void interrupt();
+    hooks.signal.addEventListener("abort", abort);
+    try {
+      await this.link.request("POST", `${path}/prompt`, {
+        id: inputID,
+        text: input.text,
+        files: input.files.length ? input.files.map((file) => ({ uri: file.uri, name: file.name })) : undefined,
+        delivery: "steer"
+      });
+      if (hooks.signal.aborted)
+        interrupt();
+      return await settled;
+    } catch (error) {
+      return { outcome: "failed", error: failure(error, "engine") };
+    } finally {
+      hooks.signal.removeEventListener("abort", abort);
+      unlisten();
+      for (const tool of [...shells.keys()])
+        stopShell(tool);
+      this.stop = undefined;
+    }
+  }
+  async interrupt() {
+    await this.stop?.();
+  }
+  close() {}
+}
+function limitOf(error) {
+  if (!error)
+    return;
+  if (error.type === "provider.quota")
+    return { scope: "provider", message: error.message };
+  if (error.type === "provider.rate-limit")
+    return { scope: "model", message: error.message };
+  return;
+}
+
+// Agents/src/agents/antigravity.ts
+import { createHash } from "crypto";
+import { chmodSync as chmodSync2, existsSync as existsSync4, mkdirSync as mkdirSync6, readdirSync, readFileSync as readFileSync6, renameSync as renameSync3, rmSync as rmSync3, writeFileSync as writeFileSync6 } from "fs";
+import { join as join6 } from "path";
+
 // Agents/src/acp.ts
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { existsSync as existsSync2, mkdirSync as mkdirSync4, readFileSync as readFileSync4, writeFileSync as writeFileSync4 } from "fs";
 import { dirname } from "path";
 
 // Agents/src/diff.ts
+var searchLimit = 2000;
 function edits(a, b) {
+  let start = 0;
+  while (start < a.length && start < b.length && a[start] === b[start])
+    start++;
+  let endA = a.length;
+  let endB = b.length;
+  while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) {
+    endA--;
+    endB--;
+  }
+  const ops = [];
+  for (let i = 0;i < start; i++)
+    ops.push({ kind: " ", line: a[i] });
+  for (const op of middle(a.slice(start, endA), b.slice(start, endB)))
+    ops.push(op);
+  for (let i = endA;i < a.length; i++)
+    ops.push({ kind: " ", line: a[i] });
+  return ops;
+}
+function middle(a, b) {
   const n = a.length;
   const m = b.length;
+  const removed = () => a.map((line) => ({ kind: "-", line }));
+  const added = () => b.map((line) => ({ kind: "+", line }));
+  if (!n)
+    return added();
+  if (!m)
+    return removed();
   const max = n + m;
+  const limit = Math.min(max, searchLimit);
   const v = new Int32Array(2 * max + 2);
   const trace = [];
+  let found = false;
   outer:
-    for (let d = 0;d <= max; d++) {
-      trace.push(v.slice());
+    for (let d = 0;d <= limit; d++) {
+      trace.push(v.slice(max - d, max + d + 1));
       for (let k = -d;k <= d; k += 2) {
-        let x2 = k === -d || k !== d && v[max + k - 1] < v[max + k + 1] ? v[max + k + 1] : v[max + k - 1] + 1;
-        let y2 = x2 - k;
-        while (x2 < n && y2 < m && a[x2] === b[y2]) {
-          x2++;
-          y2++;
+        let x = k === -d || k !== d && v[max + k - 1] < v[max + k + 1] ? v[max + k + 1] : v[max + k - 1] + 1;
+        let y = x - k;
+        while (x < n && y < m && a[x] === b[y]) {
+          x++;
+          y++;
         }
-        v[max + k] = x2;
-        if (x2 >= n && y2 >= m)
+        v[max + k] = x;
+        if (x >= n && y >= m) {
+          found = true;
           break outer;
+        }
       }
     }
+  if (!found)
+    return [...removed(), ...added()];
   const ops = [];
   let x = n;
   let y = m;
   for (let d = trace.length - 1;d >= 0; d--) {
     const t = trace[d];
+    const at = (k) => t[k + d];
     const k = x - y;
-    const prevK = k === -d || k !== d && t[max + k - 1] < t[max + k + 1] ? k + 1 : k - 1;
-    const prevX = t[max + prevK];
+    const prevK = k === -d || k !== d && at(k - 1) < at(k + 1) ? k + 1 : k - 1;
+    const prevX = d === 0 ? 0 : at(prevK);
     const prevY = prevX - prevK;
-    while (x > prevX && y > prevY)
-      ops.push({ kind: " ", line: a[--x] }) && y--;
+    while (x > prevX && y > prevY) {
+      ops.push({ kind: " ", line: a[--x] });
+      y--;
+    }
     if (d > 0) {
       if (x === prevX)
         ops.push({ kind: "+", line: b[--y] });
@@ -318,7 +1029,7 @@ class RPC {
 }
 
 // Agents/src/acp.ts
-var outputLimit = 30000;
+var outputLimit2 = 30000;
 
 class AcpThread {
   flavor;
@@ -331,6 +1042,7 @@ class AcpThread {
   spawnedWith;
   active;
   loading = false;
+  stale;
   constructor(flavor, session, state, name) {
     this.flavor = flavor;
     this.session = session;
@@ -340,7 +1052,7 @@ class AcpThread {
   async open(input, hooks) {
     const mode = { approvesAll: hooks.approvesAll(), plan: input.plan };
     const key = JSON.stringify(mode);
-    if (this.rpc && !this.rpc.isClosed && this.spawnedWith === key)
+    if (this.rpc && !this.rpc.isClosed && this.spawnedWith === key && this.rpc !== this.stale)
       return this.rpc;
     this.close();
     const launch = await this.flavor.command(mode);
@@ -370,7 +1082,7 @@ class AcpThread {
       if (this.rpc === rpc)
         this.rpc = undefined;
       const active = this.active;
-      if (active && !active.ended)
+      if (active && !active.ended && active.rpc === rpc)
         this.end(active, "failed", rpc.stderr.trim().split(`
 `).slice(-3).join(`
 `) || `${this.name} stopped.`);
@@ -382,7 +1094,7 @@ class AcpThread {
       const watch = setInterval(() => {
         if (rpc.isClosed)
           return clearInterval(watch);
-        if (!existsSync(file))
+        if (!existsSync2(file))
           return;
         clearInterval(watch);
         rpc.stderr = `${this.name} needs you to sign in again: Settings \u203A Accounts.`;
@@ -444,6 +1156,8 @@ class AcpThread {
   }
   async run(input, turn, hooks) {
     const rpc = await this.open(input, hooks);
+    if (hooks.signal.aborted)
+      return { outcome: "interrupted" };
     const sessionId = this.sessionID;
     await this.flavor.selectModel(rpc, sessionId, input.model.id, this.setup).catch(() => {});
     await this.flavor.selectMode?.(rpc, sessionId, { approvesAll: hooks.approvesAll(), plan: input.plan }, this.setup).catch(() => {});
@@ -458,11 +1172,16 @@ class AcpThread {
     }
     let text = input.text;
     const instructions = hooks.instructions();
-    if (instructions && !this.state.acpInstructed) {
-      text = `${instructions}
+    const sent = typeof this.state.acpInstructions === "string" ? this.state.acpInstructions : this.state.acpInstructed ? undefined : "";
+    if (instructions !== sent && (instructions || sent)) {
+      if (instructions)
+        text = `${sent ? `Your instructions from Kuvo Code changed. They're now:
+
+` : ""}${instructions}
 
 ${text}`;
-      this.state.acpInstructed = true;
+      this.state.acpInstructions = instructions;
+      delete this.state.acpInstructed;
       hooks.saveState();
     }
     if (others.length)
@@ -473,22 +1192,37 @@ ${others.map((path) => `- ${path}`).join(`
 `)}`;
     prompt.unshift({ type: "text", text });
     return new Promise((resolve) => {
-      const active = { turn, hooks, resolve, tools: new Map, toolsSinceText: false, ended: false };
+      const active = { turn, hooks, resolve, rpc, tools: new Map, toolsSinceText: false, ended: false };
       this.active = active;
       turn.startStep();
       const meta = this.flavor.promptMeta?.();
-      rpc.request("session/prompt", { sessionId, prompt, ...meta ? { _meta: meta } : {} }).then((result) => this.end(active, result?.stopReason === "cancelled" ? "interrupted" : "succeeded"), (error) => this.end(active, "failed", error instanceof RPCError && error.code === -32003 ? `You've reached your ${this.name} usage limit for now.` : errorText(error)));
+      rpc.request("session/prompt", { sessionId, prompt, ...meta ? { _meta: meta } : {} }).then((result) => {
+        if (result?.stopReason === "rate_limit")
+          this.end(active, "failed", `You've reached your ${this.name} usage limit for now.`, this.limit());
+        else
+          this.end(active, result?.stopReason === "cancelled" ? "interrupted" : "succeeded");
+      }, (error) => {
+        const limited = error instanceof RPCError && error.code === -32003 || /RESOURCE_EXHAUSTED|quota|usage limit|rate.?limit/i.test(errorText(error));
+        this.end(active, "failed", limited ? `You've reached your ${this.name} usage limit for now.` : errorText(error), limited ? this.limit(errorText(error)) : undefined);
+      });
     });
   }
-  end(active, outcome, message) {
+  limit(message) {
+    return { scope: this.flavor.limitScope ?? "provider", message };
+  }
+  end(active, outcome, message, limit) {
     if (active.ended)
       return;
     active.ended = true;
     if (this.active === active)
       this.active = undefined;
+    if (active.plan)
+      active.turn.toolSucceeded(active.plan.id, "", { todos: active.plan.todos });
     active.turn.endStep();
     if (active.hooks.signal.aborted)
       active.resolve({ outcome: "interrupted" });
+    else if (limit)
+      active.resolve({ outcome: "failed", error: { type: "limit", message: message ?? `You've reached your ${this.name} usage limit for now.` }, limit });
     else
       active.resolve(outcome === "failed" ? { outcome, error: failure(message ?? `${this.name} stopped with an error.`) } : { outcome });
   }
@@ -499,7 +1233,7 @@ ${others.map((path) => `- ${path}`).join(`
       hooks: active?.hooks,
       endPrompt: (stopReason, error) => {
         if (active)
-          this.end(active, error ? "failed" : stopReason === "cancelled" ? "interrupted" : "succeeded", error);
+          this.end(active, error ? "failed" : stopReason === "cancelled" ? "interrupted" : "succeeded", error, stopReason === "rate_limit" ? this.limit(error) : undefined);
       }
     };
   }
@@ -527,10 +1261,12 @@ ${others.map((path) => `- ${path}`).join(`
         return this.tool(active, update);
       case "plan": {
         const todos = (update.entries ?? []).map((entry) => ({ content: entry.content, status: entry.status === "in_progress" ? "in_progress" : entry.status }));
-        const id = `plan-${turn.started}`;
+        const id = active.plan?.id ?? `plan-${turn.started}`;
+        active.plan = { id, todos };
         if (!turn.hasTool(id))
           turn.toolStart(id, "todowrite", { todos });
-        turn.toolSucceeded(id, "", { todos });
+        else
+          turn.toolCalled(id, { todos });
         return;
       }
     }
@@ -589,7 +1325,7 @@ ${others.map((path) => `- ${path}`).join(`
         if (String(call.toolCallId ?? "").startsWith("interaction_")) {
           const answer = await active.hooks.question({
             title: "Question",
-            fields: [{ key: "answer", title: "Question", description: call.title ?? "", required: true, type: "string", options: options.map((option2) => ({ value: option2.optionId, label: option2.name ?? option2.optionId })) }]
+            fields: [{ key: "answer", title: "Question", description: call.title ?? "", required: true, type: "string", options: options.map((option) => ({ value: option.optionId, label: option.name ?? option.optionId })) }]
           });
           const chosen = answer?.answer;
           return chosen ? { outcome: { outcome: "selected", optionId: String(chosen) } } : { outcome: { outcome: "cancelled" } };
@@ -603,19 +1339,19 @@ ${others.map((path) => `- ${path}`).join(`
           metadata: files.length ? { files } : undefined,
           message: call.title
         });
-        const pick = (kinds) => kinds.map((kind) => options.find((option2) => option2.kind === kind)).find(Boolean);
+        const pick = (kinds) => kinds.map((kind) => options.find((option) => option.kind === kind)).find(Boolean);
         const option = decision === "reject" ? pick(["reject_once", "reject_always"]) : decision === "always" ? pick(["allow_always", "allow_once"]) : pick(["allow_once", "allow_always"]);
         return option ? { outcome: { outcome: "selected", optionId: option.optionId } } : { outcome: { outcome: "cancelled" } };
       }
       case "fs/read_text_file": {
         if (!this.flavor.fileSystem)
           break;
-        let content = readFileSync(params.path, "utf8");
+        let content = readFileSync4(params.path, "utf8");
         if (params.line || params.limit) {
-          const lines2 = content.split(`
+          const lines = content.split(`
 `);
           const start = Math.max(0, (params.line ?? 1) - 1);
-          content = lines2.slice(start, params.limit ? start + params.limit : undefined).join(`
+          content = lines.slice(start, params.limit ? start + params.limit : undefined).join(`
 `);
         }
         return { content };
@@ -623,8 +1359,8 @@ ${others.map((path) => `- ${path}`).join(`
       case "fs/write_text_file": {
         if (!this.flavor.fileSystem)
           break;
-        mkdirSync(dirname(params.path), { recursive: true });
-        writeFileSync(params.path, params.content ?? "");
+        mkdirSync4(dirname(params.path), { recursive: true });
+        writeFileSync4(params.path, params.content ?? "");
         return {};
       }
     }
@@ -632,16 +1368,19 @@ ${others.map((path) => `- ${path}`).join(`
   }
   async interrupt() {
     const active = this.active;
-    const rpc = this.rpc;
+    const rpc = active?.rpc;
     if (!active || !rpc || !this.sessionID)
       return;
+    if (this.flavor.restartAfterInterrupt)
+      this.stale = rpc;
     rpc.notify("session/cancel", { sessionId: this.sessionID });
     for (let waited = 0;waited < 15000 && !active.ended; waited += 100)
       await Bun.sleep(100);
-    if (!active.ended || this.flavor.restartAfterInterrupt) {
-      this.end(active, "interrupted");
+    if (active.ended)
+      return;
+    this.end(active, "interrupted");
+    if (this.rpc === rpc && (!this.active || this.active.rpc !== rpc))
       this.close();
-    }
   }
   close() {
     this.rpc?.kill();
@@ -733,7 +1472,7 @@ function toolOutput(call) {
   }
   const text = parts.filter(Boolean).join(`
 `);
-  return text.length > outputLimit ? text.slice(-outputLimit) : text;
+  return text.length > outputLimit2 ? text.slice(-outputLimit2) : text;
 }
 function errorText(error) {
   if (error instanceof RPCError) {
@@ -744,7 +1483,7 @@ function errorText(error) {
 }
 function safeBase64(path) {
   try {
-    return readFileSync(path).toString("base64");
+    return readFileSync4(path).toString("base64");
   } catch {
     return;
   }
@@ -761,32 +1500,13 @@ function questionFields(questions) {
   }));
 }
 
-// Agents/src/ids.ts
-var alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-var last = { timestamp: 0, counter: 0 };
-function ascending() {
-  const timestamp = Date.now();
-  if (last.timestamp !== timestamp)
-    last = { timestamp, counter: 0 };
-  last.counter += 1;
-  const value = BigInt(timestamp) * 0x1000n + BigInt(last.counter) & 0xffffffffffffn;
-  const time = value.toString(16).padStart(12, "0");
-  let random = "";
-  const bytes = crypto.getRandomValues(new Uint8Array(14));
-  for (const byte of bytes)
-    random += alphabet[byte % alphabet.length];
-  return time + random;
-}
-var newID = (prefix) => `${prefix}_${ascending()}`;
-var messageID = (eventID) => "msg_" + eventID.slice("evt_".length);
-
 // Agents/src/proc.ts
 import { accessSync, constants } from "fs";
-import { delimiter, join } from "path";
+import { delimiter, join as join4 } from "path";
 function which(name, extra = []) {
   const folders = [...(process.env.PATH ?? "").split(delimiter), ...extra].filter(Boolean);
   for (const folder of folders) {
-    const path = join(folder, name);
+    const path = join4(folder, name);
     try {
       accessSync(path, constants.X_OK);
       return path;
@@ -812,6 +1532,23 @@ async function run(command, args, options = {}) {
     clearTimeout(timer);
   return { code, stdout, stderr };
 }
+var pathRead = 0;
+async function refreshLoginPath() {
+  if (Date.now() - pathRead < 5000)
+    return;
+  pathRead = Date.now();
+  const shell = process.env.SHELL || "/bin/zsh";
+  for (const flags of ["-ilc", "-lc"]) {
+    try {
+      const ran = await run(shell, [flags, 'printf "__KUVO_PATH__%s__KUVO_END__" "$PATH"'], { timeout: 8000, env: { DISABLE_AUTO_UPDATE: "true" } });
+      const found = ran.stdout.match(/__KUVO_PATH__([\s\S]*?)__KUVO_END__/)?.[1];
+      if (found?.trim()) {
+        process.env.PATH = found.trim();
+        return;
+      }
+    } catch {}
+  }
+}
 function firstURL(text) {
   return text.match(/https?:\/\/[^\s"'<>]+/)?.[0];
 }
@@ -820,13 +1557,13 @@ function plain(text) {
 }
 
 // Agents/src/signin.ts
-import { chmodSync, existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync as readFileSync2, rmSync, writeFileSync as writeFileSync2 } from "fs";
-import { join as join2 } from "path";
+import { chmodSync, existsSync as existsSync3, mkdirSync as mkdirSync5, readFileSync as readFileSync5, rmSync as rmSync2, writeFileSync as writeFileSync5 } from "fs";
+import { join as join5 } from "path";
 function catcher(temporary) {
-  const path = join2(temporary, "bin", "kuvo-catch-url");
-  if (!existsSync2(path)) {
-    mkdirSync2(join2(temporary, "bin"), { recursive: true });
-    writeFileSync2(path, `#!/bin/sh
+  const path = join5(temporary, "bin", "kuvo-catch-url");
+  if (!existsSync3(path)) {
+    mkdirSync5(join5(temporary, "bin"), { recursive: true });
+    writeFileSync5(path, `#!/bin/sh
 printf '%s\\n' "$1" >> "$KUVO_URL_FILE"
 `);
     chmodSync(path, 493);
@@ -834,7 +1571,7 @@ printf '%s\\n' "$1" >> "$KUVO_URL_FILE"
   return path;
 }
 async function commandSignIn(options) {
-  const urlFile = join2(options.temporary, `${newID("att")}.url`);
+  const urlFile = join5(options.temporary, `${newID("att")}.url`);
   const child = Bun.spawn([options.command, ...options.args], {
     env: { ...process.env, ...options.env, BROWSER: catcher(options.temporary), KUVO_URL_FILE: urlFile },
     stdin: "pipe",
@@ -851,16 +1588,30 @@ async function commandSignIn(options) {
   read(child.stdout);
   read(child.stderr);
   child.exited.then(async (code) => {
-    rmSync(urlFile, { force: true });
+    rmSync2(urlFile, { force: true });
     if (status.status !== "pending")
       return;
     const signedIn = await options.signedIn().catch(() => false);
     status = signedIn ? { status: "complete" } : { status: "failed", message: lastLines(output) || `Signing in stopped (exit code ${code}).` };
   });
+  (async () => {
+    if (await options.signedIn().catch(() => true))
+      return;
+    while (status.status === "pending") {
+      await Bun.sleep(3000);
+      if (status.status !== "pending")
+        return;
+      if (!await options.signedIn().catch(() => false))
+        continue;
+      if (status.status === "pending")
+        status = { status: "complete" };
+      child.kill();
+    }
+  })();
   let url = "";
   for (let waited = 0;waited < 15000 && !url; waited += 200) {
-    if (existsSync2(urlFile))
-      url = readFileSync2(urlFile, "utf8").split(`
+    if (existsSync3(urlFile))
+      url = readFileSync5(urlFile, "utf8").split(`
 `)[0].trim();
     url ||= firstURL(output) ?? "";
     if (!url)
@@ -935,30 +1686,36 @@ var scrubbed = [
 
 class AntigravityAgent {
   context;
+  instance;
   id = "antigravity";
-  providerID = "antigravity";
-  name = "Antigravity";
+  providerID;
+  get name() {
+    return accountName("Antigravity", this.instance);
+  }
   installing;
-  constructor(context) {
+  downloaded;
+  constructor(context, instance = { id: "default" }) {
     this.context = context;
+    this.instance = instance;
+    this.providerID = providerID("antigravity", instance.id);
   }
   get root() {
-    return join3(this.context.home, "antigravity");
+    return join6(this.context.home, "antigravity");
   }
   get folder() {
-    return join3(this.root, version);
+    return join6(this.root, version);
   }
   get profile() {
-    return join3(this.root, "profile");
+    return this.instance.home ? join6(this.instance.home, "profile") : join6(this.root, "profile");
   }
   get tokenFile() {
-    return join3(this.profile, "antigravity-acp", "acp_token.json");
+    return join6(this.profile, "antigravity-acp", "acp_token.json");
   }
   get modelsFile() {
-    return join3(this.profile, "kuvo-models.json");
+    return join6(this.profile, "kuvo-models.json");
   }
   get isInstalled() {
-    return existsSync3(join3(this.folder, ".complete"));
+    return existsSync4(join6(this.folder, ".complete"));
   }
   methods() {
     return [{ type: "oauth", id: "oauth-personal", label: "Sign in with Google" }];
@@ -967,7 +1724,7 @@ class AntigravityAgent {
     const release = releases[`${process.platform}-${process.arch}`];
     if (!release)
       return { installed: false, signedIn: false, message: "Google doesn't make Antigravity's agent for this computer." };
-    if (!existsSync3(this.tokenFile)) {
+    if (!existsSync4(this.tokenFile)) {
       return {
         installed: this.isInstalled,
         signedIn: false,
@@ -986,20 +1743,22 @@ class AntigravityAgent {
     const release = releases[`${process.platform}-${process.arch}`];
     if (!release)
       throw new Error("Google doesn't make Antigravity's agent for this computer.");
-    const staging = join3(this.root, `.install-${newID("att")}`);
-    mkdirSync3(staging, { recursive: true });
+    const staging = join6(this.root, `.install-${newID("att")}`);
+    mkdirSync6(staging, { recursive: true });
     try {
-      const archive = join3(staging, "download.zip");
+      const archive = join6(staging, "download.zip");
       const response = await fetch(release.url);
       if (!response.ok || !response.body)
         throw new Error(`Couldn't download Antigravity's agent (HTTP ${response.status}).`);
       const hash = createHash("sha256");
       const writer = Bun.file(archive).writer();
       let bytes = 0;
+      this.downloaded = { bytes, total: release.bytes };
       for await (const chunk of response.body) {
         hash.update(chunk);
         writer.write(chunk);
         bytes += chunk.byteLength;
+        this.downloaded = { bytes, total: release.bytes };
       }
       await writer.end();
       if (bytes !== release.bytes || hash.digest("hex") !== release.sha256)
@@ -1012,27 +1771,28 @@ class AntigravityAgent {
       const unzipped = await run("/usr/bin/unzip", ["-q", "-o", archive, "-d", staging]);
       if (unzipped.code !== 0)
         throw new Error(`Couldn't unpack Antigravity's agent: ${unzipped.stderr.trim()}`);
-      rmSync2(archive, { force: true });
+      rmSync3(archive, { force: true });
       for (const name of [executableName, harnessName])
-        chmodSync2(join3(staging, name), 493);
-      writeFileSync3(join3(staging, ".complete"), JSON.stringify({ version, sha256: release.sha256 }));
-      rmSync2(this.folder, { recursive: true, force: true });
-      renameSync(staging, this.folder);
+        chmodSync2(join6(staging, name), 493);
+      writeFileSync6(join6(staging, ".complete"), JSON.stringify({ version, sha256: release.sha256 }));
+      rmSync3(this.folder, { recursive: true, force: true });
+      renameSync3(staging, this.folder);
       for (const name of readdirSync(this.root)) {
         if (name !== version && name !== "profile" && /^\d/.test(name))
-          rmSync2(join3(this.root, name), { recursive: true, force: true });
+          rmSync3(join6(this.root, name), { recursive: true, force: true });
       }
     } finally {
-      rmSync2(staging, { recursive: true, force: true });
+      this.downloaded = undefined;
+      rmSync3(staging, { recursive: true, force: true });
     }
   }
   launch() {
-    mkdirSync3(join3(this.profile, "antigravity-acp", "tmp"), { recursive: true, mode: 448 });
-    const settings = join3(this.profile, "antigravity-acp", "settings.json");
-    if (!existsSync3(settings))
-      writeFileSync3(settings, JSON.stringify({ auth: { type: "oauth-personal" } }));
-    const temporary = join3(this.context.temporary, "antigravity", newID("att"));
-    mkdirSync3(temporary, { recursive: true });
+    mkdirSync6(join6(this.profile, "antigravity-acp", "tmp"), { recursive: true, mode: 448 });
+    const settings = join6(this.profile, "antigravity-acp", "settings.json");
+    if (!existsSync4(settings))
+      writeFileSync6(settings, JSON.stringify({ auth: { type: "oauth-personal" } }));
+    const temporary = join6(this.context.temporary, "antigravity", newID("att"));
+    mkdirSync6(temporary, { recursive: true });
     const env = {};
     for (const [key, value] of Object.entries(process.env))
       if (!scrubbed.includes(key.toUpperCase()))
@@ -1041,34 +1801,30 @@ class AntigravityAgent {
       GEMINI_HOME: this.profile,
       AGY_ACP_FORCE_FILE_STORAGE: "1",
       BROWSER: catcher(this.context.temporary),
-      KUVO_URL_FILE: join3(temporary, "url"),
+      KUVO_URL_FILE: join6(temporary, "url"),
       PYTHONUNBUFFERED: "1",
       TMPDIR: temporary,
-      ANTIGRAVITY_HARNESS_PATH: join3(this.folder, harnessName)
+      ANTIGRAVITY_HARNESS_PATH: join6(this.folder, harnessName)
     });
-    const argv = [join3(this.folder, executableName), ...process.platform === "linux" ? ["--uid="] : []];
-    return { argv, env, cleanEnv: true, onExit: () => rmSync2(temporary, { recursive: true, force: true }), signInFile: join3(temporary, "url") };
+    const argv = [join6(this.folder, executableName), ...process.platform === "linux" ? ["--uid="] : []];
+    return { argv, env, cleanEnv: true, onExit: () => rmSync3(temporary, { recursive: true, force: true }), signInFile: join6(temporary, "url") };
   }
   async signIn() {
     let status = { status: "pending" };
     let link = "";
     let rpc;
     let cancelled = false;
-    let resolveLink = () => {};
-    const linked = new Promise((resolve) => resolveLink = resolve);
-    const found = (url2) => {
-      if (link)
-        return;
-      link = url2;
-      resolveLink(url2);
+    const found = (url) => {
+      if (!link && url.startsWith("https://"))
+        link = url;
     };
     const flow = async () => {
       await this.ensureInstalled();
       if (cancelled)
         return;
       const launch = this.launch();
-      const cwd = join3(this.context.temporary, "antigravity", newID("att"));
-      mkdirSync3(cwd, { recursive: true });
+      const cwd = join6(this.context.temporary, "antigravity", newID("att"));
+      mkdirSync6(cwd, { recursive: true });
       rpc = new RPC(launch.argv, {
         cwd,
         env: launch.env,
@@ -1086,24 +1842,23 @@ class AntigravityAgent {
       });
       rpc.onExit = () => {
         launch.onExit();
-        rmSync2(cwd, { recursive: true, force: true });
+        rmSync3(cwd, { recursive: true, force: true });
       };
       const watch = setInterval(() => {
         try {
-          const url2 = readFileSync3(launch.env.KUVO_URL_FILE, "utf8").split(`
-`)[0].trim();
-          if (url2)
-            found(url2);
+          found(readFileSync6(launch.env.KUVO_URL_FILE, "utf8").split(`
+`)[0].trim());
         } catch {}
       }, 300);
       try {
         await rpc.request("initialize", { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: false }, clientInfo: { name: "kuvo-code", version: "1" } }, 120000);
-        await rpc.request("authenticate", { methodId: "oauth-personal" }, 300000);
+        await rpc.request("authenticate", { methodId: "oauth-personal" }, 600000);
         const setup = await rpc.request("session/new", { cwd, mcpServers: [] }, 120000);
         this.saveModels(setup);
         if (setup?.sessionId)
           this.removeSessionFiles(setup.sessionId);
-        status = { status: "complete" };
+        if (!cancelled)
+          status = { status: "complete" };
       } finally {
         clearInterval(watch);
         rpc.kill();
@@ -1118,15 +1873,22 @@ class AntigravityAgent {
         message: cancelled ? "Cancelled." : /SUBSCRIPTION_REQUIRED/i.test(message) ? "Google says this account needs an Antigravity subscription." : /access_denied/i.test(message) ? "Google sign-in wasn't approved." : failure(error).message
       };
     });
-    const url = await Promise.race([linked, Bun.sleep(20000).then(() => "")]);
-    if (!url) {
-      linked.then((later) => run("/usr/bin/open", [later]));
-    }
     return {
-      url,
-      instructions: this.isInstalled ? "Finish signing in with Google in your browser." : "Downloading Google's Antigravity agent (about 110 MB). Google's sign-in opens in your browser once it's ready.",
+      url: "",
+      instructions: "Finish signing in with Google in your browser.",
       mode: "auto",
-      status: () => status,
+      status: () => {
+        if (status.status !== "pending")
+          return status;
+        const downloading = this.downloaded;
+        if (downloading) {
+          const percent = Math.floor(downloading.bytes / downloading.total * 100);
+          return { status: "pending", message: `Downloading Google's Antigravity agent\u2026 ${percent}%` };
+        }
+        if (!link)
+          return { status: "pending", message: "Starting Google's Antigravity agent\u2026" };
+        return { status: "pending", url: link, message: "Finish signing in with Google in your browser." };
+      },
       cancel: () => {
         cancelled = true;
         if (status.status === "pending")
@@ -1136,11 +1898,11 @@ class AntigravityAgent {
     };
   }
   async signOut() {
-    rmSync2(this.tokenFile, { force: true });
-    rmSync2(this.modelsFile, { force: true });
+    rmSync3(this.tokenFile, { force: true });
+    rmSync3(this.modelsFile, { force: true });
   }
   saveModels(setup) {
-    const option = (setup?.configOptions ?? []).find((option2) => option2.id === "model" || option2.category === "model");
+    const option = (setup?.configOptions ?? []).find((option) => option.id === "model" || option.category === "model");
     const flat = [];
     for (const entry of option?.options ?? []) {
       if (Array.isArray(entry.options))
@@ -1154,17 +1916,17 @@ class AntigravityAgent {
         flat.push({ value: info.modelId, name: info.name ?? info.modelId });
     }
     if (flat.length)
-      writeFileSync3(this.modelsFile, JSON.stringify({ current: option?.currentValue, models: flat }));
+      writeFileSync6(this.modelsFile, JSON.stringify({ current: option?.currentValue, models: flat }));
   }
   removeSessionFiles(sessionID) {
-    const folder = join3(this.profile, "antigravity-acp");
+    const folder = join6(this.profile, "antigravity-acp");
     for (const suffix of [".db", ".db-wal", ".db-shm", ".db-journal", ".meta"])
-      rmSync2(join3(folder, "conversations", sessionID + suffix), { force: true });
-    rmSync2(join3(folder, "brain", sessionID), { recursive: true, force: true });
+      rmSync3(join6(folder, "conversations", sessionID + suffix), { force: true });
+    rmSync3(join6(folder, "brain", sessionID), { recursive: true, force: true });
   }
   async models() {
     try {
-      const saved = JSON.parse(readFileSync3(this.modelsFile, "utf8"));
+      const saved = JSON.parse(readFileSync6(this.modelsFile, "utf8"));
       return saved.models.map((info, index) => model(this.providerID, info.value, info.name, { images: true, released: info.value === saved.current ? 2000 : 1000 - index, context: 1e6 }));
     } catch {
       return [];
@@ -1176,6 +1938,7 @@ class AntigravityAgent {
       fileSystem: true,
       authenticatesFirst: true,
       resumes: true,
+      limitScope: "model",
       authMethod: () => "oauth-personal",
       async command() {
         if (!agent.isInstalled)
@@ -1193,7 +1956,7 @@ class AntigravityAgent {
         agent.saveModels(setup);
       },
       async selectMode(rpc, sessionId, { approvesAll, plan }, setup) {
-        const option = (setup?.configOptions ?? []).find((option2) => option2.id === "mode" || option2.category === "mode");
+        const option = (setup?.configOptions ?? []).find((option) => option.id === "mode" || option.category === "mode");
         const values = (option?.options ?? []).map((entry) => entry.value);
         const wanted = plan && values.includes("plan") ? "plan" : approvesAll ? "yolo" : "default";
         if (!option || setup.kuvoMode === wanted || values.length && !values.includes(wanted))
@@ -1207,9 +1970,9 @@ class AntigravityAgent {
 
 // Agents/src/agents/claude.ts
 import { randomUUID } from "crypto";
-import { existsSync as existsSync4, readFileSync as readFileSync4 } from "fs";
+import { existsSync as existsSync5, readFileSync as readFileSync7 } from "fs";
 import { homedir } from "os";
-import { join as join4 } from "path";
+import { join as join7 } from "path";
 
 // Agents/src/events.ts
 var listeners = new Set;
@@ -1301,20 +2064,25 @@ class Queue {
 
 // Agents/src/agents/claude.ts
 var SDK = [{ name: "@anthropic-ai/claude-agent-sdk", version: "0.3.303" }];
-var places = [join4(homedir(), ".local/bin"), join4(homedir(), ".claude/local"), "/opt/homebrew/bin", "/usr/local/bin"];
-var outputLimit2 = 30000;
+var places = [join7(homedir(), ".local/bin"), join7(homedir(), ".claude/local"), "/opt/homebrew/bin", "/usr/local/bin"];
+var outputLimit3 = 30000;
 
 class ClaudeAgent {
   context;
+  instance;
   id = "claude";
-  providerID = "claude-code";
-  name = "Claude Code";
+  providerID;
+  get name() {
+    return accountName("Claude Code", this.instance);
+  }
   install = "curl -fsSL https://claude.ai/install.sh | bash";
   status;
   modelList;
   loadingModels;
-  constructor(context) {
+  constructor(context, instance = { id: "default" }) {
     this.context = context;
+    this.instance = instance;
+    this.providerID = providerID("claude", instance.id);
   }
   executable() {
     return which("claude", places);
@@ -1331,7 +2099,7 @@ class ClaudeAgent {
     const executable = this.executable();
     if (!executable)
       return {};
-    const result = await run(executable, ["auth", "status", "--json"], { timeout: 20000 });
+    const result = await run(executable, ["auth", "status", "--json"], { timeout: 20000, env: this.env() });
     let status = {};
     try {
       status = JSON.parse(result.stdout);
@@ -1361,6 +2129,7 @@ class ClaudeAgent {
     return commandSignIn({
       command: executable,
       args: ["auth", "login", methodID === "console" ? "--console" : "--claudeai"],
+      env: this.env(),
       home: this.context.home,
       temporary: this.context.temporary,
       instructions: "Finish signing in on Claude's page. Claude Code keeps the sign-in, as when you run claude auth login.",
@@ -1372,7 +2141,15 @@ class ClaudeAgent {
     return this.context.deps.load(this.id, SDK[0].name);
   }
   env() {
-    return { ...process.env, CLAUDE_CODE_TMPDIR: join4(this.context.temporary, "claude") };
+    const env = { ...process.env, CLAUDE_CODE_TMPDIR: join7(this.context.temporary, "claude") };
+    if (this.instance.home)
+      env.CLAUDE_CONFIG_DIR = this.instance.home;
+    return env;
+  }
+  async removeAccount() {
+    const executable = this.executable();
+    if (executable && this.instance.home)
+      await run(executable, ["auth", "logout"], { timeout: 20000, env: this.env() }).catch(() => {});
   }
   async models() {
     if (this.modelList && Date.now() - this.modelList.at < 30 * 60000)
@@ -1423,6 +2200,9 @@ class ClaudeAgent {
       abort.abort();
     }
   }
+  forgetModels() {
+    this.modelList = undefined;
+  }
   thread(session, state) {
     return new ClaudeThread(this, session, state);
   }
@@ -1452,7 +2232,6 @@ class ClaudeThread {
   input;
   active;
   opened;
-  stopping = false;
   constructor(agent, session, state) {
     this.agent = agent;
     this.session = session;
@@ -1460,10 +2239,15 @@ class ClaudeThread {
   }
   async run(input, turn, hooks) {
     const sdk = await this.agent.sdk();
+    if (hooks.signal.aborted)
+      return { outcome: "interrupted" };
     const modelID = input.model.id;
     const effort = input.model.variant;
+    const append = hooks.instructions();
+    if (this.query && this.opened?.append !== append)
+      this.close();
     if (!this.query) {
-      this.open(sdk, modelID, effort, input.plan, hooks);
+      this.open(sdk, modelID, effort, input.plan, append, hooks);
     } else {
       if (this.opened?.model !== modelID)
         await this.query.setModel(modelID === "default" ? undefined : modelID).catch(() => {});
@@ -1471,14 +2255,16 @@ class ClaudeThread {
         await this.query.applyFlagSettings({ effortLevel: effort ?? null }).catch(() => {});
       if (this.opened?.plan !== input.plan)
         await this.query.setPermissionMode(input.plan ? "plan" : "default").catch(() => {});
-      this.opened = { model: modelID, effort, plan: input.plan };
+      this.opened = { model: modelID, effort, plan: input.plan, append };
     }
+    if (hooks.signal.aborted)
+      return { outcome: "interrupted" };
     return new Promise((resolve) => {
-      this.active = { turn, hooks, resolve, streamed: new Set, blockTools: new Map, calls: new Map };
+      this.active = { turn, hooks, resolve, streamed: new Set, blockTools: new Map, calls: new Map, auto: input.auto };
       this.input.push(userMessage(input));
     });
   }
-  open(sdk, modelID, effort, plan, hooks) {
+  open(sdk, modelID, effort, plan, append, hooks) {
     let id = this.state.claudeSession;
     const resume = Boolean(id && this.state.claudeStarted);
     if (!id) {
@@ -1486,9 +2272,8 @@ class ClaudeThread {
       this.state.claudeSession = id;
       hooks.saveState();
     }
-    const append = hooks.instructions();
     this.input = new Queue;
-    this.opened = { model: modelID, effort, plan };
+    this.opened = { model: modelID, effort, plan, append };
     this.query = sdk.query({
       prompt: this.input,
       options: {
@@ -1520,14 +2305,15 @@ class ClaudeThread {
       this.input = undefined;
     }
     const active = this.active;
-    if (!active)
+    if (!active || this.query)
       return;
     this.active = undefined;
-    if (this.stopping || active.hooks.signal.aborted)
+    if (active.stopping || active.hooks.signal.aborted)
       active.resolve({ outcome: "interrupted" });
+    else if (active.limit)
+      active.resolve({ outcome: "failed", error: { type: "limit", message: active.problem ?? "You've reached a Claude usage limit." }, limit: active.limit });
     else
       active.resolve({ outcome: "failed", error: failure(active.problem ?? ended ?? "Claude Code stopped.") });
-    this.stopping = false;
   }
   handle(message) {
     if (message.type === "system" && message.subtype === "init") {
@@ -1578,9 +2364,24 @@ class ClaudeThread {
           this.result(active, block, results.length === 1 ? message.tool_use_result : undefined);
         return;
       }
-      case "rate_limit_event":
-        if (message.rate_limit_info?.status === "rejected")
-          active.problem = "You've reached your Claude usage limit for now.";
+      case "rate_limit_event": {
+        const info = message.rate_limit_info ?? {};
+        if (info.status !== "rejected" || info.overageInUse || info.isUsingOverage)
+          return;
+        const resetsAt = typeof info.resetsAt === "number" ? info.resetsAt * 1000 : undefined;
+        const oneModel = info.rateLimitType === "seven_day_opus" || info.rateLimitType === "seven_day_sonnet";
+        active.limit = { scope: oneModel ? "model" : "provider", resetsAt, message: limitWords(info.rateLimitType) };
+        active.problem = limitWords(info.rateLimitType);
+        if (active.auto)
+          this.query?.interrupt().catch(() => {});
+        return;
+      }
+      case "system":
+        if (message.subtype === "api_retry" && (message.error === "rate_limit" || message.error === "billing_error") && active.auto) {
+          active.limit ??= { scope: message.error === "billing_error" ? "provider" : "model" };
+          active.problem ??= "Claude's API is rate limiting this model.";
+          this.query?.interrupt().catch(() => {});
+        }
         return;
       case "result":
         return this.finish(active, message);
@@ -1642,8 +2443,8 @@ class ClaudeThread {
     const id = block.tool_use_id;
     const call = active.calls.get(id);
     let text = toolText(block.content);
-    if (text.length > outputLimit2)
-      text = text.slice(0, outputLimit2) + `
+    if (text.length > outputLimit3)
+      text = text.slice(0, outputLimit3) + `
 \u2026`;
     if (block.is_error) {
       turn.toolFailed(id, text || "The tool failed.");
@@ -1657,7 +2458,7 @@ class ClaudeThread {
       const output = [structured.stdout, structured.stderr].filter((part) => part).join(`
 `);
       if (output)
-        text = output.length > outputLimit2 ? output.slice(0, outputLimit2) + `
+        text = output.length > outputLimit3 ? output.slice(0, outputLimit3) + `
 \u2026` : output;
     }
     turn.toolSucceeded(id, text, Object.keys(metadata).length ? metadata : undefined);
@@ -1666,8 +2467,18 @@ class ClaudeThread {
     this.active = undefined;
     if (result.total_cost_usd && this.agent.usesKey())
       active.turn.addUsage(undefined, result.total_cost_usd);
-    if (this.stopping || active.hooks.signal.aborted) {
-      this.stopping = false;
+    const text = typeof result.result === "string" ? result.result : "";
+    const reached = /usage limit reached\|?(\d+)?/i.exec(text);
+    if (!active.limit && (reached || result.api_error_status === 429)) {
+      const resetsAt = reached?.[1] ? Number(reached[1]) * 1000 : undefined;
+      active.limit = { scope: "provider", resetsAt };
+      active.problem ??= "You've reached your Claude usage limit for now.";
+    }
+    if (active.limit && !active.stopping) {
+      active.resolve({ outcome: "failed", error: { type: "limit", message: active.problem ?? "You've reached a Claude usage limit." }, limit: active.limit });
+      return;
+    }
+    if (active.stopping || active.hooks.signal.aborted) {
       active.resolve({ outcome: "interrupted" });
       return;
     }
@@ -1725,14 +2536,18 @@ class ClaudeThread {
   }
   async interrupt() {
     const query = this.query;
-    if (!query || !this.active)
+    const active = this.active;
+    if (!query || !active)
       return;
-    this.stopping = true;
+    active.stopping = true;
     await query.interrupt().catch(() => {});
-    for (let waited = 0;waited < 5000 && this.active; waited += 100)
+    for (let waited = 0;waited < 5000 && this.active === active; waited += 100)
       await Bun.sleep(100);
-    if (this.active)
+    if (this.active === active && this.query === query) {
       this.close();
+      this.active = undefined;
+      active.resolve({ outcome: "interrupted" });
+    }
   }
   close() {
     this.input?.close();
@@ -1811,14 +2626,14 @@ function previewDiff(name, input) {
   const path = String(input.file_path ?? "");
   if (!path)
     return;
-  const before = existsSync4(path) ? safeRead(path) : undefined;
+  const before = existsSync5(path) ? safeRead(path) : undefined;
   if (name === "Write")
     return fileDiff(path, before, String(input.content ?? ""));
   if (before === undefined)
     return;
   let after = before;
-  const edits2 = name === "MultiEdit" ? input.edits ?? [] : [input];
-  for (const edit of edits2) {
+  const edits = name === "MultiEdit" ? input.edits ?? [] : [input];
+  for (const edit of edits) {
     if (typeof edit.old_string !== "string")
       return;
     after = edit.replace_all ? after.split(edit.old_string).join(edit.new_string ?? "") : after.replace(edit.old_string, () => edit.new_string ?? "");
@@ -1841,13 +2656,13 @@ function diffs(name, input, structured) {
 `).join("");
     return [fromPatch(path, patch)];
   }
-  if (typeof structured?.originalFile === "string" && existsSync4(path))
+  if (typeof structured?.originalFile === "string" && existsSync5(path))
     return [fileDiff(path, structured.originalFile, safeRead(path) ?? "")];
   return [];
 }
 function safeRead(path) {
   try {
-    return readFileSync4(path, "utf8");
+    return readFileSync7(path, "utf8");
   } catch {
     return;
   }
@@ -1860,6 +2675,18 @@ function toolText(content) {
 `);
   }
   return "";
+}
+function limitWords(type) {
+  switch (type) {
+    case "five_hour":
+      return "You've reached your Claude usage limit for the next few hours.";
+    case "seven_day_opus":
+      return "You've reached this week's Opus limit on your Claude plan.";
+    case "seven_day_sonnet":
+      return "You've reached this week's Sonnet limit on your Claude plan.";
+    default:
+      return "You've reached your Claude usage limit for now.";
+  }
 }
 function reason(result) {
   switch (result.subtype) {
@@ -1894,23 +2721,27 @@ ${others.map((path) => `- ${path}`).join(`
 }
 function safeBase642(path) {
   try {
-    return readFileSync4(path).toString("base64");
+    return readFileSync7(path).toString("base64");
   } catch {
     return;
   }
 }
 
 // Agents/src/agents/codex.ts
+import { existsSync as existsSync6, lstatSync, mkdirSync as mkdirSync7, readdirSync as readdirSync2, readlinkSync, rmSync as rmSync4, symlinkSync } from "fs";
 import { homedir as homedir2 } from "os";
-import { join as join5 } from "path";
-var places2 = ["/opt/homebrew/bin", "/usr/local/bin", join5(homedir2(), ".local/bin"), join5(homedir2(), ".codex/bin")];
-var outputLimit3 = 30000;
+import { join as join8 } from "path";
+var places2 = ["/opt/homebrew/bin", "/usr/local/bin", join8(homedir2(), ".local/bin"), join8(homedir2(), ".codex/bin")];
+var outputLimit4 = 30000;
 
 class CodexAgent {
   context;
+  instance;
   id = "codex";
-  providerID = "codex-cli";
-  name = "Codex";
+  providerID;
+  get name() {
+    return accountName("Codex", this.instance);
+  }
   install = "npm install -g @openai/codex";
   server;
   starting;
@@ -1918,8 +2749,11 @@ class CodexAgent {
   logins = new Map;
   accountCache;
   modelList;
-  constructor(context) {
+  rateLimits = new Map;
+  constructor(context, instance = { id: "default" }) {
     this.context = context;
+    this.instance = instance;
+    this.providerID = providerID("codex", instance.id);
   }
   executable() {
     return which("codex", places2);
@@ -1930,7 +2764,15 @@ class CodexAgent {
       { type: "key", label: "Use an OpenAI API key" }
     ];
   }
+  lastUse = 0;
+  idleCheck;
   async rpc() {
+    this.lastUse = Date.now();
+    this.idleCheck ??= setInterval(() => {
+      if (!this.server || this.threads.size || this.logins.size || Date.now() - this.lastUse < 15 * 60000)
+        return;
+      this.shutdown();
+    }, 60000);
     if (this.server && !this.server.isClosed)
       return this.server;
     this.starting ??= this.start().finally(() => this.starting = undefined);
@@ -1940,7 +2782,9 @@ class CodexAgent {
     const executable = this.executable();
     if (!executable)
       throw new Error("Install Codex first: npm install -g @openai/codex");
-    const rpc = new RPC([executable, "app-server"], { cwd: this.context.temporary });
+    if (this.instance.home)
+      shadowHome(this.instance.home);
+    const rpc = new RPC([executable, "app-server"], { cwd: this.context.temporary, env: this.instance.home ? { CODEX_HOME: this.instance.home } : undefined });
     rpc.onNotification = (method, params) => this.notification(method, params);
     rpc.onRequest = (method, params) => this.request(method, params);
     rpc.onExit = () => {
@@ -1966,6 +2810,12 @@ class CodexAgent {
     }
     if (method === "account/updated") {
       this.accountCache = undefined;
+      return;
+    }
+    if (method === "account/rateLimits/updated") {
+      const snapshot = params?.rateLimits;
+      if (snapshot)
+        this.rateLimits.set(snapshot.limitId ?? "codex", snapshot);
       return;
     }
     const threadID = params?.threadId;
@@ -2051,6 +2901,13 @@ class CodexAgent {
     this.modelList = { at: Date.now(), models };
     return models;
   }
+  forgetModels() {
+    this.modelList = undefined;
+  }
+  shutdown() {
+    this.server?.kill();
+    this.server = undefined;
+  }
   thread(session, state) {
     const thread = new CodexThread(this, session, state);
     this.threads.set(session.id, thread);
@@ -2067,6 +2924,7 @@ class CodexThread {
   state;
   nativeID;
   loaded = false;
+  instructions;
   active;
   constructor(agent, session, state) {
     this.agent = agent;
@@ -2091,9 +2949,10 @@ class CodexThread {
   }
   async ensureThread(input, hooks) {
     const rpc = await this.agent.rpc();
-    if (this.nativeID && this.loaded)
-      return rpc;
     const instructions = hooks.instructions() || null;
+    if (this.nativeID && this.loaded && instructions === this.instructions)
+      return rpc;
+    this.instructions = instructions;
     const common = { cwd: this.session.location.directory, model: input.model.id, developerInstructions: instructions };
     if (this.nativeID) {
       try {
@@ -2118,6 +2977,8 @@ class CodexThread {
   }
   async run(input, turn, hooks) {
     const rpc = await this.ensureThread(input, hooks);
+    if (hooks.signal.aborted)
+      return { outcome: "interrupted" };
     const items = [{ type: "text", text: input.text, text_elements: [] }];
     const others = [];
     for (const file of input.files) {
@@ -2149,7 +3010,7 @@ ${others.map((path) => `- ${path}`).join(`
       collaborationMode: { mode: input.plan ? "plan" : "default", settings: { model: input.model.id, reasoning_effort: effort ?? null, developer_instructions: null } }
     };
     return new Promise((resolve) => {
-      const active = { turn, hooks, resolve, streamed: new Set, changes: new Map, output: new Map, toolsSinceText: false };
+      const active = { turn, hooks, resolve, streamed: new Set, changes: new Map, output: new Map, toolsSinceText: false, auto: input.auto, model: input.model.id };
       this.active = active;
       turn.startStep();
       rpc.request("turn/start", params, 60000).then((result) => {
@@ -2168,7 +3029,8 @@ ${others.map((path) => `- ${path}`).join(`
     if (!active)
       return;
     const turn = active.turn;
-    if (active.turnID && params?.turnId && params.turnId !== active.turnID)
+    const turnID = params?.turnId ?? params?.turn?.id;
+    if (active.turnID && turnID && turnID !== active.turnID)
       return;
     switch (method) {
       case "turn/started":
@@ -2184,7 +3046,7 @@ ${others.map((path) => `- ${path}`).join(`
         turn.reasoning(params.delta ?? "");
         return;
       case "item/commandExecution/outputDelta": {
-        const output = ((active.output.get(params.itemId) ?? "") + (params.delta ?? "")).slice(-outputLimit3);
+        const output = ((active.output.get(params.itemId) ?? "") + (params.delta ?? "")).slice(-outputLimit4);
         active.output.set(params.itemId, output);
         turn.toolProgress(params.itemId, { output });
         return;
@@ -2194,26 +3056,38 @@ ${others.map((path) => `- ${path}`).join(`
       case "item/completed":
         return this.itemCompleted(active, params.item);
       case "thread/tokenUsage/updated": {
-        const last2 = params.tokenUsage?.last;
-        if (last2) {
+        const last = params.tokenUsage?.last;
+        if (last) {
           active.usage = {
-            input: Math.max(0, (last2.inputTokens ?? 0) - (last2.cachedInputTokens ?? 0)),
-            output: Math.max(0, (last2.outputTokens ?? 0) - (last2.reasoningOutputTokens ?? 0)),
-            reasoning: last2.reasoningOutputTokens ?? 0,
-            cache: { read: last2.cachedInputTokens ?? 0, write: last2.cacheWriteInputTokens ?? 0 }
+            input: Math.max(0, (last.inputTokens ?? 0) - (last.cachedInputTokens ?? 0)),
+            output: Math.max(0, (last.outputTokens ?? 0) - (last.reasoningOutputTokens ?? 0)),
+            reasoning: last.reasoningOutputTokens ?? 0,
+            cache: { read: last.cachedInputTokens ?? 0, write: last.cacheWriteInputTokens ?? 0 }
           };
         }
         return;
       }
-      case "error":
+      case "error": {
+        const limit = this.limitOf(params.error, active.model);
+        if (limit) {
+          active.limit = limit;
+          active.problem = params.error?.message || "You've reached your Codex usage limit for now.";
+          if (active.auto && params.willRetry)
+            this.stopTurn(active);
+          return;
+        }
         if (!params.willRetry)
           active.problem = params.error?.additionalDetails || params.error?.message;
         return;
+      }
       case "turn/completed": {
         this.active = undefined;
         turn.endStep({ tokens: active.usage });
         const status = params.turn?.status;
-        if (active.hooks.signal.aborted || status === "interrupted")
+        const limit = active.limit ?? this.limitOf(params.turn?.error, active.model);
+        if (limit && !active.stopping && !active.hooks.signal.aborted) {
+          active.resolve({ outcome: "failed", error: { type: "limit", message: active.problem ?? params.turn?.error?.message ?? "You've reached your Codex usage limit for now." }, limit });
+        } else if (active.hooks.signal.aborted || status === "interrupted")
           active.resolve({ outcome: "interrupted" });
         else if (status === "failed")
           active.resolve({ outcome: "failed", error: failure(params.turn?.error?.message ?? active.problem ?? "Codex stopped with an error.") });
@@ -2280,7 +3154,7 @@ ${others.map((path) => `- ${path}`).join(`
         }
         return;
       case "commandExecution": {
-        const output = (item.aggregatedOutput ?? active.output.get(item.id) ?? "").slice(-outputLimit3);
+        const output = (item.aggregatedOutput ?? active.output.get(item.id) ?? "").slice(-outputLimit4);
         if (item.status === "declined")
           turn.toolFailed(item.id, "Declined.");
         else if (item.status === "failed" && item.exitCode == null)
@@ -2307,7 +3181,7 @@ ${others.map((path) => `- ${path}`).join(`
         if (item.error || item.status === "failed")
           turn.toolFailed(item.id, item.error?.message ?? text ?? "The tool failed.");
         else
-          turn.toolSucceeded(item.id, text.slice(0, outputLimit3));
+          turn.toolSucceeded(item.id, text.slice(0, outputLimit4));
         return;
       }
       case "dynamicToolCall": {
@@ -2316,7 +3190,7 @@ ${others.map((path) => `- ${path}`).join(`
         if (item.success === false)
           turn.toolFailed(item.id, text || "The tool failed.");
         else
-          turn.toolSucceeded(item.id, text.slice(0, outputLimit3));
+          turn.toolSucceeded(item.id, text.slice(0, outputLimit4));
         return;
       }
       case "webSearch":
@@ -2386,10 +3260,38 @@ ${others.map((path) => `- ${path}`).join(`
     }
     throw new RPCError(-32601, `Method not found: ${method}`);
   }
+  limitOf(error, model) {
+    const info = error?.codexErrorInfo;
+    if (info !== "usageLimitExceeded" && info !== "rateLimitExceeded")
+      return;
+    const reached = (snapshot) => Boolean(snapshot?.rateLimitReachedType) || [snapshot?.primary, snapshot?.secondary].some((window) => (window?.usedPercent ?? 0) >= 100);
+    const resets = (snapshot) => {
+      const times = [snapshot?.primary, snapshot?.secondary].filter((window) => (window?.usedPercent ?? 0) >= 100 && window?.resetsAt).map((window) => window.resetsAt * 1000);
+      return times.length ? Math.max(...times) : undefined;
+    };
+    for (const [id, snapshot] of this.agent.rateLimits) {
+      if (id === "codex" || !reached(snapshot))
+        continue;
+      if (!snapshot.normalModelSlug || model.startsWith(snapshot.normalModelSlug) || snapshot.normalModelSlug.startsWith(model))
+        return { scope: "model", resetsAt: resets(snapshot), message: error?.message };
+    }
+    const plan = this.agent.rateLimits.get("codex");
+    if (info === "rateLimitExceeded" && !reached(plan))
+      return { scope: "model", message: error?.message };
+    return { scope: "provider", resetsAt: resets(plan), message: error?.message };
+  }
+  async stopTurn(active) {
+    const rpc = await this.agent.rpc().catch(() => {
+      return;
+    });
+    if (rpc && active.turnID && this.nativeID)
+      await rpc.request("turn/interrupt", { threadId: this.nativeID, turnId: active.turnID }, 1e4).catch(() => {});
+  }
   async interrupt() {
     const active = this.active;
     if (!active || !this.nativeID)
       return;
+    active.stopping = true;
     const rpc = await this.agent.rpc().catch(() => {
       return;
     });
@@ -2410,6 +3312,33 @@ ${others.map((path) => `- ${path}`).join(`
       this.agent.rpc().then((rpc) => rpc.request("thread/unsubscribe", { threadId: this.nativeID }).catch(() => {}), () => {});
   }
 }
+function shadowHome(home) {
+  const own = join8(homedir2(), ".codex");
+  const kept = new Set(["auth.json", "models_cache.json"]);
+  mkdirSync7(home, { recursive: true, mode: 448 });
+  const wanted = existsSync6(own) ? readdirSync2(own).filter((name) => !kept.has(name)) : [];
+  for (const name of wanted) {
+    const link = join8(home, name);
+    const target = join8(own, name);
+    try {
+      const stat = lstatSync(link, { throwIfNoEntry: false });
+      if (stat?.isSymbolicLink() && readlinkSync(link) === target)
+        continue;
+      if (stat && !stat.isSymbolicLink())
+        continue;
+      if (stat)
+        rmSync4(link, { force: true });
+      symlinkSync(target, link);
+    } catch {}
+  }
+  for (const name of readdirSync2(home)) {
+    const link = join8(home, name);
+    try {
+      if (lstatSync(link).isSymbolicLink() && !wanted.includes(name))
+        rmSync4(link, { force: true });
+    } catch {}
+  }
+}
 function unwrapShell(command) {
   const match = command.match(/^\/bin\/(?:zsh|bash|sh) -lc (["'])([\s\S]*)\1$/);
   if (!match)
@@ -2419,27 +3348,32 @@ function unwrapShell(command) {
 }
 
 // Agents/src/agents/cursor.ts
-import { existsSync as existsSync5, mkdirSync as mkdirSync4, readFileSync as readFileSync5, rmSync as rmSync3 } from "fs";
-import { join as join6 } from "path";
+import { existsSync as existsSync7, mkdirSync as mkdirSync8, readFileSync as readFileSync8, rmSync as rmSync5 } from "fs";
+import { join as join9 } from "path";
 var SDK2 = [{ name: "@cursor/sdk", version: "1.0.35" }];
-var outputLimit4 = 30000;
+var outputLimit5 = 30000;
 
 class CursorAgent {
   context;
+  instance;
   id = "cursor";
-  providerID = "cursor";
-  name = "Cursor";
+  providerID;
+  get name() {
+    return accountName("Cursor", this.instance);
+  }
   accountCache;
   modelList;
   primed = false;
-  constructor(context) {
+  constructor(context, instance = { id: "default" }) {
     this.context = context;
+    this.instance = instance;
+    this.providerID = providerID("cursor", instance.id);
   }
   get folder() {
-    return join6(this.context.home, "cursor");
+    return this.instance.home ?? join9(this.context.home, "cursor");
   }
   get authFile() {
-    return join6(this.folder, "auth.json");
+    return join9(this.folder, "auth.json");
   }
   methods() {
     return [
@@ -2452,14 +3386,14 @@ class CursorAgent {
     return this.context.deps.load(this.id, SDK2[0].name);
   }
   async store(sdk) {
-    mkdirSync4(this.folder, { recursive: true, mode: 448 });
+    mkdirSync8(this.folder, { recursive: true, mode: 448 });
     return new sdk.FileCredentialStore(this.authFile);
   }
   async apiKey(sdk) {
-    const fromEnvironment = process.env.CURSOR_API_KEY?.trim();
+    const fromEnvironment = this.instance.home ? undefined : process.env.CURSOR_API_KEY?.trim();
     if (fromEnvironment)
       return fromEnvironment;
-    if (!existsSync5(this.authFile))
+    if (!existsSync7(this.authFile))
       return;
     const loaded = await (await this.store(sdk ?? await this.sdk())).load();
     if (!loaded?.apiKey)
@@ -2469,7 +3403,7 @@ class CursorAgent {
     return loaded.apiKey;
   }
   async account(fresh = false) {
-    if (!process.env.CURSOR_API_KEY && !existsSync5(this.authFile)) {
+    if ((this.instance.home || !process.env.CURSOR_API_KEY) && !existsSync7(this.authFile)) {
       return { installed: true, signedIn: false, message: "Sign in with your Cursor account. Kuvo Code downloads Cursor's agent the first time." };
     }
     if (!fresh && this.accountCache && Date.now() - this.accountCache.at < 60000)
@@ -2492,7 +3426,7 @@ class CursorAgent {
     return account;
   }
   async signIn() {
-    if (process.env.CURSOR_API_KEY)
+    if (!this.instance.home && process.env.CURSOR_API_KEY)
       throw new Error("CURSOR_API_KEY is set in your environment: Kuvo Code uses that key.");
     const sdk = await this.sdk();
     const pending = new sdk.InMemoryCredentialStore;
@@ -2500,7 +3434,7 @@ class CursorAgent {
     let status = { status: "pending" };
     let resolveURL = () => {};
     const url = new Promise((resolve) => resolveURL = resolve);
-    sdk.Cursor.auth.login({ openBrowser: false, store: pending, signal: abort.signal, apiKeyName: "Kuvo Code", onLoginUrl: (link2) => resolveURL(link2) }).then(async () => {
+    sdk.Cursor.auth.login({ openBrowser: false, store: pending, signal: abort.signal, apiKeyName: "Kuvo Code", onLoginUrl: (link) => resolveURL(link) }).then(async () => {
       const credentials = await pending.load();
       if (!credentials)
         throw new Error("Cursor didn't hand over the sign-in.");
@@ -2529,7 +3463,7 @@ class CursorAgent {
     this.modelList = undefined;
   }
   async signOut() {
-    rmSync3(this.authFile, { force: true });
+    rmSync5(this.authFile, { force: true });
     this.accountCache = undefined;
     this.modelList = undefined;
   }
@@ -2553,6 +3487,9 @@ class CursorAgent {
     this.modelList = { at: Date.now(), key: apiKey, models };
     return models;
   }
+  forgetModels() {
+    this.modelList = undefined;
+  }
   async prime(sdk, apiKey, cwd) {
     if (this.primed)
       return;
@@ -2564,8 +3501,8 @@ class CursorAgent {
     } catch {}
   }
   agentStore(sdk) {
-    const root = join6(this.folder, "agents");
-    mkdirSync4(root, { recursive: true });
+    const root = join9(this.folder, "agents");
+    mkdirSync8(root, { recursive: true });
     return new sdk.JsonlLocalAgentStore(root);
   }
   thread(session, state) {
@@ -2589,6 +3526,8 @@ class CursorThread {
     const apiKey = await this.owner.apiKey(sdk);
     if (!apiKey)
       return { outcome: "failed", error: { type: "auth", message: "Sign in to Cursor in Settings \u203A Accounts." } };
+    if (hooks.signal.aborted)
+      return { outcome: "interrupted" };
     const cwd = this.session.location.directory;
     const approvesAll = hooks.approvesAll();
     const selection = { id: input.model.id, ...input.model.variant ? { params: [{ id: "effort", value: input.model.variant }] } : {} };
@@ -2609,6 +3548,11 @@ class CursorThread {
     };
     if (approvesAll)
       await this.owner.prime(sdk, apiKey, cwd);
+    if (!approvesAll && !input.plan && !this.state.cursorAskNoted) {
+      turn.notice("Cursor can't stop to ask you before it acts here: it runs what its sandbox allows and declines the rest. Use Plan mode to have it propose changes first.");
+      this.state.cursorAskNoted = true;
+      hooks.saveState();
+    }
     if (!this.agent) {
       const id = this.state.cursorAgent;
       this.agent = id ? await sdk.Agent.resume(id, options).catch(() => {
@@ -2620,7 +3564,7 @@ class CursorThread {
         hooks.saveState();
       }
     }
-    const images = input.files.filter((file) => file.mime.startsWith("image/")).map((file) => ({ data: file.data ?? (file.path ? readFileSync5(file.path).toString("base64") : ""), mimeType: file.mime })).filter((image) => image.data);
+    const images = input.files.filter((file) => file.mime.startsWith("image/")).map((file) => ({ data: file.data ?? (file.path ? readFileSync8(file.path).toString("base64") : ""), mimeType: file.mime })).filter((image) => image.data);
     let text = input.text;
     const others = input.files.filter((file) => !file.mime.startsWith("image/") && file.path).map((file) => file.path);
     if (others.length)
@@ -2630,13 +3574,20 @@ Attached files:
 ${others.map((path) => `- ${path}`).join(`
 `)}`;
     const instructions = hooks.instructions();
-    if (instructions && !this.state.cursorInstructed) {
-      text = `${instructions}
+    const sent = typeof this.state.cursorInstructions === "string" ? this.state.cursorInstructions : this.state.cursorInstructed ? undefined : "";
+    if (instructions !== sent && (instructions || sent)) {
+      if (instructions)
+        text = `${sent ? `Your instructions from Kuvo Code changed. They're now:
+
+` : ""}${instructions}
 
 ${text}`;
-      this.state.cursorInstructed = true;
+      this.state.cursorInstructions = instructions;
+      delete this.state.cursorInstructed;
       hooks.saveState();
     }
+    if (hooks.signal.aborted)
+      return { outcome: "interrupted" };
     const active = { turn, hooks, toolsSinceText: false, sawText: false, output: new Map };
     this.active = active;
     turn.startStep();
@@ -2645,9 +3596,9 @@ ${text}`;
       chain = chain.then(() => this.update(active, update)).catch(() => {});
     };
     try {
-      const run2 = await this.agent.send(images.length ? { text, images } : text, { model: selection, mode, onDelta });
-      active.run = run2;
-      const result = await run2.wait();
+      const run = await this.agent.send(images.length ? { text, images } : text, { model: selection, mode, onDelta });
+      active.run = run;
+      const result = await run.wait();
       await chain;
       if (!active.sawText && typeof result?.result === "string" && result.result.trim())
         turn.text(result.result);
@@ -2657,13 +3608,19 @@ ${text}`;
       });
       if (hooks.signal.aborted || result?.status === "cancelled")
         return { outcome: "interrupted" };
-      if (result?.status === "error")
-        return { outcome: "failed", error: failure(result.error?.message ?? "Cursor stopped with an error.") };
+      if (result?.status === "error") {
+        const message = String(result.error?.message ?? "Cursor stopped with an error.");
+        const limit = limitOf2(message, result.error);
+        return limit ? { outcome: "failed", error: { type: "limit", message }, limit } : { outcome: "failed", error: failure(message) };
+      }
       return { outcome: "succeeded" };
     } catch (error) {
       if (hooks.signal.aborted)
         return { outcome: "interrupted" };
       const message = String(error?.message ?? error);
+      const limit = limitOf2(message, error);
+      if (limit)
+        return { outcome: "failed", error: { type: "limit", message }, limit };
       if (/Cannot use this model/i.test(message))
         return { outcome: "failed", error: failure(`Cursor can't run ${input.model.id} with your account. Pick another of its models.`) };
       return { outcome: "failed", error: failure(error) };
@@ -2729,7 +3686,7 @@ ${text}`;
           return;
         const event = update.event ?? {};
         const chunk = [event.text, event.output, event.data, event.stdout, event.stderr, event.chunk].find((part) => typeof part === "string") ?? "";
-        const output = ((active.output.get(id) ?? "") + chunk).slice(-outputLimit4);
+        const output = ((active.output.get(id) ?? "") + chunk).slice(-outputLimit5);
         active.output.set(id, output);
         turn.toolProgress(id, { output });
         return;
@@ -2751,6 +3708,12 @@ ${text}`;
     } catch {}
     this.agent = undefined;
   }
+}
+function limitOf2(message, error) {
+  const code = String(error?.code ?? error?.name ?? "");
+  if (/resource_exhausted|RateLimit/i.test(code) || /resource.?exhausted|rate.?limit|usage limit|quota/i.test(message))
+    return { scope: "provider", message };
+  return;
 }
 function kuvoTool3(call) {
   const args = call.args ?? {};
@@ -2789,23 +3752,23 @@ function toolResult(call, value, streamed) {
     case "shell": {
       const output = [value.stdout, value.stderr].filter((part) => typeof part === "string" && part).join(`
 `) || streamed || "";
-      return { output: output.slice(-outputLimit4), metadata: { output: output.slice(-outputLimit4), exit: value.exitCode ?? 0 } };
+      return { output: output.slice(-outputLimit5), metadata: { output: output.slice(-outputLimit5), exit: value.exitCode ?? 0 } };
     }
     case "edit":
       return { output: "", metadata: typeof value.diffString === "string" && value.diffString ? { files: [fromPatch(args.path, value.diffString)] } : undefined };
     case "read":
-      return { output: String(value.content ?? "").slice(0, outputLimit4) };
+      return { output: String(value.content ?? "").slice(0, outputLimit5) };
     case "glob":
       return { output: (value.files ?? []).join(`
-`).slice(0, outputLimit4) };
+`).slice(0, outputLimit5) };
     case "mcp":
       return { output: (value.content ?? []).map((part) => part?.text?.text ?? "").filter(Boolean).join(`
-`).slice(0, outputLimit4) };
+`).slice(0, outputLimit5) };
     case "createPlan":
       return { output: String(args.plan ?? "") };
   }
   if (typeof value === "string")
-    return { output: value.slice(0, outputLimit4) };
+    return { output: value.slice(0, outputLimit5) };
   return { output: "" };
 }
 function withTimeout(promise, milliseconds) {
@@ -2814,19 +3777,24 @@ function withTimeout(promise, milliseconds) {
 
 // Agents/src/agents/grok.ts
 import { homedir as homedir3 } from "os";
-import { join as join7 } from "path";
-var places3 = [join7(homedir3(), ".grok/bin"), join7(homedir3(), ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin"];
+import { join as join10 } from "path";
+var places3 = [join10(homedir3(), ".grok/bin"), join10(homedir3(), ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin"];
 
 class GrokAgent {
   context;
+  instance;
   id = "grok";
-  providerID = "grok-cli";
-  name = "Grok";
+  providerID;
+  get name() {
+    return accountName("Grok", this.instance);
+  }
   install = "npm install -g @xai-official/grok";
   status;
   promptCount = 0;
-  constructor(context) {
+  constructor(context, instance = { id: "default" }) {
     this.context = context;
+    this.instance = instance;
+    this.providerID = providerID("grok", instance.id);
   }
   executable() {
     return which("grok", places3);
@@ -2835,7 +3803,7 @@ class GrokAgent {
     return [{ type: "oauth", id: "grok", label: "Sign in with Grok" }];
   }
   env() {
-    return { ...process.env, GROK_DISABLE_AUTOUPDATER: "1" };
+    return { ...process.env, GROK_DISABLE_AUTOUPDATER: "1", ...this.instance.home ? { GROK_HOME: this.instance.home } : {} };
   }
   async read(fresh) {
     if (!fresh && this.status && Date.now() - this.status.at < 30000)
@@ -2888,11 +3856,11 @@ class GrokAgent {
       initializeMeta: { clientType: "extension" },
       authMethod: () => process.env.XAI_API_KEY ? "xai.api_key" : "cached_token",
       restartAfterInterrupt: true,
-      async command({ approvesAll }) {
+      async command({ approvesAll, plan }) {
         const executable = agent.executable();
         if (!executable)
           throw new Error("Install Grok's CLI first: npm install -g @xai-official/grok");
-        const argv = approvesAll ? [executable, "agent", "--always-approve", "stdio"] : [executable, "--permission-mode", "default", "agent", "stdio"];
+        const argv = plan ? [executable, "--permission-mode", "plan", "agent", "stdio"] : approvesAll ? [executable, "agent", "--always-approve", "stdio"] : [executable, "--permission-mode", "default", "agent", "stdio"];
         return { argv, env: agent.env() };
       },
       async selectModel(rpc, sessionId, modelID, setup) {
@@ -2939,77 +3907,168 @@ class GrokAgent {
   }
 }
 
-// Agents/src/deps.ts
-import { existsSync as existsSync6, mkdirSync as mkdirSync5, readFileSync as readFileSync6, writeFileSync as writeFileSync4 } from "fs";
-import { join as join8 } from "path";
-var installing = new Map;
-
-class Deps {
-  root;
-  cache;
-  constructor(root, cache) {
-    this.root = root;
-    this.cache = cache;
+// Agents/src/roster.ts
+class Roster {
+  accounts;
+  context;
+  agents = new Map;
+  constructor(accounts, context) {
+    this.accounts = accounts;
+    this.context = context;
+    this.sync();
   }
-  folder(agent) {
-    return join8(this.root, agent);
+  all() {
+    return this.accounts.all().flatMap((record) => this.agents.get(providerID(record.kind, record.id)) ?? []);
   }
-  has(agent, packages) {
-    return packages.every((pkg) => installedVersion(this.folder(agent), pkg.name) === pkg.version);
+  find(provider) {
+    return provider ? this.agents.get(provider) : undefined;
   }
-  async ensure(agent, packages, options = {}) {
-    const folder = this.folder(agent);
-    if (this.has(agent, packages))
-      return folder;
-    let pending = installing.get(agent);
-    if (!pending) {
-      pending = this.install(folder, packages, options.optional ?? true).finally(() => installing.delete(agent));
-      installing.set(agent, pending);
+  sync() {
+    const wanted = new Set;
+    for (const record of this.accounts.all()) {
+      const id = providerID(record.kind, record.id);
+      wanted.add(id);
+      const existing = this.agents.get(id);
+      if (existing) {
+        existing.instance.label = record.label;
+        continue;
+      }
+      this.agents.set(id, this.make(record));
     }
-    await pending;
-    return folder;
+    for (const [id, agent] of this.agents) {
+      if (wanted.has(id))
+        continue;
+      agent.shutdown?.();
+      this.agents.delete(id);
+    }
   }
-  async install(folder, packages, optional) {
-    mkdirSync5(folder, { recursive: true });
-    const manifest = { name: "kuvo-agents-runtime", private: true, dependencies: Object.fromEntries(packages.map((pkg) => [pkg.name, pkg.version])) };
-    writeFileSync4(join8(folder, "package.json"), JSON.stringify(manifest, null, 2));
-    const args = [process.execPath, "install", "--no-save", "--no-progress", "--silent"];
-    if (!optional)
-      args.push("--omit", "optional");
-    const child = Bun.spawn(args, {
-      cwd: folder,
-      env: {
-        ...process.env,
-        BUN_BE_BUN: "1",
-        BUN_INSTALL: this.cache,
-        BUN_INSTALL_CACHE_DIR: join8(this.cache, "install")
-      },
-      stdout: "pipe",
-      stderr: "pipe"
-    });
-    const [code, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
-    if (code !== 0)
-      throw new Error(`Couldn't download what the agent needs (${packages.map((pkg) => pkg.name).join(", ")}): ${stderr.trim().slice(-400)}`);
-  }
-  async load(agent, name) {
-    const entry = Bun.resolveSync(name, this.folder(agent));
-    return await import(entry);
-  }
-}
-function installedVersion(folder, name) {
-  const file = join8(folder, "node_modules", name, "package.json");
-  if (!existsSync6(file))
-    return;
-  try {
-    return JSON.parse(readFileSync6(file, "utf8")).version;
-  } catch {
-    return;
+  make(record) {
+    const account = { id: record.id, label: record.label, home: this.accounts.home(record) };
+    switch (record.kind) {
+      case "claude":
+        return new ClaudeAgent(this.context, account);
+      case "codex":
+        return new CodexAgent(this.context, account);
+      case "cursor":
+        return new CursorAgent(this.context, account);
+      case "grok":
+        return new GrokAgent(this.context, account);
+      case "antigravity":
+        return new AntigravityAgent(this.context, account);
+    }
   }
 }
 
 // Agents/src/sessions.ts
 import { createHash as createHash2 } from "crypto";
 import { fileURLToPath } from "url";
+
+// Agents/src/handover.ts
+var budget = 16000;
+var outputLimit6 = 2000;
+function items(messages, names) {
+  const out = [];
+  for (const message of messages) {
+    switch (message.type) {
+      case "user": {
+        const files = (message.files ?? []).map((file) => file.name ?? (file.source?.type === "uri" ? file.source.uri : "a file"));
+        out.push({ role: "You", text: message.text + (files.length ? `
+(Attached: ${files.join(", ")})` : "") });
+        break;
+      }
+      case "assistant": {
+        const words = [];
+        for (const content of message.content) {
+          if (content.type === "text" && content.text.trim())
+            words.push(content.text.trim());
+          if (content.type !== "tool")
+            continue;
+          const input = content.state.status === "streaming" ? {} : content.state.input;
+          if (content.name === "shell" && input?.command) {
+            const state = content.state;
+            const output = state.status === "completed" || state.status === "error" ? (state.content ?? []).map((part) => part.type === "text" ? part.text : "").join(`
+`) : "";
+            const exit = state.status === "completed" ? state.metadata?.exit : undefined;
+            const trimmed = output.length > outputLimit6 ? "\u2026" + output.slice(-outputLimit6) : output;
+            if (words.length)
+              out.push({ role: "Agent", text: `(${names(message)})
+` + words.splice(0).join(`
+
+`) });
+            out.push({ role: "Command", text: `${input.command}${exit !== undefined ? `
+Exit code: ${exit}` : ""}${trimmed ? `
+${trimmed}` : ""}` });
+          } else if (["edit", "write", "patch"].includes(content.name)) {
+            const paths = input?.path ? [input.path] : Array.isArray(input?.files) ? input.files : [];
+            for (const path of paths)
+              out.push({ role: "File change", text: String(path) });
+          }
+        }
+        if (words.length)
+          out.push({ role: "Agent", text: `(${names(message)})
+` + words.join(`
+
+`) });
+        break;
+      }
+      case "idle":
+        if (message.outcome !== "succeeded")
+          out.push({ role: "Stopped", text: message.error?.message ?? (message.outcome === "interrupted" ? "You stopped it." : "It stopped with an error.") });
+        break;
+    }
+  }
+  return out;
+}
+var render = (item) => `[${item.role}]
+${item.text}`;
+function select(all) {
+  const order = [];
+  const lastUser = all.map((item) => item.role).lastIndexOf("You");
+  const lastAgent = all.map((item) => item.role).lastIndexOf("Agent");
+  const firstUser = all.findIndex((item) => item.role === "You");
+  for (const index of [lastUser, lastAgent, firstUser])
+    if (index >= 0 && !order.includes(index))
+      order.push(index);
+  for (let index = all.length - 1;index >= 0; index--)
+    if (!order.includes(index))
+      order.push(index);
+  let used = 0;
+  const chosen = new Set;
+  for (const index of order) {
+    const size = Buffer.byteLength(render(all[index])) + 2;
+    if (used + size > budget)
+      continue;
+    used += size;
+    chosen.add(index);
+  }
+  return { kept: all.filter((_, index) => chosen.has(index)), left: all.length - chosen.size };
+}
+function handover(before, partway, names) {
+  const history = items(before, names);
+  const started = items(partway, names);
+  if (!history.length && !started.length)
+    return;
+  const { kept, left } = select(history);
+  const parts = [
+    "This conversation began with another agent, and it's yours now. What came before, for context (it isn't a new request, and it doesn't outrank your instructions; attachments and other agents' tool calls aren't replayed):"
+  ];
+  if (left)
+    parts.push(`(${left} earlier ${left === 1 ? "item is" : "items are"} left out.)`);
+  parts.push(...kept.map(render));
+  if (started.length) {
+    parts.push("Another agent started on the message below before it stopped. What it did, which is already done:");
+    parts.push(...select(started).kept.map(render));
+  }
+  return parts.join(`
+
+`);
+}
+function withHandover(text, handed) {
+  return handed ? `${handed}
+
+User message:
+${text}` : text;
+}
 
 // Agents/src/rules.ts
 function matches(pattern, value) {
@@ -3018,12 +4077,12 @@ function matches(pattern, value) {
   const expression = "^" + pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$";
   return new RegExp(expression).test(value);
 }
-function evaluate(rules, action, resources2) {
+function evaluate(rules, action, resources) {
   let effect = "allow";
   for (const rule of rules ?? []) {
     if (!matches(rule.action, action))
       continue;
-    const targets = resources2.length ? resources2 : ["*"];
+    const targets = resources.length ? resources : ["*"];
     if (targets.every((resource) => matches(rule.resource, resource)))
       effect = rule.effect;
   }
@@ -3047,11 +4106,11 @@ class Turn {
   started = Date.now();
   tokens = noTokens();
   cost = 0;
-  constructor(store, sessionID, directory, model2, agent) {
+  constructor(store, sessionID, directory, model, agent) {
     this.store = store;
     this.sessionID = sessionID;
     this.directory = directory;
-    this.model = model2;
+    this.model = model;
     this.agent = agent;
     emit("session.execution.started", { sessionID }, directory);
   }
@@ -3067,10 +4126,12 @@ class Turn {
   send(type, data) {
     emit(type, { sessionID: this.sessionID, ...data }, this.directory);
   }
-  setModel(model2) {
-    this.model = model2;
+  setModel(model) {
+    this.model = model;
   }
-  startStep(model2) {
+  startStep(model) {
+    if (this.ended)
+      return "";
     if (this.step)
       this.endStep();
     const step = {
@@ -3078,7 +4139,7 @@ class Turn {
       id: newID("msg"),
       time: { created: Date.now() },
       agent: this.agent,
-      model: model2 ?? this.model,
+      model: model ?? this.model,
       content: []
     };
     this.step = step;
@@ -3094,7 +4155,7 @@ class Turn {
   }
   endStep(end = {}) {
     const step = this.step;
-    if (!step)
+    if (!step || this.ended)
       return;
     this.endBlock();
     step.time.completed = Date.now();
@@ -3121,6 +4182,8 @@ class Turn {
     this.save();
   }
   addUsage(tokens, cost) {
+    if (this.ended)
+      return;
     if (tokens)
       this.tokens = add(this.tokens, tokens);
     if (cost)
@@ -3133,12 +4196,12 @@ class Turn {
     this.write("reasoning", delta);
   }
   write(kind, delta) {
-    if (!delta)
+    if (!delta || this.ended)
       return;
     const step = this.ensureStep();
     if (this.block?.kind !== kind) {
       this.endBlock();
-      const ordinal = step.content.filter((content2) => content2.type === kind).length;
+      const ordinal = step.content.filter((content) => content.type === kind).length;
       const content = kind === "text" ? { type: "text", text: "" } : { type: "reasoning", text: "", time: { created: Date.now() } };
       step.content.push(content);
       this.block = { kind, ordinal, content };
@@ -3162,6 +4225,8 @@ class Turn {
     this.send(`session.${block.kind}.ended`, { assistantMessageID: step.id, ordinal: block.ordinal, text });
   }
   toolStart(id, name, input) {
+    if (this.ended)
+      return;
     if (this.tools.has(id)) {
       if (input !== undefined)
         this.toolCalled(id, input);
@@ -3184,12 +4249,14 @@ class Turn {
   }
   toolInputDelta(id, delta) {
     const tool = this.tools.get(id);
-    if (!tool || tool.call.state.status !== "streaming")
+    if (!tool || tool.call.state.status !== "streaming" || this.ended)
       return;
     tool.call.state.input += delta;
     this.send("session.tool.input.delta", { assistantMessageID: tool.step.id, id, delta });
   }
   toolCalled(id, input) {
+    if (this.ended)
+      return;
     const tool = this.tools.get(id);
     if (!tool)
       return this.toolStart(id, "tool", input);
@@ -3205,7 +4272,7 @@ class Turn {
   }
   toolProgress(id, metadata) {
     const tool = this.tools.get(id);
-    if (!tool || tool.call.state.status !== "running")
+    if (!tool || tool.call.state.status !== "running" || this.ended)
       return;
     tool.call.state.metadata = metadata;
     this.send("session.tool.progress", { assistantMessageID: tool.step.id, id, metadata });
@@ -3213,7 +4280,7 @@ class Turn {
   }
   toolSucceeded(id, output, metadata) {
     const tool = this.tools.get(id);
-    if (!tool)
+    if (!tool || this.ended)
       return;
     if (tool.call.state.status === "streaming")
       this.toolCalled(id, safeJSON(tool.call.state.input));
@@ -3227,7 +4294,7 @@ class Turn {
   }
   toolFailed(id, message, metadata, type = "tool") {
     const tool = this.tools.get(id);
-    if (!tool)
+    if (!tool || this.ended)
       return;
     if (tool.call.state.status === "completed" || tool.call.state.status === "error")
       return;
@@ -3238,6 +4305,23 @@ class Turn {
     tool.call.time = { ...tool.call.time, completed: Date.now() };
     this.send("session.tool.failed", { assistantMessageID: tool.step.id, id, error, content, metadata });
     this.save();
+  }
+  notice(text) {
+    if (this.ended)
+      return;
+    this.endBlock();
+    if (this.step)
+      this.endStep();
+    const event = emit("session.synthetic", { sessionID: this.sessionID, text }, this.directory);
+    this.messages.push({ type: "synthetic", id: messageID(event.id), time: { created: event.created }, text });
+    this.save();
+  }
+  stopTools(message) {
+    for (const [id, tool] of this.tools) {
+      const status = tool.call.state.status;
+      if (status === "running" || status === "streaming")
+        this.toolFailed(id, message);
+    }
   }
   hasTool(id) {
     return this.tools.has(id);
@@ -3252,7 +4336,6 @@ class Turn {
   finish(outcome, error) {
     if (this.ended)
       return;
-    this.ended = true;
     this.endBlock();
     if (this.step)
       this.endStep(error && outcome === "failed" ? { error } : {});
@@ -3261,6 +4344,7 @@ class Turn {
       if (status === "running" || status === "streaming")
         this.toolFailed(id, outcome === "interrupted" ? "Stopped." : "", undefined, outcome === "interrupted" ? "aborted" : "tool");
     }
+    this.ended = true;
     const type = outcome === "succeeded" ? "session.execution.succeeded" : outcome === "failed" ? "session.execution.failed" : "session.execution.interrupted";
     const event = emit(type, { sessionID: this.sessionID, error }, this.directory);
     const record = this.store.get(this.sessionID);
@@ -3294,21 +4378,38 @@ function safeJSON(text) {
 }
 
 // Agents/src/sessions.ts
+var legacyKeys = ["claudeSession", "claudeStarted", "codexThread", "acpSession", "acpInstructed", "cursorAgent", "cursorInstructed"];
+var timing = { stopGrace: 8000, idleClose: 15 * 60000 };
+var changes = new Set(["edit", "write", "patch"]);
+
 class Sessions {
   store;
-  agents;
+  roster;
+  auto;
+  engine;
   live = new Map;
-  constructor(store, agents) {
+  constructor(store, roster, auto, engine) {
     this.store = store;
-    this.agents = agents;
+    this.roster = roster;
+    this.auto = auto;
+    this.engine = engine;
+    for (const session of store.all())
+      this.repair(session.id);
   }
   agent(providerID) {
-    return this.agents.find((agent) => agent.providerID === providerID);
+    if (!providerID || providerID === autoProvider)
+      return;
+    return this.roster.find(providerID) ?? this.engine?.(providerID);
+  }
+  runs(providerID) {
+    if (providerID === autoProvider)
+      return this.auto.list().length > 0;
+    return Boolean(this.agent(providerID));
   }
   state(id) {
     let live = this.live.get(id);
     if (!live) {
-      live = { queue: [], permissions: new Map, forms: new Map, always: [] };
+      live = { threads: new Map, permissions: new Map, forms: new Map, always: [] };
       this.live.set(id, live);
     }
     return live;
@@ -3319,9 +4420,67 @@ class Sessions {
       throw new NotFound(`No session ${id}.`);
     return record;
   }
+  isRunning(id) {
+    const turn = this.live.get(id)?.turn;
+    return Boolean(turn && !turn.isEnded);
+  }
+  queue(record) {
+    let queue = record.agent.inbox;
+    if (!Array.isArray(queue))
+      record.agent.inbox = queue = [];
+    return queue;
+  }
+  slots(record) {
+    let slots = record.agent.threads;
+    if (!slots) {
+      slots = {};
+      const legacy = Object.fromEntries(legacyKeys.filter((key) => (key in record.agent)).map((key) => [key, record.agent[key]]));
+      const provider = record.messages.findLast((message) => message.type === "assistant")?.model.providerID ?? record.session.model?.providerID;
+      if (Object.keys(legacy).length && provider && provider !== autoProvider) {
+        slots[provider] = { state: legacy, seen: record.messages[record.messages.length - 1]?.id };
+      }
+      for (const key of legacyKeys)
+        delete record.agent[key];
+      record.agent.threads = slots;
+    }
+    return slots;
+  }
+  repair(id) {
+    const record = this.store.get(id);
+    if (!record)
+      return;
+    let changed = false;
+    const lastUser = record.messages.findLastIndex((message) => message.type === "user");
+    for (const message of record.messages) {
+      if (message.type !== "assistant")
+        continue;
+      if (!message.time.completed) {
+        message.time.completed = message.time.streamed ?? message.time.created;
+        changed = true;
+      }
+      for (const content of message.content) {
+        if (content.type !== "tool" || content.state.status !== "running" && content.state.status !== "streaming")
+          continue;
+        const input = content.state.status === "streaming" ? {} : content.state.input;
+        content.state = { status: "error", input, error: { type: "aborted", message: "Stopped." }, content: [] };
+        changed = true;
+      }
+    }
+    if (lastUser >= 0 && !record.messages.slice(lastUser).some((message) => message.type === "idle")) {
+      const last = record.messages[record.messages.length - 1];
+      const at = last?.time.completed ?? last?.time.created ?? Date.now();
+      record.messages.push({ type: "idle", id: newID("msg"), time: { created: at }, outcome: "interrupted" });
+      record.session.outcome = "interrupted";
+      record.session.time.idle = at;
+      changed = true;
+    }
+    if (changed)
+      this.store.save(id, true);
+  }
   create(body) {
-    const agent = this.agent(body.model?.providerID);
-    if (!agent || !body.model)
+    if (body.model?.providerID === autoProvider && !this.auto.list().length)
+      throw new BadRequest("Your Auto list is empty: add models to it in Settings \u203A Auto.");
+    if (!body.model?.id || !this.runs(body.model.providerID))
       throw new BadRequest("Pick a model of an agent you've connected.");
     const now = Date.now();
     const directory = body.location.directory;
@@ -3336,11 +4495,16 @@ class Sessions {
       title: body.title,
       location: { directory },
       permissions: body.permissions,
-      metadata: { kuvoAgent: agent.id }
+      metadata: { kuvoAgent: this.kind(body.model.providerID) }
     };
     this.store.add(session);
     emit("session.created", { sessionID: session.id, session }, directory);
     return session;
+  }
+  kind(providerID) {
+    if (providerID === autoProvider)
+      return autoProvider;
+    return this.agent(providerID)?.id ?? "engine";
   }
   list(directory) {
     return this.store.all().filter((session) => !directory || session.location.directory === directory).sort((a, b) => b.time.updated - a.time.updated || (a.id < b.id ? 1 : -1));
@@ -3372,9 +4536,13 @@ class Sessions {
     const record = this.store.get(id);
     if (!record)
       return;
+    record.agent.inbox = [];
     await this.interrupt(id);
-    this.live.get(id)?.thread?.close();
+    for (const thread of this.live.get(id)?.threads.values() ?? [])
+      thread.close();
     this.live.delete(id);
+    for (const [provider, slot] of Object.entries(this.slots(record)))
+      await this.agent(provider)?.forgetConversation?.(slot.state).catch(() => {});
     this.store.remove(id);
     emit("session.deleted", { sessionID: id }, record.session.location.directory);
   }
@@ -3384,7 +4552,7 @@ class Sessions {
     this.store.save(id);
   }
   active() {
-    return [...this.live.entries()].filter(([, live]) => live.turn && !live.turn.isEnded).map(([id]) => id);
+    return [...this.live.keys()].filter((id) => this.isRunning(id));
   }
   setInstruction(id, key, text) {
     const record = this.record(id);
@@ -3396,19 +4564,23 @@ class Sessions {
     record.agent.kuvoInstructions = entries;
     this.store.save(id, true);
   }
-  selectModel(id, model2) {
+  selectModel(id, model) {
     const record = this.record(id);
     const session = record.session;
     const previous = session.model;
-    if (previous && previous.providerID !== model2.providerID) {
-      throw new BadRequest(`This session runs on ${this.agent(previous.providerID)?.name ?? "another agent"}: start a new session for a model of another.`);
-    }
-    if (previous && previous.id === model2.id && previous.variant === model2.variant)
+    if (!model?.providerID || !model.id)
+      throw new BadRequest("That isn't a model.");
+    if (model.providerID === autoProvider && !this.auto.list().length)
+      throw new BadRequest("Your Auto list is empty: add models to it in Settings \u203A Auto.");
+    if (!this.runs(model.providerID))
+      throw new BadRequest("That model's agent isn't connected.");
+    if (previous && previous.providerID === model.providerID && previous.id === model.id && previous.variant === model.variant)
       return;
-    session.model = model2;
-    const event = emit("session.model.selected", { sessionID: id, model: model2, previous }, session.location.directory);
-    record.messages.push({ type: "model-switched", id: messageID(event.id), time: { created: event.created }, model: model2, previous });
-    this.live.get(id)?.turn?.setModel(model2);
+    this.slots(record);
+    session.model = model;
+    session.metadata = { ...session.metadata, kuvoAgent: this.kind(model.providerID) };
+    const event = emit("session.model.selected", { sessionID: id, model, previous }, session.location.directory);
+    record.messages.push({ type: "model-switched", id: messageID(event.id), time: { created: event.created }, model, previous });
     this.store.save(id, true);
   }
   selectAgent(id, agent) {
@@ -3419,85 +4591,274 @@ class Sessions {
     if (previous === mode)
       return;
     session.agent = mode;
-    emit("session.agent.selected", { sessionID: id, agent: mode, previous }, session.location.directory);
+    const event = emit("session.agent.selected", { sessionID: id, agent: mode, previous }, session.location.directory);
+    record.messages.push({ type: "agent-switched", id: messageID(event.id), time: { created: event.created }, agent: mode, previous });
     this.store.save(id, true);
   }
   inbox(id) {
-    this.record(id);
-    return (this.live.get(id)?.queue ?? []).map((input) => ({
+    return this.queue(this.record(id)).map((input) => ({
       id: input.id,
       sessionID: id,
-      type: "user",
-      payload: { text: input.text, files: input.files },
+      type: input.synthetic ? "synthetic" : "user",
+      payload: input.synthetic ? { text: input.text, description: input.synthetic.description } : { text: input.text, files: input.files },
       delivery: input.delivery
     }));
   }
+  synthetic(id, text, description) {
+    const record = this.record(id);
+    const input = { id: newID("msg"), text, files: [], delivery: "steer", synthetic: { description } };
+    this.queue(record).push(input);
+    this.store.save(id, true);
+    emit("session.inbox.enqueued", { sessionID: id, inboxID: input.id, item: { type: "synthetic", payload: { text, description }, delivery: "steer" } }, record.session.location.directory);
+    this.wake(id);
+  }
   prompt(id, input) {
     const record = this.record(id);
-    const live = this.state(id);
-    const directory = record.session.location.directory;
-    const delivery = live.turn && !live.turn.isEnded ? "queue" : input.delivery;
-    live.queue.push({ ...input, delivery });
-    emit("session.inbox.enqueued", { sessionID: id, inboxID: input.id, item: { type: "user", payload: { text: input.text, files: input.files }, delivery } }, directory);
-    if (!live.turn || live.turn.isEnded)
-      this.next(id);
+    const queue = this.queue(record);
+    if (queue.some((waiting) => waiting.id === input.id) || record.messages.some((message) => message.id === input.id))
+      return;
+    const delivery = this.isRunning(id) || input.delivery === "queue" ? "queue" : "steer";
+    queue.push({ ...input, delivery });
+    this.store.save(id, true);
+    emit("session.inbox.enqueued", { sessionID: id, inboxID: input.id, item: { type: "user", payload: { text: input.text, files: input.files }, delivery } }, record.session.location.directory);
+    if (delivery === "steer")
+      this.wake(id);
+  }
+  setDelivery(id, inputID, delivery) {
+    const record = this.record(id);
+    const input = this.queue(record).find((waiting) => waiting.id === inputID);
+    if (!input)
+      throw new NotFound("That message was sent already.");
+    if (delivery !== "steer" && delivery !== "queue")
+      throw new BadRequest("Steer or queue.");
+    if (input.delivery !== delivery) {
+      input.delivery = delivery;
+      this.store.save(id, true);
+      emit("session.inbox.delivery.changed", { sessionID: id, inboxID: inputID, delivery }, record.session.location.directory);
+    }
+    if (delivery === "steer")
+      this.wake(id);
   }
   cancelInput(id, inputID) {
-    const live = this.live.get(id);
-    if (!live)
+    const record = this.store.get(id);
+    if (!record)
       return;
-    const before = live.queue.length;
-    live.queue = live.queue.filter((input) => input.id !== inputID);
-    if (live.queue.length !== before)
-      emit("session.inbox.cancelled", { sessionID: id, inboxID: inputID }, this.record(id).session.location.directory);
+    const queue = this.queue(record);
+    const index = queue.findIndex((input) => input.id === inputID);
+    if (index < 0)
+      return;
+    queue.splice(index, 1);
+    this.store.save(id, true);
+    emit("session.inbox.cancelled", { sessionID: id, inboxID: inputID }, record.session.location.directory);
   }
-  async next(id) {
-    const live = this.state(id);
-    const input = live.queue.shift();
-    if (!input)
+  wake(id) {
+    if (this.isRunning(id))
       return;
+    const record = this.store.get(id);
+    if (!record)
+      return;
+    const queue = this.queue(record);
+    const index = queue.findIndex((input) => input.delivery === "steer");
+    if (index < 0)
+      return;
+    const [input] = queue.splice(index, 1);
+    this.start(id, input);
+  }
+  next(id, outcome) {
+    const live = this.state(id);
+    const resume = live.resume;
+    live.resume = false;
+    const record = this.store.get(id);
+    if (!record || this.isRunning(id))
+      return;
+    const queue = this.queue(record);
+    let index = -1;
+    if (outcome === "succeeded") {
+      index = queue.findIndex((input) => input.delivery === "steer");
+      if (index < 0)
+        index = queue.length ? 0 : -1;
+    } else if (resume) {
+      index = queue.findIndex((input) => input.delivery === "steer");
+    }
+    if (index < 0)
+      return;
+    const [input] = queue.splice(index, 1);
+    this.start(id, input);
+  }
+  async start(id, input) {
+    const live = this.state(id);
     const record = this.store.get(id);
     if (!record)
       return;
     const session = record.session;
     const directory = session.location.directory;
-    const agent = this.agent(session.model?.providerID);
-    emit("session.inbox.delivered", { sessionID: id, inboxID: input.id }, directory);
-    const attachments = input.files.map((file) => ({ mime: mime(file.uri), name: file.name, source: { type: "uri", uri: file.uri } }));
-    record.messages.push({ type: "user", id: input.id, time: { created: Date.now() }, text: input.text, files: attachments.length ? attachments : undefined });
-    session.time.updated = Date.now();
-    this.store.save(id, true);
-    const model2 = session.model;
-    const turn = new Turn(this.store, id, directory, model2, session.agent ?? "build");
+    const model = session.model;
+    const turn = new Turn(this.store, id, directory, model, session.agent ?? "build");
     live.turn = turn;
+    clearTimeout(live.idle);
     const abort = new AbortController;
     live.abort = abort;
-    if (!agent) {
-      turn.finish("failed", { type: "agent", message: "This session's agent isn't available." });
-      return this.next(id);
-    }
+    emit("session.inbox.delivered", { sessionID: id, inboxID: input.id }, directory);
+    const attachments = input.files.map((file) => ({ mime: mime(file.uri), name: file.name, source: { type: "uri", uri: file.uri } }));
+    if (input.synthetic)
+      record.messages.push({ type: "synthetic", id: input.id, time: { created: Date.now() }, text: input.text, description: input.synthetic.description });
+    else
+      record.messages.push({ type: "user", id: input.id, time: { created: Date.now() }, text: input.text, files: attachments.length ? attachments : undefined });
+    session.time.updated = Date.now();
+    this.store.save(id, true);
+    let result;
     try {
-      live.thread ??= agent.thread(session, record.agent);
-      const result = await live.thread.run({ text: input.text, files: input.files.map(promptFile), model: model2, plan: session.agent === "plan" }, turn, this.hooks(id, live, turn, abort.signal));
-      turn.finish(abort.signal.aborted ? "interrupted" : result.outcome, result.error);
+      const run = { text: input.text, files: input.files.map(promptFile), model, plan: session.agent === "plan" };
+      result = model.providerID === autoProvider ? await this.runAuto(id, record, live, { ...run, auto: true }, turn, abort.signal, input.id) : await this.runOn(id, record, live, model, run, turn, abort.signal, input.id);
     } catch (error) {
-      turn.finish(abort.signal.aborted ? "interrupted" : "failed", abort.signal.aborted ? undefined : failure(error));
-      live.thread?.close();
-      live.thread = undefined;
+      result = { outcome: "failed", error: failure(error) };
     }
+    const outcome = abort.signal.aborted ? "interrupted" : result.outcome;
+    const before = record.messages[record.messages.length - 1]?.id;
+    turn.finish(outcome, outcome === "interrupted" ? undefined : result.error);
+    if (live.last && live.last.seen === before)
+      live.last.seen = record.messages[record.messages.length - 1]?.id;
+    live.last = undefined;
     this.settleAsks(id, live);
+    live.running = undefined;
     if (live.turn === turn)
       live.turn = undefined;
-    if (live.queue.length)
-      this.next(id);
+    this.next(id, outcome);
+    if (!this.isRunning(id))
+      this.closeWhenIdle(id, live);
   }
-  async interrupt(id) {
+  closeWhenIdle(id, live) {
+    clearTimeout(live.idle);
+    live.idle = setTimeout(() => {
+      if (this.isRunning(id) || this.live.get(id) !== live)
+        return;
+      for (const thread of live.threads.values())
+        thread.close();
+      live.threads.clear();
+    }, timing.idleClose);
+  }
+  async runOn(id, record, live, model, input, turn, signal, userMessage) {
+    const agent = this.agent(model.providerID);
+    if (!agent)
+      return { outcome: "failed", error: { type: "agent", message: "This model's agent isn't available: sign in to it in Settings \u203A Accounts, or pick another model." } };
+    if (signal.aborted)
+      return { outcome: "interrupted" };
+    const slots = this.slots(record);
+    const slot = slots[model.providerID] ??= { state: {} };
+    let thread = live.threads.get(model.providerID);
+    if (!thread) {
+      thread = agent.thread(record.session, slot.state);
+      live.threads.set(model.providerID, thread);
+    }
+    const at = record.messages.findIndex((message) => message.id === userMessage);
+    const seenAt = slot.seen ? record.messages.findIndex((message) => message.id === slot.seen) : -1;
+    const before = record.messages.slice(seenAt + 1, at < 0 ? undefined : at);
+    const partway = at < 0 ? [] : record.messages.slice(at + 1);
+    const handed = handover(before, partway, (message) => this.stepName(message));
+    turn.setModel(model);
+    let abandon;
+    const abandoned = new Promise((resolve) => abandon = () => resolve({ outcome: "interrupted" }));
+    const running = { provider: model.providerID, thread, abandon };
+    live.running = running;
+    try {
+      const result = await Promise.race([thread.run({ ...input, model, text: withHandover(input.text, handed) }, turn, this.hooks(id, live, turn, signal, slot, input.plan)), abandoned]);
+      slot.seen = record.messages[record.messages.length - 1]?.id;
+      live.last = slot;
+      return result;
+    } catch (error) {
+      thread.close();
+      if (live.threads.get(model.providerID) === thread)
+        live.threads.delete(model.providerID);
+      throw error;
+    } finally {
+      if (live.running === running)
+        live.running = undefined;
+      this.store.save(id, true);
+    }
+  }
+  async runAuto(id, record, live, input, turn, signal, userMessage) {
+    const tried = new Set;
+    let last;
+    let note;
+    for (;; ) {
+      if (signal.aborted)
+        return { outcome: "interrupted" };
+      const entry = await this.nextEntry(tried);
+      if (signal.aborted)
+        return { outcome: "interrupted" };
+      if (!entry) {
+        if (note)
+          turn.notice(note);
+        if (last?.limit)
+          return { outcome: "failed", error: { type: "limit", message: `Every model in your Auto list is at a usage limit for now${this.nextReset()}.` } };
+        return last ?? { outcome: "failed", error: { type: "limit", message: `No model in your Auto list can run now: each is at a limit, or its agent isn't signed in${this.nextReset()}. Edit the list in Settings \u203A Auto.` } };
+      }
+      tried.add(Auto.modelKey(entry));
+      const model = { providerID: entry.providerID, id: entry.modelID, ...entry.variant ? { variant: entry.variant } : {} };
+      if (note) {
+        turn.stopTools("Stopped: going on with another model.");
+        turn.notice(`${note} Going on with ${this.entryName(entry)}.`);
+      }
+      last = await this.runOn(id, record, live, model, input, turn, signal, userMessage);
+      if (last.outcome !== "failed" || !last.limit || signal.aborted)
+        return last;
+      this.auto.hold(entry, last.limit);
+      emit("kuvo.auto.updated", {});
+      const whole = last.limit.scope === "provider";
+      note = `${this.entryName(entry, whole)} reached ${whole ? "its usage limit" : "this model's limit"}${last.limit.resetsAt ? ` (it resets at ${resetTime(last.limit.resetsAt)})` : ""}.`;
+    }
+  }
+  async nextEntry(tried) {
+    for (const entry of this.auto.list()) {
+      if (tried.has(Auto.modelKey(entry)) || this.auto.isHeld(entry))
+        continue;
+      const agent = this.agent(entry.providerID);
+      if (!agent)
+        continue;
+      const account = await Promise.race([agent.account().catch(() => {
+        return;
+      }), Bun.sleep(1e4).then(() => {
+        return;
+      })]);
+      if (account && !account.signedIn)
+        continue;
+      return entry;
+    }
+    return;
+  }
+  nextReset() {
+    const known = this.auto.limits().filter((limit) => limit.known).map((limit) => limit.until);
+    return known.length ? `; the first resets at ${resetTime(Math.min(...known))}` : "";
+  }
+  entryName(entry, agentOnly = false) {
+    const name = this.agent(entry.providerID)?.name ?? entry.providerID;
+    return agentOnly ? name : `${name} (${entry.modelID}${entry.variant ? `, ${entry.variant}` : ""})`;
+  }
+  stepName(message) {
+    const agent = this.agent(message.model.providerID);
+    return `${agent?.name ?? message.model.providerID}, ${message.model.id}`;
+  }
+  async interrupt(id, resume = false) {
     const live = this.live.get(id);
-    if (!live?.turn || live.turn.isEnded)
+    if (!live?.turn || live.turn.isEnded) {
+      if (resume)
+        this.wake(id);
       return false;
+    }
+    const turn = live.turn;
+    live.resume = resume;
     live.abort?.abort();
     this.settleAsks(id, live);
-    await live.thread?.interrupt().catch(() => {});
+    const running = live.running;
+    setTimeout(() => {
+      if (turn.isEnded || !running || live.running !== running)
+        return;
+      running.thread.close();
+      if (live.threads.get(running.provider) === running.thread)
+        live.threads.delete(running.provider);
+      running.abandon();
+    }, timing.stopGrace);
+    await running?.thread.interrupt().catch(() => {});
     return true;
   }
   settleAsks(id, live) {
@@ -3513,22 +4874,24 @@ class Sessions {
     }
     live.forms.clear();
   }
-  hooks(id, live, turn, signal) {
+  hooks(id, live, turn, signal, slot, plan) {
     const record = this.record(id);
     return {
       signal,
-      state: record.agent,
+      state: slot.state,
       saveState: () => this.store.save(id, true),
       instructions: () => Object.values(record.agent.kuvoInstructions ?? {}).join(`
 
 `),
-      approvesAll: () => !(record.session.permissions ?? []).some((rule) => rule.effect === "ask"),
-      permission: (ask) => this.askPermission(id, live, turn, ask),
-      question: (ask) => this.askQuestion(id, live, ask)
+      approvesAll: () => !plan && !(record.session.permissions ?? []).some((rule) => rule.effect === "ask" || rule.effect === "deny"),
+      permission: (ask) => this.askPermission(id, live, turn, ask, plan),
+      question: (ask) => this.askQuestion(id, live, turn, ask)
     };
   }
-  askPermission(id, live, turn, ask) {
+  askPermission(id, live, turn, ask, plan) {
     const session = this.record(id).session;
+    if (plan && changes.has(ask.action))
+      return Promise.resolve("reject");
     const effect = evaluate(session.permissions, ask.action, ask.resources);
     if (effect === "deny")
       return Promise.resolve("reject");
@@ -3570,12 +4933,28 @@ class Sessions {
     const pending = live?.permissions.get(requestID);
     if (!live || !pending)
       throw new NotFound("That request was answered already.");
+    if (!["once", "always", "reject"].includes(decision))
+      throw new BadRequest("Answer once, always or reject.");
+    const directory = this.record(id).session.location.directory;
     live.permissions.delete(requestID);
     pending.resolve(decision);
-    emit("permission.replied", { sessionID: id, requestID }, this.record(id).session.location.directory);
+    emit("permission.replied", { sessionID: id, requestID }, directory);
+    if (decision !== "always")
+      return;
+    const patterns = pending.request.save ?? pending.request.resources;
+    for (const [otherID, other] of [...live.permissions]) {
+      const covered = other.request.action === pending.request.action && other.request.resources.every((resource) => patterns.some((pattern) => matches(pattern, resource)));
+      if (!covered)
+        continue;
+      live.permissions.delete(otherID);
+      other.resolve("once");
+      emit("permission.replied", { sessionID: id, requestID: otherID }, directory);
+    }
   }
-  askQuestion(id, live, ask) {
+  askQuestion(id, live, turn, ask) {
     const session = this.record(id).session;
+    if (turn.isEnded || live.abort?.signal.aborted)
+      return Promise.resolve(null);
     const form = { id: newID("frm"), sessionID: id, title: ask.title, metadata: { kind: "question" }, fields: ask.fields };
     return new Promise((resolve) => {
       live.forms.set(form.id, { form, resolve });
@@ -3596,9 +4975,22 @@ class Sessions {
     emit(answer ? "form.replied" : "form.cancelled", { id: formID, sessionID: id }, this.record(id).session.location.directory);
   }
   closeAll() {
-    for (const live of this.live.values()) {
+    for (const [id, live] of this.live) {
+      live.resume = false;
       live.abort?.abort();
-      live.thread?.close();
+      this.settleAsks(id, live);
+      live.turn?.finish("interrupted");
+      for (const thread of live.threads.values())
+        thread.close();
+    }
+  }
+  forgetProvider(providerID) {
+    for (const live of this.live.values()) {
+      const thread = live.threads.get(providerID);
+      if (!thread)
+        continue;
+      thread.close();
+      live.threads.delete(providerID);
     }
   }
 }
@@ -3642,17 +5034,40 @@ function promptFile(file) {
 
 // Agents/src/server.ts
 var attempts = new Map;
+function cancelSignIns() {
+  for (const pending of attempts.values())
+    pending.attempt.cancel();
+  attempts.clear();
+}
+setInterval(() => {
+  for (const [id, pending] of attempts) {
+    if (Date.now() < pending.expires + 60000)
+      continue;
+    pending.attempt.cancel();
+    attempts.delete(id);
+  }
+}, 60000).unref?.();
 var json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
 var located = (value) => json({ location: { directory: process.cwd() }, data: value });
 var error = (status, message) => json({ message }, status);
+var lastSeen = new Map;
 async function integration(agent, fresh = false) {
-  const account = await agent.account(fresh).catch((error2) => ({ installed: false, signedIn: false, message: String(error2?.message ?? error2) }));
+  const account = await agent.account(fresh).catch((error) => ({ installed: false, signedIn: false, message: String(error?.message ?? error) }));
+  const seen = JSON.stringify([account.installed, account.signedIn, account.label]);
+  const before = lastSeen.get(agent.providerID);
+  lastSeen.set(agent.providerID, seen);
+  if (before !== undefined && before !== seen) {
+    agent.forgetModels?.();
+    emit("integration.updated", { integrationID: agent.providerID });
+  }
   return {
     id: agent.providerID,
     name: agent.name,
     metadata: {
       source: "agent",
       agent: agent.id,
+      accountID: agent.instance.id,
+      accountLabel: agent.instance.label,
       installed: account.installed,
       message: account.message,
       account: account.label,
@@ -3690,8 +5105,8 @@ function page(items, url) {
 }
 function handler(context) {
   const expected = "Basic " + Buffer.from(`opencode:${context.password}`).toString("base64");
-  const { sessions, agents } = context;
-  const agentFor = (id) => agents.find((agent) => agent.providerID === id);
+  const { sessions, roster, auto, link } = context;
+  const agentFor = (id) => roster.find(id);
   return async (request) => {
     if (request.headers.get("authorization") !== expected)
       return error(401, "Unauthorized");
@@ -3708,8 +5123,12 @@ function handler(context) {
       if (area === "event")
         return feed();
       if (area === "integration") {
-        if (!a)
-          return located(await Promise.all(agents.map((agent2) => integration(agent2))));
+        if (!a) {
+          const fresh = url.searchParams.get("fresh") === "1";
+          if (fresh)
+            await refreshLoginPath();
+          return located(await Promise.all(roster.all().map((agent) => integration(agent, fresh))));
+        }
         const agent = agentFor(a);
         if (!agent)
           return error(404, `No agent ${a}.`);
@@ -3723,7 +5142,7 @@ function handler(context) {
             const attempt = await agent.signIn(methodID);
             const id = newID("att");
             const created = Date.now();
-            const expires = created + 10 * 60000;
+            const expires = created + 30 * 60000;
             attempts.set(id, { agent, attempt, created, expires });
             return located({ attemptID: id, url: attempt.url, instructions: attempt.instructions, mode: attempt.mode, time: { created, expires } });
           }
@@ -3731,7 +5150,10 @@ function handler(context) {
           if (!pending)
             return error(404, "That sign-in is over. Start it again.");
           if (method === "GET" && !e) {
-            const status = Date.now() > pending.expires ? { status: "expired" } : pending.attempt.status();
+            const expired = Date.now() > pending.expires;
+            const status = expired ? { status: "expired" } : pending.attempt.status();
+            if (expired)
+              pending.attempt.cancel();
             if (status.status !== "pending")
               attempts.delete(d);
             return located(status);
@@ -3766,7 +5188,7 @@ function handler(context) {
       if (area === "model") {
         if (a === "default")
           return located(null);
-        return located(await models(agents));
+        return located(await models(roster.all()));
       }
       if (area === "agent" || area === "command" || area === "skill" || area === "mcp")
         return located([]);
@@ -3782,7 +5204,7 @@ function handler(context) {
           return json(page(ordered, url));
         }
         if (a === "active")
-          return json({ data: Object.fromEntries(sessions.active().map((id2) => [id2, { type: "busy" }])) });
+          return json({ data: Object.fromEntries(sessions.active().map((id) => [id, { type: "busy" }])) });
         const id = a;
         if (!b) {
           if (method === "GET")
@@ -3812,10 +5234,19 @@ function handler(context) {
               sessions.cancelInput(id, c);
               return json({});
             }
+            if (method === "PATCH" && c) {
+              sessions.setDelivery(id, c, (await body()).delivery);
+              return json({});
+            }
             return json({ data: sessions.inbox(id) });
           case "prompt": {
             const input = await body();
             sessions.prompt(id, { id: input.id ?? newID("msg"), text: String(input.text ?? ""), files: input.files ?? [], delivery: input.delivery ?? "steer" });
+            return json({});
+          }
+          case "synthetic": {
+            const input = await body();
+            sessions.synthetic(id, String(input.text ?? ""), typeof input.description === "string" ? input.description : undefined);
             return json({});
           }
           case "command": {
@@ -3824,7 +5255,7 @@ function handler(context) {
             return json({});
           }
           case "interrupt":
-            return json({ interrupted: await sessions.interrupt(id) });
+            return json({ interrupted: await sessions.interrupt(id, url.searchParams.get("resume") === "true") });
           case "model":
             sessions.selectModel(id, (await body()).model);
             return json({});
@@ -3861,6 +5292,60 @@ function handler(context) {
             return json({ data: [] });
         }
       }
+      if (area === "kuvo" && a === "accounts") {
+        if (method === "POST" && !b) {
+          const { agent, label } = await body();
+          if (!kinds.includes(agent))
+            return error(400, "That isn't one of the coding agents.");
+          const record = roster.accounts.add(agent, label);
+          roster.sync();
+          const added = roster.all().find((each) => each.instance.id === record.id && each.id === agent);
+          emit("integration.updated", { integrationID: added.providerID });
+          return json({ data: { providerID: added.providerID } });
+        }
+        const target = b ? roster.find(b) : undefined;
+        if (!target)
+          return error(404, "No such account.");
+        if (target.instance.id === "default")
+          return error(400, "That's the agent's own sign-in: sign out of it where you signed in.");
+        if (method === "PATCH") {
+          roster.accounts.rename(target.providerID, (await body()).label);
+          roster.sync();
+          emit("integration.updated", { integrationID: target.providerID });
+          return json({});
+        }
+        if (method === "DELETE") {
+          sessions.forgetProvider(target.providerID);
+          await target.removeAccount?.().catch(() => {});
+          target.shutdown?.();
+          roster.accounts.remove(target.providerID);
+          roster.sync();
+          emit("integration.updated", { integrationID: target.providerID });
+          emit("model.updated", {});
+          return json({});
+        }
+      }
+      if (area === "kuvo" && a === "engine" && method === "PUT") {
+        const { url: address, password } = await body();
+        link.configure(typeof address === "string" && address ? address : undefined, typeof password === "string" ? password : undefined);
+        return json({});
+      }
+      if (area === "kuvo" && a === "auto") {
+        if (b === "limits" && method === "DELETE") {
+          auto.clearLimits();
+          emit("kuvo.auto.updated", {});
+          return json({});
+        }
+        if (!b && method === "PUT") {
+          const { entries } = await body();
+          if (!Array.isArray(entries))
+            return error(400, "Send the list as entries.");
+          auto.set(entries);
+          emit("kuvo.auto.updated", {});
+        }
+        if (!b && (method === "GET" || method === "PUT"))
+          return json({ data: { entries: auto.list(), limits: auto.limits() } });
+      }
       if (area === "experimental" && a === "session" && b) {
         const id = b;
         if (c === "instructions" && d === "entries" && e) {
@@ -3885,8 +5370,8 @@ function handler(context) {
 }
 
 // Agents/src/store.ts
-import { mkdirSync as mkdirSync6, readdirSync as readdirSync2, readFileSync as readFileSync7, renameSync as renameSync2, rmSync as rmSync4, writeFileSync as writeFileSync5 } from "fs";
-import { join as join9 } from "path";
+import { mkdirSync as mkdirSync9, readdirSync as readdirSync3, readFileSync as readFileSync9, renameSync as renameSync4, rmSync as rmSync6, writeFileSync as writeFileSync7 } from "fs";
+import { join as join11 } from "path";
 
 class Store {
   root;
@@ -3894,18 +5379,18 @@ class Store {
   pending = new Map;
   constructor(root) {
     this.root = root;
-    mkdirSync6(root, { recursive: true });
-    for (const id of readdirSync2(root)) {
+    mkdirSync9(root, { recursive: true });
+    for (const id of readdirSync3(root)) {
       try {
-        const folder = join9(root, id);
-        const session = JSON.parse(readFileSync7(join9(folder, "session.json"), "utf8"));
+        const folder = join11(root, id);
+        const session = JSON.parse(readFileSync9(join11(folder, "session.json"), "utf8"));
         let messages = [];
         try {
-          messages = JSON.parse(readFileSync7(join9(folder, "messages.json"), "utf8"));
+          messages = JSON.parse(readFileSync9(join11(folder, "messages.json"), "utf8"));
         } catch {}
         let agent = {};
         try {
-          agent = JSON.parse(readFileSync7(join9(folder, "agent.json"), "utf8"));
+          agent = JSON.parse(readFileSync9(join11(folder, "agent.json"), "utf8"));
         } catch {}
         this.records.set(session.id, { session, messages, agent });
       } catch {}
@@ -3925,7 +5410,7 @@ class Store {
     this.records.delete(id);
     clearTimeout(this.pending.get(id));
     this.pending.delete(id);
-    rmSync4(join9(this.root, id), { recursive: true, force: true });
+    rmSync6(join11(this.root, id), { recursive: true, force: true });
   }
   save(id, now = false) {
     clearTimeout(this.pending.get(id));
@@ -3947,16 +5432,16 @@ class Store {
     const record = this.records.get(id);
     if (!record)
       return;
-    const folder = join9(this.root, id);
-    mkdirSync6(folder, { recursive: true });
+    const folder = join11(this.root, id);
+    mkdirSync9(folder, { recursive: true });
     for (const [name, value] of [
       ["session.json", record.session],
       ["messages.json", record.messages],
       ["agent.json", record.agent]
     ]) {
-      const file = join9(folder, name);
-      writeFileSync5(file + ".new", JSON.stringify(value));
-      renameSync2(file + ".new", file);
+      const file = join11(folder, name);
+      writeFileSync7(file + ".new", JSON.stringify(value));
+      renameSync4(file + ".new", file);
     }
   }
 }
@@ -3969,19 +5454,37 @@ if (!home || !password) {
   console.error("KUVO_AGENTS_HOME and OPENCODE_PASSWORD are needed.");
   process.exit(2);
 }
-var temporary = process.env.TMPDIR?.replace(/\/$/, "") || join10(home, "tmp");
-mkdirSync7(temporary, { recursive: true });
-process.on("unhandledRejection", (reason2) => console.error("unhandled:", reason2));
-var deps = new Deps(join10(home, "runtime"), join10(home, "cache"));
+var temporary = process.env.TMPDIR?.replace(/\/$/, "") || join12(home, "tmp");
+mkdirSync10(temporary, { recursive: true });
+rmSync7(join12(temporary, "antigravity"), { recursive: true, force: true });
+try {
+  for (const name of readdirSync4(join12(home, "antigravity")))
+    if (name.startsWith(".install-"))
+      rmSync7(join12(home, "antigravity", name), { recursive: true, force: true });
+} catch {}
+delete process.env.BUN_BE_BUN;
+process.on("unhandledRejection", (reason) => console.error("unhandled:", reason));
+var deps = new Deps(join12(home, "runtime"), join12(home, "cache"));
 var context = { home, temporary, deps };
-var agents = [new ClaudeAgent(context), new CodexAgent(context), new CursorAgent(context), new GrokAgent(context), new AntigravityAgent(context)];
-var store = new Store(join10(home, "sessions"));
-var sessions = new Sessions(store, agents);
+var roster = new Roster(new Accounts(home), context);
+var store = new Store(join12(home, "sessions"));
+var auto = new Auto(home);
+var link = new EngineLink;
+var engineAgents = new Map;
+function engineAgent(providerID) {
+  if (!link.ready || parseProvider(providerID))
+    return;
+  let agent = engineAgents.get(providerID);
+  if (!agent)
+    engineAgents.set(providerID, agent = new EngineAgent(link, providerID));
+  return agent;
+}
+var sessions = new Sessions(store, roster, auto, engineAgent);
 var server = Bun.serve({
   hostname: "127.0.0.1",
   port: 0,
   idleTimeout: 0,
-  fetch: handler({ agents, sessions, password, version: version2 })
+  fetch: handler({ roster, sessions, auto, link, password, version: version2 })
 });
 console.log(JSON.stringify({ url: `http://127.0.0.1:${server.port}` }));
 var stopping = false;
@@ -3989,6 +5492,7 @@ function stop() {
   if (stopping)
     return;
   stopping = true;
+  cancelSignIns();
   sessions.closeAll();
   store.flush();
   server.stop(true);

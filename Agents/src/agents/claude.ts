@@ -6,8 +6,10 @@ import { randomUUID } from "node:crypto"
 import { existsSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { providerID, type AgentAccount } from "../accounts"
 import type { Agent, AgentContext, Account, RunInput, RunResult, SignInAttempt, Thread, TurnHooks } from "../agent"
-import { failure, model } from "../agent"
+import type { Limit } from "../auto"
+import { accountName, failure, model } from "../agent"
 import { fileDiff, fromPatch } from "../diff"
 import { emit } from "../events"
 import { run, which } from "../proc"
@@ -31,14 +33,21 @@ interface Status {
 
 export class ClaudeAgent implements Agent {
   id = "claude"
-  providerID = "claude-code"
-  name = "Claude Code"
+  readonly providerID: string
+  get name() {
+    return accountName("Claude Code", this.instance)
+  }
   install = "curl -fsSL https://claude.ai/install.sh | bash"
   private status?: { at: number; status: Status }
   private modelList?: { at: number; models: Model[] }
   private loadingModels?: Promise<void>
 
-  constructor(readonly context: AgentContext) {}
+  constructor(
+    readonly context: AgentContext,
+    readonly instance: AgentAccount = { id: "default" },
+  ) {
+    this.providerID = providerID("claude", instance.id)
+  }
 
   executable(): string | undefined {
     return which("claude", places)
@@ -55,7 +64,7 @@ export class ClaudeAgent implements Agent {
     if (!fresh && this.status && Date.now() - this.status.at < 30_000) return this.status.status
     const executable = this.executable()
     if (!executable) return {}
-    const result = await run(executable, ["auth", "status", "--json"], { timeout: 20_000 })
+    const result = await run(executable, ["auth", "status", "--json"], { timeout: 20_000, env: this.env() })
     let status: Status = {}
     try {
       status = JSON.parse(result.stdout)
@@ -87,6 +96,7 @@ export class ClaudeAgent implements Agent {
     return commandSignIn({
       command: executable,
       args: ["auth", "login", methodID === "console" ? "--console" : "--claudeai"],
+      env: this.env(),
       home: this.context.home,
       temporary: this.context.temporary,
       instructions: "Finish signing in on Claude's page. Claude Code keeps the sign-in, as when you run claude auth login.",
@@ -100,8 +110,17 @@ export class ClaudeAgent implements Agent {
     return this.context.deps.load(this.id, SDK[0].name)
   }
 
+  /** Claude Code's environment: an added account's own folder (Claude Code keeps its sign-in in the Keychain, named after it). */
   env(): Record<string, string | undefined> {
-    return { ...process.env, CLAUDE_CODE_TMPDIR: join(this.context.temporary, "claude") }
+    const env: Record<string, string | undefined> = { ...process.env, CLAUDE_CODE_TMPDIR: join(this.context.temporary, "claude") }
+    if (this.instance.home) env.CLAUDE_CONFIG_DIR = this.instance.home
+    return env
+  }
+
+  /** An added account signs out as it goes (its Keychain item with it). */
+  async removeAccount() {
+    const executable = this.executable()
+    if (executable && this.instance.home) await run(executable, ["auth", "logout"], { timeout: 20_000, env: this.env() }).catch(() => {})
   }
 
   async models(): Promise<Model[]> {
@@ -157,6 +176,10 @@ export class ClaudeAgent implements Agent {
     }
   }
 
+  forgetModels() {
+    this.modelList = undefined
+  }
+
   thread(session: Session, state: Record<string, unknown>): Thread {
     return new ClaudeThread(this, session, state)
   }
@@ -198,14 +221,19 @@ interface Active {
   stopReason?: string
   /** Why the turn will fail, if Claude Code says before its result. */
   problem?: string
+  /** A usage limit it reached (Auto goes on with the next model). */
+  limit?: Limit
+  /** On Auto: a limit ends the turn rather than being waited out. */
+  auto?: boolean
+  /** You pressed Stop. */
+  stopping?: boolean
 }
 
 class ClaudeThread implements Thread {
   private query?: any
   private input?: Queue<any>
   private active?: Active
-  private opened?: { model: string; effort?: string; plan: boolean }
-  private stopping = false
+  private opened?: { model: string; effort?: string; plan: boolean; append: string }
 
   constructor(
     private readonly agent: ClaudeAgent,
@@ -215,24 +243,31 @@ class ClaudeThread implements Thread {
 
   async run(input: RunInput, turn: Turn, hooks: TurnHooks): Promise<RunResult> {
     const sdk = await this.agent.sdk()
+    // Stopped while its SDK was coming.
+    if (hooks.signal.aborted) return { outcome: "interrupted" }
     const modelID = input.model.id
     const effort = input.model.variant
+    const append = hooks.instructions()
+    // What the app adds to its instructions changed (a worktree, the project's folders): Claude
+    // Code starts again with them, going on with the same conversation.
+    if (this.query && this.opened?.append !== append) this.close()
     if (!this.query) {
-      this.open(sdk, modelID, effort, input.plan, hooks)
+      this.open(sdk, modelID, effort, input.plan, append, hooks)
     } else {
       // The same Claude Code goes on, told what changed.
       if (this.opened?.model !== modelID) await this.query.setModel(modelID === "default" ? undefined : modelID).catch(() => {})
       if (this.opened?.effort !== effort) await this.query.applyFlagSettings({ effortLevel: effort ?? null }).catch(() => {})
       if (this.opened?.plan !== input.plan) await this.query.setPermissionMode(input.plan ? "plan" : "default").catch(() => {})
-      this.opened = { model: modelID, effort, plan: input.plan }
+      this.opened = { model: modelID, effort, plan: input.plan, append }
     }
+    if (hooks.signal.aborted) return { outcome: "interrupted" }
     return new Promise<RunResult>((resolve) => {
-      this.active = { turn, hooks, resolve, streamed: new Set(), blockTools: new Map(), calls: new Map() }
+      this.active = { turn, hooks, resolve, streamed: new Set(), blockTools: new Map(), calls: new Map(), auto: input.auto }
       this.input!.push(userMessage(input))
     })
   }
 
-  private open(sdk: any, modelID: string, effort: string | undefined, plan: boolean, hooks: TurnHooks) {
+  private open(sdk: any, modelID: string, effort: string | undefined, plan: boolean, append: string, hooks: TurnHooks) {
     let id = this.state.claudeSession as string | undefined
     const resume = Boolean(id && this.state.claudeStarted)
     if (!id) {
@@ -240,9 +275,8 @@ class ClaudeThread implements Thread {
       this.state.claudeSession = id
       hooks.saveState()
     }
-    const append = hooks.instructions()
     this.input = new Queue()
-    this.opened = { model: modelID, effort, plan }
+    this.opened = { model: modelID, effort, plan, append }
     this.query = sdk.query({
       prompt: this.input,
       options: {
@@ -273,12 +307,13 @@ class ClaudeThread implements Thread {
       this.query = undefined
       this.input = undefined
     }
+    // Ended under a turn of this Claude Code (not one started since on a new one).
     const active = this.active
-    if (!active) return
+    if (!active || this.query) return
     this.active = undefined
-    if (this.stopping || active.hooks.signal.aborted) active.resolve({ outcome: "interrupted" })
+    if (active.stopping || active.hooks.signal.aborted) active.resolve({ outcome: "interrupted" })
+    else if (active.limit) active.resolve({ outcome: "failed", error: { type: "limit", message: active.problem ?? "You've reached a Claude usage limit." }, limit: active.limit })
     else active.resolve({ outcome: "failed", error: failure(active.problem ?? ended ?? "Claude Code stopped.") })
-    this.stopping = false
   }
 
   private handle(message: any) {
@@ -325,8 +360,24 @@ class ClaudeThread implements Thread {
         for (const block of results) this.result(active, block, results.length === 1 ? message.tool_use_result : undefined)
         return
       }
-      case "rate_limit_event":
-        if (message.rate_limit_info?.status === "rejected") active.problem = "You've reached your Claude usage limit for now."
+      case "rate_limit_event": {
+        const info = message.rate_limit_info ?? {}
+        // Over the plan's limit, unless extra usage you pay for carries on.
+        if (info.status !== "rejected" || info.overageInUse || info.isUsingOverage) return
+        const resetsAt = typeof info.resetsAt === "number" ? info.resetsAt * 1000 : undefined
+        const oneModel = info.rateLimitType === "seven_day_opus" || info.rateLimitType === "seven_day_sonnet"
+        active.limit = { scope: oneModel ? "model" : "provider", resetsAt, message: limitWords(info.rateLimitType) }
+        active.problem = limitWords(info.rateLimitType)
+        if (active.auto) void this.query?.interrupt().catch(() => {})
+        return
+      }
+      case "system":
+        // Waiting out a rate limit to try again: on Auto, the next model goes on instead.
+        if (message.subtype === "api_retry" && (message.error === "rate_limit" || message.error === "billing_error") && active.auto) {
+          active.limit ??= { scope: message.error === "billing_error" ? "provider" : "model" }
+          active.problem ??= "Claude's API is rate limiting this model."
+          void this.query?.interrupt().catch(() => {})
+        }
         return
       case "result":
         return this.finish(active, message)
@@ -404,8 +455,19 @@ class ClaudeThread implements Thread {
   private finish(active: Active, result: any) {
     this.active = undefined
     if (result.total_cost_usd && this.agent.usesKey()) active.turn.addUsage(undefined, result.total_cost_usd)
-    if (this.stopping || active.hooks.signal.aborted) {
-      this.stopping = false
+    // Its words for a limit: "Claude AI usage limit reached|<when it resets>".
+    const text = typeof result.result === "string" ? result.result : ""
+    const reached = /usage limit reached\|?(\d+)?/i.exec(text)
+    if (!active.limit && (reached || result.api_error_status === 429)) {
+      const resetsAt = reached?.[1] ? Number(reached[1]) * 1000 : undefined
+      active.limit = { scope: "provider", resetsAt }
+      active.problem ??= "You've reached your Claude usage limit for now."
+    }
+    if (active.limit && !active.stopping) {
+      active.resolve({ outcome: "failed", error: { type: "limit", message: active.problem ?? "You've reached a Claude usage limit." }, limit: active.limit })
+      return
+    }
+    if (active.stopping || active.hooks.signal.aborted) {
       active.resolve({ outcome: "interrupted" })
       return
     }
@@ -466,12 +528,18 @@ class ClaudeThread implements Thread {
 
   async interrupt() {
     const query = this.query
-    if (!query || !this.active) return
-    this.stopping = true
+    const active = this.active
+    if (!query || !active) return
+    active.stopping = true
     await query.interrupt().catch(() => {})
-    // Claude Code ends the turn with a result; one that doesn't is stopped.
-    for (let waited = 0; waited < 5_000 && this.active; waited += 100) await Bun.sleep(100)
-    if (this.active) this.close()
+    // Claude Code ends the turn with a result; one that doesn't is stopped (this turn's Claude
+    // Code, not one a later message started).
+    for (let waited = 0; waited < 5_000 && this.active === active; waited += 100) await Bun.sleep(100)
+    if (this.active === active && this.query === query) {
+      this.close()
+      this.active = undefined
+      active.resolve({ outcome: "interrupted" })
+    }
   }
 
   close() {
@@ -601,6 +669,20 @@ function toolText(content: unknown): string {
       .join("\n")
   }
   return ""
+}
+
+/** What reaching a Claude plan limit means, in words. */
+function limitWords(type: string | undefined): string {
+  switch (type) {
+    case "five_hour":
+      return "You've reached your Claude usage limit for the next few hours."
+    case "seven_day_opus":
+      return "You've reached this week's Opus limit on your Claude plan."
+    case "seven_day_sonnet":
+      return "You've reached this week's Sonnet limit on your Claude plan."
+    default:
+      return "You've reached your Claude usage limit for now."
+  }
 }
 
 function reason(result: any): string {

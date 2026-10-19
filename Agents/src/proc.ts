@@ -42,6 +42,29 @@ export async function run(command: string, args: string[], options: { cwd?: stri
   return { code, stdout, stderr }
 }
 
+let pathRead = 0
+
+/**
+ * Your login shell's PATH again, so a tool installed since the bridge started (`npm install -g`,
+ * Homebrew, an installer that adds a folder to your profile) is found. Asked when you refresh,
+ * at most every few seconds.
+ */
+export async function refreshLoginPath(): Promise<void> {
+  if (Date.now() - pathRead < 5_000) return
+  pathRead = Date.now()
+  const shell = process.env.SHELL || "/bin/zsh"
+  for (const flags of ["-ilc", "-lc"]) {
+    try {
+      const ran = await run(shell, [flags, 'printf "__KUVO_PATH__%s__KUVO_END__" "$PATH"'], { timeout: 8_000, env: { DISABLE_AUTO_UPDATE: "true" } })
+      const found = ran.stdout.match(/__KUVO_PATH__([\s\S]*?)__KUVO_END__/)?.[1]
+      if (found?.trim()) {
+        process.env.PATH = found.trim()
+        return
+      }
+    } catch {}
+  }
+}
+
 /** Finds the first web address in some text (a sign-in page a program printed). */
 export function firstURL(text: string): string | undefined {
   return text.match(/https?:\/\/[^\s"'<>]+/)?.[0]

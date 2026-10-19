@@ -3,8 +3,9 @@
 
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { providerID, type AgentAccount } from "../accounts"
 import type { Agent, AgentContext, Account, SignInAttempt, Thread } from "../agent"
-import { model } from "../agent"
+import { accountName, model } from "../agent"
 import { AcpThread, questionFields } from "../acp"
 import { plain, run, which } from "../proc"
 import { commandSignIn } from "../signin"
@@ -14,13 +15,20 @@ const places = [join(homedir(), ".grok/bin"), join(homedir(), ".local/bin"), "/o
 
 export class GrokAgent implements Agent {
   id = "grok"
-  providerID = "grok-cli"
-  name = "Grok"
+  readonly providerID: string
+  get name() {
+    return accountName("Grok", this.instance)
+  }
   install = "npm install -g @xai-official/grok"
   private status?: { at: number; signedIn: boolean; models: { id: string; name: string; isDefault: boolean }[] }
   private promptCount = 0
 
-  constructor(readonly context: AgentContext) {}
+  constructor(
+    readonly context: AgentContext,
+    readonly instance: AgentAccount = { id: "default" },
+  ) {
+    this.providerID = providerID("grok", instance.id)
+  }
 
   executable(): string | undefined {
     return which("grok", places)
@@ -31,7 +39,8 @@ export class GrokAgent implements Agent {
   }
 
   env(): Record<string, string | undefined> {
-    return { ...process.env, GROK_DISABLE_AUTOUPDATER: "1" }
+    // An added account's own GROK_HOME: its sign-in and sessions there.
+    return { ...process.env, GROK_DISABLE_AUTOUPDATER: "1", ...(this.instance.home ? { GROK_HOME: this.instance.home } : {}) }
   }
 
   /** `grok models` says whether you're signed in, and lists your models. */
@@ -84,10 +93,14 @@ export class GrokAgent implements Agent {
         initializeMeta: { clientType: "extension" },
         authMethod: () => (process.env.XAI_API_KEY ? "xai.api_key" : "cached_token"),
         restartAfterInterrupt: true,
-        async command({ approvesAll }) {
+        async command({ approvesAll, plan }) {
           const executable = agent.executable()
           if (!executable) throw new Error("Install Grok's CLI first: npm install -g @xai-official/grok")
-          const argv = approvesAll ? [executable, "agent", "--always-approve", "stdio"] : [executable, "--permission-mode", "default", "agent", "stdio"]
+          const argv = plan
+            ? [executable, "--permission-mode", "plan", "agent", "stdio"]
+            : approvesAll
+              ? [executable, "agent", "--always-approve", "stdio"]
+              : [executable, "--permission-mode", "default", "agent", "stdio"]
           return { argv, env: agent.env() }
         },
         async selectModel(rpc, sessionId, modelID, setup) {

@@ -63,6 +63,7 @@ export class Turn {
 
   /** A new model call. Any step still open ends first. */
   startStep(model?: ModelRef): string {
+    if (this.ended) return ""
     if (this.step) this.endStep()
     const step: AssistantMessage = {
       type: "assistant",
@@ -86,7 +87,7 @@ export class Turn {
 
   endStep(end: StepEnd = {}) {
     const step = this.step
-    if (!step) return
+    if (!step || this.ended) return
     this.endBlock()
     step.time.completed = Date.now()
     if (end.finish) step.finish = end.finish
@@ -112,6 +113,7 @@ export class Turn {
 
   /** Usage reported for the whole run at its end, when the agent gives no per-step figures. */
   addUsage(tokens?: TokenUsage, cost?: number) {
+    if (this.ended) return
     if (tokens) this.tokens = add(this.tokens, tokens)
     if (cost) this.cost += cost
   }
@@ -127,7 +129,7 @@ export class Turn {
   }
 
   private write(kind: "text" | "reasoning", delta: string) {
-    if (!delta) return
+    if (!delta || this.ended) return
     const step = this.ensureStep()
     if (this.block?.kind !== kind) {
       this.endBlock()
@@ -158,6 +160,7 @@ export class Turn {
 
   /** A tool call begins; with `input`, it's called right away. */
   toolStart(id: string, name: string, input?: unknown) {
+    if (this.ended) return
     if (this.tools.has(id)) {
       if (input !== undefined) this.toolCalled(id, input)
       return
@@ -180,12 +183,13 @@ export class Turn {
 
   toolInputDelta(id: string, delta: string) {
     const tool = this.tools.get(id)
-    if (!tool || tool.call.state.status !== "streaming") return
+    if (!tool || tool.call.state.status !== "streaming" || this.ended) return
     tool.call.state.input += delta
     this.send("session.tool.input.delta", { assistantMessageID: tool.step.id, id, delta })
   }
 
   toolCalled(id: string, input: unknown) {
+    if (this.ended) return
     const tool = this.tools.get(id)
     if (!tool) return this.toolStart(id, "tool", input)
     if (tool.call.state.status === "completed" || tool.call.state.status === "error") return
@@ -201,7 +205,7 @@ export class Turn {
   /** What a running tool has to show so far (a command's output, as it comes). */
   toolProgress(id: string, metadata: Record<string, unknown>) {
     const tool = this.tools.get(id)
-    if (!tool || tool.call.state.status !== "running") return
+    if (!tool || tool.call.state.status !== "running" || this.ended) return
     tool.call.state.metadata = metadata
     this.send("session.tool.progress", { assistantMessageID: tool.step.id, id, metadata })
     this.save()
@@ -209,7 +213,7 @@ export class Turn {
 
   toolSucceeded(id: string, output: string | ToolOutput[], metadata?: Record<string, unknown>) {
     const tool = this.tools.get(id)
-    if (!tool) return
+    if (!tool || this.ended) return
     if (tool.call.state.status === "streaming") this.toolCalled(id, safeJSON(tool.call.state.input))
     if (tool.call.state.status !== "running") return
     const content: ToolOutput[] = typeof output === "string" ? [{ type: "text", text: output }] : output
@@ -221,7 +225,7 @@ export class Turn {
 
   toolFailed(id: string, message: string, metadata?: Record<string, unknown>, type = "tool") {
     const tool = this.tools.get(id)
-    if (!tool) return
+    if (!tool || this.ended) return
     if (tool.call.state.status === "completed" || tool.call.state.status === "error") return
     const input = tool.call.state.status === "streaming" ? safeJSON(tool.call.state.input) : tool.call.state.input
     const error = { type, message }
@@ -230,6 +234,24 @@ export class Turn {
     tool.call.time = { ...tool.call.time, completed: Date.now() }
     this.send("session.tool.failed", { assistantMessageID: tool.step.id, id, error, content, metadata })
     this.save()
+  }
+
+  /** A note in the conversation from Kuvo Code, not the agent: "Going on with Codex…". */
+  notice(text: string) {
+    if (this.ended) return
+    this.endBlock()
+    if (this.step) this.endStep()
+    const event = emit("session.synthetic", { sessionID: this.sessionID, text }, this.directory)
+    this.messages.push({ type: "synthetic", id: messageID(event.id), time: { created: event.created }, text })
+    this.save()
+  }
+
+  /** Tools still running from an attempt that gave up (Auto goes on with another model): stopped. */
+  stopTools(message: string) {
+    for (const [id, tool] of this.tools) {
+      const status = tool.call.state.status
+      if (status === "running" || status === "streaming") this.toolFailed(id, message)
+    }
   }
 
   hasTool(id: string) {
@@ -251,13 +273,14 @@ export class Turn {
   /** Ends the run: open steps close, tools still running are stopped, and the idle marker goes in. */
   finish(outcome: Outcome, error?: StructuredError) {
     if (this.ended) return
-    this.ended = true
     this.endBlock()
     if (this.step) this.endStep(error && outcome === "failed" ? { error } : {})
     for (const [id, tool] of this.tools) {
       const status = tool.call.state.status
       if (status === "running" || status === "streaming") this.toolFailed(id, outcome === "interrupted" ? "Stopped." : "", undefined, outcome === "interrupted" ? "aborted" : "tool")
     }
+    // Nothing more goes in (an agent given up on, still talking).
+    this.ended = true
     const type = outcome === "succeeded" ? "session.execution.succeeded" : outcome === "failed" ? "session.execution.failed" : "session.execution.interrupted"
     const event = emit(type, { sessionID: this.sessionID, error }, this.directory)
     const record = this.store.get(this.sessionID)

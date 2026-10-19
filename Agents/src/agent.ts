@@ -1,6 +1,8 @@
 // What each outside agent (Claude Code, Codex, Cursor, Grok, Antigravity) gives the bridge: its
 // sign-in, its models, and a conversation that runs turns and reports them on a `Turn`.
 
+import type { AgentAccount } from "./accounts"
+import type { Limit } from "./auto"
 import type { Deps } from "./deps"
 import type { Turn, Outcome } from "./turn"
 import type { Decision, FormAnswer, FormField, IntegrationMethod, Model, ModelRef, OAuthStatus, Session, StructuredError } from "./wire"
@@ -48,6 +50,8 @@ export interface RunInput {
   model: ModelRef
   /** Plan mode: look and propose, change nothing. */
   plan: boolean
+  /** On Auto: a usage limit ends the run (the next model in your list goes on) rather than waiting. */
+  auto?: boolean
 }
 
 export interface PermissionAsk {
@@ -88,6 +92,8 @@ export interface TurnHooks {
 export interface RunResult {
   outcome: Outcome
   error?: StructuredError
+  /** It stopped at a usage or rate limit (Auto goes on with the next model in your list). */
+  limit?: Limit
 }
 
 export interface Thread {
@@ -111,7 +117,17 @@ export interface Agent {
   signInWithKey?(key: string): Promise<void>
   signOut?(): Promise<void>
   models(): Promise<Model[]>
+  /** Forgets the models it listed: the account changed. */
+  forgetModels?(): void
+  /** The account it runs as: the agent's own sign-in, or one you added (with a folder of its own). */
+  instance: AgentAccount
+  /** An added account is being removed: sign out where the agent keeps it outside its folder. */
+  removeAccount?(): Promise<void>
+  /** Stops what it keeps running (an app-server): its account is gone. */
+  shutdown?(): void
   thread(session: Session, state: Record<string, unknown>): Thread
+  /** A session here was deleted: its conversation where the agent keeps it goes too. */
+  forgetConversation?(state: Record<string, unknown>): Promise<void>
 }
 
 /** A model as the app lists it, from the little an agent says about one. */
@@ -130,6 +146,12 @@ export function model(providerID: string, id: string, name: string, options: { v
     enabled: true,
     limit: { context: options.context ?? 200_000, output: 32_000 },
   }
+}
+
+/** An agent's name, with its account's when it isn't the agent's own sign-in: "Claude Code · Work". */
+export function accountName(name: string, account: { id: string; label?: string }): string {
+  if (account.id === "default") return name
+  return `${name} · ${account.label ?? "Another account"}`
 }
 
 export function failure(error: unknown, type = "agent"): StructuredError {
