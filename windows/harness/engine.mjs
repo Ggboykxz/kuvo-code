@@ -238,6 +238,11 @@ export class EngineClient {
     return answer?.data?.text ?? "";
   }
 
+  /// The providers the engine knows: the built-in ones, and the ones its settings add.
+  async providers(directory) {
+    return ((await this.request("GET", "api/provider", { directory })).data) ?? [];
+  }
+
   /// The questions waiting on a session: the agent's question tool, or an MCP server's.
   async forms(session) {
     return (await this.request("GET", `api/session/${encodeURIComponent(session)}/form`)).data ?? [];

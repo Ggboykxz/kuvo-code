@@ -71,7 +71,8 @@ mirrored in `windows/harness/engine.mjs` and typed in `windows/app/src/api.ts`).
 | `MachinesSettings`, `MachineForm`, `MachineStatusViews` | ⛔ machines distantes : amont |
 | `PhoneSettings`, `PhoneLink` | ⛔ téléphone : amont |
 | `SiteSignInPage`, `SiteSignIns` | ⛔ comptes du site : amont |
-| `ProvidersView`, `CustomProviders`, `ConnectView` | ⬜ les fournisseurs sur mesure |
+| `ProvidersView`, `CustomProviders` | ✅ (les fournisseurs du moteur, et les tiens : id, nom, adresse, modèles — **sans la clé**) |
+| `ConnectView` | ⬜ la connexion OAuth d'un fournisseur (les secrets) |
 | `BotEditor`, `GroupEditor`, `GroupChatView` | ⛔ groupes et bots : amont |
 
 ## The rest of the app

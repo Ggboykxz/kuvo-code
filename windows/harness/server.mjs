@@ -977,6 +977,10 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
     }
 
     // Skills: the engine's own list, plus ours on disk, one SKILL.md per folder.
+    if (url.pathname === "/api/providers" && request.method === "GET") {
+      return json({ providers: await client.providers(currentProject ?? undefined).catch(() => []) });
+    }
+
     if (url.pathname === "/api/skills" && request.method === "GET") {
       const skills = await client.skills(currentProject ?? undefined).catch(() => []);
       return json({ skills, folder: skillsFolder() });

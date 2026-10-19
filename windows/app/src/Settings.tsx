@@ -29,6 +29,7 @@ const PAGES = [
   ["skills", "Skills"],
   ["commands", "Commands"],
   ["projects", "Projects"],
+  ["providers", "Providers"],
   ["git", "Git"],
   ["archived", "Archived sessions"],
   ["permissions", "Permissions"],
@@ -127,6 +128,7 @@ export function Settings() {
       case "skills": return <SkillsPage />;
       case "commands": return <CommandsPage />;
       case "projects": return <ProjectsPage />;
+      case "providers": return <ProvidersPage />;
       case "git": return <GitPage />;
       case "archived": return <ArchivedPage />;
       case "permissions": return <PermissionsPage permissions={savedPermissions} onChange={setSavedPermissions} />;
@@ -330,6 +332,89 @@ function ProjectsPage() {
         </div>
       ))}
       <div className="settings-note">The folders this machine has worked in, newest first.</div>
+    </>
+  );
+}
+
+/// Providers: the ones the engine knows, and the ones you add yourself — with their
+/// address and their models. The key stays where it is: in your own opencode settings.
+function ProvidersPage() {
+  const [known, setKnown] = useState<{ id: string; name?: string }[]>([]);
+  const [id, setId] = useState("");
+  const [name, setName] = useState("");
+  const [baseURL, setBaseURL] = useState("");
+  const [model, setModel] = useState("");
+  const [modelName, setModelName] = useState("");
+  const [saved, setSaved] = useState("");
+
+  useEffect(() => {
+    void api<{ providers: { id: string; name?: string }[] }>("/api/providers")
+      .then(answer => setKnown(answer.providers ?? []))
+      .catch(() => {});
+  }, []);
+
+  const mine = (cfgGet(["provider"]) as Record<string, Record<string, unknown>>) ?? {};
+  const mineIds = Object.keys(mine);
+
+  const add = async () => {
+    const fresh = id.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
+    if (!fresh) { complain(new Error("A provider needs an id: letters, digits, dashes.")); return; }
+    if (mine[fresh]) { complain(new Error(`There is already a provider called ${fresh}.`)); return; }
+    const entry: Record<string, unknown> = { name: name.trim() || fresh, options: { baseURL: baseURL.trim() } };
+    if (model.trim()) entry.models = { [model.trim()]: { name: modelName.trim() || model.trim() } };
+    cfgSet(["provider", fresh], entry);
+    const ok = await saveConfig();
+    if (ok) {
+      setSaved(fresh);
+      setId(""); setName(""); setBaseURL(""); setModel(""); setModelName("");
+    }
+  };
+
+  return (
+    <>
+      <h3>The engine's own</h3>
+      <div id="providers-known">
+        {known.length === 0 ? <div className="where">Loading…</div> : known.map(provider => (
+          <div className="cfg-row" key={provider.id}>
+            <div className="cfg-row-main">
+              <div className="cfg-row-title"><strong>{provider.name ?? provider.id}</strong><span className="where">{provider.id}</span></div>
+            </div>
+          </div>
+        ))}
+      </div>
+      <h3>Your own</h3>
+      <div id="providers-mine">
+        {mineIds.length === 0 ? <div className="where">None yet.</div> : mineIds.map(providerId => (
+          <div className="cfg-row" key={providerId}>
+            <div className="cfg-row-main">
+              <div className="cfg-row-title">
+                <strong>{String(mine[providerId]?.name ?? providerId)}</strong>
+                <span className="where">{String((mine[providerId]?.options as { baseURL?: string })?.baseURL ?? "")}</span>
+              </div>
+            </div>
+            <button
+              className="small"
+              onClick={async () => {
+                cfgSet(["provider", providerId], null);
+                await saveConfig();
+              }}
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+      </div>
+      <h3>Add a provider</h3>
+      <div className="settings-row"><span>Id</span><input type="text" value={id} placeholder="my-provider" onChange={event => setId(event.target.value)} /></div>
+      <div className="settings-row"><span>Name</span><input type="text" value={name} placeholder="My provider" onChange={event => setName(event.target.value)} /></div>
+      <div className="settings-row"><span>Address</span><input type="text" value={baseURL} placeholder="https://api.example.com/v1" onChange={event => setBaseURL(event.target.value)} /></div>
+      <div className="settings-row"><span>Model</span><input type="text" value={model} placeholder="my-model" onChange={event => setModel(event.target.value)} /></div>
+      <div className="settings-row"><span>Model name</span><input type="text" value={modelName} placeholder="My model" onChange={event => setModelName(event.target.value)} /></div>
+      <div className="settings-editor-buttons">
+        <button className="primary" onClick={() => void add()}>Add the provider</button>
+        {saved ? <span className="where">{`${saved} is added.`}</span> : null}
+      </div>
+      <div className="settings-note">A provider you add here is written to the engine's settings with its address and its models. The key is not written here: it stays where opencode keeps it, and the engine finds it as it does in a terminal.</div>
     </>
   );
 }

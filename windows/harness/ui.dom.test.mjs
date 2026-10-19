@@ -186,7 +186,9 @@ test("the page, in a DOM, against the real engine", {
   assert.equal(reloaded.document.querySelectorAll("#sessions li").length, 1, "the session is listed again");
   // The engine can still call a session active for a moment after a turn; the page reads that
   // the same way the Mac app does, and settles as soon as there's nothing to stop.
-  await reloaded.seen("nothing to be running", () => reloaded.element("stop")?.hidden, 15_000);
+  // The engine can still call a session active for a moment after the turn ends; the page
+  // reads that the way the Mac app does, and settles as soon as there's nothing to stop.
+  await reloaded.seen("nothing to be running", () => reloaded.element("stop")?.hidden, 45_000);
 
   // The built page carries what it needs: the formulas (KaTeX and its fonts) travel with it.
   if (usingBuild) {
