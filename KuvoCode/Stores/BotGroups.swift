@@ -289,18 +289,26 @@ final class BotGroups {
 
     /// Saves a new name, members or lead. Bots that left lose their seat and stop remembering
     /// the chat; everyone's seat learns who's there now.
-    func update(_ group: BotGroup) async {
-        guard let index = list.firstIndex(where: { $0.id == group.id }) else { return }
+    func update(_ edited: BotGroup) async {
+        guard let index = list.firstIndex(where: { $0.id == edited.id }) else { return }
         let old = list[index]
-        var group = group
-        let gone = old.members.filter { !group.members.contains($0) }
-        for bot in gone {
-            if let seat = group.seats.removeValue(forKey: bot) { await deleteSeat(seat, of: bot) }
+        // What you edited, over the chat as it is now, saved before anything is awaited: what
+        // changes meanwhile (what each bot heard, seats made, a meeting moved on) isn't put back
+        // as it was.
+        var group = old
+        group.name = edited.name
+        group.purpose = edited.purpose
+        group.members = edited.members
+        group.meeting = edited.meeting
+        var leaving: [(bot: String, seat: String)] = []
+        for bot in old.members where !group.members.contains(bot) {
+            if let seat = group.seats.removeValue(forKey: bot) { leaving.append((bot, seat)) }
             group.heard[bot] = nil
         }
         list[index] = group
         save()
-        await refreshSeats(of: group)
+        for (bot, seat) in leaving { await deleteSeat(seat, of: bot) }
+        await refreshSeats(of: list.first { $0.id == group.id } ?? group)
         for bot in Set(old.members + group.members) { await remember(bot) }
     }
 
@@ -320,7 +328,9 @@ final class BotGroups {
     func remove(_ bot: Bot) async {
         leaving.insert(bot.id)
         defer { leaving.remove(bot.id) }
-        for var group in list where group.members.contains(bot.id) {
+        // Each chat as it is when its turn comes: updating one awaits the engine.
+        for id in list.filter({ $0.members.contains(bot.id) }).map(\.id) {
+            guard var group = list.first(where: { $0.id == id }) else { continue }
             group.members.removeAll { $0 == bot.id }
             await update(group)
         }
@@ -747,9 +757,9 @@ final class BotGroups {
             text += "The user took back their message starting \"\(taken)\" and everything said after it. Set all of that aside: it no longer stands.\n\n"
         }
         if unheard.isEmpty {
-            text = "Nothing new in \"\(group.name)\" since you last spoke.\n"
+            text += "Nothing new in \"\(group.name)\" since you last spoke.\n"
         } else {
-            text = "New in \"\(group.name)\" since you last spoke:\n"
+            text += "New in \"\(group.name)\" since you last spoke:\n"
             if unheard.count > 40 { text += "\n(Earlier messages left out.)\n" }
             for message in unheard.suffix(40) {
                 text += "\n\(label(of: message)): \(message.text)\n"
