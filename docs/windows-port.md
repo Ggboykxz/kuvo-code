@@ -105,6 +105,9 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
+  - **2.46 (this change).** What floats over the conversation is thicker glass: the
+    palette, the gauge's popover, the menus and the note are cards of glass, readable over
+    whatever is under them, with the light along their top edge.
   - **2.45 (this change).** The canvas carries a whisper of light, so the glass has
     something to hold, and the materials are in the Mac's order: a thin strip for the chrome,
     a fuller one for the composer and the sheets.

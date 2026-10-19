@@ -1107,6 +1107,34 @@ li.unread .session { position: relative; padding-left: 16px; }
 .form-choice { display: inline-flex; gap: var(--space-1); align-items: center; font-size: var(--text-sm); }
 #redo { align-self: flex-start; }
 
+/* What floats over the conversation is thicker glass: it has to stay readable over
+   whatever is under it — the palette, the gauge's popover, the menus, the note. */
+.palette,
+.gauge-pop,
+.choice-panel,
+.toast,
+.picker-card {
+  background: color-mix(in oklab, var(--panel) 82%, transparent);
+  backdrop-filter: blur(32px) saturate(2);
+  -webkit-backdrop-filter: blur(32px) saturate(2);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-lifted);
+  position: relative;
+}
+.palette::before,
+.gauge-pop::before,
+.choice-panel::before,
+.toast::before,
+.picker-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: var(--lit);
+  border-radius: var(--radius) var(--radius) 0 0;
+  pointer-events: none;
+}
+
 /* The lit edge: a hairline of light along the top of a card, the Mac app's tell. */
 .card::before {
   content: "";
