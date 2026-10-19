@@ -143,7 +143,7 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 
 | ID | Job | Status |
 | --- | --- | --- |
-| L26 | "Keep this project's build green: run the tests every hour; when they fail, fix it on a branch and tell me" | ⏳ |
+| L26 | "Keep this project's build green: run the tests every hour; when they fail, fix it on a branch and tell me" | ❌→✅ it set an hourly wake-up; after a bad commit, Wake Up Now had it fix `add` on `fix/add-regression` with main untouched, but it left the project checked out on that branch; now it goes back to main. Each click of Wake Up Now also queued another wake-up; now it sends once and shows Woken Up |
 | L27 | "Review the changes on this branch before I merge" (Lens) | ✅ asked in a session: it found the planted bug (page_count rounding down, so last_page is wrong), showed the failing cases, and left the code alone |
 | L28 | "Check every week whether this project's dependencies are out of date" | ⏳ |
 | L29 | "Write the release notes from the commits since the last tag" | ✅ found the tag, read the commits since, and wrote user-facing notes, leaving out the version bump |
