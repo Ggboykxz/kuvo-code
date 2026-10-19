@@ -145,6 +145,8 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
             if Self.playsSound { content.sound = .default }
             content.threadIdentifier = session
             content.userInfo = ["session": session]
+            // A browser's ask: cleared as it's answered, or goes unanswered.
+            if let ask = push?.ask { content.userInfo["ask"] = ask }
             if let permission {
                 content.categoryIdentifier = Self.permissionCategory
                 content.userInfo["requestSession"] = permission.session
@@ -194,7 +196,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
             let delivered = await center.deliveredNotifications()
             let ids = delivered.filter { notification in
                 let info = notification.request.content.userInfo
-                return info["request"] as? String == request || info["form"] as? String == request
+                return info["request"] as? String == request || info["form"] as? String == request || info["ask"] as? String == request
             }
             .map(\.request.identifier)
             if !ids.isEmpty { center.removeDeliveredNotifications(withIdentifiers: ids) }

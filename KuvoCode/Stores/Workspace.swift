@@ -884,6 +884,9 @@ final class Workspace {
         // Answered meanwhile (on your phone, say): no longer asking.
         let isTheirs = { (id: String) in (self.session(id).map { RemoteFolder.machine(of: $0.location.directory) } ?? self.sessionMachines[id]) == machine }
         let kept = complete ? asking.filter { !isTheirs($0.value) || sharedForms[$0.key] != nil } : asking
+        // Answered elsewhere meanwhile (on the phone): its notification goes too, rather than
+        // offering an answer to a request that's gone.
+        for request in asking.keys where kept[request] == nil && found[request] == nil { Notifier.shared.clear(request: request) }
         asking = kept.merging(found) { $1 }
     }
 
@@ -928,6 +931,7 @@ final class Workspace {
     /// disconnected are known again from the open sessions.
     func resync() async {
         await refresh()
+        let before = asking
         asking = [:]
         for directory in Set(models.values.map(\.session.location.directory)) { await readShellJobs(in: directory) }
         for model in models.values {
@@ -935,6 +939,10 @@ final class Workspace {
             if RemoteFolder.machine(of: model.session.location.directory).map(connectedMachines.contains) ?? true { await model.load() }
             for request in model.permissions { asking[request.id] = request.sessionID }
             for form in model.forms { note(form, in: model) }
+        }
+        // What was asked before and isn't now, here or on a machine read again: its notification goes.
+        for (request, session) in before where asking[request] == nil && (sessionMachines[session].map(connectedMachines.contains) ?? true) {
+            Notifier.shared.clear(request: request)
         }
     }
 
@@ -1338,8 +1346,11 @@ final class Workspace {
         case "webfetch": "open a web page"
         default: request.action
         }
-        guard let resource = request.resources.first, resource != "*" else { return "Wants to \(what)." }
-        return "Wants to \(what): \(resource)"
+        // Every one it covers (a command line's commands each): Allow takes them all.
+        let shown = request.resources.filter { $0 != "*" }
+        guard !shown.isEmpty else { return "Wants to \(what)." }
+        let more = shown.count > 4 ? " · and \(shown.count - 4) more" : ""
+        return "Wants to \(what): " + shown.prefix(4).joined(separator: " · ") + more
     }
 
     /// A permission request answered from its notification.

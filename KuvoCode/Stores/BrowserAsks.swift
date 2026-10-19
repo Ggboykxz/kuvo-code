@@ -127,6 +127,7 @@ final class BrowserAsks {
     /// An ask on this Mac whose tool call has ended: its card goes, and the call hears no.
     private func end(_ id: String) {
         guard let respond = responders.removeValue(forKey: id) else { return }
+        Notifier.shared.clear(request: id)
         withAnimation(.ui) { asks.removeAll { $0.id == id } }
         changed()
         respond(.declined)
@@ -172,6 +173,7 @@ final class BrowserAsks {
     /// Your answer.
     func answer(_ id: String, _ answer: Answer) {
         guard let respond = responders.removeValue(forKey: id) else { return }
+        Notifier.shared.clear(request: id)
         if case .signIn(let username, let password) = answer, let ask = asks.first(where: { $0.id == id }) {
             remember(key(ask), username: username, password: password, session: ask.session)
         }
@@ -183,6 +185,7 @@ final class BrowserAsks {
     /// An ask that ended elsewhere: the agent stopped waiting, or another Mac answered it.
     func closed(_ id: String) {
         responders[id] = nil
+        Notifier.shared.clear(request: id)
         withAnimation(.ui) { asks.removeAll { $0.id == id } }
         changed()
     }
