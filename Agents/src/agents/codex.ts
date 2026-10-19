@@ -10,6 +10,7 @@ import type { Agent, AgentContext, Account, RunInput, RunResult, SignInAttempt, 
 import type { Limit } from "../auto"
 import { accountName, failure, model } from "../agent"
 import { fromPatch } from "../diff"
+import { emit } from "../events"
 import { maintenance, update, type MaintenanceDefinition } from "../maintenance"
 import { which } from "../proc"
 import { RPC, RPCError } from "../rpc"
@@ -61,14 +62,42 @@ export class CodexAgent implements Agent {
   async update() {
     const definition = this.definition
     if (!definition) return { updated: false, message: "Codex isn't installed." }
-    const result = await update(definition, this.context.temporary)
-    if (result.updated) {
-      this.modelList = undefined
-      this.accountCache = undefined
-      // The new Codex lists its models once its app-server starts again: now, if no session is using it.
-      if (!this.threads.size && !this.logins.size) this.shutdown()
+    return update(definition, this.context.temporary)
+  }
+
+  /** The app-server still running the old Codex. */
+  private outdated?: RPC
+
+  /**
+   * The new Codex lists the models and runs the sessions once its app-server starts again: now,
+   * or once no turn or sign-in is using the old one (a session goes on with its thread there).
+   */
+  programUpdated() {
+    this.modelList = undefined
+    this.accountCache = undefined
+    this.outdated = this.server
+    // One starting now may be the old program's too.
+    void this.starting?.then((rpc) => {
+      this.outdated ??= rpc
+      this.restartIfQuiet()
+    }, () => {})
+    this.restartIfQuiet()
+  }
+
+  /** Restarts the old app-server when no turn but `starting`'s (not on it yet) and no sign-in uses it. */
+  private restartIfQuiet(starting?: CodexThread) {
+    const server = this.outdated
+    if (!server) return
+    if (server.isClosed || this.server !== server) {
+      this.outdated = undefined
+      return
     }
-    return result
+    if (this.logins.size || [...this.threads.values()].some((thread) => thread !== starting && thread.isRunning)) return
+    this.outdated = undefined
+    this.shutdown()
+    // What the old one listed meanwhile, asked anew.
+    this.modelList = undefined
+    emit("model.updated", {})
   }
 
   methods() {
@@ -82,13 +111,15 @@ export class CodexAgent implements Agent {
   private idleCheck?: ReturnType<typeof setInterval>
 
   /** The app-server, started the first time it's needed and again after it stops. */
-  async rpc(): Promise<RPC> {
+  async rpc(starting?: CodexThread): Promise<RPC> {
     this.lastUse = Date.now()
     // Stopped when nothing has used it for a while (no session, no sign-in).
     this.idleCheck ??= setInterval(() => {
+      this.restartIfQuiet()
       if (!this.server || this.threads.size || this.logins.size || Date.now() - this.lastUse < 15 * 60_000) return
       this.shutdown()
     }, 60_000)
+    this.restartIfQuiet(starting)
     if (this.server && !this.server.isClosed) return this.server
     this.starting ??= this.start().finally(() => (this.starting = undefined))
     return this.starting
@@ -103,7 +134,9 @@ export class CodexAgent implements Agent {
     rpc.onNotification = (method, params) => this.notification(method, params)
     rpc.onRequest = (method, params) => this.request(method, params)
     rpc.onExit = () => {
-      if (this.server === rpc) this.server = undefined
+      // Stopped on purpose: the threads were told then (they may be on a newer one by now).
+      if (this.server !== rpc) return
+      this.server = undefined
       for (const thread of this.threads.values()) thread.serverStopped()
     }
     await rpc.request("initialize", { clientInfo: { name: "kuvo-code", title: "Kuvo Code", version: "1" }, capabilities: { experimentalApi: true, optOutNotificationMethods: ["turn/diff/updated"] } }, 30_000)
@@ -211,7 +244,8 @@ export class CodexAgent implements Agent {
       }
       cursor = page?.nextCursor ?? undefined
     } while (cursor)
-    this.modelList = { at: Date.now(), models }
+    // Not kept from the old Codex's app-server: asked again of the new one.
+    if (rpc !== this.outdated) this.modelList = { at: Date.now(), models }
     return models
   }
 
@@ -220,8 +254,11 @@ export class CodexAgent implements Agent {
   }
 
   shutdown() {
-    this.server?.kill()
+    const server = this.server
+    if (!server) return
     this.server = undefined
+    server.kill()
+    for (const thread of this.threads.values()) thread.serverStopped()
   }
 
   thread(session: Session, state: Record<string, unknown>): Thread {
@@ -269,6 +306,8 @@ class CodexThread implements Thread {
   /** The app's added instructions the thread was loaded with. */
   private instructions?: string | null
   private active?: Active
+  /** From a message's start until its turn ends: its app-server isn't to stop meanwhile. */
+  private inTurn = false
 
   constructor(
     private readonly agent: CodexAgent,
@@ -294,7 +333,8 @@ class CodexThread implements Thread {
   }
 
   private async ensureThread(input: RunInput, hooks: TurnHooks) {
-    const rpc = await this.agent.rpc()
+    // A turn starting: on the new Codex, when it was updated.
+    const rpc = await this.agent.rpc(this)
     const instructions = hooks.instructions() || null
     // Loaded again with what the app adds to its instructions, when that changed.
     if (this.nativeID && this.loaded && instructions === this.instructions) return rpc
@@ -323,7 +363,20 @@ class CodexThread implements Thread {
     return rpc
   }
 
+  get isRunning(): boolean {
+    return this.inTurn
+  }
+
   async run(input: RunInput, turn: Turn, hooks: TurnHooks): Promise<RunResult> {
+    this.inTurn = true
+    try {
+      return await this.runTurn(input, turn, hooks)
+    } finally {
+      this.inTurn = false
+    }
+  }
+
+  private async runTurn(input: RunInput, turn: Turn, hooks: TurnHooks): Promise<RunResult> {
     const rpc = await this.ensureThread(input, hooks)
     // Stopped while Codex was starting.
     if (hooks.signal.aborted) return { outcome: "interrupted" }

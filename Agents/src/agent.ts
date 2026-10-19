@@ -134,6 +134,11 @@ export interface Agent {
   maintenance?(fresh?: boolean): Promise<Maintenance>
   /** Updates its program through the installer that owns it. */
   update?(): Promise<UpdateResult>
+  /**
+   * Its program was updated (told to each account with it): the new one lists the models, and
+   * runs sessions from their next message, without the app starting again.
+   */
+  programUpdated?(): void
   thread(session: Session, state: Record<string, unknown>): Thread
   /** A session here was deleted: its conversation where the agent keeps it goes too. */
   forgetConversation?(state: Record<string, unknown>): Promise<void>

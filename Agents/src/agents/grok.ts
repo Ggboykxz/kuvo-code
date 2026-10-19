@@ -50,9 +50,16 @@ export class GrokAgent implements Agent {
   async update() {
     const definition = this.definition
     if (!definition) return { updated: false, message: "Grok's CLI isn't installed." }
-    const result = await update(definition, this.context.temporary)
-    if (result.updated) this.status = undefined
-    return result
+    return update(definition, this.context.temporary)
+  }
+
+  /** Counts updates of Grok's CLI: a session's agent started before the last one starts again. */
+  program = 0
+
+  /** Its models asked of the new CLI; sessions start it at their next message. */
+  programUpdated() {
+    this.program++
+    this.status = undefined
   }
 
   methods() {
@@ -114,6 +121,7 @@ export class GrokAgent implements Agent {
         initializeMeta: { clientType: "extension" },
         authMethod: () => (process.env.XAI_API_KEY ? "xai.api_key" : "cached_token"),
         restartAfterInterrupt: true,
+        program: () => agent.program,
         async command({ approvesAll, plan }) {
           const executable = agent.executable()
           if (!executable) throw new Error("Install Grok's CLI first: npm install -g @xai-official/grok")

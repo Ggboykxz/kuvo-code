@@ -57,6 +57,8 @@ export interface AcpFlavor {
   restartAfterInterrupt?: boolean
   /** What a usage limit holds back: the whole account (the default), or the model. */
   limitScope?: "provider" | "model"
+  /** Changes when the agent's program was updated: a process started before starts again. */
+  program?(): number
 }
 
 export interface AcpContext {
@@ -99,9 +101,9 @@ export class AcpThread implements Thread {
 
   private async open(input: RunInput, hooks: TurnHooks) {
     const mode = { approvesAll: hooks.approvesAll(), plan: input.plan }
-    const key = JSON.stringify(mode)
+    const key = JSON.stringify({ ...mode, program: this.flavor.program?.() ?? 0 })
     if (this.rpc && !this.rpc.isClosed && this.spawnedWith === key && this.rpc !== this.stale) return this.rpc
-    // Started again for another approval mode (the agent takes it as it starts).
+    // Started again for another approval mode (the agent takes it as it starts), or an updated program.
     this.close()
     const launch = await this.flavor.command(mode)
     const flavor = this.flavor

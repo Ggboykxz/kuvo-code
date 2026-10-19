@@ -193,7 +193,8 @@ export function handler(context: Context) {
           if (!agent.update) return error(400, `Update ${agent.name} the way you installed it.`)
           const result = await agent.update()
           if (result.updated) {
-            for (const each of roster.all()) if (each.id === agent.id) each.forgetModels?.()
+            // Every account with it runs that program.
+            for (const each of roster.all()) if (each.id === agent.id) each.programUpdated?.()
             emit("integration.updated", { integrationID: agent.providerID })
             emit("model.updated", {})
           }

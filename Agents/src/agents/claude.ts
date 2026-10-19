@@ -48,6 +48,8 @@ export class ClaudeAgent implements Agent {
   authFailedAt?: number
   private modelList?: { at: number; models: Model[] }
   private loadingModels?: Promise<void>
+  /** Counts updates of Claude Code: a session's Claude Code started before the last one starts again. */
+  program = 0
 
   constructor(
     readonly context: AgentContext,
@@ -80,10 +82,13 @@ export class ClaudeAgent implements Agent {
   async update() {
     const definition = this.definition
     if (!definition) return { updated: false, message: "Claude Code isn't installed." }
-    const result = await update(definition, this.context.temporary)
-    // Its models are the new Claude Code's.
-    if (result.updated) this.modelList = undefined
-    return result
+    return update(definition, this.context.temporary)
+  }
+
+  /** Its models asked of the new Claude Code (the old ones listed meanwhile); sessions start it at their next message. */
+  programUpdated() {
+    this.program++
+    if (this.modelList) this.modelList.at = 0
   }
 
   methods() {
@@ -283,7 +288,7 @@ class ClaudeThread implements Thread {
   private query?: any
   private input?: Queue<any>
   private active?: Active
-  private opened?: { model: string; effort?: string; plan: boolean; append: string }
+  private opened?: { model: string; effort?: string; plan: boolean; append: string; program: number }
 
   constructor(
     private readonly agent: ClaudeAgent,
@@ -298,9 +303,9 @@ class ClaudeThread implements Thread {
     const modelID = input.model.id
     const effort = input.model.variant
     const append = hooks.instructions()
-    // What the app adds to its instructions changed (a worktree, the project's folders): Claude
-    // Code starts again with them, going on with the same conversation.
-    if (this.query && this.opened?.append !== append) this.close()
+    // What the app adds to its instructions changed (a worktree, the project's folders), or Claude
+    // Code was updated: it starts again, going on with the same conversation.
+    if (this.query && (this.opened?.append !== append || this.opened?.program !== this.agent.program)) this.close()
     if (!this.query) {
       this.open(sdk, modelID, effort, input.plan, append, hooks)
     } else {
@@ -308,7 +313,7 @@ class ClaudeThread implements Thread {
       if (this.opened?.model !== modelID) await this.query.setModel(modelID === "default" ? undefined : modelID).catch(() => {})
       if (this.opened?.effort !== effort) await this.query.applyFlagSettings({ effortLevel: effort ?? null }).catch(() => {})
       if (this.opened?.plan !== input.plan) await this.query.setPermissionMode(input.plan ? "plan" : "default").catch(() => {})
-      this.opened = { model: modelID, effort, plan: input.plan, append }
+      this.opened = { model: modelID, effort, plan: input.plan, append, program: this.agent.program }
     }
     if (hooks.signal.aborted) return { outcome: "interrupted" }
     return new Promise<RunResult>((resolve) => {
@@ -328,7 +333,7 @@ class ClaudeThread implements Thread {
     // A new conversation counts its cost from nothing.
     if (!resume) delete this.state.claudeCost
     this.input = new Queue()
-    this.opened = { model: modelID, effort, plan, append }
+    this.opened = { model: modelID, effort, plan, append, program: this.agent.program }
     this.query = sdk.query({
       prompt: this.input,
       options: {

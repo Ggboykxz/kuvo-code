@@ -249,10 +249,29 @@ final class OutsideAgents {
         try await api.removeAgentAccount(providerID)
     }
 
-    /// Updates an agent's program (Claude Code, Codex, Grok's CLI) through the installer that owns it.
-    func update(_ providerID: String) async throws -> AgentUpdate {
-        guard let api else { throw Failure.unavailable("Updating") }
-        return try await api.updateAgent(providerID)
+    /// Agents whose program is updating, by the account it was asked for: updating wherever you
+    /// look (Settings closed and opened again), and not asked twice.
+    private(set) var updating: Set<String> = []
+    /// Why an update didn't work, until you've seen it (where you look next, when you'd gone).
+    var updateFailures: [String: String] = [:]
+
+    /// Updates an agent's program (Claude Code, Codex, Grok's CLI) through the installer that owns
+    /// it, then `refresh`es what the app shows of it; it's updating until then.
+    func update(_ providerID: String, then refresh: @escaping () async -> Void) {
+        guard let api, !updating.contains(providerID) else { return }
+        updating.insert(providerID)
+        updateFailures[providerID] = nil
+        Task {
+            do {
+                let result = try await api.updateAgent(providerID)
+                if !result.updated, let message = result.message { updateFailures[providerID] = message }
+            } catch {
+                updateFailures[providerID] = error.localizedDescription
+            }
+            // Its version and models, as they are now, before its button comes back.
+            await refresh()
+            updating.remove(providerID)
+        }
     }
 
     /// Signs out of an agent, where the agent lets an app do that (Cursor's browser sign-in).

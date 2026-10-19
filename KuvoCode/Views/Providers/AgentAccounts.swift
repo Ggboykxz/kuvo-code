@@ -171,8 +171,6 @@ private struct ProductBlock: View {
     @Environment(AppModel.self) private var app
     @Environment(Catalog.self) private var catalog
     @State private var copied = false
-    @State private var isUpdating = false
-    @State private var updateFailure: String?
     /// Naming an account you're adding (an agent's: each gets a folder and a name of its own).
     @State private var naming = false
     @State private var name = ""
@@ -187,6 +185,8 @@ private struct ProductBlock: View {
     private var latest: String? { main.metadata?["outdated"]?.bool == true ? main.metadata?["latestVersion"]?.string : nil }
     private var updates: Bool { main.metadata?["updates"]?.bool == true }
     private var updateCommand: String? { main.metadata?["updateCommand"]?.string }
+    private var isUpdating: Bool { app.agents.updating.contains(main.id) }
+    private var updateFailure: String? { app.agents.updateFailures[main.id] }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -229,7 +229,7 @@ private struct ProductBlock: View {
         } message: {
             Text(failure ?? "")
         }
-        .alert("Couldn't Update \(title)", isPresented: Binding(get: { updateFailure != nil }, set: { if !$0 { updateFailure = nil } })) {
+        .alert("Couldn't Update \(title)", isPresented: Binding(get: { updateFailure != nil }, set: { if !$0 { app.agents.updateFailures[main.id] = nil } })) {
             if let updateCommand {
                 Button("Copy Command") { Clipboard.copy(updateCommand) }
             }
@@ -254,15 +254,15 @@ private struct ProductBlock: View {
                 .buttonStyle(.glass)
                 .controlSize(.small)
                 .help("It isn't installed now. Run this in Terminal, then click Refresh.")
+            } else if isUpdating {
+                HStack(spacing: 6) {
+                    Spinner(size: 12)
+                    Text("Updating…")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
             } else if let latest {
-                if isUpdating {
-                    HStack(spacing: 6) {
-                        Spinner(size: 12)
-                        Text("Updating…")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                    }
-                } else if updates {
+                if updates {
                     Button(action: update) {
                         Label("Update to \(latest)", systemImage: "arrow.down.circle")
                             .font(.callout)
@@ -312,18 +312,8 @@ private struct ProductBlock: View {
     }
 
     private func update() {
-        isUpdating = true
-        Task {
-            defer { isUpdating = false }
-            do {
-                let result = try await app.agents.update(main.id)
-                if !result.updated, let message = result.message { updateFailure = message }
-            } catch {
-                updateFailure = error.localizedDescription
-            }
-            // Its version and models, as they are now.
-            await catalog.refreshAgents(fresh: true)
-        }
+        let catalog = catalog
+        app.agents.update(main.id) { await catalog.refreshAgents(fresh: true) }
     }
 }
 
