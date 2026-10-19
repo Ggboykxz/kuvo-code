@@ -64,6 +64,8 @@ export function Palette() {
 
   return (
     <div id="palette" className={`palette ${state.paletteOpen ? "shown" : ""}`} hidden={!state.paletteOpen} onClick={event => { if (event.target === event.currentTarget) { state.paletteOpen = false; render(); } }}>
+      {/* The palette is one card of glass: the search above the list. */}
+      <div className="palette-card">
       <input
         id="palette-input"
         placeholder="Search sessions, files and actions…"
@@ -142,6 +144,7 @@ export function Palette() {
             {shortcut ? <span className="palette-keys">{keysOf(shortcut)}</span> : null}
           </div>
         ))}
+      </div>
       </div>
     </div>
   );

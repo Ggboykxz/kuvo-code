@@ -105,6 +105,11 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
+  - **2.57 (this change).** The layout, seen at last: the app's column was never a column —
+    the React root, the body and the grid's row all had to become one, or the composer
+    floated at the top of the conversation and the sidebar's glass stopped halfway down. The
+    palette is a card of glass again (the search above the list, not beside it), the
+    settings' *Done* belongs to the card, and the project path is a label, not a field.
   - **2.56 (this change).** The interface, audited against the craft: your own words are an
     **accent glass** bubble again — translucent, tinted, the light along its top edge — the
     Mac app's own material, not a flat chat blue; the marks that stood for icons (a paperclip,

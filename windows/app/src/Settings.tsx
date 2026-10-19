@@ -163,8 +163,9 @@ export function Settings() {
             ))}
           </div>
         </div>
+        {/* The close belongs to the card, at its foot — not beside it. */}
+        <button id="settings-close" className="primary" onClick={() => { state.settingsOpen = false; render(); }}>Done</button>
       </div>
-      <button id="settings-close" className="primary" onClick={() => { state.settingsOpen = false; render(); }}>Done</button>
     </div>
   );
 }
