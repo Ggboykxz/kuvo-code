@@ -1606,8 +1606,11 @@ struct MainView: View {
                 var wrong: [String] = []
                 let meter = PerfMeter()
                 meter.start()
+                // KUVO_PERF_SWITCH_BY=<steps>: tabs to go by, in turn ("1,1,-1,-1": back and forth
+                // among three), rather than always the next.
+                let by = environment["KUVO_PERF_SWITCH_BY"].map { $0.split(separator: ",").compactMap { Int($0) } } ?? [1]
                 for step in 0..<count {
-                    cycleTabs(by: 1)
+                    cycleTabs(by: by[step % by.count])
                     try? await Task.sleep(for: .milliseconds(1500))
                     if check, let id = selection, let model = workspace.model(for: id),
                        let editor = NSApp.windows.lazy.compactMap({ $0.firstResponder as? NSTextView }).first(where: \.isFieldEditor) {
@@ -1620,6 +1623,34 @@ struct MainView: View {
                     }
                 }
                 let line = "switch x\(count) among \(tabs.count) tabs: " + meter.stop() + (check ? "; check: " + (wrong.isEmpty ? "all right" : wrong.prefix(6).joined(separator: "; ")) : "") + "\n"
+                if let file = environment["KUVO_PERF_STALLS"] { try? meter.stallReport().write(toFile: file, atomically: true, encoding: .utf8) }
+                if let file = environment["KUVO_PERF_LOG"] {
+                    if let handle = FileHandle(forWritingAtPath: file) { handle.seekToEndOfFile(); handle.write(Data(line.utf8)); try? handle.close() } else { FileManager.default.createFile(atPath: file, contents: Data(line.utf8)) }
+                }
+            }
+        }
+        // KUVO_PERF_RESIZE=<n>: ten seconds after launch, goes through the next three session tabs
+        // and back, then makes the window narrower and wider again, n frames each way, and writes
+        // how the main thread kept up to KUVO_PERF_LOG.
+        if let count = environment["KUVO_PERF_RESIZE"].flatMap(Int.init) {
+            Task {
+                try? await Task.sleep(for: .seconds(10))
+                for by in [1, 1, 1, -3] {
+                    cycleTabs(by: by)
+                    try? await Task.sleep(for: .milliseconds(1500))
+                }
+                guard let window = NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain }) else { return }
+                let start = window.frame
+                let meter = PerfMeter()
+                meter.start()
+                for step in 0..<(count * 2) {
+                    let done = Double(step < count ? step + 1 : count * 2 - step - 1) / Double(count)
+                    var frame = start
+                    frame.size.width = start.width - 400 * done
+                    window.setFrame(frame, display: true)
+                    try? await Task.sleep(for: .milliseconds(16))
+                }
+                let line = "resize x\(count * 2): " + meter.stop() + "\n"
                 if let file = environment["KUVO_PERF_STALLS"] { try? meter.stallReport().write(toFile: file, atomically: true, encoding: .utf8) }
                 if let file = environment["KUVO_PERF_LOG"] {
                     if let handle = FileHandle(forWritingAtPath: file) { handle.seekToEndOfFile(); handle.write(Data(line.utf8)); try? handle.close() } else { FileManager.default.createFile(atPath: file, contents: Data(line.utf8)) }
