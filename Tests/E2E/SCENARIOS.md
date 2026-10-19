@@ -155,8 +155,8 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 | --- | --- | --- |
 | L31 | Fill in and send a multi-step form | ✅ see E2 |
 | L32 | A page behind a cookie banner, a popup and a new window | ✅ a new window, switched to, its heading read |
-| L33 | A site that needs the user's sign-in (the card), then work behind it | ⏳ |
-| L34 | A one-time code from the user | ⏳ |
+| L33 | A site that needs the user's sign-in (the card), then work behind it | ✅ a test shop on 127.0.0.1: the sign-in card filled the page (a wrong password brought the card back), then it read the orders behind it and named the two still processing |
+| L34 | A one-time code from the user | ✅ after the sign-in, a code card ("Enter the 6-digit code sent to your phone…") filled the page's code field and the site let it in |
 | L35 | A table spread over several pages, or loaded as you scroll | ❌→✅ right count, but 38 steps and 5 minutes scrolling each page; with browser_text pointed out, 5 steps and 54 s |
 | L36 | Take a screenshot of a page and show it to me | ⚠️ the screenshot shows only inside the folded browser step; "show it to me" should show it in the reply |
 | L37 | A page's own dialog (alert, confirm) | ✅ a JS confirm, declined, the page's result read back |
