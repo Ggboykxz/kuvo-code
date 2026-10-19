@@ -180,6 +180,8 @@ struct WindowDragArea: View {
             .onTapGesture(count: 2) { TitleBarDoubleClick.perform() }
             .gesture(WindowDragGesture())
             .allowsWindowActivationEvents(true)
+            // The title bar moves the window only while the pointer is on it (see TitleBarMoveGate).
+            .background(TitleBarMoveGateInstaller())
     }
 }
 
