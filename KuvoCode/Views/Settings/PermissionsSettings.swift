@@ -176,12 +176,12 @@ extension JSONValue {
 
 /// An ordered list of `{action, resource, effect}` rules at a path in the settings, each
 /// editable in place, with a button to add one. Rules for actions in `hiding`, for everything
-/// ("*"), are left out: they have their own controls (`ActionChoices`). Items that aren't rules
-/// (written by hand) are kept where they are.
+/// ("*"), are left out: they have their own controls (`ActionChoices`), and a rule can't be
+/// made one of those here. Items that aren't rules (written by hand) are kept where they are.
 ///
-/// Every rule here is for particular commands, files or sites, so each needs a pattern: a new one
-/// is saved once it has one (as you type, in a draft; else on Return, on leaving it, or with the
-/// page), and a pattern can't be emptied.
+/// Rules you add are new rows under the others, as many as you like, each saved once it has a
+/// pattern and you press Return or leave it (or leave the page). In a draft (a new agent), the
+/// new ones wait at `pendingKey` for its Create.
 struct RulesEditor: View {
     let path: [String]
     var actions: [(id: String, title: String)] = PermissionsSettings.actions.map { ($0.id, $0.title) }
@@ -191,13 +191,29 @@ struct RulesEditor: View {
     var prompt: String?
     @Environment(AppModel.self) private var app
     @Environment(\.editedConfig) private var edited
-    /// A rule being added, under the others, until it has a pattern: a half-made rule never
-    /// changes what the agent may do.
-    @State private var draft: PermissionRule?
-    /// Goes up to put the cursor in the new rule's pattern.
-    @State private var draftFocus = 0
+    /// Rules being added, until each has a pattern: a half-made rule never changes what the
+    /// agent may do.
+    @State private var drafts: [Draft] = []
+    /// The one just added, which takes the cursor.
+    @State private var focused: UUID?
+
+    private struct Draft: Identifiable, Equatable {
+        let id = UUID()
+        var rule: PermissionRule
+    }
+
+    /// Where a draft's new rules wait, in front of their path: `[pendingKey] + path`.
+    static let pendingKey = "pendingRules"
 
     private var config: EngineConfig { edited ?? app.engineConfig }
+
+    /// Why a rule can't be saved as it is, if it can't.
+    static func problem(of rule: PermissionRule, hiding: Set<String>) -> String? {
+        let pattern = rule.resource.trimmingCharacters(in: .whitespacesAndNewlines)
+        if pattern.isEmpty { return "Needs a pattern." }
+        if pattern == "*", hiding.contains(rule.action) { return "For all of them, use the choice above." }
+        return nil
+    }
 
     var body: some View {
         let items = config.items(path)
@@ -205,31 +221,45 @@ struct RulesEditor: View {
             guard let rule = items[index].rule else { return false }
             return !(hiding.contains(rule.action) && rule.resource == "*")
         }
-        // The new rule's row has the place the rule takes once it's saved (the end of the list),
-        // so it stays the same row, with the cursor in it, as it's saved.
-        let rows = shown.map { (id: $0, rule: items[$0].rule!, isDraft: false) } + (draft.map { [(id: items.count, rule: $0, isDraft: true)] } ?? [])
         Group {
-            if rows.isEmpty {
+            if shown.isEmpty, drafts.isEmpty {
                 Text("None yet.")
                     .foregroundStyle(.secondary)
             }
-            ForEach(rows, id: \.id) { row in
-                RuleRow(rule: row.rule, actions: actions, effects: effects, prompt: prompt ?? Self.example(for: row.rule.action),
-                        focusRequest: row.isDraft ? draftFocus : 0) { changed in
-                    row.isDraft ? changeDraft(changed) : change(row.id, to: changed)
-                } typed: { text in
-                    if row.isDraft, var rule = draft {
-                        rule.resource = text
-                        draft = rule
-                        if config.isDraft { saveDraft(trimming: false) }
-                    } else if config.isDraft, !row.isDraft, !text.trimmingCharacters(in: .whitespaces).isEmpty, text != row.rule.resource {
-                        // A draft keeps up with every key, for its Create.
-                        change(row.id, to: PermissionRule(action: row.rule.action, resource: text, effect: row.rule.effect))
+            ForEach(shown, id: \.self) { index in
+                if let rule = items[index].rule {
+                    RuleRow(rule: rule, actions: actions, effects: effects, prompt: prompt ?? Self.example(for: rule.action),
+                            problem: { Self.problem(of: $0, hiding: hiding) }) { changed in
+                        change(index, to: changed)
+                    } typed: { text in
+                        // A draft keeps up with every key, for its Create; without spaces around
+                        // the pattern there (they're the end of a word you're typing).
+                        let typed = PermissionRule(action: rule.action, resource: text, effect: rule.effect)
+                        if config.isDraft, Self.problem(of: typed, hiding: hiding) == nil, text != rule.resource { change(index, to: typed) }
                     }
                 }
             }
+            // By its ID, not a binding into the list: a row that's going (removed, saved) can still
+            // write what it shows as it goes, after it's out of the list.
+            ForEach(drafts) { draft in
+                RuleRow(rule: draft.rule, actions: actions, effects: effects, prompt: prompt ?? Self.example(for: draft.rule.action),
+                        isNew: true, focusesOnAppear: focused == draft.id, problem: { Self.problem(of: $0, hiding: hiding) }) { changed in
+                    guard let index = drafts.firstIndex(where: { $0.id == draft.id }) else { return }
+                    if let changed { drafts[index].rule = changed } else { drafts.remove(at: index) }
+                } typed: { text in
+                    guard let index = drafts.firstIndex(where: { $0.id == draft.id }) else { return }
+                    drafts[index].rule.resource = text
+                } commit: {
+                    save(draft.id)
+                }
+            }
             Button("Add Rule", action: add)
-                .onDisappear { saveDraft() }
+                // Leaving the page keeps the ones that have a pattern.
+                .onDisappear { for draft in drafts { save(draft.id) } }
+        }
+        .onChange(of: drafts) {
+            guard config.isDraft else { return }
+            config.setItems(drafts.map(\.rule.json), at: [Self.pendingKey] + path)
         }
     }
 
@@ -250,104 +280,113 @@ struct RulesEditor: View {
         config.setItems(items, at: path)
     }
 
-    private func changeDraft(_ changed: PermissionRule?) {
-        guard let changed else {
-            draft = nil
-            return
-        }
-        draft = changed
-        saveDraft()
-    }
-
-    /// Saves the new rule, once it has a pattern. As it's typed, it's kept as it is (a space
-    /// you just typed stays); otherwise without spaces around it.
-    private func saveDraft(trimming: Bool = true) {
-        guard var rule = draft else { return }
-        if trimming { rule.resource = rule.resource.trimmingCharacters(in: .whitespacesAndNewlines) }
-        guard !rule.resource.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        draft = nil
+    /// Saves a new rule at the end of the list, once it can be.
+    private func save(_ id: UUID) {
+        guard let index = drafts.firstIndex(where: { $0.id == id }) else { return }
+        var rule = drafts[index].rule
+        rule.resource = rule.resource.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard Self.problem(of: rule, hiding: hiding) == nil else { return }
+        drafts.remove(at: index)
         config.setItems(config.items(path) + [rule.json], at: path)
     }
 
-    /// Another rule: the one being added is saved first, if it has a pattern; if it hasn't, the
-    /// cursor goes there, as that's what's missing.
+    /// Another new rule, under the others, with the cursor in its pattern.
     private func add() {
-        saveDraft()
-        if draft != nil {
-            draftFocus += 1
-            return
-        }
         // Most rules are for commands ("git push *"), when there are some.
         let action = actions.contains { $0.id == "shell" } ? "shell" : actions.first?.id ?? "shell"
-        draft = PermissionRule(action: action, resource: "", effect: effects.first ?? .ask)
-        draftFocus += 1
+        let draft = Draft(rule: PermissionRule(action: action, resource: "", effect: effects.first ?? .ask))
+        focused = draft.id
+        drafts.append(draft)
     }
 }
 
-/// One rule: what kind of action, which (a pattern), and what happens.
+/// One rule: what kind of action, which (a pattern), and what happens; under it, why it can't be
+/// saved as it is, if it can't.
 private struct RuleRow: View {
     let rule: PermissionRule
     let actions: [(id: String, title: String)]
     let effects: [PermissionRule.Effect]
     let prompt: String
-    /// Goes up to put the cursor in its pattern (a rule just added).
-    var focusRequest = 0
+    /// Not saved yet: it's kept as typed until it can be.
+    var isNew = false
+    /// Takes the cursor as it shows (one just added).
+    var focusesOnAppear = false
+    let problem: (PermissionRule) -> String?
     /// The rule as changed, or nil to remove it.
     let change: (PermissionRule?) -> Void
-    /// Each change to the pattern as it's typed, before it's saved.
+    /// Each change to the pattern as it's typed.
     let typed: (String) -> Void
+    /// For a new one: save it now, if it can be.
+    var commit: () -> Void = {}
     @State private var resource = ""
     @FocusState private var isFocused: Bool
 
+    /// What's wrong with it as typed; an empty new one says so only once you've left it.
+    private var shownProblem: String? {
+        let typed = PermissionRule(action: rule.action, resource: resource, effect: rule.effect)
+        guard let problem = problem(typed) else { return nil }
+        return resource.trimmingCharacters(in: .whitespaces).isEmpty && (isFocused || !isNew) ? nil : problem
+    }
+
     var body: some View {
-        HStack(spacing: 8) {
-            // A fixed width that long titles truncate in, so the patterns line up.
-            Picker("Action", selection: Binding(get: { rule.action }, set: { change(PermissionRule(action: $0, resource: resource, effect: rule.effect)) })) {
-                ForEach(actions, id: \.id) { Text($0.title).tag($0.id) }
-                if !actions.contains(where: { $0.id == rule.action }) { Text(rule.action).tag(rule.action) }
-            }
-            .labelsHidden()
-            .frame(width: 190, alignment: .leading)
-            TextField("Pattern", text: $resource, prompt: Text(prompt))
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                // A fixed width that long titles truncate in, so the patterns line up.
+                Picker("Action", selection: Binding(get: { rule.action }, set: { change(PermissionRule(action: $0, resource: rule.resource, effect: rule.effect)) })) {
+                    ForEach(actions, id: \.id) { Text($0.title).tag($0.id) }
+                    if !actions.contains(where: { $0.id == rule.action }) { Text(rule.action).tag(rule.action) }
+                }
                 .labelsHidden()
-                .focused($isFocused)
-                .onSubmit(commit)
-                .onChange(of: isFocused) { if !isFocused { commit() } }
-                .onChange(of: resource) { typed(resource) }
-            Picker("Effect", selection: Binding(get: { rule.effect }, set: { change(PermissionRule(action: rule.action, resource: resource, effect: $0)) })) {
-                ForEach(effects, id: \.self) { Text(Self.title(of: $0)).tag($0) }
+                .frame(width: 190, alignment: .leading)
+                TextField("Pattern", text: $resource, prompt: Text(prompt))
+                    .labelsHidden()
+                    .focused($isFocused)
+                    .onSubmit(save)
+                    .onChange(of: isFocused) { if !isFocused { save() } }
+                    .onChange(of: resource) { typed(resource) }
+                Picker("Effect", selection: Binding(get: { rule.effect }, set: { change(PermissionRule(action: rule.action, resource: rule.resource, effect: $0)) })) {
+                    ForEach(effects, id: \.self) { Text(Self.title(of: $0)).tag($0) }
+                }
+                .labelsHidden()
+                .frame(width: 120)
+                Button {
+                    // Drop what was typed first, so going away doesn't save it back.
+                    resource = rule.resource
+                    change(nil)
+                } label: {
+                    Image(systemName: "minus.circle.fill")
+                }
+                .buttonStyle(RemoveButtonStyle())
+                .help("Remove Rule")
             }
-            .labelsHidden()
-            .frame(width: 120)
-            Button {
-                // Drop what was typed first, so going away doesn't save it back.
-                resource = rule.resource
-                change(nil)
-            } label: {
-                Image(systemName: "minus.circle.fill")
+            if let shownProblem {
+                Text(shownProblem)
+                    .font(.callout)
+                    .foregroundStyle(.red)
+                    // Under the pattern.
+                    .padding(.leading, 198)
             }
-            .buttonStyle(RemoveButtonStyle())
-            .help("Remove Rule")
         }
         .onAppear {
             resource = rule.resource
-            if focusRequest > 0 { isFocused = true }
+            if focusesOnAppear { isFocused = true }
         }
         .onChange(of: rule.resource) { if rule.resource != resource { resource = rule.resource } }
-        .onChange(of: focusRequest) { isFocused = true }
         // Closing the page or switching tabs while typing keeps what you typed.
-        .onDisappear(perform: commit)
+        .onDisappear(perform: save)
     }
 
-    private func commit() {
+    private func save() {
+        if isNew { return commit() }
         let value = resource.trimmingCharacters(in: .whitespacesAndNewlines)
-        // A pattern can't be emptied: "everything" has its own choice, above the rules.
-        guard !value.isEmpty else {
-            if !rule.resource.isEmpty { resource = rule.resource }
+        let changed = PermissionRule(action: rule.action, resource: value, effect: rule.effect)
+        // A saved rule keeps its pattern until the new one can be used.
+        guard problem(changed) == nil else {
+            resource = rule.resource
             return
         }
         guard value != rule.resource else { return }
-        change(PermissionRule(action: rule.action, resource: value, effect: rule.effect))
+        change(changed)
     }
 
     static func title(of effect: PermissionRule.Effect) -> String {

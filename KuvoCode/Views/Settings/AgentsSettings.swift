@@ -194,12 +194,12 @@ private struct AgentEditor: View {
         return catalog.agents.first { $0.id == id }?.name ?? id
     }
 
-    /// The name you typed, as an agent's: lowercase, with hyphens for spaces, and only letters,
-    /// digits, hyphens and underscores.
+    /// The name you typed, as the agent is called: as you wrote it, with one space between words,
+    /// and only letters, digits, spaces, hyphens and underscores (the engine takes it as it is, as
+    /// a mode and a subagent).
     private var newID: String {
-        newName.lowercased().trimmingCharacters(in: .whitespaces)
-            .replacingOccurrences(of: " ", with: "-")
-            .filter { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }
+        newName.filter { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" || $0 == " " }
+            .split(separator: " ").joined(separator: " ")
     }
 
     /// Why the name you typed can't be used, if it can't.
@@ -208,9 +208,23 @@ private struct AgentEditor: View {
             return newName.trimmingCharacters(in: .whitespaces).isEmpty ? nil : "A name needs a letter or a number."
         }
         // Not one the engine already has: that would change it instead.
-        let isTaken = app.engineConfig.value(at: ["agents", newID]) != nil || catalog.agents.contains(where: { $0.id == newID })
-            || AgentsSettings.builtIn.contains(newID) || AgentsSettings.hiddenBuiltIn.contains(newID)
+        // Bug Hunter and bug hunter would be told apart only by their case.
+        let name = newID.lowercased()
+        let configured = (app.engineConfig.value(at: ["agents"])?.object ?? [:]).keys
+        let isTaken = configured.contains { $0.lowercased() == name } || catalog.agents.contains { $0.id.lowercased() == name || $0.name.lowercased() == name }
+            || AgentsSettings.builtIn.contains(name) || AgentsSettings.hiddenBuiltIn.contains(name)
         return isTaken ? "There's an agent called \(newID) already." : nil
+    }
+
+    /// The rules added on a new one's page that aren't saved into it yet (the cursor is still in
+    /// one), which Create takes too.
+    private var pendingRules: [PermissionRule] {
+        draft?.items([RulesEditor.pendingKey] + Self.draftPath + ["permissions"]).compactMap(\.rule) ?? []
+    }
+
+    /// A rule that can't be made as it is (no pattern yet) keeps the agent from being created.
+    private var rulesProblem: Bool {
+        pendingRules.contains { RulesEditor.problem(of: $0, hiding: Set(PermissionsSettings.actions.map(\.id))) != nil }
     }
 
     private var mode: String {
@@ -225,7 +239,7 @@ private struct AgentEditor: View {
             }
             .environment(\.editedConfig, draft)
         } footer: {
-            SettingsEditorButtons(create: id == nil ? "Create Agent" : nil, canCreate: !newID.isEmpty && problem == nil, onCreate: create,
+            SettingsEditorButtons(create: id == nil ? "Create Agent" : nil, canCreate: !newID.isEmpty && problem == nil && !rulesProblem, onCreate: create,
                                   remove: id.flatMap { app.engineConfig.value(at: ["agents", $0]) } != nil ? (isBuiltIn ? "Reset to Built-In…" : "Delete Agent…") : nil,
                                   onRemove: { confirmsRemoval = true }, done: done)
         }
@@ -243,14 +257,14 @@ private struct AgentEditor: View {
     /// what you typed.
     private var naming: some View {
         Section {
-            TextField("Name", text: $newName, prompt: Text("bug-hunter"))
+            TextField("Name", text: $newName, prompt: Text("Bug Hunter"))
         } footer: {
             if let problem {
                 Text(problem).foregroundStyle(.red)
             } else if !newID.isEmpty, newID != newName.trimmingCharacters(in: .whitespaces) {
                 Text(verbatim: "It'll be called \(newID).").foregroundStyle(.secondary)
             } else {
-                Text("A short name. It's how you and other agents pick it.").foregroundStyle(.secondary)
+                Text("How it shows in the composer, and how other agents ask for it.").foregroundStyle(.secondary)
             }
         }
     }
@@ -322,6 +336,11 @@ private struct AgentEditor: View {
         guard let draft, !newID.isEmpty, problem == nil else { return }
         var agent = draft.value(at: Self.draftPath)?.object ?? [:]
         if agent["mode"] == nil { agent["mode"] = .string("primary") }
+        // With the rules still being typed, and each pattern without spaces around it.
+        let rules = (draft.items(Self.draftPath + ["permissions"]).compactMap(\.rule) + pendingRules).map {
+            PermissionRule(action: $0.action, resource: $0.resource.trimmingCharacters(in: .whitespacesAndNewlines), effect: $0.effect).json
+        }
+        agent["permissions"] = rules.isEmpty ? nil : .array(rules)
         app.engineConfig.set(.object(agent), at: ["agents", newID])
         Analytics.shared.track("agent_created")
         done()
