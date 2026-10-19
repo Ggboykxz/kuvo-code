@@ -33,6 +33,11 @@ struct MainView: View {
     @State private var keptSplit: String?
     /// The room the conversation and the panel share: what the panel takes, expanded.
     @State private var mainAreaWidth: CGFloat = 0
+    /// The room the conversation leaves the panel: it follows the panel a moment later, so the
+    /// panel slides in over the conversation (and out from over it) and the conversation's text
+    /// wraps once after, rather than at every step of the slide or all at once ahead of it.
+    @State private var panelRoom: Double?
+    @State private var panelRoomChange: Task<Void, Never>?
     @AppStorage("sessionsWidth") private var sessionsWidth = 280.0
     @AppStorage("changesWidth") private var changesWidth = 420.0
     @AppStorage(Notifier.badgeKey) private var showsBadge = true
@@ -192,16 +197,20 @@ struct MainView: View {
             let layout = paneLayout(available: proxy.size.width)
             let expands = showsPanel && panelExpanded
             HStack(spacing: 0) {
-                if let width = layout.sessions {
-                    // The sidebar's room; the sidebar itself is over it (below).
-                    Color.clear
-                        .frame(width: width)
-                    PaneResizer(
-                        width: Binding(get: { width }, set: { sessionsWidth = $0 }),
-                        range: PaneLayout.sessionsRange.lowerBound...max(PaneLayout.sessionsRange.lowerBound, layout.sessionsMax),
-                        side: .leading
-                    )
-                }
+                // The sidebar's room, with the gap after it; the sidebar itself is over it
+                // (below). Growing and shrinking with the slide, so the conversation makes room
+                // as the sidebar comes in, rather than all at once ahead of it.
+                Color.clear
+                    .frame(width: layout.sessions.map { $0 + Metrics.paneGap } ?? 0)
+                    .overlay(alignment: .trailing) {
+                        if let width = layout.sessions {
+                            PaneResizer(
+                                width: Binding(get: { width }, set: { sessionsWidth = $0 }),
+                                range: PaneLayout.sessionsRange.lowerBound...max(PaneLayout.sessionsRange.lowerBound, layout.sessionsMax),
+                                side: .leading
+                            )
+                        }
+                    }
                 // With the tab bar hidden and no sidebar, the window's buttons and the sidebar
                 // button sit over this card's header.
                 let controlsInset: CGFloat = !showsTabBar && layout.sessions == nil ? 124 : 0
@@ -209,11 +218,6 @@ struct MainView: View {
                     HStack(spacing: 0) {
                         conversationCard
                             .frame(maxWidth: .infinity)
-                            // It takes its new room at once while the panel or sidebar slides, so its
-                            // text wraps once instead of at every step of the slide, which made
-                            // the conversation flicker and jump.
-                            .transaction(value: showsPanel) { $0.animation = nil }
-                            .transaction(value: showsSidebar) { $0.animation = nil }
                             // Another session shows at once, as the tab moves to it: animated, the
                             // last one faded out row by row under the new one, both drawn meanwhile.
                             .transaction(value: selection) { $0.animation = nil }
@@ -244,17 +248,22 @@ struct MainView: View {
                                 .accessibilityHidden(expands)
                                 .transition(.move(edge: .trailing).combined(with: .opacity))
                         }
-                        if let width = layout.changes {
-                            PaneResizer(
-                                width: Binding(get: { width }, set: { changesWidth = $0 }),
-                                range: PaneLayout.changesRange.lowerBound...max(PaneLayout.changesRange.lowerBound, layout.changesMax),
-                                side: .trailing
-                            )
-                            .allowsHitTesting(!expands)
-                            // The panel's room; the panel itself is over it, so expanding only
-                            // makes it wider, the one card it is.
-                            Color.clear.frame(width: width)
-                        }
+                        // The panel's room, with the gap before it; the panel itself is over it, so
+                        // expanding only makes it wider, the one card it is. Growing and shrinking
+                        // with the panel's slide, as the sidebar's does.
+                        Color.clear
+                            .frame(width: panelRoom.map { $0 + Metrics.paneGap } ?? 0)
+                            .onChange(of: layout.changes, initial: true) { old, new in followPanel(from: old, to: new) }
+                            .overlay(alignment: .leading) {
+                                if let width = layout.changes, panelRoom != nil {
+                                    PaneResizer(
+                                        width: Binding(get: { width }, set: { changesWidth = $0 }),
+                                        range: PaneLayout.changesRange.lowerBound...max(PaneLayout.changesRange.lowerBound, layout.changesMax),
+                                        side: .trailing
+                                    )
+                                    .allowsHitTesting(!expands)
+                                }
+                            }
                     }
                     .onGeometryChange(for: CGFloat.self, of: \.size.width) { mainAreaWidth = $0 }
                     if showsPanel, layout.changes != nil || expands {
@@ -951,6 +960,23 @@ struct MainView: View {
     /// The panel's and the sidebar's buttons, which show what's on screen.
     private var panelToggle: Binding<Bool> { Binding(get: { panelOnScreen }, set: { showPanel($0) }) }
     private var sidebarToggle: Binding<Bool> { Binding(get: { sidebarOnScreen }, set: { showSidebar($0) }) }
+
+    /// The panel's room to `new`: at once when it's there before and after (the panel or the
+    /// window resized), a moment later when the panel comes or goes, once it has slid.
+    private func followPanel(from old: Double?, to new: Double?) {
+        panelRoomChange?.cancel()
+        guard (old == nil) != (new == nil), panelRoom != new else {
+            panelRoom = new
+            return
+        }
+        panelRoomChange = Task {
+            try? await Task.sleep(for: .milliseconds(320))
+            guard !Task.isCancelled else { return }
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { panelRoom = new }
+        }
+    }
 
     private func keep(_ pane: PaneLayout.Pane) {
         givesWay.removeAll { $0 == pane }
