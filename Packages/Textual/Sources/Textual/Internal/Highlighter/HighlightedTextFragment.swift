@@ -40,7 +40,8 @@ struct HighlightedTextFragment: View {
       )
     )
     .foregroundStyle(theme.foregroundColor)
-    .task(id: code) {
+    // Its language too: a block still being written gets its own once its fence closes.
+    .task(id: Tuple(code, languageHint)) {
       await model.tokenize(code: code, languageHint: languageHint)
     }
   }
@@ -48,8 +49,8 @@ struct HighlightedTextFragment: View {
 
 extension HighlightedTextFragment {
   @MainActor @Observable final class Model {
-    /// The code's tokens, once read here.
-    private var tokens: (code: String, tokens: [CodeToken])?
+    /// The code's tokens, once read here, and the language they were read in.
+    private var tokens: (code: String, language: String, tokens: [CodeToken])?
 
     @ObservationIgnored
     private var memo: (key: Tuple<String, StructuredText.HighlighterTheme, TextEnvironmentValues>, tokens: [CodeToken], value: AttributedString)?
@@ -64,7 +65,7 @@ extension HighlightedTextFragment {
       environment: TextEnvironmentValues
     ) -> AttributedString {
       let tokens =
-        (self.tokens?.code == code ? self.tokens?.tokens : nil)
+        (self.tokens.flatMap { $0.code == code && $0.language == languageHint ? $0.tokens : nil })
         ?? languageHint.flatMap { TokenCache.shared.tokens(of: code, in: $0) }
         ?? [CodeToken(content: code, type: .plain)]
       let key = Tuple(code, theme, environment)
@@ -78,7 +79,7 @@ extension HighlightedTextFragment {
       guard let languageHint else { return }
       // Read before: kept here too, as the cache may let it go.
       if let cached = TokenCache.shared.tokens(of: code, in: languageHint) {
-        if self.tokens?.code != code { self.tokens = (code, cached) }
+        if self.tokens?.code != code || self.tokens?.language != languageHint { self.tokens = (code, languageHint, cached) }
         return
       }
       guard let tokenizer = await CodeTokenizer.loaded() else { return }
@@ -87,7 +88,7 @@ extension HighlightedTextFragment {
       // The code changed meanwhile (a block still being written), which cancelled this: its
       // tokens, of the code as it was, would show over the newer code's.
       guard !Task.isCancelled else { return }
-      self.tokens = (code, tokens)
+      self.tokens = (code, languageHint, tokens)
     }
 
     private static func highlight(
