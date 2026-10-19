@@ -203,9 +203,10 @@ public struct Transcript: Sendable, Equatable {
             var item = Pending(id: enqueued.inboxID, text: enqueued.item.payload["text"]?.string ?? "", delivery: enqueued.item.delivery, isLocal: false,
                                files: InboxItem.files(in: enqueued.item.payload), inlineFiles: InboxItem.inlineFiles(in: enqueued.item.payload))
             if let index = pending.firstIndex(where: { $0.id == item.id }) {
-                // A local copy knows the files as they were picked, before any conversion: the
-                // same ones it carries inline, if it does.
-                if !pending[index].files.isEmpty {
+                // A local copy knows the files on this Mac as they were picked, before any
+                // conversion: the same ones it carries inline, if it does. One that only carries
+                // them inline (a phone's) keeps the engine's, which have their names.
+                if pending[index].files.contains(where: \.isFileURL) {
                     item.files = pending[index].files
                     item.inlineFiles = []
                 }

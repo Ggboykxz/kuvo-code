@@ -146,16 +146,18 @@ import Testing
     #expect(transcript.pending.first?.files == [])
     #expect(transcript.pending.first?.inlineFiles.map(\.mime) == ["image/png"])
 
-    // Sent from a phone, its local copy has the photo as a data: URL: the type comes from that.
+    // Sent from a phone, its local copy has the photo as a data: URL: the type comes from that,
+    // and the name it was sent with stays.
     transcript.addLocal(id: "msg_3", text: "Photo", delivery: .steer, files: [URL(string: "data:image/heic;base64,AAAA")!])
     transcript.apply(try event(#"""
-    {"id":"evt_4","created":4,"type":"session.inbox.enqueued","data":{"sessionID":"ses_1","inboxID":"msg_3","item":{"type":"user","payload":{"text":"Photo","files":[{"uri":"data:image/heic;base64,AAAA"}]},"delivery":"steer"}}}
+    {"id":"evt_4","created":4,"type":"session.inbox.enqueued","data":{"sessionID":"ses_1","inboxID":"msg_3","item":{"type":"user","payload":{"text":"Photo","files":[{"uri":"data:image/heic;base64,AAAA","name":"IMG_0002.heic"}]},"delivery":"steer"}}}
     """#))
     transcript.apply(try event(#"""
     {"id":"evt_5","created":5,"type":"session.inbox.delivered","data":{"sessionID":"ses_1","inboxID":"msg_3"}}
     """#))
     guard case .user(let photo) = transcript.messages.last else { Issue.record("no message"); return }
     #expect(photo.files?.map(\.mime) == ["image/heic"])
+    #expect(photo.files?.first?.name == "IMG_0002.heic")
     #expect(photo.files?.first?.bytes == Data([0, 0, 0]))
 }
 
