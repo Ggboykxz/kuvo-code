@@ -141,6 +141,7 @@ struct TranscriptView: View {
         .onDisappear { PerfRead.viewsGone += 1 }
         .task { await PerfRender.run(model: model) }
         .task { await PerfDrag.run() }
+        .onAppear { PerfCompare.run() }
         // KUVO_DEMO_WANDER=<seconds>: that long after it opens, scrolls up a screen or two and back
         // down, again and again, as you would reading what streams in, for KUVO_DEMO_WANDER_FOR
         // seconds: scroll gestures, as a trackpad sends them, through AppKit.
@@ -940,6 +941,22 @@ private struct MarkdownPiece: View, Equatable {
     }
 
     var body: some View {
+        #if DEBUG
+        if Perf.textKit {
+            ReplyView(markdown: text, parser: FileLinkingParser(folders: folders, mentions: mentions, highlight: highlight)) { url in
+                guard url.isFileURL else { return false }
+                app.utilities.show(url)
+                return true
+            }
+        } else {
+            textual
+        }
+        #else
+        textual
+        #endif
+    }
+
+    private var textual: some View {
         StructuredText(text, parser: FileLinkingParser(folders: folders, mentions: mentions, highlight: highlight))
             // Textual reads it again only when the text changes: made again when the marks do.
             .id(highlight)
@@ -1609,6 +1626,8 @@ enum Perf {
     static let noGlass = ProcessInfo.processInfo.environment["KUVO_PERF_NO_GLASS"] != nil
     static let noEdge = ProcessInfo.processInfo.environment["KUVO_PERF_NO_EDGE"] != nil
     static let noAnimation = ProcessInfo.processInfo.environment["KUVO_PERF_NO_ANIM"] != nil
+    /// KUVO_PERF_TEXTKIT: replies drawn with TextKit (`ReplyView`) instead of Textual.
+    static let textKit = ProcessInfo.processInfo.environment["KUVO_PERF_TEXTKIT"] != nil
 }
 #endif
 

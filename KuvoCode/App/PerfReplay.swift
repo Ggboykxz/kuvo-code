@@ -656,7 +656,10 @@ enum PerfRender {
         let width: CGFloat = 680
         var lines: [String] = []
         var slowest: [String] = []
+        // KUVO_PERF_RENDER_ONLY=<name>: that one alone (and Textual's, which starts the meter).
+        let only = ProcessInfo.processInfo.environment["KUVO_PERF_RENDER_ONLY"]
         func measure<V: View>(_ name: String, _ make: (String) -> V) async {
+            if let only, name != only, name != "textual" { return }
             _ = time(make(pieces[0]), width: width, window: window)
             var times: [Double] = []
             var height: CGFloat = 0
@@ -684,7 +687,7 @@ enum PerfRender {
         func parsed(_ text: String) -> AttributedString { (try? FileLinkingParser(folders: { [] }).attributedString(for: text)) ?? AttributedString(text) }
         // KUVO_PERF_STALLS: where the main thread is while Textual draws them.
         let meter = PerfMeter()
-        if ProcessInfo.processInfo.environment["KUVO_PERF_STALLS"] != nil { meter.start() }
+        if ProcessInfo.processInfo.environment["KUVO_PERF_STALLS"] != nil, only == nil { meter.start() }
         await measure("textual") { text in
             StructuredText(text, parser: FileLinkingParser(folders: { [] }))
                 .transcriptFont()
@@ -695,7 +698,7 @@ enum PerfRender {
                 .textual.structuredTextStyle(.gitHub)
                 .textual.textSelection(.enabled)
         }
-        if let file = ProcessInfo.processInfo.environment["KUVO_PERF_STALLS"] {
+        if let file = ProcessInfo.processInfo.environment["KUVO_PERF_STALLS"], only == nil {
             try? await Task.sleep(for: .milliseconds(300))
             _ = meter.stop()
             try? meter.stallReport().write(toFile: file, atomically: true, encoding: .utf8)
@@ -740,6 +743,13 @@ enum PerfRender {
             .transcriptFont()
         }
         await measure("NSTextView") { text in PlainTextView(text: NSAttributedString(parsed(text))) }
+        let textKitMeter = PerfMeter()
+        if only == "textkit", ProcessInfo.processInfo.environment["KUVO_PERF_STALLS"] != nil { textKitMeter.start() }
+        await measure("textkit") { text in ReplyView(markdown: text, parser: FileLinkingParser(folders: { [] })) }
+        if only == "textkit", let file = ProcessInfo.processInfo.environment["KUVO_PERF_STALLS"] {
+            _ = textKitMeter.stop()
+            try? textKitMeter.stallReport().write(toFile: file, atomically: true, encoding: .utf8)
+        }
         window.orderOut(nil)
         let line = "render " + lines.joined(separator: "\nrender ") + "\nslowest (textual first):\n" + slowest.prefix(5).joined(separator: "\n") + "\n"
         if let file = ProcessInfo.processInfo.environment["KUVO_PERF_LOG"] {
@@ -760,6 +770,42 @@ enum PerfRender {
         let ms = (CACurrentMediaTime() - start) * 1000
         window.contentView = nil
         return (ms, size.height)
+    }
+}
+
+/// KUVO_PERF_COMPARE=<file.md>: once the window is up, a window of its own with the Markdown drawn
+/// by Textual on the left and by TextKit (`ReplyView`) on the right, for comparing their looks.
+enum PerfCompare {
+    private static var window: NSWindow?
+
+    static func run() {
+        guard window == nil, let path = ProcessInfo.processInfo.environment["KUVO_PERF_COMPARE"],
+              let markdown = try? String(contentsOfFile: path, encoding: .utf8) else { return }
+        let width: CGFloat = 640
+        let view = ScrollView {
+            HStack(alignment: .top, spacing: 40) {
+                StructuredText(markdown, parser: FileLinkingParser(folders: { [] }))
+                    .transcriptFont()
+                    .textual.codeBlockStyle(CopyableCodeBlockStyle())
+                    .textual.listItemStyle(.firstLine)
+                    .textual.inlineStyle(.gitHub)
+                    .textual.highlighterTheme(CodeColors.theme)
+                    .textual.structuredTextStyle(.gitHub)
+                    .textual.textSelection(.enabled)
+                    .frame(width: width, alignment: .topLeading)
+                ReplyView(markdown: markdown, parser: FileLinkingParser(folders: { [] }))
+                    .frame(width: width, alignment: .topLeading)
+            }
+            .padding(30)
+        }
+        .background(Color(nsColor: Surface.cardFillColor(dark: NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua, focused: true)))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width * 2 + 100, height: 1400), styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        window.title = "Textual | TextKit"
+        window.contentView = NSHostingView(rootView: view.appLook())
+        window.isReleasedWhenClosed = false
+        if ProcessInfo.processInfo.environment["KUVO_DEMO_OFFSCREEN"] != nil { window.setFrameOrigin(NSPoint(x: -20000, y: 0)) }
+        window.orderFrontRegardless()
+        self.window = window
     }
 }
 
