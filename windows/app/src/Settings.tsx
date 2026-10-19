@@ -133,7 +133,7 @@ export function Settings() {
   };
 
   return (
-    <div id="settings-modal" className="settings" hidden={!state.settingsOpen} onClick={event => { if (event.target === event.currentTarget) { state.settingsOpen = false; render(); } }}>
+    <div id="settings-modal" className={`settings ${state.settingsOpen ? "shown" : ""}`} hidden={!state.settingsOpen} onClick={event => { if (event.target === event.currentTarget) { state.settingsOpen = false; render(); } }}>
       <div className="settings-card wide">
         <div className="settings-shell">
           <nav className="settings-nav">

@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import type { Attachment, FormRequest, PermissionRequest, SessionSummary, Transcript, TranscriptEntry } from "./api";
+import { fromHistory } from "../../harness/transcript.mjs";
 import { brief, compactTokens, errorText, renderMarkdown, when } from "./lib";
 import {
   answerPermission,
@@ -341,11 +342,24 @@ function Header() {
   );
 }
 
+/// The session the split pane shows, read as the main pane reads its own.
+async function openSplit(id: string) {
+  if (!id) return;
+  if (state.transcripts.has(id)) return;
+  try {
+    const detail = await api<{ session: SessionSummary; messages: unknown[]; permissions: unknown[]; running: boolean }>(`/api/sessions/${encodeURIComponent(id)}`);
+    state.transcripts.set(id, fromHistory(id, detail.messages as never[], detail.permissions as never[], detail.running));
+  } catch (error) {
+    complain(error);
+  }
+}
+
 async function toggleSplit() {
   const other = state.openSessions.find(id => id !== state.session?.id) ?? state.sessions.find(s => s.id !== state.session?.id)?.id;
   if (state.split) { state.split = null; render(); return; }
   if (!other) return;
   state.split = other;
+  await openSplit(other);
   render();
 }
 
@@ -488,6 +502,7 @@ function Composer() {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<Attachment[]>([]);
   const [mentions, setMentions] = useState<Mention[]>([]);
+  const [queueOpen, setQueueOpen] = useState(false);
   const [mentionIndex, setMentionIndex] = useState(0);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const allFiles = useRef<{ path: string; name: string; relative: string }[]>([]);
@@ -560,10 +575,31 @@ function Composer() {
   };
 
   return (
-    <form id="composer" className="composer" hidden={!state.session} onSubmit={submit}>
+    <form
+      id="composer"
+      className="composer"
+      hidden={!state.session}
+      onSubmit={submit}
+      onDragOver={event => { event.preventDefault(); event.currentTarget.classList.add("dropping"); }}
+      onDragLeave={event => event.currentTarget.classList.remove("dropping")}
+      onDrop={async event => {
+        event.preventDefault();
+        event.currentTarget.classList.remove("dropping");
+        const picked: Attachment[] = [];
+        for (const file of Array.from(event.dataTransfer?.files ?? [])) {
+          const data = await new Promise<string>(resolve => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
+            reader.readAsDataURL(file);
+          });
+          picked.push({ name: file.name, mime: file.type, data });
+        }
+        if (picked.length) setFiles(current => [...current, ...picked]);
+      }}
+    >
       <button id="redo" className="small" type="button" hidden={!state.revert} title="Bring back what an undo took away" onClick={() => void redoNow()}>Redo</button>
-      <div id="queue-dock" className="queue-dock" hidden={queueItems.length === 0}>
-        {queueItems.map(item => (
+      <div id="queue-dock" className={`queue-dock ${queueOpen ? "open" : ""}`} hidden={queueItems.length === 0}>
+        {!queueOpen ? null : queueItems.map(item => (
           <div className="queue-item" key={item.id}>
             <span className="queue-text">{item.text || "(attachment only)"}</span>
             <button
@@ -593,6 +629,9 @@ function Composer() {
             </button>
           </div>
         ))}
+        <button className="small" title={queueOpen ? "Fold the queue away" : "Show what is waiting"} onClick={() => { setQueueOpen(open => !open); render(); }}>
+          {queueOpen ? "↑" : `↓ ${queueItems.length} waiting`}
+        </button>
       </div>
       <div id="autocomplete" className="autocomplete" hidden={mentions.length === 0}>
         {mentions.map((item, index) => (
@@ -819,7 +858,12 @@ export function App() {
         </section>
         <section id="split-pane" className="split-pane" hidden={!state.split}>
           <div className="split-head">
-            <select id="split-session" title="The session shown here" value={state.split ?? ""} onChange={event => { state.split = event.target.value; render(); }}>
+            <select
+              id="split-session"
+              title="The session shown here"
+              value={state.split ?? ""}
+              onChange={event => { state.split = event.target.value; void openSplit(event.target.value); render(); }}
+            >
               {state.openSessions.map(id => {
                 const session = state.sessions.find(s => s.id === id);
                 return <option key={id} value={id}>{session?.title || id.slice(0, 8)}</option>;

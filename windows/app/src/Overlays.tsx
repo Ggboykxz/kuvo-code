@@ -11,6 +11,7 @@ import { complain, loadSessions, notify, openSession, render, state, useStore } 
 export function Palette() {
   useStore();
   const [query, setQuery] = useState("");
+  const [index, setIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -23,6 +24,11 @@ export function Palette() {
   const needle = query.trim().toLowerCase();
   const sessions = state.sessions.filter(s => !needle || (s.title || "").toLowerCase().includes(needle)).slice(0, 6);
   const commands = state.commands.filter(c => !needle || c.name.toLowerCase().includes(needle)).slice(0, 6);
+  const actions: [string, () => void | Promise<void>][] = [
+    ["Appearance", async () => { state.settingsOpen = true; state.settingsSection = "appearance"; render(); }],
+    ["Refresh sessions", async () => { await loadSessions(); notify("Kuvo Code", "Sessions refreshed."); }],
+  ];
+  const total = sessions.length + commands.length + actions.length;
 
   const run = async (action: () => void | Promise<void>) => {
     state.paletteOpen = false;
@@ -31,7 +37,7 @@ export function Palette() {
   };
 
   return (
-    <div id="palette" className="palette" hidden={!state.paletteOpen} onClick={event => { if (event.target === event.currentTarget) { state.paletteOpen = false; render(); } }}>
+    <div id="palette" className={`palette ${state.paletteOpen ? "shown" : ""}`} hidden={!state.paletteOpen} onClick={event => { if (event.target === event.currentTarget) { state.paletteOpen = false; render(); } }}>
       <input
         id="palette-input"
         placeholder="Search sessions, files and actions…"
@@ -39,13 +45,29 @@ export function Palette() {
         autoComplete="off"
         value={query}
         ref={inputRef}
-        onChange={event => setQuery(event.target.value)}
+        onChange={event => { setQuery(event.target.value); setIndex(0); }}
+        onKeyDown={event => {
+          if (event.key === "ArrowDown") { event.preventDefault(); setIndex(current => (current + 1) % Math.max(total, 1)); return; }
+          if (event.key === "ArrowUp") { event.preventDefault(); setIndex(current => (current - 1 + total) % Math.max(total, 1)); return; }
+          if (event.key === "Enter") {
+            event.preventDefault();
+            const rows = [
+              ...sessions.map(session => () => openSession(session.id)),
+              ...commands.map(command => () => {
+                const prompt = document.getElementById("prompt") as HTMLTextAreaElement | null;
+                if (prompt) { prompt.value = `/${command.name} `; prompt.dispatchEvent(new Event("input", { bubbles: true })); prompt.focus(); }
+              }),
+              ...actions.map(([, action]) => action),
+            ];
+            void run(rows[index] ?? (() => {}));
+          }
+        }}
       />
       <div id="palette-list" className="palette-list">
         {sessions.map(session => (
           <div
             key={session.id}
-            className="palette-item"
+            className={`palette-item ${sessions.indexOf(session) === index ? "selected" : ""}`}
             onClick={() => void run(async () => { await openSession(session.id); })}
           >
             <span className="palette-kind">session</span>
@@ -55,7 +77,7 @@ export function Palette() {
         {commands.map(command => (
           <div
             key={command.name}
-            className="palette-item"
+            className={`palette-item ${sessions.length + commands.indexOf(command) === index ? "selected" : ""}`}
             onClick={() => void run(async () => {
               const prompt = document.getElementById("prompt") as HTMLTextAreaElement | null;
               if (prompt) {
@@ -69,14 +91,16 @@ export function Palette() {
             <span>/{command.name}</span>
           </div>
         ))}
-        <div className="palette-item" onClick={() => void run(async () => { state.settingsOpen = true; state.settingsSection = "appearance"; render(); })}>
-          <span className="palette-kind">action</span>
-          <span>Appearance</span>
-        </div>
-        <div className="palette-item" onClick={() => void run(async () => { await loadSessions(); notify("Kuvo Code", "Sessions refreshed."); })}>
-          <span className="palette-kind">action</span>
-          <span>Refresh sessions</span>
-        </div>
+        {actions.map(([title, action], position) => (
+          <div
+            key={title}
+            className={`palette-item ${sessions.length + commands.length + position === index ? "selected" : ""}`}
+            onClick={() => void run(action)}
+          >
+            <span className="palette-kind">action</span>
+            <span>{title}</span>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -128,7 +152,7 @@ export function Picker() {
   }, [state.pickerOpen]);
 
   return (
-    <div id="picker" className="picker-modal" hidden={!state.pickerOpen}>
+    <div id="picker" className={`picker-modal ${state.pickerOpen ? "shown" : ""}`} hidden={!state.pickerOpen}>
       <div className="picker-card">
         <div className="settings-row">
           <span>Folder</span>
@@ -225,7 +249,7 @@ export function Drawer() {
   }, [state.drawerOpen, state.drawerTab, state.project]);
 
   return (
-    <div id="drawer" className="drawer" hidden={!state.drawerOpen}>
+    <div id="drawer" className={`drawer ${state.drawerOpen ? "shown" : ""}`} hidden={!state.drawerOpen}>
       <div className="drawer-head">
         <div className="drawer-tabs">
           <button className={`drawer-tab ${state.drawerTab === "files" ? "active" : ""}`} onClick={() => { state.drawerTab = "files"; render(); }}>Files</button>
@@ -279,7 +303,7 @@ export function Drawer() {
 export function DiffModal() {
   useStore();
   return (
-    <div id="diff-modal" className="diff-modal" hidden={!state.diffOpen} onClick={event => { if (event.target === event.currentTarget) { state.diffOpen = false; render(); } }}>
+    <div id="diff-modal" className={`diff-modal ${state.diffOpen ? "shown" : ""}`} hidden={!state.diffOpen} onClick={event => { if (event.target === event.currentTarget) { state.diffOpen = false; render(); } }}>
       <div className="diff-card">
         <div className="diff-head">
           <strong id="diff-title">{state.diffTitle ?? "Changes in this session"}</strong>

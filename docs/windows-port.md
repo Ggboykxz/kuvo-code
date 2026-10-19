@@ -105,7 +105,14 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
-  - **2.25 (this change).** The Mac app's way of putting a session away: a mark of the
+  - **2.26 (this change).** The motion layer, in the direction's own hand: the overlays
+    rise, the drawer slides, the entries and the questions arrive gently, the engine's dot
+    breathes while it works, the scrollbars are thin and quiet. Every duration comes from
+    the tokens, so "Motion: Reduced" — and the system's own preference — stop all of it at
+    once. With it: the palette answers to the arrow keys, the queue folds away when it is
+    long, the split pane reads the session it shows, and files dropped on the composer are
+    taken.
+  - **2.25. The Mac app's way of putting a session away: a mark of the
     app's own, so it leaves the sidebar but stays searchable — Settings › Archived sessions
     brings it back or deletes it. The Keyboard page lists every shortcut, by where it is
     used, and the ones that were missing work now (Ctrl+N, Ctrl+S, Ctrl+F, Ctrl+,, Ctrl+.).
