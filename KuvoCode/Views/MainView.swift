@@ -1626,6 +1626,31 @@ struct MainView: View {
                 }
             }
         }
+        // KUVO_PERF_TYPE=<n>: ten seconds after launch, types n characters into the composer, one
+        // every 60 ms, and writes how the main thread kept up (and the longest a character took to
+        // be handled) to KUVO_PERF_LOG.
+        if let count = environment["KUVO_PERF_TYPE"].flatMap(Int.init) {
+            Task {
+                try? await Task.sleep(for: .seconds(10))
+                guard let editor = NSApp.windows.lazy.compactMap({ $0.firstResponder as? NSTextView }).first(where: \.isFieldEditor) else { return }
+                let meter = PerfMeter()
+                meter.start()
+                var longest = 0.0
+                let words = Array("the quick brown fox jumps over the lazy dog and keeps on running ")
+                for index in 0..<count {
+                    let started = CACurrentMediaTime()
+                    editor.insertText(String(words[index % words.count]), replacementRange: NSRange(location: (editor.string as NSString).length, length: 0))
+                    // Until the run loop has handled it and drawn.
+                    await Task.yield()
+                    longest = max(longest, (CACurrentMediaTime() - started) * 1000)
+                    try? await Task.sleep(for: .milliseconds(60))
+                }
+                let line = String(format: "type x%d: longest %.0f ms; ", count, longest) + meter.stop() + "\n"
+                if let file = environment["KUVO_PERF_LOG"] {
+                    if let handle = FileHandle(forWritingAtPath: file) { handle.seekToEndOfFile(); handle.write(Data(line.utf8)); try? handle.close() } else { FileManager.default.createFile(atPath: file, contents: Data(line.utf8)) }
+                }
+            }
+        }
         // KUVO_DEMO_REOPEN_WINDOW=<seconds>: closes the window after that long, and opens it again.
         if let wait = environment["KUVO_DEMO_REOPEN_WINDOW"].flatMap(Double.init) {
             Task { [app] in
