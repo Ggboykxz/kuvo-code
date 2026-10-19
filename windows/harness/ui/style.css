@@ -92,6 +92,8 @@
   --gutter: 20px;
   --pane-gap: 8px;
   --readable-width: 760px;
+  /* The header's height: the drawer slides in under it, the Mac app's way. */
+  --header-height: 40px;
 }
 
 /* The dark ground: the same direction, inverted — a near-black canvas, panels one step up,
@@ -307,6 +309,7 @@ header {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  min-height: var(--header-height);
   padding: var(--space-2) var(--space-4);
   border-bottom: 1px solid var(--line);
 }
@@ -584,9 +587,10 @@ aside {
 /* ---- Files / terminal drawer (glass) ---- */
 .drawer {
   position: fixed;
-  top: 0; right: 0;
+  /* Under the header, which stays above it. */
+  top: var(--header-height); right: 0;
   width: 440px; max-width: 90vw;
-  height: 100vh;
+  height: calc(100vh - var(--header-height));
   border-left: 1px solid var(--line);
   box-shadow: -12px 0 40px rgba(0,0,0,.12);
   display: flex;
