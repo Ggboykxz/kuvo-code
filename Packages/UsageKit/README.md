@@ -21,10 +21,14 @@ here.
   caches (`~/Library/Application Support/<bundle id>/Usage`) follow the app UsageKit runs in, so it
   never shares files with an installed OpenUsage. A proxy goes in `Usage/proxy.json` there.
 - **The host's accounts** (`HostAccounts`). Copilot, OpenRouter and Z.ai accounts connected in Kuvo
-  Code are used, and so is a SuperGrok sign-in, for Grok's weekly limit, before the Grok CLI's
-  login (one the server turns away gives way to the next). Its token is used as the host's engine keeps it, never refreshed or saved here: xAI
-  rotates refresh tokens, so refreshing it would sign the engine out. OpenCode also reads the databases of Kuvo Code's private engine, so Kuvo Code's own
-  runs count toward spend, and its OpenCode Go key is found there.
+  Code are used, and so are its sign-ins: ChatGPT's for Codex, instead of the Codex CLI's or pi's
+  login (an account card for another account stays off), and SuperGrok's for Grok's weekly limit,
+  before the Grok CLI's login (one the server turns away gives way to the next, which is then only
+  read, never renewed). A sign-in's token is used as the host's engine keeps it, never refreshed or
+  saved here: OpenAI and xAI rotate refresh tokens, so refreshing it would sign the engine out. The
+  engine renews it without saying so, so one that has lapsed or is turned away is asked of the host
+  again (`HostAccounts.setReader`). OpenCode also reads the databases of Kuvo Code's private engine,
+  so Kuvo Code's own runs count toward spend, and its OpenCode Go key is found there.
 
 - **Plan limits for the host** (`Embedding/PlanLimits.swift`): the latest limits of one provider,
   read from what the panel already has, for Kuvo Code to show beside a session.

@@ -56,12 +56,14 @@ public final class UsageMenuBar {
         }
     }
 
-    /// Refreshes the given providers now, skipping the cache: the host's accounts changed. Providers
-    /// that are off stay off.
+    /// Refreshes the given providers now, every account card of each, skipping the cache: the host's
+    /// accounts changed. Providers that are off stay off.
     func refresh(providerIDs: [String]) {
         guard let container, !FirstLaunchSetup.isPending() else { return }
+        let families = Set(providerIDs)
+        let cards = container.providers.map(\.provider.id).filter { families.contains(ProviderAccountID.family(of: $0)) }
         Task {
-            for id in providerIDs where container.enablement.isEnabled(id) {
+            for id in cards where container.enablement.isEnabled(id) {
                 await container.dataStore.refresh(providerID: id, force: true)
             }
         }

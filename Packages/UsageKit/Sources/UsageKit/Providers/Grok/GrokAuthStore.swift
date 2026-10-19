@@ -58,15 +58,19 @@ struct GrokAuthStore: Sendable {
     var now: @Sendable () -> Date
     /// The host's SuperGrok token, if it's signed in (fork addition).
     var hostSecret: @Sendable () -> String?
+    /// Asks the host for its accounts again, for a sign-in whose token has lapsed here.
+    var rereadHost: @Sendable () async -> Void
 
     init(
         files: TextFileAccessing = LocalTextFileAccessor(),
         now: @escaping @Sendable () -> Date = Date.init,
-        hostSecret: @escaping @Sendable () -> String? = { HostAccounts.secret(for: ["xai"]) }
+        hostSecret: @escaping @Sendable () -> String? = { HostAccounts.signIn(for: "xai")?.secret },
+        rereadHost: @escaping @Sendable () async -> Void = { await HostAccounts.reread() }
     ) {
         self.files = files
         self.now = now
         self.hostSecret = hostSecret
+        self.rereadHost = rereadHost
     }
 
     /// The entry for the host's own SuperGrok sign-in (fork addition). Its engine keeps and renews

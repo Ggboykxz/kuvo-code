@@ -8,10 +8,16 @@ public struct HostCredential: Sendable, Hashable {
     public var integrationID: String
     /// The OAuth access token or API key.
     public var secret: String
+    /// Whether it's a sign-in rather than an API key.
+    public var signedIn: Bool
+    /// The account a sign-in is for, where the provider names one: ChatGPT's account ID.
+    public var accountID: String?
 
-    public init(integrationID: String, secret: String) {
+    public init(integrationID: String, secret: String, signedIn: Bool = false, accountID: String? = nil) {
         self.integrationID = integrationID
         self.secret = secret
+        self.signedIn = signedIn
+        self.accountID = accountID
     }
 }
 
@@ -21,6 +27,7 @@ public struct HostCredential: Sendable, Hashable {
 public enum HostAccounts {
     private static let credentials = Mutex<[HostCredential]>([])
     private static let openCodeDirectories = Mutex<[String]>([])
+    private static let reader = Mutex<(@Sendable () async -> Void)?>(nil)
 
     /// Replaces the host's accounts, then refreshes the providers that read them.
     @MainActor
@@ -29,7 +36,19 @@ public enum HostAccounts {
             defer { current = newCredentials }
             return current != newCredentials
         }
-        if changed { UsageMenuBar.shared.refresh(providerIDs: ["copilot", "openrouter", "zai", "opencode", "grok"]) }
+        if changed { UsageMenuBar.shared.refresh(providerIDs: ["copilot", "openrouter", "zai", "opencode", "grok", "codex"]) }
+    }
+
+    /// How to read the host's accounts again. Its engine renews a sign-in's token when it uses it,
+    /// without saying so, so a provider whose copy has lapsed asks for the current one first.
+    public static func setReader(_ read: @escaping @Sendable () async -> Void) {
+        reader.withLock { $0 = read }
+    }
+
+    /// Reads the host's accounts again, when it said how.
+    static func reread() async {
+        let read = reader.withLock { $0 }
+        await read?()
     }
 
     /// The panel's providers (`codex`, `copilot`, …) whose accounts are connected in the host: the
@@ -55,6 +74,16 @@ public enum HostAccounts {
             }
             return nil
         }
+    }
+
+    /// The host's sign-in (not an API key) for `integrationID`, if it has one.
+    static func signIn(for integrationID: String) -> HostCredential? {
+        credentials.withLock { signIn(for: integrationID, in: $0) }
+    }
+
+    static func signIn(for integrationID: String, in all: [HostCredential]) -> HostCredential? {
+        all.first { $0.integrationID == integrationID && $0.signedIn
+            && $0.secret.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty != nil }
     }
 
     static var openCodeDataDirectories: [String] {

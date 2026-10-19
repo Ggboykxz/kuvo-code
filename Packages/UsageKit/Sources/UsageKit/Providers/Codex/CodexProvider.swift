@@ -78,6 +78,7 @@ final class CodexProvider: ProviderRuntime {
     }
 
     func hasLocalCredentials() async -> Bool {
+        if let host = authStore.hostCandidate() { return isThisCard(host) }
         // Same sources as `refresh()`: auth.json candidates first, keychain as the fallback. Only a
         // usable access token counts (see `hasUsableAccessToken`) — an API-key-only auth.json can't
         // serve the usage API, so seeding it on would just show an error row.
@@ -96,6 +97,7 @@ final class CodexProvider: ProviderRuntime {
     }
 
     func refresh() async -> ProviderSnapshot {
+        if let host = authStore.hostCandidate() { return await refreshHost(host) }
         if authStore.expectedIdentity != nil { return await refreshAccount() }
         let fileCandidates = authStore.loadAuthCandidates()
         var lastFallbackError: Error?
@@ -124,6 +126,39 @@ final class CodexProvider: ProviderRuntime {
             return ProviderSnapshot.error(provider: provider, error: lastFallbackError)
         }
         return ProviderSnapshot.error(provider: provider, error: CodexAuthError.notLoggedIn)
+    }
+
+    /// The host's ChatGPT sign-in, when it has one, is the only login read (fork change): the Codex
+    /// CLI's or pi's may be another account, and isn't the host's to renew. An account card for
+    /// another account says so and stays off the dashboard.
+    private func refreshHost(_ host: CodexAuthState) async -> ProviderSnapshot {
+        guard isThisCard(host) else {
+            return ProviderSnapshot.error(provider: provider, error: CodexAuthError.hostOtherAccount)
+        }
+        var state = host
+        if hostTokenLapsed(state) {
+            // The engine may have renewed it since the host last said.
+            await authStore.rereadHost()
+            guard let current = authStore.hostCandidate(), isThisCard(current), !hostTokenLapsed(current) else {
+                return ProviderSnapshot.error(provider: provider, error: CodexAuthError.hostExpired)
+            }
+            state = current
+        }
+        do {
+            return try await probe(authState: &state)
+        } catch {
+            return ProviderSnapshot.error(provider: provider, error: error)
+        }
+    }
+
+    private func isThisCard(_ host: CodexAuthState) -> Bool {
+        guard let expected = authStore.expectedIdentity else { return true }
+        return CodexAccountIdentity(auth: host.auth) == expected
+    }
+
+    private func hostTokenLapsed(_ host: CodexAuthState) -> Bool {
+        guard let token = host.auth.tokens?.accessToken, let expiry = authStore.accessTokenExpiresAt(token) else { return false }
+        return expiry <= now()
     }
 
     /// Fetches usage for one credential, refreshing and persisting its token when it may. On return
@@ -312,6 +347,18 @@ final class CodexProvider: ProviderRuntime {
             token: accessToken,
             attempt: { try await self.usageClient.fetchUsage(accessToken: $0, accountID: working.auth.tokens?.accountID) },
             refreshAccessToken: {
+                if working.source == .host {
+                    // Turned away: the engine may have renewed it since the host last said.
+                    let rejected = working.auth.tokens?.accessToken
+                    await self.authStore.rereadHost()
+                    guard let current = self.authStore.hostCandidate(),
+                          let token = current.auth.tokens?.accessToken, token != rejected else {
+                        throw CodexAuthError.hostExpired
+                    }
+                    working = current
+                    baseline = current
+                    return token
+                }
                 guard let refreshToken = working.auth.tokens?.refreshToken, !refreshToken.isEmpty else {
                     throw CodexAuthError.tokenExpired
                 }
@@ -324,7 +371,7 @@ final class CodexProvider: ProviderRuntime {
                 }
             },
             connectionFailed: CodexUsageError.connectionFailed,
-            authExpired: CodexAuthError.tokenExpired
+            authExpired: working.source == .host ? CodexAuthError.hostExpired : CodexAuthError.tokenExpired
         )
     }
 
@@ -340,6 +387,9 @@ final class CodexProvider: ProviderRuntime {
             return await loadOffMainActor { [authStore] in authStore.loadKeychainAuth(account: account) }
         case .pi(let source):
             return authStore.loadPiAuth(source)
+        case .host:
+            await authStore.rereadHost()
+            return authStore.hostCandidate()
         }
     }
 
