@@ -90,6 +90,9 @@ struct ConversationScroll<Rows: View>: View {
     @State private var spot = ScrollSpot()
     @State private var fold = FoldWatch()
     @State private var anchor = ScrollAnchor()
+    #if DEBUG
+    @Environment(\.isConversationShown) private var isShown
+    #endif
 
     var body: some View {
         // Scrolled by AppKit's scroll view (to the end, to a place, keeping what you read in
@@ -117,7 +120,14 @@ struct ConversationScroll<Rows: View>: View {
             .padding(.top, 16)
             .readableColumn()
             .coordinateSpace(.named(ScrollAnchor.space))
-            .background { ScrollViewFinder { anchor.scrollView = $0 } }
+            .background {
+                ScrollViewFinder {
+                    anchor.scrollView = $0
+                    #if DEBUG
+                    if isShown { ScrollAnchor.shownScrollView = $0 }
+                    #endif
+                }
+            }
             .animation(animation, value: change)
         }
         .modifier(SelectionMenu(addToChat: quote))
@@ -125,6 +135,9 @@ struct ConversationScroll<Rows: View>: View {
         // stack re-measures rows during a bounce, so the end kept moving and the bounce
         // crawled, then snapped back. Following the end is done below, only while idle.
         .defaultScrollAnchor(.bottom, for: .initialOffset)
+        #if DEBUG
+        .onChange(of: isShown) { if isShown { ScrollAnchor.shownScrollView = anchor.scrollView } }
+        #endif
         .onScrollPhaseChange { _, phase in
             scrolling.isOn = phase != .idle
             #if DEBUG
@@ -406,6 +419,14 @@ final class ScrollAnchor {
         }
     }
     #if DEBUG
+    /// The scroll view of the conversation in view, not one kept hidden, for the tests.
+    static weak var shownScrollView: NSScrollView?
+    /// The conversation's scroll view, for the tests: the one in view, else the tallest.
+    static func conversationScrollView() -> NSScrollView? {
+        if let shownScrollView, shownScrollView.window != nil { return shownScrollView }
+        func scrollViews(in view: NSView) -> [NSScrollView] { (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(scrollViews) }
+        return NSApp.windows.compactMap(\.contentView).flatMap(scrollViews).max { ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0) }
+    }
     private static let boundsLog = ProcessInfo.processInfo.environment["KUVO_PERF_BOUNDS"]
     private var boundsWatch: NSObjectProtocol?
     #endif

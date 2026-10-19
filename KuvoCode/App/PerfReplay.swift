@@ -94,8 +94,7 @@ enum PerfReplay {
             return total + step.content.reduce(0) { if case .reasoning(let text) = $1 { $0 + text.text.count } else { $0 } }
         } ?? 0
         // How far from the end the conversation is scrolled: 0 when it followed the end.
-        func scrollViews(in view: NSView) -> [NSScrollView] { (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(scrollViews) }
-        let scroll = NSApp.windows.compactMap(\.contentView).flatMap(scrollViews).max { ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0) }
+        let scroll = ScrollAnchor.conversationScrollView()
         let fromEnd = scroll.map { Int(($0.documentView?.frame.height ?? 0) - $0.contentView.bounds.maxY) } ?? -1
         if let file = ProcessInfo.processInfo.environment["KUVO_PERF_STALLS"] { try? meter.stallReport().write(toFile: file, atomically: true, encoding: .utf8) }
         let line = "replay \((path as NSString).lastPathComponent) x\(speed): \(events.count) events, \(thinking) characters of thinking, \(wrong) of \(checked) blocks shown wrong, played in \(played) (recorded \(String(format: "%.1f", recordedLength)) s), ended \(fromEnd) pt from the end of \(Int(scroll?.documentView?.frame.height ?? 0)), \(workspace.model(for: id)?.transcript.messages.count ?? -1) messages; " + meter.stop() + "\n"
@@ -366,17 +365,31 @@ struct RowProbe: ViewModifier {
     static var newTwin: String?
     let id: String
     @State private var copy = UUID()
+    /// A conversation kept hidden has rows too, in the same place: not the ones in view.
+    @Environment(\.isConversationShown) private var isShown
 
     func body(content: Content) -> some View {
         if Self.isOn {
             content
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
+                    guard isShown else {
+                        if Self.owners[id] == copy {
+                            Self.frames[id] = nil
+                            Self.owners[id] = nil
+                        }
+                        return
+                    }
                     if let owner = Self.owners[id], owner != copy, Self.twins.insert(id).inserted { Self.newTwin = id }
                     Self.owners[id] = copy
                     Self.frames[id] = $0
                 }
                 .onDisappear {
                     guard Self.owners[id] == copy else { return }
+                    Self.frames[id] = nil
+                    Self.owners[id] = nil
+                }
+                .onChange(of: isShown) {
+                    guard !isShown, Self.owners[id] == copy else { return }
                     Self.frames[id] = nil
                     Self.owners[id] = nil
                 }
@@ -400,10 +413,9 @@ enum PerfOpen {
             let began = ContinuousClock.now
             var lines: [String] = []
             var last = ""
-            func scrollViews(in view: NSView) -> [NSScrollView] { (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(scrollViews) }
             // KUVO_PERF_OPEN_FOR: that many seconds instead.
             while ContinuousClock.now - began < .seconds(ProcessInfo.processInfo.environment["KUVO_PERF_OPEN_FOR"].flatMap(Double.init) ?? 4) {
-                let scroll = NSApp.windows.compactMap(\.contentView).flatMap(scrollViews).max { ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0) }
+                let scroll = ScrollAnchor.conversationScrollView()
                 let origin = Int(scroll?.contentView.bounds.origin.y ?? -1)
                 let height = Int(scroll?.documentView?.frame.height ?? -1)
                 let view = scroll.map { $0.convert($0.bounds, to: nil) } ?? .zero
@@ -457,8 +469,7 @@ enum PerfRead {
         guard let wait = environment["KUVO_DEMO_READ"].flatMap(Double.init) else { return }
         try? await Task.sleep(for: .seconds(wait))
         let speed = CGFloat(Double(environment["KUVO_DEMO_READ_SPEED"] ?? "") ?? 30)
-        func scrollViews(in view: NSView) -> [NSScrollView] { (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(scrollViews) }
-        guard let scroll = NSApp.windows.compactMap(\.contentView).flatMap(scrollViews).max(by: { ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0) }),
+        guard let scroll = ScrollAnchor.conversationScrollView(),
               let root = scroll.window?.contentView else { return }
         func snapshot() -> Snapshot {
             // The part of the window the conversation shows, as SwiftUI's global space has it
