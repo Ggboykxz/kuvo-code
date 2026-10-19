@@ -12,7 +12,9 @@
 :root {
   /* Canvas — the direction's own neutrals, in oklch. */
   --bg: oklch(99% 0.002 240);
-  --bg-ambient: none;
+    --bg-ambient:
+    radial-gradient(120% 80% at 12% -10%, rgba(94, 106, 210, 0.07) 0%, rgba(94, 106, 210, 0) 55%),
+    radial-gradient(100% 70% at 88% 0%, rgba(47, 191, 175, 0.05) 0%, rgba(47, 191, 175, 0) 50%);
   --surface: oklch(100% 0 0);
   --fg: oklch(18% 0.012 250);
   --muted: oklch(54% 0.012 250);
@@ -97,7 +99,9 @@
 @media (prefers-color-scheme: dark) {
   html:not([data-theme="light"]) {
     --bg: #08090a;
-    --bg-ambient: none;
+        --bg-ambient:
+      radial-gradient(120% 80% at 12% -10%, rgba(94, 106, 210, 0.10) 0%, rgba(94, 106, 210, 0) 55%),
+      radial-gradient(100% 70% at 88% 0%, rgba(47, 191, 175, 0.07) 0%, rgba(47, 191, 175, 0) 50%);
     --surface: #191a1b;
     --fg: #f7f8f8;
     --muted: #d0d6e0;
@@ -130,7 +134,9 @@
 }
 html[data-theme="dark"] {
     --bg: #08090a;
-    --bg-ambient: none;
+        --bg-ambient:
+      radial-gradient(120% 80% at 12% -10%, rgba(94, 106, 210, 0.10) 0%, rgba(94, 106, 210, 0) 55%),
+      radial-gradient(100% 70% at 88% 0%, rgba(47, 191, 175, 0.07) 0%, rgba(47, 191, 175, 0) 50%);
     --surface: #191a1b;
     --fg: #f7f8f8;
     --muted: #d0d6e0;
@@ -194,13 +200,17 @@ body::before {
    and the sidebar are strips of it, the composer and the sheets are cards of it. */
 .glass,
 header,
-aside,
+aside {
+  background: var(--panel-glass);
+  backdrop-filter: blur(18px) saturate(1.5);
+  -webkit-backdrop-filter: blur(18px) saturate(1.5);
+}
 .composer,
 .drawer,
 .settings-card {
   background: var(--panel-glass);
-  backdrop-filter: blur(20px) saturate(1.6);
-  -webkit-backdrop-filter: blur(20px) saturate(1.6);
+  backdrop-filter: blur(28px) saturate(1.8);
+  -webkit-backdrop-filter: blur(28px) saturate(1.8);
 }
 
 /* The header floats over the conversation, held by a hairline. */

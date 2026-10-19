@@ -105,6 +105,9 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
+  - **2.45 (this change).** The canvas carries a whisper of light, so the glass has
+    something to hold, and the materials are in the Mac's order: a thin strip for the chrome,
+    a fuller one for the composer and the sheets.
   - **2.44 (this change).** The glass, the Mac app's own: the header and the sidebar are
     strips of it, the composer and the sheets are cards of it, and a card catches the light
     along its top edge. The direction's flatness kept, the Mac's translucence restored.
