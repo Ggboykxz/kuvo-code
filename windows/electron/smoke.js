@@ -20,7 +20,9 @@ if (exes.length === 0) {
     child.stdout.on('data', (chunk) => { output += chunk; process.stdout.write(chunk); });
     child.stderr.on('data', (chunk) => { process.stderr.write(chunk); });
     const code = await new Promise((resolve) => {
-      const timer = setTimeout(() => { child.kill(); resolve(124); }, 90000);
+      // The first start of the app fetches the engine (the Mac app does the same), so the
+      // wait is generous: a slow download is not a broken shell.
+      const timer = setTimeout(() => { child.kill(); resolve(124); }, 300000);
       child.on('exit', (c) => { clearTimeout(timer); resolve(c ?? 0); });
     });
     if (code !== 0) {

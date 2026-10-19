@@ -92,7 +92,7 @@ mirrored in `windows/harness/engine.mjs` and typed in `windows/app/src/api.ts`).
 | `ProjectChanges` (revert) | ✅ (remettre un fichier comme il était) |
 | Create Pull Request | ✅ (pousse la branche, le modèle écrit le titre et la description, la page de l'hôte s'ouvre) |
 | `Attachments`, `Drafts`, `Quoting` | ✅ (les pièces jointes, la citation ; **les brouillons** : ce qui est tapé mais pas envoyé, par session, d'un lancement à l'autre — et un message qui n'a pas pu partir revient dans la boîte) |
-| `Updates`, `Awake`, `Notifier` | ✅ (via les réglages de la coquille) |
+| `Updates`, `Awake`, `Notifier` | ✅ (via les réglages de la coquille — et la vérification des mises à jour **marche** : nos versions sont des prereleases au tag `windows-v*`, ce qu'electron-updater ne lit pas ; la coquille demande à GitHub et propose l'installeur) |
 | `Analytics` | ✅ (l'avis, rien n'est collecté) |
 | `PagePrinter`, `ImageViewer` | ⛔ / ✅ (l'impression d'une page suit le navigateur intégré) |
 | `UsageAccounts`, `Personalities`, `ProviderCompatibility` | ◐ la **compatibilité des fournisseurs** : les modèles Claude de GitHub Copilot sont nommés dans les réglages du moteur, qui n'ajoute alors pas `thinking.block_binding` (ils le refusent). Les *personalities* suivent les bots ⛔. |

@@ -1,12 +1,12 @@
 // Kuvo Code's Windows shell: a native window around the harness, which already knows how to
 // install and run the engine. This process owns the window, the tray, the terminal (ConPTY)
 // and the lifecycle.
-const { app, BrowserWindow, Tray, Menu, nativeImage, dialog, globalShortcut, Notification, powerSaveBlocker } = require('electron');
+const { app, BrowserWindow, Tray, Menu, nativeImage, dialog, globalShortcut, Notification, powerSaveBlocker, shell } = require('electron');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { autoUpdater } = require('electron-updater');
+const { RELEASES_API, pickRelease } = require('./update-check.js');
 let pty = null;
 try { pty = require('node-pty'); } catch (error) { console.error('node-pty unavailable:', error && error.message); }
 let WebSocketServer = null;
@@ -180,9 +180,9 @@ function createTray() {
     } });
     items.push({ label: 'Automatic updates', type: 'checkbox', checked: config.autoUpdate !== false, click: (item) => {
       const next = loadConfig(); next.autoUpdate = item.checked; saveConfig(next);
-      if (item.checked) try { autoUpdater.checkForUpdatesAndNotify(); } catch {}
+      if (item.checked) void checkForUpdates({ quiet: true });
     } });
-    items.push({ label: 'Check for updates', click: () => { try { autoUpdater.checkForUpdates(); } catch {} } });
+    items.push({ label: 'Check for updates', click: () => { void checkForUpdates(); } });
     items.push({ type: 'separator' });
     items.push({ label: 'Quit', click: () => { quitting = true; app.quit(); } });
     tray.setContextMenu(Menu.buildFromTemplate(items));
@@ -204,18 +204,64 @@ function shutdown() {
   if (harness) { try { harness.kill(); } catch {} harness = null; }
 }
 
+// ---- The updates ----
+//
+// Our releases are prereleases with a tag of their own, and electron-updater's GitHub
+// provider looks for another kind of release — so the shell asks GitHub itself, compares the
+// versions, and offers the installer. The keys are ours: the installer is the portable one's
+// bigger brother, and it replaces what is installed.
+
+async function checkForUpdates({ quiet = false } = {}) {
+  try {
+    const response = await fetch(RELEASES_API, { headers: { 'user-agent': 'Kuvo-Code' } });
+    if (!response.ok) throw new Error(`GitHub answered ${response.status}`);
+    const releases = await response.json();
+    const update = pickRelease(releases, app.getVersion());
+    if (!update) {
+      if (!quiet) {
+        const message = { type: 'info', title: 'Kuvo Code', message: `Kuvo Code ${app.getVersion()} is the latest.` };
+        if (mainWindow) dialog.showMessageBox(mainWindow, message);
+        else dialog.showMessageBox(message);
+      }
+      return null;
+    }
+    if (quiet) {
+      // On startup, a note in the corner — not a question that waits for an answer.
+      try { new Notification({ title: 'Kuvo Code', body: `Version ${update.version} is available.` }).show(); } catch {}
+      return update;
+    }
+    const question = {
+      type: 'info', buttons: ['Download and install', 'Later'], defaultId: 0,
+      title: 'A new version', message: `Kuvo Code ${update.version} is available. Download it now?`,
+    };
+    const choice = mainWindow ? dialog.showMessageBoxSync(mainWindow, question) : dialog.showMessageBoxSync(question);
+    if (choice !== 0) return update;
+    await downloadAndRun(update);
+    return update;
+  } catch (error) {
+    if (!quiet) dialog.showErrorBox('Kuvo Code', `The update check failed: ${String(error && error.message || error)}`);
+    return null;
+  }
+}
+
+async function downloadAndRun(update) {
+  const target = path.join(os.tmpdir(), update.name);
+  const response = await fetch(update.url, { headers: { 'user-agent': 'Kuvo-Code' } });
+  if (!response.ok) throw new Error(`the download failed (${response.status})`);
+  fs.writeFileSync(target, Buffer.from(await response.arrayBuffer()));
+  const failure = await shell.openPath(target);
+  if (failure) throw new Error(failure);
+}
+
 app.whenReady().then(async () => {
   try {
     const cfg = loadConfig();
     if (cfg.autoStart) app.setLoginItemSettings({ openAtLogin: true });
     applyShellPreferences();
     globalShortcut.register('CommandOrControl+Shift+K', toggleWindow);
-    // Auto-update on startup, unless the user turned it off.
+    // Auto-update on startup, unless the user turned it off: a note, not a question.
     if (cfg.autoUpdate !== false) {
-      try {
-        autoUpdater.allowPrerelease = true;
-        autoUpdater.checkForUpdatesAndNotify();
-      } catch {}
+      void checkForUpdates({ quiet: true });
     }
     if (process.argv.includes('--smoke')) {
       const url = await startHarness();
@@ -243,15 +289,3 @@ app.on('window-all-closed', () => { /* stay alive in the tray */ });
 app.on('before-quit', () => { quitting = true; });
 app.on('will-quit', () => { globalShortcut.unregisterAll(); shutdown(); });
 
-autoUpdater.on('update-available', () => {
-  try { new Notification({ title: 'Kuvo Code', body: 'A new version is available and is being downloaded.' }).show(); } catch {}
-});
-autoUpdater.on('update-downloaded', () => {
-  if (!mainWindow) return;
-  const choice = dialog.showMessageBoxSync(mainWindow, {
-    type: 'info', buttons: ['Restart now', 'Later'], defaultId: 0,
-    title: 'Update ready', message: 'A new version of Kuvo Code has been downloaded. Restart to install it?',
-  });
-  if (choice === 0) autoUpdater.quitAndInstall();
-});
-autoUpdater.on('error', () => { /* updates are optional; stay quiet */ });

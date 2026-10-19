@@ -105,6 +105,10 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
+  - **2.55 (this change).** The update check that works: our releases are prereleases with
+    a tag of their own, which electron-updater does not read — so the shell asks GitHub
+    itself, compares the versions, and offers the installer. The promise the settings make
+    ("Automatic updates") is kept.
   - **2.54 (this change).** The Mac app's provider compatibility: GitHub Copilot's Claude
     models from 5.1 on refuse the `thinking.block_binding` the engine adds, and the engine
     leaves it out only for the models named in its settings — so the app names them, in the
