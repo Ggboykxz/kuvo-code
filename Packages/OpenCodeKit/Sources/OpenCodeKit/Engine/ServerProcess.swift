@@ -112,9 +112,12 @@ public final class ServerProcess: @unchecked Sendable {
         onExit: @escaping @Sendable (Int32) -> Void = { _ in }
     ) async throws -> ServerProcess {
         try folders.create()
+        // The commands it runs get the folders `base` had back ([CommandEnvironment]).
+        try? CommandEnvironment.install(in: folders.configFile.deletingLastPathComponent())
         let password = Self.randomPassword()
 
         var environment = base
+        for (key, value) in CommandEnvironment.variables(from: base) { environment[key] = value }
         for (key, value) in folders.environment { environment[key] = value }
         environment["OPENCODE_PASSWORD"] = password
         // Tells the server it's driven by a desktop GUI (what opencode's own desktop app sends).

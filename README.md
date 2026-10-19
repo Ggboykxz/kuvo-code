@@ -83,7 +83,10 @@ side panel and the usage menu.
   HTTP API and follows its event stream to show live transcripts.
 - **Its data is kept apart** from any opencode you've installed. Sessions,
   accounts and settings live in
-  `~/Library/Application Support/run.kuvo.code/opencode`.
+  `~/Library/Application Support/run.kuvo.code/opencode`. The commands the
+  agent runs still get your own folders (`~/.config` and the like) back,
+  through a small plugin in the engine's `plugins` folder, so tools such as
+  `gh` find their sign-ins.
 - **On a machine you add**, Kuvo Code reaches it with `ssh` and your keys. It
   sends the same engine version's Linux build, downloaded and checked on the
   Mac, to `~/.kuvo-code` there, runs it on the machine's localhost only, and

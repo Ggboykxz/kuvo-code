@@ -125,11 +125,13 @@ public struct RemoteEngineInstaller: Sendable {
     var remoteExecutable: String { "$HOME/\(Self.root)/engine/\(OpenCodeEngine.version)/opencode" }
 
     /// Gives the engine folders of its own in `~/.kuvo-code` (`$K`), for everything it runs there,
-    /// so it never touches the machine's own opencode, if it has one.
+    /// so it never touches the machine's own opencode, if it has one. (The commands the agent
+    /// runs get the machine's own back: [CommandEnvironment].)
     /// Worked out each time, never kept, so a `root` set later is the one it names.
     static var folders: String {
         """
         K="$HOME/\(root)"
+        \(CommandEnvironment.keepScript)
         export XDG_DATA_HOME="$K/data" XDG_CONFIG_HOME="$K/config" XDG_STATE_HOME="$K/state" XDG_CACHE_HOME="$K/cache" npm_config_cache="$K/cache/npm" BUN_INSTALL="$K/cache/bun" KUVO_INTEGRATIONS="$K/integrations" TMPDIR="$K/tmp"
         mkdir -p "$K/data" "$K/config" "$K/state" "$K/cache" "$K/workspace" "$K/integrations" "$K/tmp"
         find "$K/tmp" -mindepth 1 -maxdepth 1 -mtime +3 -exec rm -rf {} + 2>/dev/null
@@ -347,6 +349,7 @@ public final class RemoteServer: @unchecked Sendable {
         fi
         \(Wakes.installScript)
         \(Launcher.installScript)
+        \(CommandEnvironment.installScript)
         export PATH="$K/bin:$PATH"
         # Bots' folders under this root, for `kuvo-wake` (its default is the app's own root).
         export KUVO_BOTS="$K/bots"

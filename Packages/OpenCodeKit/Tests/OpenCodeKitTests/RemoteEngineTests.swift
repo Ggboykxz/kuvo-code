@@ -179,4 +179,33 @@ struct LiveRemoteEngineTests {
         #expect(try await connection.run("[ -e \(file) ] && echo left || true").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         _ = try await connection.run("pkill -f '[/]\\.kuvo-code-test/run' || true; rm -rf \"$HOME/.kuvo-code-test\"")
     }
+
+    /// The commands the agent runs there get the machine's own folders, not the engine's in
+    /// `~/.kuvo-code`.
+    @Test func commandsGetTheMachinesOwnFolders() async throws {
+        let cache = FileManager.default.temporaryDirectory.appending(path: "opencodekit-remote-cache")
+        defer { try? FileManager.default.removeItem(at: cache) }
+        try await RemoteEngineInstaller(connection: connection, cache: cache).install()
+        try await RemoteServer.stop(on: connection)
+        let home = try await connection.run("printf %s \"$HOME\"")
+        let project = home + "/.kuvo-code-test/test-project"
+        _ = try await connection.run("mkdir -p '\(project)'")
+
+        let engine = try await RemoteServer.launch(on: connection, environment: [:])
+        let server = try await RemoteServer.attach(to: engine, on: connection)
+        let api = OpenCodeAPI(endpoint: server.endpoint)
+        let session = try await api.createSession(directory: project)
+        try await api.runShell(session: session.id, command: #"printf '%s|%s' "${XDG_CONFIG_HOME:-unset}" "${KUVO_OWN_XDG_CONFIG_HOME-unset}" >seen"#)
+        var seen = ""
+        for _ in 0..<50 where seen.isEmpty {
+            seen = try await connection.run("cat '\(project)/seen' 2>/dev/null || true")
+            if seen.isEmpty { try await Task.sleep(for: .milliseconds(200)) }
+        }
+        let own = try await connection.run("printf %s \"${XDG_CONFIG_HOME:-unset}\"")
+        #expect(seen == own + "|unset")
+        server.disconnect()
+
+        try await RemoteServer.stop(on: connection)
+        _ = try await connection.run("pkill -f '[/]\\.kuvo-code-test/run' || true; rm -rf \"$HOME/.kuvo-code-test\"")
+    }
 }

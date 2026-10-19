@@ -26,6 +26,30 @@ struct LiveServerTests {
         #expect(info?.version == OpenCodeEngine.version)
     }
 
+    /// The commands it runs get the folders it was started with back, not its own: `gh` and the
+    /// like find their sign-ins.
+    @Test func commandsGetTheirOwnFolders() async throws {
+        let binary = URL(filePath: ProcessInfo.processInfo.environment["OPENCODE_TEST_BINARY"]!)
+        let root = FileManager.default.temporaryDirectory.appending(path: "opencodekit-commands-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = root.appending(path: "project")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        var environment = ProcessInfo.processInfo.environment
+        environment["XDG_CONFIG_HOME"] = "/own/config"
+        environment.removeValue(forKey: "XDG_DATA_HOME")
+        let folders = EngineFolders(root: root.appending(path: "engine"))
+        let server = try await ServerProcess.start(executable: binary, folders: folders, environment: environment)
+        defer { server.stop() }
+        let api = OpenCodeAPI(endpoint: server.endpoint)
+        let session = try await api.createSession(directory: project.path)
+        try await api.runShell(session: session.id, command: #"printf '%s|%s|%s' "${XDG_CONFIG_HOME-unset}" "${XDG_DATA_HOME-unset}" "${KUVO_OWN_XDG_CONFIG_HOME-unset}" >seen"#)
+        let seen = project.appending(path: "seen")
+        for _ in 0..<100 where !FileManager.default.fileExists(atPath: seen.path) { try await Task.sleep(for: .milliseconds(100)) }
+        #expect(try String(contentsOf: seen, encoding: .utf8) == "/own/config|unset|unset")
+        // The engine itself keeps its own.
+        #expect(FileManager.default.fileExists(atPath: folders.dataDirectory.path))
+    }
+
     @Test func createsAndRemovesWorktrees() async throws {
         let binary = URL(filePath: ProcessInfo.processInfo.environment["OPENCODE_TEST_BINARY"]!)
         let root = FileManager.default.temporaryDirectory.appending(path: "opencodekit-worktrees-\(UUID().uuidString)")
