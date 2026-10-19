@@ -410,7 +410,9 @@ enum PerfOpen {
                 let top = (scroll?.window?.contentView?.bounds.height ?? 0) - view.maxY
                 let shown = RowProbe.frames.filter { $0.value.maxY > top + 40 && $0.value.minY < top + view.height - 100 }.keys
                 let end = lastRow()
-                let state = "at \(origin) of \(height), \(shown.count) rows in view\(end.map { shown.contains($0) ? ", the last among them" : ", not the last" } ?? "")"
+                let insets = scroll.map { "insets \(Int($0.contentInsets.top))/\(Int($0.contentInsets.bottom)), view \(Int($0.contentView.bounds.height))" } ?? ""
+                let lastFrame = end.flatMap { RowProbe.frames[$0] }.map { ", last row \(Int($0.minY))…\(Int($0.maxY))" } ?? ""
+                let state = "at \(origin) of \(height), \(shown.count) rows in view\(end.map { shown.contains($0) ? ", the last among them" : ", not the last" } ?? ""), \(insets)\(lastFrame)"
                 if state != last {
                     lines.append(String(format: "%5.0f ms ", (ContinuousClock.now - began) / .milliseconds(1)) + state)
                     last = state
