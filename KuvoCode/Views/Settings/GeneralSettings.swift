@@ -108,8 +108,11 @@ struct GeneralSettings: View {
             let connected = Set(credentials.map(\.integrationID))
             do {
                 let plan = try await OpencodeImport.plan(engine: engine, config: app.engineConfig.settings, connected: connected)
-                if plan.isEmpty, plan.signIns.isEmpty {
+                if plan.isEmpty {
+                    // Nothing to bring: no page to look over, only what's left to sign in to.
+                    let signIns = plan.signIns.map(catalog.providerName)
                     importNote = "Everything in your opencode setup is here already."
+                        + (signIns.isEmpty ? "" : " Sign in to \(ListFormatter.localizedString(byJoining: signIns)) again in Settings › Accounts.")
                 } else {
                     importing = ImportRequest(plan: plan)
                 }

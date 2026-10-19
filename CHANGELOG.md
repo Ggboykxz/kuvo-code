@@ -9,6 +9,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - A checklist in a reply ("- [ ] Gather ingredients", "- [x] Done") shows checkboxes, ticked or not, rather than bullets followed by brackets.
 - Save to Mac, for a file a machine's browser downloaded, puts it in your Downloads folder once it has all arrived. A half-copied file showed there under its name meanwhile, and stayed if Kuvo Code quit.
 - A bot's job, as it shows under its name and goes into Export, is no longer taken from a section like "Job log" or "Job history" in its memory.
+- Bring Over, when everything from opencode is here already but a sign-in, says so with which to sign in to again, rather than opening an empty list to bring over.
 
 ## 0.5.18
 

@@ -10,9 +10,9 @@ real open-source projects cloned into the run's folder. Status: ✅ passes, ⚠�
 | ID | Case | Status |
 | --- | --- | --- |
 | A1 | Open the app for the first time: the engine downloads, the window explains what to do next, and a free model is ready without an account | ✅ fixed on the way: the model picker listed models you can't use (680ef6a) |
-| A2 | Start chatting right away with no account, from the first screen | ⏳ |
+| A2 | Start chatting right away with no account, from the first screen | ✅ a new copy: Setting up (the engine downloads, with its progress), then the welcome card says free models work without an account; Start a Chat had a free model chosen and answered in 2 s |
 | A3 | Look for how to connect Claude, ChatGPT or an API key, and find where each account's usage shows | ✅ Connect an Account opens Accounts: Popular has ChatGPT and SuperGrok sign-in, Copilot, Anthropic and other keys, Your Own; Settings › Usage says limits live in the menu bar, with Open… and Choose… |
-| A4 | Bring over an existing opencode setup from Settings › General | ⏳ |
+| A4 | Bring over an existing opencode setup from Settings › General | ✅ a made-up opencode setup (XDG folders): it listed the key, model, MCP server, agent, command, permission and skills, said to sign in to OpenAI again, and brought them all; ❌→✅ with only that sign-in left, it opened an empty list to bring over |
 | A5 | Change the theme, the accent and the text size, and see them apply everywhere | ✅ Dark, Orange and Large applied to the sidebar, conversation and composer; FIX: the tab bar's badges, the agent's pointer and @User kept macOS's accent, and the swatches had no names for VoiceOver |
 | A6 | Quit with work running and open again: the conversation and the queue are as they were | ✅ quit mid-command with a message queued: on reopening, the run shows its interrupted command, the queued message waits under Paused, and Resume sends it (the agent re-ran the count, then answered it) |
 
