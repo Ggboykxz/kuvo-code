@@ -1055,7 +1055,7 @@ struct MainView: View {
         return tabs.tabs.compactMap { tab -> TabItem? in
             switch tab.kind {
             case .page(let page):
-                return TabItem(id: tab.id, title: page.title, logo: nil, status: .idle, symbol: page.symbol, closes: closes)
+                return TabItem(id: tab.id, title: page.title, logo: nil, status: .idle, symbol: page.symbol, closes: closes, isPreview: tab.id == tabs.previewTab)
             case .site(let id):
                 guard let site = tabs.site(id) else { return nil }
                 return TabItem(id: tab.id, title: site.service.title, logo: nil, status: .idle, symbol: site.service.symbol, closes: closes)

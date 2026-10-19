@@ -23,6 +23,9 @@ struct TabItem: Identifiable, Equatable {
     var symbol: String?
     /// One that stays (Settings' page) has no close button.
     var closes = true
+    /// A page you've only looked at, which the next one you open takes the place of (Settings'):
+    /// its title in italics, as VS Code shows its preview tab.
+    var isPreview = false
     /// The session beside it in split view, shown with it as one tab (none, or one).
     var companion: [TabItem] = []
 
@@ -75,12 +78,64 @@ struct TabStrip: View {
     @Namespace private var pill
     @Environment(\.colorScheme) private var scheme
     @AppStorage(PairStyle.key) private var style = PairStyle.halves
+    /// How wide the tabs are, each as wide as its title, and whether some are out of sight at
+    /// either end.
+    @State private var tracksWidth: CGFloat = 0
+    @State private var hidden = HiddenEnds()
+
+    struct HiddenEnds: Equatable {
+        var leading = false
+        var trailing = false
+    }
+
+    /// Room above and below the tabs, in the scroll view, for the raised pill's shadow.
+    private static let shadowRoom: CGFloat = 8
 
     var body: some View {
+        // As many tabs as fit, each as wide as its title; past that, the track scrolls, with the
+        // tab in view kept in sight, as VS Code's and a browser's do, rather than squeezing the
+        // titles and running off the window.
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal) {
+                track
+                    .padding(3)
+                    .padding(.vertical, Self.shadowRoom)
+                    .onGeometryChange(for: CGFloat.self, of: \.size.width) { tracksWidth = $0 }
+            }
+            .scrollIndicators(.never)
+            .onScrollGeometryChange(for: HiddenEnds.self) { geometry in
+                HiddenEnds(
+                    leading: geometry.contentOffset.x > 1,
+                    trailing: geometry.contentOffset.x + geometry.containerSize.width < geometry.contentSize.width - 1
+                )
+            } action: { _, ends in hidden = ends }
+            // Tabs out of sight fade at the end they're past.
+            .mask {
+                HStack(spacing: 0) {
+                    LinearGradient(colors: [hidden.leading ? .clear : .black, .black], startPoint: .leading, endPoint: .trailing)
+                        .frame(width: 24)
+                    Color.black
+                    LinearGradient(colors: [.black, hidden.trailing ? .clear : .black], startPoint: .leading, endPoint: .trailing)
+                        .frame(width: 24)
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.vertical, -Self.shadowRoom)
+            .frame(maxWidth: tracksWidth > 0 ? tracksWidth : nil)
+            .onAppear { proxy.scrollTo(selection) }
+            .onChange(of: selection) { _, id in withAnimation(.ui) { proxy.scrollTo(id) } }
+            .onChange(of: tabs.map(\.id)) { withAnimation(.ui) { proxy.scrollTo(selection) } }
+        }
+        .glassEffect(.regular, in: .capsule)
+        .animation(.ui, value: tabs.map(\.id))
+    }
+
+    private var track: some View {
         HStack(spacing: 0) {
             ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
                 let isActive = tab.id == selection
                 tabView(tab, isActive: isActive)
+                    .id(tab.id)
                 // Hairlines between inactive neighbours, like Rex; none next to the pill. They
                 // fade out at both ends, so they read as a crease in the glass, not a drawn line.
                 if index < tabs.count - 1, !isActive, tabs[index + 1].id != selection {
@@ -99,9 +154,6 @@ struct TabStrip: View {
                 }
             }
         }
-        .padding(3)
-        .glassEffect(.regular, in: .capsule)
-        .animation(.ui, value: tabs.map(\.id))
     }
 
     /// The session beside a tab's, in its half of the tab.
@@ -218,6 +270,7 @@ private struct TabButton: View {
             .padding(.trailing, behind == nil ? 0 : 9)
             Text(tab.title)
                 .font(.system(size: 13, weight: isActive ? .medium : .regular))
+                .italic(tab.isPreview)
                 .foregroundStyle(isActive ? .primary : .secondary)
                 .fixedSize()
                 .onGeometryChange(for: CGFloat.self, of: \.size.width) { textWidth = $0 }

@@ -23,10 +23,10 @@ struct SettingsView: View {
 
     var body: some View {
         HStack(spacing: Metrics.paneGap) {
-            SettingsSidebar(selection: Binding(get: { tabs.page }, set: { page in withAnimation(.ui) { tabs.show(page) } }), search: $search) { page in
+            // A tab with an editor open keeps it, and what's typed in it.
+            SettingsSidebar(selection: Binding(get: { tabs.page }, set: { page in withAnimation(.ui) { tabs.show(page) { navigators[$0]?.detail != nil } } }), search: $search) { page in
                 withAnimation(.ui) { tabs.show(page, inNewTab: true) }
             } preview: { page in
-                // A tab with an editor open keeps it, and what's typed in it.
                 withAnimation(.ui) { tabs.preview(page) { navigators[$0]?.detail != nil } }
             }
                 .padding(.top, topInset)
@@ -68,6 +68,8 @@ struct SettingsView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(WindowXReader { tabs.contentX = $0 })
+            // Doing something in the page in view keeps its tab (see `SettingsTabs`).
+            .background(InteractionWatcher { tabs.keepSelected() })
             .background(Surface.cardFill(scheme, focused: true), in: .rect(cornerRadius: Metrics.cardRadius))
             .clipShape(.rect(cornerRadius: Metrics.cardRadius))
             .specularRim(RoundedRectangle(cornerRadius: Metrics.cardRadius))
@@ -460,5 +462,59 @@ private struct SettingsColumnInset: ViewModifier {
         content
             .environment(\.settingsInset, SettingsMetrics.inset(forWidth: width))
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+    }
+}
+
+/// Calls `onInteraction` when you do something in its frame: a click (the left button or the
+/// right), or a key typed with the focus there. Scrolling and shortcuts (⌘, ⌃) don't count, nor do
+/// keys that move around (Tab, Escape, the arrows, Page Up and Down, Home and End).
+struct InteractionWatcher: NSViewRepresentable {
+    let onInteraction: () -> Void
+
+    func makeNSView(context: Context) -> WatcherView {
+        let view = WatcherView()
+        view.onInteraction = onInteraction
+        return view
+    }
+
+    func updateNSView(_ view: WatcherView, context: Context) {
+        view.onInteraction = onInteraction
+    }
+
+    static func dismantleNSView(_ view: WatcherView, coordinator: ()) {
+        view.stop()
+    }
+
+    final class WatcherView: NSView {
+        var onInteraction: () -> Void = {}
+        private var monitor: Any?
+        private static let movingKeys: Set<UInt16> = [48, 53, 115, 116, 119, 121, 123, 124, 125, 126]
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            stop()
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] event in
+                if let self, self.counts(event) { self.onInteraction() }
+                return event
+            }
+        }
+
+        func stop() {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
+        }
+
+        private func counts(_ event: NSEvent) -> Bool {
+            guard let window, event.window === window, !isHiddenOrHasHiddenAncestor else { return false }
+            if event.type == .keyDown {
+                guard event.modifierFlags.isDisjoint(with: [.command, .control]), !Self.movingKeys.contains(event.keyCode),
+                      let focused = window.firstResponder as? NSView, focused !== window.contentView else { return false }
+                return bounds.contains(convert(NSPoint(x: focused.bounds.midX, y: focused.bounds.midY), from: focused))
+            }
+            return bounds.contains(convert(event.locationInWindow, from: nil))
+        }
     }
 }

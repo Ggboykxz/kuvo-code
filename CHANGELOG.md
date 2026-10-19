@@ -7,6 +7,8 @@ release, Unreleased is renamed to the version; the release notes come from that 
 ## Unreleased
 - Commands the agent runs no longer get the settings Kuvo Code gives the engine, which hold the key to its browser tools: a command that printed its environment showed it, there for the model to read.
 - The first message in a project after Kuvo Code starts has the browser's and your integrations' tools: it could go out just before they were connected, and the agent said it had no browser.
+- Tabs no longer run off the window when there are more than fit: they keep their names, and the row scrolls, with the tab you're on brought into view. Their ends fade where more tabs are out of sight.
+- A Settings page you open comes in a preview tab, its name in italics, as in VS Code: the next page you open replaces it, unless you've clicked or typed in it, and then it gets a tab of its own. ⌘-click still opens one right away.
 
 ## 0.5.21
 
