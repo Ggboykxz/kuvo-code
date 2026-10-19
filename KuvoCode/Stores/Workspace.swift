@@ -1061,8 +1061,22 @@ final class Workspace {
             for request in model.permissions { asking[request.id] = request.sessionID }
             for form in model.forms { note(form, in: model) }
         }
-        // What was asked before and isn't now, here or on a machine read again: its notification goes.
-        for (request, session) in before where asking[request] == nil && (sessionMachines[session].map(connectedMachines.contains) ?? true) {
+        for (request, session) in before where asking[request] == nil {
+            // The coding agents' are the bridge's, which an engine's reconnect doesn't touch.
+            if self.session(session).map(OutsideAgents.isAgentSession) ?? false {
+                asking[request] = session
+                continue
+            }
+            // On a machine not connected now: read again when it is.
+            guard sessionMachines[session].map(connectedMachines.contains) ?? true else { continue }
+            // A closed session's: still asked (or not known), it stays; its notification goes otherwise.
+            if sharedForms[request] == nil, let api = api(forSession: session) {
+                guard let permissions = try? await api.permissions(session: session), let forms = try? await api.forms(session: session),
+                      !permissions.contains(where: { $0.id == request }), !forms.contains(where: { $0.id == request }) else {
+                    asking[request] = session
+                    continue
+                }
+            }
             Notifier.shared.clear(request: request)
         }
     }
