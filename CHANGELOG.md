@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- A conversation shows at once when you open Kuvo Code, and when you open one you haven't yet since: its latest messages, as last seen, show while the engine reads them (which took a second or more at launch, with a blank card meanwhile). The sidebar's sessions show at once too.
 - Going from one session to another is quicker. The composer stays where it is and keeps the keyboard, showing each session's draft, rather than being made again for every session; the slowest switches took about half as long in tests.
 - The accent color you pick in Settings › Appearance also colors the tab bar's badges, the agent's pointer in the browser and @User in group chats. They kept macOS's own accent. VoiceOver names each accent swatch.
 - Scrolling and clicking in a machine's browser keep up with you. Its live view comes at your screen's size while the page moves, and sharp once it stops; making every picture sharp kept the browser on the server so busy that a scroll took most of a second to show.
