@@ -622,7 +622,7 @@ test("what opencode's own settings hold can be brought over, in the shape the en
   const brought = await (await fetch(`${url}api/config/import`, {
     method: "POST", headers: { "content-type": "application/json" }, body: "{}",
   })).json();
-  assert.deepEqual([...brought.added].sort(), ["context7", "open-design"]);
+  assert.deepEqual([...brought.added].sort(), ["mcp:context7", "mcp:open-design"]);
 
   const written = JSON.parse(fs.readFileSync(mine, "utf8"));
   const design = written.mcp.servers["open-design"];
@@ -637,12 +637,48 @@ test("what opencode's own settings hold can be brought over, in the shape the en
     method: "POST", headers: { "content-type": "application/json" }, body: "{}",
   })).json();
   assert.deepEqual(again.added, []);
-  assert.deepEqual([...again.skipped].sort(), ["context7", "open-design"]);
+  assert.deepEqual([...again.skipped].sort(), ["mcp:context7", "mcp:open-design"]);
+
+  // The agents, the commands and the model come across as well.
+  fs.writeFileSync(theirs, JSON.stringify({
+    mcp: { "open-design": { type: "local", command: ["od", "mcp"], enabled: true } },
+    agents: { reviewer: { mode: "primary", description: "Reviews" } },
+    commands: { ship: { template: "ship it" } },
+    model: "openai/gpt-5",
+  }));
+  const wider = await (await fetch(`${url}api/config/import`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+  })).json();
+  assert.deepEqual([...wider.added].sort(), ["agents:reviewer", "commands:ship", "model"]);
+  const widerSettings = JSON.parse(fs.readFileSync(mine, "utf8"));
+  assert.equal(widerSettings.agents.reviewer.description, "Reviews");
+  assert.equal(widerSettings.commands.ship.template, "ship it");
+  assert.equal(widerSettings.model, "openai/gpt-5");
 
   // One server at a time.
   const one = await (await fetch(`${url}api/config/import`, {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "context7" }),
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "open-design" }),
   })).json();
   assert.deepEqual(one.added, []);
-  assert.deepEqual(one.skipped, ["context7"]);
+  assert.deepEqual(one.skipped, ["mcp:open-design"]);
+});
+
+test("the shell's own settings are read and written, so the page can speak to the app", async t => {
+  const engine = await fakeEngine();
+  t.after(engine.close);
+  const { harness, url } = await inFront(engine);
+  t.after(() => harness.close());
+
+  const first = await (await fetch(`${url}api/app-settings`)).json();
+  assert.equal(typeof first.updates, "boolean");
+  assert.equal(typeof first.startAtLogin, "boolean");
+  assert.equal(typeof first.keepAwake, "boolean");
+
+  const written = await (await fetch(`${url}api/app-settings`, {
+    method: "PUT", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ updates: false, keepAwake: true }),
+  })).json();
+  assert.equal(written.updates, false);
+  assert.equal(written.keepAwake, true);
+  assert.equal(written.startAtLogin, first.startAtLogin);
 });

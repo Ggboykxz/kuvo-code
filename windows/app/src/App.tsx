@@ -272,6 +272,7 @@ function FormCard({ form }: { form: FormRequest }) {
 // ---- The header ----
 
 function Header() {
+  const [gaugeOpen, setGaugeOpen] = useState(false);
   const running = state.engine?.status === "running";
   const total = state.session?.tokens?.total ?? 0;
   const model = state.models.find(item => state.session?.model && `${item.providerID}/${item.id}` === `${state.session.model.providerID}/${state.session.model.id}`);
@@ -294,8 +295,36 @@ function Header() {
       <button id="changes" className="small" hidden={state.sessionDiff.length === 0} title="The files this session changed" onClick={() => { state.diffOpen = true; render(); }}>
         {state.sessionDiff.length ? `Changes (${state.sessionDiff.length})` : "Changes"}
       </button>
-      <div id="context-gauge" className="context-gauge" hidden={!total} title="Context window used">
+      <div
+        id="context-gauge"
+        className="context-gauge"
+        hidden={!total}
+        title="Context window used"
+        onClick={event => { event.stopPropagation(); setGaugeOpen(open => !open); }}
+      >
         {fraction !== null ? `${Math.round(fraction * 100)}%` : compactTokens(total)}
+      </div>
+      <div id="gauge-pop" className="gauge-pop" hidden={!gaugeOpen}>
+        <div className="gauge-line big">
+          {fraction !== null ? `${Math.round(fraction * 100)}% of the context window` : `${compactTokens(total)} tokens in the context window`}
+        </div>
+        {limit ? <div className="gauge-line">{`${compactTokens(total)} of ${compactTokens(limit)} tokens`}</div> : null}
+        {typeof state.session?.cost === "number" ? <div className="gauge-line">{`Session cost so far: $${state.session.cost.toFixed(4)}`}</div> : null}
+        {state.session?.model ? <div className="gauge-line faint">{`${state.session.model.providerID}/${state.session.model.id}`}</div> : null}
+        <button
+          className="small"
+          title="Squeeze the conversation into a summary, like the Mac app's compact"
+          onClick={async () => {
+            if (!state.session) return;
+            try {
+              await api(`/api/sessions/${encodeURIComponent(state.session.id)}/compact`, { method: "POST", body: {} });
+              setGaugeOpen(false);
+              await openSession(state.session.id);
+            } catch (error) { complain(error); }
+          }}
+        >
+          Compact context
+        </button>
       </div>
       <div id="engine" className={`engine ${running ? "up" : state.engine?.status === "starting" ? "starting" : "down"}`} title="The engine on this machine">
         {running ? `engine ${state.engine?.version ?? ""}`.trim() : state.engine?.status ?? "…"}

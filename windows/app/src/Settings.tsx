@@ -21,6 +21,7 @@ import {
 
 const PAGES = [
   ["appearance", "Appearance"],
+  ["general", "General"],
   ["keyboard", "Keyboard"],
   ["mcp", "MCP servers"],
   ["agents", "Agents"],
@@ -116,6 +117,7 @@ export function Settings() {
   const page = (id: string) => {
     switch (id) {
       case "appearance": return <AppearancePage />;
+      case "general": return <GeneralPage />;
       case "keyboard": return <KeyboardPage />;
       case "mcp": return <McpPage />;
       case "agents": return <AgentsPage />;
@@ -190,6 +192,72 @@ function AppearancePage() {
         </select>
       </div>
       <div className="settings-note">The look is bound to OpenDesign's design direction "modern minimal — Linear / Vercel": system fonts, hairline borders, one accent. The accent you pick here is the one colour the app uses; everything else stays quiet.</div>
+    </>
+  );
+}
+
+/// General: the app's own ways — updates, starting at login, staying awake — and what
+/// opencode already knows that this app could take over.
+function GeneralPage() {
+  const [settings, setSettings] = useState<{ updates: boolean; startAtLogin: boolean; keepAwake: boolean; path: string }>({
+    updates: true, startAtLogin: false, keepAwake: false, path: "",
+  });
+  const [imported, setImported] = useState<string[] | null>(null);
+
+  useEffect(() => {
+    void api<{ updates: boolean; startAtLogin: boolean; keepAwake: boolean; path: string }>("/api/app-settings")
+      .then(answer => setSettings(answer))
+      .catch(() => {});
+  }, []);
+
+  const set = async (next: Partial<typeof settings>) => {
+    try {
+      const answer = await api<typeof settings>("/api/app-settings", { method: "PUT", body: next });
+      setSettings(answer);
+    } catch (error) {
+      complain(error);
+    }
+  };
+
+  return (
+    <>
+      <div className="settings-row">
+        <span>Automatic updates</span>
+        <input type="checkbox" checked={settings.updates} onChange={event => void set({ updates: event.target.checked })} />
+      </div>
+      <div className="settings-row">
+        <span>Start at login</span>
+        <input type="checkbox" checked={settings.startAtLogin} onChange={event => void set({ startAtLogin: event.target.checked })} />
+      </div>
+      <div className="settings-row">
+        <span>Keep this machine awake</span>
+        <input type="checkbox" checked={settings.keepAwake} onChange={event => void set({ keepAwake: event.target.checked })} />
+      </div>
+      <div className="settings-note">The app's own settings live next to its data ({settings.path || "in the shell's folder"}). Keeping the machine awake stops the screen from sleeping while a long run is going.</div>
+      <h3>Bring over from opencode</h3>
+      <div className="settings-row">
+        <span>What opencode already knows</span>
+        <button
+          className="small"
+          onClick={async () => {
+            try {
+              const answer = await api<{ added: string[]; skipped: string[] }>("/api/config/import", { method: "POST", body: {} });
+              setImported(answer.added ?? []);
+              await bootConfig();
+            } catch (error) {
+              complain(error);
+            }
+          }}
+        >
+          Bring it over
+        </button>
+      </div>
+      {imported ? (
+        <div className="settings-note">
+          {imported.length ? `Brought over: ${imported.join(", ")}.` : "Nothing new — it is all here already."}
+        </div>
+      ) : null}
+      <div className="settings-note">The MCP servers, the agents, the commands and the model that opencode's own settings hold, copied into this app's settings. Your keys stay where they are.</div>
     </>
   );
 }

@@ -10,6 +10,7 @@ export interface SessionSummary {
   tokens?: { input?: number; output?: number; reasoning?: number; total?: number };
   model?: { providerID?: string; id?: string } | null;
   parentID?: string | null;
+  cost?: number;
 }
 
 export interface MessagePart {

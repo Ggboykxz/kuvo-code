@@ -105,7 +105,13 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
-  - **2.22 (this change).** The conversation view is React and TypeScript: `windows/app`
+  - **2.23 (this change).** The Mac app's General settings on Windows: automatic updates,
+    starting at login and keeping the machine awake now live in the app's own settings
+    (the shell's file, reached through the harness), and *Bring over from opencode* copies
+    the MCP servers, the agents, the commands and the model — the keys stay where they
+    are. The context gauge opens its popover (what the window is used for, the cost, and
+    *Compact context*).
+  - **2.22. The conversation view is React and TypeScript: `windows/app`
     holds the source, `npm run build` bundles it into the page the harness serves, and the
     packed executable carries that build. The state stays a plain object the way the page
     has always kept it; React draws it. The hand-written page stays as a fallback when

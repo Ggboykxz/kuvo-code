@@ -1,7 +1,7 @@
 // Kuvo Code's Windows shell: a native window around the harness, which already knows how to
 // install and run the engine. This process owns the window, the tray, the terminal (ConPTY)
 // and the lifecycle.
-const { app, BrowserWindow, Tray, Menu, nativeImage, dialog, globalShortcut, Notification } = require('electron');
+const { app, BrowserWindow, Tray, Menu, nativeImage, dialog, globalShortcut, Notification, powerSaveBlocker } = require('electron');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
@@ -112,6 +112,8 @@ function createWindow(url) {
   const fullUrl = `${url}${url.includes('?') ? '&' : '?'}terminalPort=${terminalPort}&shell=1`;
   mainWindow.loadURL(fullUrl);
   mainWindow.once('ready-to-show', () => mainWindow.show());
+  // The settings page can change these; the window coming forward is when they are read.
+  mainWindow.on('focus', () => applyShellPreferences());
   mainWindow.on('close', (event) => {
     if (!quitting) { event.preventDefault(); mainWindow.hide(); }
   });
@@ -135,6 +137,19 @@ async function switchProject(project) {
   const url = await startHarness(project);
   rememberProject(project);
   if (mainWindow) mainWindow.loadURL(`${url}${url.includes('?') ? '&' : '?'}terminalPort=${terminalPort}&shell=1`);
+}
+
+// What the settings page asks for: staying awake, and starting at login.
+let awakeBlocker = null;
+function applyShellPreferences() {
+  const config = loadConfig();
+  try { app.setLoginItemSettings({ openAtLogin: Boolean(config.autoStart) }); } catch {}
+  if (config.keepAwake && !awakeBlocker) {
+    try { awakeBlocker = powerSaveBlocker.start('prevent-display-sleep'); } catch { awakeBlocker = null; }
+  } else if (!config.keepAwake && awakeBlocker) {
+    try { awakeBlocker.stop(); } catch {}
+    awakeBlocker = null;
+  }
 }
 
 function createTray() {
@@ -188,6 +203,7 @@ app.whenReady().then(async () => {
   try {
     const cfg = loadConfig();
     if (cfg.autoStart) app.setLoginItemSettings({ openAtLogin: true });
+    applyShellPreferences();
     globalShortcut.register('CommandOrControl+Shift+K', toggleWindow);
     // Auto-update on startup, unless the user turned it off.
     if (cfg.autoUpdate !== false) {

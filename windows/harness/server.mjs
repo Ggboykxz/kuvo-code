@@ -571,6 +571,50 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
       return json({ ok: true });
     }
 
+    // The shell's own settings — the file the Electron app keeps next to its data. The
+    // page shows them and writes them; the shell reads them when it comes forward.
+    const shellConfigFile = () => {
+      const appData = process.env.APPDATA ?? path.join(os.homedir(), ".config");
+      const candidates = [
+        path.join(appData, "Kuvo Code", "config.json"),
+        path.join(appData, "kuvo-code", "config.json"),
+        path.join(os.homedir(), ".config", "Kuvo Code", "config.json"),
+      ];
+      for (const candidate of candidates) if (fs.existsSync(candidate)) return candidate;
+      return candidates[0];
+    };
+    const readShellConfig = () => {
+      const file = shellConfigFile();
+      let settings = {};
+      try { settings = JSON.parse(fs.readFileSync(file, "utf8")); } catch {}
+      return {
+        path: file,
+        updates: settings.autoUpdate !== false,
+        startAtLogin: Boolean(settings.autoStart),
+        keepAwake: Boolean(settings.keepAwake),
+        recentProjects: Array.isArray(settings.recentProjects) ? settings.recentProjects : [],
+      };
+    };
+    const writeShellConfig = next => {
+      const file = shellConfigFile();
+      let settings = {};
+      try { settings = JSON.parse(fs.readFileSync(file, "utf8")); } catch {}
+      if (typeof next.updates === "boolean") settings.autoUpdate = next.updates;
+      if (typeof next.startAtLogin === "boolean") settings.autoStart = next.startAtLogin;
+      if (typeof next.keepAwake === "boolean") settings.keepAwake = next.keepAwake;
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify(settings, null, 2));
+    };
+
+    if (url.pathname === "/api/app-settings" && request.method === "GET") {
+      return json(readShellConfig());
+    }
+    if (url.pathname === "/api/app-settings" && request.method === "PUT") {
+      const body = await readBody(request);
+      writeShellConfig(body ?? {});
+      return json(readShellConfig());
+    }
+
     // ---- The engine's settings file, as the Mac app's engine config is ----
 
     /// Where the engine reads its settings: the Mac app's layout, in this machine's data
@@ -651,16 +695,35 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
       if (theirs.problem) throw new HttpError(400, `opencode's settings can't be read: ${theirs.problem}`);
       const mine = readSettings();
       if (!mine.settings) throw new HttpError(400, "This app's settings file has a problem; fix it first.");
-      const theirsServers = mcpServersIn(theirs.settings);
-      const mineServers = mcpServersIn(mine.settings);
       const added = [];
       const skipped = [];
+      // The MCP servers, whatever shape they were written in.
+      const theirsServers = mcpServersIn(theirs.settings);
+      const mineServers = mcpServersIn(mine.settings);
       for (const [name, entry] of Object.entries(theirsServers)) {
         if (wanted && name !== wanted) continue;
-        if (mineServers[name]) { skipped.push(name); continue; }
+        if (mineServers[name]) { skipped.push(`mcp:${name}`); continue; }
         mine.settings.mcp = { ...(mine.settings.mcp ?? {}) };
         mine.settings.mcp.servers = { ...(mine.settings.mcp.servers ?? {}), [name]: entry };
-        added.push(name);
+        added.push(`mcp:${name}`);
+      }
+      // The agents and the commands, when they are asked for by name.
+      for (const kind of ["agents", "commands"]) {
+        const source = theirs.settings?.[kind];
+        if (!source || typeof source !== "object") continue;
+        const target = mine.settings[kind] && typeof mine.settings[kind] === "object" ? mine.settings[kind] : {};
+        for (const [name, entry] of Object.entries(source)) {
+          if (wanted && wanted !== `${kind}:${name}`) continue;
+          if (target[name] != null) { skipped.push(`${kind}:${name}`); continue; }
+          target[name] = entry;
+          added.push(`${kind}:${name}`);
+        }
+        mine.settings[kind] = target;
+      }
+      // The model, when there is one and nothing is chosen here yet.
+      if (!wanted && typeof theirs.settings?.model === "string" && !mine.settings.model) {
+        mine.settings.model = theirs.settings.model;
+        added.push("model");
       }
       if (added.length) {
         fs.mkdirSync(path.dirname(settingsFile()), { recursive: true });
