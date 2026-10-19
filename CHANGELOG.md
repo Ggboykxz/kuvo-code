@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- In Ask First, the agent asks before saving a PDF or uploading one of your files to a site. Bots in a group chat can't start sessions, save PDFs or upload your files, as they already couldn't change files or run commands.
 - Closing an integration's sign-in page in Settings while the site shows a message no longer quits Kuvo Code.
 - Your password goes only into a page of the site the sign-in card names. A page leaving for another site could take a sign-in meant for that site, and the toolbar's Fill Password could fill the last site's login on a page that never finished loading.
 - In a group chat, a message you send as a bot finishes its turn reaches that bot: it gets another turn. Before, it could miss it, and the others passed it by.

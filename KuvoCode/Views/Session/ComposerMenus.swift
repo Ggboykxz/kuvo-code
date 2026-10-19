@@ -29,7 +29,9 @@ enum ToolApproval: String, CaseIterable {
     var rules: [PermissionRule] {
         switch self {
         case .approveAll: []
-        case .askFirst: ["edit", "write", "patch", "shell", "webfetch", "external_directory"].map { PermissionRule(action: $0, effect: .ask) }
+        // A PDF the browser saves is a file written, and an upload sends one of yours to a site.
+        case .askFirst: ["edit", "write", "patch", "shell", "webfetch", "external_directory", "kuvo-browser_browser_save_pdf", "kuvo-browser_browser_upload"]
+            .map { PermissionRule(action: $0, effect: .ask) }
         }
     }
 

@@ -1091,7 +1091,9 @@ final class BotGroups {
     /// bot's own conversation once you say go, handed out after the wrap-up.
     private static func seatRules(for bot: Bot) -> [PermissionRule] {
         let approval = UserDefaults.standard.string(forKey: ToolApproval.key).flatMap(ToolApproval.init) ?? .approveAll
-        var rules = ["edit", "write", "patch", "question", "external_directory", "shell", "subagent", "kuvo-browser_send_message"].map { PermissionRule(action: $0, effect: .deny) }
+        // Nor a session of its own, a PDF written anywhere or your files sent to a site.
+        var rules = ["edit", "write", "patch", "question", "external_directory", "shell", "subagent", "kuvo-browser_send_message",
+                     "kuvo-browser_start_session", "kuvo-browser_browser_save_pdf", "kuvo-browser_browser_upload"].map { PermissionRule(action: $0, effect: .deny) }
         if approval == .askFirst {
             rules.append(PermissionRule(action: "webfetch", effect: .deny))
         }
