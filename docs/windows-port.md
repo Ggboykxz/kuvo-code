@@ -105,7 +105,10 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
-  - **2.17 (latest).** The settings file: MCP servers (list, add, edit, catalog, timeouts,
+  - **2.18.** Forms (the agent's question tool and MCP servers' asks, answered or
+    skipped per field type) and revert (undo to before a user message, the words back in the
+    composer, redo brings it all back).
+  - **2.17. The settings file: MCP servers (list, add, edit, catalog, timeouts,
     on/off, Try Again), agents (defaults, mode, model, steps, instructions, permission
     rules), skills (list, on/off via deny rule, own SKILL.md files), commands (own, with
     agent/model/subagent/template + the engine's own read-only) — edited in pages like the

@@ -147,6 +147,8 @@ const state = {
   mcpLive: [],
   skillsEngine: [],
   cfgEditor: null,
+  forms: [],
+  revert: null,
 };
 
 let renderQueued = false;
@@ -334,6 +336,7 @@ function entryNodes(transcript) {
     if (entry.kind === "user") {
       const node = el("article", { class: "entry user" }, el("div", { class: "text", text: entry.text }));
       for (const file of entry.files ?? []) node.append(attachmentNode(file));
+      if (entry.id) node.append(el("button", { class: "small entry-action", text: "Undo from here", title: "Take the session back to before this message", onclick: () => undoFromHere(entry) }));
       rendered.push(node);
     }
     else if (entry.kind === "assistant") rendered.push(assistantEntry(entry));
@@ -477,6 +480,158 @@ $("agent").addEventListener("change", async event => {
     complain(null, error);
   }
 });
+
+// ---- Forms: the agent's question tool and MCP servers' questions, answered here ----
+
+async function loadForms() {
+  if (!state.session) { state.forms = []; renderForms(); return; }
+  try {
+    const { forms } = await api(`/api/sessions/${encodeURIComponent(state.session.id)}/forms`);
+    state.forms = Array.isArray(forms) ? forms : [];
+  } catch {
+    state.forms = [];
+  }
+  renderForms();
+}
+
+function formInput(field) {
+  const kind = field.type ?? "string";
+  if (kind === "boolean") {
+    const input = el("input", { type: "checkbox" });
+    input.checked = field.default === true;
+    return ["check", input];
+  }
+  if (kind === "number" || kind === "integer") {
+    const input = el("input", { type: "number" });
+    if (field.default != null) input.value = String(field.default);
+    if (field.minimum != null) input.min = String(field.minimum);
+    if (field.maximum != null) input.max = String(field.maximum);
+    if (kind === "integer") input.step = "1";
+    return ["number", input];
+  }
+  if (kind === "multiselect") {
+    const box = el("div", { class: "form-choices" });
+    for (const option of field.options ?? []) {
+      const input = el("input", { type: "checkbox" });
+      input.dataset.value = option.value;
+      if ((field.default ?? []).includes(option.value)) input.checked = true;
+      box.append(el("label", { class: "form-choice" }, input, el("span", { text: option.label ?? option.value })));
+    }
+    return ["list", box];
+  }
+  if (kind === "external") {
+    const open = el("a", { href: field.url, target: "_blank", class: "small", text: "Open the page" });
+    return ["external", open];
+  }
+  const options = field.options ?? [];
+  if (options.length) {
+    const select = el("select");
+    if (!field.required) select.append(el("option", { value: "", text: "—" }));
+    for (const option of options) select.append(el("option", { value: option.value, text: option.label ?? option.value }));
+    if (field.default != null) select.value = field.default;
+    return ["select", select];
+  }
+  const input = el("input", { type: "text", placeholder: field.placeholder ?? "" });
+  if (field.default != null) input.value = field.default;
+  return ["text", input];
+}
+
+function formCard(form) {
+  const card = el("div", { class: "ask form" });
+  card.append(el("div", { class: "ask-head" },
+    el("strong", { text: form.title ?? "A question" }),
+    form.metadata?.kind === "mcp-elicitation" ? el("span", { class: "where", text: form.metadata?.server ?? "an MCP server" }) : null,
+  ));
+  if (form.metadata?.message) card.append(el("div", { class: "ask-message", text: form.metadata.message }));
+  const values = {};
+  const inputs = [];
+  for (const field of form.fields ?? []) {
+    if (field.hidden) continue;
+    const [kind, input] = formInput(field);
+    inputs.push([field.key, kind, input, field]);
+    const row = el("div", { class: "form-field" },
+      el("label", {},
+        el("span", { text: field.title ?? field.key }),
+        field.required ? el("span", { class: "warn", text: " · needed" }) : null,
+      ),
+      input,
+    );
+    if (field.description) row.append(el("div", { class: "where", text: field.description }));
+    card.append(row);
+  }
+  const submit = async () => {
+    const answer = {};
+    for (const [key, kind, input] of inputs) {
+      if (kind === "check") { if (input.checked) answer[key] = true; }
+      else if (kind === "number") { if (input.value !== "") answer[key] = Number(input.value); }
+      else if (kind === "list") { const picked = [...input.querySelectorAll("input:checked")].map(one => one.dataset.value); if (picked.length) answer[key] = picked; }
+      else if (kind === "select") { if (input.value !== "") answer[key] = input.value; }
+      else if (kind === "text") { if (input.value !== "") answer[key] = input.value; }
+    }
+    try {
+      await api(`/api/sessions/${encodeURIComponent(state.session.id)}/forms/${encodeURIComponent(form.id)}/reply`, { method: "POST", body: { answer } });
+      state.forms = state.forms.filter(item => item.id !== form.id);
+      renderForms();
+    } catch (error) {
+      complain(null, error);
+    }
+  };
+  card.append(el("div", { class: "ask-buttons" },
+    el("button", { class: "primary", text: "Answer", onclick: submit }),
+    el("button", { class: "danger", text: "Skip", onclick: async () => {
+      try {
+        await api(`/api/sessions/${encodeURIComponent(state.session.id)}/forms/${encodeURIComponent(form.id)}?message=`, { method: "DELETE" });
+        state.forms = state.forms.filter(item => item.id !== form.id);
+        renderForms();
+      } catch (error) {
+        complain(null, error);
+      }
+    } }),
+  ));
+  return card;
+}
+
+function renderForms() {
+  const box = $("forms");
+  box.hidden = state.forms.length === 0;
+  box.innerHTML = "";
+  for (const form of state.forms) box.append(formCard(form));
+}
+
+// ---- Undo and redo: take the session back before a message, bring it back ----
+
+async function undoFromHere(entry) {
+  if (!state.session) return;
+  try {
+    if (state.transcript?.running) {
+      await api(`/api/sessions/${encodeURIComponent(state.session.id)}/interrupt`, { method: "POST", body: {} }).catch(() => {});
+    }
+    const { revert } = await api(`/api/sessions/${encodeURIComponent(state.session.id)}/revert`, { method: "POST", body: { messageID: entry.id } });
+    state.revert = revert ?? { messageID: entry.id };
+    $("prompt").value = entry.text ?? "";
+    await openSession(state.session.id);
+  } catch (error) {
+    complain(null, error);
+  }
+}
+
+async function redoNow() {
+  if (!state.session) return;
+  try {
+    await api(`/api/sessions/${encodeURIComponent(state.session.id)}/revert`, { method: "DELETE" });
+    state.revert = null;
+    renderRedo();
+    await openSession(state.session.id);
+  } catch (error) {
+    complain(null, error);
+  }
+}
+
+function renderRedo() {
+  const redo = $("redo");
+  redo.hidden = !state.revert;
+}
+$("redo").addEventListener("click", redoNow);
 
 function permissionCard(request) {
   const answer = decision => async () => {
@@ -643,10 +798,13 @@ async function openSession(id) {
     state.transcript = cached || fromHistory(id, detail.messages, detail.permissions, detail.running);
     if (!cached) state.transcripts.set(id, state.transcript);
     selectModelInPicker();
+    state.revert = detail.revert ?? null;
+    renderRedo();
     api(`/api/sessions/${encodeURIComponent(id)}/view`, { method: "POST", body: { idle: Date.now() } }).catch(() => {});
     loadInbox().catch(() => {});
     loadVcs().catch(() => {});
     loadSessionDiff().catch(() => {});
+    loadForms().catch(() => {});
     render();
     $("prompt").focus();
   } catch (error) {
@@ -1078,6 +1236,7 @@ function handleEvent(event) {
         await openSession(state.session.id);
         await loadSessions();
         loadSessionDiff().catch(() => {});
+        loadForms().catch(() => {});
       } catch {}
     }, 250);
   }

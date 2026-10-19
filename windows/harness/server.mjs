@@ -647,6 +647,36 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
       }
     }
 
+    // Forms: what the agent's question tool or an MCP server asks, answered or skipped.
+    if (url.pathname.match(/^\/api\/sessions\/[^/]+\/forms$/) && request.method === "GET") {
+      const id = route(/^\/api\/sessions\/([^/]+)\/forms$/)[0];
+      return json({ forms: await client.forms(id) });
+    }
+    const formReply = route(/^\/api\/sessions\/([^/]+)\/forms\/([^/]+)\/reply$/);
+    if (formReply && request.method === "POST") {
+      const body = await readBody(request);
+      await client.replyForm(formReply[0], formReply[1], body.answer ?? {});
+      return json({ ok: true });
+    }
+    const formDismiss = route(/^\/api\/sessions\/([^/]+)\/forms\/([^/]+)$/);
+    if (formDismiss && request.method === "DELETE") {
+      await client.dismissForm(formDismiss[0], formDismiss[1], url.searchParams.get("message") ?? undefined);
+      return json({ ok: true });
+    }
+
+    // Revert: take the session back to before a message; bring it all back again.
+    if (url.pathname.match(/^\/api\/sessions\/[^/]+\/revert$/) && request.method === "POST") {
+      const id = route(/^\/api\/sessions\/([^/]+)\/revert$/)[0];
+      const body = await readBody(request);
+      const revert = await client.stageRevert(id, body.messageID);
+      return json({ revert });
+    }
+    if (url.pathname.match(/^\/api\/sessions\/[^/]+\/revert$/) && request.method === "DELETE") {
+      const id = route(/^\/api\/sessions\/([^/]+)\/revert$/)[0];
+      await client.clearRevert(id);
+      return json({ ok: true });
+    }
+
     const rename = route(/^\/api\/sessions\/([^/]+)\/rename$/);
     if (rename && request.method === "POST") {
       const body = await readBody(request);

@@ -225,6 +225,19 @@ export class EngineClient {
     return await this.request("GET", "api/config", { directory });
   }
 
+  /// The questions waiting on a session: the agent's question tool, or an MCP server's.
+  async forms(session) {
+    return (await this.request("GET", `api/session/${encodeURIComponent(session)}/form`)).data ?? [];
+  }
+
+  async replyForm(session, form, answer) {
+    await this.request("POST", `api/session/${encodeURIComponent(session)}/form/${encodeURIComponent(form)}/reply`, { body: { answer } });
+  }
+
+  async dismissForm(session, form, message) {
+    await this.request("DELETE", `api/session/${encodeURIComponent(session)}/form/${encodeURIComponent(form)}`, { query: message ? { message } : undefined });
+  }
+
   /// Connects one again ("Try Again" on a failed server).
   async mcpConnect(name, directory) {
     await this.request("POST", `api/experimental/mcp/${encodeURIComponent(name)}/connect`, { directory, body: {} });

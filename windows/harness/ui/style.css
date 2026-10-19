@@ -1020,3 +1020,17 @@ li.unread .session { position: relative; padding-left: 16px; }
   font-size: var(--text-sm); font-weight: 600;
   color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.06em;
 }
+
+/* ---- Forms: the agent's questions and MCP servers' asks ---- */
+.forms { display: flex; flex-direction: column; gap: var(--space-2); margin-bottom: var(--space-2); }
+.form .form-field { display: grid; gap: var(--space-1); margin: var(--space-2) 0; }
+.form .form-field label { display: flex; gap: var(--space-2); align-items: baseline; font-size: var(--text-sm); }
+.form .form-field input[type="text"], .form .form-field input[type="number"], .form .form-field select {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--panel-2); color: var(--ink);
+  font-size: var(--text-sm); width: 100%;
+}
+.form-choices { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.form-choice { display: inline-flex; gap: var(--space-1); align-items: center; font-size: var(--text-sm); }
+#redo { align-self: flex-start; }
