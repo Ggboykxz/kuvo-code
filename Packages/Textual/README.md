@@ -37,6 +37,9 @@ frame after it appeared, and the conversation jumped while you scrolled up into 
   document's own pictures and refuses anything that isn't a file, so a previewed README doesn't
   reach the hosts its badges name.
 
+- **Task lists.** An unordered list item that starts with `[ ] ` or `[x] ` (GitHub's task list)
+  shows a checkbox in the bullet's place, without the brackets (`UnorderedList.swift`).
+
 ## Updating
 
 Compare upstream's changes since `01b5187` with this copy, and port them by hand, keeping the

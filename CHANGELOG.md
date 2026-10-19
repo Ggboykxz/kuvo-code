@@ -5,6 +5,7 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- A checklist in a reply ("- [ ] Gather ingredients", "- [x] Done") shows checkboxes, ticked or not, rather than bullets followed by brackets.
 
 ## 0.5.18
 
