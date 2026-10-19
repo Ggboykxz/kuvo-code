@@ -101,12 +101,19 @@ export interface TurnHooks {
 
 export interface RunResult {
   outcome: Outcome
+  /** A failed run's agent had your message all the same (it took it, then failed). */
+  taken?: boolean
   error?: StructuredError
   /** It stopped at a usage or rate limit (Auto goes on with the next model in your list). */
   limit?: Limit
 }
 
 export interface Thread {
+  /**
+   * Gets its conversation ready before the message is made: `fresh` when the one it had couldn't
+   * be picked up again, so it starts over and is handed all that came before.
+   */
+  prepare?(input: RunInput, hooks: TurnHooks): Promise<{ fresh: boolean } | undefined>
   run(input: RunInput, turn: Turn, hooks: TurnHooks): Promise<RunResult>
   /** Stops the turn under way; `run` then ends with `interrupted`. */
   interrupt(): Promise<void>

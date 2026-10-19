@@ -16,7 +16,7 @@ import { emit } from "./events"
 import { handover, withHandover } from "./handover"
 import { messageID, newID } from "./ids"
 import type { Roster } from "./roster"
-import { evaluate, matches } from "./rules"
+import { evaluate, matches, ruled } from "./rules"
 import type { Record_, Store } from "./store"
 import { Turn, type Outcome } from "./turn"
 import type { AssistantMessage, Attachment, Decision, FormAnswer, FormRequest, Message, ModelRef, PermissionRequest, PermissionRule, Session } from "./wire"
@@ -508,6 +508,12 @@ export class Sessions {
       thread = agent.thread(record.session, slot.state)
       live.threads.set(model.providerID, thread)
     }
+    const hooks = this.hooks(id, live, turn, signal, slot, input.plan)
+    // Its conversation, ready: one it had that couldn't be picked up again starts over, and is
+    // handed all that came before.
+    const prepared = await thread.prepare?.({ ...input, model }, hooks).catch(() => undefined)
+    if (prepared?.fresh) slot.seen = undefined
+    if (signal.aborted) return { outcome: "interrupted" }
     // What it hasn't seen: what came before your message since it last ran here, and what
     // another agent did on this message before handing it over.
     const at = record.messages.findIndex((message) => message.id === userMessage)
@@ -528,11 +534,11 @@ export class Sessions {
     live.running = running
     const from = record.messages.length
     try {
-      const result = await Promise.race([thread.run({ ...input, model, text, files }, turn, this.hooks(id, live, turn, signal, slot, input.plan)), abandoned])
+      const result = await Promise.race([thread.run({ ...input, model, text, files }, turn, hooks), abandoned])
       // It has seen all of it now, its own replies too; but one that failed with nothing done
       // couldn't take your message (its model is gone, it was turned away), and doesn't count as
       // having it: the next time, it or another model of its agent gets it.
-      if (result.outcome !== "failed" || record.messages.slice(from).some(didWork)) slot.seen = record.messages[record.messages.length - 1]?.id
+      if (result.outcome !== "failed" || result.taken || record.messages.slice(from).some(didWork)) slot.seen = record.messages[record.messages.length - 1]?.id
       live.last = slot
       return result
     } catch (error) {
@@ -584,7 +590,13 @@ export class Sessions {
         turn.notice(`${note} Going on with ${this.entryName(entry)}.`)
       }
       const from = record.messages.length
-      last = await this.runOn(id, record, live, model, input, turn, signal, userMessage)
+      try {
+        last = await this.runOn(id, record, live, model, input, turn, signal, userMessage)
+      } catch (error) {
+        // It couldn't start (its process, its sign-in): as a model that couldn't take it.
+        if (signal.aborted || record.messages.slice(from).some(didWork)) throw error
+        last = { outcome: "failed", error: failure(error) }
+      }
       if (last.outcome !== "failed" || signal.aborted) return last
       if (!last.limit) {
         // It couldn't take the message at all (its model is gone, its sign-in ended): the next

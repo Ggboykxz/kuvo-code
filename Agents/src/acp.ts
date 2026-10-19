@@ -95,6 +95,8 @@ export class AcpThread implements Thread {
   private loading = false
   /** A process that was stopped mid-turn and can't go on: the next message starts another. */
   private stale?: RPC
+  /** The conversation it had couldn't be picked up again: a new one took its place. */
+  private startedOver = false
 
   constructor(
     private readonly flavor: AcpFlavor,
@@ -194,6 +196,12 @@ export class AcpThread implements Thread {
       }
       this.setup = await rpc.request("session/new", { cwd, mcpServers: [] }, 120_000)
       this.sessionID = this.setup?.sessionId
+      if (previous && previous !== this.sessionID) {
+        // In place of one it had: the instructions go again, and what came before is handed over.
+        this.startedOver = true
+        delete this.state.acpInstructions
+        delete this.state.acpInstructed
+      }
       this.state.acpSession = this.sessionID
       hooks.saveState()
     }
@@ -207,6 +215,13 @@ export class AcpThread implements Thread {
     return rpc
   }
 
+  async prepare(input: RunInput, hooks: TurnHooks) {
+    await this.open(input, hooks)
+    const fresh = this.startedOver
+    this.startedOver = false
+    return { fresh }
+  }
+
   async run(input: RunInput, turn: Turn, hooks: TurnHooks): Promise<RunResult> {
     const rpc = await this.open(input, hooks)
     // Stopped while the agent was starting.
@@ -214,6 +229,7 @@ export class AcpThread implements Thread {
     const sessionId = this.sessionID!
     await this.flavor.selectModel(rpc, sessionId, input.model.id, this.setup).catch(() => {})
     await this.flavor.selectMode?.(rpc, sessionId, { approvesAll: hooks.approvesAll(), plan: input.plan }, this.setup).catch(() => {})
+    if (hooks.signal.aborted) return { outcome: "interrupted" }
     const prompt: any[] = []
     const others: string[] = []
     for (const file of input.files) {

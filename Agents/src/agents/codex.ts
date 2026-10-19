@@ -308,6 +308,8 @@ class CodexThread implements Thread {
   private active?: Active
   /** From a message's start until its turn ends: its app-server isn't to stop meanwhile. */
   private inTurn = false
+  /** The thread it had was gone: a new one took its place. */
+  private startedOver = false
 
   constructor(
     private readonly agent: CodexAgent,
@@ -356,6 +358,7 @@ class CodexThread implements Thread {
       }
     }
     const started: any = await rpc.request("thread/start", common, 60_000)
+    if (this.nativeID && this.nativeID !== started.thread.id) this.startedOver = true
     this.nativeID = started.thread.id
     this.state.codexThread = this.nativeID
     hooks.saveState()
@@ -365,6 +368,18 @@ class CodexThread implements Thread {
 
   get isRunning(): boolean {
     return this.inTurn
+  }
+
+  async prepare(input: RunInput, hooks: TurnHooks) {
+    this.inTurn = true
+    try {
+      await this.ensureThread(input, hooks)
+    } finally {
+      this.inTurn = false
+    }
+    const fresh = this.startedOver
+    this.startedOver = false
+    return { fresh }
   }
 
   async run(input: RunInput, turn: Turn, hooks: TurnHooks): Promise<RunResult> {

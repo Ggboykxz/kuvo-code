@@ -39,6 +39,7 @@ function items(messages: Message[], names: (message: AssistantMessage) => string
             out.push({ role: "Command", text: `${input.command}${exit !== undefined ? `\nExit code: ${exit}` : ""}${trimmed ? `\n${trimmed}` : ""}` })
           } else if (["edit", "write", "patch"].includes(content.name)) {
             const paths: string[] = input?.path ? [input.path] : Array.isArray(input?.files) ? input.files : []
+            if (paths.length && words.length) out.push({ role: "Agent", text: `(${names(message)})\n` + words.splice(0).join("\n\n") })
             for (const path of paths) out.push({ role: "File change", text: String(path) })
           }
         }

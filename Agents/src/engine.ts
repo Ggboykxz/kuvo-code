@@ -43,6 +43,7 @@ export class EngineLink {
     this.url = url?.replace(/\/$/, "")
     this.authorization = authorization
     this.names.clear()
+    this.catalog = undefined
     const generation = ++this.generation
     if (this.url) void this.feed(generation)
     for (const set of this.listeners.values()) for (const listener of set) listener.reconnected()
@@ -83,6 +84,8 @@ export class EngineLink {
       void this.request("GET", "/api/provider")
         .then((answer) => {
           for (const provider of answer?.data ?? []) if (provider?.id && provider?.name) this.names.set(provider.id, provider.name)
+          // None yet (a folder it hasn't loaded): asked again next time.
+          if (this.names.size === 1) this.names.clear()
         })
         .catch(() => this.names.clear())
     }
@@ -95,7 +98,10 @@ export class EngineLink {
     if (!this.catalog || Date.now() - this.catalog.at > 60_000) {
       try {
         const [providers, models] = await Promise.all([this.request("GET", "/api/provider"), this.request("GET", "/api/model")])
-        this.catalog = { at: Date.now(), ready: new Set((providers?.data ?? []).map((provider: { id: string }) => provider.id)), models: models?.data ?? [] }
+        const ready = new Set<string>((providers?.data ?? []).map((provider: { id: string }) => provider.id))
+        // None (an engine that hasn't loaded its folder yet answers so at first): not kept.
+        if (!ready.size) return { ready: false, models: [] }
+        this.catalog = { at: Date.now(), ready, models: models?.data ?? [] }
       } catch {
         return undefined
       }
@@ -442,7 +448,7 @@ class EngineThread implements Thread {
           return
         case "session.execution.failed": {
           const error = (data.error ?? { type: "engine", message: "The engine stopped with an error." }) as StructuredError
-          finish({ outcome: "failed", error, limit: limit ?? limitOf(error) })
+          finish({ outcome: "failed", error, limit: limit ?? limitOf(error), taken: delivered })
           return
         }
       }

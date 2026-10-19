@@ -64,6 +64,14 @@ class FakeThread implements Thread {
   interrupted = 0
   closed = false
   onStop?: () => void
+  /** Its next prepare says it started over. */
+  fresh = false
+
+  async prepare() {
+    const fresh = this.fresh
+    this.fresh = false
+    return { fresh }
+  }
 
   constructor(
     readonly agent: FakeAgent,
@@ -374,6 +382,37 @@ describe("permissions", () => {
     sessions.replyPermission(id, sessions.permissions(id)[0].id, "always")
     await settled(id, 1)
     expect(answers).toEqual(["always", "once", "once"])
+  })
+})
+
+describe("asks and conversations", () => {
+  test("what the engine asks first (reading .env) is yours to answer, even with Approve All", async () => {
+    let decided: string | undefined
+    a.script = async (_input, turn, hooks) => {
+      decided = await hooks.permission({ action: "read", resources: [".env"], weighed: true })
+      turn.startStep()
+      turn.text("read it")
+      turn.endStep()
+      return { outcome: "succeeded" }
+    }
+    const id = create()
+    send(id, "read the env")
+    await until(() => sessions.permissions(id).length === 1)
+    expect(decided).toBeUndefined()
+    sessions.replyPermission(id, sessions.permissions(id)[0].id, "reject")
+    await settled(id, 1)
+    expect(decided).toBe("reject")
+  })
+
+  test("a conversation the agent couldn't pick up again is handed all that came before", async () => {
+    const id = create()
+    send(id, "first thing")
+    await settled(id, 1)
+    a.threads[0].fresh = true
+    send(id, "second thing")
+    await settled(id, 2)
+    expect(a.runs[1].text).toContain("first thing")
+    expect(a.runs[1].text).toContain("second thing")
   })
 })
 
@@ -720,6 +759,22 @@ process.stdin.on("data", (chunk) => {
     expect(prompts.map((prompt) => prompt.model)).toEqual(["one", "two"])
     expect(prompts[1].text).toContain("WORK IN THE WORKTREE")
     expect(prompts[1].text).toContain("build the thing")
+  })
+
+  test("an agent that can't start passes to the next model", async () => {
+    auto.set([
+      { providerID: "alpha", modelID: "one" },
+      { providerID: "beta", modelID: "one" },
+    ])
+    a.script = async () => {
+      throw new Error("Its process didn't start.")
+    }
+    const id = create({ providerID: "auto", id: "auto" })
+    send(id, "do it")
+    await settled(id, 1)
+    expect(idles(id)[0].outcome).toBe("succeeded")
+    expect(b.runs).toHaveLength(1)
+    expect(b.runs[0].text).toContain("do it")
   })
 
   test("an account's limit skips all of its models", async () => {

@@ -202,6 +202,8 @@ interface Active {
 
 class CursorThread implements Thread {
   private agent?: any
+  /** Whether it was started to run its tools without asking. */
+  private startedApproving?: boolean
   private active?: Active
 
   constructor(
@@ -210,16 +212,26 @@ class CursorThread implements Thread {
     private readonly state: Record<string, unknown>,
   ) {}
 
-  async run(input: RunInput, turn: Turn, hooks: TurnHooks): Promise<RunResult> {
+  /** The conversation it had couldn't be picked up again: a new one took its place. */
+  private startedOver = false
+
+  async prepare(input: RunInput, hooks: TurnHooks) {
     const sdk = await this.owner.sdk()
     const apiKey = await this.owner.apiKey(sdk)
-    if (!apiKey) return { outcome: "failed", error: { type: "auth", message: "Sign in to Cursor in Settings › Accounts." } }
-    if (hooks.signal.aborted) return { outcome: "interrupted" }
-    const cwd = this.session.location.directory
+    if (!apiKey || hooks.signal.aborted) return undefined
+    if (hooks.approvesAll()) await this.owner.prime(sdk, apiKey, this.session.location.directory)
+    await this.ensureAgent(sdk, this.options(sdk, input, hooks, apiKey), hooks)
+    const fresh = this.startedOver
+    this.startedOver = false
+    return { fresh }
+  }
+
+  private options(sdk: any, input: RunInput, hooks: TurnHooks, apiKey: string) {
     const approvesAll = hooks.approvesAll()
     const selection = { id: input.model.id, ...(input.model.variant ? { params: [{ id: "effort", value: input.model.variant }] } : {}) }
     const mode = input.plan ? "plan" : "agent"
-    const options = {
+    const cwd = this.session.location.directory
+    return {
       model: selection,
       name: `Kuvo Code: ${this.session.title ?? "session"}`,
       mode,
@@ -233,6 +245,45 @@ class CursorThread implements Thread {
         store: this.owner.agentStore(sdk),
       },
     }
+  }
+
+  /** Cursor's agent for this session: the one it had, or a new one (said by `startedOver`). */
+  private async ensureAgent(sdk: any, options: any, hooks: TurnHooks) {
+    const approvesAll = hooks.approvesAll()
+    // Its sandbox and review are set as it starts: another approval mode starts it again.
+    if (this.agent && this.startedApproving !== approvesAll) {
+      try {
+        this.agent.close?.()
+      } catch {}
+      this.agent = undefined
+    }
+    if (this.agent) return
+    this.startedApproving = approvesAll
+    const id = this.state.cursorAgent as string | undefined
+    this.agent = id ? await sdk.Agent.resume(id, options).catch(() => undefined) : undefined
+    if (!this.agent && id) {
+      // In place of one it had: the instructions go again, and what came before is handed over.
+      this.startedOver = true
+      delete this.state.cursorInstructions
+      delete this.state.cursorInstructed
+    }
+    this.agent ??= await sdk.Agent.create(options)
+    if (this.state.cursorAgent !== this.agent.agentId) {
+      this.state.cursorAgent = this.agent.agentId
+      hooks.saveState()
+    }
+  }
+
+  async run(input: RunInput, turn: Turn, hooks: TurnHooks): Promise<RunResult> {
+    const sdk = await this.owner.sdk()
+    const apiKey = await this.owner.apiKey(sdk)
+    if (!apiKey) return { outcome: "failed", error: { type: "auth", message: "Sign in to Cursor in Settings › Accounts." } }
+    if (hooks.signal.aborted) return { outcome: "interrupted" }
+    const cwd = this.session.location.directory
+    const approvesAll = hooks.approvesAll()
+    const selection = { id: input.model.id, ...(input.model.variant ? { params: [{ id: "effort", value: input.model.variant }] } : {}) }
+    const mode = input.plan ? "plan" : "agent"
+    const options = this.options(sdk, input, hooks, apiKey)
     if (approvesAll) await this.owner.prime(sdk, apiKey, cwd)
     // Cursor's SDK can't stop to ask: said once, so Ask First isn't taken for what it does.
     if (!approvesAll && !input.plan && !this.state.cursorAskNoted) {
@@ -240,15 +291,7 @@ class CursorThread implements Thread {
       this.state.cursorAskNoted = true
       hooks.saveState()
     }
-    if (!this.agent) {
-      const id = this.state.cursorAgent as string | undefined
-      this.agent = id ? await sdk.Agent.resume(id, options).catch(() => undefined) : undefined
-      this.agent ??= await sdk.Agent.create(options)
-      if (this.state.cursorAgent !== this.agent.agentId) {
-        this.state.cursorAgent = this.agent.agentId
-        hooks.saveState()
-      }
-    }
+    await this.ensureAgent(sdk, options, hooks)
     const images = input.files
       .filter((file) => file.mime.startsWith("image/"))
       .map((file) => ({ data: file.data ?? (file.path ? readFileSync(file.path).toString("base64") : ""), mimeType: file.mime }))
@@ -284,6 +327,8 @@ class CursorThread implements Thread {
     try {
       const run = await this.agent.send(images.length ? { text, images } : text, { model: selection, mode, onDelta })
       active.run = run
+      // Stopped while it was being sent.
+      if (hooks.signal.aborted) await run.cancel().catch(() => {})
       const result = await run.wait()
       await chain
       if (result?.status !== "error" || active.sawText || active.output.size) instructionsTaken()

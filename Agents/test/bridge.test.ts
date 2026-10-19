@@ -11,6 +11,7 @@ import { fileDiff, fromPatch, unified } from "../src/diff"
 import { messageID, newID } from "../src/ids"
 import { compareVersions, homebrewKeg, npmGlobalPrefix, versionIn } from "../src/maintenance"
 import { evaluate, matches } from "../src/rules"
+import { handover } from "../src/handover"
 import { commandSignIn } from "../src/signin"
 
 describe("diffs", () => {
@@ -260,5 +261,29 @@ exit 1
     } finally {
       rmSync(folder, { recursive: true, force: true })
     }
+  })
+})
+
+describe("handovers", () => {
+  test("what the agent said comes before the file change it led to", () => {
+    const text = handover(
+      [
+        { type: "user", id: "msg_1", time: { created: 1 }, text: "fix the parser" },
+        {
+          type: "assistant",
+          id: "msg_2",
+          time: { created: 2 },
+          agent: "build",
+          model: { providerID: "alpha", id: "one" },
+          content: [
+            { type: "text", text: "I'll fix the parser." },
+            { type: "tool", id: "call_1", name: "edit", state: { status: "completed", input: { path: "src/parser.ts" }, content: [] } },
+          ],
+        } as any,
+      ],
+      [],
+      () => "Alpha, one",
+    )!
+    expect(text.indexOf("I'll fix the parser.")).toBeLessThan(text.indexOf("src/parser.ts"))
   })
 })
