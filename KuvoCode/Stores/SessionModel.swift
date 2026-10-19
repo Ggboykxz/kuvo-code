@@ -276,8 +276,14 @@ final class SessionModel {
     /// stays there while the run it starts gets going.
     var waiting: [Transcript.Pending] {
         let pending = pending.filter { !starters.contains($0.id) }
-        return (isRunning ? pending.filter { $0.delivery == .steer } : []) + pending.filter { $0.delivery == .queue }
+        // What Stop held back was meant for the work under way: it stays ahead of the queue.
+        let queued = pending.filter { $0.delivery == .queue }
+        let held = heldBack.compactMap { id in queued.first { $0.id == id } }
+        return (isRunning ? pending.filter { $0.delivery == .steer } : []) + held + queued.filter { !heldBack.contains($0.id) }
     }
+
+    /// Messages for the agent's next step that Stop moved to the queue, in their order.
+    @ObservationIgnored private var heldBack: [String] = []
 
     /// Messages sent while the agent was idle, until it has them: each starts a run, and the run
     /// begins a moment before the agent takes it, which isn't waiting.
@@ -764,6 +770,7 @@ final class SessionModel {
         drainTask?.cancel()
         let steering = transcript.pending.filter { $0.delivery == .steer && !$0.isLocal }
         if hasQueue || !steering.isEmpty { isQueuePaused = true }
+        heldBack = steering.map(\.id) + heldBack.filter { id in transcript.pending.contains { $0.id == id } }
         for item in steering { try? await api.setDelivery(session: id, item: item.id, delivery: .queue) }
     }
 
@@ -876,14 +883,16 @@ final class SessionModel {
         var text: String
         var files: [URL]
         var comments: [ReviewComment]
+        var quotes: [Drafts.Quote]
     }
 
     private var composerState: ComposerState {
-        get { ComposerState(text: draftText, files: draftFiles, comments: reviewComments) }
+        get { ComposerState(text: draftText, files: draftFiles, comments: reviewComments, quotes: draftQuotes) }
         set {
             draftText = newValue.text
             draftFiles = newValue.files
             reviewComments = newValue.comments
+            draftQuotes = newValue.quotes
         }
     }
 
