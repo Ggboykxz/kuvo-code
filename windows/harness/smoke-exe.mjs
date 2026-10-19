@@ -13,7 +13,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const exe = process.argv[2] ?? path.join(here, "build", "kuvo-windows-harness.exe");
+// Absolute, because the executable is started from a folder of its own (see below).
+const exe = path.resolve(process.argv[2] ?? path.join(here, "build", "kuvo-windows-harness.exe"));
 if (!fs.existsSync(exe)) throw new Error(`there's no executable at ${exe}: build it first (npm run build:exe)`);
 
 const project = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "kuvo-exe-")));
@@ -24,6 +25,8 @@ const child = spawn(exe, ["--project", project, "--port", "0"], { stdio: ["ignor
 let output = "";
 child.stdout.on("data", chunk => { output += chunk; });
 child.stderr.on("data", chunk => { process.stderr.write(chunk); });
+// A failed start is an answer, not a crash: say what was missing.
+child.on("error", error => { output += `\n${error.message}`; });
 
 const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
