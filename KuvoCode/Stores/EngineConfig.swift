@@ -22,8 +22,9 @@ final class EngineConfig {
     static weak var current: EngineConfig?
 
     /// Reads the file again and adds what Kuvo Code starts every engine with, unless it sets it:
-    /// web search through a free provider, moving to another when one is rate limited. The engine
-    /// has none chosen, and every search the agent tried failed ("Web search provider is required").
+    /// web search through Exa, which needs no key. The engine has none chosen, and every search
+    /// the agent tried failed ("Web search provider is required"). Not "random": that keeps one
+    /// service a session, and one that needs a key (Firecrawl) answers every search with nothing.
     ///
     /// It goes in the file, so a choice made anywhere (here, in Settings, in a project's own
     /// settings) wins over it, and only once: what you change or remove later stays as you left
@@ -31,13 +32,25 @@ final class EngineConfig {
     /// over) gets it again.
     func addDefaults() {
         reload()
+        guard problem == nil else { return }
         let isNew = !FileManager.default.fileExists(atPath: file.path)
-        guard problem == nil, isNew || !UserDefaults.standard.bool(forKey: Self.defaultsAddedKey) else { return }
-        if settings["websearch"] == nil { add(.object(["provider": .string("random")]), as: "websearch") }
-        if problem == nil { UserDefaults.standard.set(true, forKey: Self.defaultsAddedKey) }
+        let defaults = UserDefaults.standard
+        if isNew || !defaults.bool(forKey: Self.defaultsAddedKey) {
+            if settings["websearch"] == nil { add(Self.search, as: "websearch") }
+            if problem == nil {
+                defaults.set(true, forKey: Self.defaultsAddedKey)
+                defaults.set(true, forKey: Self.searchMovedKey)
+            }
+        } else if !defaults.bool(forKey: Self.searchMovedKey) {
+            // "random", as Kuvo Code chose it before: Exa instead, once.
+            if value(at: ["websearch"]) == .object(["provider": .string("random")]) { set(Self.search, at: ["websearch"]) }
+            if problem == nil { defaults.set(true, forKey: Self.searchMovedKey) }
+        }
     }
 
+    private static let search: JSONValue = .object(["provider": .string("exa")])
     private static let defaultsAddedKey = "engine.defaultsAdded"
+    private static let searchMovedKey = "engine.searchMovedToExa"
 
     /// Adds a setting to the file as it's written, keeping its layout and order: one line at its
     /// end. A file that's new, or not laid out as expected, is written whole, as `set` does.

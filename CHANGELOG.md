@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Web search works in every session: agents search with Exa, which needs no key. The default picked a service at random for each session, and one of them (Firecrawl) answers every search with nothing without a key, so about one session in five couldn't search. Settings › Engine still lets you choose another service, or any.
 - A conversation shows at once when you open Kuvo Code, and when you open one you haven't yet since: its latest messages, as last seen, show while the engine reads them (which took a second or more at launch, with a blank card meanwhile). The sidebar's sessions show at once too.
 - Going from one session to another is quicker. The composer stays where it is and keeps the keyboard, showing each session's draft, rather than being made again for every session; the slowest switches took about half as long in tests.
 - The accent color you pick in Settings › Appearance also colors the tab bar's badges, the agent's pointer in the browser and @User in group chats. They kept macOS's own accent. VoiceOver names each accent swatch.
