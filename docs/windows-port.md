@@ -105,7 +105,10 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
-  - **2.32 (this change).** The image viewer: clicking an attached image opens it over the
+  - **2.33 (this change).** The formulas, the Mac app's MathText: KaTeX renders $inline$
+    and $$block$$, the code is put aside first so a dollar sign in a snippet stays one, and
+    the fonts travel with the page.
+  - **2.32. The image viewer: clicking an attached image opens it over the
     page, the Mac app's way, instead of a new browser tab.
   - **2.31. The Mac app's steps row: between two replies, one line says what
     the agent did — "Thought for 40s, ran 6 commands, read 3 files (1 failed)" — and it opens

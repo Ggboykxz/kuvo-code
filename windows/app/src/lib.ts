@@ -1,6 +1,7 @@
 // Small helpers the view needs: markdown the way the Mac app renders it, and the
 // few words the page says about time, size and failure.
 
+import katex from "katex";
 import { marked } from "marked";
 
 export const escapeHtml = (text: unknown) =>
@@ -18,8 +19,31 @@ export function sanitizeHtml(html: string): string {
   return doc.body.innerHTML;
 }
 
+/// The formulas, as the Mac app's MathText renders them: $inline$ and $$block$$.
+/// The code is put aside first, so a dollar sign in a snippet stays a dollar sign.
+export function renderMath(text: string): string {
+  const kept: string[] = [];
+  const hold = (code: string) => {
+    kept.push(code);
+    return `\u0000${kept.length - 1}\u0000`;
+  };
+  let source = String(text)
+    .replace(/```[\s\S]*?```/g, hold)
+    .replace(/`[^`\n]*`/g, hold);
+  const formula = (tex: string, display: boolean) => {
+    try {
+      return katex.renderToString(tex, { displayMode: display, throwOnError: false, output: "html" });
+    } catch {
+      return display ? `$$${tex}$$` : `$${tex}$`;
+    }
+  };
+  source = source.replace(/\$\$([\s\S]+?)\$\$/g, (_, tex) => formula(tex, true));
+  source = source.replace(/\$([^$\n]+?)\$/g, (_, tex) => formula(tex, false));
+  return source.replace(/\u0000(\d+)\u0000/g, (_, index) => kept[Number(index)]);
+}
+
 export function renderMarkdown(text: string): string {
-  const html = sanitizeHtml(marked.parse(String(text), { breaks: true, gfm: true }) as string);
+  const html = sanitizeHtml(marked.parse(renderMath(text), { breaks: true, gfm: true }) as string);
   const doc = new DOMParser().parseFromString(html, "text/html");
   doc.querySelectorAll("pre").forEach(pre => {
     const button = doc.createElement("button");

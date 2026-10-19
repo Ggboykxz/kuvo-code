@@ -182,6 +182,14 @@ test("the page, in a DOM, against the real engine", {
   // the same way the Mac app does, and settles as soon as there's nothing to stop.
   await reloaded.seen("nothing to be running", () => reloaded.element("stop")?.hidden, 15_000);
 
+  // The built page carries what it needs: the formulas (KaTeX and its fonts) travel with it.
+  if (usingBuild) {
+    const bundle = fs.readFileSync(path.join(here, "ui-build", "app.js"), "utf8");
+    assert.match(bundle, /katex/i, "the page brings the formula renderer");
+    const fonts = fs.readdirSync(path.join(here, "ui-build")).filter(name => name.endsWith(".woff2"));
+    assert.ok(fonts.length > 0, "the formula renderer's fonts travel with the page");
+  }
+
   // The settings: the navigation holds only buttons, and every page it can open is a page
   // of the settings itself. (A page once slipped inside the navigation and broke them all.)
   const nav = page.document.querySelector(".settings-nav");

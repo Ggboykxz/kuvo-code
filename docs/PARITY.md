@@ -26,7 +26,7 @@ mirrored in `windows/harness/engine.mjs` and typed in `windows/app/src/api.ts`).
 | `FindBar` | ✅ (le header) |
 | `QuoteList`, `SelectionMenu` | ✅ (sélectionner, *Quote*, la citation part avec le message) |
 | `LongText` | ✅ (repliés, *Show more*) |
-| `MathText` | ⬜ le rendu des formules |
+| `MathText` | ✅ (KaTeX, $inline$ et $$bloc$$, les polices embarquées) |
 | `MarkdownChunks` | ✅ (marked, assaini) |
 | `CodeTextView` | ✅ (copie, surlignage) |
 | `FileLinks` | ◐ les liens de fichiers (la recherche de fichiers existe) |

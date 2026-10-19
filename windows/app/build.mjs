@@ -26,7 +26,10 @@ const options = {
   sourcemap: false,
   define: { "process.env.NODE_ENV": '"production"' },
   logLevel: "error",
-  loader: { ".svg": "dataurl", ".png": "dataurl" },
+  // KaTeX brings its own fonts; they are copied beside the page, and the page's own
+  // stylesheet says where they are.
+  assetNames: "[name]",
+  loader: { ".svg": "dataurl", ".png": "dataurl", ".woff2": "file", ".woff": "file", ".ttf": "file" },
 };
 
 /// The page and the stylesheet the page wears: the design the app is bound to (DESIGN.md
