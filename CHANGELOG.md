@@ -4,10 +4,8 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
-## Unreleased
+## 0.5.15
 
-- Going back to one of the last few sessions you had open shows it at once, scrolled where you left it. Switching to a long conversation took up to a quarter of a second, and it opened at the end.
-- Resizing the window with a long conversation open is smoother: it took twice the work, as the conversation was laid out again to keep its end in view at every step, and the sidebar was made again each time too.
 - In Ask First, the agent asks before saving a PDF or uploading one of your files to a site. Bots in a group chat can't start sessions, save PDFs or upload your files, as they already couldn't change files or run commands.
 - Closing an integration's sign-in page in Settings while the site shows a message no longer quits Kuvo Code.
 - Your password goes only into a page of the site the sign-in card names. A page leaving for another site could take a sign-in meant for that site, and the toolbar's Fill Password could fill the last site's login on a page that never finished loading.
