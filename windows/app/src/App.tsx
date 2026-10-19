@@ -383,10 +383,63 @@ async function newSession() {
 
 // ---- The composer ----
 
+type Mention = { kind: "files" | "commands"; name: string; path?: string; relative?: string; description?: string };
+
 function Composer() {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<Attachment[]>([]);
+  const [mentions, setMentions] = useState<Mention[]>([]);
+  const [mentionIndex, setMentionIndex] = useState(0);
   const promptRef = useRef<HTMLTextAreaElement>(null);
+  const allFiles = useRef<{ path: string; name: string; relative: string }[]>([]);
+
+  // What the typing is asking for: a file (@) or a command (/).
+  const complete = async (value: string, caret: number) => {
+    const upTo = value.slice(0, caret);
+    const at = upTo.match(/(?:^|\s)@([^\s@]*)$/);
+    const slash = !at ? upTo.match(/^\/(\w*)$/) : null;
+    if (!at && !slash) { setMentions([]); return; }
+    if (at) {
+      const query = at[1].toLowerCase();
+      if (!query) {
+        const answer = await api<{ files: { path: string; name: string; relative: string }[] }>("/api/files").catch(() => null);
+        const list = answer?.files ?? [];
+        allFiles.current = list;
+        setMentions(list.slice(0, 12).map(file => ({ kind: "files", name: file.name, path: file.path, relative: file.relative })));
+        return;
+      }
+      const answer = await api<{ files: { path: string; name: string; relative: string }[] }>(`/api/files?q=${encodeURIComponent(query)}`).catch(() => null);
+      const found = answer?.files ?? [];
+      const local = allFiles.current.filter(file => file.relative.toLowerCase().includes(query)).slice(0, 12);
+      const merged = [...found, ...local.filter(file => !found.some(f => f.path === file.path))].slice(0, 12);
+      setMentions(merged.map(file => ({ kind: "files", name: file.name, path: file.path, relative: file.relative })));
+      return;
+    }
+    const query = slash![1].toLowerCase();
+    const items = state.commands.filter(command => query === "" || command.name.toLowerCase().startsWith(query)).slice(0, 12);
+    setMentions(items.map(command => ({ kind: "commands", name: command.name, description: command.description })));
+  };
+
+  const chooseMention = (item: Mention) => {
+    const box = promptRef.current;
+    if (!box) return;
+    const caret = box.selectionStart ?? box.value.length;
+    if (item.kind === "files") {
+      const before = box.value.slice(0, caret).replace(/@[^\s@]*$/, `@${item.relative} `);
+      const next = before + box.value.slice(caret);
+      setText(next);
+      setMentions([]);
+      requestAnimationFrame(() => {
+        const at = caret;
+        box.focus();
+        box.setSelectionRange(at + (item.relative?.length ?? 0) + 2, at + (item.relative?.length ?? 0) + 2);
+      });
+      return;
+    }
+    setText(`/${item.name} `);
+    setMentions([]);
+    requestAnimationFrame(() => box.focus());
+  };
 
   useEffect(() => {
     const draft = localStorage.getItem("kuvo-undo-draft");
@@ -442,6 +495,18 @@ function Composer() {
           </div>
         ))}
       </div>
+      <div id="autocomplete" className="autocomplete" hidden={mentions.length === 0}>
+        {mentions.map((item, index) => (
+          <div
+            key={`${item.kind}-${item.path ?? item.name}`}
+            className={`mention-item ${index === mentionIndex ? "selected" : ""}`}
+            onMouseDown={event => { event.preventDefault(); chooseMention(item); }}
+          >
+            <span className="mention-name">{item.kind === "files" ? item.name : `/${item.name}`}</span>
+            <span className="where">{item.kind === "files" ? item.relative : item.description ?? ""}</span>
+          </div>
+        ))}
+      </div>
       <div id="attachments" className="attachments" hidden={files.length === 0}>
         {files.map((file, index) => (
           <span className="attachment-chip" key={index}>
@@ -456,8 +521,27 @@ function Composer() {
         ref={promptRef}
         placeholder={state.transcript?.running ? "Send while it works — delivered at its next step…" : "Ask for something…  (@ mentions a file, / runs a command)"}
         value={text}
-        onChange={event => setText(event.target.value)}
+        onChange={event => {
+          const box = event.currentTarget;
+          setText(box.value);
+          setMentionIndex(0);
+          void complete(box.value, box.selectionStart ?? box.value.length);
+        }}
+        onClick={event => {
+          const box = event.currentTarget;
+          void complete(box.value, box.selectionStart ?? box.value.length);
+        }}
         onKeyDown={event => {
+          if (mentions.length && ["ArrowDown", "ArrowUp", "Enter", "Escape"].includes(event.key)) {
+            if (event.key === "Escape") { setMentions([]); return; }
+            if (event.key === "ArrowDown") { event.preventDefault(); setMentionIndex(index => (index + 1) % mentions.length); return; }
+            if (event.key === "ArrowUp") { event.preventDefault(); setMentionIndex(index => (index - 1 + mentions.length) % mentions.length); return; }
+            if (event.key === "Enter") {
+              event.preventDefault();
+              chooseMention(mentions[mentionIndex]);
+              return;
+            }
+          }
           if (event.key === "Enter" && !event.shiftKey) {
             event.preventDefault();
             void submit(event as unknown as React.FormEvent);

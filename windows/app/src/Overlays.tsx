@@ -82,6 +82,21 @@ export function Palette() {
   );
 }
 
+/// What the terminal's own library gives us: the bits we use.
+interface Xterm {
+  open(container: HTMLElement): void;
+  write(data: string): void;
+  focus(): void;
+  onData(handler: (data: string) => void): void;
+  loadAddon(addon: XtermAddon): void;
+  cols: number;
+  rows: number;
+}
+
+interface XtermAddon {
+  fit(): void;
+}
+
 // ---- The folder picker ----
 
 export function Picker() {
@@ -154,6 +169,39 @@ export function Picker() {
 export function Drawer() {
   useStore();
   const terminalRef = useRef<HTMLDivElement>(null);
+  const [terminalNote, setTerminalNote] = useState("");
+
+  // The terminal: the shell's ConPTY, over a WebSocket on the port it passed.
+  useEffect(() => {
+    if (!state.drawerOpen || state.drawerTab !== "terminal") return;
+    const container = terminalRef.current;
+    if (!container || container.dataset.ready === "1") return;
+    container.dataset.ready = "1";
+    const port = new URLSearchParams(window.location.search).get("terminalPort");
+    if (!port) { setTerminalNote("Terminal is available when running inside the Kuvo Code shell."); return; }
+    const TerminalClass = (window as unknown as { Terminal?: new (options: unknown) => Xterm }).Terminal;
+    if (!TerminalClass) { setTerminalNote("Terminal library failed to load."); return; }
+    const term = new TerminalClass({ convertEol: true, fontSize: 13, theme: { background: "#121316", foreground: "#d0d6e0" } });
+    const FitAddonClass = (window as unknown as { FitAddon?: new () => XtermAddon }).FitAddon;
+    let fitAddon: XtermAddon | null = null;
+    if (FitAddonClass) {
+      fitAddon = new FitAddonClass();
+      term.loadAddon(fitAddon);
+    }
+    term.open(container);
+    fitAddon?.fit();
+    const socket = new WebSocket(`ws://127.0.0.1:${port}`);
+    socket.onopen = () => { setTerminalNote(""); term.focus(); };
+    socket.onmessage = event => term.write(typeof event.data === "string" ? event.data : "");
+    socket.onclose = () => setTerminalNote("Terminal closed.");
+    term.onData(data => { if (socket.readyState === WebSocket.OPEN) socket.send(data); });
+    const onResize = () => {
+      fitAddon?.fit();
+      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+    };
+    window.addEventListener("resize", onResize);
+    return () => { window.removeEventListener("resize", onResize); socket.close(); };
+  }, [state.drawerOpen, state.drawerTab]);
 
   useEffect(() => {
     if (!state.drawerOpen || state.drawerTab !== "files" || !state.project) return;
@@ -189,7 +237,8 @@ export function Drawer() {
         ) : null}
       </div>
       <div id="drawer-terminal" className="drawer-body" hidden={state.drawerTab !== "terminal"}>
-        <div ref={terminalRef} className="terminal" />
+        <div id="terminal" ref={terminalRef} className="terminal" />
+        <div id="terminal-note" className="where">{terminalNote}</div>
       </div>
     </div>
   );
