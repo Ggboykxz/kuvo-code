@@ -5839,7 +5839,7 @@ function handler(context) {
             return json({});
           case "permission":
             if (!c)
-              return json({ data: sessions.permissions(id) });
+              return json({ data: id === "global" ? [] : sessions.permissions(id) });
             if (d === "reply") {
               const { decision } = await body();
               sessions.replyPermission(id, c, decision);
@@ -5848,7 +5848,7 @@ function handler(context) {
             break;
           case "form":
             if (!c)
-              return json({ data: sessions.forms(id) });
+              return json({ data: id === "global" ? [] : sessions.forms(id) });
             if (d === "reply") {
               sessions.replyForm(id, c, (await body()).answer ?? {});
               return json({});
