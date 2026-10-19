@@ -55,6 +55,23 @@ direction's own blue.
 - **No webfont** — the system stack: SF Pro on macOS, Segoe UI Variable on Windows. The
   app looks native because it *is* native, and it loads nothing.
 
+## The motions
+
+The direction's timings, and the Mac app's gestures, in one place:
+
+| Where | What |
+| --- | --- |
+| A step with details (a tool's call) | opens like a button, and lights up like one; the rest are plain lines. What opens comes down from the icon along a hairline. A subagent at work shows its steps; opened later, they stay folded. |
+| The command palette | the app's spring — it is the app's signature, not the system's |
+| A detail page (a server's editor) | pushes in, the way the Mac app's settings do |
+| The entries and the questions | arrive gently, from a little below |
+| The drawer | slides in from the side, and the conversation moves with it |
+| The gauge's popover | rises, and the engine's dot breathes while it works |
+| Anything that waits | the "Thinking" shimmer, and never a spinner that jumps |
+
+Every duration comes from the tokens, so "Motion: Reduced" — and the system's own
+preference — stop all of it at once.
+
 ## Shape and space
 
 - Radius: 4 (rows), 6 (buttons, inputs), 8 (cards), 12 (panels), 9999 (pills).

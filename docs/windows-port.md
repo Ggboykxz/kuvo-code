@@ -105,7 +105,11 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
-  - **2.39 (this change).** A run is running while its **last words are unfinished**, the Mac
+  - **2.41 (this change).** The Mac app's tool steps, with its gestures: a step with
+    details opens like a button and lights up like one, the rest stay plain lines, what opens
+    comes down from the icon along a hairline, and a subagent at work shows its steps. The
+    settings' detail pages push in. The motions are written down in DESIGN.md.
+  - **2.40. A run is running while its **last words are unfinished**, the Mac
     app's own measure (its `Message.isRunning` reads the message's status), not while the
     engine's session flag still says so — that flag lingers for a moment after the turn is
     over, and the Stop button used to stay.

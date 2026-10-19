@@ -43,6 +43,7 @@ import { DiffModal, Drawer, Palette, Picker, Toast } from "./Overlays";
 
 function ToolCard({ part }: { part: TranscriptEntry["parts"] extends (infer P)[] | undefined ? P : never }) {
   const status = part.status ?? "running";
+  const [open, setOpen] = useState(false);
   const input = brief(part.input ?? part.inputText);
   const output = Array.isArray(part.output)
     ? part.output.map(item => (item as { text?: string })?.text ?? brief(item)).filter(Boolean).join("\n")
@@ -50,27 +51,42 @@ function ToolCard({ part }: { part: TranscriptEntry["parts"] extends (infer P)[]
   const lower = (part.name ?? "").toLowerCase();
   const hasDiff = lower.includes("edit") || lower.includes("write") || lower.includes("patch")
     || Boolean(part.input && ((part.input as Record<string, unknown>).oldString || (part.input as Record<string, unknown>).old || (part.input as Record<string, unknown>).content));
+  // A step with details opens like a button; the rest are lines. The Mac app's rule.
+  const hasDetails = Boolean(input || output || part.error);
+  const going = status !== "completed" && status !== "error";
+  // A subagent at work shows what it is doing; opened later, its steps stay folded.
+  useEffect(() => { if (lower === "subagent" && going) setOpen(true); }, [lower, going]);
   return (
     <div className={`tool ${status}`}>
-      <div className="tool-head">
+      <button
+        className="tool-head"
+        disabled={!hasDetails}
+        onClick={() => hasDetails && setOpen(value => !value)}
+        title={hasDetails ? "Show what it did" : undefined}
+      >
+        <span className="tool-chevron">{hasDetails ? (open ? "▾" : "▸") : ""}</span>
         <span className="tool-name">{part.name ?? "tool"}</span>
         <span className="tool-status">{status === "completed" ? "done" : status === "error" ? "failed" : status}</span>
-      </div>
-      {input ? <pre className="tool-input">{input}</pre> : null}
-      {output ? <pre className="tool-output">{output.length > 4000 ? `${output.slice(0, 4000)}…` : output}</pre> : null}
-      {part.error ? <div className="tool-error">{errorText(part.error)}</div> : null}
-      {hasDiff ? (
-        <button
-          className="small"
-          onClick={() => {
-            const input_ = (part.input ?? {}) as Record<string, unknown>;
-            const oldText = (input_.oldString ?? input_.old ?? "") as string;
-            const newText = (input_.newString ?? input_.new ?? input_.content ?? part.output ?? "") as string;
-            showDiff(`${part.name ?? "tool"} · ${(input_.filePath ?? input_.path ?? input_.file ?? "") as string}`, oldText, newText);
-          }}
-        >
-          diff
-        </button>
+      </button>
+      {open && hasDetails ? (
+        <div className="tool-details">
+          {input ? <pre className="tool-input">{input}</pre> : null}
+          {output ? <pre className="tool-output">{output.length > 4000 ? `${output.slice(0, 4000)}…` : output}</pre> : null}
+          {part.error ? <div className="tool-error">{errorText(part.error)}</div> : null}
+          {hasDiff ? (
+            <button
+              className="small"
+              onClick={() => {
+                const input_ = (part.input ?? {}) as Record<string, unknown>;
+                const oldText = (input_.oldString ?? input_.old ?? "") as string;
+                const newText = (input_.newString ?? input_.new ?? input_.content ?? part.output ?? "") as string;
+                showDiff(`${part.name ?? "tool"} · ${(input_.filePath ?? input_.path ?? input_.file ?? "") as string}`, oldText, newText);
+              }}
+            >
+              diff
+            </button>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );

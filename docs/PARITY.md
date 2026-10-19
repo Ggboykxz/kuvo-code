@@ -21,7 +21,7 @@ mirrored in `windows/harness/engine.mjs` and typed in `windows/app/src/api.ts`).
 | `StepsRow` | ✅ (le résumé des étapes, dépliable) |
 | `AttentionCards` | ✅ les demandes de permission et les formulaires |
 | `YourMessage`, `AttachmentViews` | ✅ (pièces jointes, images) |
-| `ToolCallView`, `ShellRow` | ✅ (outils, shell, diff par outil) |
+| `ToolCallView`, `ShellRow` | ✅ (les outils se replient comme sur le Mac : ce qui a des détails s'ouvre, un filet le long, un sous-agent montre ses étapes) |
 | `DiffView` | ✅ la vue des changements d'un fichier |
 | `FindBar` | ✅ (le header) |
 | `QuoteList`, `SelectionMenu` | ✅ (sélectionner, *Quote*, la citation part avec le message) |
