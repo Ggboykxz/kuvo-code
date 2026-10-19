@@ -7,7 +7,7 @@ import { existsSync, readFileSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { providerID, type AgentAccount } from "../accounts"
-import type { Agent, AgentContext, Account, RunInput, RunResult, SignInAttempt, Thread, TurnHooks } from "../agent"
+import type { Agent, AgentContext, Account, RunInput, RunResult, SignInAttempt, SubagentRun, Thread, TurnHooks } from "../agent"
 import type { Limit } from "../auto"
 import { accountName, failure, model } from "../agent"
 import { fileDiff, fromPatch } from "../diff"
@@ -275,10 +275,9 @@ function fallbackModels(providerID: string): Model[] {
 
 // MARK: A session
 
-interface Active {
+/** Where Claude's messages are told: the turn's own, or a subagent's session. */
+interface Lane {
   turn: Turn
-  hooks: TurnHooks
-  resolve: (result: RunResult) => void
   /** Steps (Claude's messages) already told as they streamed. */
   streamed: Set<string>
   /** The streamed message's tool calls, by their block's index. */
@@ -287,6 +286,13 @@ interface Active {
   calls: Map<string, { name: string; input: Record<string, any> }>
   usage?: TokenUsage
   stopReason?: string
+}
+
+interface Active extends Lane {
+  hooks: TurnHooks
+  resolve: (result: RunResult) => void
+  /** Its subagents (Task and Agent calls), each told in a session of its own, by their call. */
+  subagents: Map<string, Lane & { run: SubagentRun; background: boolean }>
   /** Why the turn will fail, if Claude Code says before its result. */
   problem?: string
   /** A usage limit it reached (Auto goes on with the next model). */
@@ -330,7 +336,7 @@ class ClaudeThread implements Thread {
     }
     if (hooks.signal.aborted) return { outcome: "interrupted" }
     return new Promise<RunResult>((resolve) => {
-      this.active = { turn, hooks, resolve, streamed: new Set(), blockTools: new Map(), calls: new Map(), auto: input.auto }
+      this.active = { turn, hooks, resolve, streamed: new Set(), blockTools: new Map(), calls: new Map(), subagents: new Map(), auto: input.auto }
       this.input!.push(userMessage(input))
     })
   }
@@ -397,12 +403,13 @@ class ClaudeThread implements Thread {
     }
     const active = this.active
     if (!active) return
-    // A subagent's own work shows as its tool call, not in the conversation.
-    if (message.parent_tool_use_id) return
-    const turn = active.turn
+    // A subagent's own work is told in its session, as the engine's subagents' is.
+    const lane: Lane | undefined = message.parent_tool_use_id ? this.subagentLane(active, message.parent_tool_use_id) : active
+    if (!lane) return
+    const turn = lane.turn
     switch (message.type) {
       case "stream_event":
-        return this.stream(active, message.event)
+        return this.stream(lane, message.event)
       case "assistant": {
         const content = message.message?.content ?? []
         const id = message.message?.id
@@ -412,26 +419,29 @@ class ClaudeThread implements Thread {
         }
         for (const block of content) {
           if (block.type === "tool_use") {
-            active.calls.set(block.id, { name: block.name, input: block.input ?? {} })
+            lane.calls.set(block.id, { name: block.name, input: block.input ?? {} })
             const tool = kuvoTool(block.name, block.input ?? {})
             if (!turn.hasTool(block.id)) turn.toolStart(block.id, tool.name)
             turn.toolCalled(block.id, tool.input)
-          } else if (!id || !active.streamed.has(id)) {
+            // A subagent of the turn's own: its session, from now.
+            if (lane === active && tool.name === "subagent") this.subagentLane(active, block.id)
+          } else if (!id || !lane.streamed.has(id)) {
             // Not streamed (it came whole): told now.
             if (block.type === "text" && block.text) turn.text(block.text)
             else if (block.type === "thinking" && block.thinking) turn.reasoning(block.thinking)
           }
         }
-        if (id && !active.streamed.has(id)) turn.endBlock()
+        if (id && !lane.streamed.has(id)) turn.endBlock()
         return
       }
       case "user": {
         const content = Array.isArray(message.message?.content) ? message.message.content : []
         const results = content.filter((block: any) => block.type === "tool_result")
-        for (const block of results) this.result(active, block, results.length === 1 ? message.tool_use_result : undefined)
+        for (const block of results) this.result(active, lane, block, results.length === 1 ? message.tool_use_result : undefined)
         return
       }
       case "rate_limit_event": {
+        if (lane !== active) return
         const info = message.rate_limit_info ?? {}
         // Over the plan's limit, unless extra usage you pay for carries on.
         if (info.status !== "rejected" || info.overageInUse || info.isUsingOverage) return
@@ -444,38 +454,52 @@ class ClaudeThread implements Thread {
       }
       case "system":
         // Waiting out a rate limit to try again: on Auto, the next model goes on instead.
-        if (message.subtype === "api_retry" && (message.error === "rate_limit" || message.error === "billing_error") && active.auto) {
+        if (lane === active && message.subtype === "api_retry" && (message.error === "rate_limit" || message.error === "billing_error") && active.auto) {
           active.limit ??= message.error === "billing_error" ? { scope: "provider" } : { scope: "model", brief: true }
           active.problem ??= "Claude's API is rate limiting this model."
           void this.query?.interrupt().catch(() => {})
         }
         return
       case "result":
+        if (lane !== active) return
         return this.finish(active, message)
     }
   }
 
-  private stream(active: Active, event: any) {
-    const turn = active.turn
+  /** The session a subagent's work is told in, for its call: made the first time. */
+  private subagentLane(active: Active, callID: string): Lane | undefined {
+    const known = active.subagents.get(callID)
+    if (known) return known
+    const call = active.calls.get(callID)
+    const input = (call?.input ?? (active.turn.toolInput(callID) as Record<string, any> | undefined) ?? {}) as Record<string, any>
+    if (call && kuvoTool(call.name, input).name !== "subagent") return undefined
+    const run = active.hooks.subagent(callID, { title: String(input.description ?? ""), prompt: typeof input.prompt === "string" ? input.prompt : undefined, agent: input.subagent_type })
+    const lane = { turn: run.turn, streamed: new Set<string>(), blockTools: new Map<number, string>(), calls: new Map<string, { name: string; input: Record<string, any> }>(), run, background: input.run_in_background === true }
+    active.subagents.set(callID, lane)
+    return lane
+  }
+
+  private stream(lane: Lane, event: any) {
+    const turn = lane.turn
     switch (event?.type) {
       case "message_start": {
-        active.streamed.add(event.message?.id)
-        active.blockTools.clear()
+        lane.streamed.add(event.message?.id)
+        lane.blockTools.clear()
         const usage = event.message?.usage ?? {}
-        active.usage = {
+        lane.usage = {
           input: usage.input_tokens ?? 0,
           output: usage.output_tokens ?? 0,
           reasoning: 0,
           cache: { read: usage.cache_read_input_tokens ?? 0, write: usage.cache_creation_input_tokens ?? 0 },
         }
-        active.stopReason = undefined
+        lane.stopReason = undefined
         turn.startStep()
         return
       }
       case "content_block_start": {
         const block = event.content_block
         if (block?.type === "tool_use") {
-          active.blockTools.set(event.index, block.id)
+          lane.blockTools.set(event.index, block.id)
           turn.toolStart(block.id, kuvoTool(block.name, {}).name)
         }
         return
@@ -485,7 +509,7 @@ class ClaudeThread implements Thread {
         if (delta?.type === "text_delta") turn.text(delta.text)
         else if (delta?.type === "thinking_delta") turn.reasoning(delta.thinking)
         else if (delta?.type === "input_json_delta") {
-          const id = active.blockTools.get(event.index)
+          const id = lane.blockTools.get(event.index)
           if (id) turn.toolInputDelta(id, delta.partial_json ?? "")
         }
         return
@@ -494,21 +518,28 @@ class ClaudeThread implements Thread {
         turn.endBlock()
         return
       case "message_delta":
-        if (active.usage && event.usage?.output_tokens !== undefined) active.usage.output = event.usage.output_tokens
-        active.stopReason = event.delta?.stop_reason ?? active.stopReason
+        if (lane.usage && event.usage?.output_tokens !== undefined) lane.usage.output = event.usage.output_tokens
+        lane.stopReason = event.delta?.stop_reason ?? lane.stopReason
         return
       case "message_stop":
-        turn.endStep({ tokens: active.usage, finish: active.stopReason === "tool_use" ? "tool-calls" : active.stopReason ?? "stop" })
+        turn.endStep({ tokens: lane.usage, finish: lane.stopReason === "tool_use" ? "tool-calls" : lane.stopReason ?? "stop" })
         return
     }
   }
 
-  private result(active: Active, block: any, structured: any) {
-    const turn = active.turn
+  private result(active: Active, lane: Lane, block: any, structured: any) {
+    const turn = lane.turn
     const id = block.tool_use_id
-    const call = active.calls.get(id)
+    const call = lane.calls.get(id)
     let text = toolText(block.content)
     if (text.length > outputLimit) text = text.slice(0, outputLimit) + "\n…"
+    // A subagent's task came back: its session's work is done (one sent off in the background
+    // goes on, and ends with the turn).
+    const subagent = lane === active ? active.subagents.get(id) : undefined
+    if (subagent && !subagent.background) {
+      subagent.run.end(block.is_error ? "failed" : "succeeded", block.is_error ? { type: "agent", message: text || "The subagent failed." } : undefined)
+      active.subagents.delete(id)
+    }
     if (block.is_error) {
       turn.toolFailed(id, text || "The tool failed.")
       return
