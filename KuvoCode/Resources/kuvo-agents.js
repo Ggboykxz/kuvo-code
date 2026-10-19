@@ -20,7 +20,7 @@ function providerID(kind, id) {
 }
 function parseProvider(provider) {
   const [base, id] = provider.split("@", 2);
-  const kind = kinds.find((kind) => baseProvider[kind] === base);
+  const kind = kinds.find((kind2) => baseProvider[kind2] === base);
   if (!kind)
     return;
   return { kind, id: id ?? "default" };
@@ -54,7 +54,7 @@ class Accounts {
   }
   rename(provider, label) {
     const parsed = parseProvider(provider);
-    const record = this.records.find((record) => record.kind === parsed?.kind && record.id === parsed?.id);
+    const record = this.records.find((record2) => record2.kind === parsed?.kind && record2.id === parsed?.id);
     if (!record)
       return;
     record.label = label?.trim() || undefined;
@@ -62,7 +62,7 @@ class Accounts {
   }
   remove(provider) {
     const parsed = parseProvider(provider);
-    const index = this.records.findIndex((record) => record.kind === parsed?.kind && record.id === parsed?.id);
+    const index = this.records.findIndex((record2) => record2.kind === parsed?.kind && record2.id === parsed?.id);
     if (index < 0)
       return;
     const [record] = this.records.splice(index, 1);
@@ -120,8 +120,8 @@ class Auto {
     if (this.held.length !== before)
       this.save();
   }
-  static providerKey(providerID) {
-    return providerID;
+  static providerKey(providerID2) {
+    return providerID2;
   }
   static modelKey(entry) {
     return `${entry.providerID}/${entry.modelID}`;
@@ -222,14 +222,14 @@ function installedVersion(folder, name) {
 }
 
 // Agents/src/agent.ts
-function model(providerID, id, name, options = {}) {
+function model(providerID2, id, name, options = {}) {
   return {
     id,
-    providerID,
+    providerID: providerID2,
     name,
     family: options.family,
     capabilities: { tools: true, input: options.images ? ["text", "image"] : ["text"], output: ["text"] },
-    variants: (options.variants ?? []).map((id) => ({ id })),
+    variants: (options.variants ?? []).map((id2) => ({ id: id2 })),
     time: { released: options.released ?? 0 },
     cost: [{ input: 0, output: 0 }],
     status: "active",
@@ -319,7 +319,7 @@ class EngineLink {
     }
     return value;
   }
-  providerName(providerID) {
+  providerName(providerID2) {
     if (!this.names.size && this.url) {
       this.names.set("", "");
       this.request("GET", "/api/provider").then((answer) => {
@@ -328,9 +328,9 @@ class EngineLink {
             this.names.set(provider.id, provider.name);
       }).catch(() => this.names.clear());
     }
-    return this.names.get(providerID);
+    return this.names.get(providerID2);
   }
-  async offered(providerID) {
+  async offered(providerID2) {
     if (!this.url)
       return;
     if (!this.catalog || Date.now() - this.catalog.at > 60000) {
@@ -341,7 +341,7 @@ class EngineLink {
         return;
       }
     }
-    return { ready: this.catalog.ready.has(providerID), models: this.catalog.models.filter((model) => model.providerID === providerID) };
+    return { ready: this.catalog.ready.has(providerID2), models: this.catalog.models.filter((model2) => model2.providerID === providerID2) };
   }
   listen(sessionID, listener) {
     let set = this.listeners.get(sessionID);
@@ -428,9 +428,9 @@ class EngineAgent {
   providerID;
   id = "engine";
   instance = { id: "default" };
-  constructor(link, providerID) {
+  constructor(link, providerID2) {
     this.link = link;
-    this.providerID = providerID;
+    this.providerID = providerID2;
   }
   get name() {
     return this.link.providerName(this.providerID) || this.providerID;
@@ -696,10 +696,10 @@ class EngineThread {
     const onReconnected = async () => {
       if (done)
         return;
-      const active = await this.link.request("GET", "/api/session/active").catch(() => {
+      const active2 = await this.link.request("GET", "/api/session/active").catch(() => {
         return;
       });
-      if (active?.data?.[id])
+      if (active2?.data?.[id])
         return;
       const session = await this.link.request("GET", path).catch(() => {
         return;
@@ -794,14 +794,14 @@ function middle(a, b) {
     for (let d = 0;d <= limit; d++) {
       trace.push(v.slice(max - d, max + d + 1));
       for (let k = -d;k <= d; k += 2) {
-        let x = k === -d || k !== d && v[max + k - 1] < v[max + k + 1] ? v[max + k + 1] : v[max + k - 1] + 1;
-        let y = x - k;
-        while (x < n && y < m && a[x] === b[y]) {
-          x++;
-          y++;
+        let x2 = k === -d || k !== d && v[max + k - 1] < v[max + k + 1] ? v[max + k + 1] : v[max + k - 1] + 1;
+        let y2 = x2 - k;
+        while (x2 < n && y2 < m && a[x2] === b[y2]) {
+          x2++;
+          y2++;
         }
-        v[max + k] = x;
-        if (x >= n && y >= m) {
+        v[max + k] = x2;
+        if (x2 >= n && y2 >= m) {
           found = true;
           break outer;
         }
@@ -814,7 +814,7 @@ function middle(a, b) {
   let y = m;
   for (let d = trace.length - 1;d >= 0; d--) {
     const t = trace[d];
-    const at = (k) => t[k + d];
+    const at = (k2) => t[k2 + d];
     const k = x - y;
     const prevK = k === -d || k !== d && at(k - 1) < at(k + 1) ? k + 1 : k - 1;
     const prevX = d === 0 ? 0 : at(prevK);
@@ -1098,7 +1098,7 @@ class AcpThread {
   }
   async open(input, hooks) {
     const mode = { approvesAll: hooks.approvesAll(), plan: input.plan };
-    const key = JSON.stringify(mode);
+    const key = JSON.stringify({ ...mode, program: this.flavor.program?.() ?? 0 });
     if (this.rpc && !this.rpc.isClosed && this.spawnedWith === key && this.rpc !== this.stale)
       return this.rpc;
     this.close();
@@ -1372,7 +1372,7 @@ ${others.map((path) => `- ${path}`).join(`
         if (String(call.toolCallId ?? "").startsWith("interaction_")) {
           const answer = await active.hooks.question({
             title: "Question",
-            fields: [{ key: "answer", title: "Question", description: call.title ?? "", required: true, type: "string", options: options.map((option) => ({ value: option.optionId, label: option.name ?? option.optionId })) }]
+            fields: [{ key: "answer", title: "Question", description: call.title ?? "", required: true, type: "string", options: options.map((option2) => ({ value: option2.optionId, label: option2.name ?? option2.optionId })) }]
           });
           const chosen = answer?.answer;
           return chosen ? { outcome: { outcome: "selected", optionId: String(chosen) } } : { outcome: { outcome: "cancelled" } };
@@ -1386,7 +1386,7 @@ ${others.map((path) => `- ${path}`).join(`
           metadata: files.length ? { files } : undefined,
           message: call.title
         });
-        const pick = (kinds) => kinds.map((kind) => options.find((option) => option.kind === kind)).find(Boolean);
+        const pick = (kinds2) => kinds2.map((kind) => options.find((option2) => option2.kind === kind)).find(Boolean);
         const option = decision === "reject" ? pick(["reject_once", "reject_always"]) : decision === "always" ? pick(["allow_always", "allow_once"]) : pick(["allow_once", "allow_always"]);
         return option ? { outcome: { outcome: "selected", optionId: option.optionId } } : { outcome: { outcome: "cancelled" } };
       }
@@ -1395,10 +1395,10 @@ ${others.map((path) => `- ${path}`).join(`
           break;
         let content = readFileSync4(params.path, "utf8");
         if (params.line || params.limit) {
-          const lines = content.split(`
+          const lines2 = content.split(`
 `);
           const start = Math.max(0, (params.line ?? 1) - 1);
-          content = lines.slice(start, params.limit ? start + params.limit : undefined).join(`
+          content = lines2.slice(start, params.limit ? start + params.limit : undefined).join(`
 `);
         }
         return { content };
@@ -1638,12 +1638,18 @@ async function commandSignIn(options) {
   };
   read(child.stdout);
   read(child.stderr);
+  let pasted = false;
   child.exited.then(async (code) => {
     rmSync2(urlFile, { force: true });
     if (status.status !== "pending")
       return;
     const signedIn = await options.signedIn().catch(() => false);
-    status = signedIn ? { status: "complete" } : { status: "failed", message: lastLines(output) || `Signing in stopped (exit code ${code}).` };
+    if (signedIn)
+      status = { status: "complete" };
+    else if (pasted)
+      status = { status: "failed", message: "That code didn't work. Start again, and paste the code from the page this sign-in opens." };
+    else
+      status = { status: "failed", message: lastLines(options.codePrompt ? output.replace(options.codePrompt, "") : output) || `Signing in stopped (exit code ${code}).` };
   });
   (async () => {
     if (await options.signedIn().catch(() => true))
@@ -1660,11 +1666,16 @@ async function commandSignIn(options) {
     }
   })();
   let url = "";
+  let printedAt;
   for (let waited = 0;waited < 15000 && !url; waited += 200) {
     if (existsSync3(urlFile))
       url = readFileSync5(urlFile, "utf8").split(`
 `)[0].trim();
-    url ||= firstURL(output) ?? "";
+    const printed = firstURL(output);
+    if (printed)
+      printedAt ??= waited;
+    if (!url && printed && waited - printedAt >= 3000)
+      url = printed;
     if (!url)
       await Bun.sleep(200);
     if (status.status !== "pending")
@@ -1674,6 +1685,15 @@ async function commandSignIn(options) {
     url,
     instructions: options.instructions,
     mode: "auto",
+    acceptsCode: Boolean(options.codePrompt),
+    complete: options.codePrompt ? async (code) => {
+      if (status.status !== "pending")
+        throw new Error("That sign-in is over. Start it again.");
+      pasted = true;
+      child.stdin.write(code.trim() + `
+`);
+      await child.stdin.flush();
+    } : undefined,
     status: () => status,
     cancel() {
       if (status.status === "pending")
@@ -1953,7 +1973,7 @@ class AntigravityAgent {
     rmSync3(this.modelsFile, { force: true });
   }
   saveModels(setup) {
-    const option = (setup?.configOptions ?? []).find((option) => option.id === "model" || option.category === "model");
+    const option = (setup?.configOptions ?? []).find((option2) => option2.id === "model" || option2.category === "model");
     const flat = [];
     for (const entry of option?.options ?? []) {
       if (Array.isArray(entry.options))
@@ -2007,7 +2027,7 @@ class AntigravityAgent {
         agent.saveModels(setup);
       },
       async selectMode(rpc, sessionId, { approvesAll, plan }, setup) {
-        const option = (setup?.configOptions ?? []).find((option) => option.id === "mode" || option.category === "mode");
+        const option = (setup?.configOptions ?? []).find((option2) => option2.id === "mode" || option2.category === "mode");
         const values = (option?.options ?? []).map((entry) => entry.value);
         const wanted = plan && values.includes("plan") ? "plan" : approvesAll ? "yolo" : "default";
         if (!option || setup.kuvoMode === wanted || values.length && !values.includes(wanted))
@@ -2041,8 +2061,8 @@ async function maintenance(definition, fresh = false) {
   checked.set(definition.executable, { at: Date.now(), value });
   return value;
 }
-function isOutdated(maintenance) {
-  return Boolean(maintenance.installed && maintenance.latest && compareVersions(maintenance.installed, maintenance.latest) < 0);
+function isOutdated(maintenance2) {
+  return Boolean(maintenance2.installed && maintenance2.latest && compareVersions(maintenance2.installed, maintenance2.latest) < 0);
 }
 function update(definition, temporary) {
   const running = updating.get(definition.executable);
@@ -2292,6 +2312,7 @@ class ClaudeAgent {
   authFailedAt;
   modelList;
   loadingModels;
+  program = 0;
   constructor(context, instance = { id: "default" }) {
     this.context = context;
     this.instance = instance;
@@ -2319,10 +2340,12 @@ class ClaudeAgent {
     const definition = this.definition;
     if (!definition)
       return { updated: false, message: "Claude Code isn't installed." };
-    const result = await update(definition, this.context.temporary);
-    if (result.updated)
-      this.modelList = undefined;
-    return result;
+    return update(definition, this.context.temporary);
+  }
+  programUpdated() {
+    this.program++;
+    if (this.modelList)
+      this.modelList.at = 0;
   }
   methods() {
     return [
@@ -2382,7 +2405,8 @@ class ClaudeAgent {
       home: this.context.home,
       temporary: this.context.temporary,
       instructions: "Finish signing in on Claude's page. Claude Code keeps the sign-in, as when you run claude auth login.",
-      signedIn: async () => (await this.account(true)).signedIn
+      signedIn: async () => (await this.account(true)).signedIn,
+      codePrompt: /Paste code here if prompted >\s*/g
     });
   }
   async sdk() {
@@ -2465,11 +2489,11 @@ function modelName(info) {
 function family(name) {
   return "claude-" + (name.split(/\s+/)[0] ?? "").toLowerCase();
 }
-function fallbackModels(providerID) {
+function fallbackModels(providerID2) {
   return [
-    model(providerID, "default", "Claude Code's default", { family: "claude-default", images: true, variants: ["low", "medium", "high", "xhigh", "max"], released: 3 }),
-    model(providerID, "sonnet", "Sonnet", { family: "claude-sonnet", images: true, variants: ["low", "medium", "high", "max"], released: 2 }),
-    model(providerID, "haiku", "Haiku", { family: "claude-haiku", images: true, released: 1 })
+    model(providerID2, "default", "Claude Code's default", { family: "claude-default", images: true, variants: ["low", "medium", "high", "xhigh", "max"], released: 3 }),
+    model(providerID2, "sonnet", "Sonnet", { family: "claude-sonnet", images: true, variants: ["low", "medium", "high", "max"], released: 2 }),
+    model(providerID2, "haiku", "Haiku", { family: "claude-haiku", images: true, released: 1 })
   ];
 }
 
@@ -2493,7 +2517,7 @@ class ClaudeThread {
     const modelID = input.model.id;
     const effort = input.model.variant;
     const append = hooks.instructions();
-    if (this.query && this.opened?.append !== append)
+    if (this.query && (this.opened?.append !== append || this.opened?.program !== this.agent.program))
       this.close();
     if (!this.query) {
       this.open(sdk, modelID, effort, input.plan, append, hooks);
@@ -2504,7 +2528,7 @@ class ClaudeThread {
         await this.query.applyFlagSettings({ effortLevel: effort ?? null }).catch(() => {});
       if (this.opened?.plan !== input.plan)
         await this.query.setPermissionMode(input.plan ? "plan" : "default").catch(() => {});
-      this.opened = { model: modelID, effort, plan: input.plan, append };
+      this.opened = { model: modelID, effort, plan: input.plan, append, program: this.agent.program };
     }
     if (hooks.signal.aborted)
       return { outcome: "interrupted" };
@@ -2524,7 +2548,7 @@ class ClaudeThread {
     if (!resume)
       delete this.state.claudeCost;
     this.input = new Queue;
-    this.opened = { model: modelID, effort, plan, append };
+    this.opened = { model: modelID, effort, plan, append, program: this.agent.program };
     this.query = sdk.query({
       prompt: this.input,
       options: {
@@ -2895,8 +2919,8 @@ function previewDiff(name, input) {
   if (before === undefined)
     return;
   let after = before;
-  const edits = name === "MultiEdit" ? input.edits ?? [] : [input];
-  for (const edit of edits) {
+  const edits2 = name === "MultiEdit" ? input.edits ?? [] : [input];
+  for (const edit of edits2) {
     if (typeof edit.old_string !== "string")
       return;
     after = edit.replace_all ? after.split(edit.old_string).join(edit.new_string ?? "") : after.replace(edit.old_string, () => edit.new_string ?? "");
@@ -3035,14 +3059,33 @@ class CodexAgent {
     const definition = this.definition;
     if (!definition)
       return { updated: false, message: "Codex isn't installed." };
-    const result = await update(definition, this.context.temporary);
-    if (result.updated) {
-      this.modelList = undefined;
-      this.accountCache = undefined;
-      if (!this.threads.size && !this.logins.size)
-        this.shutdown();
+    return update(definition, this.context.temporary);
+  }
+  outdated;
+  programUpdated() {
+    this.modelList = undefined;
+    this.accountCache = undefined;
+    this.outdated = this.server;
+    this.starting?.then((rpc) => {
+      this.outdated ??= rpc;
+      this.restartIfQuiet();
+    }, () => {});
+    this.restartIfQuiet();
+  }
+  restartIfQuiet(starting) {
+    const server = this.outdated;
+    if (!server)
+      return;
+    if (server.isClosed || this.server !== server) {
+      this.outdated = undefined;
+      return;
     }
-    return result;
+    if (this.logins.size || [...this.threads.values()].some((thread) => thread !== starting && thread.isRunning))
+      return;
+    this.outdated = undefined;
+    this.shutdown();
+    this.modelList = undefined;
+    emit("model.updated", {});
   }
   methods() {
     return [
@@ -3052,13 +3095,15 @@ class CodexAgent {
   }
   lastUse = 0;
   idleCheck;
-  async rpc() {
+  async rpc(starting) {
     this.lastUse = Date.now();
     this.idleCheck ??= setInterval(() => {
+      this.restartIfQuiet();
       if (!this.server || this.threads.size || this.logins.size || Date.now() - this.lastUse < 15 * 60000)
         return;
       this.shutdown();
     }, 60000);
+    this.restartIfQuiet(starting);
     if (this.server && !this.server.isClosed)
       return this.server;
     this.starting ??= this.start().finally(() => this.starting = undefined);
@@ -3074,8 +3119,9 @@ class CodexAgent {
     rpc.onNotification = (method, params) => this.notification(method, params);
     rpc.onRequest = (method, params) => this.request(method, params);
     rpc.onExit = () => {
-      if (this.server === rpc)
-        this.server = undefined;
+      if (this.server !== rpc)
+        return;
+      this.server = undefined;
       for (const thread of this.threads.values())
         thread.serverStopped();
     };
@@ -3184,15 +3230,21 @@ class CodexAgent {
       }
       cursor = page?.nextCursor ?? undefined;
     } while (cursor);
-    this.modelList = { at: Date.now(), models };
+    if (rpc !== this.outdated)
+      this.modelList = { at: Date.now(), models };
     return models;
   }
   forgetModels() {
     this.modelList = undefined;
   }
   shutdown() {
-    this.server?.kill();
+    const server = this.server;
+    if (!server)
+      return;
     this.server = undefined;
+    server.kill();
+    for (const thread of this.threads.values())
+      thread.serverStopped();
   }
   thread(session, state) {
     const thread = new CodexThread(this, session, state);
@@ -3212,6 +3264,7 @@ class CodexThread {
   loaded = false;
   instructions;
   active;
+  inTurn = false;
   constructor(agent, session, state) {
     this.agent = agent;
     this.session = session;
@@ -3234,7 +3287,7 @@ class CodexThread {
     return { approvalPolicy: "untrusted", sandboxPolicy: { type: "readOnly", networkAccess: true } };
   }
   async ensureThread(input, hooks) {
-    const rpc = await this.agent.rpc();
+    const rpc = await this.agent.rpc(this);
     const instructions = hooks.instructions() || null;
     if (this.nativeID && this.loaded && instructions === this.instructions)
       return rpc;
@@ -3261,7 +3314,18 @@ class CodexThread {
     this.loaded = true;
     return rpc;
   }
+  get isRunning() {
+    return this.inTurn;
+  }
   async run(input, turn, hooks) {
+    this.inTurn = true;
+    try {
+      return await this.runTurn(input, turn, hooks);
+    } finally {
+      this.inTurn = false;
+    }
+  }
+  async runTurn(input, turn, hooks) {
     const rpc = await this.ensureThread(input, hooks);
     if (hooks.signal.aborted)
       return { outcome: "interrupted" };
@@ -3342,13 +3406,13 @@ ${others.map((path) => `- ${path}`).join(`
       case "item/completed":
         return this.itemCompleted(active, params.item);
       case "thread/tokenUsage/updated": {
-        const last = params.tokenUsage?.last;
-        if (last) {
+        const last2 = params.tokenUsage?.last;
+        if (last2) {
           active.usage = {
-            input: Math.max(0, (last.inputTokens ?? 0) - (last.cachedInputTokens ?? 0)),
-            output: Math.max(0, (last.outputTokens ?? 0) - (last.reasoningOutputTokens ?? 0)),
-            reasoning: last.reasoningOutputTokens ?? 0,
-            cache: { read: last.cachedInputTokens ?? 0, write: last.cacheWriteInputTokens ?? 0 }
+            input: Math.max(0, (last2.inputTokens ?? 0) - (last2.cachedInputTokens ?? 0)),
+            output: Math.max(0, (last2.outputTokens ?? 0) - (last2.reasoningOutputTokens ?? 0)),
+            reasoning: last2.reasoningOutputTokens ?? 0,
+            cache: { read: last2.cachedInputTokens ?? 0, write: last2.cacheWriteInputTokens ?? 0 }
           };
         }
         return;
@@ -3553,7 +3617,7 @@ ${others.map((path) => `- ${path}`).join(`
     }
     throw new RPCError(-32601, `Method not found: ${method}`);
   }
-  limitOf(error, model) {
+  limitOf(error, model2) {
     const info = error?.codexErrorInfo;
     if (info !== "usageLimitExceeded" && info !== "rateLimitExceeded")
       return;
@@ -3566,7 +3630,7 @@ ${others.map((path) => `- ${path}`).join(`
       if (id === "codex" || !reached(snapshot))
         continue;
       const slug = snapshot.normalModelSlug;
-      if (slug && (model === slug || model.startsWith(`${slug}-`)))
+      if (slug && (model2 === slug || model2.startsWith(`${slug}-`)))
         return { scope: "model", resetsAt: resets(snapshot), message: error?.message };
     }
     const plan = this.agent.rateLimits.get("codex");
@@ -3728,7 +3792,7 @@ class CursorAgent {
     let status = { status: "pending" };
     let resolveURL = () => {};
     const url = new Promise((resolve) => resolveURL = resolve);
-    sdk.Cursor.auth.login({ openBrowser: false, store: pending, signal: abort.signal, apiKeyName: "Kuvo Code", onLoginUrl: (link) => resolveURL(link) }).then(async () => {
+    sdk.Cursor.auth.login({ openBrowser: false, store: pending, signal: abort.signal, apiKeyName: "Kuvo Code", onLoginUrl: (link2) => resolveURL(link2) }).then(async () => {
       const credentials = await pending.load();
       if (!credentials)
         throw new Error("Cursor didn't hand over the sign-in.");
@@ -3886,13 +3950,13 @@ ${text}`;
     this.active = active;
     turn.startStep();
     let chain = Promise.resolve();
-    const onDelta = async ({ update }) => {
-      chain = chain.then(() => this.update(active, update)).catch(() => {});
+    const onDelta = async ({ update: update2 }) => {
+      chain = chain.then(() => this.update(active, update2)).catch(() => {});
     };
     try {
-      const run = await this.agent.send(images.length ? { text, images } : text, { model: selection, mode, onDelta });
-      active.run = run;
-      const result = await run.wait();
+      const run2 = await this.agent.send(images.length ? { text, images } : text, { model: selection, mode, onDelta });
+      active.run = run2;
+      const result = await run2.wait();
       await chain;
       if (!active.sawText && typeof result?.result === "string" && result.result.trim())
         turn.text(result.result);
@@ -3931,16 +3995,16 @@ ${text}`;
     active.turn.endStep();
     active.turn.startStep();
   }
-  async update(active, update) {
+  async update(active, update2) {
     const turn = active.turn;
-    switch (update?.type) {
+    switch (update2?.type) {
       case "text-delta":
         this.words(active);
-        turn.text(update.text ?? "");
+        turn.text(update2.text ?? "");
         return;
       case "thinking-delta":
         this.words(active);
-        turn.reasoning(update.text ?? "");
+        turn.reasoning(update2.text ?? "");
         return;
       case "thinking-completed":
       case "step-completed":
@@ -3949,8 +4013,8 @@ ${text}`;
       case "tool-call-started":
       case "partial-tool-call":
       case "tool-call-completed": {
-        const call = update.toolCall ?? {};
-        const id = update.callId;
+        const call = update2.toolCall ?? {};
+        const id = update2.callId;
         if (!id)
           return;
         const kuvo = kuvoTool3(call);
@@ -3962,7 +4026,7 @@ ${text}`;
         } else {
           turn.toolCalled(id, kuvo.input);
         }
-        if (update.type !== "tool-call-completed")
+        if (update2.type !== "tool-call-completed")
           return;
         const result = call.result ?? {};
         const value = result.value ?? {};
@@ -3978,7 +4042,7 @@ ${text}`;
         const id = active.lastShell;
         if (!id)
           return;
-        const event = update.event ?? {};
+        const event = update2.event ?? {};
         const chunk = [event.text, event.output, event.data, event.stdout, event.stderr, event.chunk].find((part) => typeof part === "string") ?? "";
         const output = ((active.output.get(id) ?? "") + chunk).slice(-outputLimit5);
         active.output.set(id, output);
@@ -4107,10 +4171,12 @@ class GrokAgent {
     const definition = this.definition;
     if (!definition)
       return { updated: false, message: "Grok's CLI isn't installed." };
-    const result = await update(definition, this.context.temporary);
-    if (result.updated)
-      this.status = undefined;
-    return result;
+    return update(definition, this.context.temporary);
+  }
+  program = 0;
+  programUpdated() {
+    this.program++;
+    this.status = undefined;
   }
   methods() {
     return [{ type: "oauth", id: "grok", label: "Sign in with Grok" }];
@@ -4169,6 +4235,7 @@ class GrokAgent {
       initializeMeta: { clientType: "extension" },
       authMethod: () => process.env.XAI_API_KEY ? "xai.api_key" : "cached_token",
       restartAfterInterrupt: true,
+      program: () => agent.program,
       async command({ approvesAll, plan }) {
         const executable = agent.executable();
         if (!executable)
@@ -4391,12 +4458,12 @@ function matches(pattern, value) {
   const expression = "^" + pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$";
   return new RegExp(expression).test(value);
 }
-function evaluate(rules, action, resources) {
+function evaluate(rules, action, resources2) {
   let effect = "allow";
   for (const rule of rules ?? []) {
     if (!matches(rule.action, action))
       continue;
-    const targets = resources.length ? resources : ["*"];
+    const targets = resources2.length ? resources2 : ["*"];
     if (targets.every((resource) => matches(rule.resource, resource)))
       effect = rule.effect;
   }
@@ -4421,11 +4488,11 @@ class Turn {
   started = Date.now();
   tokens = noTokens();
   cost = 0;
-  constructor(store, sessionID, directory, model, agent) {
+  constructor(store, sessionID, directory, model2, agent) {
     this.store = store;
     this.sessionID = sessionID;
     this.directory = directory;
-    this.model = model;
+    this.model = model2;
     this.agent = agent;
     emit("session.execution.started", { sessionID }, directory);
   }
@@ -4441,10 +4508,10 @@ class Turn {
   send(type, data) {
     emit(type, { sessionID: this.sessionID, ...data }, this.directory);
   }
-  setModel(model) {
-    this.model = model;
+  setModel(model2) {
+    this.model = model2;
   }
-  startStep(model) {
+  startStep(model2) {
     if (this.ended)
       return "";
     if (this.step)
@@ -4454,7 +4521,7 @@ class Turn {
       id: newID("msg"),
       time: { created: Date.now() },
       agent: this.agent,
-      model: model ?? this.model,
+      model: model2 ?? this.model,
       content: []
     };
     this.step = step;
@@ -4518,7 +4585,7 @@ class Turn {
     const step = this.ensureStep();
     if (this.block?.kind !== kind) {
       this.endBlock();
-      const ordinal = step.content.filter((content) => content.type === kind).length;
+      const ordinal = step.content.filter((content2) => content2.type === kind).length;
       const content = kind === "text" ? { type: "text", text: "" } : { type: "reasoning", text: "", time: { created: Date.now() } };
       step.content.push(content);
       this.block = { kind, ordinal, content };
@@ -4534,7 +4601,7 @@ class Turn {
     if (this.ended || this.keyed.has(key))
       return;
     const step = this.ensureStep();
-    const ordinal = step.content.filter((content) => content.type === kind).length;
+    const ordinal = step.content.filter((content2) => content2.type === kind).length;
     const content = kind === "text" ? { type: "text", text: "" } : { type: "reasoning", text: "", time: { created: Date.now() } };
     step.content.push(content);
     this.keyed.set(key, { kind, ordinal, content });
@@ -4750,15 +4817,15 @@ class Sessions {
     for (const session of store.all())
       this.repair(session.id);
   }
-  agent(providerID) {
-    if (!providerID || providerID === autoProvider)
+  agent(providerID2) {
+    if (!providerID2 || providerID2 === autoProvider)
       return;
-    return this.roster.find(providerID) ?? this.engine?.(providerID);
+    return this.roster.find(providerID2) ?? this.engine?.(providerID2);
   }
-  runs(providerID) {
-    if (providerID === autoProvider)
+  runs(providerID2) {
+    if (providerID2 === autoProvider)
       return this.auto.list().length > 0;
-    return Boolean(this.agent(providerID));
+    return Boolean(this.agent(providerID2));
   }
   state(id) {
     let live = this.live.get(id);
@@ -4821,8 +4888,8 @@ class Sessions {
       }
     }
     if (lastUser >= 0 && !record.messages.slice(lastUser).some((message) => message.type === "idle")) {
-      const last = record.messages[record.messages.length - 1];
-      const at = last?.time.completed ?? last?.time.created ?? Date.now();
+      const last2 = record.messages[record.messages.length - 1];
+      const at = last2?.time.completed ?? last2?.time.created ?? Date.now();
       record.messages.push({ type: "idle", id: newID("msg"), time: { created: at }, outcome: "interrupted" });
       record.session.outcome = "interrupted";
       record.session.time.idle = at;
@@ -4855,10 +4922,10 @@ class Sessions {
     emit("session.created", { sessionID: session.id, session }, directory);
     return session;
   }
-  kind(providerID) {
-    if (providerID === autoProvider)
+  kind(providerID2) {
+    if (providerID2 === autoProvider)
       return autoProvider;
-    return this.agent(providerID)?.id ?? "engine";
+    return this.agent(providerID2)?.id ?? "engine";
   }
   fork(id, before) {
     const record = this.record(id);
@@ -4950,23 +5017,23 @@ class Sessions {
     record.agent.kuvoInstructions = entries;
     this.store.save(id, true);
   }
-  selectModel(id, model) {
+  selectModel(id, model2) {
     const record = this.record(id);
     const session = record.session;
     const previous = session.model;
-    if (!model?.providerID || !model.id)
+    if (!model2?.providerID || !model2.id)
       throw new BadRequest("That isn't a model.");
-    if (model.providerID === autoProvider && !this.auto.list().length)
+    if (model2.providerID === autoProvider && !this.auto.list().length)
       throw new BadRequest("Your Auto list is empty: add models to it in Settings \u203A Auto.");
-    if (!this.runs(model.providerID))
+    if (!this.runs(model2.providerID))
       throw new BadRequest("That model's agent isn't connected.");
-    if (previous && previous.providerID === model.providerID && previous.id === model.id && previous.variant === model.variant)
+    if (previous && previous.providerID === model2.providerID && previous.id === model2.id && previous.variant === model2.variant)
       return;
     this.slots(record);
-    session.model = model;
-    session.metadata = { ...session.metadata, kuvoAgent: this.kind(model.providerID) };
-    const event = emit("session.model.selected", { sessionID: id, model, previous }, session.location.directory);
-    record.messages.push({ type: "model-switched", id: messageID(event.id), time: { created: event.created }, model, previous });
+    session.model = model2;
+    session.metadata = { ...session.metadata, kuvoAgent: this.kind(model2.providerID) };
+    const event = emit("session.model.selected", { sessionID: id, model: model2, previous }, session.location.directory);
+    record.messages.push({ type: "model-switched", id: messageID(event.id), time: { created: event.created }, model: model2, previous });
     this.store.save(id, true);
   }
   selectAgent(id, agent) {
@@ -5046,7 +5113,7 @@ class Sessions {
     if (!record)
       return;
     const queue = this.queue(record);
-    const index = queue.findIndex((input) => input.delivery === "steer");
+    const index = queue.findIndex((input2) => input2.delivery === "steer");
     if (index < 0)
       return;
     const [input] = queue.splice(index, 1);
@@ -5064,11 +5131,11 @@ class Sessions {
     const queue = this.queue(record);
     let index = -1;
     if (outcome === "succeeded") {
-      index = queue.findIndex((input) => input.delivery === "steer");
+      index = queue.findIndex((input2) => input2.delivery === "steer");
       if (index < 0)
         index = queue.length ? 0 : -1;
     } else if (resume) {
-      index = queue.findIndex((input) => input.delivery === "steer");
+      index = queue.findIndex((input2) => input2.delivery === "steer");
     }
     if (index < 0)
       return;
@@ -5082,8 +5149,8 @@ class Sessions {
       return;
     const session = record.session;
     const directory = session.location.directory;
-    const model = session.model;
-    const turn = new Turn(this.store, id, directory, model, session.agent ?? "build");
+    const model2 = session.model;
+    const turn = new Turn(this.store, id, directory, model2, session.agent ?? "build");
     live.turn = turn;
     clearTimeout(live.idle);
     const abort = new AbortController;
@@ -5098,8 +5165,8 @@ class Sessions {
     this.store.save(id, true);
     let result;
     try {
-      const run = { text: input.text, files: input.files.map(promptFile), model, plan: session.agent === "plan" };
-      result = model.providerID === autoProvider ? await this.runAuto(id, record, live, { ...run, auto: true }, turn, abort.signal, input.id) : await this.runOn(id, record, live, model, run, turn, abort.signal, input.id);
+      const run2 = { text: input.text, files: input.files.map(promptFile), model: model2, plan: session.agent === "plan" };
+      result = model2.providerID === autoProvider ? await this.runAuto(id, record, live, { ...run2, auto: true }, turn, abort.signal, input.id) : await this.runOn(id, record, live, model2, run2, turn, abort.signal, input.id);
     } catch (error) {
       result = { outcome: "failed", error: failure(error) };
     }
@@ -5127,20 +5194,20 @@ class Sessions {
       live.threads.clear();
     }, timing.idleClose);
   }
-  async runOn(id, record, live, model, input, turn, signal, userMessage) {
-    const agent = this.agent(model.providerID);
+  async runOn(id, record, live, model2, input, turn, signal, userMessage2) {
+    const agent = this.agent(model2.providerID);
     if (!agent)
       return { outcome: "failed", error: { type: "agent", message: "This model's agent isn't available: sign in to it in Settings \u203A Accounts, or pick another model." } };
     if (signal.aborted)
       return { outcome: "interrupted" };
     const slots = this.slots(record);
-    const slot = slots[model.providerID] ??= { state: {} };
-    let thread = live.threads.get(model.providerID);
+    const slot = slots[model2.providerID] ??= { state: {} };
+    let thread = live.threads.get(model2.providerID);
     if (!thread) {
       thread = agent.thread(record.session, slot.state);
-      live.threads.set(model.providerID, thread);
+      live.threads.set(model2.providerID, thread);
     }
-    const at = record.messages.findIndex((message) => message.id === userMessage);
+    const at = record.messages.findIndex((message) => message.id === userMessage2);
     const seenAt = slot.seen ? record.messages.findIndex((message) => message.id === slot.seen) : -1;
     const hasMessage = at >= 0 && seenAt >= at;
     const before = hasMessage ? [] : record.messages.slice(seenAt + 1, at < 0 ? undefined : at);
@@ -5148,20 +5215,20 @@ class Sessions {
     const handed = handover(before, partway, (message) => this.stepName(message));
     const text = withHandover(hasMessage ? carryOn : input.text, handed);
     const files = hasMessage ? [] : input.files;
-    turn.setModel(model);
+    turn.setModel(model2);
     let abandon;
     const abandoned = new Promise((resolve) => abandon = () => resolve({ outcome: "interrupted" }));
-    const running = { provider: model.providerID, thread, abandon };
+    const running = { provider: model2.providerID, thread, abandon };
     live.running = running;
     try {
-      const result = await Promise.race([thread.run({ ...input, model, text, files }, turn, this.hooks(id, live, turn, signal, slot, input.plan)), abandoned]);
+      const result = await Promise.race([thread.run({ ...input, model: model2, text, files }, turn, this.hooks(id, live, turn, signal, slot, input.plan)), abandoned]);
       slot.seen = record.messages[record.messages.length - 1]?.id;
       live.last = slot;
       return result;
     } catch (error) {
       thread.close();
-      if (live.threads.get(model.providerID) === thread)
-        live.threads.delete(model.providerID);
+      if (live.threads.get(model2.providerID) === thread)
+        live.threads.delete(model2.providerID);
       throw error;
     } finally {
       if (live.running === running)
@@ -5169,9 +5236,18 @@ class Sessions {
       this.store.save(id, true);
     }
   }
-  async runAuto(id, record, live, input, turn, signal, userMessage) {
+  async runAuto(id, record, live, input, turn, signal, userMessage2) {
+    const heldBefore = new Set(Array.isArray(record.agent.autoHeld) ? record.agent.autoHeld : []);
+    try {
+      return await this.runAutoList(id, record, live, input, turn, signal, userMessage2, heldBefore);
+    } finally {
+      record.agent.autoHeld = this.auto.list().filter((entry) => this.auto.isHeld(entry)).map((entry) => Auto.modelKey(entry));
+      this.store.save(id);
+    }
+  }
+  async runAutoList(id, record, live, input, turn, signal, userMessage2, heldBefore) {
     const tried = new Set;
-    let last;
+    let last2;
     let note;
     for (;; ) {
       if (signal.aborted)
@@ -5182,31 +5258,33 @@ class Sessions {
       if (!entry) {
         if (note)
           turn.notice(note);
-        if (last?.limit)
+        if (last2?.limit)
           return { outcome: "failed", error: { type: "limit", message: `Every model in your Auto list is at a usage limit for now${this.nextReset()}.` } };
-        return last ?? { outcome: "failed", error: { type: "limit", message: `No model in your Auto list can run now: each is at a limit, or its agent isn't signed in${this.nextReset()}. Edit the list in Settings \u203A Auto.` } };
+        return last2 ?? { outcome: "failed", error: { type: "limit", message: `No model in your Auto list can run now: each is at a limit, or its agent isn't signed in${this.nextReset()}. Edit the list in Settings \u203A Auto.` } };
       }
+      if (!tried.size && heldBefore.has(Auto.modelKey(entry)))
+        turn.notice(`Back on ${this.entryName(entry)}: its limit has reset.`);
       tried.add(Auto.modelKey(entry));
-      const model = { providerID: entry.providerID, id: entry.modelID, ...entry.variant ? { variant: entry.variant } : {} };
+      const model2 = { providerID: entry.providerID, id: entry.modelID, ...entry.variant ? { variant: entry.variant } : {} };
       if (note) {
         turn.stopTools("Stopped: going on with another model.");
         turn.notice(`${note} Going on with ${this.entryName(entry)}.`);
       }
       const from = record.messages.length;
-      last = await this.runOn(id, record, live, model, input, turn, signal, userMessage);
-      if (last.outcome !== "failed" || signal.aborted)
-        return last;
-      if (!last.limit) {
+      last2 = await this.runOn(id, record, live, model2, input, turn, signal, userMessage2);
+      if (last2.outcome !== "failed" || signal.aborted)
+        return last2;
+      if (!last2.limit) {
         const worked = record.messages.slice(from).some((message) => message.type === "assistant" && message.content.some((content) => content.type === "tool" || content.type === "text" && content.text.trim()));
         if (worked)
-          return last;
-        note = `${this.entryName(entry)} couldn't take it: ${last.error?.message ?? "it stopped with an error"}`;
+          return last2;
+        note = `${this.entryName(entry)} couldn't take it: ${last2.error?.message ?? "it stopped with an error"}`;
         continue;
       }
-      this.auto.hold(entry, last.limit);
+      this.auto.hold(entry, last2.limit);
       emit("kuvo.auto.updated", {});
-      const whole = last.limit.scope === "provider";
-      note = `${this.entryName(entry, whole)} reached ${whole ? "its usage limit" : "this model's limit"}${last.limit.resetsAt ? ` (it resets at ${resetTime(last.limit.resetsAt)})` : ""}.`;
+      const whole = last2.limit.scope === "provider";
+      note = `${this.entryName(entry, whole)} reached ${whole ? "its usage limit" : "this model's limit"}${last2.limit.resetsAt ? ` (it resets at ${resetTime(last2.limit.resetsAt)})` : ""}.`;
     }
   }
   async nextEntry(tried) {
@@ -5225,7 +5303,7 @@ class Sessions {
         continue;
       if (agent.id === "engine") {
         const models = await agent.models().catch(() => []);
-        if (models.length && !models.some((model) => model.id === entry.modelID))
+        if (models.length && !models.some((model2) => model2.id === entry.modelID))
           continue;
       }
       return entry;
@@ -5390,13 +5468,13 @@ class Sessions {
         thread.close();
     }
   }
-  forgetProvider(providerID) {
+  forgetProvider(providerID2) {
     for (const live of this.live.values()) {
-      const thread = live.threads.get(providerID);
+      const thread = live.threads.get(providerID2);
       if (!thread)
         continue;
       thread.close();
-      live.threads.delete(providerID);
+      live.threads.delete(providerID2);
     }
   }
 }
@@ -5459,7 +5537,7 @@ var error = (status, message) => json({ message }, status);
 var lastSeen = new Map;
 async function integration(agent, fresh = false) {
   const [account, maintained] = await Promise.all([
-    agent.account(fresh).catch((error) => ({ installed: false, signedIn: false, message: String(error?.message ?? error) })),
+    agent.account(fresh).catch((error2) => ({ installed: false, signedIn: false, message: String(error2?.message ?? error2) })),
     agent.maintenance ? Promise.race([agent.maintenance(fresh).catch(() => {
       return;
     }), Bun.sleep(15000).then(() => {
@@ -5508,18 +5586,18 @@ async function models(agents) {
   }));
   return lists.flat();
 }
-function page(items, url) {
+function page(items2, url) {
   const limit = Number(url.searchParams.get("limit") ?? 100) || 100;
   const cursor = url.searchParams.get("cursor");
   let start = 0;
   if (cursor) {
     const [, after] = cursor.split(":", 2);
-    const index = items.findIndex((item) => item.id === after);
-    start = index >= 0 ? index + 1 : items.length;
+    const index = items2.findIndex((item) => item.id === after);
+    start = index >= 0 ? index + 1 : items2.length;
   }
-  const data = items.slice(start, start + limit);
+  const data = items2.slice(start, start + limit);
   const order = cursor?.split(":", 1)[0] ?? url.searchParams.get("order") ?? "desc";
-  const next = start + limit < items.length && data.length ? `${order}:${data[data.length - 1].id}` : undefined;
+  const next = start + limit < items2.length && data.length ? `${order}:${data[data.length - 1].id}` : undefined;
   return { data, cursor: { next } };
 }
 function handler(context) {
@@ -5546,7 +5624,7 @@ function handler(context) {
           const fresh = url.searchParams.get("fresh") === "1";
           if (fresh)
             await refreshLoginPath();
-          return located(await Promise.all(roster.all().map((agent) => integration(agent, fresh))));
+          return located(await Promise.all(roster.all().map((agent2) => integration(agent2, fresh))));
         }
         const agent = agentFor(a);
         if (!agent)
@@ -5563,7 +5641,7 @@ function handler(context) {
             const created = Date.now();
             const expires = created + 30 * 60000;
             attempts.set(id, { agent, attempt, created, expires });
-            return located({ attemptID: id, url: attempt.url, instructions: attempt.instructions, mode: attempt.mode, time: { created, expires } });
+            return located({ attemptID: id, url: attempt.url, instructions: attempt.instructions, mode: attempt.mode, acceptsCode: attempt.acceptsCode || undefined, time: { created, expires } });
           }
           const pending = d ? attempts.get(d) : undefined;
           if (!pending)
@@ -5604,7 +5682,7 @@ function handler(context) {
           if (result.updated) {
             for (const each of roster.all())
               if (each.id === agent.id)
-                each.forgetModels?.();
+                each.programUpdated?.();
             emit("integration.updated", { integrationID: agent.providerID });
             emit("model.updated", {});
           }
@@ -5636,7 +5714,7 @@ function handler(context) {
           return json(page(ordered, url));
         }
         if (a === "active")
-          return json({ data: Object.fromEntries(sessions.active().map((id) => [id, { type: "busy" }])) });
+          return json({ data: Object.fromEntries(sessions.active().map((id2) => [id2, { type: "busy" }])) });
         const id = a;
         if (!b) {
           if (method === "GET")
@@ -5897,7 +5975,7 @@ try {
       rmSync7(join13(home, "antigravity", name), { recursive: true, force: true });
 } catch {}
 delete process.env.BUN_BE_BUN;
-process.on("unhandledRejection", (reason) => console.error("unhandled:", reason));
+process.on("unhandledRejection", (reason2) => console.error("unhandled:", reason2));
 var deps = new Deps(join13(home, "runtime"), join13(home, "cache"));
 var context = { home, temporary, deps };
 var roster = new Roster(new Accounts(home), context);
@@ -5905,12 +5983,12 @@ var store = new Store(join13(home, "sessions"));
 var auto = new Auto(home);
 var link = new EngineLink;
 var engineAgents = new Map;
-function engineAgent(providerID) {
-  if (!link.ready || parseProvider(providerID))
+function engineAgent(providerID2) {
+  if (!link.ready || parseProvider(providerID2))
     return;
-  let agent = engineAgents.get(providerID);
+  let agent = engineAgents.get(providerID2);
   if (!agent)
-    engineAgents.set(providerID, agent = new EngineAgent(link, providerID));
+    engineAgents.set(providerID2, agent = new EngineAgent(link, providerID2));
   return agent;
 }
 var sessions = new Sessions(store, roster, auto, engineAgent);
