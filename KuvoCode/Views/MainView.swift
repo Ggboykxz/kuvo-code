@@ -1656,6 +1656,34 @@ struct MainView: View {
                 }
             }
         }
+        // KUVO_PERF_TOGGLE=<n>: ten seconds after launch, the sidebar hidden and shown n times, then
+        // the panel, as their buttons do, a second apart; how the main thread kept up with the
+        // slides goes to KUVO_PERF_LOG.
+        if let count = environment["KUVO_PERF_TOGGLE"].flatMap(Int.init) {
+            Task {
+                try? await Task.sleep(for: .seconds(10))
+                func log(_ line: String) {
+                    guard let file = environment["KUVO_PERF_LOG"] else { return }
+                    if let handle = FileHandle(forWritingAtPath: file) { handle.seekToEndOfFile(); handle.write(Data(line.utf8)); try? handle.close() } else { FileManager.default.createFile(atPath: file, contents: Data(line.utf8)) }
+                }
+                let sidebar = PerfMeter()
+                sidebar.start()
+                for _ in 0..<(count * 2) {
+                    withAnimation(.ui) { showSidebar(!showsSidebar) }
+                    try? await Task.sleep(for: .seconds(1))
+                }
+                log("toggle sidebar x\(count * 2): " + sidebar.stop() + "\n")
+                if let file = environment["KUVO_PERF_STALLS"] { try? sidebar.stallReport().write(toFile: file, atomically: true, encoding: .utf8) }
+                let panel = PerfMeter()
+                panel.start()
+                for _ in 0..<(count * 2) {
+                    withAnimation(.ui) { showPanel(!showsPanel) }
+                    try? await Task.sleep(for: .seconds(1))
+                }
+                log("toggle panel x\(count * 2): " + panel.stop() + "\n")
+                if let file = environment["KUVO_PERF_STALLS"] { try? panel.stallReport().write(toFile: file + ".panel", atomically: true, encoding: .utf8) }
+            }
+        }
         // KUVO_PERF_SIDEBAR=<n>: ten seconds after launch, the sidebar scrolled down and back up,
         // n frames each way, as a trackpad does; then ten seconds left alone. How the main thread
         // kept up with each goes to KUVO_PERF_LOG.
