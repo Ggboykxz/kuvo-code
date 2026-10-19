@@ -7,3 +7,4 @@ build/
 *.xcuserstate
 Config/Signing.local.xcconfig
 CLAUDE.md
+Agents/node_modules/

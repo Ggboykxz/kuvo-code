@@ -1,0 +1,81 @@
+// Signing in by running an agent's own sign-in command (`claude auth login`, `codex login`,
+// `grok login`): it opens its maker's page in your browser and finishes by itself. The page it
+// would open is caught (its BROWSER is a little script that writes it down), so the app opens it,
+// once, and can open it again.
+
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
+import type { SignInAttempt } from "./agent"
+import { newID } from "./ids"
+import { firstURL, plain } from "./proc"
+import type { OAuthStatus } from "./wire"
+
+export interface CommandSignInOptions {
+  command: string
+  args: string[]
+  env?: Record<string, string | undefined>
+  /** Where the bridge keeps its files (the URL catcher goes in `bin`). */
+  home: string
+  temporary: string
+  /** Whether you're signed in now (asked once the command ends). */
+  signedIn: () => Promise<boolean>
+  instructions: string
+}
+
+/** The catcher, in the temporary folder: a path without spaces (Python splits BROWSER on them). */
+export function catcher(temporary: string): string {
+  const path = join(temporary, "bin", "kuvo-catch-url")
+  if (!existsSync(path)) {
+    mkdirSync(join(temporary, "bin"), { recursive: true })
+    writeFileSync(path, '#!/bin/sh\nprintf \'%s\\n\' "$1" >> "$KUVO_URL_FILE"\n')
+    chmodSync(path, 0o755)
+  }
+  return path
+}
+
+export async function commandSignIn(options: CommandSignInOptions): Promise<SignInAttempt> {
+  const urlFile = join(options.temporary, `${newID("att")}.url`)
+  const child = Bun.spawn([options.command, ...options.args], {
+    env: { ...process.env, ...options.env, BROWSER: catcher(options.temporary), KUVO_URL_FILE: urlFile },
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  let output = ""
+  let status: OAuthStatus = { status: "pending" }
+  const read = async (stream: ReadableStream<Uint8Array>) => {
+    const decoder = new TextDecoder()
+    for await (const chunk of stream) output += plain(decoder.decode(chunk))
+  }
+  void read(child.stdout)
+  void read(child.stderr)
+  void child.exited.then(async (code) => {
+    rmSync(urlFile, { force: true })
+    if (status.status !== "pending") return
+    const signedIn = await options.signedIn().catch(() => false)
+    status = signedIn ? { status: "complete" } : { status: "failed", message: lastLines(output) || `Signing in stopped (exit code ${code}).` }
+  })
+
+  // The page to open: what the command handed its browser, or printed.
+  let url = ""
+  for (let waited = 0; waited < 15_000 && !url; waited += 200) {
+    if (existsSync(urlFile)) url = readFileSync(urlFile, "utf8").split("\n")[0].trim()
+    url ||= firstURL(output) ?? ""
+    if (!url) await Bun.sleep(200)
+    if (status.status !== "pending") break
+  }
+  return {
+    url,
+    instructions: options.instructions,
+    mode: "auto",
+    status: () => status,
+    cancel() {
+      if (status.status === "pending") status = { status: "failed", message: "Cancelled." }
+      child.kill()
+    },
+  }
+}
+
+function lastLines(text: string): string {
+  return text.trim().split("\n").slice(-4).join("\n").trim()
+}

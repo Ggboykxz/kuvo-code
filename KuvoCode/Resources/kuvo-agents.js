@@ -1,0 +1,4001 @@
+// @bun
+// Agents/src/main.ts
+import { mkdirSync as mkdirSync7 } from "fs";
+import { join as join10 } from "path";
+
+// Agents/src/agents/antigravity.ts
+import { createHash } from "crypto";
+import { chmodSync as chmodSync2, existsSync as existsSync3, mkdirSync as mkdirSync3, readdirSync, readFileSync as readFileSync3, renameSync, rmSync as rmSync2, writeFileSync as writeFileSync3 } from "fs";
+import { join as join3 } from "path";
+
+// Agents/src/agent.ts
+function model(providerID, id, name, options = {}) {
+  return {
+    id,
+    providerID,
+    name,
+    family: options.family,
+    capabilities: { tools: true, input: options.images ? ["text", "image"] : ["text"], output: ["text"] },
+    variants: (options.variants ?? []).map((id2) => ({ id: id2 })),
+    time: { released: options.released ?? 0 },
+    cost: [{ input: 0, output: 0 }],
+    status: "active",
+    enabled: true,
+    limit: { context: options.context ?? 200000, output: 32000 }
+  };
+}
+function failure(error, type = "agent") {
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : JSON.stringify(error);
+  return { type, message: message || "The agent stopped with an error." };
+}
+
+// Agents/src/acp.ts
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { dirname } from "path";
+
+// Agents/src/diff.ts
+function edits(a, b) {
+  const n = a.length;
+  const m = b.length;
+  const max = n + m;
+  const v = new Int32Array(2 * max + 2);
+  const trace = [];
+  outer:
+    for (let d = 0;d <= max; d++) {
+      trace.push(v.slice());
+      for (let k = -d;k <= d; k += 2) {
+        let x2 = k === -d || k !== d && v[max + k - 1] < v[max + k + 1] ? v[max + k + 1] : v[max + k - 1] + 1;
+        let y2 = x2 - k;
+        while (x2 < n && y2 < m && a[x2] === b[y2]) {
+          x2++;
+          y2++;
+        }
+        v[max + k] = x2;
+        if (x2 >= n && y2 >= m)
+          break outer;
+      }
+    }
+  const ops = [];
+  let x = n;
+  let y = m;
+  for (let d = trace.length - 1;d >= 0; d--) {
+    const t = trace[d];
+    const k = x - y;
+    const prevK = k === -d || k !== d && t[max + k - 1] < t[max + k + 1] ? k + 1 : k - 1;
+    const prevX = t[max + prevK];
+    const prevY = prevX - prevK;
+    while (x > prevX && y > prevY)
+      ops.push({ kind: " ", line: a[--x] }) && y--;
+    if (d > 0) {
+      if (x === prevX)
+        ops.push({ kind: "+", line: b[--y] });
+      else
+        ops.push({ kind: "-", line: a[--x] });
+    }
+  }
+  return ops.reverse();
+}
+function lines(text) {
+  if (text === "")
+    return [];
+  const split = text.split(`
+`);
+  if (split[split.length - 1] === "")
+    split.pop();
+  return split;
+}
+function unified(before, after, context = 3) {
+  const ops = edits(lines(before), lines(after));
+  let additions = 0;
+  let deletions = 0;
+  for (const op of ops) {
+    if (op.kind === "+")
+      additions++;
+    else if (op.kind === "-")
+      deletions++;
+  }
+  let patch = "";
+  let i = 0;
+  let oldLine = 1;
+  let newLine = 1;
+  const starts = ops.map((op) => {
+    const at = { old: oldLine, new: newLine };
+    if (op.kind !== "+")
+      oldLine++;
+    if (op.kind !== "-")
+      newLine++;
+    return at;
+  });
+  while (i < ops.length) {
+    if (ops[i].kind === " ") {
+      i++;
+      continue;
+    }
+    let start = Math.max(0, i - context);
+    let end = i;
+    while (end < ops.length) {
+      if (ops[end].kind !== " ") {
+        end++;
+        continue;
+      }
+      let next = end;
+      while (next < ops.length && ops[next].kind === " ")
+        next++;
+      if (next < ops.length && next - end <= context * 2)
+        end = next;
+      else
+        break;
+    }
+    end = Math.min(ops.length, end + context);
+    const slice = ops.slice(start, end);
+    const oldCount = slice.filter((op) => op.kind !== "+").length;
+    const newCount = slice.filter((op) => op.kind !== "-").length;
+    const oldStart = oldCount === 0 ? starts[start].old - 1 : starts[start].old;
+    const newStart = newCount === 0 ? starts[start].new - 1 : starts[start].new;
+    patch += `@@ -${oldStart},${oldCount} +${newStart},${newCount} @@
+`;
+    for (const op of slice)
+      patch += op.kind + op.line + `
+`;
+    i = end;
+  }
+  return { patch, additions, deletions };
+}
+function header(path) {
+  return path.startsWith("/") ? `--- ${path}
++++ ${path}
+` : `--- a/${path}
++++ b/${path}
+`;
+}
+function fileDiff(path, before, after) {
+  const { patch, additions, deletions } = unified(before ?? "", after ?? "");
+  const status = before === undefined ? "added" : after === undefined ? "deleted" : "modified";
+  return { file: path, patch: header(path) + patch, additions, deletions, status };
+}
+function fromPatch(path, patch, status) {
+  let additions = 0;
+  let deletions = 0;
+  let inHunk = false;
+  for (const line of patch.split(`
+`)) {
+    if (line.startsWith("@@"))
+      inHunk = true;
+    else if (!inHunk)
+      continue;
+    else if (line.startsWith("+"))
+      additions++;
+    else if (line.startsWith("-"))
+      deletions++;
+  }
+  const headed = patch.startsWith("---") || patch.startsWith("diff ") ? patch : header(path) + patch;
+  return { file: path, patch: headed, additions, deletions, status: status ?? "modified" };
+}
+
+// Agents/src/rpc.ts
+class RPCError extends Error {
+  code;
+  data;
+  constructor(code, message, data) {
+    super(message);
+    this.code = code;
+    this.data = data;
+  }
+}
+
+class RPC {
+  next = 1;
+  pending = new Map;
+  child;
+  closed = false;
+  stderr = "";
+  onNotification = () => {};
+  onRequest = async (method) => {
+    throw new RPCError(-32601, `Method not found: ${method}`);
+  };
+  onExit = () => {};
+  exited;
+  constructor(command, options = {}) {
+    this.jsonrpc = options.jsonrpc ?? false;
+    if (options.firstID)
+      this.next = options.firstID;
+    this.filter = options.filter;
+    const env = options.cleanEnv ? options.env : { ...process.env, ...options.env };
+    this.child = Bun.spawn(command, { cwd: options.cwd, env, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+    this.exited = this.child.exited.then((code) => {
+      this.closed = true;
+      for (const { reject } of this.pending.values())
+        reject(new Error(this.stderr.trim().split(`
+`).slice(-3).join(`
+`) || `The agent stopped (exit code ${code}).`));
+      this.pending.clear();
+      this.onExit(code);
+      return code;
+    });
+    this.read();
+    this.readErrors();
+  }
+  jsonrpc;
+  filter;
+  get pid() {
+    return this.child.pid;
+  }
+  get isClosed() {
+    return this.closed;
+  }
+  async read() {
+    const decoder = new TextDecoder;
+    let buffer = "";
+    for await (const chunk of this.child.stdout) {
+      buffer += decoder.decode(chunk, { stream: true });
+      let newline;
+      while ((newline = buffer.indexOf(`
+`)) >= 0) {
+        const line = buffer.slice(0, newline).replace(/\r$/, "");
+        buffer = buffer.slice(newline + 1);
+        if (line.trim() && (!this.filter || this.filter(line)))
+          this.receive(line);
+      }
+    }
+  }
+  async readErrors() {
+    const decoder = new TextDecoder;
+    for await (const chunk of this.child.stderr) {
+      this.stderr = (this.stderr + decoder.decode(chunk, { stream: true })).slice(-8000);
+    }
+  }
+  receive(line) {
+    let message;
+    try {
+      message = JSON.parse(line);
+    } catch {
+      return;
+    }
+    if (message.method !== undefined && message.id !== undefined) {
+      this.answer(message.id, message.method, message.params);
+    } else if (message.method !== undefined) {
+      this.onNotification(message.method, message.params);
+    } else if (message.id !== undefined) {
+      const pending = this.pending.get(message.id);
+      if (!pending)
+        return;
+      this.pending.delete(message.id);
+      if (message.error)
+        pending.reject(new RPCError(message.error.code ?? -32000, message.error.message ?? "The agent refused.", message.error.data));
+      else
+        pending.resolve(message.result);
+    }
+  }
+  async answer(id, method, params) {
+    try {
+      const result = await this.onRequest(method, params);
+      this.write({ id, result: result ?? null });
+    } catch (error) {
+      const code = error instanceof RPCError ? error.code : -32603;
+      this.write({ id, error: { code, message: error instanceof Error ? error.message : String(error) } });
+    }
+  }
+  write(message) {
+    if (this.closed)
+      return;
+    const body = this.jsonrpc ? { jsonrpc: "2.0", ...message } : message;
+    try {
+      this.child.stdin.write(JSON.stringify(body) + `
+`);
+      this.child.stdin.flush();
+    } catch {}
+  }
+  request(method, params, timeout) {
+    if (this.closed)
+      return Promise.reject(new Error(this.stderr.trim().split(`
+`).slice(-3).join(`
+`) || "The agent isn't running."));
+    const id = this.next++;
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
+      this.write(params === undefined ? { id, method } : { id, method, params });
+      if (timeout) {
+        setTimeout(() => {
+          if (!this.pending.has(id))
+            return;
+          this.pending.delete(id);
+          reject(new Error(`${method} took too long.`));
+        }, timeout);
+      }
+    });
+  }
+  notify(method, params) {
+    this.write(params === undefined ? { method } : { method, params });
+  }
+  kill() {
+    if (this.closed)
+      return;
+    try {
+      this.child.stdin.end();
+    } catch {}
+    this.child.kill();
+  }
+}
+
+// Agents/src/acp.ts
+var outputLimit = 30000;
+
+class AcpThread {
+  flavor;
+  session;
+  state;
+  name;
+  rpc;
+  sessionID;
+  setup;
+  spawnedWith;
+  active;
+  loading = false;
+  constructor(flavor, session, state, name) {
+    this.flavor = flavor;
+    this.session = session;
+    this.state = state;
+    this.name = name;
+  }
+  async open(input, hooks) {
+    const mode = { approvesAll: hooks.approvesAll(), plan: input.plan };
+    const key = JSON.stringify(mode);
+    if (this.rpc && !this.rpc.isClosed && this.spawnedWith === key)
+      return this.rpc;
+    this.close();
+    const launch = await this.flavor.command(mode);
+    const flavor = this.flavor;
+    const rpc = new RPC(launch.argv, {
+      cwd: launch.cwd ?? this.session.location.directory,
+      env: launch.env,
+      cleanEnv: launch.cleanEnv,
+      jsonrpc: true,
+      firstID: 2 ** 30,
+      filter: (line) => {
+        const fatal = flavor.fatalLine?.(line);
+        if (fatal) {
+          setTimeout(() => {
+            rpc.stderr = fatal;
+            rpc.kill();
+          });
+          return false;
+        }
+        return flavor.filter?.(line) ?? true;
+      }
+    });
+    rpc.onNotification = (method, params) => this.notification(method, params);
+    rpc.onRequest = (method, params) => this.request(method, params);
+    rpc.onExit = () => {
+      launch.onExit?.();
+      if (this.rpc === rpc)
+        this.rpc = undefined;
+      const active = this.active;
+      if (active && !active.ended)
+        this.end(active, "failed", rpc.stderr.trim().split(`
+`).slice(-3).join(`
+`) || `${this.name} stopped.`);
+    };
+    this.rpc = rpc;
+    this.spawnedWith = key;
+    if (launch.signInFile) {
+      const file = launch.signInFile;
+      const watch = setInterval(() => {
+        if (rpc.isClosed)
+          return clearInterval(watch);
+        if (!existsSync(file))
+          return;
+        clearInterval(watch);
+        rpc.stderr = `${this.name} needs you to sign in again: Settings \u203A Accounts.`;
+        rpc.kill();
+      }, 500);
+    }
+    const init = await rpc.request("initialize", {
+      protocolVersion: 1,
+      clientCapabilities: { fs: { readTextFile: this.flavor.fileSystem, writeTextFile: this.flavor.fileSystem }, terminal: false },
+      clientInfo: { name: "kuvo-code", title: "Kuvo Code", version: "1" },
+      ...this.flavor.initializeMeta ? { _meta: this.flavor.initializeMeta } : {}
+    }, 120000);
+    const advertised = init?.authMethods ?? [];
+    const authenticate = async () => {
+      const methodId = this.flavor.authMethod(advertised);
+      if (!methodId)
+        throw new Error(`${this.name} isn't signed in. Sign in again in Settings \u203A Accounts.`);
+      await rpc.request("authenticate", { methodId }, 300000);
+    };
+    if (this.flavor.authenticatesFirst)
+      await authenticate();
+    const cwd = this.session.location.directory;
+    const previous = this.state.acpSession;
+    const openSession = async () => {
+      if (previous && this.flavor.resumes && init?.agentCapabilities?.sessionCapabilities?.resume) {
+        this.loading = true;
+        try {
+          this.setup = await rpc.request("session/resume", { sessionId: previous, cwd, mcpServers: [] }, 120000);
+          this.sessionID = previous;
+          return;
+        } catch {} finally {
+          this.loading = false;
+        }
+      }
+      if (previous && init?.agentCapabilities?.loadSession) {
+        this.loading = true;
+        try {
+          this.setup = await rpc.request("session/load", { sessionId: previous, cwd, mcpServers: [] }, 120000);
+          this.sessionID = previous;
+          return;
+        } catch {} finally {
+          this.loading = false;
+        }
+      }
+      this.setup = await rpc.request("session/new", { cwd, mcpServers: [] }, 120000);
+      this.sessionID = this.setup?.sessionId;
+      this.state.acpSession = this.sessionID;
+      hooks.saveState();
+    };
+    try {
+      await openSession();
+    } catch (error) {
+      if (!(error instanceof RPCError && error.code === -32000))
+        throw error;
+      await authenticate();
+      await openSession();
+    }
+    return rpc;
+  }
+  async run(input, turn, hooks) {
+    const rpc = await this.open(input, hooks);
+    const sessionId = this.sessionID;
+    await this.flavor.selectModel(rpc, sessionId, input.model.id, this.setup).catch(() => {});
+    await this.flavor.selectMode?.(rpc, sessionId, { approvesAll: hooks.approvesAll(), plan: input.plan }, this.setup).catch(() => {});
+    const prompt = [];
+    const others = [];
+    for (const file of input.files) {
+      const data = file.data ?? (file.mime.startsWith("image/") && file.path ? safeBase64(file.path) : undefined);
+      if (file.mime.startsWith("image/") && data)
+        prompt.push({ type: "image", data, mimeType: file.mime });
+      else if (file.path)
+        others.push(file.path);
+    }
+    let text = input.text;
+    const instructions = hooks.instructions();
+    if (instructions && !this.state.acpInstructed) {
+      text = `${instructions}
+
+${text}`;
+      this.state.acpInstructed = true;
+      hooks.saveState();
+    }
+    if (others.length)
+      text += `
+
+Attached files:
+${others.map((path) => `- ${path}`).join(`
+`)}`;
+    prompt.unshift({ type: "text", text });
+    return new Promise((resolve) => {
+      const active = { turn, hooks, resolve, tools: new Map, toolsSinceText: false, ended: false };
+      this.active = active;
+      turn.startStep();
+      const meta = this.flavor.promptMeta?.();
+      rpc.request("session/prompt", { sessionId, prompt, ...meta ? { _meta: meta } : {} }).then((result) => this.end(active, result?.stopReason === "cancelled" ? "interrupted" : "succeeded"), (error) => this.end(active, "failed", error instanceof RPCError && error.code === -32003 ? `You've reached your ${this.name} usage limit for now.` : errorText(error)));
+    });
+  }
+  end(active, outcome, message) {
+    if (active.ended)
+      return;
+    active.ended = true;
+    if (this.active === active)
+      this.active = undefined;
+    active.turn.endStep();
+    if (active.hooks.signal.aborted)
+      active.resolve({ outcome: "interrupted" });
+    else
+      active.resolve(outcome === "failed" ? { outcome, error: failure(message ?? `${this.name} stopped with an error.`) } : { outcome });
+  }
+  context() {
+    const active = this.active;
+    return {
+      turn: active?.turn,
+      hooks: active?.hooks,
+      endPrompt: (stopReason, error) => {
+        if (active)
+          this.end(active, error ? "failed" : stopReason === "cancelled" ? "interrupted" : "succeeded", error);
+      }
+    };
+  }
+  notification(method, params) {
+    if (method !== "session/update") {
+      this.flavor.notification?.(method, params, this.context());
+      return;
+    }
+    const active = this.active;
+    if (!active || this.loading || params?._meta?.isReplay)
+      return;
+    const update = params?.update ?? {};
+    const turn = active.turn;
+    switch (update.sessionUpdate) {
+      case "agent_message_chunk":
+        this.words(active);
+        turn.text(contentText(update.content));
+        return;
+      case "agent_thought_chunk":
+        this.words(active);
+        turn.reasoning(contentText(update.content));
+        return;
+      case "tool_call":
+      case "tool_call_update":
+        return this.tool(active, update);
+      case "plan": {
+        const todos = (update.entries ?? []).map((entry) => ({ content: entry.content, status: entry.status === "in_progress" ? "in_progress" : entry.status }));
+        const id = `plan-${turn.started}`;
+        if (!turn.hasTool(id))
+          turn.toolStart(id, "todowrite", { todos });
+        turn.toolSucceeded(id, "", { todos });
+        return;
+      }
+    }
+  }
+  words(active) {
+    if (!active.toolsSinceText)
+      return;
+    active.toolsSinceText = false;
+    active.turn.endStep();
+    active.turn.startStep();
+  }
+  tool(active, update) {
+    const turn = active.turn;
+    const id = update.toolCallId;
+    if (!id)
+      return;
+    const merged = { ...active.tools.get(id) ?? {}, ...Object.fromEntries(Object.entries(update).filter(([, value]) => value !== undefined && value !== null)) };
+    active.tools.set(id, merged);
+    const kuvo = kuvoTool(merged);
+    if (!turn.hasTool(id)) {
+      active.toolsSinceText = true;
+      turn.toolStart(id, kuvo.name, kuvo.input);
+    } else {
+      turn.toolRename(id, kuvo.name);
+      if (merged.status !== "completed" && merged.status !== "failed")
+        turn.toolCalled(id, kuvo.input);
+    }
+    const output = toolOutput(merged);
+    const files = (merged.content ?? []).filter((part) => part?.type === "diff" && part.path).map((part) => fileDiff(part.path, part.oldText ?? undefined, part.newText ?? ""));
+    const metadata = {};
+    if (files.length)
+      metadata.files = files;
+    const exit = merged.rawOutput?.exit_code ?? merged.rawOutput?.exitCode;
+    if (typeof exit === "number")
+      metadata.exit = exit;
+    if (output)
+      metadata.output = output;
+    if (merged.status === "completed")
+      turn.toolSucceeded(id, output, metadata);
+    else if (merged.status === "failed")
+      turn.toolFailed(id, output || "The tool failed.", metadata);
+    else if (output)
+      turn.toolProgress(id, metadata);
+  }
+  async request(method, params) {
+    const own = this.flavor.request?.(method, params, this.context());
+    if (own)
+      return own;
+    const active = this.active;
+    switch (method) {
+      case "session/request_permission": {
+        const options = params?.options ?? [];
+        if (!active)
+          return { outcome: { outcome: "cancelled" } };
+        const call = { ...active.tools.get(params.toolCall?.toolCallId) ?? {}, ...params.toolCall ?? {} };
+        if (String(call.toolCallId ?? "").startsWith("interaction_")) {
+          const answer = await active.hooks.question({
+            title: "Question",
+            fields: [{ key: "answer", title: "Question", description: call.title ?? "", required: true, type: "string", options: options.map((option2) => ({ value: option2.optionId, label: option2.name ?? option2.optionId })) }]
+          });
+          const chosen = answer?.answer;
+          return chosen ? { outcome: { outcome: "selected", optionId: String(chosen) } } : { outcome: { outcome: "cancelled" } };
+        }
+        const kuvo = kuvoTool(call);
+        const files = (call.content ?? []).filter((part) => part?.type === "diff" && part.path).map((part) => fileDiff(part.path, part.oldText ?? undefined, part.newText ?? ""));
+        const decision = await active.hooks.permission({
+          toolCallID: call.toolCallId,
+          action: permissionAction(call.kind, kuvo.name),
+          resources: resources(call),
+          metadata: files.length ? { files } : undefined,
+          message: call.title
+        });
+        const pick = (kinds) => kinds.map((kind) => options.find((option2) => option2.kind === kind)).find(Boolean);
+        const option = decision === "reject" ? pick(["reject_once", "reject_always"]) : decision === "always" ? pick(["allow_always", "allow_once"]) : pick(["allow_once", "allow_always"]);
+        return option ? { outcome: { outcome: "selected", optionId: option.optionId } } : { outcome: { outcome: "cancelled" } };
+      }
+      case "fs/read_text_file": {
+        if (!this.flavor.fileSystem)
+          break;
+        let content = readFileSync(params.path, "utf8");
+        if (params.line || params.limit) {
+          const lines2 = content.split(`
+`);
+          const start = Math.max(0, (params.line ?? 1) - 1);
+          content = lines2.slice(start, params.limit ? start + params.limit : undefined).join(`
+`);
+        }
+        return { content };
+      }
+      case "fs/write_text_file": {
+        if (!this.flavor.fileSystem)
+          break;
+        mkdirSync(dirname(params.path), { recursive: true });
+        writeFileSync(params.path, params.content ?? "");
+        return {};
+      }
+    }
+    throw new RPCError(-32601, `Method not found: ${method}`);
+  }
+  async interrupt() {
+    const active = this.active;
+    const rpc = this.rpc;
+    if (!active || !rpc || !this.sessionID)
+      return;
+    rpc.notify("session/cancel", { sessionId: this.sessionID });
+    for (let waited = 0;waited < 15000 && !active.ended; waited += 100)
+      await Bun.sleep(100);
+    if (!active.ended || this.flavor.restartAfterInterrupt) {
+      this.end(active, "interrupted");
+      this.close();
+    }
+  }
+  close() {
+    this.rpc?.kill();
+    this.rpc = undefined;
+  }
+}
+function kuvoTool(call) {
+  const raw = call.rawInput ?? {};
+  const path = call.locations?.[0]?.path ?? raw.path ?? raw.file_path ?? raw.filePath;
+  const command = Array.isArray(raw.command) ? raw.command.join(" ") : raw.command ?? raw.CommandLine ?? raw.command_line ?? raw.commandLine;
+  switch (call.kind) {
+    case "execute":
+      return { name: "shell", input: { command: command ?? backticked(call.title) ?? call.title, description: raw.description } };
+    case "read":
+      return { name: "read", input: { path } };
+    case "edit":
+    case "delete":
+    case "move":
+      return { name: "edit", input: { path } };
+    case "search":
+      return { name: "grep", input: { pattern: raw.pattern ?? raw.query ?? call.title, path } };
+    case "fetch":
+      return { name: raw.url ? "webfetch" : "websearch", input: { url: raw.url, query: raw.query ?? call.title } };
+    case "think":
+      return { name: "think", input: {} };
+  }
+  return { name: (call.title ?? "tool").toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_|_$/g, "") || "tool", input: raw };
+}
+function permissionAction(kind, name) {
+  switch (kind) {
+    case "execute":
+      return "shell";
+    case "edit":
+    case "delete":
+    case "move":
+      return "edit";
+    case "fetch":
+      return "webfetch";
+    case "read":
+    case "search":
+      return "read";
+  }
+  return name;
+}
+function resources(call) {
+  const raw = call.rawInput ?? {};
+  if (call.kind === "execute") {
+    const command = Array.isArray(raw.command) ? raw.command.join(" ") : raw.command ?? backticked(call.title);
+    return [command ?? call.title ?? "*"];
+  }
+  const paths = (call.locations ?? []).map((location) => location.path).filter(Boolean);
+  if (paths.length)
+    return paths;
+  return [raw.path ?? raw.url ?? raw.file_path ?? "*"];
+}
+function backticked(title) {
+  return typeof title === "string" ? title.match(/`([^`]+)`/)?.[1] : undefined;
+}
+function contentText(content) {
+  if (!content)
+    return "";
+  if (typeof content === "string")
+    return content;
+  if (content.type === "text")
+    return content.text ?? "";
+  if (content.type === "resource_link")
+    return content.name ?? content.uri ?? "";
+  if (content.type === "resource")
+    return content.resource?.text ?? "";
+  return "";
+}
+function toolOutput(call) {
+  const parts = [];
+  for (const part of call.content ?? []) {
+    if (part?.type === "content")
+      parts.push(contentText(part.content));
+    else if (part?.type === "terminal")
+      continue;
+  }
+  const raw = call.rawOutput;
+  if (!parts.length && raw) {
+    for (const key of ["output_for_prompt", "combinedOutput", "combined_output", "output", "stdout", "content"]) {
+      const value = raw[key];
+      if (typeof value === "string" && value) {
+        parts.push(value);
+        break;
+      }
+    }
+  }
+  const text = parts.filter(Boolean).join(`
+`);
+  return text.length > outputLimit ? text.slice(-outputLimit) : text;
+}
+function errorText(error) {
+  if (error instanceof RPCError) {
+    const data = error.data;
+    return data?.message ?? error.message;
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+function safeBase64(path) {
+  try {
+    return readFileSync(path).toString("base64");
+  } catch {
+    return;
+  }
+}
+function questionFields(questions) {
+  return questions.map((question, index) => ({
+    key: question.id ?? `q${index}`,
+    title: question.header ?? `Question ${index + 1}`,
+    description: question.question,
+    required: true,
+    type: question.multiSelect ? "multiselect" : "string",
+    options: (question.options ?? []).map((option) => ({ value: option.label, label: option.label, description: option.description })),
+    custom: true
+  }));
+}
+
+// Agents/src/ids.ts
+var alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+var last = { timestamp: 0, counter: 0 };
+function ascending() {
+  const timestamp = Date.now();
+  if (last.timestamp !== timestamp)
+    last = { timestamp, counter: 0 };
+  last.counter += 1;
+  const value = BigInt(timestamp) * 0x1000n + BigInt(last.counter) & 0xffffffffffffn;
+  const time = value.toString(16).padStart(12, "0");
+  let random = "";
+  const bytes = crypto.getRandomValues(new Uint8Array(14));
+  for (const byte of bytes)
+    random += alphabet[byte % alphabet.length];
+  return time + random;
+}
+var newID = (prefix) => `${prefix}_${ascending()}`;
+var messageID = (eventID) => "msg_" + eventID.slice("evt_".length);
+
+// Agents/src/proc.ts
+import { accessSync, constants } from "fs";
+import { delimiter, join } from "path";
+function which(name, extra = []) {
+  const folders = [...(process.env.PATH ?? "").split(delimiter), ...extra].filter(Boolean);
+  for (const folder of folders) {
+    const path = join(folder, name);
+    try {
+      accessSync(path, constants.X_OK);
+      return path;
+    } catch {}
+  }
+  return;
+}
+async function run(command, args, options = {}) {
+  const child = Bun.spawn([command, ...args], {
+    cwd: options.cwd,
+    env: { ...process.env, ...options.env },
+    stdin: options.input !== undefined ? "pipe" : "ignore",
+    stdout: "pipe",
+    stderr: "pipe"
+  });
+  if (options.input !== undefined && child.stdin) {
+    child.stdin.write(options.input);
+    child.stdin.end();
+  }
+  const timer = options.timeout ? setTimeout(() => child.kill(), options.timeout) : undefined;
+  const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+  if (timer)
+    clearTimeout(timer);
+  return { code, stdout, stderr };
+}
+function firstURL(text) {
+  return text.match(/https?:\/\/[^\s"'<>]+/)?.[0];
+}
+function plain(text) {
+  return text.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "").replace(/\x1b\][^\x07]*\x07/g, "");
+}
+
+// Agents/src/signin.ts
+import { chmodSync, existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync as readFileSync2, rmSync, writeFileSync as writeFileSync2 } from "fs";
+import { join as join2 } from "path";
+function catcher(temporary) {
+  const path = join2(temporary, "bin", "kuvo-catch-url");
+  if (!existsSync2(path)) {
+    mkdirSync2(join2(temporary, "bin"), { recursive: true });
+    writeFileSync2(path, `#!/bin/sh
+printf '%s\\n' "$1" >> "$KUVO_URL_FILE"
+`);
+    chmodSync(path, 493);
+  }
+  return path;
+}
+async function commandSignIn(options) {
+  const urlFile = join2(options.temporary, `${newID("att")}.url`);
+  const child = Bun.spawn([options.command, ...options.args], {
+    env: { ...process.env, ...options.env, BROWSER: catcher(options.temporary), KUVO_URL_FILE: urlFile },
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe"
+  });
+  let output = "";
+  let status = { status: "pending" };
+  const read = async (stream) => {
+    const decoder = new TextDecoder;
+    for await (const chunk of stream)
+      output += plain(decoder.decode(chunk));
+  };
+  read(child.stdout);
+  read(child.stderr);
+  child.exited.then(async (code) => {
+    rmSync(urlFile, { force: true });
+    if (status.status !== "pending")
+      return;
+    const signedIn = await options.signedIn().catch(() => false);
+    status = signedIn ? { status: "complete" } : { status: "failed", message: lastLines(output) || `Signing in stopped (exit code ${code}).` };
+  });
+  let url = "";
+  for (let waited = 0;waited < 15000 && !url; waited += 200) {
+    if (existsSync2(urlFile))
+      url = readFileSync2(urlFile, "utf8").split(`
+`)[0].trim();
+    url ||= firstURL(output) ?? "";
+    if (!url)
+      await Bun.sleep(200);
+    if (status.status !== "pending")
+      break;
+  }
+  return {
+    url,
+    instructions: options.instructions,
+    mode: "auto",
+    status: () => status,
+    cancel() {
+      if (status.status === "pending")
+        status = { status: "failed", message: "Cancelled." };
+      child.kill();
+    }
+  };
+}
+function lastLines(text) {
+  return text.trim().split(`
+`).slice(-4).join(`
+`).trim();
+}
+
+// Agents/src/agents/antigravity.ts
+var version = "1.3.0";
+var releases = {
+  "darwin-arm64": {
+    url: "https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.3.0-darwin-arm64.zip",
+    sha256: "7cd97045f7b4fe81175a107cdf16f9c51484e3c78a5162cae415338bb6aa5b88",
+    bytes: 111456962
+  },
+  "darwin-x64": {
+    url: "https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.3.0-darwin-x86_64.zip",
+    sha256: "bb23956b89984bf5d354af2c3725e6c57f0cc1b7228e77a0e91c9c2bc1d47646",
+    bytes: 117245544
+  },
+  "linux-x64": {
+    url: "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.3.0-linux-x86_64.zip",
+    sha256: "9fb60956af0a9d76220a4db91ca9ac88e2a2372ad68f985ab5fceace6b825b96",
+    bytes: 333727150
+  },
+  "linux-arm64": {
+    url: "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.3.0-linux-arm64.zip",
+    sha256: "500b0bc0fb858e88f4df404d4cedf80bf9298c178291e39e383d6c50b111cbdf",
+    bytes: 321690363
+  }
+};
+var executableName = "agy_acp_server.par";
+var harnessName = "localharness_external";
+var signInLine = "Open the following link to authenticate the ACP server:";
+var scrubbed = [
+  "GEMINI_API_KEY",
+  "GOOGLE_API_KEY",
+  "GOOGLE_APPLICATION_CREDENTIALS",
+  "GOOGLE_CLOUD_PROJECT",
+  "GOOGLE_CLOUD_LOCATION",
+  "GOOGLE_CLOUD_QUOTA_PROJECT",
+  "GOOGLE_GENAI_USE_VERTEXAI",
+  "GCLOUD_PROJECT",
+  "CLOUDSDK_CORE_PROJECT",
+  "AGY_ACP_CCPA_PROJECT",
+  "AGY_ACP_ENABLE_OAUTH",
+  "GEMINI_HOME",
+  "AGY_ACP_FORCE_FILE_STORAGE",
+  "ANTIGRAVITY_HARNESS_PATH",
+  "BROWSER",
+  "PYTHONUNBUFFERED",
+  "ELECTRON_RUN_AS_NODE"
+];
+
+class AntigravityAgent {
+  context;
+  id = "antigravity";
+  providerID = "antigravity";
+  name = "Antigravity";
+  installing;
+  constructor(context) {
+    this.context = context;
+  }
+  get root() {
+    return join3(this.context.home, "antigravity");
+  }
+  get folder() {
+    return join3(this.root, version);
+  }
+  get profile() {
+    return join3(this.root, "profile");
+  }
+  get tokenFile() {
+    return join3(this.profile, "antigravity-acp", "acp_token.json");
+  }
+  get modelsFile() {
+    return join3(this.profile, "kuvo-models.json");
+  }
+  get isInstalled() {
+    return existsSync3(join3(this.folder, ".complete"));
+  }
+  methods() {
+    return [{ type: "oauth", id: "oauth-personal", label: "Sign in with Google" }];
+  }
+  async account() {
+    const release = releases[`${process.platform}-${process.arch}`];
+    if (!release)
+      return { installed: false, signedIn: false, message: "Google doesn't make Antigravity's agent for this computer." };
+    if (!existsSync3(this.tokenFile)) {
+      return {
+        installed: this.isInstalled,
+        signedIn: false,
+        message: this.isInstalled ? "Sign in with your Google account." : "Sign in with your Google account. Kuvo Code downloads Google's Antigravity agent (about 110 MB) first."
+      };
+    }
+    return { installed: this.isInstalled, signedIn: true, label: "Google account" };
+  }
+  ensureInstalled() {
+    if (this.isInstalled)
+      return Promise.resolve();
+    this.installing ??= this.download().finally(() => this.installing = undefined);
+    return this.installing;
+  }
+  async download() {
+    const release = releases[`${process.platform}-${process.arch}`];
+    if (!release)
+      throw new Error("Google doesn't make Antigravity's agent for this computer.");
+    const staging = join3(this.root, `.install-${newID("att")}`);
+    mkdirSync3(staging, { recursive: true });
+    try {
+      const archive = join3(staging, "download.zip");
+      const response = await fetch(release.url);
+      if (!response.ok || !response.body)
+        throw new Error(`Couldn't download Antigravity's agent (HTTP ${response.status}).`);
+      const hash = createHash("sha256");
+      const writer = Bun.file(archive).writer();
+      let bytes = 0;
+      for await (const chunk of response.body) {
+        hash.update(chunk);
+        writer.write(chunk);
+        bytes += chunk.byteLength;
+      }
+      await writer.end();
+      if (bytes !== release.bytes || hash.digest("hex") !== release.sha256)
+        throw new Error("Antigravity's agent didn't download whole. Try again.");
+      const listed = await run("/usr/bin/unzip", ["-Z1", archive]);
+      const entries = listed.stdout.split(`
+`).filter(Boolean).sort();
+      if (entries.join(",") !== [executableName, harnessName].sort().join(","))
+        throw new Error("Antigravity's agent wasn't what Kuvo Code expected.");
+      const unzipped = await run("/usr/bin/unzip", ["-q", "-o", archive, "-d", staging]);
+      if (unzipped.code !== 0)
+        throw new Error(`Couldn't unpack Antigravity's agent: ${unzipped.stderr.trim()}`);
+      rmSync2(archive, { force: true });
+      for (const name of [executableName, harnessName])
+        chmodSync2(join3(staging, name), 493);
+      writeFileSync3(join3(staging, ".complete"), JSON.stringify({ version, sha256: release.sha256 }));
+      rmSync2(this.folder, { recursive: true, force: true });
+      renameSync(staging, this.folder);
+      for (const name of readdirSync(this.root)) {
+        if (name !== version && name !== "profile" && /^\d/.test(name))
+          rmSync2(join3(this.root, name), { recursive: true, force: true });
+      }
+    } finally {
+      rmSync2(staging, { recursive: true, force: true });
+    }
+  }
+  launch() {
+    mkdirSync3(join3(this.profile, "antigravity-acp", "tmp"), { recursive: true, mode: 448 });
+    const settings = join3(this.profile, "antigravity-acp", "settings.json");
+    if (!existsSync3(settings))
+      writeFileSync3(settings, JSON.stringify({ auth: { type: "oauth-personal" } }));
+    const temporary = join3(this.context.temporary, "antigravity", newID("att"));
+    mkdirSync3(temporary, { recursive: true });
+    const env = {};
+    for (const [key, value] of Object.entries(process.env))
+      if (!scrubbed.includes(key.toUpperCase()))
+        env[key] = value;
+    Object.assign(env, {
+      GEMINI_HOME: this.profile,
+      AGY_ACP_FORCE_FILE_STORAGE: "1",
+      BROWSER: catcher(this.context.temporary),
+      KUVO_URL_FILE: join3(temporary, "url"),
+      PYTHONUNBUFFERED: "1",
+      TMPDIR: temporary,
+      ANTIGRAVITY_HARNESS_PATH: join3(this.folder, harnessName)
+    });
+    const argv = [join3(this.folder, executableName), ...process.platform === "linux" ? ["--uid="] : []];
+    return { argv, env, cleanEnv: true, onExit: () => rmSync2(temporary, { recursive: true, force: true }), signInFile: join3(temporary, "url") };
+  }
+  async signIn() {
+    let status = { status: "pending" };
+    let link = "";
+    let rpc;
+    let cancelled = false;
+    let resolveLink = () => {};
+    const linked = new Promise((resolve) => resolveLink = resolve);
+    const found = (url2) => {
+      if (link)
+        return;
+      link = url2;
+      resolveLink(url2);
+    };
+    const flow = async () => {
+      await this.ensureInstalled();
+      if (cancelled)
+        return;
+      const launch = this.launch();
+      const cwd = join3(this.context.temporary, "antigravity", newID("att"));
+      mkdirSync3(cwd, { recursive: true });
+      rpc = new RPC(launch.argv, {
+        cwd,
+        env: launch.env,
+        cleanEnv: true,
+        jsonrpc: true,
+        firstID: 2 ** 30,
+        filter: (line) => {
+          const at = line.indexOf(signInLine);
+          if (at >= 0) {
+            found(line.slice(at + signInLine.length).trim());
+            return false;
+          }
+          return true;
+        }
+      });
+      rpc.onExit = () => {
+        launch.onExit();
+        rmSync2(cwd, { recursive: true, force: true });
+      };
+      const watch = setInterval(() => {
+        try {
+          const url2 = readFileSync3(launch.env.KUVO_URL_FILE, "utf8").split(`
+`)[0].trim();
+          if (url2)
+            found(url2);
+        } catch {}
+      }, 300);
+      try {
+        await rpc.request("initialize", { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: false }, clientInfo: { name: "kuvo-code", version: "1" } }, 120000);
+        await rpc.request("authenticate", { methodId: "oauth-personal" }, 300000);
+        const setup = await rpc.request("session/new", { cwd, mcpServers: [] }, 120000);
+        this.saveModels(setup);
+        if (setup?.sessionId)
+          this.removeSessionFiles(setup.sessionId);
+        status = { status: "complete" };
+      } finally {
+        clearInterval(watch);
+        rpc.kill();
+      }
+    };
+    flow().catch((error) => {
+      if (status.status !== "pending")
+        return;
+      const message = String(error?.message ?? error);
+      status = {
+        status: "failed",
+        message: cancelled ? "Cancelled." : /SUBSCRIPTION_REQUIRED/i.test(message) ? "Google says this account needs an Antigravity subscription." : /access_denied/i.test(message) ? "Google sign-in wasn't approved." : failure(error).message
+      };
+    });
+    const url = await Promise.race([linked, Bun.sleep(20000).then(() => "")]);
+    if (!url) {
+      linked.then((later) => run("/usr/bin/open", [later]));
+    }
+    return {
+      url,
+      instructions: this.isInstalled ? "Finish signing in with Google in your browser." : "Downloading Google's Antigravity agent (about 110 MB). Google's sign-in opens in your browser once it's ready.",
+      mode: "auto",
+      status: () => status,
+      cancel: () => {
+        cancelled = true;
+        if (status.status === "pending")
+          status = { status: "failed", message: "Cancelled." };
+        rpc?.kill();
+      }
+    };
+  }
+  async signOut() {
+    rmSync2(this.tokenFile, { force: true });
+    rmSync2(this.modelsFile, { force: true });
+  }
+  saveModels(setup) {
+    const option = (setup?.configOptions ?? []).find((option2) => option2.id === "model" || option2.category === "model");
+    const flat = [];
+    for (const entry of option?.options ?? []) {
+      if (Array.isArray(entry.options))
+        for (const inner of entry.options)
+          flat.push({ value: inner.value, name: inner.name ?? inner.value });
+      else if (entry.value)
+        flat.push({ value: entry.value, name: entry.name ?? entry.value });
+    }
+    if (!flat.length) {
+      for (const info of setup?.models?.availableModels ?? [])
+        flat.push({ value: info.modelId, name: info.name ?? info.modelId });
+    }
+    if (flat.length)
+      writeFileSync3(this.modelsFile, JSON.stringify({ current: option?.currentValue, models: flat }));
+  }
+  removeSessionFiles(sessionID) {
+    const folder = join3(this.profile, "antigravity-acp");
+    for (const suffix of [".db", ".db-wal", ".db-shm", ".db-journal", ".meta"])
+      rmSync2(join3(folder, "conversations", sessionID + suffix), { force: true });
+    rmSync2(join3(folder, "brain", sessionID), { recursive: true, force: true });
+  }
+  async models() {
+    try {
+      const saved = JSON.parse(readFileSync3(this.modelsFile, "utf8"));
+      return saved.models.map((info, index) => model(this.providerID, info.value, info.name, { images: true, released: info.value === saved.current ? 2000 : 1000 - index, context: 1e6 }));
+    } catch {
+      return [];
+    }
+  }
+  thread(session, state) {
+    const agent = this;
+    return new AcpThread({
+      fileSystem: true,
+      authenticatesFirst: true,
+      resumes: true,
+      authMethod: () => "oauth-personal",
+      async command() {
+        if (!agent.isInstalled)
+          throw new Error("Sign in to Antigravity in Settings \u203A Accounts first.");
+        return agent.launch();
+      },
+      fatalLine(line) {
+        return line.includes(signInLine) ? "Antigravity needs you to sign in again: Settings \u203A Accounts." : undefined;
+      },
+      async selectModel(rpc, sessionId, modelID, setup) {
+        if (setup?.kuvoModel === modelID)
+          return;
+        await rpc.request("session/set_config_option", { sessionId, configId: "model", value: modelID }, 30000);
+        setup.kuvoModel = modelID;
+        agent.saveModels(setup);
+      },
+      async selectMode(rpc, sessionId, { approvesAll, plan }, setup) {
+        const option = (setup?.configOptions ?? []).find((option2) => option2.id === "mode" || option2.category === "mode");
+        const values = (option?.options ?? []).map((entry) => entry.value);
+        const wanted = plan && values.includes("plan") ? "plan" : approvesAll ? "yolo" : "default";
+        if (!option || setup.kuvoMode === wanted || values.length && !values.includes(wanted))
+          return;
+        await rpc.request("session/set_config_option", { sessionId, configId: option.id, value: wanted }, 30000);
+        setup.kuvoMode = wanted;
+      }
+    }, session, state, this.name);
+  }
+}
+
+// Agents/src/agents/claude.ts
+import { randomUUID } from "crypto";
+import { existsSync as existsSync4, readFileSync as readFileSync4 } from "fs";
+import { homedir } from "os";
+import { join as join4 } from "path";
+
+// Agents/src/events.ts
+var listeners = new Set;
+function emit(type, data, directory) {
+  const event = { id: newID("evt"), type, created: Date.now(), data };
+  if (directory)
+    event.location = { directory };
+  for (const listener of listeners)
+    listener(event);
+  return event;
+}
+function feed() {
+  const encoder = new TextEncoder;
+  let listener;
+  let heartbeat;
+  const stream = new ReadableStream({
+    start(controller) {
+      const send = (event) => {
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}
+
+`));
+        } catch {
+          stop();
+        }
+      };
+      const stop = () => {
+        if (listener)
+          listeners.delete(listener);
+        if (heartbeat)
+          clearInterval(heartbeat);
+        listener = undefined;
+        heartbeat = undefined;
+      };
+      send({ id: newID("evt"), type: "server.connected", created: Date.now(), data: {} });
+      listener = send;
+      listeners.add(send);
+      heartbeat = setInterval(() => send({ id: newID("evt"), type: "server.heartbeat", created: Date.now(), data: {} }), 15000);
+    },
+    cancel() {
+      if (listener)
+        listeners.delete(listener);
+      if (heartbeat)
+        clearInterval(heartbeat);
+    }
+  });
+  return new Response(stream, {
+    headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" }
+  });
+}
+
+// Agents/src/queue.ts
+class Queue {
+  items = [];
+  waiting;
+  closed = false;
+  push(item) {
+    if (this.closed)
+      return;
+    if (this.waiting) {
+      const resolve = this.waiting;
+      this.waiting = undefined;
+      resolve({ value: item, done: false });
+    } else {
+      this.items.push(item);
+    }
+  }
+  close() {
+    this.closed = true;
+    this.waiting?.({ value: undefined, done: true });
+    this.waiting = undefined;
+  }
+  [Symbol.asyncIterator]() {
+    return {
+      next: () => {
+        if (this.items.length)
+          return Promise.resolve({ value: this.items.shift(), done: false });
+        if (this.closed)
+          return Promise.resolve({ value: undefined, done: true });
+        return new Promise((resolve) => this.waiting = resolve);
+      },
+      return: () => {
+        this.close();
+        return Promise.resolve({ value: undefined, done: true });
+      }
+    };
+  }
+}
+
+// Agents/src/agents/claude.ts
+var SDK = [{ name: "@anthropic-ai/claude-agent-sdk", version: "0.3.303" }];
+var places = [join4(homedir(), ".local/bin"), join4(homedir(), ".claude/local"), "/opt/homebrew/bin", "/usr/local/bin"];
+var outputLimit2 = 30000;
+
+class ClaudeAgent {
+  context;
+  id = "claude";
+  providerID = "claude-code";
+  name = "Claude Code";
+  install = "curl -fsSL https://claude.ai/install.sh | bash";
+  status;
+  modelList;
+  loadingModels;
+  constructor(context) {
+    this.context = context;
+  }
+  executable() {
+    return which("claude", places);
+  }
+  methods() {
+    return [
+      { type: "oauth", id: "claudeai", label: "Sign in with your Claude plan" },
+      { type: "oauth", id: "console", label: "Sign in with Anthropic Console" }
+    ];
+  }
+  async readStatus(fresh) {
+    if (!fresh && this.status && Date.now() - this.status.at < 30000)
+      return this.status.status;
+    const executable = this.executable();
+    if (!executable)
+      return {};
+    const result = await run(executable, ["auth", "status", "--json"], { timeout: 20000 });
+    let status = {};
+    try {
+      status = JSON.parse(result.stdout);
+    } catch {}
+    this.status = { at: Date.now(), status };
+    return status;
+  }
+  async account(fresh = false) {
+    if (!this.executable()) {
+      return { installed: false, signedIn: false, message: "Install Claude Code, then sign in here." };
+    }
+    const status = await this.readStatus(fresh);
+    if (!status.loggedIn)
+      return { installed: true, signedIn: false, message: "Sign in to Claude Code with your Claude plan or an Anthropic Console account." };
+    const plan = status.subscriptionType ? `${status.subscriptionType.charAt(0).toUpperCase()}${status.subscriptionType.slice(1)} plan` : undefined;
+    const who = status.email ?? (status.apiProvider && status.apiProvider !== "firstParty" ? status.apiProvider : undefined);
+    return { installed: true, signedIn: true, label: [who, plan].filter(Boolean).join(" \xB7 ") || "Claude Code" };
+  }
+  usesKey() {
+    const method = this.status?.status.authMethod ?? "";
+    return method !== "" && method !== "claude.ai";
+  }
+  async signIn(methodID) {
+    const executable = this.executable();
+    if (!executable)
+      throw new Error("Install Claude Code first: curl -fsSL https://claude.ai/install.sh | bash");
+    return commandSignIn({
+      command: executable,
+      args: ["auth", "login", methodID === "console" ? "--console" : "--claudeai"],
+      home: this.context.home,
+      temporary: this.context.temporary,
+      instructions: "Finish signing in on Claude's page. Claude Code keeps the sign-in, as when you run claude auth login.",
+      signedIn: async () => (await this.account(true)).signedIn
+    });
+  }
+  async sdk() {
+    await this.context.deps.ensure(this.id, SDK, { optional: false });
+    return this.context.deps.load(this.id, SDK[0].name);
+  }
+  env() {
+    return { ...process.env, CLAUDE_CODE_TMPDIR: join4(this.context.temporary, "claude") };
+  }
+  async models() {
+    if (this.modelList && Date.now() - this.modelList.at < 30 * 60000)
+      return this.modelList.models;
+    this.loadingModels ??= this.loadModels().finally(() => this.loadingModels = undefined);
+    return this.modelList?.models ?? fallbackModels(this.providerID);
+  }
+  async loadModels() {
+    const sdk = await this.sdk();
+    const abort = new AbortController;
+    const idle = async function* () {
+      await new Promise((resolve) => abort.signal.addEventListener("abort", resolve));
+    }();
+    const q = sdk.query({
+      prompt: idle,
+      options: {
+        pathToClaudeCodeExecutable: this.executable(),
+        cwd: this.context.temporary,
+        persistSession: false,
+        abortController: abort,
+        allowedTools: [],
+        mcpServers: {},
+        strictMcpConfig: true,
+        settings: { disableAllHooks: true },
+        env: this.env(),
+        stderr: () => {}
+      }
+    });
+    try {
+      const init = await Promise.race([q.initializationResult(), Bun.sleep(30000).then(() => {
+        return;
+      })]);
+      const list = init?.models ?? [];
+      if (list.length) {
+        this.modelList = {
+          at: Date.now(),
+          models: list.map((info, index) => model(this.providerID, info.value, modelName(info), {
+            family: family(modelName(info)),
+            variants: info.supportedEffortLevels,
+            images: true,
+            context: /1M/i.test(info.description ?? "") ? 1e6 : 200000,
+            released: Date.now() - index
+          }))
+        };
+        emit("model.updated", {});
+      }
+    } finally {
+      abort.abort();
+    }
+  }
+  thread(session, state) {
+    return new ClaudeThread(this, session, state);
+  }
+}
+function modelName(info) {
+  const what = info.description?.split(" \xB7 ")[0]?.trim();
+  if (what && /^(opus|sonnet|haiku|fable|claude)/i.test(what))
+    return what;
+  return info.displayName;
+}
+function family(name) {
+  return "claude-" + (name.split(/\s+/)[0] ?? "").toLowerCase();
+}
+function fallbackModels(providerID) {
+  return [
+    model(providerID, "default", "Claude Code's default", { family: "claude-default", images: true, variants: ["low", "medium", "high", "xhigh", "max"], released: 3 }),
+    model(providerID, "sonnet", "Sonnet", { family: "claude-sonnet", images: true, variants: ["low", "medium", "high", "max"], released: 2 }),
+    model(providerID, "haiku", "Haiku", { family: "claude-haiku", images: true, released: 1 })
+  ];
+}
+
+class ClaudeThread {
+  agent;
+  session;
+  state;
+  query;
+  input;
+  active;
+  opened;
+  stopping = false;
+  constructor(agent, session, state) {
+    this.agent = agent;
+    this.session = session;
+    this.state = state;
+  }
+  async run(input, turn, hooks) {
+    const sdk = await this.agent.sdk();
+    const modelID = input.model.id;
+    const effort = input.model.variant;
+    if (!this.query) {
+      this.open(sdk, modelID, effort, input.plan, hooks);
+    } else {
+      if (this.opened?.model !== modelID)
+        await this.query.setModel(modelID === "default" ? undefined : modelID).catch(() => {});
+      if (this.opened?.effort !== effort)
+        await this.query.applyFlagSettings({ effortLevel: effort ?? null }).catch(() => {});
+      if (this.opened?.plan !== input.plan)
+        await this.query.setPermissionMode(input.plan ? "plan" : "default").catch(() => {});
+      this.opened = { model: modelID, effort, plan: input.plan };
+    }
+    return new Promise((resolve) => {
+      this.active = { turn, hooks, resolve, streamed: new Set, blockTools: new Map, calls: new Map };
+      this.input.push(userMessage(input));
+    });
+  }
+  open(sdk, modelID, effort, plan, hooks) {
+    let id = this.state.claudeSession;
+    const resume = Boolean(id && this.state.claudeStarted);
+    if (!id) {
+      id = randomUUID();
+      this.state.claudeSession = id;
+      hooks.saveState();
+    }
+    const append = hooks.instructions();
+    this.input = new Queue;
+    this.opened = { model: modelID, effort, plan };
+    this.query = sdk.query({
+      prompt: this.input,
+      options: {
+        pathToClaudeCodeExecutable: this.agent.executable(),
+        cwd: this.session.location.directory,
+        model: modelID === "default" ? undefined : modelID,
+        effort,
+        includePartialMessages: true,
+        permissionMode: plan ? "plan" : "default",
+        canUseTool: (name, input, options) => this.canUseTool(name, input, options),
+        systemPrompt: { type: "preset", preset: "claude_code", ...append ? { append } : {} },
+        ...resume ? { resume: id } : { sessionId: id },
+        env: this.agent.env(),
+        stderr: () => {}
+      }
+    });
+    this.read(this.query);
+  }
+  async read(query) {
+    let ended;
+    try {
+      for await (const message of query)
+        this.handle(message);
+    } catch (error) {
+      ended = error;
+    }
+    if (this.query === query) {
+      this.query = undefined;
+      this.input = undefined;
+    }
+    const active = this.active;
+    if (!active)
+      return;
+    this.active = undefined;
+    if (this.stopping || active.hooks.signal.aborted)
+      active.resolve({ outcome: "interrupted" });
+    else
+      active.resolve({ outcome: "failed", error: failure(active.problem ?? ended ?? "Claude Code stopped.") });
+    this.stopping = false;
+  }
+  handle(message) {
+    if (message.type === "system" && message.subtype === "init") {
+      if (!this.state.claudeStarted || this.state.claudeSession !== message.session_id) {
+        this.state.claudeSession = message.session_id;
+        this.state.claudeStarted = true;
+        this.active?.hooks.saveState();
+      }
+      return;
+    }
+    const active = this.active;
+    if (!active)
+      return;
+    if (message.parent_tool_use_id)
+      return;
+    const turn = active.turn;
+    switch (message.type) {
+      case "stream_event":
+        return this.stream(active, message.event);
+      case "assistant": {
+        const content = message.message?.content ?? [];
+        const id = message.message?.id;
+        if (message.error === "authentication_failed" || message.message?.error === "authentication_failed") {
+          active.problem = "Claude Code isn't signed in. Sign in again in Settings \u203A Accounts.";
+        }
+        for (const block of content) {
+          if (block.type === "tool_use") {
+            active.calls.set(block.id, { name: block.name, input: block.input ?? {} });
+            const tool = kuvoTool2(block.name, block.input ?? {});
+            if (!turn.hasTool(block.id))
+              turn.toolStart(block.id, tool.name);
+            turn.toolCalled(block.id, tool.input);
+          } else if (!id || !active.streamed.has(id)) {
+            if (block.type === "text" && block.text)
+              turn.text(block.text);
+            else if (block.type === "thinking" && block.thinking)
+              turn.reasoning(block.thinking);
+          }
+        }
+        if (id && !active.streamed.has(id))
+          turn.endBlock();
+        return;
+      }
+      case "user": {
+        const content = Array.isArray(message.message?.content) ? message.message.content : [];
+        const results = content.filter((block) => block.type === "tool_result");
+        for (const block of results)
+          this.result(active, block, results.length === 1 ? message.tool_use_result : undefined);
+        return;
+      }
+      case "rate_limit_event":
+        if (message.rate_limit_info?.status === "rejected")
+          active.problem = "You've reached your Claude usage limit for now.";
+        return;
+      case "result":
+        return this.finish(active, message);
+    }
+  }
+  stream(active, event) {
+    const turn = active.turn;
+    switch (event?.type) {
+      case "message_start": {
+        active.streamed.add(event.message?.id);
+        active.blockTools.clear();
+        const usage = event.message?.usage ?? {};
+        active.usage = {
+          input: usage.input_tokens ?? 0,
+          output: usage.output_tokens ?? 0,
+          reasoning: 0,
+          cache: { read: usage.cache_read_input_tokens ?? 0, write: usage.cache_creation_input_tokens ?? 0 }
+        };
+        active.stopReason = undefined;
+        turn.startStep();
+        return;
+      }
+      case "content_block_start": {
+        const block = event.content_block;
+        if (block?.type === "tool_use") {
+          active.blockTools.set(event.index, block.id);
+          turn.toolStart(block.id, kuvoTool2(block.name, {}).name);
+        }
+        return;
+      }
+      case "content_block_delta": {
+        const delta = event.delta;
+        if (delta?.type === "text_delta")
+          turn.text(delta.text);
+        else if (delta?.type === "thinking_delta")
+          turn.reasoning(delta.thinking);
+        else if (delta?.type === "input_json_delta") {
+          const id = active.blockTools.get(event.index);
+          if (id)
+            turn.toolInputDelta(id, delta.partial_json ?? "");
+        }
+        return;
+      }
+      case "content_block_stop":
+        turn.endBlock();
+        return;
+      case "message_delta":
+        if (active.usage && event.usage?.output_tokens !== undefined)
+          active.usage.output = event.usage.output_tokens;
+        active.stopReason = event.delta?.stop_reason ?? active.stopReason;
+        return;
+      case "message_stop":
+        turn.endStep({ tokens: active.usage, finish: active.stopReason === "tool_use" ? "tool-calls" : active.stopReason ?? "stop" });
+        return;
+    }
+  }
+  result(active, block, structured) {
+    const turn = active.turn;
+    const id = block.tool_use_id;
+    const call = active.calls.get(id);
+    let text = toolText(block.content);
+    if (text.length > outputLimit2)
+      text = text.slice(0, outputLimit2) + `
+\u2026`;
+    if (block.is_error) {
+      turn.toolFailed(id, text || "The tool failed.");
+      return;
+    }
+    const metadata = {};
+    const files = call ? diffs(call.name, call.input, structured) : [];
+    if (files.length)
+      metadata.files = files;
+    if (call?.name === "Bash" && structured) {
+      const output = [structured.stdout, structured.stderr].filter((part) => part).join(`
+`);
+      if (output)
+        text = output.length > outputLimit2 ? output.slice(0, outputLimit2) + `
+\u2026` : output;
+    }
+    turn.toolSucceeded(id, text, Object.keys(metadata).length ? metadata : undefined);
+  }
+  finish(active, result) {
+    this.active = undefined;
+    if (result.total_cost_usd && this.agent.usesKey())
+      active.turn.addUsage(undefined, result.total_cost_usd);
+    if (this.stopping || active.hooks.signal.aborted) {
+      this.stopping = false;
+      active.resolve({ outcome: "interrupted" });
+      return;
+    }
+    if (result.subtype === "success" && !result.is_error) {
+      active.resolve({ outcome: "succeeded" });
+      return;
+    }
+    const message = active.problem ?? (typeof result.result === "string" && result.result.trim() ? result.result.trim() : undefined) ?? (Array.isArray(result.errors) && result.errors.length ? result.errors.join(`
+`) : undefined) ?? reason(result);
+    active.resolve({ outcome: "failed", error: { type: "agent", message } });
+  }
+  async canUseTool(name, input, options) {
+    const active = this.active;
+    const toolUseID = options?.toolUseID;
+    if (!active)
+      return { behavior: "deny", message: "There's no turn under way for this.", toolUseID };
+    const hooks = active.hooks;
+    if (name === "AskUserQuestion") {
+      const questions = input.questions ?? [];
+      const fields = questions.map((question, index) => ({
+        key: `q${index}`,
+        title: question.header ?? `Question ${index + 1}`,
+        description: question.question,
+        required: true,
+        type: question.multiSelect ? "multiselect" : "string",
+        options: (question.options ?? []).map((option) => ({ value: option.label, label: option.label, description: option.description })),
+        custom: true
+      }));
+      const answer = await hooks.question({ title: questions.length === 1 ? questions[0].header ?? "Question" : "Questions", fields, toolCallID: toolUseID });
+      if (!answer)
+        return { behavior: "deny", message: "The user dismissed the question.", toolUseID };
+      const answers = {};
+      questions.forEach((question, index) => {
+        const value = answer[`q${index}`];
+        answers[question.question] = Array.isArray(value) ? value.join(", ") : String(value ?? "");
+      });
+      return { behavior: "allow", updatedInput: { ...input, answers }, toolUseID };
+    }
+    if (name === "ExitPlanMode") {
+      return {
+        behavior: "deny",
+        message: "The plan is shown to the user. Stop here and wait: they'll switch out of plan mode and ask you to build it when they're ready.",
+        toolUseID
+      };
+    }
+    const ask = permissionAsk(name, input);
+    const decision = await hooks.permission({ toolCallID: toolUseID, ...ask, message: options?.title ?? options?.description });
+    if (decision === "reject")
+      return { behavior: "deny", message: "The user declined this.", toolUseID };
+    const result = { behavior: "allow", updatedInput: input, toolUseID };
+    if (decision === "always" && Array.isArray(options?.suggestions)) {
+      result.updatedPermissions = options.suggestions.map((suggestion) => ({ ...suggestion, destination: "session" }));
+    }
+    return result;
+  }
+  async interrupt() {
+    const query = this.query;
+    if (!query || !this.active)
+      return;
+    this.stopping = true;
+    await query.interrupt().catch(() => {});
+    for (let waited = 0;waited < 5000 && this.active; waited += 100)
+      await Bun.sleep(100);
+    if (this.active)
+      this.close();
+  }
+  close() {
+    this.input?.close();
+    try {
+      this.query?.close?.();
+    } catch {}
+    this.query = undefined;
+    this.input = undefined;
+  }
+}
+function kuvoTool2(name, input) {
+  switch (name) {
+    case "Bash":
+      return { name: "shell", input: { command: input.command, description: input.description } };
+    case "Read":
+      return { name: "read", input: { path: input.file_path, offset: input.offset, limit: input.limit } };
+    case "Write":
+      return { name: "write", input: { path: input.file_path, content: input.content } };
+    case "Edit":
+      return { name: "edit", input: { path: input.file_path, oldString: input.old_string, newString: input.new_string, replaceAll: input.replace_all } };
+    case "MultiEdit":
+      return { name: "edit", input: { path: input.file_path, edits: input.edits } };
+    case "NotebookEdit":
+      return { name: "edit", input: { path: input.notebook_path, newString: input.new_source } };
+    case "Glob":
+      return { name: "glob", input: { pattern: input.pattern, path: input.path } };
+    case "Grep":
+      return { name: "grep", input: { pattern: input.pattern, path: input.path, glob: input.glob } };
+    case "WebFetch":
+      return { name: "webfetch", input: { url: input.url, prompt: input.prompt } };
+    case "WebSearch":
+      return { name: "websearch", input: { query: input.query } };
+    case "Task":
+    case "Agent":
+      return { name: "subagent", input: { description: input.description, agent: input.subagent_type, prompt: input.prompt } };
+    case "TodoWrite":
+      return { name: "todowrite", input: { todos: input.todos } };
+    case "AskUserQuestion":
+      return { name: "question", input: { questions: input.questions } };
+    case "Skill":
+      return { name: "skill", input: { name: input.skill ?? input.command } };
+    case "ExitPlanMode":
+      return { name: "plan", input: { plan: input.plan } };
+  }
+  if (name.startsWith("mcp__")) {
+    const [, server, ...rest] = name.split("__");
+    return { name: `${server}_${rest.join("__")}`, input };
+  }
+  return { name: name.toLowerCase(), input };
+}
+function permissionAsk(name, input) {
+  switch (name) {
+    case "Bash":
+      return { action: "shell", resources: [String(input.command ?? "")] };
+    case "Edit":
+    case "MultiEdit":
+    case "Write":
+    case "NotebookEdit": {
+      const path = String(input.file_path ?? input.notebook_path ?? "");
+      const preview = previewDiff(name, input);
+      return { action: "edit", resources: [path], metadata: preview ? { files: [preview] } : undefined };
+    }
+    case "WebFetch":
+      return { action: "webfetch", resources: [String(input.url ?? "")] };
+    case "WebSearch":
+      return { action: "websearch", resources: [String(input.query ?? "")] };
+    case "Read":
+    case "Glob":
+    case "Grep":
+    case "LS":
+      return { action: "read", resources: [String(input.file_path ?? input.path ?? "*")] };
+  }
+  return { action: kuvoTool2(name, input).name, resources: ["*"] };
+}
+function previewDiff(name, input) {
+  const path = String(input.file_path ?? "");
+  if (!path)
+    return;
+  const before = existsSync4(path) ? safeRead(path) : undefined;
+  if (name === "Write")
+    return fileDiff(path, before, String(input.content ?? ""));
+  if (before === undefined)
+    return;
+  let after = before;
+  const edits2 = name === "MultiEdit" ? input.edits ?? [] : [input];
+  for (const edit of edits2) {
+    if (typeof edit.old_string !== "string")
+      return;
+    after = edit.replace_all ? after.split(edit.old_string).join(edit.new_string ?? "") : after.replace(edit.old_string, () => edit.new_string ?? "");
+  }
+  return fileDiff(path, before, after);
+}
+function diffs(name, input, structured) {
+  if (!["Edit", "MultiEdit", "Write", "NotebookEdit"].includes(name))
+    return [];
+  const path = String(structured?.filePath ?? input.file_path ?? input.notebook_path ?? "");
+  if (!path)
+    return [];
+  if (name === "Write" && structured?.type === "create")
+    return [fileDiff(path, undefined, String(structured.content ?? input.content ?? ""))];
+  const hunks = structured?.structuredPatch;
+  if (Array.isArray(hunks) && hunks.length) {
+    const patch = hunks.map((hunk) => `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@
+` + hunk.lines.join(`
+`) + `
+`).join("");
+    return [fromPatch(path, patch)];
+  }
+  if (typeof structured?.originalFile === "string" && existsSync4(path))
+    return [fileDiff(path, structured.originalFile, safeRead(path) ?? "")];
+  return [];
+}
+function safeRead(path) {
+  try {
+    return readFileSync4(path, "utf8");
+  } catch {
+    return;
+  }
+}
+function toolText(content) {
+  if (typeof content === "string")
+    return content;
+  if (Array.isArray(content)) {
+    return content.map((part) => part?.type === "text" ? part.text : part?.type === "image" ? "[image]" : "").filter(Boolean).join(`
+`);
+  }
+  return "";
+}
+function reason(result) {
+  switch (result.subtype) {
+    case "error_max_turns":
+      return "Claude Code stopped after too many steps.";
+    case "error_max_budget_usd":
+      return "Claude Code reached its spending limit.";
+    default:
+      return "Claude Code stopped with an error.";
+  }
+}
+function userMessage(input) {
+  const content = [];
+  const others = [];
+  for (const file of input.files) {
+    const isImage = /^image\/(png|jpeg|gif|webp)$/.test(file.mime);
+    const data = file.data ?? (isImage && file.path ? safeBase642(file.path) : undefined);
+    if (isImage && data)
+      content.push({ type: "image", source: { type: "base64", media_type: file.mime, data } });
+    else if (file.path)
+      others.push(file.path);
+  }
+  let text = input.text;
+  if (others.length)
+    text += `
+
+Attached files:
+${others.map((path) => `- ${path}`).join(`
+`)}`;
+  content.push({ type: "text", text });
+  return { type: "user", message: { role: "user", content }, parent_tool_use_id: null, uuid: randomUUID() };
+}
+function safeBase642(path) {
+  try {
+    return readFileSync4(path).toString("base64");
+  } catch {
+    return;
+  }
+}
+
+// Agents/src/agents/codex.ts
+import { homedir as homedir2 } from "os";
+import { join as join5 } from "path";
+var places2 = ["/opt/homebrew/bin", "/usr/local/bin", join5(homedir2(), ".local/bin"), join5(homedir2(), ".codex/bin")];
+var outputLimit3 = 30000;
+
+class CodexAgent {
+  context;
+  id = "codex";
+  providerID = "codex-cli";
+  name = "Codex";
+  install = "npm install -g @openai/codex";
+  server;
+  starting;
+  threads = new Map;
+  logins = new Map;
+  accountCache;
+  modelList;
+  constructor(context) {
+    this.context = context;
+  }
+  executable() {
+    return which("codex", places2);
+  }
+  methods() {
+    return [
+      { type: "oauth", id: "chatgpt", label: "Sign in with ChatGPT" },
+      { type: "key", label: "Use an OpenAI API key" }
+    ];
+  }
+  async rpc() {
+    if (this.server && !this.server.isClosed)
+      return this.server;
+    this.starting ??= this.start().finally(() => this.starting = undefined);
+    return this.starting;
+  }
+  async start() {
+    const executable = this.executable();
+    if (!executable)
+      throw new Error("Install Codex first: npm install -g @openai/codex");
+    const rpc = new RPC([executable, "app-server"], { cwd: this.context.temporary });
+    rpc.onNotification = (method, params) => this.notification(method, params);
+    rpc.onRequest = (method, params) => this.request(method, params);
+    rpc.onExit = () => {
+      if (this.server === rpc)
+        this.server = undefined;
+      for (const thread of this.threads.values())
+        thread.serverStopped();
+    };
+    await rpc.request("initialize", { clientInfo: { name: "kuvo-code", title: "Kuvo Code", version: "1" }, capabilities: { experimentalApi: true, optOutNotificationMethods: ["turn/diff/updated"] } }, 30000);
+    rpc.notify("initialized");
+    this.server = rpc;
+    return rpc;
+  }
+  notification(method, params) {
+    if (method === "account/login/completed") {
+      const done = this.logins.get(params?.loginId);
+      if (done) {
+        this.logins.delete(params.loginId);
+        done(params.success ? { status: "complete" } : { status: "failed", message: params.error ?? "Signing in didn't work." });
+      }
+      this.accountCache = undefined;
+      return;
+    }
+    if (method === "account/updated") {
+      this.accountCache = undefined;
+      return;
+    }
+    const threadID = params?.threadId;
+    if (threadID)
+      this.threadFor(threadID)?.notification(method, params);
+  }
+  async request(method, params) {
+    const thread = params?.threadId ? this.threadFor(params.threadId) : params?.conversationId ? this.threadFor(params.conversationId) : undefined;
+    if (method === "mcpServer/elicitation/request")
+      return { action: "decline" };
+    if (!thread)
+      throw new RPCError(-32601, `No session for ${method}.`);
+    return thread.request(method, params);
+  }
+  threadFor(nativeID) {
+    for (const thread of this.threads.values())
+      if (thread.nativeID === nativeID)
+        return thread;
+    return;
+  }
+  async account(fresh = false) {
+    if (!this.executable())
+      return { installed: false, signedIn: false, message: "Install Codex, then sign in here." };
+    if (!fresh && this.accountCache && Date.now() - this.accountCache.at < 30000)
+      return this.accountCache.account;
+    const rpc = await this.rpc();
+    const result = await rpc.request("account/read", {}, 20000);
+    const info = result?.account;
+    let account;
+    if (!info) {
+      account = { installed: true, signedIn: false, message: "Sign in to Codex with ChatGPT or an OpenAI API key." };
+    } else if (info.type === "chatgpt") {
+      const plan = info.planType ? `ChatGPT ${String(info.planType).charAt(0).toUpperCase()}${String(info.planType).slice(1)}` : "ChatGPT";
+      account = { installed: true, signedIn: true, label: [info.email, plan].filter(Boolean).join(" \xB7 ") };
+    } else {
+      account = { installed: true, signedIn: true, label: info.type === "apiKey" ? "OpenAI API key" : String(info.type) };
+    }
+    this.accountCache = { at: Date.now(), account };
+    return account;
+  }
+  async signIn() {
+    const rpc = await this.rpc();
+    const result = await rpc.request("account/login/start", { type: "chatgpt" }, 30000);
+    let status = { status: "pending" };
+    this.logins.set(result.loginId, (done) => status = done);
+    return {
+      url: result.authUrl,
+      instructions: "Finish signing in with ChatGPT in your browser. Codex keeps the sign-in, as when you run codex login.",
+      mode: "auto",
+      status: () => status,
+      cancel: () => {
+        this.logins.delete(result.loginId);
+        rpc.request("account/login/cancel", { loginId: result.loginId }).catch(() => {});
+      }
+    };
+  }
+  async signInWithKey(key) {
+    const rpc = await this.rpc();
+    await rpc.request("account/login/start", { type: "apiKey", apiKey: key }, 30000);
+    this.accountCache = undefined;
+  }
+  async models() {
+    if (this.modelList && Date.now() - this.modelList.at < 30 * 60000)
+      return this.modelList.models;
+    const rpc = await this.rpc();
+    const models = [];
+    let cursor;
+    let order = 1000;
+    do {
+      const page = await rpc.request("model/list", cursor ? { cursor } : {}, 30000);
+      for (const info of page?.data ?? []) {
+        if (info.hidden)
+          continue;
+        models.push(model(this.providerID, info.model ?? info.id, info.displayName ?? info.model, {
+          variants: (info.supportedReasoningEfforts ?? []).map((effort) => effort.reasoningEffort),
+          images: (info.inputModalities ?? []).includes("image"),
+          context: 400000,
+          released: info.isDefault ? 2000 : order--
+        }));
+      }
+      cursor = page?.nextCursor ?? undefined;
+    } while (cursor);
+    this.modelList = { at: Date.now(), models };
+    return models;
+  }
+  thread(session, state) {
+    const thread = new CodexThread(this, session, state);
+    this.threads.set(session.id, thread);
+    return thread;
+  }
+  forget(sessionID) {
+    this.threads.delete(sessionID);
+  }
+}
+
+class CodexThread {
+  agent;
+  session;
+  state;
+  nativeID;
+  loaded = false;
+  active;
+  constructor(agent, session, state) {
+    this.agent = agent;
+    this.session = session;
+    this.state = state;
+    this.nativeID = state.codexThread;
+  }
+  serverStopped() {
+    this.loaded = false;
+    const active = this.active;
+    if (!active)
+      return;
+    this.active = undefined;
+    active.resolve(active.hooks.signal.aborted ? { outcome: "interrupted" } : { outcome: "failed", error: failure(active.problem ?? "Codex stopped.") });
+  }
+  policy(hooks, plan) {
+    if (plan)
+      return { approvalPolicy: "untrusted", sandboxPolicy: { type: "readOnly", networkAccess: true } };
+    if (hooks.approvesAll())
+      return { approvalPolicy: "never", sandboxPolicy: { type: "dangerFullAccess" } };
+    return { approvalPolicy: "untrusted", sandboxPolicy: { type: "readOnly", networkAccess: true } };
+  }
+  async ensureThread(input, hooks) {
+    const rpc = await this.agent.rpc();
+    if (this.nativeID && this.loaded)
+      return rpc;
+    const instructions = hooks.instructions() || null;
+    const common = { cwd: this.session.location.directory, model: input.model.id, developerInstructions: instructions };
+    if (this.nativeID) {
+      try {
+        await rpc.request("thread/resume", { threadId: this.nativeID, excludeTurns: true, ...common }, 60000);
+        this.loaded = true;
+        return rpc;
+      } catch (error) {
+        if (error instanceof RPCError && /archived|unarchive/i.test(error.message)) {
+          await rpc.request("thread/unarchive", { threadId: this.nativeID }).catch(() => {});
+          await rpc.request("thread/resume", { threadId: this.nativeID, excludeTurns: true, ...common }, 60000);
+          this.loaded = true;
+          return rpc;
+        }
+      }
+    }
+    const started = await rpc.request("thread/start", common, 60000);
+    this.nativeID = started.thread.id;
+    this.state.codexThread = this.nativeID;
+    hooks.saveState();
+    this.loaded = true;
+    return rpc;
+  }
+  async run(input, turn, hooks) {
+    const rpc = await this.ensureThread(input, hooks);
+    const items = [{ type: "text", text: input.text, text_elements: [] }];
+    const others = [];
+    for (const file of input.files) {
+      if (file.mime.startsWith("image/")) {
+        if (file.path)
+          items.push({ type: "localImage", path: file.path });
+        else if (file.data)
+          items.push({ type: "image", url: `data:${file.mime};base64,${file.data}` });
+      } else if (file.path) {
+        others.push(file.path);
+      }
+    }
+    if (others.length)
+      items[0].text += `
+
+Attached files:
+${others.map((path) => `- ${path}`).join(`
+`)}`;
+    const effort = input.model.variant;
+    const params = {
+      threadId: this.nativeID,
+      input: items,
+      cwd: this.session.location.directory,
+      model: input.model.id,
+      summary: "detailed",
+      approvalsReviewer: "user",
+      ...this.policy(hooks, input.plan),
+      ...effort ? { effort } : {},
+      collaborationMode: { mode: input.plan ? "plan" : "default", settings: { model: input.model.id, reasoning_effort: effort ?? null, developer_instructions: null } }
+    };
+    return new Promise((resolve) => {
+      const active = { turn, hooks, resolve, streamed: new Set, changes: new Map, output: new Map, toolsSinceText: false };
+      this.active = active;
+      turn.startStep();
+      rpc.request("turn/start", params, 60000).then((result) => {
+        if (result?.turn?.id)
+          active.turnID ??= result.turn.id;
+      }, (error) => {
+        if (this.active !== active)
+          return;
+        this.active = undefined;
+        resolve({ outcome: "failed", error: failure(error) });
+      });
+    });
+  }
+  notification(method, params) {
+    const active = this.active;
+    if (!active)
+      return;
+    const turn = active.turn;
+    if (active.turnID && params?.turnId && params.turnId !== active.turnID)
+      return;
+    switch (method) {
+      case "turn/started":
+        active.turnID ??= params.turn?.id;
+        return;
+      case "item/agentMessage/delta":
+        this.words(active);
+        active.streamed.add(params.itemId);
+        turn.text(params.delta ?? "");
+        return;
+      case "item/reasoning/summaryTextDelta":
+        this.words(active);
+        turn.reasoning(params.delta ?? "");
+        return;
+      case "item/commandExecution/outputDelta": {
+        const output = ((active.output.get(params.itemId) ?? "") + (params.delta ?? "")).slice(-outputLimit3);
+        active.output.set(params.itemId, output);
+        turn.toolProgress(params.itemId, { output });
+        return;
+      }
+      case "item/started":
+        return this.itemStarted(active, params.item);
+      case "item/completed":
+        return this.itemCompleted(active, params.item);
+      case "thread/tokenUsage/updated": {
+        const last2 = params.tokenUsage?.last;
+        if (last2) {
+          active.usage = {
+            input: Math.max(0, (last2.inputTokens ?? 0) - (last2.cachedInputTokens ?? 0)),
+            output: Math.max(0, (last2.outputTokens ?? 0) - (last2.reasoningOutputTokens ?? 0)),
+            reasoning: last2.reasoningOutputTokens ?? 0,
+            cache: { read: last2.cachedInputTokens ?? 0, write: last2.cacheWriteInputTokens ?? 0 }
+          };
+        }
+        return;
+      }
+      case "error":
+        if (!params.willRetry)
+          active.problem = params.error?.additionalDetails || params.error?.message;
+        return;
+      case "turn/completed": {
+        this.active = undefined;
+        turn.endStep({ tokens: active.usage });
+        const status = params.turn?.status;
+        if (active.hooks.signal.aborted || status === "interrupted")
+          active.resolve({ outcome: "interrupted" });
+        else if (status === "failed")
+          active.resolve({ outcome: "failed", error: failure(params.turn?.error?.message ?? active.problem ?? "Codex stopped with an error.") });
+        else
+          active.resolve({ outcome: "succeeded" });
+        return;
+      }
+    }
+  }
+  words(active) {
+    if (!active.toolsSinceText)
+      return;
+    active.toolsSinceText = false;
+    active.turn.endStep({ tokens: active.usage });
+    active.usage = undefined;
+    active.turn.startStep();
+  }
+  itemStarted(active, item) {
+    const turn = active.turn;
+    switch (item?.type) {
+      case "commandExecution":
+        active.toolsSinceText = true;
+        turn.toolStart(item.id, "shell", { command: unwrapShell(item.command ?? ""), cwd: item.cwd });
+        return;
+      case "fileChange": {
+        active.toolsSinceText = true;
+        const changes = (item.changes ?? []).map((change) => ({ path: change.path, kind: change.kind?.type ?? "update", diff: change.diff ?? "" }));
+        active.changes.set(item.id, changes);
+        turn.toolStart(item.id, "patch", { files: changes.map((change) => change.path) });
+        return;
+      }
+      case "mcpToolCall":
+        active.toolsSinceText = true;
+        turn.toolStart(item.id, `${item.server}_${item.tool}`, item.arguments ?? {});
+        return;
+      case "dynamicToolCall":
+        active.toolsSinceText = true;
+        turn.toolStart(item.id, item.tool, item.arguments ?? {});
+        return;
+      case "webSearch":
+        active.toolsSinceText = true;
+        turn.toolStart(item.id, "websearch", { query: item.query ?? item.action?.query ?? "" });
+        return;
+    }
+  }
+  itemCompleted(active, item) {
+    const turn = active.turn;
+    switch (item?.type) {
+      case "agentMessage":
+        if (!active.streamed.has(item.id) && item.text) {
+          this.words(active);
+          turn.text(item.text);
+        }
+        turn.endBlock();
+        return;
+      case "reasoning":
+        turn.endBlock();
+        return;
+      case "plan":
+        if (item.text) {
+          this.words(active);
+          turn.text(item.text);
+          turn.endBlock();
+        }
+        return;
+      case "commandExecution": {
+        const output = (item.aggregatedOutput ?? active.output.get(item.id) ?? "").slice(-outputLimit3);
+        if (item.status === "declined")
+          turn.toolFailed(item.id, "Declined.");
+        else if (item.status === "failed" && item.exitCode == null)
+          turn.toolFailed(item.id, output || "The command failed.");
+        else
+          turn.toolSucceeded(item.id, output, { output, exit: item.exitCode ?? 0 });
+        return;
+      }
+      case "fileChange": {
+        const changes = (item.changes ?? []).map((change) => ({ path: change.path, kind: change.kind?.type ?? "update", diff: change.diff ?? "" }));
+        const files = changes.map((change) => fromPatch(change.path, change.diff, change.kind === "add" ? "added" : change.kind === "delete" ? "deleted" : "modified"));
+        if (item.status === "declined")
+          turn.toolFailed(item.id, "Declined.", { files });
+        else if (item.status === "failed")
+          turn.toolFailed(item.id, "The change couldn't be made.", { files });
+        else
+          turn.toolSucceeded(item.id, changes.map((change) => change.path).join(`
+`), { files });
+        return;
+      }
+      case "mcpToolCall": {
+        const text = (item.result?.content ?? []).map((part) => part?.text ?? "").filter(Boolean).join(`
+`);
+        if (item.error || item.status === "failed")
+          turn.toolFailed(item.id, item.error?.message ?? text ?? "The tool failed.");
+        else
+          turn.toolSucceeded(item.id, text.slice(0, outputLimit3));
+        return;
+      }
+      case "dynamicToolCall": {
+        const text = (item.contentItems ?? []).map((part) => part?.text ?? "").filter(Boolean).join(`
+`);
+        if (item.success === false)
+          turn.toolFailed(item.id, text || "The tool failed.");
+        else
+          turn.toolSucceeded(item.id, text.slice(0, outputLimit3));
+        return;
+      }
+      case "webSearch":
+        turn.toolSucceeded(item.id, "");
+        return;
+    }
+  }
+  async request(method, params) {
+    const active = this.active;
+    if (!active) {
+      if (method === "item/tool/requestUserInput")
+        return { answers: {} };
+      return method.endsWith("Approval") || method.endsWith("/requestApproval") ? method.startsWith("item/") ? { decision: "decline" } : { decision: "denied" } : {};
+    }
+    const hooks = active.hooks;
+    switch (method) {
+      case "item/commandExecution/requestApproval": {
+        const decision = await hooks.permission({ toolCallID: params.itemId, action: "shell", resources: [unwrapShell(params.command ?? "")], message: params.reason ?? undefined });
+        return { decision: decision === "always" ? "acceptForSession" : decision === "once" ? "accept" : "decline" };
+      }
+      case "item/fileChange/requestApproval": {
+        const changes = active.changes.get(params.itemId) ?? [];
+        const files = changes.map((change) => fromPatch(change.path, change.diff, change.kind === "add" ? "added" : change.kind === "delete" ? "deleted" : "modified"));
+        const decision = await hooks.permission({
+          toolCallID: params.itemId,
+          action: "edit",
+          resources: changes.length ? changes.map((change) => change.path) : [params.grantRoot ?? "*"],
+          metadata: files.length ? { files } : undefined,
+          message: params.reason ?? undefined
+        });
+        return { decision: decision === "always" ? "acceptForSession" : decision === "once" ? "accept" : "decline" };
+      }
+      case "item/permissions/requestApproval": {
+        const paths = [...params.permissions?.fileSystem?.read ?? [], ...params.permissions?.fileSystem?.write ?? []];
+        const decision = await hooks.permission({ toolCallID: params.itemId, action: "external_directory", resources: paths.length ? paths : ["*"], message: params.reason ?? undefined });
+        return decision === "reject" ? { permissions: {}, scope: "turn" } : { permissions: params.permissions, scope: decision === "always" ? "session" : "turn" };
+      }
+      case "execCommandApproval": {
+        const command = Array.isArray(params.command) ? params.command.join(" ") : String(params.command ?? "");
+        const decision = await hooks.permission({ toolCallID: params.callId, action: "shell", resources: [command], message: params.reason ?? undefined });
+        return { decision: decision === "always" ? "approved_for_session" : decision === "once" ? "approved" : "denied" };
+      }
+      case "applyPatchApproval": {
+        const paths = Object.keys(params.fileChanges ?? {});
+        const decision = await hooks.permission({ toolCallID: params.callId, action: "edit", resources: paths.length ? paths : ["*"], message: params.reason ?? undefined });
+        return { decision: decision === "always" ? "approved_for_session" : decision === "once" ? "approved" : "denied" };
+      }
+      case "item/tool/requestUserInput": {
+        const questions = params.questions ?? [];
+        const fields = questions.map((question) => ({
+          key: question.id,
+          title: question.header ?? "Question",
+          description: question.question,
+          required: true,
+          type: "string",
+          options: question.options?.map((option) => ({ value: option.label, label: option.label, description: option.description })),
+          custom: question.isOther ?? !question.options?.length
+        }));
+        const answer = await hooks.question({ title: questions.length === 1 ? questions[0].header ?? "Question" : "Questions", fields, toolCallID: params.itemId });
+        const answers = {};
+        for (const question of questions) {
+          const value = answer?.[question.id];
+          answers[question.id] = { answers: value === undefined || value === null ? [] : Array.isArray(value) ? value.map(String) : [String(value)] };
+        }
+        return { answers };
+      }
+    }
+    throw new RPCError(-32601, `Method not found: ${method}`);
+  }
+  async interrupt() {
+    const active = this.active;
+    if (!active || !this.nativeID)
+      return;
+    const rpc = await this.agent.rpc().catch(() => {
+      return;
+    });
+    for (let waited = 0;waited < 1e4 && !active.turnID && this.active === active; waited += 100)
+      await Bun.sleep(100);
+    if (rpc && active.turnID)
+      await rpc.request("turn/interrupt", { threadId: this.nativeID, turnId: active.turnID }, 1e4).catch(() => {});
+    for (let waited = 0;waited < 1e4 && this.active === active; waited += 100)
+      await Bun.sleep(100);
+    if (this.active === active) {
+      this.active = undefined;
+      active.resolve({ outcome: "interrupted" });
+    }
+  }
+  close() {
+    this.agent.forget(this.session.id);
+    if (this.nativeID && this.loaded)
+      this.agent.rpc().then((rpc) => rpc.request("thread/unsubscribe", { threadId: this.nativeID }).catch(() => {}), () => {});
+  }
+}
+function unwrapShell(command) {
+  const match = command.match(/^\/bin\/(?:zsh|bash|sh) -lc (["'])([\s\S]*)\1$/);
+  if (!match)
+    return command;
+  const inner = match[2];
+  return match[1] === '"' ? inner.replace(/\\(["\\$`])/g, "$1") : inner.replace(/'"'"'/g, "'");
+}
+
+// Agents/src/agents/cursor.ts
+import { existsSync as existsSync5, mkdirSync as mkdirSync4, readFileSync as readFileSync5, rmSync as rmSync3 } from "fs";
+import { join as join6 } from "path";
+var SDK2 = [{ name: "@cursor/sdk", version: "1.0.35" }];
+var outputLimit4 = 30000;
+
+class CursorAgent {
+  context;
+  id = "cursor";
+  providerID = "cursor";
+  name = "Cursor";
+  accountCache;
+  modelList;
+  primed = false;
+  constructor(context) {
+    this.context = context;
+  }
+  get folder() {
+    return join6(this.context.home, "cursor");
+  }
+  get authFile() {
+    return join6(this.folder, "auth.json");
+  }
+  methods() {
+    return [
+      { type: "oauth", id: "browser", label: "Sign in with Cursor" },
+      { type: "key", label: "Use a Cursor API key" }
+    ];
+  }
+  async sdk() {
+    await this.context.deps.ensure(this.id, SDK2);
+    return this.context.deps.load(this.id, SDK2[0].name);
+  }
+  async store(sdk) {
+    mkdirSync4(this.folder, { recursive: true, mode: 448 });
+    return new sdk.FileCredentialStore(this.authFile);
+  }
+  async apiKey(sdk) {
+    const fromEnvironment = process.env.CURSOR_API_KEY?.trim();
+    if (fromEnvironment)
+      return fromEnvironment;
+    if (!existsSync5(this.authFile))
+      return;
+    const loaded = await (await this.store(sdk ?? await this.sdk())).load();
+    if (!loaded?.apiKey)
+      return;
+    if (loaded.apiKeyExpiresAtMs && loaded.apiKeyExpiresAtMs < Date.now())
+      return;
+    return loaded.apiKey;
+  }
+  async account(fresh = false) {
+    if (!process.env.CURSOR_API_KEY && !existsSync5(this.authFile)) {
+      return { installed: true, signedIn: false, message: "Sign in with your Cursor account. Kuvo Code downloads Cursor's agent the first time." };
+    }
+    if (!fresh && this.accountCache && Date.now() - this.accountCache.at < 60000)
+      return this.accountCache.account;
+    const sdk = await this.sdk();
+    const apiKey = await this.apiKey(sdk);
+    let account;
+    if (!apiKey) {
+      account = { installed: true, signedIn: false, message: "Your Cursor sign-in expired. Sign in again." };
+    } else {
+      try {
+        const me = await withTimeout(sdk.Cursor.me({ apiKey }), 15000);
+        account = { installed: true, signedIn: true, label: me?.userEmail ?? (process.env.CURSOR_API_KEY ? "Cursor API key" : "Cursor account") };
+      } catch (error) {
+        const rejected = error instanceof sdk.AuthenticationError || error?.status === 401;
+        account = rejected ? { installed: true, signedIn: false, message: "Cursor turned the sign-in down. Sign in again." } : { installed: true, signedIn: true, label: "Cursor account" };
+      }
+    }
+    this.accountCache = { at: Date.now(), account };
+    return account;
+  }
+  async signIn() {
+    if (process.env.CURSOR_API_KEY)
+      throw new Error("CURSOR_API_KEY is set in your environment: Kuvo Code uses that key.");
+    const sdk = await this.sdk();
+    const pending = new sdk.InMemoryCredentialStore;
+    const abort = new AbortController;
+    let status = { status: "pending" };
+    let resolveURL = () => {};
+    const url = new Promise((resolve) => resolveURL = resolve);
+    sdk.Cursor.auth.login({ openBrowser: false, store: pending, signal: abort.signal, apiKeyName: "Kuvo Code", onLoginUrl: (link2) => resolveURL(link2) }).then(async () => {
+      const credentials = await pending.load();
+      if (!credentials)
+        throw new Error("Cursor didn't hand over the sign-in.");
+      await (await this.store(sdk)).save(credentials);
+      this.accountCache = undefined;
+      this.modelList = undefined;
+      status = { status: "complete" };
+    }).catch((error) => {
+      if (status.status === "pending")
+        status = { status: "failed", message: abort.signal.aborted ? "Cancelled." : failure(error).message };
+    });
+    const link = await Promise.race([url, Bun.sleep(30000).then(() => "")]);
+    return {
+      url: link,
+      instructions: "Finish signing in to Cursor in your browser. Cursor makes an API key for Kuvo Code, kept on this Mac.",
+      mode: "auto",
+      status: () => status,
+      cancel: () => abort.abort()
+    };
+  }
+  async signInWithKey(key) {
+    const sdk = await this.sdk();
+    await withTimeout(sdk.Cursor.me({ apiKey: key }), 15000);
+    await (await this.store(sdk)).save({ version: 1, backendUrl: "https://api2.cursor.sh", apiKey: key, createdAtMs: Date.now() });
+    this.accountCache = undefined;
+    this.modelList = undefined;
+  }
+  async signOut() {
+    rmSync3(this.authFile, { force: true });
+    this.accountCache = undefined;
+    this.modelList = undefined;
+  }
+  async models() {
+    const sdk = await this.sdk();
+    const apiKey = await this.apiKey(sdk);
+    if (!apiKey)
+      return [];
+    if (this.modelList && this.modelList.key === apiKey && Date.now() - this.modelList.at < 30 * 60000)
+      return this.modelList.models;
+    const list = await withTimeout(sdk.Cursor.models.list({ apiKey }), 15000);
+    const seen = new Set;
+    const models = list.filter((info) => info?.id && !seen.has(info.id) && seen.add(info.id)).map((info, index) => {
+      const effort = (info.parameters ?? []).find((parameter) => parameter.id === "effort" || parameter.id === "reasoning");
+      return model(this.providerID, info.id, info.id === "default" ? "Auto" : info.displayName ?? info.id, {
+        variants: effort?.values?.map((value) => String(value.value)) ?? [],
+        images: true,
+        released: info.id === "default" ? 2000 : 1000 - index
+      });
+    });
+    this.modelList = { at: Date.now(), key: apiKey, models };
+    return models;
+  }
+  async prime(sdk, apiKey, cwd) {
+    if (this.primed)
+      return;
+    this.primed = true;
+    try {
+      const platform = await sdk.createAgentPlatform({ workspaceRef: cwd });
+      const release = await platform.prewarmLocalWorkspace({ apiKey, local: { cwd, settingSources: [], sandboxOptions: { enabled: true } } });
+      await release?.();
+    } catch {}
+  }
+  agentStore(sdk) {
+    const root = join6(this.folder, "agents");
+    mkdirSync4(root, { recursive: true });
+    return new sdk.JsonlLocalAgentStore(root);
+  }
+  thread(session, state) {
+    return new CursorThread(this, session, state);
+  }
+}
+
+class CursorThread {
+  owner;
+  session;
+  state;
+  agent;
+  active;
+  constructor(owner, session, state) {
+    this.owner = owner;
+    this.session = session;
+    this.state = state;
+  }
+  async run(input, turn, hooks) {
+    const sdk = await this.owner.sdk();
+    const apiKey = await this.owner.apiKey(sdk);
+    if (!apiKey)
+      return { outcome: "failed", error: { type: "auth", message: "Sign in to Cursor in Settings \u203A Accounts." } };
+    const cwd = this.session.location.directory;
+    const approvesAll = hooks.approvesAll();
+    const selection = { id: input.model.id, ...input.model.variant ? { params: [{ id: "effort", value: input.model.variant }] } : {} };
+    const mode = input.plan ? "plan" : "agent";
+    const options = {
+      model: selection,
+      name: `Kuvo Code: ${this.session.title ?? "session"}`,
+      mode,
+      apiKey,
+      local: {
+        cwd,
+        autoReview: !approvesAll,
+        settingSources: ["project", "user", "team", "mdm", "plugins"],
+        sandboxOptions: { enabled: !approvesAll },
+        enableAgentRetries: true,
+        store: this.owner.agentStore(sdk)
+      }
+    };
+    if (approvesAll)
+      await this.owner.prime(sdk, apiKey, cwd);
+    if (!this.agent) {
+      const id = this.state.cursorAgent;
+      this.agent = id ? await sdk.Agent.resume(id, options).catch(() => {
+        return;
+      }) : undefined;
+      this.agent ??= await sdk.Agent.create(options);
+      if (this.state.cursorAgent !== this.agent.agentId) {
+        this.state.cursorAgent = this.agent.agentId;
+        hooks.saveState();
+      }
+    }
+    const images = input.files.filter((file) => file.mime.startsWith("image/")).map((file) => ({ data: file.data ?? (file.path ? readFileSync5(file.path).toString("base64") : ""), mimeType: file.mime })).filter((image) => image.data);
+    let text = input.text;
+    const others = input.files.filter((file) => !file.mime.startsWith("image/") && file.path).map((file) => file.path);
+    if (others.length)
+      text += `
+
+Attached files:
+${others.map((path) => `- ${path}`).join(`
+`)}`;
+    const instructions = hooks.instructions();
+    if (instructions && !this.state.cursorInstructed) {
+      text = `${instructions}
+
+${text}`;
+      this.state.cursorInstructed = true;
+      hooks.saveState();
+    }
+    const active = { turn, hooks, toolsSinceText: false, sawText: false, output: new Map };
+    this.active = active;
+    turn.startStep();
+    let chain = Promise.resolve();
+    const onDelta = async ({ update }) => {
+      chain = chain.then(() => this.update(active, update)).catch(() => {});
+    };
+    try {
+      const run2 = await this.agent.send(images.length ? { text, images } : text, { model: selection, mode, onDelta });
+      active.run = run2;
+      const result = await run2.wait();
+      await chain;
+      if (!active.sawText && typeof result?.result === "string" && result.result.trim())
+        turn.text(result.result);
+      const usage = result?.usage;
+      turn.endStep({
+        tokens: usage ? { input: usage.inputTokens ?? 0, output: usage.outputTokens ?? 0, reasoning: 0, cache: { read: usage.cacheReadTokens ?? 0, write: usage.cacheWriteTokens ?? 0 } } : undefined
+      });
+      if (hooks.signal.aborted || result?.status === "cancelled")
+        return { outcome: "interrupted" };
+      if (result?.status === "error")
+        return { outcome: "failed", error: failure(result.error?.message ?? "Cursor stopped with an error.") };
+      return { outcome: "succeeded" };
+    } catch (error) {
+      if (hooks.signal.aborted)
+        return { outcome: "interrupted" };
+      const message = String(error?.message ?? error);
+      if (/Cannot use this model/i.test(message))
+        return { outcome: "failed", error: failure(`Cursor can't run ${input.model.id} with your account. Pick another of its models.`) };
+      return { outcome: "failed", error: failure(error) };
+    } finally {
+      if (this.active === active)
+        this.active = undefined;
+    }
+  }
+  words(active) {
+    active.sawText = true;
+    if (!active.toolsSinceText)
+      return;
+    active.toolsSinceText = false;
+    active.turn.endStep();
+    active.turn.startStep();
+  }
+  async update(active, update) {
+    const turn = active.turn;
+    switch (update?.type) {
+      case "text-delta":
+        this.words(active);
+        turn.text(update.text ?? "");
+        return;
+      case "thinking-delta":
+        this.words(active);
+        turn.reasoning(update.text ?? "");
+        return;
+      case "thinking-completed":
+      case "step-completed":
+        turn.endBlock();
+        return;
+      case "tool-call-started":
+      case "partial-tool-call":
+      case "tool-call-completed": {
+        const call = update.toolCall ?? {};
+        const id = update.callId;
+        if (!id)
+          return;
+        const kuvo = kuvoTool3(call);
+        if (!turn.hasTool(id)) {
+          active.toolsSinceText = true;
+          turn.toolStart(id, kuvo.name, kuvo.input);
+          if (call.type === "shell")
+            active.lastShell = id;
+        } else {
+          turn.toolCalled(id, kuvo.input);
+        }
+        if (update.type !== "tool-call-completed")
+          return;
+        const result = call.result ?? {};
+        const value = result.value ?? {};
+        const failed = result.status === "error" || call.type === "mcp" && value.isError;
+        const { output, metadata } = toolResult(call, value, active.output.get(id));
+        if (failed)
+          turn.toolFailed(id, output || String(result.error?.message ?? result.error ?? "The tool failed."), metadata);
+        else
+          turn.toolSucceeded(id, output, metadata);
+        return;
+      }
+      case "shell-output-delta": {
+        const id = active.lastShell;
+        if (!id)
+          return;
+        const event = update.event ?? {};
+        const chunk = [event.text, event.output, event.data, event.stdout, event.stderr, event.chunk].find((part) => typeof part === "string") ?? "";
+        const output = ((active.output.get(id) ?? "") + chunk).slice(-outputLimit4);
+        active.output.set(id, output);
+        turn.toolProgress(id, { output });
+        return;
+      }
+    }
+  }
+  async interrupt() {
+    const active = this.active;
+    if (!active?.run)
+      return;
+    await Bun.sleep(10);
+    await active.run.cancel().catch(() => {});
+    for (let waited = 0;waited < 1e4 && this.active === active; waited += 100)
+      await Bun.sleep(100);
+  }
+  close() {
+    try {
+      this.agent?.close?.();
+    } catch {}
+    this.agent = undefined;
+  }
+}
+function kuvoTool3(call) {
+  const args = call.args ?? {};
+  switch (call.type) {
+    case "shell":
+      return { name: "shell", input: { command: args.command } };
+    case "edit":
+    case "delete":
+      return { name: "edit", input: { path: args.path } };
+    case "write":
+      return { name: "write", input: { path: args.path, content: args.fileText } };
+    case "read":
+      return { name: "read", input: { path: args.path } };
+    case "glob":
+      return { name: "glob", input: { pattern: args.globPattern, path: args.targetDirectory } };
+    case "grep":
+      return { name: "grep", input: { pattern: args.pattern, path: args.path } };
+    case "semSearch":
+      return { name: "grep", input: { pattern: args.query } };
+    case "ls":
+      return { name: "glob", input: { pattern: "*", path: args.path } };
+    case "mcp":
+      return { name: `${args.providerIdentifier}_${args.toolName}`, input: args.args ?? {} };
+    case "updateTodos":
+      return { name: "todowrite", input: { todos: args.todos } };
+    case "task":
+      return { name: "subagent", input: { description: args.description, prompt: args.prompt, agent: args.subagentType?.kind } };
+    case "createPlan":
+      return { name: "plan", input: { plan: args.plan } };
+  }
+  return { name: String(call.type ?? "tool"), input: args };
+}
+function toolResult(call, value, streamed) {
+  const args = call.args ?? {};
+  switch (call.type) {
+    case "shell": {
+      const output = [value.stdout, value.stderr].filter((part) => typeof part === "string" && part).join(`
+`) || streamed || "";
+      return { output: output.slice(-outputLimit4), metadata: { output: output.slice(-outputLimit4), exit: value.exitCode ?? 0 } };
+    }
+    case "edit":
+      return { output: "", metadata: typeof value.diffString === "string" && value.diffString ? { files: [fromPatch(args.path, value.diffString)] } : undefined };
+    case "read":
+      return { output: String(value.content ?? "").slice(0, outputLimit4) };
+    case "glob":
+      return { output: (value.files ?? []).join(`
+`).slice(0, outputLimit4) };
+    case "mcp":
+      return { output: (value.content ?? []).map((part) => part?.text?.text ?? "").filter(Boolean).join(`
+`).slice(0, outputLimit4) };
+    case "createPlan":
+      return { output: String(args.plan ?? "") };
+  }
+  if (typeof value === "string")
+    return { output: value.slice(0, outputLimit4) };
+  return { output: "" };
+}
+function withTimeout(promise, milliseconds) {
+  return Promise.race([promise, Bun.sleep(milliseconds).then(() => Promise.reject(new Error("Cursor didn't answer in time.")))]);
+}
+
+// Agents/src/agents/grok.ts
+import { homedir as homedir3 } from "os";
+import { join as join7 } from "path";
+var places3 = [join7(homedir3(), ".grok/bin"), join7(homedir3(), ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin"];
+
+class GrokAgent {
+  context;
+  id = "grok";
+  providerID = "grok-cli";
+  name = "Grok";
+  install = "npm install -g @xai-official/grok";
+  status;
+  promptCount = 0;
+  constructor(context) {
+    this.context = context;
+  }
+  executable() {
+    return which("grok", places3);
+  }
+  methods() {
+    return [{ type: "oauth", id: "grok", label: "Sign in with Grok" }];
+  }
+  env() {
+    return { ...process.env, GROK_DISABLE_AUTOUPDATER: "1" };
+  }
+  async read(fresh) {
+    if (!fresh && this.status && Date.now() - this.status.at < 30000)
+      return this.status;
+    const executable = this.executable();
+    const result = await run(executable, ["models"], { env: this.env(), timeout: 20000, cwd: this.context.temporary });
+    const text = plain(result.stdout + `
+` + result.stderr);
+    const signedIn = Boolean(process.env.XAI_API_KEY) || /you are logged in/i.test(text) && !/not authenticated|not logged in/i.test(text);
+    const models = [];
+    for (const line of text.split(`
+`)) {
+      const match = line.match(/^\s*[*-]\s+(\S+)(.*)$/);
+      if (match)
+        models.push({ id: match[1], name: match[1], isDefault: /\(default\)/i.test(match[2]) });
+    }
+    this.status = { at: Date.now(), signedIn, models };
+    return this.status;
+  }
+  async account(fresh = false) {
+    if (!this.executable())
+      return { installed: false, signedIn: false, message: "Install Grok's CLI, then sign in here." };
+    const status = await this.read(fresh);
+    if (!status.signedIn)
+      return { installed: true, signedIn: false, message: "Sign in to Grok with your SuperGrok plan." };
+    return { installed: true, signedIn: true, label: process.env.XAI_API_KEY ? "xAI API key" : "grok.com" };
+  }
+  async signIn() {
+    const executable = this.executable();
+    if (!executable)
+      throw new Error("Install Grok's CLI first: npm install -g @xai-official/grok");
+    return commandSignIn({
+      command: executable,
+      args: ["login"],
+      env: this.env(),
+      home: this.context.home,
+      temporary: this.context.temporary,
+      instructions: "Finish signing in to Grok in your browser. Grok's CLI keeps the sign-in, as when you run grok login.",
+      signedIn: async () => (await this.read(true)).signedIn
+    });
+  }
+  async models() {
+    const status = await this.read(false);
+    return status.models.map((info, index) => model(this.providerID, info.id, info.name, { released: info.isDefault ? 1000 : 500 - index, context: 256000 }));
+  }
+  thread(session, state) {
+    const agent = this;
+    return new AcpThread({
+      fileSystem: false,
+      initializeMeta: { clientType: "extension" },
+      authMethod: () => process.env.XAI_API_KEY ? "xai.api_key" : "cached_token",
+      restartAfterInterrupt: true,
+      async command({ approvesAll }) {
+        const executable = agent.executable();
+        if (!executable)
+          throw new Error("Install Grok's CLI first: npm install -g @xai-official/grok");
+        const argv = approvesAll ? [executable, "agent", "--always-approve", "stdio"] : [executable, "--permission-mode", "default", "agent", "stdio"];
+        return { argv, env: agent.env() };
+      },
+      async selectModel(rpc, sessionId, modelID, setup) {
+        const current = setup?.models?.currentModelId;
+        if (current === modelID)
+          return;
+        await rpc.request("session/set_model", { sessionId, modelId: modelID }, 30000);
+        if (setup?.models)
+          setup.models.currentModelId = modelID;
+      },
+      promptMeta() {
+        const id = `kuvo-prompt-${++agent.promptCount}`;
+        return { promptId: id, requestId: id };
+      },
+      notification(method, params, context) {
+        const name = method.replace(/^_/, "");
+        if (name === "x.ai/session/prompt_complete" && !String(params?.promptId ?? "").startsWith("task-completed-")) {
+          context.endPrompt(params?.stopReason ?? "end_turn", params?.stopReason === "rate_limit" ? "You've reached your Grok usage limit for now." : params?.stopReason === "error" ? String(params?.agentResult ?? "Grok stopped with an error.") : undefined);
+        }
+      },
+      request(method, params, context) {
+        const name = method.replace(/^_/, "");
+        const call = params?.params ?? params;
+        if (name === "x.ai/ask_user_question") {
+          return (async () => {
+            const questions = call?.questions ?? [];
+            const answer = context.hooks ? await context.hooks.question({ title: "Question", fields: questionFields(questions), toolCallID: call?.toolCallId }) : null;
+            if (!answer)
+              return { outcome: "cancelled" };
+            const answers = {};
+            questions.forEach((question, index) => {
+              const value = answer[question.id ?? `q${index}`];
+              answers[question.question] = Array.isArray(value) ? value.map(String) : value === undefined ? [] : [String(value)];
+            });
+            return { outcome: "accepted", answers };
+          })();
+        }
+        if (name === "x.ai/exit_plan_mode") {
+          return Promise.resolve({ outcome: "abandoned", feedback: "The plan is shown to the user. Stop here and wait: they'll switch out of plan mode and ask you to build it when they're ready." });
+        }
+        return;
+      }
+    }, session, state, this.name);
+  }
+}
+
+// Agents/src/deps.ts
+import { existsSync as existsSync6, mkdirSync as mkdirSync5, readFileSync as readFileSync6, writeFileSync as writeFileSync4 } from "fs";
+import { join as join8 } from "path";
+var installing = new Map;
+
+class Deps {
+  root;
+  cache;
+  constructor(root, cache) {
+    this.root = root;
+    this.cache = cache;
+  }
+  folder(agent) {
+    return join8(this.root, agent);
+  }
+  has(agent, packages) {
+    return packages.every((pkg) => installedVersion(this.folder(agent), pkg.name) === pkg.version);
+  }
+  async ensure(agent, packages, options = {}) {
+    const folder = this.folder(agent);
+    if (this.has(agent, packages))
+      return folder;
+    let pending = installing.get(agent);
+    if (!pending) {
+      pending = this.install(folder, packages, options.optional ?? true).finally(() => installing.delete(agent));
+      installing.set(agent, pending);
+    }
+    await pending;
+    return folder;
+  }
+  async install(folder, packages, optional) {
+    mkdirSync5(folder, { recursive: true });
+    const manifest = { name: "kuvo-agents-runtime", private: true, dependencies: Object.fromEntries(packages.map((pkg) => [pkg.name, pkg.version])) };
+    writeFileSync4(join8(folder, "package.json"), JSON.stringify(manifest, null, 2));
+    const args = [process.execPath, "install", "--no-save", "--no-progress", "--silent"];
+    if (!optional)
+      args.push("--omit", "optional");
+    const child = Bun.spawn(args, {
+      cwd: folder,
+      env: {
+        ...process.env,
+        BUN_BE_BUN: "1",
+        BUN_INSTALL: this.cache,
+        BUN_INSTALL_CACHE_DIR: join8(this.cache, "install")
+      },
+      stdout: "pipe",
+      stderr: "pipe"
+    });
+    const [code, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
+    if (code !== 0)
+      throw new Error(`Couldn't download what the agent needs (${packages.map((pkg) => pkg.name).join(", ")}): ${stderr.trim().slice(-400)}`);
+  }
+  async load(agent, name) {
+    const entry = Bun.resolveSync(name, this.folder(agent));
+    return await import(entry);
+  }
+}
+function installedVersion(folder, name) {
+  const file = join8(folder, "node_modules", name, "package.json");
+  if (!existsSync6(file))
+    return;
+  try {
+    return JSON.parse(readFileSync6(file, "utf8")).version;
+  } catch {
+    return;
+  }
+}
+
+// Agents/src/sessions.ts
+import { createHash as createHash2 } from "crypto";
+import { fileURLToPath } from "url";
+
+// Agents/src/rules.ts
+function matches(pattern, value) {
+  if (pattern === "*" || pattern === value)
+    return true;
+  const expression = "^" + pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$";
+  return new RegExp(expression).test(value);
+}
+function evaluate(rules, action, resources2) {
+  let effect = "allow";
+  for (const rule of rules ?? []) {
+    if (!matches(rule.action, action))
+      continue;
+    const targets = resources2.length ? resources2 : ["*"];
+    if (targets.every((resource) => matches(rule.resource, resource)))
+      effect = rule.effect;
+  }
+  return effect;
+}
+
+// Agents/src/wire.ts
+var noTokens = () => ({ input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } });
+
+// Agents/src/turn.ts
+class Turn {
+  store;
+  sessionID;
+  directory;
+  model;
+  agent;
+  step;
+  block;
+  tools = new Map;
+  ended = false;
+  started = Date.now();
+  tokens = noTokens();
+  cost = 0;
+  constructor(store, sessionID, directory, model2, agent) {
+    this.store = store;
+    this.sessionID = sessionID;
+    this.directory = directory;
+    this.model = model2;
+    this.agent = agent;
+    emit("session.execution.started", { sessionID }, directory);
+  }
+  get isEnded() {
+    return this.ended;
+  }
+  get messages() {
+    return this.store.get(this.sessionID)?.messages ?? [];
+  }
+  save() {
+    this.store.save(this.sessionID);
+  }
+  send(type, data) {
+    emit(type, { sessionID: this.sessionID, ...data }, this.directory);
+  }
+  setModel(model2) {
+    this.model = model2;
+  }
+  startStep(model2) {
+    if (this.step)
+      this.endStep();
+    const step = {
+      type: "assistant",
+      id: newID("msg"),
+      time: { created: Date.now() },
+      agent: this.agent,
+      model: model2 ?? this.model,
+      content: []
+    };
+    this.step = step;
+    this.messages.push(step);
+    this.send("session.step.started", { assistantMessageID: step.id, agent: step.agent, model: step.model, started: step.time.created });
+    this.save();
+    return step.id;
+  }
+  ensureStep() {
+    if (!this.step)
+      this.startStep();
+    return this.step;
+  }
+  endStep(end = {}) {
+    const step = this.step;
+    if (!step)
+      return;
+    this.endBlock();
+    step.time.completed = Date.now();
+    if (end.finish)
+      step.finish = end.finish;
+    if (end.tokens) {
+      step.tokens = end.tokens;
+      this.tokens = add(this.tokens, end.tokens);
+    }
+    if (end.cost !== undefined) {
+      step.cost = end.cost;
+      this.cost += end.cost;
+    }
+    if (end.error)
+      step.error = end.error;
+    this.send("session.step.ended", {
+      assistantMessageID: step.id,
+      finish: step.finish ?? (end.error ? "error" : "stop"),
+      cost: step.cost,
+      tokens: step.tokens,
+      error: end.error
+    });
+    this.step = undefined;
+    this.save();
+  }
+  addUsage(tokens, cost) {
+    if (tokens)
+      this.tokens = add(this.tokens, tokens);
+    if (cost)
+      this.cost += cost;
+  }
+  text(delta) {
+    this.write("text", delta);
+  }
+  reasoning(delta) {
+    this.write("reasoning", delta);
+  }
+  write(kind, delta) {
+    if (!delta)
+      return;
+    const step = this.ensureStep();
+    if (this.block?.kind !== kind) {
+      this.endBlock();
+      const ordinal = step.content.filter((content2) => content2.type === kind).length;
+      const content = kind === "text" ? { type: "text", text: "" } : { type: "reasoning", text: "", time: { created: Date.now() } };
+      step.content.push(content);
+      this.block = { kind, ordinal, content };
+      if (!step.time.streamed)
+        step.time.streamed = Date.now();
+      this.send(`session.${kind}.started`, { assistantMessageID: step.id, ordinal });
+    }
+    this.block.content.text += delta;
+    this.send(`session.${kind}.delta`, { assistantMessageID: step.id, ordinal: this.block.ordinal, delta });
+    this.save();
+  }
+  endBlock() {
+    const block = this.block;
+    const step = this.step;
+    if (!block || !step)
+      return;
+    this.block = undefined;
+    if (block.content.type === "reasoning")
+      block.content.time = { created: block.content.time?.created ?? Date.now(), completed: Date.now() };
+    const text = block.content.text;
+    this.send(`session.${block.kind}.ended`, { assistantMessageID: step.id, ordinal: block.ordinal, text });
+  }
+  toolStart(id, name, input) {
+    if (this.tools.has(id)) {
+      if (input !== undefined)
+        this.toolCalled(id, input);
+      return;
+    }
+    this.endBlock();
+    const step = this.ensureStep();
+    const call = { type: "tool", id, name, state: { status: "streaming", input: "" }, time: { created: Date.now() } };
+    step.content.push(call);
+    this.tools.set(id, { step, call });
+    this.send("session.tool.input.started", { assistantMessageID: step.id, id, name });
+    if (input !== undefined)
+      this.toolCalled(id, input);
+    this.save();
+  }
+  toolRename(id, name) {
+    const tool = this.tools.get(id);
+    if (tool)
+      tool.call.name = name;
+  }
+  toolInputDelta(id, delta) {
+    const tool = this.tools.get(id);
+    if (!tool || tool.call.state.status !== "streaming")
+      return;
+    tool.call.state.input += delta;
+    this.send("session.tool.input.delta", { assistantMessageID: tool.step.id, id, delta });
+  }
+  toolCalled(id, input) {
+    const tool = this.tools.get(id);
+    if (!tool)
+      return this.toolStart(id, "tool", input);
+    if (tool.call.state.status === "completed" || tool.call.state.status === "error")
+      return;
+    if (tool.call.state.status === "streaming") {
+      this.send("session.tool.input.ended", { assistantMessageID: tool.step.id, id, text: JSON.stringify(input) });
+    }
+    tool.call.state = { status: "running", input, metadata: tool.call.state.status === "running" ? tool.call.state.metadata : undefined };
+    tool.call.time = { ...tool.call.time, ran: tool.call.time?.ran ?? Date.now() };
+    this.send("session.tool.called", { assistantMessageID: tool.step.id, id, input });
+    this.save();
+  }
+  toolProgress(id, metadata) {
+    const tool = this.tools.get(id);
+    if (!tool || tool.call.state.status !== "running")
+      return;
+    tool.call.state.metadata = metadata;
+    this.send("session.tool.progress", { assistantMessageID: tool.step.id, id, metadata });
+    this.save();
+  }
+  toolSucceeded(id, output, metadata) {
+    const tool = this.tools.get(id);
+    if (!tool)
+      return;
+    if (tool.call.state.status === "streaming")
+      this.toolCalled(id, safeJSON(tool.call.state.input));
+    if (tool.call.state.status !== "running")
+      return;
+    const content = typeof output === "string" ? [{ type: "text", text: output }] : output;
+    tool.call.state = { status: "completed", input: tool.call.state.input, content, metadata: metadata ?? tool.call.state.metadata };
+    tool.call.time = { ...tool.call.time, completed: Date.now() };
+    this.send("session.tool.success", { assistantMessageID: tool.step.id, id, content, metadata: tool.call.state.metadata });
+    this.save();
+  }
+  toolFailed(id, message, metadata, type = "tool") {
+    const tool = this.tools.get(id);
+    if (!tool)
+      return;
+    if (tool.call.state.status === "completed" || tool.call.state.status === "error")
+      return;
+    const input = tool.call.state.status === "streaming" ? safeJSON(tool.call.state.input) : tool.call.state.input;
+    const error = { type, message };
+    const content = message ? [{ type: "text", text: message }] : [];
+    tool.call.state = { status: "error", input, error, content, metadata };
+    tool.call.time = { ...tool.call.time, completed: Date.now() };
+    this.send("session.tool.failed", { assistantMessageID: tool.step.id, id, error, content, metadata });
+    this.save();
+  }
+  hasTool(id) {
+    return this.tools.has(id);
+  }
+  toolInput(id) {
+    const state = this.tools.get(id)?.call.state;
+    return state && state.status !== "streaming" ? state.input : undefined;
+  }
+  toolStep(id) {
+    return this.tools.get(id)?.step.id;
+  }
+  finish(outcome, error) {
+    if (this.ended)
+      return;
+    this.ended = true;
+    this.endBlock();
+    if (this.step)
+      this.endStep(error && outcome === "failed" ? { error } : {});
+    for (const [id, tool] of this.tools) {
+      const status = tool.call.state.status;
+      if (status === "running" || status === "streaming")
+        this.toolFailed(id, outcome === "interrupted" ? "Stopped." : "", undefined, outcome === "interrupted" ? "aborted" : "tool");
+    }
+    const type = outcome === "succeeded" ? "session.execution.succeeded" : outcome === "failed" ? "session.execution.failed" : "session.execution.interrupted";
+    const event = emit(type, { sessionID: this.sessionID, error }, this.directory);
+    const record = this.store.get(this.sessionID);
+    if (record) {
+      record.messages.push({ type: "idle", id: messageID(event.id), time: { created: event.created }, outcome, error });
+      const session = record.session;
+      session.outcome = outcome;
+      session.time.idle = event.created;
+      session.time.updated = event.created;
+      session.tokens = add(session.tokens, this.tokens);
+      session.cost += this.cost;
+      emit("session.usage.updated", { sessionID: this.sessionID, cost: session.cost, tokens: session.tokens }, this.directory);
+      this.store.save(this.sessionID, true);
+    }
+  }
+}
+function add(a, b) {
+  return {
+    input: a.input + b.input,
+    output: a.output + b.output,
+    reasoning: a.reasoning + b.reasoning,
+    cache: { read: a.cache.read + b.cache.read, write: a.cache.write + b.cache.write }
+  };
+}
+function safeJSON(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {};
+  }
+}
+
+// Agents/src/sessions.ts
+class Sessions {
+  store;
+  agents;
+  live = new Map;
+  constructor(store, agents) {
+    this.store = store;
+    this.agents = agents;
+  }
+  agent(providerID) {
+    return this.agents.find((agent) => agent.providerID === providerID);
+  }
+  state(id) {
+    let live = this.live.get(id);
+    if (!live) {
+      live = { queue: [], permissions: new Map, forms: new Map, always: [] };
+      this.live.set(id, live);
+    }
+    return live;
+  }
+  record(id) {
+    const record = this.store.get(id);
+    if (!record)
+      throw new NotFound(`No session ${id}.`);
+    return record;
+  }
+  create(body) {
+    const agent = this.agent(body.model?.providerID);
+    if (!agent || !body.model)
+      throw new BadRequest("Pick a model of an agent you've connected.");
+    const now = Date.now();
+    const directory = body.location.directory;
+    const session = {
+      id: newID("ses"),
+      projectID: "prj_" + createHash2("sha1").update(directory).digest("hex").slice(0, 16),
+      agent: body.agent === "plan" ? "plan" : "build",
+      model: body.model,
+      cost: 0,
+      tokens: noTokens(),
+      time: { created: now, updated: now },
+      title: body.title,
+      location: { directory },
+      permissions: body.permissions,
+      metadata: { kuvoAgent: agent.id }
+    };
+    this.store.add(session);
+    emit("session.created", { sessionID: session.id, session }, directory);
+    return session;
+  }
+  list(directory) {
+    return this.store.all().filter((session) => !directory || session.location.directory === directory).sort((a, b) => b.time.updated - a.time.updated || (a.id < b.id ? 1 : -1));
+  }
+  get(id) {
+    return this.record(id).session;
+  }
+  messages(id) {
+    return this.record(id).messages;
+  }
+  update(id, body) {
+    const record = this.record(id);
+    const session = record.session;
+    const directory = session.location.directory;
+    if (body.title !== undefined) {
+      session.title = body.title;
+      emit("session.renamed", { sessionID: id, title: body.title }, directory);
+    }
+    if (body.permissions !== undefined)
+      session.permissions = body.permissions;
+    if (body.metadata !== undefined) {
+      session.metadata = { ...body.metadata, kuvoAgent: session.metadata?.kuvoAgent };
+      emit("session.metadata.updated", { sessionID: id }, directory);
+    }
+    session.time.updated = Date.now();
+    this.store.save(id, true);
+  }
+  async remove(id) {
+    const record = this.store.get(id);
+    if (!record)
+      return;
+    await this.interrupt(id);
+    this.live.get(id)?.thread?.close();
+    this.live.delete(id);
+    this.store.remove(id);
+    emit("session.deleted", { sessionID: id }, record.session.location.directory);
+  }
+  view(id, idle) {
+    const session = this.record(id).session;
+    session.time.viewed = Math.max(idle, session.time.viewed ?? 0);
+    this.store.save(id);
+  }
+  active() {
+    return [...this.live.entries()].filter(([, live]) => live.turn && !live.turn.isEnded).map(([id]) => id);
+  }
+  setInstruction(id, key, text) {
+    const record = this.record(id);
+    const entries = record.agent.kuvoInstructions ?? {};
+    if (text === undefined)
+      delete entries[key];
+    else
+      entries[key] = text;
+    record.agent.kuvoInstructions = entries;
+    this.store.save(id, true);
+  }
+  selectModel(id, model2) {
+    const record = this.record(id);
+    const session = record.session;
+    const previous = session.model;
+    if (previous && previous.providerID !== model2.providerID) {
+      throw new BadRequest(`This session runs on ${this.agent(previous.providerID)?.name ?? "another agent"}: start a new session for a model of another.`);
+    }
+    if (previous && previous.id === model2.id && previous.variant === model2.variant)
+      return;
+    session.model = model2;
+    const event = emit("session.model.selected", { sessionID: id, model: model2, previous }, session.location.directory);
+    record.messages.push({ type: "model-switched", id: messageID(event.id), time: { created: event.created }, model: model2, previous });
+    this.live.get(id)?.turn?.setModel(model2);
+    this.store.save(id, true);
+  }
+  selectAgent(id, agent) {
+    const record = this.record(id);
+    const session = record.session;
+    const mode = agent === "plan" ? "plan" : "build";
+    const previous = session.agent;
+    if (previous === mode)
+      return;
+    session.agent = mode;
+    emit("session.agent.selected", { sessionID: id, agent: mode, previous }, session.location.directory);
+    this.store.save(id, true);
+  }
+  inbox(id) {
+    this.record(id);
+    return (this.live.get(id)?.queue ?? []).map((input) => ({
+      id: input.id,
+      sessionID: id,
+      type: "user",
+      payload: { text: input.text, files: input.files },
+      delivery: input.delivery
+    }));
+  }
+  prompt(id, input) {
+    const record = this.record(id);
+    const live = this.state(id);
+    const directory = record.session.location.directory;
+    const delivery = live.turn && !live.turn.isEnded ? "queue" : input.delivery;
+    live.queue.push({ ...input, delivery });
+    emit("session.inbox.enqueued", { sessionID: id, inboxID: input.id, item: { type: "user", payload: { text: input.text, files: input.files }, delivery } }, directory);
+    if (!live.turn || live.turn.isEnded)
+      this.next(id);
+  }
+  cancelInput(id, inputID) {
+    const live = this.live.get(id);
+    if (!live)
+      return;
+    const before = live.queue.length;
+    live.queue = live.queue.filter((input) => input.id !== inputID);
+    if (live.queue.length !== before)
+      emit("session.inbox.cancelled", { sessionID: id, inboxID: inputID }, this.record(id).session.location.directory);
+  }
+  async next(id) {
+    const live = this.state(id);
+    const input = live.queue.shift();
+    if (!input)
+      return;
+    const record = this.store.get(id);
+    if (!record)
+      return;
+    const session = record.session;
+    const directory = session.location.directory;
+    const agent = this.agent(session.model?.providerID);
+    emit("session.inbox.delivered", { sessionID: id, inboxID: input.id }, directory);
+    const attachments = input.files.map((file) => ({ mime: mime(file.uri), name: file.name, source: { type: "uri", uri: file.uri } }));
+    record.messages.push({ type: "user", id: input.id, time: { created: Date.now() }, text: input.text, files: attachments.length ? attachments : undefined });
+    session.time.updated = Date.now();
+    this.store.save(id, true);
+    const model2 = session.model;
+    const turn = new Turn(this.store, id, directory, model2, session.agent ?? "build");
+    live.turn = turn;
+    const abort = new AbortController;
+    live.abort = abort;
+    if (!agent) {
+      turn.finish("failed", { type: "agent", message: "This session's agent isn't available." });
+      return this.next(id);
+    }
+    try {
+      live.thread ??= agent.thread(session, record.agent);
+      const result = await live.thread.run({ text: input.text, files: input.files.map(promptFile), model: model2, plan: session.agent === "plan" }, turn, this.hooks(id, live, turn, abort.signal));
+      turn.finish(abort.signal.aborted ? "interrupted" : result.outcome, result.error);
+    } catch (error) {
+      turn.finish(abort.signal.aborted ? "interrupted" : "failed", abort.signal.aborted ? undefined : failure(error));
+      live.thread?.close();
+      live.thread = undefined;
+    }
+    this.settleAsks(id, live);
+    if (live.turn === turn)
+      live.turn = undefined;
+    if (live.queue.length)
+      this.next(id);
+  }
+  async interrupt(id) {
+    const live = this.live.get(id);
+    if (!live?.turn || live.turn.isEnded)
+      return false;
+    live.abort?.abort();
+    this.settleAsks(id, live);
+    await live.thread?.interrupt().catch(() => {});
+    return true;
+  }
+  settleAsks(id, live) {
+    const directory = this.store.get(id)?.session.location.directory;
+    for (const [requestID, pending] of live.permissions) {
+      pending.resolve("reject");
+      emit("permission.replied", { sessionID: id, requestID }, directory);
+    }
+    live.permissions.clear();
+    for (const [formID, pending] of live.forms) {
+      pending.resolve(null);
+      emit("form.cancelled", { id: formID, sessionID: id }, directory);
+    }
+    live.forms.clear();
+  }
+  hooks(id, live, turn, signal) {
+    const record = this.record(id);
+    return {
+      signal,
+      state: record.agent,
+      saveState: () => this.store.save(id, true),
+      instructions: () => Object.values(record.agent.kuvoInstructions ?? {}).join(`
+
+`),
+      approvesAll: () => !(record.session.permissions ?? []).some((rule) => rule.effect === "ask"),
+      permission: (ask) => this.askPermission(id, live, turn, ask),
+      question: (ask) => this.askQuestion(id, live, ask)
+    };
+  }
+  askPermission(id, live, turn, ask) {
+    const session = this.record(id).session;
+    const effect = evaluate(session.permissions, ask.action, ask.resources);
+    if (effect === "deny")
+      return Promise.resolve("reject");
+    const allowedBefore = live.always.some((rule) => rule.action === ask.action && ask.resources.every((resource) => rule.patterns.some((pattern) => matches(pattern, resource))));
+    if (effect === "allow" || allowedBefore)
+      return Promise.resolve("once");
+    if (turn.isEnded || live.abort?.signal.aborted)
+      return Promise.resolve("reject");
+    const request = {
+      id: newID("per"),
+      sessionID: id,
+      action: ask.action,
+      resources: ask.resources,
+      save: ask.save ?? ask.resources,
+      metadata: ask.metadata,
+      message: ask.message
+    };
+    const step = ask.toolCallID ? turn.toolStep(ask.toolCallID) : undefined;
+    if (ask.toolCallID && step)
+      request.source = { type: "tool", messageID: step, id: ask.toolCallID };
+    return new Promise((resolve) => {
+      live.permissions.set(request.id, {
+        request,
+        resolve: (decision) => {
+          if (decision === "always")
+            live.always.push({ action: ask.action, patterns: request.save ?? ask.resources });
+          resolve(decision);
+        }
+      });
+      emit("permission.asked", request, session.location.directory);
+    });
+  }
+  permissions(id) {
+    this.record(id);
+    return [...this.live.get(id)?.permissions.values() ?? []].map((pending) => pending.request);
+  }
+  replyPermission(id, requestID, decision) {
+    const live = this.live.get(id);
+    const pending = live?.permissions.get(requestID);
+    if (!live || !pending)
+      throw new NotFound("That request was answered already.");
+    live.permissions.delete(requestID);
+    pending.resolve(decision);
+    emit("permission.replied", { sessionID: id, requestID }, this.record(id).session.location.directory);
+  }
+  askQuestion(id, live, ask) {
+    const session = this.record(id).session;
+    const form = { id: newID("frm"), sessionID: id, title: ask.title, metadata: { kind: "question" }, fields: ask.fields };
+    return new Promise((resolve) => {
+      live.forms.set(form.id, { form, resolve });
+      emit("form.created", { form }, session.location.directory);
+    });
+  }
+  forms(id) {
+    this.record(id);
+    return [...this.live.get(id)?.forms.values() ?? []].map((pending) => pending.form);
+  }
+  replyForm(id, formID, answer) {
+    const live = this.live.get(id);
+    const pending = live?.forms.get(formID);
+    if (!live || !pending)
+      throw new NotFound("That question was answered already.");
+    live.forms.delete(formID);
+    pending.resolve(answer);
+    emit(answer ? "form.replied" : "form.cancelled", { id: formID, sessionID: id }, this.record(id).session.location.directory);
+  }
+  closeAll() {
+    for (const live of this.live.values()) {
+      live.abort?.abort();
+      live.thread?.close();
+    }
+  }
+}
+
+class NotFound extends Error {
+}
+
+class BadRequest extends Error {
+}
+function mime(uri) {
+  if (uri.startsWith("data:"))
+    return uri.slice(5).split(/[;,]/)[0] || "text/plain";
+  const extension = uri.split("?")[0].split(".").pop()?.toLowerCase() ?? "";
+  return {
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    gif: "image/gif",
+    webp: "image/webp",
+    heic: "image/heic",
+    pdf: "application/pdf",
+    txt: "text/plain",
+    md: "text/markdown",
+    json: "application/json"
+  }[extension] ?? "application/octet-stream";
+}
+function promptFile(file) {
+  const type = mime(file.uri);
+  if (file.uri.startsWith("data:")) {
+    const comma = file.uri.indexOf(",");
+    const isBase64 = file.uri.slice(0, comma).endsWith(";base64");
+    const payload = file.uri.slice(comma + 1);
+    return { uri: file.uri, mime: type, name: file.name, data: isBase64 ? payload : Buffer.from(decodeURIComponent(payload)).toString("base64") };
+  }
+  let path;
+  try {
+    path = file.uri.startsWith("file:") ? fileURLToPath(file.uri) : undefined;
+  } catch {}
+  return { uri: file.uri, mime: type, name: file.name, path };
+}
+
+// Agents/src/server.ts
+var attempts = new Map;
+var json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
+var located = (value) => json({ location: { directory: process.cwd() }, data: value });
+var error = (status, message) => json({ message }, status);
+async function integration(agent, fresh = false) {
+  const account = await agent.account(fresh).catch((error2) => ({ installed: false, signedIn: false, message: String(error2?.message ?? error2) }));
+  return {
+    id: agent.providerID,
+    name: agent.name,
+    metadata: {
+      source: "agent",
+      agent: agent.id,
+      installed: account.installed,
+      message: account.message,
+      account: account.label,
+      install: agent.install,
+      signsOut: Boolean(agent.signOut)
+    },
+    methods: agent.methods(),
+    connections: account.signedIn ? [{ type: "agent", label: account.label, method: "oauth", status: { status: "connected", message: account.label ? `Signed in as ${account.label}` : "Signed in" } }] : []
+  };
+}
+async function models(agents) {
+  const lists = await Promise.all(agents.map(async (agent) => {
+    try {
+      const account = await agent.account();
+      return account.signedIn ? await agent.models() : [];
+    } catch {
+      return [];
+    }
+  }));
+  return lists.flat();
+}
+function page(items, url) {
+  const limit = Number(url.searchParams.get("limit") ?? 100) || 100;
+  const cursor = url.searchParams.get("cursor");
+  let start = 0;
+  if (cursor) {
+    const [, after] = cursor.split(":", 2);
+    const index = items.findIndex((item) => item.id === after);
+    start = index >= 0 ? index + 1 : items.length;
+  }
+  const data = items.slice(start, start + limit);
+  const order = cursor?.split(":", 1)[0] ?? url.searchParams.get("order") ?? "desc";
+  const next = start + limit < items.length && data.length ? `${order}:${data[data.length - 1].id}` : undefined;
+  return { data, cursor: { next } };
+}
+function handler(context) {
+  const expected = "Basic " + Buffer.from(`opencode:${context.password}`).toString("base64");
+  const { sessions, agents } = context;
+  const agentFor = (id) => agents.find((agent) => agent.providerID === id);
+  return async (request) => {
+    if (request.headers.get("authorization") !== expected)
+      return error(401, "Unauthorized");
+    const url = new URL(request.url);
+    const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+    const method = request.method;
+    const body = async () => request.headers.get("content-type")?.includes("json") ? await request.json().catch(() => ({})) : {};
+    try {
+      if (parts[0] !== "api")
+        return error(404, "Not found");
+      const [, area, a, b, c, d, e] = parts;
+      if (area === "info")
+        return json({ version: context.version, pid: process.pid });
+      if (area === "event")
+        return feed();
+      if (area === "integration") {
+        if (!a)
+          return located(await Promise.all(agents.map((agent2) => integration(agent2))));
+        const agent = agentFor(a);
+        if (!agent)
+          return error(404, `No agent ${a}.`);
+        if (!b)
+          return located(await integration(agent, true));
+        if (b === "connect" && c === "oauth") {
+          if (!d && method === "POST") {
+            const { methodID } = await body();
+            if (!agent.signIn)
+              return error(400, `${agent.name} signs in another way.`);
+            const attempt = await agent.signIn(methodID);
+            const id = newID("att");
+            const created = Date.now();
+            const expires = created + 10 * 60000;
+            attempts.set(id, { agent, attempt, created, expires });
+            return located({ attemptID: id, url: attempt.url, instructions: attempt.instructions, mode: attempt.mode, time: { created, expires } });
+          }
+          const pending = d ? attempts.get(d) : undefined;
+          if (!pending)
+            return error(404, "That sign-in is over. Start it again.");
+          if (method === "GET" && !e) {
+            const status = Date.now() > pending.expires ? { status: "expired" } : pending.attempt.status();
+            if (status.status !== "pending")
+              attempts.delete(d);
+            return located(status);
+          }
+          if (method === "POST" && e === "complete") {
+            const { code } = await body();
+            if (!pending.attempt.complete)
+              return error(400, "This sign-in finishes in the browser.");
+            await pending.attempt.complete(String(code ?? ""));
+            return json({});
+          }
+          if (method === "DELETE") {
+            pending.attempt.cancel();
+            attempts.delete(d);
+            return json({});
+          }
+        }
+        if (b === "connect" && c === "key" && method === "POST") {
+          const { key } = await body();
+          if (!agent.signInWithKey)
+            return error(400, `${agent.name} doesn't take a key here.`);
+          await agent.signInWithKey(String(key ?? "").trim());
+          return json({});
+        }
+        if (b === "disconnect" && method === "POST") {
+          if (!agent.signOut)
+            return error(400, `Sign out of ${agent.name} where you signed in.`);
+          await agent.signOut();
+          return json({});
+        }
+      }
+      if (area === "model") {
+        if (a === "default")
+          return located(null);
+        return located(await models(agents));
+      }
+      if (area === "agent" || area === "command" || area === "skill" || area === "mcp")
+        return located([]);
+      if (area === "provider")
+        return located([]);
+      if (area === "session") {
+        if (!a) {
+          if (method === "POST")
+            return json({ data: sessions.create(await body()) });
+          const directory = url.searchParams.get("directory") ?? undefined;
+          const roots = sessions.list(directory);
+          const ordered = url.searchParams.get("cursor")?.startsWith("asc") || url.searchParams.get("order") === "asc" ? [...roots].reverse() : roots;
+          return json(page(ordered, url));
+        }
+        if (a === "active")
+          return json({ data: Object.fromEntries(sessions.active().map((id2) => [id2, { type: "busy" }])) });
+        const id = a;
+        if (!b) {
+          if (method === "GET")
+            return json({ data: sessions.get(id) });
+          if (method === "PATCH") {
+            sessions.update(id, await body());
+            return json({ data: sessions.get(id) });
+          }
+          if (method === "DELETE") {
+            await sessions.remove(id);
+            return json({});
+          }
+        }
+        switch (b) {
+          case "message": {
+            const messages = sessions.messages(id);
+            const asc = url.searchParams.get("order") === "asc" || url.searchParams.get("cursor")?.startsWith("asc");
+            const ordered = asc ? messages : [...messages].reverse();
+            if (c) {
+              const found = messages.find((message) => message.id === c);
+              return found ? json({ data: found }) : error(404, "No such message.");
+            }
+            return json(page(ordered, url));
+          }
+          case "inbox":
+            if (method === "DELETE" && c) {
+              sessions.cancelInput(id, c);
+              return json({});
+            }
+            return json({ data: sessions.inbox(id) });
+          case "prompt": {
+            const input = await body();
+            sessions.prompt(id, { id: input.id ?? newID("msg"), text: String(input.text ?? ""), files: input.files ?? [], delivery: input.delivery ?? "steer" });
+            return json({});
+          }
+          case "command": {
+            const input = await body();
+            sessions.prompt(id, { id: newID("msg"), text: `/${input.name} ${input.text ?? ""}`.trim(), files: input.files ?? [], delivery: input.delivery ?? "steer" });
+            return json({});
+          }
+          case "interrupt":
+            return json({ interrupted: await sessions.interrupt(id) });
+          case "model":
+            sessions.selectModel(id, (await body()).model);
+            return json({});
+          case "agent":
+            sessions.selectAgent(id, (await body()).agent);
+            return json({});
+          case "permission":
+            if (!c)
+              return json({ data: sessions.permissions(id) });
+            if (d === "reply") {
+              const { decision } = await body();
+              sessions.replyPermission(id, c, decision);
+              return json({});
+            }
+            break;
+          case "form":
+            if (!c)
+              return json({ data: sessions.forms(id) });
+            if (d === "reply") {
+              sessions.replyForm(id, c, (await body()).answer ?? {});
+              return json({});
+            }
+            if (method === "DELETE") {
+              sessions.replyForm(id, c, null);
+              return json({});
+            }
+            break;
+          case "view": {
+            const { idle } = await body();
+            sessions.view(id, Number(idle) || Date.now());
+            return json({});
+          }
+          case "diff":
+            return json({ data: [] });
+        }
+      }
+      if (area === "experimental" && a === "session" && b) {
+        const id = b;
+        if (c === "instructions" && d === "entries" && e) {
+          sessions.setInstruction(id, e, method === "DELETE" ? undefined : String((await body()).value ?? ""));
+          return json({});
+        }
+        if (c === "wait") {
+          while (sessions.active().includes(id))
+            await Bun.sleep(200);
+          return json({});
+        }
+      }
+      return error(404, "Not available for this agent.");
+    } catch (caught) {
+      if (caught instanceof NotFound)
+        return error(404, caught.message);
+      if (caught instanceof BadRequest)
+        return error(400, caught.message);
+      return error(500, caught instanceof Error ? caught.message : String(caught));
+    }
+  };
+}
+
+// Agents/src/store.ts
+import { mkdirSync as mkdirSync6, readdirSync as readdirSync2, readFileSync as readFileSync7, renameSync as renameSync2, rmSync as rmSync4, writeFileSync as writeFileSync5 } from "fs";
+import { join as join9 } from "path";
+
+class Store {
+  root;
+  records = new Map;
+  pending = new Map;
+  constructor(root) {
+    this.root = root;
+    mkdirSync6(root, { recursive: true });
+    for (const id of readdirSync2(root)) {
+      try {
+        const folder = join9(root, id);
+        const session = JSON.parse(readFileSync7(join9(folder, "session.json"), "utf8"));
+        let messages = [];
+        try {
+          messages = JSON.parse(readFileSync7(join9(folder, "messages.json"), "utf8"));
+        } catch {}
+        let agent = {};
+        try {
+          agent = JSON.parse(readFileSync7(join9(folder, "agent.json"), "utf8"));
+        } catch {}
+        this.records.set(session.id, { session, messages, agent });
+      } catch {}
+    }
+  }
+  all() {
+    return [...this.records.values()].map((record) => record.session);
+  }
+  get(id) {
+    return this.records.get(id);
+  }
+  add(session) {
+    this.records.set(session.id, { session, messages: [], agent: {} });
+    this.save(session.id, true);
+  }
+  remove(id) {
+    this.records.delete(id);
+    clearTimeout(this.pending.get(id));
+    this.pending.delete(id);
+    rmSync4(join9(this.root, id), { recursive: true, force: true });
+  }
+  save(id, now = false) {
+    clearTimeout(this.pending.get(id));
+    if (now) {
+      this.pending.delete(id);
+      this.write(id);
+      return;
+    }
+    this.pending.set(id, setTimeout(() => {
+      this.pending.delete(id);
+      this.write(id);
+    }, 500));
+  }
+  flush() {
+    for (const id of [...this.pending.keys()])
+      this.save(id, true);
+  }
+  write(id) {
+    const record = this.records.get(id);
+    if (!record)
+      return;
+    const folder = join9(this.root, id);
+    mkdirSync6(folder, { recursive: true });
+    for (const [name, value] of [
+      ["session.json", record.session],
+      ["messages.json", record.messages],
+      ["agent.json", record.agent]
+    ]) {
+      const file = join9(folder, name);
+      writeFileSync5(file + ".new", JSON.stringify(value));
+      renameSync2(file + ".new", file);
+    }
+  }
+}
+
+// Agents/src/main.ts
+var version2 = "1";
+var home = process.env.KUVO_AGENTS_HOME;
+var password = process.env.OPENCODE_PASSWORD;
+if (!home || !password) {
+  console.error("KUVO_AGENTS_HOME and OPENCODE_PASSWORD are needed.");
+  process.exit(2);
+}
+var temporary = process.env.TMPDIR?.replace(/\/$/, "") || join10(home, "tmp");
+mkdirSync7(temporary, { recursive: true });
+process.on("unhandledRejection", (reason2) => console.error("unhandled:", reason2));
+var deps = new Deps(join10(home, "runtime"), join10(home, "cache"));
+var context = { home, temporary, deps };
+var agents = [new ClaudeAgent(context), new CodexAgent(context), new CursorAgent(context), new GrokAgent(context), new AntigravityAgent(context)];
+var store = new Store(join10(home, "sessions"));
+var sessions = new Sessions(store, agents);
+var server = Bun.serve({
+  hostname: "127.0.0.1",
+  port: 0,
+  idleTimeout: 0,
+  fetch: handler({ agents, sessions, password, version: version2 })
+});
+console.log(JSON.stringify({ url: `http://127.0.0.1:${server.port}` }));
+var stopping = false;
+function stop() {
+  if (stopping)
+    return;
+  stopping = true;
+  sessions.closeAll();
+  store.flush();
+  server.stop(true);
+  process.exit(0);
+}
+process.stdin.on("end", stop);
+process.stdin.on("close", stop);
+process.stdin.resume();
+process.on("SIGTERM", stop);
+process.on("SIGINT", stop);

@@ -1,0 +1,138 @@
+// What each outside agent (Claude Code, Codex, Cursor, Grok, Antigravity) gives the bridge: its
+// sign-in, its models, and a conversation that runs turns and reports them on a `Turn`.
+
+import type { Deps } from "./deps"
+import type { Turn, Outcome } from "./turn"
+import type { Decision, FormAnswer, FormField, IntegrationMethod, Model, ModelRef, OAuthStatus, Session, StructuredError } from "./wire"
+
+/** What every agent gets from the bridge: its folders and the SDK installer. */
+export interface AgentContext {
+  home: string
+  temporary: string
+  deps: Deps
+}
+
+export interface Account {
+  /** The agent's program (or package) is there to run. */
+  installed: boolean
+  signedIn: boolean
+  /** Who's signed in, as the agent says: "you@example.com", "Max plan". */
+  label?: string
+  /** What's missing, in words: how to install it, or that it needs a sign-in. */
+  message?: string
+}
+
+export interface SignInAttempt {
+  url: string
+  instructions: string
+  mode: "auto" | "code"
+  status(): OAuthStatus
+  /** For `code`: the code the sign-in page gave you. */
+  complete?(code: string): Promise<void>
+  cancel(): void
+}
+
+export interface PromptFile {
+  /** A file on this Mac, when it's one. */
+  path?: string
+  uri: string
+  mime: string
+  name?: string
+  /** Its contents, base64, when it came inline (a pasted picture). */
+  data?: string
+}
+
+export interface RunInput {
+  text: string
+  files: PromptFile[]
+  model: ModelRef
+  /** Plan mode: look and propose, change nothing. */
+  plan: boolean
+}
+
+export interface PermissionAsk {
+  /** The tool call it's for, when the agent says. */
+  toolCallID?: string
+  /** The engine's name for the kind of access: `edit`, `shell`, `webfetch`, `read`, … */
+  action: string
+  /** What it's for: paths, a command, a web address. */
+  resources: string[]
+  /** What "Always allow" would allow. */
+  save?: string[]
+  metadata?: Record<string, unknown>
+  /** The agent's own words for it, when it has them. */
+  message?: string
+}
+
+export interface QuestionAsk {
+  title: string
+  fields: FormField[]
+  toolCallID?: string
+}
+
+export interface TurnHooks {
+  /** Asks you (or answers from your rules and earlier "Always" answers). */
+  permission(ask: PermissionAsk): Promise<Decision>
+  /** Asks you a question; null when you dismissed it. */
+  question(ask: QuestionAsk): Promise<FormAnswer | null>
+  /** What the app adds to the agent's instructions (a worktree's, the project's other folders). */
+  instructions(): string
+  /** The agent's own state for this session, kept with it (its conversation's ID). */
+  state: Record<string, unknown>
+  saveState(): void
+  /** Approve All: the agent runs its tools without asking (your rules that deny still hold). */
+  approvesAll(): boolean
+  signal: AbortSignal
+}
+
+export interface RunResult {
+  outcome: Outcome
+  error?: StructuredError
+}
+
+export interface Thread {
+  run(input: RunInput, turn: Turn, hooks: TurnHooks): Promise<RunResult>
+  /** Stops the turn under way; `run` then ends with `interrupted`. */
+  interrupt(): Promise<void>
+  close(): void
+}
+
+export interface Agent {
+  /** The bridge's own name for it: `claude`, `codex`, `cursor`, `grok`, `antigravity`. */
+  id: string
+  /** Its models' provider in the app, and its account's ID: `claude-code`, `codex-cli`, … */
+  providerID: string
+  name: string
+  /** The command that installs its program, when it's yours to install. */
+  install?: string
+  methods(): IntegrationMethod[]
+  account(fresh?: boolean): Promise<Account>
+  signIn?(methodID: string): Promise<SignInAttempt>
+  signInWithKey?(key: string): Promise<void>
+  signOut?(): Promise<void>
+  models(): Promise<Model[]>
+  thread(session: Session, state: Record<string, unknown>): Thread
+}
+
+/** A model as the app lists it, from the little an agent says about one. */
+export function model(providerID: string, id: string, name: string, options: { variants?: string[]; images?: boolean; context?: number; released?: number; family?: string } = {}): Model {
+  return {
+    id,
+    providerID,
+    name,
+    family: options.family,
+    capabilities: { tools: true, input: options.images ? ["text", "image"] : ["text"], output: ["text"] },
+    variants: (options.variants ?? []).map((id) => ({ id })),
+    time: { released: options.released ?? 0 },
+    // Paid for by your plan with the agent's maker, not per token here.
+    cost: [{ input: 0, output: 0 }],
+    status: "active",
+    enabled: true,
+    limit: { context: options.context ?? 200_000, output: 32_000 },
+  }
+}
+
+export function failure(error: unknown, type = "agent"): StructuredError {
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : JSON.stringify(error)
+  return { type, message: message || "The agent stopped with an error." }
+}

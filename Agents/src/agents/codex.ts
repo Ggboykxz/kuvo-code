@@ -1,0 +1,526 @@
+// Codex, as T3 Code runs it: your own `codex`, signed in with ChatGPT or an API key (what
+// `codex login` keeps), driven through its app-server (JSON-RPC over stdio). One app-server
+// serves every Codex session; each session is one of its threads.
+
+import { homedir } from "node:os"
+import { join } from "node:path"
+import type { Agent, AgentContext, Account, RunInput, RunResult, SignInAttempt, Thread, TurnHooks } from "../agent"
+import { failure, model } from "../agent"
+import { fromPatch } from "../diff"
+import { which } from "../proc"
+import { RPC, RPCError } from "../rpc"
+import type { Turn } from "../turn"
+import type { FileDiff, FormField, Model, OAuthStatus, Session, TokenUsage } from "../wire"
+
+const places = ["/opt/homebrew/bin", "/usr/local/bin", join(homedir(), ".local/bin"), join(homedir(), ".codex/bin")]
+const outputLimit = 30_000
+
+export class CodexAgent implements Agent {
+  id = "codex"
+  providerID = "codex-cli"
+  name = "Codex"
+  install = "npm install -g @openai/codex"
+  private server?: RPC
+  private starting?: Promise<RPC>
+  private threads = new Map<string, CodexThread>()
+  private logins = new Map<string, (status: OAuthStatus) => void>()
+  private accountCache?: { at: number; account: Account }
+  private modelList?: { at: number; models: Model[] }
+
+  constructor(readonly context: AgentContext) {}
+
+  executable(): string | undefined {
+    return which("codex", places)
+  }
+
+  methods() {
+    return [
+      { type: "oauth" as const, id: "chatgpt", label: "Sign in with ChatGPT" },
+      { type: "key" as const, label: "Use an OpenAI API key" },
+    ]
+  }
+
+  /** The app-server, started the first time it's needed and again after it stops. */
+  async rpc(): Promise<RPC> {
+    if (this.server && !this.server.isClosed) return this.server
+    this.starting ??= this.start().finally(() => (this.starting = undefined))
+    return this.starting
+  }
+
+  private async start(): Promise<RPC> {
+    const executable = this.executable()
+    if (!executable) throw new Error("Install Codex first: npm install -g @openai/codex")
+    const rpc = new RPC([executable, "app-server"], { cwd: this.context.temporary })
+    rpc.onNotification = (method, params) => this.notification(method, params)
+    rpc.onRequest = (method, params) => this.request(method, params)
+    rpc.onExit = () => {
+      if (this.server === rpc) this.server = undefined
+      for (const thread of this.threads.values()) thread.serverStopped()
+    }
+    await rpc.request("initialize", { clientInfo: { name: "kuvo-code", title: "Kuvo Code", version: "1" }, capabilities: { experimentalApi: true, optOutNotificationMethods: ["turn/diff/updated"] } }, 30_000)
+    rpc.notify("initialized")
+    this.server = rpc
+    return rpc
+  }
+
+  private notification(method: string, params: any) {
+    if (method === "account/login/completed") {
+      const done = this.logins.get(params?.loginId)
+      if (done) {
+        this.logins.delete(params.loginId)
+        done(params.success ? { status: "complete" } : { status: "failed", message: params.error ?? "Signing in didn't work." })
+      }
+      this.accountCache = undefined
+      return
+    }
+    if (method === "account/updated") {
+      this.accountCache = undefined
+      return
+    }
+    const threadID = params?.threadId
+    if (threadID) this.threadFor(threadID)?.notification(method, params)
+  }
+
+  private async request(method: string, params: any): Promise<unknown> {
+    const thread = params?.threadId ? this.threadFor(params.threadId) : params?.conversationId ? this.threadFor(params.conversationId) : undefined
+    if (method === "mcpServer/elicitation/request") return { action: "decline" }
+    if (!thread) throw new RPCError(-32601, `No session for ${method}.`)
+    return thread.request(method, params)
+  }
+
+  private threadFor(nativeID: string): CodexThread | undefined {
+    for (const thread of this.threads.values()) if (thread.nativeID === nativeID) return thread
+    return undefined
+  }
+
+  async account(fresh = false): Promise<Account> {
+    if (!this.executable()) return { installed: false, signedIn: false, message: "Install Codex, then sign in here." }
+    if (!fresh && this.accountCache && Date.now() - this.accountCache.at < 30_000) return this.accountCache.account
+    const rpc = await this.rpc()
+    const result: any = await rpc.request("account/read", {}, 20_000)
+    const info = result?.account
+    let account: Account
+    if (!info) {
+      account = { installed: true, signedIn: false, message: "Sign in to Codex with ChatGPT or an OpenAI API key." }
+    } else if (info.type === "chatgpt") {
+      const plan = info.planType ? `ChatGPT ${String(info.planType).charAt(0).toUpperCase()}${String(info.planType).slice(1)}` : "ChatGPT"
+      account = { installed: true, signedIn: true, label: [info.email, plan].filter(Boolean).join(" · ") }
+    } else {
+      account = { installed: true, signedIn: true, label: info.type === "apiKey" ? "OpenAI API key" : String(info.type) }
+    }
+    this.accountCache = { at: Date.now(), account }
+    return account
+  }
+
+  async signIn(): Promise<SignInAttempt> {
+    const rpc = await this.rpc()
+    const result: any = await rpc.request("account/login/start", { type: "chatgpt" }, 30_000)
+    let status: OAuthStatus = { status: "pending" }
+    this.logins.set(result.loginId, (done) => (status = done))
+    return {
+      url: result.authUrl,
+      instructions: "Finish signing in with ChatGPT in your browser. Codex keeps the sign-in, as when you run codex login.",
+      mode: "auto",
+      status: () => status,
+      cancel: () => {
+        this.logins.delete(result.loginId)
+        void rpc.request("account/login/cancel", { loginId: result.loginId }).catch(() => {})
+      },
+    }
+  }
+
+  async signInWithKey(key: string) {
+    const rpc = await this.rpc()
+    await rpc.request("account/login/start", { type: "apiKey", apiKey: key }, 30_000)
+    this.accountCache = undefined
+  }
+
+  async models(): Promise<Model[]> {
+    if (this.modelList && Date.now() - this.modelList.at < 30 * 60_000) return this.modelList.models
+    const rpc = await this.rpc()
+    const models: Model[] = []
+    let cursor: string | undefined
+    let order = 1000
+    do {
+      const page: any = await rpc.request("model/list", cursor ? { cursor } : {}, 30_000)
+      for (const info of page?.data ?? []) {
+        if (info.hidden) continue
+        models.push(
+          model(this.providerID, info.model ?? info.id, info.displayName ?? info.model, {
+            variants: (info.supportedReasoningEfforts ?? []).map((effort: any) => effort.reasoningEffort),
+            images: (info.inputModalities ?? []).includes("image"),
+            context: 400_000,
+            // Listed in Codex's order: its default first.
+            released: info.isDefault ? 2000 : order--,
+          }),
+        )
+      }
+      cursor = page?.nextCursor ?? undefined
+    } while (cursor)
+    this.modelList = { at: Date.now(), models }
+    return models
+  }
+
+  thread(session: Session, state: Record<string, unknown>): Thread {
+    const thread = new CodexThread(this, session, state)
+    this.threads.set(session.id, thread)
+    return thread
+  }
+
+  forget(sessionID: string) {
+    this.threads.delete(sessionID)
+  }
+}
+
+// MARK: A session
+
+interface Active {
+  turn: Turn
+  hooks: TurnHooks
+  resolve: (result: RunResult) => void
+  turnID?: string
+  /** Items whose words came as deltas (their completion doesn't add them again). */
+  streamed: Set<string>
+  /** File changes, by item, for their approval and their result. */
+  changes: Map<string, { path: string; kind: string; diff: string }[]>
+  /** A command's output so far, by item. */
+  output: Map<string, string>
+  /** A tool ran since the last words: the next words start a new step. */
+  toolsSinceText: boolean
+  usage?: TokenUsage
+  problem?: string
+}
+
+class CodexThread implements Thread {
+  nativeID?: string
+  private loaded = false
+  private active?: Active
+
+  constructor(
+    private readonly agent: CodexAgent,
+    private readonly session: Session,
+    private readonly state: Record<string, unknown>,
+  ) {
+    this.nativeID = state.codexThread as string | undefined
+  }
+
+  /** The app-server stopped: a thread must be loaded again, and a turn under way is over. */
+  serverStopped() {
+    this.loaded = false
+    const active = this.active
+    if (!active) return
+    this.active = undefined
+    active.resolve(active.hooks.signal.aborted ? { outcome: "interrupted" } : { outcome: "failed", error: failure(active.problem ?? "Codex stopped.") })
+  }
+
+  private policy(hooks: TurnHooks, plan: boolean) {
+    if (plan) return { approvalPolicy: "untrusted", sandboxPolicy: { type: "readOnly", networkAccess: true } }
+    if (hooks.approvesAll()) return { approvalPolicy: "never", sandboxPolicy: { type: "dangerFullAccess" } }
+    return { approvalPolicy: "untrusted", sandboxPolicy: { type: "readOnly", networkAccess: true } }
+  }
+
+  private async ensureThread(input: RunInput, hooks: TurnHooks) {
+    const rpc = await this.agent.rpc()
+    if (this.nativeID && this.loaded) return rpc
+    const instructions = hooks.instructions() || null
+    const common = { cwd: this.session.location.directory, model: input.model.id, developerInstructions: instructions }
+    if (this.nativeID) {
+      try {
+        await rpc.request("thread/resume", { threadId: this.nativeID, excludeTurns: true, ...common }, 60_000)
+        this.loaded = true
+        return rpc
+      } catch (error) {
+        if (error instanceof RPCError && /archived|unarchive/i.test(error.message)) {
+          await rpc.request("thread/unarchive", { threadId: this.nativeID }).catch(() => {})
+          await rpc.request("thread/resume", { threadId: this.nativeID, excludeTurns: true, ...common }, 60_000)
+          this.loaded = true
+          return rpc
+        }
+        // Gone (deleted, or another Codex's): a new thread, without what came before.
+      }
+    }
+    const started: any = await rpc.request("thread/start", common, 60_000)
+    this.nativeID = started.thread.id
+    this.state.codexThread = this.nativeID
+    hooks.saveState()
+    this.loaded = true
+    return rpc
+  }
+
+  async run(input: RunInput, turn: Turn, hooks: TurnHooks): Promise<RunResult> {
+    const rpc = await this.ensureThread(input, hooks)
+    const items: any[] = [{ type: "text", text: input.text, text_elements: [] }]
+    const others: string[] = []
+    for (const file of input.files) {
+      if (file.mime.startsWith("image/")) {
+        if (file.path) items.push({ type: "localImage", path: file.path })
+        else if (file.data) items.push({ type: "image", url: `data:${file.mime};base64,${file.data}` })
+      } else if (file.path) {
+        others.push(file.path)
+      }
+    }
+    if (others.length) items[0].text += `\n\nAttached files:\n${others.map((path) => `- ${path}`).join("\n")}`
+    const effort = input.model.variant
+    const params: Record<string, unknown> = {
+      threadId: this.nativeID,
+      input: items,
+      cwd: this.session.location.directory,
+      model: input.model.id,
+      summary: "detailed",
+      approvalsReviewer: "user",
+      ...this.policy(hooks, input.plan),
+      ...(effort ? { effort } : {}),
+      collaborationMode: { mode: input.plan ? "plan" : "default", settings: { model: input.model.id, reasoning_effort: effort ?? null, developer_instructions: null } },
+    }
+    return new Promise<RunResult>((resolve) => {
+      const active: Active = { turn, hooks, resolve, streamed: new Set(), changes: new Map(), output: new Map(), toolsSinceText: false }
+      this.active = active
+      turn.startStep()
+      rpc.request("turn/start", params, 60_000).then(
+        (result: any) => {
+          if (result?.turn?.id) active.turnID ??= result.turn.id
+        },
+        (error) => {
+          if (this.active !== active) return
+          this.active = undefined
+          resolve({ outcome: "failed", error: failure(error) })
+        },
+      )
+    })
+  }
+
+  notification(method: string, params: any) {
+    const active = this.active
+    if (!active) return
+    const turn = active.turn
+    if (active.turnID && params?.turnId && params.turnId !== active.turnID) return
+    switch (method) {
+      case "turn/started":
+        active.turnID ??= params.turn?.id
+        return
+      case "item/agentMessage/delta":
+        this.words(active)
+        active.streamed.add(params.itemId)
+        turn.text(params.delta ?? "")
+        return
+      case "item/reasoning/summaryTextDelta":
+        this.words(active)
+        turn.reasoning(params.delta ?? "")
+        return
+      case "item/commandExecution/outputDelta": {
+        const output = ((active.output.get(params.itemId) ?? "") + (params.delta ?? "")).slice(-outputLimit)
+        active.output.set(params.itemId, output)
+        turn.toolProgress(params.itemId, { output })
+        return
+      }
+      case "item/started":
+        return this.itemStarted(active, params.item)
+      case "item/completed":
+        return this.itemCompleted(active, params.item)
+      case "thread/tokenUsage/updated": {
+        const last = params.tokenUsage?.last
+        if (last) {
+          active.usage = {
+            input: Math.max(0, (last.inputTokens ?? 0) - (last.cachedInputTokens ?? 0)),
+            output: Math.max(0, (last.outputTokens ?? 0) - (last.reasoningOutputTokens ?? 0)),
+            reasoning: last.reasoningOutputTokens ?? 0,
+            cache: { read: last.cachedInputTokens ?? 0, write: last.cacheWriteInputTokens ?? 0 },
+          }
+        }
+        return
+      }
+      case "error":
+        if (!params.willRetry) active.problem = params.error?.additionalDetails || params.error?.message
+        return
+      case "turn/completed": {
+        this.active = undefined
+        turn.endStep({ tokens: active.usage })
+        const status = params.turn?.status
+        if (active.hooks.signal.aborted || status === "interrupted") active.resolve({ outcome: "interrupted" })
+        else if (status === "failed") active.resolve({ outcome: "failed", error: failure(params.turn?.error?.message ?? active.problem ?? "Codex stopped with an error.") })
+        else active.resolve({ outcome: "succeeded" })
+        return
+      }
+    }
+  }
+
+  /** Words after a tool begin a new step, as a model's next answer does. */
+  private words(active: Active) {
+    if (!active.toolsSinceText) return
+    active.toolsSinceText = false
+    active.turn.endStep({ tokens: active.usage })
+    active.usage = undefined
+    active.turn.startStep()
+  }
+
+  private itemStarted(active: Active, item: any) {
+    const turn = active.turn
+    switch (item?.type) {
+      case "commandExecution":
+        active.toolsSinceText = true
+        turn.toolStart(item.id, "shell", { command: unwrapShell(item.command ?? ""), cwd: item.cwd })
+        return
+      case "fileChange": {
+        active.toolsSinceText = true
+        const changes = (item.changes ?? []).map((change: any) => ({ path: change.path, kind: change.kind?.type ?? "update", diff: change.diff ?? "" }))
+        active.changes.set(item.id, changes)
+        turn.toolStart(item.id, "patch", { files: changes.map((change: { path: string }) => change.path) })
+        return
+      }
+      case "mcpToolCall":
+        active.toolsSinceText = true
+        turn.toolStart(item.id, `${item.server}_${item.tool}`, item.arguments ?? {})
+        return
+      case "dynamicToolCall":
+        active.toolsSinceText = true
+        turn.toolStart(item.id, item.tool, item.arguments ?? {})
+        return
+      case "webSearch":
+        active.toolsSinceText = true
+        turn.toolStart(item.id, "websearch", { query: item.query ?? item.action?.query ?? "" })
+        return
+    }
+  }
+
+  private itemCompleted(active: Active, item: any) {
+    const turn = active.turn
+    switch (item?.type) {
+      case "agentMessage":
+        if (!active.streamed.has(item.id) && item.text) {
+          this.words(active)
+          turn.text(item.text)
+        }
+        turn.endBlock()
+        return
+      case "reasoning":
+        turn.endBlock()
+        return
+      case "plan":
+        // Plan mode's proposal: the plan, in words.
+        if (item.text) {
+          this.words(active)
+          turn.text(item.text)
+          turn.endBlock()
+        }
+        return
+      case "commandExecution": {
+        const output = (item.aggregatedOutput ?? active.output.get(item.id) ?? "").slice(-outputLimit)
+        if (item.status === "declined") turn.toolFailed(item.id, "Declined.")
+        else if (item.status === "failed" && item.exitCode == null) turn.toolFailed(item.id, output || "The command failed.")
+        else turn.toolSucceeded(item.id, output, { output, exit: item.exitCode ?? 0 })
+        return
+      }
+      case "fileChange": {
+        const changes: { path: string; kind: string; diff: string }[] = (item.changes ?? []).map((change: any) => ({ path: change.path, kind: change.kind?.type ?? "update", diff: change.diff ?? "" }))
+        const files: FileDiff[] = changes.map((change) => fromPatch(change.path, change.diff, change.kind === "add" ? "added" : change.kind === "delete" ? "deleted" : "modified"))
+        if (item.status === "declined") turn.toolFailed(item.id, "Declined.", { files })
+        else if (item.status === "failed") turn.toolFailed(item.id, "The change couldn't be made.", { files })
+        else turn.toolSucceeded(item.id, changes.map((change) => change.path).join("\n"), { files })
+        return
+      }
+      case "mcpToolCall": {
+        const text = (item.result?.content ?? []).map((part: any) => part?.text ?? "").filter(Boolean).join("\n")
+        if (item.error || item.status === "failed") turn.toolFailed(item.id, item.error?.message ?? text ?? "The tool failed.")
+        else turn.toolSucceeded(item.id, text.slice(0, outputLimit))
+        return
+      }
+      case "dynamicToolCall": {
+        const text = (item.contentItems ?? []).map((part: any) => part?.text ?? "").filter(Boolean).join("\n")
+        if (item.success === false) turn.toolFailed(item.id, text || "The tool failed.")
+        else turn.toolSucceeded(item.id, text.slice(0, outputLimit))
+        return
+      }
+      case "webSearch":
+        turn.toolSucceeded(item.id, "")
+        return
+    }
+  }
+
+  async request(method: string, params: any): Promise<unknown> {
+    const active = this.active
+    if (!active) {
+      if (method === "item/tool/requestUserInput") return { answers: {} }
+      return method.endsWith("Approval") || method.endsWith("/requestApproval") ? (method.startsWith("item/") ? { decision: "decline" } : { decision: "denied" }) : {}
+    }
+    const hooks = active.hooks
+    switch (method) {
+      case "item/commandExecution/requestApproval": {
+        const decision = await hooks.permission({ toolCallID: params.itemId, action: "shell", resources: [unwrapShell(params.command ?? "")], message: params.reason ?? undefined })
+        return { decision: decision === "always" ? "acceptForSession" : decision === "once" ? "accept" : "decline" }
+      }
+      case "item/fileChange/requestApproval": {
+        const changes = active.changes.get(params.itemId) ?? []
+        const files = changes.map((change) => fromPatch(change.path, change.diff, change.kind === "add" ? "added" : change.kind === "delete" ? "deleted" : "modified"))
+        const decision = await hooks.permission({
+          toolCallID: params.itemId,
+          action: "edit",
+          resources: changes.length ? changes.map((change) => change.path) : [params.grantRoot ?? "*"],
+          metadata: files.length ? { files } : undefined,
+          message: params.reason ?? undefined,
+        })
+        return { decision: decision === "always" ? "acceptForSession" : decision === "once" ? "accept" : "decline" }
+      }
+      case "item/permissions/requestApproval": {
+        const paths = [...(params.permissions?.fileSystem?.read ?? []), ...(params.permissions?.fileSystem?.write ?? [])]
+        const decision = await hooks.permission({ toolCallID: params.itemId, action: "external_directory", resources: paths.length ? paths : ["*"], message: params.reason ?? undefined })
+        return decision === "reject" ? { permissions: {}, scope: "turn" } : { permissions: params.permissions, scope: decision === "always" ? "session" : "turn" }
+      }
+      case "execCommandApproval": {
+        const command = Array.isArray(params.command) ? params.command.join(" ") : String(params.command ?? "")
+        const decision = await hooks.permission({ toolCallID: params.callId, action: "shell", resources: [command], message: params.reason ?? undefined })
+        return { decision: decision === "always" ? "approved_for_session" : decision === "once" ? "approved" : "denied" }
+      }
+      case "applyPatchApproval": {
+        const paths = Object.keys(params.fileChanges ?? {})
+        const decision = await hooks.permission({ toolCallID: params.callId, action: "edit", resources: paths.length ? paths : ["*"], message: params.reason ?? undefined })
+        return { decision: decision === "always" ? "approved_for_session" : decision === "once" ? "approved" : "denied" }
+      }
+      case "item/tool/requestUserInput": {
+        const questions = (params.questions ?? []) as { id: string; header?: string; question: string; options?: { label: string; description?: string }[]; isOther?: boolean }[]
+        const fields: FormField[] = questions.map((question) => ({
+          key: question.id,
+          title: question.header ?? "Question",
+          description: question.question,
+          required: true,
+          type: "string",
+          options: question.options?.map((option) => ({ value: option.label, label: option.label, description: option.description })),
+          custom: question.isOther ?? !question.options?.length,
+        }))
+        const answer = await hooks.question({ title: questions.length === 1 ? questions[0].header ?? "Question" : "Questions", fields, toolCallID: params.itemId })
+        const answers: Record<string, { answers: string[] }> = {}
+        for (const question of questions) {
+          const value = answer?.[question.id]
+          answers[question.id] = { answers: value === undefined || value === null ? [] : Array.isArray(value) ? value.map(String) : [String(value)] }
+        }
+        return { answers }
+      }
+    }
+    throw new RPCError(-32601, `Method not found: ${method}`)
+  }
+
+  async interrupt() {
+    const active = this.active
+    if (!active || !this.nativeID) return
+    const rpc = await this.agent.rpc().catch(() => undefined)
+    for (let waited = 0; waited < 10_000 && !active.turnID && this.active === active; waited += 100) await Bun.sleep(100)
+    if (rpc && active.turnID) await rpc.request("turn/interrupt", { threadId: this.nativeID, turnId: active.turnID }, 10_000).catch(() => {})
+    for (let waited = 0; waited < 10_000 && this.active === active; waited += 100) await Bun.sleep(100)
+    if (this.active === active) {
+      this.active = undefined
+      active.resolve({ outcome: "interrupted" })
+    }
+  }
+
+  close() {
+    this.agent.forget(this.session.id)
+    if (this.nativeID && this.loaded) void this.agent.rpc().then((rpc) => rpc.request("thread/unsubscribe", { threadId: this.nativeID }).catch(() => {}), () => {})
+  }
+}
+
+/** The command as you'd type it: Codex runs each in your login shell (`/bin/zsh -lc "…"`). */
+export function unwrapShell(command: string): string {
+  const match = command.match(/^\/bin\/(?:zsh|bash|sh) -lc (["'])([\s\S]*)\1$/)
+  if (!match) return command
+  const inner = match[2]
+  return match[1] === '"' ? inner.replace(/\\(["\\$`])/g, "$1") : inner.replace(/'"'"'/g, "'")
+}
