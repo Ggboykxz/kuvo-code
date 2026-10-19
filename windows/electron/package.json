@@ -7,8 +7,8 @@
   "private": true,
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder --win",
-    "build:portable": "electron-builder --win portable",
+    "build": "electron-builder --win --publish never",
+    "build:portable": "electron-builder --win portable --publish never",
     "smoke": "node smoke.js"
   },
   "dependencies": {
