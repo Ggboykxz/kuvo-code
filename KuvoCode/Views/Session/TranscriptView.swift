@@ -332,6 +332,9 @@ struct TranscriptView: View {
             case .shell(let shell):
                 rows.append(.shell(shell))
             case .synthetic(let notice), .system(let notice):
+                // A turn the app or the engine started (a model switched mid-run carries on), timed
+                // from it as one you started is from your message.
+                if turn.started == nil { turn.started = notice.time.created }
                 let sources = notice.instructionSources
                 if !sources.isEmpty, sources.allSatisfy({ $0.contains(ProjectFolders.instructionKey) }) {
                     rows.append(.notice(notice.id, "folder", "Project folders updated"))
@@ -381,7 +384,11 @@ struct TranscriptView: View {
             // step writing or running a tool after it (a step stays open while its tools run).
             var quiet: Milliseconds?
             switch messages.last {
-            case .assistant(let step)?: quiet = step.time.completed ?? (step.content.isEmpty ? step.time.created : nil)
+            case .assistant(let step)?:
+                // Partway through its reply (not a tool at work): since it last sent anything, so a
+                // reply that stalls midway says so as well.
+                let toolRuns = step.content.contains { if case .tool(let call) = $0, case .running = call.state { true } else { false } }
+                quiet = step.time.completed ?? (step.content.isEmpty ? step.time.created : toolRuns ? nil : model.transcript.lastHeard)
             case .user(let message)?: quiet = message.time.created
             case .synthetic(let notice)?, .system(let notice)?: quiet = notice.time.created
             default: break

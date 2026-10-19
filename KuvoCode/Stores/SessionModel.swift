@@ -1070,11 +1070,26 @@ final class SessionModel {
     func selectModel(_ model: ModelRef) {
         guard canReach else { return }
         guard !model.sameModel(as: session.model) || model.variant != session.model?.variant else { return }
+        // Another model while it works: the step under way stops and the run goes on with the new
+        // one at once (or says why it can't), rather than the switch waiting for the next step,
+        // which a stalled step never reaches. Not while it waits on you: that would lose the ask.
+        let switchesNow = transcript.isRunning && !model.sameModel(as: session.model) && permissions.isEmpty && forms.isEmpty
         session.model = model
         Task {
-            do { try await api.selectModel(session: id, model: model) } catch { failure = error.localizedDescription }
+            do {
+                try await api.selectModel(session: id, model: model)
+                if switchesNow {
+                    try await api.addSynthetic(session: id, text: Self.switchedModelNote)
+                    try await api.interrupt(session: id, resume: true)
+                }
+            } catch {
+                failure = error.localizedDescription
+            }
         }
     }
+
+    /// What the agent hears when you switch its model mid-run (the conversation doesn't show it).
+    static let switchedModelNote = "<system-reminder>The user switched the model while you were working. Carry on with the task from where you left off.</system-reminder>"
 
     var approval: ToolApproval { ToolApproval(rules: session.permissions) }
 
