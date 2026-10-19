@@ -85,6 +85,12 @@ final class FileTree {
         let isDirectory: Bool
         var id: URL { url }
         var name: String { url.lastPathComponent }
+
+        /// Folders first, then names as Finder orders them: file3 before file29.
+        static func inFinderOrder(_ a: Entry, _ b: Entry) -> Bool {
+            if a.isDirectory != b.isDirectory { return a.isDirectory }
+            return a.name.localizedStandardCompare(b.name) == .orderedAscending
+        }
     }
 
     /// The project's folders, the primary one first.
@@ -142,7 +148,7 @@ final class FileTree {
                 let listed = await Task.detached { RemoteShell.list(directory) ?? [] }.value
                 children[directory] = listed
                     .map { Entry(url: directory.appending(path: $0.name, directoryHint: $0.isDirectory ? .isDirectory : .notDirectory), isDirectory: $0.isDirectory) }
-                    .sorted { ($0.isDirectory ? 0 : 1, $0.name.lowercased()) < ($1.isDirectory ? 0 : 1, $1.name.lowercased()) }
+                    .sorted(by: Entry.inFinderOrder)
             }
             return []
         }
@@ -150,7 +156,7 @@ final class FileTree {
         let entries = urls
             .filter { $0.lastPathComponent != ".DS_Store" }
             .map { Entry(url: $0, isDirectory: (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true) }
-            .sorted { ($0.isDirectory ? 0 : 1, $0.name.lowercased()) < ($1.isDirectory ? 0 : 1, $1.name.lowercased()) }
+            .sorted(by: Entry.inFinderOrder)
         children[directory] = entries
         return entries
     }
