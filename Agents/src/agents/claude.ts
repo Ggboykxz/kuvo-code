@@ -70,7 +70,7 @@ export class ClaudeAgent implements Agent {
       name: "Claude Code",
       executable,
       npmPackage: "@anthropic-ai/claude-code",
-      nativeUpdate: { args: ["update"], isNative: (path) => /\/\.local\/share\/claude\/|\/\.claude\/local\//.test(path) },
+      nativeUpdate: { args: ["update"], isNative: (path) => /\/\.local\/share\/claude\/|\/\.claude\/local\//.test(path), distTag: updateChannel },
     }
   }
 
@@ -252,6 +252,17 @@ function modelName(info: { value: string; displayName: string; description?: str
 /** Its family, for its maker's mark and so each shows in the short list: "claude-opus". */
 function family(name: string): string {
   return "claude-" + (name.split(/\s+/)[0] ?? "").toLowerCase()
+}
+
+/** The channel `claude update` follows (`autoUpdatesChannel` in your settings), as npm names it. */
+function updateChannel(): string {
+  try {
+    const folder = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude")
+    const settings = JSON.parse(readFileSync(join(folder, "settings.json"), "utf8"))
+    return settings?.autoUpdatesChannel === "stable" ? "stable" : "latest"
+  } catch {
+    return "latest"
+  }
 }
 
 function fallbackModels(providerID: string): Model[] {

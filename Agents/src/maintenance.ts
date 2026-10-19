@@ -29,8 +29,11 @@ export interface MaintenanceDefinition {
   name: string
   executable: string
   npmPackage: string
-  /** The agent's own updater, and how to tell its own installer put the program there. */
-  nativeUpdate?: { args: string[]; isNative: (realPath: string) => boolean }
+  /**
+   * The agent's own updater, how to tell its own installer put the program there, and the npm
+   * dist-tag it updates to (its channel), when not `latest`.
+   */
+  nativeUpdate?: { args: string[]; isNative: (realPath: string) => boolean; distTag?: () => string }
 }
 
 const checked = new Map<string, { at: number; value: Maintenance }>()
@@ -42,7 +45,8 @@ export async function maintenance(definition: MaintenanceDefinition, fresh = fal
   const kept = checked.get(definition.executable)
   if (!fresh && kept && Date.now() - kept.at < 10 * 60_000) return kept.value
   const [installed, updater] = await Promise.all([installedVersion(definition.executable), resolveUpdater(definition)])
-  const latest = updater.latest ?? (await npmLatest(definition.npmPackage, fresh))
+  // Homebrew's own newest, or none known: npm's may not have reached it.
+  const latest = updater.homebrew ? updater.latest : (updater.latest ?? (await npmLatest(definition.npmPackage, fresh, updater.distTag)))
   const value: Maintenance = { installed, latest, command: updater.command, shown: updater.shown, env: updater.env }
   checked.set(definition.executable, { at: Date.now(), value })
   return value
@@ -108,14 +112,15 @@ export function compareVersions(a: string, b: string): number {
   return preA < preB ? -1 : 1
 }
 
-/** The newest release on npm, which an agent's own updater and npm installs follow. */
-async function npmLatest(name: string, fresh: boolean): Promise<string | undefined> {
-  const kept = newest.get(name)
+/** The newest release on npm (on a dist-tag: a channel), which an agent's own updater and npm installs follow. */
+async function npmLatest(name: string, fresh: boolean, tag = "latest"): Promise<string | undefined> {
+  const key = `${name}@${tag}`
+  const kept = newest.get(key)
   if (!fresh && kept && Date.now() - kept.at < 6 * 60 * 60_000) return kept.value
   try {
-    const response = await fetch(`https://registry.npmjs.org/${name.replace("/", "%2F")}/latest`, { signal: AbortSignal.timeout(10_000) })
+    const response = await fetch(`https://registry.npmjs.org/${name.replace("/", "%2F")}/${tag}`, { signal: AbortSignal.timeout(10_000) })
     const value = response.ok ? (((await response.json()) as { version?: string }).version ?? undefined) : undefined
-    newest.set(name, { at: Date.now(), value })
+    newest.set(key, { at: Date.now(), value })
     return value
   } catch {
     return kept?.value
@@ -128,6 +133,10 @@ interface Updater {
   env?: Record<string, string>
   /** What that installer can deliver, when it isn't npm's newest (Homebrew trails it). */
   latest?: string
+  /** Homebrew's: only it knows its newest. */
+  homebrew?: boolean
+  /** The npm dist-tag its updater follows. */
+  distTag?: string
 }
 
 async function resolveUpdater(definition: MaintenanceDefinition): Promise<Updater> {
@@ -137,7 +146,7 @@ async function resolveUpdater(definition: MaintenanceDefinition): Promise<Update
   } catch {}
   const name = basename(definition.executable)
   const native = definition.nativeUpdate
-  const nativeUpdater: Updater = native ? { command: [definition.executable, ...native.args], shown: [name, ...native.args].join(" ") } : {}
+  const nativeUpdater: Updater = native ? { command: [definition.executable, ...native.args], shown: [name, ...native.args].join(" "), distTag: native.distTag?.() } : {}
   if (native?.isNative(realPath) || (native && native.isNative(definition.executable))) return nativeUpdater
 
   // npm names the package, so it outranks a Homebrew keg the path passes through (a Homebrew
@@ -169,6 +178,7 @@ async function resolveUpdater(definition: MaintenanceDefinition): Promise<Update
           command: [brew, "upgrade", ...(cask ? ["--cask"] : []), keg.name],
           shown: `brew upgrade ${cask ? "--cask " : ""}${keg.name}`,
           latest: info ? homebrewLatest(info.stdout, cask) : undefined,
+          homebrew: true,
         }
       }
     }
