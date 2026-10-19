@@ -23,6 +23,8 @@ struct ReplyDocument {
     struct Style: Hashable {
         var size: CGFloat = 14
         var design: NSFontDescriptor.SystemDesign = .default
+        /// Dark or light: pictures in the text (a formula, a face) are drawn for one.
+        var dark = false
 
         var body: NSFont { Self.font(size, weight: .regular, design: design) }
         var codeSize: CGFloat { size * 0.85 }
@@ -385,7 +387,7 @@ struct ReplyDocument {
             if let background = run.swiftUI.backgroundColor { attributes[.backgroundColor] = NSColor(background) }
             if let foreground = run.swiftUI.foregroundColor { attributes[.foregroundColor] = NSColor(foreground) }
             if let attachment = run.textual.attachment {
-                text.append(ReplyAttachments.attachment(for: attachment, attributes: attributes, size: fontSize))
+                text.append(ReplyAttachments.attachment(for: attachment, attributes: attributes, size: fontSize, dark: style.dark))
                 continue
             }
             // A line break inside a paragraph, not a new paragraph.
@@ -503,7 +505,7 @@ enum ReplyAttachments {
         return NSAttributedString(attachment: item)
     }
 
-    static func attachment(for attachment: AnyAttachment, attributes: [NSAttributedString.Key: Any], size: CGFloat) -> NSAttributedString {
+    static func attachment(for attachment: AnyAttachment, attributes: [NSAttributedString.Key: Any], size: CGFloat, dark: Bool) -> NSAttributedString {
         let item = NSTextAttachment()
         // Sized and set on the line as Textual sets it, by its own measures at the text's size.
         let environment = TextEnvironmentValues(font: .system(size: size))
@@ -512,7 +514,6 @@ enum ReplyAttachments {
         if attachment.base is FileIconAttachment {
             item.image = fileIcon(bounds)
         } else {
-            let dark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             let key = "\(attachment.hashValue)|\(bounds.width)x\(bounds.height)|\(dark)"
             item.image = images[key] ?? {
                 // Drawn at its own size, which can be larger than it shows (a formula is), and

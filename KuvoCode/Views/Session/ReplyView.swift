@@ -14,7 +14,7 @@ struct ReplyView: NSViewRepresentable {
     @Environment(\.cardIsFocused) private var cardIsFocused
 
     private var style: ReplyDocument.Style {
-        ReplyDocument.Style(size: font.size, design: font.typeface.systemDesign)
+        ReplyDocument.Style(size: font.size, design: font.typeface.systemDesign, dark: scheme == .dark)
     }
 
     func makeNSView(context: Context) -> ReplyPieceView {
@@ -235,7 +235,19 @@ final class ReplyTextView: NSTextView, NSTextViewDelegate {
             if let plain = value as? String {
                 text += plain
             } else {
-                text += storage.attributedSubstring(from: run).string
+                var part = storage.attributedSubstring(from: run).string as NSString
+                // A table's cells: a row on a line, its cells apart by tabs.
+                var index = 0
+                while index < part.length {
+                    let character = part.character(at: index)
+                    if character == 10, run.location + index + 1 < storage.length,
+                       let next = (storage.attribute(.paragraphStyle, at: run.location + index + 1, effectiveRange: nil) as? NSParagraphStyle)?.textBlocks.first as? NSTextTableBlock,
+                       next.startingColumn > 0 {
+                        part = part.replacingCharacters(in: NSRange(location: index, length: 1), with: "\t") as NSString
+                    }
+                    index += 1
+                }
+                text += part as String
             }
         }
         return text.replacingOccurrences(of: "\u{2028}", with: "\n").replacingOccurrences(of: "\u{200B}", with: "---")
@@ -353,6 +365,8 @@ final class ReplyCodeView: NSView {
         layer?.borderWidth = 1
         numbers.alignment = .right
         numbers.isSelectable = false
+        // Beside the code, not part of it, as Textual's.
+        numbers.setAccessibilityElement(false)
         numbers.textColor = .tertiaryLabelColor
         scroll.drawsBackground = false
         scroll.hasHorizontalScroller = true

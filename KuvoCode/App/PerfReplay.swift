@@ -811,6 +811,29 @@ enum PerfCompare {
     }
 }
 
+/// KUVO_PERF_COPY_TEST=<file>: a few seconds after launch, all of each TextKit reply text in the
+/// window selected and copied (to a pasteboard of its own), written to the file one after another.
+@MainActor
+enum PerfCopyTest {
+    static func run() {
+        guard let file = ProcessInfo.processInfo.environment["KUVO_PERF_COPY_TEST"] else { return }
+        Task {
+            try? await Task.sleep(for: .seconds(8))
+            func texts(in view: NSView) -> [ReplyTextView] { (view as? ReplyTextView).map { [$0] } ?? view.subviews.flatMap(texts) }
+            let views = NSApp.windows.compactMap(\.contentView).flatMap(texts)
+            let board = NSPasteboard(name: .init("kuvo.copy-test"))
+            var out = ""
+            for view in views.prefix(6) {
+                view.selectAll(nil)
+                _ = view.writeSelection(to: board, types: [.string])
+                out += "=== \(view.textStorage?.length ?? 0) characters\n" + (board.string(forType: .string) ?? "(nothing)") + "\n"
+                view.setSelectedRange(NSRange(location: 0, length: 0))
+            }
+            try? out.write(toFile: file, atomically: true, encoding: .utf8)
+        }
+    }
+}
+
 /// TextKit's own view, for comparing.
 private struct PlainTextView: NSViewRepresentable {
     let text: NSAttributedString

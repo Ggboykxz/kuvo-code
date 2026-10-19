@@ -142,6 +142,7 @@ struct TranscriptView: View {
         .task { await PerfRender.run(model: model) }
         .task { await PerfDrag.run() }
         .onAppear { PerfCompare.run() }
+        .onAppear { PerfCopyTest.run() }
         // KUVO_DEMO_WANDER=<seconds>: that long after it opens, scrolls up a screen or two and back
         // down, again and again, as you would reading what streams in, for KUVO_DEMO_WANDER_FOR
         // seconds: scroll gestures, as a trackpad sends them, through AppKit.
@@ -927,7 +928,7 @@ struct MarkdownText: View {
     }
 }
 
-/// Markdown, drawn by Textual. Equal when its words and marks are: a piece that's done isn't read
+/// Markdown, drawn with TextKit (`ReplyView`). Equal when its words and marks are: a piece that's done isn't read
 /// again as the rest of its reply streams in.
 private struct MarkdownPiece: View, Equatable {
     let text: String
@@ -942,17 +943,22 @@ private struct MarkdownPiece: View, Equatable {
 
     var body: some View {
         #if DEBUG
-        if Perf.textKit {
-            ReplyView(markdown: text, parser: FileLinkingParser(folders: folders, mentions: mentions, highlight: highlight)) { url in
-                guard url.isFileURL else { return false }
-                app.utilities.show(url)
-                return true
-            }
-        } else {
-            textual
-        }
+        if Perf.textual { textual } else { textKit }
         #else
-        textual
+        textKit
+        #endif
+    }
+
+    /// With TextKit: a few views a piece, where Textual makes several for every block.
+    private var textKit: some View {
+        ReplyView(markdown: text, parser: FileLinkingParser(folders: folders, mentions: mentions, highlight: highlight)) { url in
+            // A file opens in the side panel; web links in the browser.
+            guard url.isFileURL else { return false }
+            app.utilities.show(url)
+            return true
+        }
+        #if DEBUG
+        .onAppear { ScrollFrameMonitor.piecesMade += 1 }
         #endif
     }
 
@@ -1626,8 +1632,8 @@ enum Perf {
     static let noGlass = ProcessInfo.processInfo.environment["KUVO_PERF_NO_GLASS"] != nil
     static let noEdge = ProcessInfo.processInfo.environment["KUVO_PERF_NO_EDGE"] != nil
     static let noAnimation = ProcessInfo.processInfo.environment["KUVO_PERF_NO_ANIM"] != nil
-    /// KUVO_PERF_TEXTKIT: replies drawn with TextKit (`ReplyView`) instead of Textual.
-    static let textKit = ProcessInfo.processInfo.environment["KUVO_PERF_TEXTKIT"] != nil
+    /// KUVO_PERF_TEXTUAL: replies drawn by Textual, as they were, instead of TextKit (`ReplyView`).
+    static let textual = ProcessInfo.processInfo.environment["KUVO_PERF_TEXTUAL"] != nil
 }
 #endif
 
