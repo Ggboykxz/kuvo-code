@@ -816,3 +816,77 @@ body.dropping::after {
   border: 3px dashed var(--accent);
   pointer-events: none;
 }
+
+/* ---- Context gauge details (the Mac app's gauge popover) ---- */
+.gauge-pop {
+  position: fixed; top: 46px; right: 12px; z-index: 50;
+  min-width: 260px;
+  background: var(--panel-glass);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: var(--shadow-lifted);
+  backdrop-filter: blur(14px);
+  padding: var(--space-3);
+  display: flex; flex-direction: column; gap: var(--space-1);
+}
+.gauge-pop[hidden] { display: none; }
+.gauge-line { font-size: var(--text-sm); color: var(--ink); }
+.gauge-line.big { font-size: var(--text-md); font-weight: 600; }
+.gauge-line.faint { color: var(--ink-faint); font-size: var(--text-xs); }
+
+/* ---- Recent projects (the Mac app keeps a list) ---- */
+.picker-recent { display: flex; flex-direction: column; gap: var(--space-1); margin-bottom: var(--space-3); }
+.picker-recent[hidden] { display: none; }
+.project-row { display: flex; align-items: center; gap: var(--space-2); }
+.project-open {
+  flex: 1; text-align: left;
+  display: flex; flex-direction: column; gap: 2px;
+  padding: var(--space-2);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--panel-2); color: var(--ink);
+  cursor: pointer;
+}
+.project-open:hover { border-color: var(--accent); }
+.project-name { font-size: var(--text-md); font-weight: 500; }
+.close-project { flex-shrink: 0; }
+.project-settings { display: flex; flex-direction: column; gap: var(--space-1); }
+
+/* ---- Settings, wide: nav + pages ---- */
+.settings-card.wide { width: min(620px, 94vw); }
+.settings-shell { display: flex; gap: var(--space-4); min-height: 260px; }
+.settings-nav { display: flex; flex-direction: column; gap: var(--space-1); min-width: 150px; }
+.settings-nav button {
+  text-align: left; padding: var(--space-2) var(--space-3);
+  border: 0; border-radius: var(--radius-sm);
+  background: transparent; color: var(--ink-soft);
+  font-size: var(--text-md); cursor: pointer;
+}
+.settings-nav button:hover { background: var(--panel-2); }
+.settings-nav button.active { background: var(--accent-soft); color: var(--ink); font-weight: 500; }
+.settings-pages { flex: 1; display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.settings-page[hidden] { display: none; }
+.shortcut-list { display: flex; flex-direction: column; gap: var(--space-1); }
+.shortcut-row {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  font-size: var(--text-md); font-variant-numeric: tabular-nums;
+}
+
+/* ---- Analytics notice (the Mac app's AnalyticsNotice) ---- */
+.AnalyticsNotice {
+  position: fixed; inset: 0; z-index: 90;
+  background: rgba(15, 23, 42, 0.35);
+  backdrop-filter: blur(3px);
+  display: flex; align-items: center; justify-content: center;
+}
+.AnalyticsNotice[hidden] { display: none; }
+.analytics-card {
+  width: min(420px, 92vw);
+  background: var(--panel);
+  border: 1px solid var(--line); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lifted);
+  padding: var(--space-5);
+  display: flex; flex-direction: column; gap: var(--space-3);
+}
+.analytics-card .primary { align-self: flex-end; }

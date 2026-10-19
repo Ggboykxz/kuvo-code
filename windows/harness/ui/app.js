@@ -134,6 +134,9 @@ const state = {
   agent: "",
   split: null,
   commands: [],
+  projects: [],
+  shortcuts: null,
+  contextGauge: null,
 };
 
 let renderQueued = false;
@@ -493,12 +496,45 @@ function compactTokens(n) {
 function updateContextGauge(session) {
   const gauge = $("context-gauge");
   const total = session?.tokens?.total ?? 0;
-  if (!total) { gauge.hidden = true; return; }
+  if (!total) { gauge.hidden = true; $("gauge-pop").hidden = true; return; }
   gauge.hidden = false;
+  // The gauge knows what the number is: the model's limit and the session's cost,
+  // like the Mac app's ContextGauge.
+  const ref = session?.model;
+  const model = state.models.find(item => ref && `${item.providerID}/${item.id}` === `${ref.providerID}/${ref.id}`);
+  const limit = model?.limit?.context ?? 0;
+  const fraction = limit > 0 ? Math.min(total / limit, 1) : null;
   const label = compactTokens(total);
-  gauge.textContent = label;
-  gauge.title = `Context window: ${compactTokens(total)} tokens used`;
+  gauge.textContent = fraction !== null ? `${Math.round(fraction * 100)}%` : compactTokens(total);
+  gauge.title = `Context window: ${compactTokens(total)} tokens used${fraction !== null ? ` of ${compactTokens(limit)}` : ""}`;
+  state.contextGauge = { total, limit, fraction, cost: session?.cost ?? 0, model: ref ? `${ref.providerID}/${ref.id}` : "default model" };
+  $("gauge-pop").hidden = true;
 }
+
+function renderGaugeDetails() {
+  const info = state.contextGauge;
+  if (!info) return;
+  const pop = $("gauge-pop");
+  pop.hidden = false;
+  pop.innerHTML = "";
+  pop.append(
+    el("div", { class: "gauge-line big", text: info.fraction !== null ? `${Math.round(info.fraction * 100)}% of the context window` : `${compactTokens(info.total)} tokens in the context window` }),
+    info.limit ? el("div", { class: "gauge-line", text: `${compactTokens(info.total)} of ${compactTokens(info.limit)} tokens` }) : null,
+    el("div", { class: "gauge-line", text: `Session cost so far: $${info.cost.toFixed(4)}` }),
+    el("div", { class: "gauge-line faint", text: info.model }),
+  );
+}
+
+$("context-gauge").addEventListener("click", event => {
+  event.stopPropagation();
+  const pop = $("gauge-pop");
+  if (pop.hidden) renderGaugeDetails();
+  else pop.hidden = true;
+});
+document.addEventListener("click", event => {
+  const pop = $("gauge-pop");
+  if (!pop.hidden && !pop.contains(event.target)) pop.hidden = true;
+});
 
 async function openSession(id) {
   if (!id) return;
@@ -749,6 +785,70 @@ $("new-session").addEventListener("click", async () => {
     complain(null, error);
   }
 });
+
+// ---- Projects (the Mac app keeps a list; so does the harness) ----
+
+async function loadProjects() {
+  try {
+    const { projects, current } = await api("/api/projects");
+    state.projects = Array.isArray(projects) ? projects : [];
+    if (current) state.project = current;
+  } catch {
+    state.projects = [];
+  }
+  renderProjects();
+}
+
+async function switchProject(folder) {
+  try {
+    await api("/api/project", { method: "POST", body: { directory: folder } });
+    $("picker").hidden = true;
+    state.project = folder;
+    state.session = null;
+    state.transcript = null;
+    state.openSessions = [];
+    state.transcripts.clear();
+    state.split = null;
+    renderSplit();
+    await loadSessions();
+    await loadProjects();
+    render();
+  } catch (error) {
+    complain($("picker-note"), error);
+  }
+}
+
+function projectRow(folder, onSwitch) {
+  const row = el("div", { class: "project-row" });
+  const open = el("button", { class: "project-open" },
+    el("span", { class: "project-name", text: folder.split(/[\\/]/).pop() }),
+    el("span", { class: "where", text: folder }),
+  );
+  open.addEventListener("click", onSwitch);
+  const remove = el("button", { class: "small close-project", text: "✕", title: "Forget this project" });
+  remove.addEventListener("click", async event => {
+    event.stopPropagation();
+    try { await api("/api/projects", { method: "DELETE", body: { path: folder } }); await loadProjects(); }
+    catch (error) { complain(null, error); }
+  });
+  row.append(open, remove);
+  return row;
+}
+
+function renderProjects() {
+  for (const [selector, emptyNote] of [["picker-recent", false], ["projects-settings-list", true]]) {
+    const list = $(selector);
+    if (!list) continue;
+    list.innerHTML = "";
+    if (state.projects.length === 0) {
+      list.hidden = true;
+      if (emptyNote) list.append(el("div", { class: "where", text: "No projects yet." }));
+      continue;
+    }
+    list.hidden = false;
+    for (const folder of state.projects) list.append(projectRow(folder, () => switchProject(folder)));
+  }
+}
 
 // ---- Agents (the ones a person picks between, like the Mac app's agents) ----
 
@@ -1382,9 +1482,39 @@ function renderAccentSwatches() {
   }
 }
 
+// The other half of the Mac app's settings: the engine, the storage, the projects.
+async function renderSystemSettings() {
+  try {
+    const info = await api("/api/storage");
+    $("engine-line").textContent = `Engine: ${info.engine?.status ?? "unknown"}${info.engine?.version ? ` · v${info.engine.version}` : ""}`;
+    $("storage-log").textContent = `Log: ${info.logPath} (${(info.logSize / (1024 * 1024)).toFixed(1)} MB)`;
+    $("storage-attachments").textContent = info.attachments
+      ? `Attachments: ${info.attachments.files} files in ${info.attachments.path} (${(info.attachments.bytes / (1024 * 1024)).toFixed(2)} MB)`
+      : "Attachments: none (open a project first)";
+  } catch (error) {
+    $("engine-line").textContent = "Engine: the harness isn't answering.";
+    $("storage-log").textContent = "";
+    $("storage-attachments").textContent = "";
+  }
+}
+
 function openSettings() {
   applyLook();
   $("settings-modal").hidden = false;
+  const section = state.settingsSection ?? "appearance";
+  document.querySelectorAll(".settings-nav button").forEach(button => {
+    button.classList.toggle("active", button.dataset.section === section);
+  });
+  document.querySelectorAll(".settings-page").forEach(page => {
+    page.hidden = page.dataset.section !== section;
+  });
+  renderShortcutEditor();
+  renderProjects();
+  renderSystemSettings();
+  for (const button of document.querySelectorAll(".settings-nav button")) button.onclick = () => {
+    state.settingsSection = button.dataset.section;
+    openSettings();
+  };
 }
 
 function closeSettings() {
@@ -1404,41 +1534,98 @@ try {
   if (["full", "reduced"].includes(stored.motion)) look.motion = stored.motion;
 } catch {}
 
-// ---- Keyboard shortcuts ----
+// ---- Keyboard shortcuts, editable like the Mac app's ShortcutsSettings ----
+
+const defaultShortcuts = {
+  palette: "Ctrl+K",
+  files: "Ctrl+O",
+  terminal: "Ctrl+`",
+  find: "Ctrl+Shift+F",
+  "new-session": "Ctrl+Shift+N",
+  split: "Ctrl+Shift+B",
+  export: "Ctrl+Shift+E",
+};
+const shortcutActions = {
+  palette: () => ($("palette").hidden ? openPalette() : closePalette()),
+  files: () => { if (state.project) $("toggle-files").click(); else openPicker(); },
+  terminal: () => { if ($("drawer").hidden) $("toggle-files").click(); setDrawerTab("terminal"); },
+  find: () => $("find").focus(),
+  "new-session": () => { if (state.project) $("new-session").click(); },
+  split: () => toggleSplit().catch(() => {}),
+  export: () => exportConversation(),
+};
+const SHORTCUTS_KEY = "kuvo-shortcuts";
+
+function loadShortcuts() {
+  try { state.shortcuts = { ...defaultShortcuts, ...(JSON.parse(localStorage.getItem(SHORTCUTS_KEY)) ?? {}) }; }
+  catch { state.shortcuts = { ...defaultShortcuts }; }
+}
+
+function comboOf(event) {
+  const parts = [];
+  if (event.ctrlKey || event.metaKey) parts.push("Ctrl");
+  if (event.shiftKey) parts.push("Shift");
+  if (event.altKey) parts.push("Alt");
+  if (["Control", "Shift", "Alt", "Meta"].includes(event.key)) return null;
+  const key = event.key.length === 1 ? event.key.toUpperCase() : event.key;
+  return parts.length ? `${parts.join("+")}+${key}` : key;
+}
+
+function matchShortcut(event) {
+  const combo = comboOf(event);
+  if (!combo) return null;
+  for (const [id, shortcut] of Object.entries(state.shortcuts)) {
+    if (shortcut && shortcut.toLowerCase() === combo.toLowerCase()) return id;
+  }
+  return null;
+}
+
+let capturingShortcut = null;
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
+    if (capturingShortcut) { capturingShortcut = null; renderShortcutEditor(); return; }
     if (!$("palette").hidden) { closePalette(); return; }
     if (!$("settings-modal").hidden) { closeSettings(); return; }
   }
-  if (!(event.ctrlKey || event.metaKey)) return;
-  const key = event.key.toLowerCase();
-  if (key === "k") {
+  if (capturingShortcut) {
     event.preventDefault();
-    if ($("palette").hidden) openPalette();
-    else closePalette();
+    event.stopPropagation();
+    const combo = comboOf(event);
+    if (combo) {
+      state.shortcuts[capturingShortcut] = combo;
+      try { localStorage.setItem(SHORTCUTS_KEY, JSON.stringify(state.shortcuts)); } catch {}
+      capturingShortcut = null;
+      renderShortcutEditor();
+    }
     return;
-  } else if (key === "s" && state.openFile) {
+  }
+  // Saving the open file keeps working whatever the map says.
+  if (state.openFile && event.ctrlKey && event.key.toLowerCase() === "s") {
     event.preventDefault();
     saveFile();
-  } else if (key === "o") {
-    event.preventDefault();
-    if (state.project) { $("toggle-files").click(); }
-    else openPicker();
-  } else if (key === "`") {
-    event.preventDefault();
-    if ($("drawer").hidden) $("toggle-files").click();
-    setDrawerTab("terminal");
-  } else if (key === "f" && event.shiftKey) {
-    event.preventDefault();
-    if ($("drawer").hidden) $("toggle-files").click();
-    setDrawerTab("files");
-    setTimeout(() => $("files-search").focus(), 50);
-  } else if (key === "n" && event.shiftKey && state.project) {
-    event.preventDefault();
-    $("new-session").click();
+    return;
   }
+  const id = matchShortcut(event);
+  if (!id || !(event.ctrlKey || event.metaKey)) return;
+  event.preventDefault();
+  shortcutActions[id]?.();
 });
+
+function renderShortcutEditor() {
+  const list = $("shortcut-list");
+  if (!list) return;
+  list.innerHTML = "";
+  for (const [id, shortcut] of Object.entries(state.shortcuts)) {
+    const row = el("div", { class: "shortcut-row" });
+    row.append(el("span", { text: shortcut }),
+      el("button", { class: "small", text: capturingShortcut === id ? "Press keys…" : "Change", onclick: () => { capturingShortcut = id; renderShortcutEditor(); } }),
+    );
+    list.append(row);
+  }
+}
+
+loadShortcuts();
 
 // ---- Export conversation ----
 
@@ -1506,6 +1693,7 @@ async function boot() {
   loadModels();
   loadAgents();
   loadCommands();
+  loadProjects();
   renderAccentSwatches();
   applyLook();
   // The engine may still be starting: keep the header honest.
@@ -1517,6 +1705,15 @@ async function boot() {
     } catch {}
   }, 4000);
 }
+
+// The analytics notice, told once: this harness sends nothing anywhere.
+if (!localStorage.getItem("kuvo-analytics-ack") && !$("analytics-notice").hidden) {
+  $("analytics-notice").hidden = false;
+}
+$("analytics-ok").addEventListener("click", () => {
+  localStorage.setItem("kuvo-analytics-ack", "1");
+  $("analytics-notice").hidden = true;
+});
 
 // Inside the shell the window has no native title bar: this page is it.
 if (new URLSearchParams(location.search).get("shell") === "1") {

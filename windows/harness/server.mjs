@@ -72,6 +72,18 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
   let currentProject = project === null ? null : path.resolve(project);
   let engine = null;
   let starting = null;
+  const recentFile = () => path.join(os.homedir(), ".kuvo-code", "recent-projects.json");
+  const recentProjects = () => {
+    try { const list = JSON.parse(fs.readFileSync(recentFile(), "utf8")); return Array.isArray(list) ? list : []; }
+    catch { return []; }
+  };
+  const saveRecentProjects = (list) => {
+    try { fs.mkdirSync(path.dirname(recentFile()), { recursive: true }); fs.writeFileSync(recentFile(), JSON.stringify([...new Set(list)].slice(0, 8), null, 2)); } catch {}
+  };
+  const rememberProject = (folder) => {
+    saveRecentProjects([folder, ...recentProjects().filter(item => item !== folder)]);
+  };
+
   const state = () => ({
     project: currentProject,
     engine: engine === null
@@ -136,7 +148,35 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
     if (url.pathname === "/api/project" && request.method === "POST") {
       const body = await readBody(request);
       currentProject = directoryOf(body.directory);
+      rememberProject(currentProject);
       return json({ project: currentProject });
+    }
+
+    // The project list, kept across runs like the Mac app keeps its own.
+    if (url.pathname === "/api/projects" && request.method === "GET") {
+      return json({ projects: recentProjects(), current: currentProject });
+    }
+    if (url.pathname === "/api/projects" && request.method === "DELETE") {
+      const body = await readBody(request);
+      const folder = directoryOf(body.path);
+      saveRecentProjects(recentProjects().filter(item => item !== folder));
+      return json({ ok: true });
+    }
+
+    // What the settings panel shows about this machine's storage.
+    if (url.pathname === "/api/storage" && request.method === "GET") {
+      const logsDir = path.join(os.homedir(), ".kuvo-code", "logs");
+      const logPath = path.join(logsDir, "harness.log");
+      let logSize = 0;
+      try { logSize = fs.statSync(logPath).size; } catch {}
+      let attachments = null;
+      if (currentProject) {
+        const folder = path.join(currentProject, ".kuvo", "attachments");
+        let files = [];
+        try { files = fs.readdirSync(folder).map(name => path.join(folder, name)); } catch {}
+        attachments = { path: folder, files: files.length, bytes: files.reduce((sum, file) => sum + (fs.statSync(file).size || 0), 0) };
+      }
+      return json({ logPath, logSize, attachments, engine: state().engine, project: currentProject });
     }
 
     // The page's folder picker: what's under a folder, so someone can walk to theirs.

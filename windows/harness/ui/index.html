@@ -20,6 +20,7 @@
   <button id="settings-open" class="small" title="Appearance">Appearance</button>
   <button id="export" class="small" title="Export conversation as Markdown">Export</button>
   <div id="context-gauge" class="context-gauge" hidden title="Context window used"></div>
+  <div id="gauge-pop" class="gauge-pop" hidden></div>
   <input id="find" class="file-search header-find" placeholder="Find in conversation…" spellcheck="false">
   <div id="engine" class="engine" title="The engine on this machine"></div>
 </header>
@@ -73,34 +74,64 @@
   </section>
 </main>
 
+<div id="analytics-notice" class="AnalyticsNotice" hidden>
+  <div class="analytics-card">
+    <div class="settings-title">Before you start</div>
+    <p class="settings-note">Kuvo Code works entirely on this machine: the engine runs locally, its words go to the model provider you configured, and this harness collects nothing and reports nothing anywhere. Close the page and everything stops with it.</p>
+    <button id="analytics-ok" class="primary">Understood</button>
+  </div>
+</div>
+
 <div id="palette" class="palette" hidden>
   <input id="palette-input" placeholder="Search sessions, files and actions…" spellcheck="false" autocomplete="off">
   <div id="palette-list" class="palette-list"></div>
 </div>
 
 <div id="settings-modal" class="settings" hidden>
-  <div class="settings-card">
-    <div class="settings-title">Appearance</div>
-    <div class="settings-row">
-      <span>Accent</span>
-      <div id="accent-swatches" class="swatches"></div>
+  <div class="settings-card wide">
+    <div class="settings-shell">
+      <nav class="settings-nav">
+        <button data-section="appearance" class="active">Appearance</button>
+        <button data-section="keyboard">Keyboard</button>
+        <button data-section="projects">Projects</button>
+        <button data-section="system">Engine &amp; storage</button>
+      </nav>
+      <div class="settings-pages">
+        <div class="settings-page" data-section="appearance">
+          <div class="settings-row"><span>Accent</span><div id="accent-swatches" class="swatches"></div></div>
+          <div class="settings-row">
+            <span>Text size</span>
+            <select id="setting-text-size">
+              <option value="13">Small</option>
+              <option value="14" selected>Default</option>
+              <option value="16">Large</option>
+            </select>
+          </div>
+          <div class="settings-row">
+            <span>Motion</span>
+            <select id="setting-motion">
+              <option value="full" selected>Full</option>
+              <option value="reduced">Reduced</option>
+            </select>
+          </div>
+          <div class="settings-note">Like the Mac app's Appearance settings: the accent colors the interface, the text size sets how messages read, and reduced motion stills the shimmer and springs.</div>
+        </div>
+        <div class="settings-page" data-section="keyboard" hidden>
+          <div id="shortcut-list" class="shortcut-list"></div>
+          <div class="settings-note">Press the new keys after Change. Ctrl+S still saves an open file first.</div>
+        </div>
+        <div class="settings-page" data-section="projects" hidden>
+          <div id="projects-settings-list" class="project-settings"></div>
+          <div class="settings-note">Switch with a click, forget with the ✕. The same list is in the folder picker.</div>
+        </div>
+        <div class="settings-page" data-section="system" hidden>
+          <div id="engine-line" class="gauge-line big"></div>
+          <div id="storage-log" class="gauge-line"></div>
+          <div id="storage-attachments" class="gauge-line"></div>
+          <div class="settings-note">Where this machine keeps things, and what the engine is running — what the Mac app's Engine and Storage settings show.</div>
+        </div>
+      </div>
     </div>
-    <div class="settings-row">
-      <span>Text size</span>
-      <select id="setting-text-size">
-        <option value="13">Small</option>
-        <option value="14" selected>Default</option>
-        <option value="16">Large</option>
-      </select>
-    </div>
-    <div class="settings-row">
-      <span>Motion</span>
-      <select id="setting-motion">
-        <option value="full" selected>Full</option>
-        <option value="reduced">Reduced</option>
-      </select>
-    </div>
-    <div class="settings-note">Like the Mac app's Appearance settings: the accent colors the interface, the text size sets how messages read, and reduced motion stills the shimmer and springs.</div>
     <button id="settings-close" class="primary">Done</button>
   </div>
 </div>
@@ -167,6 +198,7 @@
       <input id="picker-path" spellcheck="false">
       <button id="picker-go" class="small">Go</button>
     </div>
+    <div id="picker-recent" class="picker-recent" hidden></div>
     <ul id="picker-folders"></ul>
     <div class="picker-foot">
       <span id="picker-note" class="note"></span>
