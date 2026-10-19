@@ -19,6 +19,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - An agent whose own program is out of date (an old Claude Code lists old Claude models) says so in Accounts, with an **Update** button that updates it the way you installed it: Homebrew, npm or the agent's own updater. The model picker points there too.
 - Antigravity's **Sign In** shows its download, then opens Google's page when it's ready, rather than seeming to do nothing.
 - A ChatGPT or SuperGrok plan signs in once, through Codex or Grok under Subscriptions; Accounts no longer offers a second way to the same plan. One you connected before keeps working.
+- Markdown files in the side panel open at once, even long ones: they're drawn the way replies are. A link to another of the project's files opens it in the panel.
 
 ## 0.5.22
 

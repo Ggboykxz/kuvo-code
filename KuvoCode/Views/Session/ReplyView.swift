@@ -7,7 +7,9 @@ import Textual
 /// several for every block, so a long reply comes into view in a fraction of the time.
 struct ReplyView: NSViewRepresentable {
     let markdown: String
-    let parser: FileLinkingParser
+    /// A reply's (with file links), or another's (a Markdown file's, with `images`).
+    let parser: any MarkupParser
+    var images: URL? = nil
     var openURL: (URL) -> Bool = { _ in false }
     @Environment(\.messageFont) private var font
     @Environment(\.colorScheme) private var scheme
@@ -37,7 +39,10 @@ struct ReplyView: NSViewRepresentable {
     private func update(_ view: ReplyPieceView) {
         view.openURL = openURL
         view.cardIsFocused = cardIsFocused
-        view.show(markdown, document: { ReplyDocument.cached(markdown: markdown, parser: parser, style: style) }, style: style)
+        view.show(markdown, document: {
+            if let parser = parser as? FileLinkingParser, images == nil { return ReplyDocument.cached(markdown: markdown, parser: parser, style: style) }
+            return ReplyDocument(markdown: markdown, parser: parser, style: style, images: images)
+        }, style: style)
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: ReplyPieceView, context: Context) -> CGSize? {

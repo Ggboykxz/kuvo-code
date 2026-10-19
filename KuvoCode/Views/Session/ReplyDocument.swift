@@ -109,6 +109,7 @@ struct ReplyDocument {
     private final class Context {
         var tables: [Int: NSTextTable] = [:]
         var itemsSeen: Set<Int> = []
+        var images: URL?
         /// Each table's columns, as wide as their widest cell on one line.
         var columnWidths: [Int: [Int: CGFloat]] = [:]
         var cells: [Int: [(column: Int, block: NSTextTableBlock)]] = [:]
@@ -139,9 +140,12 @@ struct ReplyDocument {
         }
     }
 
-    init(markdown: String, parser: some MarkupParser, style: Style) {
+    /// `images`: the folder a file's own pictures are looked for in (a Markdown file's); none from
+    /// the web (a README's badges and tracking pixels would reach their hosts as it opens).
+    init(markdown: String, parser: some MarkupParser, style: Style, images: URL? = nil) {
         let parsed = (try? parser.attributedString(for: markdown)) ?? AttributedString(markdown)
         let context = Context()
+        context.images = images
         var text = NSMutableAttributedString()
         // Each paragraph's style and where it is, set once the space after each is known.
         var styles: [(range: NSRange, paragraph: NSMutableParagraphStyle)] = []
@@ -386,6 +390,12 @@ struct ReplyDocument {
             // Find's marks.
             if let background = run.swiftUI.backgroundColor { attributes[.backgroundColor] = NSColor(background) }
             if let foreground = run.swiftUI.foregroundColor { attributes[.foregroundColor] = NSColor(foreground) }
+            // A picture of the file's own, if there's a folder to find it in; its words otherwise.
+            if let source = run.imageURL, let folder = context.images,
+               let picture = ReplyAttachments.picture(source, in: folder, attributes: attributes) {
+                text.append(picture)
+                continue
+            }
             if let attachment = run.textual.attachment {
                 text.append(ReplyAttachments.attachment(for: attachment, attributes: attributes, size: fontSize, dark: style.dark))
                 continue
@@ -435,6 +445,27 @@ extension NSAttributedString.Key {
 /// Textual's attachments (a file's icon, a formula, a bot's face) as pictures in the text.
 enum ReplyAttachments {
     private static var images: [String: NSImage] = [:]
+
+    /// A picture a Markdown file shows (`![…](images/shot.png)`), from its folder, as wide as it
+    /// is up to a reply's width; nil for one from the web or that isn't there.
+    static func picture(_ source: URL, in folder: URL, attributes: [NSAttributedString.Key: Any]) -> NSAttributedString? {
+        let url: URL
+        if source.isFileURL {
+            url = source
+        } else if source.scheme == nil {
+            url = URL(filePath: source.path(percentEncoded: false), relativeTo: folder).standardizedFileURL
+        } else {
+            return nil
+        }
+        guard let image = NSImage(contentsOf: url), image.size.width > 0 else { return nil }
+        let item = NSTextAttachment()
+        item.image = image
+        let width = min(image.size.width, 640)
+        item.bounds = CGRect(x: 0, y: 0, width: width, height: image.size.height * width / image.size.width)
+        let text = NSMutableAttributedString(attachment: item)
+        text.addAttributes(attributes.filter { $0.key == .paragraphStyle || $0.key == .link }, range: NSRange(location: 0, length: text.length))
+        return text
+    }
 
     /// A file's icon, the symbol filling its slot in the text as Textual draws it, in the accent.
     private static func fileIcon(_ size: CGSize) -> NSImage {

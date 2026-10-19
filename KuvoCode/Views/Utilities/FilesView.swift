@@ -1,7 +1,6 @@
 import AppKit
 import Quartz
 import SwiftUI
-import Textual
 import UniformTypeIdentifiers
 
 /// A file tab: the file on the left (rendered, highlighted or previewed), the project's
@@ -371,18 +370,20 @@ private struct FileViewer: View {
                 switch content {
                 case .text(let text) where isMarkdown && !showsSource:
                     ScrollView {
-                        StructuredText(text, parser: MathMarkdownParser())
-                            // Its own pictures, beside it; none from the web (a README's badges and
-                            // tracking pixels would reach their hosts as you open it).
-                            .textual.imageAttachmentLoader(.localImage(relativeTo: url.deletingLastPathComponent()))
-                            .transcriptFont()
-                            .textual.codeBlockStyle(CopyableCodeBlockStyle())
-                            .textual.listItemStyle(.firstLine)
-                            .textual.highlighterTheme(CodeColors.theme)
-                            .textual.structuredTextStyle(.gitHub)
-                            .textual.textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(20)
+                        // Drawn as replies are (TextKit), so a long file opens at once. Its own
+                        // pictures, beside it; none from the web (a README's badges and tracking
+                        // pixels would reach their hosts as you open it).
+                        ReplyView(markdown: text, parser: MathMarkdownParser(), images: url.deletingLastPathComponent()) { link in
+                            // Another file of the project's, here; web links in the browser.
+                            let file = link.isFileURL ? link : link.scheme == nil && !link.path.isEmpty
+                                ? URL(filePath: link.path(percentEncoded: false), relativeTo: url.deletingLastPathComponent()).standardizedFileURL : nil
+                            guard let file else { return false }
+                            app.utilities.show(file)
+                            return true
+                        }
+                        .transcriptFont()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(20)
                     }
                 case .text(let text):
                     CodeTextView(text: text, language: CodeHighlighter.language(for: url.path)) { lines in
