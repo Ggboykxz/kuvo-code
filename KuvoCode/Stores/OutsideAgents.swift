@@ -43,6 +43,8 @@ final class OutsideAgents {
     @ObservationIgnored var onEvent: ((ServerEvent) -> Void)?
     /// Its feed is connected (again): what it has is read anew.
     @ObservationIgnored var onConnected: (() -> Void)?
+    /// It couldn't start, or stopped for good: what it listed is gone.
+    @ObservationIgnored var onStopped: (() -> Void)?
 
     /// Where this Mac's engine is, for the engine's own models in the bridge's sessions (Auto's,
     /// or one you pick in a session with an agent). Told to the bridge each time either starts.
@@ -131,6 +133,7 @@ final class OutsideAgents {
         self.environment = environment
         guard let script = Self.script else {
             failure = "The agents bridge is missing from the app."
+            onStopped?()
             return
         }
         var env = environment
@@ -159,6 +162,7 @@ final class OutsideAgents {
         } catch {
             log.error("The agents bridge didn't start: \(error.localizedDescription, privacy: .public)")
             failure = error.localizedDescription
+            onStopped?()
         }
     }
 
@@ -197,6 +201,7 @@ final class OutsideAgents {
         restarts.removeAll { $0 < .now.addingTimeInterval(-300) }
         guard restarts.count < 3, let engine else {
             failure = "It stopped unexpectedly (exit code \(status)).\(output.isEmpty ? "" : "\n\n" + String(output.suffix(600)))"
+            onStopped?()
             return
         }
         restarts.append(.now)

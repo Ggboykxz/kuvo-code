@@ -272,6 +272,13 @@ final class Catalog {
         merge()
     }
 
+    /// The agents bridge stopped for good: its agents and their models aren't there to use.
+    func forgetAgents() {
+        agentIntegrations = []
+        agentModels = []
+        merge()
+    }
+
     /// True while the agents are being asked anew.
     private(set) var isRefreshingAgents = false
     @ObservationIgnored private var lastFreshAgents: ContinuousClock.Instant?
