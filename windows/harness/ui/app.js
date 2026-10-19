@@ -1735,7 +1735,9 @@ function applyLook() {
   const accent = lookAccents[look.accent] ?? lookAccents.system;
   if (accent.color) {
     root.style.setProperty("--accent", accent.color);
-    root.style.setProperty("--accent-hover", `color-mix(in oklab, ${accent.color}, black 12%)`);
+    // On a dark ground a hover lifts the colour, on a light one it deepens it.
+    const dark = look.theme === "dark" || (look.theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    root.style.setProperty("--accent-hover", `color-mix(in oklab, ${accent.color}, ${dark ? "white" : "black"} 12%)`);
   } else {
     root.style.removeProperty("--accent");
     root.style.removeProperty("--accent-hover");

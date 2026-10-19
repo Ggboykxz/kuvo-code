@@ -105,7 +105,13 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
-  - **2.20 (this change).** What other tools write into opencode's own settings is now
+  - **2.21 (this change).** The look is bound to OpenDesign's design direction `modern-minimal`
+    ("Modern minimal — Linear / Vercel"), read with the tool that ships it
+    (`od tools directions --id modern-minimal --json`): system fonts, hairline borders, no
+    shadows except what floats, tabular numerals, one accent. The binding is written down in
+    `windows/harness/ui/DESIGN.md`. Also: the settings pages belong to the settings — they
+    had slipped inside the navigation, which broke every page of it.
+  - **2.20. What other tools write into opencode's own settings is now
     visible and can be brought over: the MCP servers the CLI, another agent, or a tool
     like OpenDesign put in `~/.config/opencode/opencode.json` are listed in Settings ▸
     MCP servers, and one click copies them into this app's own settings — in the shape

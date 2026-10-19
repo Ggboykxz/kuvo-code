@@ -10,3 +10,6 @@ Config/Signing.local.xcconfig
 CLAUDE.md
 dist/
 github-token-to-revoke.txt
+
+# Playwright MCP's own logs
+.playwright-mcp/
