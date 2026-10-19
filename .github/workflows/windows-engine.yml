@@ -2,11 +2,9 @@ name: Windows engine
 
 on:
   workflow_dispatch:
+  # No path filter: a pull request has to be able to satisfy the checks the protected
+  # branches require, whatever it touches.
   pull_request:
-    paths:
-      - "windows/**"
-      - "Packages/KuvoLink/**"
-      - ".github/workflows/windows-engine.yml"
 
 permissions:
   contents: read
