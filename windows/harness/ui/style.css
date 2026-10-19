@@ -734,3 +734,85 @@ main { display: flex; }
   animation: none !important;
   transition-duration: 1ms !important;
 }
+
+/* ---- Attachments ---- */
+.attachments { display: flex; flex-wrap: wrap; gap: var(--space-2); padding: 0 var(--gutter); margin-bottom: var(--space-2); }
+.attachments[hidden] { display: none; }
+.attachment-pill {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  padding: 2px 10px; border-radius: var(--radius-pill);
+  background: var(--panel-2); border: 1px solid var(--line);
+  font-size: var(--text-xs);
+}
+.attachment-pill .close { cursor: pointer; color: var(--ink-faint); }
+.attachment-pill .close:hover { color: var(--ink); }
+.entry.user .attachment-image {
+  max-width: min(320px, 60%); max-height: 240px;
+  border-radius: var(--radius);
+  margin-top: var(--space-2); cursor: zoom-in;
+  object-fit: cover;
+}
+.attachment-chip {
+  display: inline-block; margin-top: var(--space-2);
+  padding: 2px 10px; border-radius: var(--radius-sm);
+  background: var(--panel-2); border: 1px solid var(--line);
+  font-size: var(--text-xs); color: var(--ink); text-decoration: none;
+}
+
+/* ---- @-mentions and slash commands (the Mac app's GroupMentions popup) ---- */
+.autocomplete {
+  position: absolute; z-index: 40;
+  bottom: calc(100% - var(--space-1)); left: var(--gutter);
+  min-width: 340px; max-width: 480px;
+  background: var(--panel-glass);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: var(--shadow-lifted);
+  backdrop-filter: blur(14px);
+  padding: var(--space-1);
+  max-height: 300px; overflow: auto;
+}
+.autocomplete[hidden] { display: none; }
+.mention-item {
+  display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3);
+  padding: var(--space-2); border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.mention-item:hover, .mention-item.selected { background: var(--accent-soft); }
+.mention-name { font-size: var(--text-md); color: var(--ink); }
+.composer { position: relative; }
+
+/* ---- Queue dock ---- */
+.queue-dock {
+  margin: 0 var(--gutter) var(--space-2);
+  border: 1px dashed var(--line); border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  padding: var(--space-2);
+  display: flex; flex-direction: column; gap: var(--space-1);
+  font-size: var(--text-sm);
+}
+.queue-dock[hidden] { display: none; }
+.queue-dock:not(.open) .queue-item + .queue-item { display: none; }
+.queue-item { display: flex; justify-content: space-between; gap: var(--space-2); }
+.queue-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-soft); }
+.queue-meta { color: var(--ink-faint); font-size: var(--text-xs); flex-shrink: 0; }
+.queue-dock .small { align-self: flex-end; }
+
+/* ---- Fork affordance ---- */
+.entry-action { opacity: 0; transition: opacity var(--motion-fast) var(--ease-standard); }
+.entry.assistant:hover .entry-action { opacity: 1; }
+
+/* ---- Title bar (the shell loads this page without one) ---- */
+body.in-shell { padding-top: 38px; }
+body.in-shell header { -webkit-app-region: drag; padding-right: 150px; }
+body.in-shell header button, body.in-shell header input { -webkit-app-region: no-drag; }
+.titlebar-drag { position: fixed; top: 0; left: 0; right: 0; height: 38px; z-index: 100; -webkit-app-region: drag; }
+body:not(.in-shell) .titlebar-drag { display: none; }
+body.dropping::after {
+  content: "Drop the files here to attach them";
+  position: fixed; inset: 0; z-index: 200;
+  display: flex; align-items: center; justify-content: center;
+  font-size: var(--text-xl); color: var(--ink);
+  background: var(--accent-soft);
+  border: 3px dashed var(--accent);
+  pointer-events: none;
+}

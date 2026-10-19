@@ -18,7 +18,7 @@ function messageEntry(message) {
   const created = message.time?.created ?? 0;
   switch (message.type) {
     case "user":
-      return { kind: "user", id: message.id, created, text: message.text ?? "" };
+      return { kind: "user", id: message.id, created, text: message.text ?? "", files: (message.files ?? []).map(file => ({ mime: file.mime, name: file.name, data: file.data ?? null, uri: file.source?.type === "uri" ? file.source.uri : null })) };
     case "assistant": {
       const entry = { kind: "assistant", id: message.id, created, parts: [], agent: message.agent, model: message.model?.id, error: message.error, finish: message.finish, cost: message.cost, tokens: message.tokens };
       (message.content ?? []).forEach((block, ordinal) => {

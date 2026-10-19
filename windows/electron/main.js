@@ -103,9 +103,13 @@ function createWindow(url) {
   mainWindow = new BrowserWindow({
     width: 1280, height: 820, minWidth: 900, minHeight: 600,
     title: 'Kuvo Code', show: false, icon: ICON,
+    // The page draws its own title-bar strip (`.titlebar-drag`); Windows' native
+    // controls stay, like the Mac app's hidden-inset title bar.
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { color: '#00000000', symbolColor: '#888888', height: 38 },
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
   });
-  const fullUrl = `${url}${url.includes('?') ? '&' : '?'}terminalPort=${terminalPort}`;
+  const fullUrl = `${url}${url.includes('?') ? '&' : '?'}terminalPort=${terminalPort}&shell=1`;
   mainWindow.loadURL(fullUrl);
   mainWindow.once('ready-to-show', () => mainWindow.show());
   mainWindow.on('close', (event) => {
@@ -130,7 +134,7 @@ async function switchProject(project) {
   if (harness) { try { harness.kill(); } catch {} harness = null; }
   const url = await startHarness(project);
   rememberProject(project);
-  if (mainWindow) mainWindow.loadURL(`${url}${url.includes('?') ? '&' : '?'}terminalPort=${terminalPort}`);
+  if (mainWindow) mainWindow.loadURL(`${url}${url.includes('?') ? '&' : '?'}terminalPort=${terminalPort}&shell=1`);
 }
 
 function createTray() {

@@ -133,6 +133,7 @@ const state = {
   agents: [],
   agent: "",
   split: null,
+  commands: [],
 };
 
 let renderQueued = false;
@@ -247,6 +248,17 @@ function assistantEntry(entry) {
       ));
     } else if (part.type === "tool") block.append(toolCard(part));
   }
+  // Fork: a new session from the conversation up to here, like the Mac app's fork.
+  const forkButton = el("button", { class: "small entry-action", text: "Fork here", onclick: async () => {
+    if (!state.session) return;
+    try {
+      const { session: branched } = await api(`/api/sessions/${encodeURIComponent(state.session.id)}/fork`, { method: "POST", body: { before: entry.id } });
+      state.transcripts.delete(branched.id);
+      await loadSessions();
+      await openSession(branched.id);
+    } catch (error) { complain(null, error); }
+  } });
+  block.append(forkButton);
   if (entry.retry) block.append(el("div", { class: "entry-meta retry", text: `retrying${entry.retry.attempt ? ` (attempt ${entry.retry.attempt})` : ""}…` }));
   if (entry.error) block.append(el("div", { class: "entry-error", text: errorText(entry.error) }));
   if (entry.cost) block.append(el("div", { class: "entry-meta", text: `${entry.model ?? ""} · $${entry.cost.toFixed(4)}` }));
@@ -295,7 +307,8 @@ function renderConversation() {
   }
 
   $("stop").hidden = !state.transcript.running;
-  $("prompt").placeholder = state.transcript.running ? "Send while it works — delivered at its next step…" : "Ask for something…  (Enter sends, Shift+Enter for a new line)";
+  $("prompt").placeholder = state.transcript.running ? "Send while it works — delivered at its next step…" : "Ask for something…  (@ mentions a file, / runs a command)";
+  renderQueueDock();
   renderSplit();
 }
 
@@ -304,7 +317,11 @@ function renderConversation() {
 function entryNodes(transcript) {
   const rendered = [];
   for (const entry of transcript.entries) {
-    if (entry.kind === "user") rendered.push(el("article", { class: "entry user" }, el("div", { class: "text", text: entry.text })));
+    if (entry.kind === "user") {
+      const node = el("article", { class: "entry user" }, el("div", { class: "text", text: entry.text }));
+      for (const file of entry.files ?? []) node.append(attachmentNode(file));
+      rendered.push(node);
+    }
     else if (entry.kind === "assistant") rendered.push(assistantEntry(entry));
     else if (entry.kind === "notice") rendered.push(el("div", { class: "notice", text: entry.text }));
     else if (entry.kind === "shell") {
@@ -326,6 +343,51 @@ function entryNodes(transcript) {
   }
   return rendered;
 }
+
+// An attachment as the message history stores it: base64 data of its own, or a file
+// reference the harness serves.
+function attachmentNode(file) {
+  const fromData = file.data ? `data:${file.mime};base64,${file.data}` : null;
+  const fromUri = file.uri ? `/api/raw?path=${encodeURIComponent(decodeURIComponent(String(file.uri).replace(/^file:\/\//, "")))}` : null;
+  const source = fromData ?? fromUri;
+  if (!source) return el("span", { class: "attachment-chip", text: file.name ?? "file" });
+  if ((file.mime ?? "").startsWith("image/")) {
+    const img = el("img", { class: "attachment-image", src: source, alt: file.name ?? "image" });
+    img.addEventListener("click", () => { window.open(source, "_blank"); });
+    return img;
+  }
+  return el("a", { class: "attachment-chip", href: source, target: "_blank", text: `${file.name ?? "file"} (${file.mime})` });
+}
+
+// ---- Queue dock (the Mac app's QueueDock) ----
+
+function renderQueueDock() {
+  const dock = $("queue-dock");
+  const pending = state.transcript?.pending ?? [];
+  dock.hidden = pending.length === 0;
+  if (pending.length === 0) { dock.innerHTML = ""; return; }
+  dock.innerHTML = "";
+  const open = dock.classList.contains("open");
+  for (const item of pending) {
+    if (!open && dock.querySelector(".queue-item")) continue;
+    dock.append(el("div", { class: "queue-item" },
+      el("span", { class: "queue-text", text: item.text || "(attachment only)" }),
+      el("span", { class: "queue-meta", text: item.delivery === "queue" ? "queued" : "steer" }),
+    ));
+  }
+  dock.append(el("button", { class: "small", text: open ? "↑" : `↓ ${pending.length} waiting`, onclick: () => { dock.classList.toggle("open"); renderQueueDock(); } }));
+}
+
+// The agent switch is live: like the Mac app's selectAgent, the session turns right away.
+$("agent").addEventListener("change", async event => {
+  state.agent = event.target.value;
+  if (!state.session || state.agent === "") return;
+  try {
+    await api(`/api/sessions/${encodeURIComponent(state.session.id)}/agent`, { method: "POST", body: { agent: state.agent } });
+  } catch (error) {
+    complain(null, error);
+  }
+});
 
 function permissionCard(request) {
   const answer = decision => async () => {
@@ -459,26 +521,178 @@ async function openSession(id) {
 
 // ---- Composer ----
 
+// The files staged with the prompt, until it sends.
+let stagedAttachments = [];
+
+async function stageFiles(list) {
+  for (const file of list) {
+    try {
+      const data = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result ?? "").split(",")[1] ?? "");
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const { path: stored } = await api("/api/upload", { method: "POST", body: { name: file.name, data } });
+      stagedAttachments.push({ path: stored, name: file.name });
+      renderAttachments();
+    } catch (error) {
+      complain(null, error);
+    }
+  }
+}
+
+function renderAttachments() {
+  const strip = $("attachments");
+  strip.innerHTML = "";
+  strip.hidden = stagedAttachments.length === 0;
+  for (const item of stagedAttachments) {
+    const pill = el("span", { class: "attachment-pill" },
+      el("span", { text: item.name }),
+      el("span", { class: "close", text: "✕", onclick: () => { stagedAttachments = stagedAttachments.filter(a => a !== item); renderAttachments(); } }),
+    );
+    strip.append(pill);
+  }
+}
+
+$("attach").addEventListener("click", () => $("attach-input").click());
+$("attach-input").addEventListener("change", async event => {
+  await stageFiles(event.target.files ?? []);
+  event.target.value = "";
+});
+
+// Drop a file anywhere on the page and it attaches.
+document.addEventListener("dragover", event => { event.preventDefault(); document.body.classList.add("dropping"); });
+document.addEventListener("dragleave", event => { if (!event.relatedTarget) document.body.classList.remove("dropping"); });
+document.addEventListener("drop", async event => {
+  event.preventDefault();
+  document.body.classList.remove("dropping");
+  if (!state.session) return;
+  await stageFiles(event.dataTransfer?.files ?? []);
+});
+
+// ---- File mentions (@) and slash commands (/), like the Mac app's GroupMentions ----
+
+let mentionItems = [];
+let mentionQueryFiles = [];
+
+function completeBox() {
+  const box = $("prompt");
+  const upTo = box.value.slice(0, box.selectionStart ?? box.value.length);
+  const at = upTo.match(/(?:^|\s)@([^\s@]*)$/);
+  const slash = !at && upTo.match(/^\/(\w*)$/) ? upTo.match(/^\/(\w*)$/) : null;
+  const popup = $("autocomplete");
+  if (!at && !slash) { popup.hidden = true; return; }
+  if (at) {
+    const query = at[1].toLowerCase();
+    if (!query) api("/api/files").then(({ files }) => { mentionQueryFiles = files; showMentions(files.slice(0, 12), "files"); }).catch(() => { popup.hidden = true; });
+    else {
+      const all = mentionQueryFiles.length ? mentionQueryFiles : [];
+      const local = all.filter(file => file.relative.toLowerCase().includes(query)).slice(0, 12);
+      api(`/api/files?q=${encodeURIComponent(query)}`).then(({ files }) => showMentions(files.slice(0, 12).concat(local.filter(l => !files.some(f => f.path === l.path))).slice(0, 12), "files")).catch(() => { popup.hidden = true; });
+    }
+  } else if (slash) {
+    const query = slash[1].toLowerCase();
+    const items = state.commands.filter(command => query === "" || command.name.toLowerCase().startsWith(query)).slice(0, 12);
+    if (items.length === 0) { popup.hidden = true; return; }
+    showMentions(items, "commands");
+  }
+}
+
+function showMentions(items, kind) {
+  mentionItems = items.map(item => ({ ...item, kind }));
+  const popup = $("autocomplete");
+  popup.innerHTML = "";
+  for (const item of mentionItems) {
+    const row = el("div", { class: "mention-item" });
+    row.append(el("span", { class: "mention-name", text: item.kind === "files" ? item.name : `/${item.name}` }));
+    row.append(el("span", { class: "where", text: item.kind === "files" ? item.relative : item.description ?? "" }));
+    row.addEventListener("mousedown", event => { event.preventDefault();chooseMention(item); });
+    popup.append(row);
+  }
+  popup.hidden = false;
+}
+
+function chooseMention(item) {
+  const box = $("prompt");
+  const caret = box.selectionStart ?? box.value.length;
+  if (item.kind === "files") {
+    const before = box.value.slice(0, caret).replace(/@[^\s@]*$/, `@${item.relative} `);
+    box.value = before + box.value.slice(caret);
+    const at = caret;
+    box.focus();
+    box.selectionStart = box.selectionEnd = at + item.relative.length + 2;
+    $("autocomplete").hidden = true;
+    return;
+  }
+  // A command: replace the prompt with the command name and its arguments input expected after.
+  box.value = `/${item.name} `;
+  box.focus();
+  box.selectionStart = box.selectionEnd = box.value.length;
+  $("autocomplete").hidden = true;
+}
+
+$("prompt").addEventListener("input", () => completeBox());
+$("prompt").addEventListener("click", () => completeBox());
+
+async function loadCommands() {
+  try {
+    const { commands } = await api("/api/commands");
+    state.commands = Array.isArray(commands) ? commands : [];
+  } catch {
+    state.commands = [];
+  }
+}
+
+// A session's first word after "/" names a command; everything after is its arguments.
+function parseCommand(text) {
+  const match = text.match(/^\/(\w+)\b\s*([\s\S]*)$/);
+  if (!match) return null;
+  const command = state.commands.find(item => item.name.toLowerCase() === match[1].toLowerCase());
+  return command ? { name: command.name, command, args: match[2].trim() } : null;
+}
+
+$("prompt").addEventListener("keydown", event => {
+  if (!$("autocomplete").hidden && ["ArrowDown", "ArrowUp", "Enter", "Escape"].includes(event.key) && mentionItems.length > 0) {
+    event.preventDefault();
+    const rows = [...$("autocomplete").querySelectorAll(".mention-item")];
+    const index = Math.max(0, rows.findIndex(row => row.classList.contains("selected")));
+    if (event.key === "Escape") { $("autocomplete").hidden = true; return; }
+    if (event.key === "ArrowDown") { const next = Math.min(index + 1, mentionItems.length - 1); rows[index]?.classList.remove("selected"); rows[next]?.classList.add("selected"); }
+    else if (event.key === "ArrowUp") { const prev = Math.max(index - 1, 0); rows[index]?.classList.remove("selected"); rows[prev]?.classList.add("selected"); }
+    else if (event.key === "Enter") { const selected = Math.min(index, mentionItems.length - 1); chooseMention(mentionItems[selected]); }
+    return;
+  }
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    $("composer").requestSubmit();
+  }
+});
+
 $("composer").addEventListener("submit", async event => {
   event.preventDefault();
   const box = $("prompt");
   const text = box.value.trim();
-  if (text === "" || !state.session) return;
+  const attachments = stagedAttachments;
+  if ((text === "" && attachments.length === 0) || !state.session) return;
   box.value = "";
+  stagedAttachments = [];
+  renderAttachments();
+  $("autocomplete").hidden = true;
   try {
-    const { id } = await api(`/api/sessions/${encodeURIComponent(state.session.id)}/prompt`, { method: "POST", body: { text } });
-    state.transcript.pending.push({ id, text, delivery: "steer" });
+    const command = parseCommand(text);
+    if (command) {
+      await api(`/api/sessions/${encodeURIComponent(state.session.id)}/command`, { method: "POST", body: { name: command.name, text: command.args } });
+    } else {
+      const { id } = await api(`/api/sessions/${encodeURIComponent(state.session.id)}/prompt`, { method: "POST", body: { text, files: attachments } });
+      state.transcript.pending.push({ id, text, delivery: "steer", files: attachments.map(a => ({ name: a.name })) });
+    }
     render();
   } catch (error) {
     box.value = text;
+    stagedAttachments = attachments;
+    renderAttachments();
     alert(error.message);
-  }
-});
-
-$("prompt").addEventListener("keydown", event => {
-  if (event.key === "Enter" && !event.shiftKey) {
-    event.preventDefault();
-    $("composer").requestSubmit();
   }
 });
 
@@ -560,6 +774,9 @@ function renderAgentPicker() {
     select.append(el("option", { text: title, value: agent.id }));
   }
   select.value = state.agent;
+  if (state.session?.agent) {
+    if (state.agents.some(item => item.id === state.session.agent)) select.value = state.session.agent;
+  }
   select.hidden = false;
 }
 
@@ -1015,6 +1232,23 @@ const paletteActions = () => [
   { id: "find", title: "Find in this conversation", detail: "", run: () => $("find").focus() },
   { id: "export", title: "Export conversation as Markdown", detail: "", run: () => exportConversation() },
   { id: "split", title: state.split ? "Close the split view" : "Split: show a second session", detail: "", run: () => toggleSplit().catch(() => {}) },
+  { id: "rename", title: "Rename this session", detail: "", run: async () => {
+    if (!state.session) return;
+    const title = prompt("Session name:", state.session.title ?? "");
+    if (!title) return;
+    try { await api(`/api/sessions/${encodeURIComponent(state.session.id)}/rename`, { method: "POST", body: { title } }); await loadSessions(); if (state.session) state.session.title = title; render(); }
+    catch (error) { complain(null, error); }
+  } },
+  { id: "fork", title: "Fork this session (new session, same history)", detail: "", run: async () => {
+    if (!state.session || state.transcript) { /* fallthrough */ }
+    const last = state.transcript?.entries.filter(item => item.kind === "assistant" || item.kind === "user").at(-1);
+    if (!state.session || !last) return;
+    try {
+      const { session: branched } = await api(`/api/sessions/${encodeURIComponent(state.session.id)}/fork`, { method: "POST", body: { before: last.id } });
+      await loadSessions();
+      await openSession(branched.id);
+    } catch (error) { complain(null, error); }
+  } },
   { id: "appearance", title: "Appearance settings", detail: "", run: () => openSettings() },
   { id: "folder", title: "Choose a project folder", detail: "", run: () => openPicker() },
   { id: "stop", title: state.transcript?.running ? "Stop the run" : "Stop", detail: "", run: () => { if (state.session) interruptRun(); } },
@@ -1039,6 +1273,13 @@ function paletteSections() {
   if (actions.length) sections.push({ title: "Actions", items: actions });
   const sessions = state.sessions.filter(s => matches((s.title || "").toLowerCase() + " " + s.id)).slice(0, 5).map(s => ({ id: `session:${s.id}`, title: s.title || s.id.slice(0, 8), run: () => openSession(s.id) }));
   if (sessions.length) sections.push({ title: "Sessions", items: sessions });
+  const commands = state.commands.filter(c => matches(("/" + c.name.toLowerCase()) + " " + (c.description ?? "").toLowerCase())).slice(0, 5).map(c => ({
+    id: `command:${c.name}`,
+    title: `/${c.name}`,
+    detail: c.description ?? "",
+    run: () => { if (!state.session) return; $("prompt").value = `/${c.name} `; $("prompt").focus(); },
+  }));
+  if (commands.length) sections.push({ title: "Commands", items: commands });
   return sections;
 }
 
@@ -1264,6 +1505,7 @@ async function boot() {
   }
   loadModels();
   loadAgents();
+  loadCommands();
   renderAccentSwatches();
   applyLook();
   // The engine may still be starting: keep the header honest.
@@ -1274,6 +1516,14 @@ async function boot() {
       render();
     } catch {}
   }, 4000);
+}
+
+// Inside the shell the window has no native title bar: this page is it.
+if (new URLSearchParams(location.search).get("shell") === "1") {
+  document.body.classList.add("in-shell");
+  const overlay = document.createElement("div");
+  overlay.className = "titlebar-drag";
+  document.body.prepend(overlay);
 }
 
 boot().catch(error => {

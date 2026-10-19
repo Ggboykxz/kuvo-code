@@ -49,14 +49,19 @@
     <div id="entries" class="entries"></div>
     <div id="asks" class="asks"></div>
     <form id="composer" class="composer" hidden>
-      <textarea id="prompt" rows="3" placeholder="Ask for something…  (Enter sends, Shift+Enter for a new line)"></textarea>
+      <div id="queue-dock" class="queue-dock" hidden></div>
+      <div id="attachments" class="attachments" hidden></div>
+      <div id="autocomplete" class="autocomplete" hidden></div>
+      <textarea id="prompt" rows="3" placeholder="Ask for something…  (@ mentions a file, / runs a command)"></textarea>
       <div class="composer-foot">
+        <button id="attach" type="button" class="small" title="Attach files (also by dropping them here)">📎</button>
         <select id="agent" title="Agent" hidden></select>
         <select id="model" title="Model"></select>
         <div class="spacer"></div>
         <button id="stop" type="button" class="small" hidden>Stop</button>
         <button id="send" class="primary" type="submit">Send</button>
       </div>
+      <input id="attach-input" type="file" multiple hidden>
     </form>
   </section>
   <section id="split-pane" class="split-pane" hidden>

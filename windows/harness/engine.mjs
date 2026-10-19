@@ -138,6 +138,28 @@ export class EngineClient {
     await this.request("POST", `api/session/${encodeURIComponent(session)}/model`, { body: { model } });
   }
 
+  async renameSession(session, title) {
+    await this.request("PATCH", `api/session/${encodeURIComponent(session)}`, { body: { title } });
+  }
+
+  async forkSession(session, { before } = {}) {
+    return (await this.request("POST", `api/session/${encodeURIComponent(session)}/fork`, { body: { before } })).data;
+  }
+
+  async selectAgent(session, agent) {
+    await this.request("POST", `api/session/${encodeURIComponent(session)}/agent`, { body: { agent } });
+  }
+
+  async runCommand({ session, name, text, delivery }) {
+    const body = { name, text };
+    if (delivery) body.delivery = delivery;
+    await this.request("POST", `api/session/${encodeURIComponent(session)}/command`, { body });
+  }
+
+  async commands(directory) {
+    return (await this.request("GET", "api/command", { directory })).data ?? [];
+  }
+
   /// The models usable in a folder (an engine's list can differ per project).
   async models(directory) {
     return (await this.request("GET", "api/model", { directory })).data ?? [];

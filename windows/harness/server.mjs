@@ -13,7 +13,7 @@ import http from "node:http";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { EngineClient, EngineError } from "./engine.mjs";
 import { install, launch } from "../kuvo-engine.mjs";
 
@@ -404,6 +404,97 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
       return json({ agents: await client.agents(currentProject ?? undefined) });
     }
 
+    if (url.pathname === "/api/commands" && request.method === "GET") {
+      return json({ commands: await client.commands(currentProject ?? undefined) });
+    }
+
+    // The project's files by name, for the prompt's @-mentions and the palette.
+    if (url.pathname === "/api/files" && request.method === "GET") {
+      const query = (url.searchParams.get("q") ?? "").toLowerCase();
+      if (!currentProject) throw new HttpError(400, "No project is open.");
+      const found = [];
+      const skip = new Set(["node_modules", ".git", "dist", "build", ".next", "coverage", ".kuvo"]);
+      const walk = (folder, depth) => {
+        if (depth > 6 || found.length > 500) return;
+        let entries;
+        try { entries = fs.readdirSync(folder, { withFileTypes: true }); }
+        catch { return; }
+        for (const entry of entries) {
+          const full = path.join(folder, entry.name);
+          if (entry.isDirectory()) { if (!skip.has(entry.name) && !entry.name.startsWith(".")) walk(full, depth + 1); continue; }
+          if (entry.isFile()) found.push(full);
+        }
+      };
+      walk(currentProject, 0);
+      const matches = query
+        ? found.filter(file => file.toLowerCase().replace(/\\/g, "/").includes(query))
+        : found;
+      return json({ files: matches.slice(0, 40).map(file => ({
+        path: file,
+        name: path.basename(file),
+        relative: path.relative(currentProject, file).replace(/\\/g, "/"),
+      })) });
+    }
+
+    // A project file's raw bytes, for images that the conversation shows.
+    if (url.pathname === "/api/raw" && request.method === "GET") {
+      const asked = url.searchParams.get("path");
+      if (!asked) throw new HttpError(400, "No file was given.");
+      const resolved = path.resolve(asked);
+      if (currentProject && resolved !== currentProject && !resolved.startsWith(currentProject + path.sep)) {
+        throw new HttpError(403, "That file is outside the project.");
+      }
+      let data;
+      try { data = fs.readFileSync(resolved); }
+      catch { throw new HttpError(404, "There's no such file."); }
+      const kinds = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp", ".svg": "image/svg+xml", ".ico": "image/x-icon" };
+      const type = kinds[path.extname(resolved).toLowerCase()] ?? "application/octet-stream";
+      response.writeHead(200, { "content-type": type, "cache-control": "no-store" });
+      response.end(data);
+      return;
+    }
+
+    // A dropped or picked file, staged inside the project so the engine can read it.
+    if (url.pathname === "/api/upload" && request.method === "POST") {
+      const body = await readBody(request);
+      if (!currentProject) throw new HttpError(400, "No project is open.");
+      if (!body.data) throw new HttpError(400, "Nothing was uploaded.");
+      const name = (body.name ?? "attachment").replace(/[\\/:*?"<>|]/g, "_");
+      const folder = path.join(currentProject, ".kuvo", "attachments");
+      fs.mkdirSync(folder, { recursive: true });
+      const target = path.join(folder, `${Date.now()}-${name}`);
+      fs.writeFileSync(target, Buffer.from(String(body.data), "base64"));
+      return json({ path: target, name });
+    }
+
+    const rename = route(/^\/api\/sessions\/([^/]+)\/rename$/);
+    if (rename && request.method === "POST") {
+      const body = await readBody(request);
+      await client.renameSession(rename[0], String(body.title ?? "").trim());
+      return json({ ok: true });
+    }
+
+    const fork = route(/^\/api\/sessions\/([^/]+)\/fork$/);
+    if (fork && request.method === "POST") {
+      const body = await readBody(request);
+      const branched = await client.forkSession(fork[0], { before: body.before });
+      return json({ session: branched });
+    }
+
+    const command = route(/^\/api\/sessions\/([^/]+)\/command$/);
+    if (command && request.method === "POST") {
+      const body = await readBody(request);
+      await client.runCommand({ session: command[0], name: body.name, text: body.text, delivery: body.delivery === "queue" ? "queue" : "steer" });
+      return json({ ok: true });
+    }
+
+    const agent = route(/^\/api\/sessions\/([^/]+)\/agent$/);
+    if (agent && request.method === "POST") {
+      const body = await readBody(request);
+      await client.selectAgent(agent[0], body.agent);
+      return json({ ok: true });
+    }
+
     const session = route(/^\/api\/sessions\/([^/]+)$/);
     if (session && request.method === "DELETE") {
       await client.deleteSession(session[0]);
@@ -425,7 +516,11 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
       const body = await readBody(request);
       const text = String(body.text ?? "").trim();
       if (text === "") throw new HttpError(400, "An empty message has nothing to send.");
-      const id = await client.prompt({ session: prompt[0], id: body.id, text, files: body.files, delivery: body.delivery === "queue" ? "queue" : "steer" });
+      // Attachments travel as file URLs, the engine being on this machine.
+      const files = (Array.isArray(body.files) ? body.files : [])
+        .filter(file => file?.path)
+        .map(file => { const url = pathToFileURL(path.resolve(file.path)); return { uri: url.href, name: file.name ?? path.basename(file.path) }; });
+      const id = await client.prompt({ session: prompt[0], id: body.id, text, files, delivery: body.delivery === "queue" ? "queue" : "steer" });
       return json({ id });
     }
 
