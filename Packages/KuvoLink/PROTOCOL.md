@@ -185,8 +185,16 @@ itself. A host serves:
   Answers `200 {"stopped": "signal"}` or `200 {"stopped": "removed"}`, or `404 {}` when no such
   command runs. A machine's bridge does it there (from 0.5.1), with the Mac closed too.
 - `kuvo/info`: what the host is and runs; a Mac also names its folder of chats (conversations of
-  no project), and `integrations`, each integration's name by its MCP server's (`{"microsoft-365":
+  no project), whether its coding agents' bridge is up (`agents`), and `integrations`, each integration's name by its MCP server's (`{"microsoft-365":
   "Outlook and Microsoft 365", …}`), for a card when one asks something.
+- On a Mac, `kuvo/agents/api/…`: the coding agents you already have (Claude Code, Codex,
+  Cursor, Grok, Antigravity), through the Mac's agents bridge, which answers the same paths as
+  the engine for them: sessions, messages, prompts, permissions, questions, events
+  (`kuvo/agents/api/event`) and models (`kuvo/agents/api/model`, only signed-in agents'). Its
+  sessions carry `metadata.kuvoAgent` and run on the Mac; a new session with one of their
+  models (providers `claude-code`, `codex-cli`, `cursor`, `grok-cli`, `antigravity`) is made
+  there, never on the engine. `kuvo/info` has `agents: true` while the bridge is up; otherwise
+  these answer 503.
 - On a Mac, `kuvo/hosts`: the machines this phone may reach directly, with their addresses
   and static keys, so pairing once with the Mac reaches them all.
 - On a Mac, `kuvo/bots`: your bots by their session, wherever they live, with their name,

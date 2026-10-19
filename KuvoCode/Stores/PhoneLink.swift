@@ -60,6 +60,8 @@ final class PhoneLink {
     @ObservationIgnored weak var workspace: Workspace?
     /// A machine's name, by its id, for where an ask's browser runs; set by AppModel.
     @ObservationIgnored var machineName: (String) -> String? = { _ in nil }
+    /// The agents bridge (Claude Code, Codex…), for `kuvo/agents/api/…`; set by AppModel.
+    @ObservationIgnored var agents: OutsideAgents?
 
     struct MachineHost: Codable, Hashable {
         var name: String
@@ -284,10 +286,19 @@ final class PhoneLink {
         let base = endpoint.url.absoluteString.hasSuffix("/") ? endpoint.url : URL(string: endpoint.url.absoluteString + "/")!
         let password = endpoint.password
         let log = log
+        let agents = agents?.address
         return LinkServer(key: key, hello: hello) { [weak self] key, address, hello in
             await self?.authorize(key, address, hello) ?? false
         } handle: { [weak self] request, _ in
             guard request.path.hasPrefix("kuvo/") else { return EngineRoutes.forward(request, to: base, password: password) }
+            // The outside agents' sessions, through their bridge, as the engine's go through it.
+            if request.path.hasPrefix(Self.agentsPrefix) {
+                var forwarded = request
+                forwarded.path = String(request.path.dropFirst(Self.agentsPrefix.count))
+                guard let bridge = agents?.endpoint else { return Self.unavailable() }
+                let base = bridge.url.absoluteString.hasSuffix("/") ? bridge.url : URL(string: bridge.url.absoluteString + "/")!
+                return EngineRoutes.forward(forwarded, to: base, password: bridge.password)
+            }
             if request.path == "kuvo/asks/events" { return Self.following { self?.asksJSON() } }
             if request.path == "kuvo/groups/events" { return Self.following { self?.groupsJSON() } }
             if let id = Self.groupID(in: request.path, then: "events") { return Self.following { self?.groupJSON(id) } }
@@ -376,11 +387,24 @@ final class PhoneLink {
         return idle >= 120 || locked
     }
 
+    /// Where the outside agents' bridge is reached over the link.
+    nonisolated static let agentsPrefix = "kuvo/agents/"
+
+    nonisolated private static func unavailable() -> AsyncThrowingStream<LinkResponsePart, Error> {
+        AsyncThrowingStream { continuation in
+            continuation.yield(.head(status: 503, headers: ["content-type": "application/json"]))
+            continuation.yield(.body(Data(#"{"message":"The coding agents aren't running on this Mac."}"#.utf8)))
+            continuation.finish()
+        }
+    }
+
     /// Kuvo's own routes, beside the engine's.
     private func answer(_ request: LinkRequest) -> (Int, Data) {
         /// `chats`: the folder of conversations of no project, which the phone lists as Chats.
+        /// `agents`: the outside agents' bridge is up, at `kuvo/agents/api/…`.
         struct Info: Encodable {
             var kind = "mac"; var name: String; var app: String; var engine: String; var chats: String
+            var agents = false
             /// Integrations' names by their MCP server's, for what a server asks.
             var integrations = Dictionary(uniqueKeysWithValues: Integrations.all.map { ($0.id, $0.title) })
         }
@@ -391,7 +415,9 @@ final class PhoneLink {
         let encoder = JSONEncoder()
         switch request.path {
         case "kuvo/info":
-            return (200, (try? encoder.encode(Info(name: Self.computerName, app: AppInfo.version, engine: OpenCodeEngine.version, chats: Workspace.chatsFolder))) ?? Data())
+            var info = Info(name: Self.computerName, app: AppInfo.version, engine: OpenCodeEngine.version, chats: Workspace.chatsFolder)
+            info.agents = agents?.api != nil
+            return (200, (try? encoder.encode(info)) ?? Data())
         case "kuvo/bots":
             // Each bot by its session (here or on a machine): its name, look and job, and what
             // the Mac knows of it that its session doesn't say: paused, when it next wakes (in
@@ -770,3 +796,4 @@ final class PhoneLink {
         SecItemAdd(item as CFDictionary, nil)
     }
 }
+
