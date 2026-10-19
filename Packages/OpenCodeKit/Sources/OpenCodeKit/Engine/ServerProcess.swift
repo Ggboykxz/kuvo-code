@@ -123,12 +123,42 @@ public final class ServerProcess: @unchecked Sendable {
         // Tells the server it's driven by a desktop GUI (what opencode's own desktop app sends).
         environment["OPENCODE_CLIENT"] = "desktop"
         environment.removeValue(forKey: "OPENCODE_SERVER_PASSWORD")
+        return try await launch(executable: executable, arguments: ["serve", "--stdio", "--port", "0"], environment: environment,
+                                directory: folders.workspace, password: password, timeout: timeout, onExit: onExit)
+    }
 
+    /// Starts another server that starts as the engine does (the agents bridge): it prints
+    /// `{"url": …}` once it's listening, answers only with the password it's given in
+    /// OPENCODE_PASSWORD, and stops when its stdin closes.
+    public static func start(
+        executable: URL,
+        arguments: [String],
+        environment base: [String: String],
+        directory: URL,
+        timeout: Duration = .seconds(60),
+        onExit: @escaping @Sendable (Int32) -> Void = { _ in }
+    ) async throws -> ServerProcess {
+        let password = Self.randomPassword()
+        var environment = base
+        environment["OPENCODE_PASSWORD"] = password
+        return try await launch(executable: executable, arguments: arguments, environment: environment, directory: directory,
+                                password: password, timeout: timeout, onExit: onExit)
+    }
+
+    private static func launch(
+        executable: URL,
+        arguments: [String],
+        environment: [String: String],
+        directory: URL,
+        password: String,
+        timeout: Duration,
+        onExit: @escaping @Sendable (Int32) -> Void
+    ) async throws -> ServerProcess {
         let process = Process()
         process.executableURL = executable
-        process.arguments = ["serve", "--stdio", "--port", "0"]
+        process.arguments = arguments
         process.environment = environment
-        process.currentDirectoryURL = folders.workspace
+        process.currentDirectoryURL = directory
         // Its own: a terminal's shell started meanwhile mustn't hold stdin open after the app
         // has gone.
         let stdin = Pipe.unshared()
