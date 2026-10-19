@@ -385,6 +385,10 @@ final class ReplyCodeView: NSView {
     private var firstLine = ""
     private var style = ReplyDocument.Style()
     private var tokenTask: Task<Void, Never>?
+    /// The numbers' size and the corner's, worked out once for what's shown: laying out labels
+    /// to measure them, a few times each update, was much of what code being written cost.
+    private var numbersSize: CGSize?
+    private var cornerSizeKnown: CGSize?
 
     private static let inset: CGFloat = 12
     private static let radius: CGFloat = 10
@@ -433,6 +437,7 @@ final class ReplyCodeView: NSView {
 
     func show(code text: String, language hint: String?, marks: [ReplyCodeMark], style: ReplyDocument.Style) {
         guard shown?.code != text || shown?.language != hint || shown?.marks != marks || shown?.style != style else { return }
+        if shown?.style != style { cornerSizeKnown = nil }
         shown = (text, hint, marks, style)
         self.style = style
         lineCount = text.reduce(1) { $1 == "\n" ? $0 + 1 : $0 }
@@ -444,7 +449,10 @@ final class ReplyCodeView: NSView {
             .font: style.code, .foregroundColor: NSColor.tertiaryLabelColor, .paragraphStyle: paragraph,
         ])
         numbers.isHidden = lineCount <= 1
-        language.stringValue = CodeLanguage.name(of: hint)
+        numbersSize = nil
+        let languageName = CodeLanguage.name(of: hint)
+        if language.stringValue != languageName { cornerSizeKnown = nil }
+        language.stringValue = languageName
         // Colored at once if its tokens were read lately, plain until they are otherwise.
         let name = hint?.trimmingCharacters(in: .whitespaces)
         let isWriting = name?.hasPrefix(CodeLanguage.writing) ?? false
@@ -462,7 +470,14 @@ final class ReplyCodeView: NSView {
 
     /// The code's own room, beside the numbers.
     private func numbersWidth() -> CGFloat {
-        lineCount > 1 ? ceil(numbers.fittingSize.width) + 12 : 0
+        lineCount > 1 ? ceil(numbersFittingSize().width) + 12 : 0
+    }
+
+    private func numbersFittingSize() -> CGSize {
+        if let numbersSize { return numbersSize }
+        let size = numbers.fittingSize
+        numbersSize = size
+        return size
     }
 
     /// Whether the first line would run in under the corner, so the code starts below it.
@@ -474,9 +489,12 @@ final class ReplyCodeView: NSView {
     }
 
     private func cornerSize() -> CGSize {
+        if let cornerSizeKnown { return cornerSizeKnown }
         let label = language.fittingSize
         let button = copy.fittingSize
-        return CGSize(width: 28 + label.width + 2 + button.width + 6, height: max(label.height, button.height) + 12)
+        let size = CGSize(width: 28 + label.width + 2 + button.width + 6, height: max(label.height, button.height) + 12)
+        cornerSizeKnown = size
+        return size
     }
 
     func height(for width: CGFloat) -> CGFloat {
@@ -491,7 +509,7 @@ final class ReplyCodeView: NSView {
         let top = clearsCorner(width: width) ? max(0, cornerSize().height - Self.inset + 2) : 0
         let numbersWidth = numbersWidth()
         if lineCount > 1 {
-            let size = numbers.fittingSize
+            let size = numbersFittingSize()
             numbers.frame = CGRect(x: 12, y: top + Self.inset, width: numbersWidth - 12, height: size.height)
         }
         scroll.frame = CGRect(x: numbersWidth, y: top, width: width - numbersWidth, height: bounds.height - top)

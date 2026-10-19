@@ -18,6 +18,10 @@ struct ReplyDocument {
     var segments: [Segment] = []
     /// The space above each segment (the first's is 0).
     var gaps: [CGFloat] = []
+    /// What its first block asks for above it, and its last below it: for putting two together
+    /// (`joined`) with the space between them as one document would have it.
+    private var leadingTop: CGFloat = 0
+    private var trailing = Spacing(top: 0, bottom: 0)
 
     /// The look it's drawn in: the messages' size and typeface.
     struct Style: Hashable {
@@ -77,11 +81,62 @@ struct ReplyDocument {
         guard parser.highlight == nil, parser.mentions.isEmpty else { return ReplyDocument(markdown: markdown, parser: parser, style: style) }
         let key = CacheKey(markdown: markdown, style: style, folders: parser.folders())
         if let known = cache[key] { return known }
-        let document = ReplyDocument(markdown: markdown, parser: parser, style: style)
+        // A long one from short parts, each kept: as a reply is written, only its last part is
+        // read again with each few words, not all of it (most of what each update cost).
+        let parts = markdown.utf8.count > Self.partSize * 2 ? MarkdownChunks.split(markdown, size: Self.partSize) : []
+        let document: ReplyDocument
+        if parts.count > 1 {
+            var joined = cached(markdown: parts[0].text, parser: parser, style: style)
+            for part in parts.dropFirst() { joined = joined.joined(cached(markdown: part.text, parser: parser, style: style)) }
+            document = joined
+            #if DEBUG
+            PartsCheck.compare(joined, ReplyDocument(markdown: markdown, parser: parser, style: style), markdown: markdown)
+            #endif
+        } else {
+            document = ReplyDocument(markdown: markdown, parser: parser, style: style)
+        }
         cache[key] = document
         cacheOrder.append(key)
-        if cacheOrder.count > 400 { cache[cacheOrder.removeFirst()] = nil }
+        if cacheOrder.count > 1500 { cache[cacheOrder.removeFirst()] = nil }
         return document
+    }
+
+    /// About how long the parts a long piece is read in are.
+    private static let partSize = 600
+
+    /// `next` after this, with the space between them that one document of both would have: the
+    /// two only meet where a paragraph or heading starts (see `MarkdownChunks`).
+    private func joined(_ next: ReplyDocument) -> ReplyDocument {
+        guard let first = next.segments.first else { return self }
+        guard let last = segments.last else { return next }
+        var joined = self
+        let gap: CGFloat
+        if case .text = first {
+            gap = max(trailing.bottom, next.leadingTop) + trailing.below
+        } else {
+            gap = trailing.bottom + trailing.below
+        }
+        if case .text(let before) = last, case .text(let after) = first, before.length > 0 {
+            // One text: the space goes after the paragraph before, less the line spacing TextKit
+            // leaves under its last line.
+            let text = NSMutableAttributedString(attributedString: before)
+            let paragraphRange = (text.string as NSString).paragraphRange(for: NSRange(location: text.length - 1, length: 0))
+            if let style = text.attribute(.paragraphStyle, at: text.length - 1, effectiveRange: nil) as? NSParagraphStyle,
+               let paragraph = style.mutableCopy() as? NSMutableParagraphStyle {
+                paragraph.paragraphSpacing = max(0, gap - paragraph.lineSpacing)
+                text.addAttribute(.paragraphStyle, value: paragraph, range: paragraphRange)
+            }
+            text.append(NSAttributedString(string: "\n", attributes: Self.separatorAttributes(of: text)))
+            text.append(after)
+            joined.segments[joined.segments.count - 1] = .text(text)
+            joined.segments += next.segments.dropFirst()
+            joined.gaps += next.gaps.dropFirst()
+        } else {
+            joined.segments += next.segments
+            joined.gaps += [gap] + next.gaps.dropFirst()
+        }
+        joined.trailing = next.trailing
+        return joined
     }
 
     // MARK: Building
@@ -144,6 +199,7 @@ struct ReplyDocument {
     /// the web (a README's badges and tracking pixels would reach their hosts as it opens).
     init(markdown: String, parser: some MarkupParser, style: Style, images: URL? = nil) {
         let parsed = (try? parser.attributedString(for: markdown)) ?? AttributedString(markdown)
+        let findsMarks = (parser as? FileLinkingParser).map { $0.highlight != nil } ?? false
         let context = Context()
         context.images = images
         var text = NSMutableAttributedString()
@@ -173,7 +229,9 @@ struct ReplyDocument {
                 if language == MathText.blockLanguage || language?.lowercased() == "math" {
                     segments.append(.math(latex: code.trimmingCharacters(in: .whitespacesAndNewlines)))
                 } else {
-                    segments.append(.code(code: code, language: language, marks: Self.marks(in: content)))
+                    // Find's marks only while Find has some: looking through every run of a
+                    // code block for them was a good part of reading one.
+                    segments.append(.code(code: code, language: language, marks: findsMarks ? Self.marks(in: content) : []))
                 }
                 gaps.append(segments.count == 1 ? 0 : gap)
                 last = (Spacing(top: 0, bottom: 16), nil, nil, nil)
@@ -203,12 +261,14 @@ struct ReplyDocument {
             } else {
                 textGap = gap
             }
+            if segments.isEmpty, text.length == 0 { leadingTop = block.spacing.top }
             styles.append((NSRange(location: text.length, length: block.text.length), block.paragraph))
             text.append(block.text)
             last = (block.spacing, block.paragraph, block.table, block.list)
         }
         context.sizeTables()
         flushText()
+        if let last { trailing = last.list != nil ? Spacing(top: 0, bottom: 16, below: last.spacing.below) : last.spacing }
     }
 
     /// Whether a list item's first paragraph is a task's: "[ ] ", "[x] " or "[X] " ahead of its
@@ -565,3 +625,44 @@ enum ReplyAttachments {
         return text
     }
 }
+
+#if DEBUG
+/// KUVO_PERF_PARTS_CHECK=<file>: each long piece read in parts compared with it read whole, and
+/// where they differ written down.
+enum PartsCheck {
+    private static let file = ProcessInfo.processInfo.environment["KUVO_PERF_PARTS_CHECK"]
+    private static var compared = 0
+    private static var problems: [String] = []
+
+    static func compare(_ parts: ReplyDocument, _ whole: ReplyDocument, markdown: String) {
+        guard let file else { return }
+        compared += 1
+        func describe(_ document: ReplyDocument) -> [String] {
+            zip(document.segments, document.gaps).map { segment, gap in
+                switch segment {
+                case .text(let text):
+                    var paragraphs: [String] = []
+                    text.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: text.length)) { value, range, _ in
+                        let style = value as? NSParagraphStyle
+                        paragraphs.append("\(range.location)+\(range.length) \(style?.paragraphSpacing ?? -1)/\(style?.paragraphSpacingBefore ?? -1)/\(style?.lineSpacing ?? -1)/\(style?.headIndent ?? -1)")
+                    }
+                    var fonts: [String] = []
+                    text.enumerateAttribute(.font, in: NSRange(location: 0, length: text.length)) { value, range, _ in
+                        fonts.append("\(range.location)+\(range.length) \((value as? NSFont)?.pointSize ?? 0)")
+                    }
+                    return "text gap \(gap): \(text.string.debugDescription) | \(paragraphs.joined(separator: ", ")) | \(fonts.joined(separator: ", "))"
+                case .code(let code, let language, _): return "code gap \(gap) \(language ?? "-"): \(code.count)"
+                case .math(let latex): return "math gap \(gap): \(latex)"
+                }
+            }
+        }
+        let a = describe(parts), b = describe(whole)
+        if a != b {
+            let index = (0..<min(a.count, b.count)).first { a[$0] != b[$0] } ?? min(a.count, b.count)
+            problems.append("piece of \(markdown.count) characters, segment \(index):\n  parts: \(index < a.count ? String(a[index].prefix(1500)) : "none")\n  whole: \(index < b.count ? String(b[index].prefix(1500)) : "none")")
+        }
+        let out = "\(compared) compared, \(problems.count) different\n" + problems.prefix(8).joined(separator: "\n\n")
+        try? out.write(toFile: file, atomically: true, encoding: .utf8)
+    }
+}
+#endif
