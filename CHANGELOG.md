@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- In a group chat, a message you send as a bot finishes its turn reaches that bot: it gets another turn. Before, it could miss it, and the others passed it by.
 - A review comment stays with the line you wrote it on when the agent edits the file meanwhile. It could be saved on, or later shown at, another line in that place.
 - ⌘Return in a new session's composer sends the message. It did nothing.
 - A worktree isn't removed while any session works in it, even one you haven't opened, a subagent or a command left running there. And a merge stopped by a hook or commit signing is taken back, rather than leaving your checkout in the middle of it.

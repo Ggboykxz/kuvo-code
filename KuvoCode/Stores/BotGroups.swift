@@ -568,8 +568,15 @@ final class BotGroups {
     /// otherwise the next in line after whoever spoke last. Nobody twice in a row, and nobody
     /// who passed since the last thing said. Nil once there's nobody left with something to add.
     private func nextSpeaker(in group: BotGroup, members: [String], quiet: Set<String>) -> String? {
-        let last = messages(in: group.id).last { $0.kind != .note }
-        let candidates = members.filter { $0 != last?.author && !quiet.contains($0) }
+        let all = messages(in: group.id)
+        let last = all.last { $0.kind != .note }
+        // Who spoke last waits a turn, unless something of yours came that it hasn't heard: one
+        // you wrote as its turn was ending (or before its run began) didn't reach it then.
+        func missedYou(_ bot: String) -> Bool {
+            let heard = group.heard[bot].flatMap { id in all.lastIndex { $0.id == id } } ?? -1
+            return all[(heard + 1)...].contains { $0.author == nil && $0.kind == .message }
+        }
+        let candidates = members.filter { ($0 != last?.author || missedYou($0)) && !quiet.contains($0) }
         guard !candidates.isEmpty else { return nil }
         // Its own words: a quote it replies to names whoever that message did.
         if let last, let named = mentions(in: Quoting.words(of: last.text), among: candidates).first {
