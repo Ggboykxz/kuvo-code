@@ -3,6 +3,10 @@ node_modules/
 xcuserdata/
 DerivedData/
 build/
+!windows/electron/build/
+windows/electron/build/*
+!windows/electron/build/icon.ico
+!windows/electron/build/icon.png
 .build/
 .swiftpm/
 *.xcuserstate

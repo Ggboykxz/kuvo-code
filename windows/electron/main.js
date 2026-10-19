@@ -19,7 +19,12 @@ const configPath = path.join(userData, 'config.json');
 function loadConfig() { try { return JSON.parse(fs.readFileSync(configPath, 'utf8')); } catch { return {}; } }
 function saveConfig(config) { fs.mkdirSync(userData, { recursive: true }); fs.writeFileSync(configPath, JSON.stringify(config, null, 2)); }
 
-const ICON = nativeImage.createFromDataURL('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAPElEQVR4nO3OMQ0AIAwAsDnBDwd+cIE91IAIQgZJj/6N0vrKFAICAs8H6phHBAQEBAQEBP4P3CYgIJAe2LDUYXkB9p2aAAAAAElFTkSuQmCC');
+// The app's own icon, taken from the macOS build (windows/tools/make-icon.py). The window
+// and the tray wear it; Windows takes the executable's icon from build/icon.ico.
+const ICON_FILE = path.join(__dirname, 'build', 'icon.png');
+const ICON = fs.existsSync(ICON_FILE)
+  ? nativeImage.createFromPath(ICON_FILE)
+  : nativeImage.createFromDataURL('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAPElEQVR4nO3OMQ0AIAwAsDnBDwd+cIE91IAIQgZJj/6N0vrKFAICAs8H6phHBAQEBAQEBP4P3CYgIJAe2LDUYXkB9p2aAAAAAElFTkSuQmCC');
 
 let harness = null;
 let harnessUrl = null;

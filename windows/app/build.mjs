@@ -37,6 +37,9 @@ const options = {
 function copyAssets() {
   fs.mkdirSync(out, { recursive: true });
   fs.copyFileSync(path.join(here, "src", "index.html"), path.join(out, "index.html"));
+  // The app's icon: the page's favicon (the same drawing the Mac build ships).
+  const icon = path.join(here, "src", "icon.png");
+  if (fs.existsSync(icon)) fs.copyFileSync(icon, path.join(out, "icon.png"));
   const style = path.join(legacy, "style.css");
   if (fs.existsSync(style)) fs.copyFileSync(style, path.join(out, "style.css"));
   const vendor = path.join(legacy, "vendor");
