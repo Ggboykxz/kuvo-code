@@ -251,6 +251,15 @@ test("the page, in a DOM, against the real engine", {
   clear().click();
   await page.seen("the keys to go back to the app's own", () => chip("Ctrl+K") !== undefined, 10_000);
 
+  // The usage page: what the agent spent, read from the engine's own sessions.
+  page.document.querySelector('.settings-nav button[data-section="usage"]').click();
+  await page.seen("the usage page to show", () => {
+    const section = page.document.querySelector('.settings-page[data-section="usage"]');
+    return section !== null && !section.hidden && section.textContent.includes("What the agent has spent");
+  }, 10_000);
+  const usage = page.document.querySelector('.settings-page[data-section="usage"]');
+  assert.match(usage.textContent, /\$\d+\.\d{4}/, "the usage page shows what the agent spent");
+
   assert.deepEqual([...page.errors, ...reloaded.errors], [], "the page had nothing to complain about");
 
   // Leave the engine as we found it (the hook above closes the pages and the harness).

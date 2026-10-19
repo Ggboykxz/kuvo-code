@@ -105,6 +105,10 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
+  - **2.50 (this change).** What the agent has spent: Settings ▸ Usage shows what the
+    engine ran and what it cost, by model and by session, read from the engine's own
+    sessions. The Mac's menu-bar panel also follows each provider's *plan* — that asks the
+    provider with its own key, and this app leaves the keys where opencode keeps them.
   - **2.49 (this change).** The app wears its own icon, the macOS build's drawing: the
     `.icns` that ships inside the Mac app is made into the `.ico` Windows gives the
     executable, the tray, the window and the page's favicon — the same picture, once.

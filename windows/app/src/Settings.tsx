@@ -40,6 +40,7 @@ const PAGES = [
   ["commands", "Commands"],
   ["projects", "Projects"],
   ["providers", "Providers"],
+  ["usage", "Usage"],
   ["git", "Git"],
   ["archived", "Archived sessions"],
   ["permissions", "Permissions"],
@@ -139,6 +140,7 @@ export function Settings() {
       case "commands": return <CommandsPage />;
       case "projects": return <ProjectsPage />;
       case "providers": return <ProvidersPage />;
+      case "usage": return <UsagePage />;
       case "git": return <GitPage />;
       case "archived": return <ArchivedPage />;
       case "permissions": return <PermissionsPage permissions={savedPermissions} onChange={setSavedPermissions} />;
@@ -472,6 +474,64 @@ function ProvidersPage() {
         {saved ? <span className="where">{`${saved} is added.`}</span> : null}
       </div>
       <div className="settings-note">A provider you add here is written to the engine's settings with its address and its models. The key is not written here: it stays where opencode keeps it, and the engine finds it as it does in a terminal.</div>
+    </>
+  );
+}
+
+/// What the agent has spent, in this project: the cost and the tokens the engine reports for
+/// each session, and the total.
+///
+/// The Mac app's panel (UsageKit, the menu-bar app) also reads each provider's *own* plan —
+/// Copilot, Codex, Grok, OpenRouter, Z.ai — with the keys the engine holds. We do not read
+/// those: the keys stay where opencode keeps them, and a provider's plan is the provider's
+/// to tell. What the engine ran and what it cost is ours to show.
+function UsagePage() {
+  const sessions = state.sessions;
+  const cost = sessions.reduce((sum, session) => sum + (session.cost ?? 0), 0);
+  const tokens = sessions.reduce(
+    (sum, session) => ({
+      input: sum.input + (session.tokens?.input ?? 0),
+      output: sum.output + (session.tokens?.output ?? 0),
+      reasoning: sum.reasoning + (session.tokens?.reasoning ?? 0),
+    }),
+    { input: 0, output: 0, reasoning: 0 },
+  );
+  const byModel = new Map<string, { name: string; cost: number; sessions: number }>();
+  for (const session of sessions) {
+    const name = session.model?.id ?? "the model";
+    const entry = byModel.get(name) ?? { name, cost: 0, sessions: 0 };
+    entry.cost += session.cost ?? 0;
+    entry.sessions += 1;
+    byModel.set(name, entry);
+  }
+  const models = [...byModel.values()].sort((left, right) => right.cost - left.cost);
+
+  return (
+    <>
+      <h3>This project</h3>
+      <div className="settings-row"><span>What the agent has spent</span><span>{`$${cost.toFixed(4)}`}</span></div>
+      <div className="settings-row"><span>Tokens read</span><span>{tokens.input.toLocaleString()}</span></div>
+      <div className="settings-row"><span>Tokens written</span><span>{tokens.output.toLocaleString()}</span></div>
+      <div className="settings-row"><span>Tokens thought</span><span>{tokens.reasoning.toLocaleString()}</span></div>
+      {models.length === 0 ? <div className="where">No session has run yet.</div> : (
+        <>
+          <h3>By model</h3>
+          {models.map(model => (
+            <div className="settings-row" key={model.name}>
+              <span>{model.name}</span>
+              <span>{`${model.sessions} session${model.sessions === 1 ? "" : "s"} · $${model.cost.toFixed(4)}`}</span>
+            </div>
+          ))}
+        </>
+      )}
+      <h3>By session</h3>
+      {sessions.length === 0 ? <div className="where">No session yet.</div> : sessions.map(session => (
+        <div className="settings-row" key={session.id}>
+          <span>{session.title?.trim() || "A session"}</span>
+          <span>{`$${(session.cost ?? 0).toFixed(4)}`}</span>
+        </div>
+      ))}
+      <div className="settings-note">What the engine ran and what it cost, read from the engine's own sessions. The Mac app's menu-bar panel also follows each provider's plan — that needs the provider's sign-in, which this app deliberately leaves where opencode keeps it.</div>
     </>
   );
 }

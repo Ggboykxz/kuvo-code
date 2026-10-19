@@ -51,9 +51,15 @@ list and the keys), `windows/app/src/shortcuts.ts` (the app's half), `windows/ap
 (the handler), the Keyboard page, the settings file.
 
 ### 3. The usage panel — what the account spent
-The Mac ships `UsageKit` and a usage page. We have the cost per session in the gauge's
-popover only. **Needs:** the engine's usage routes, and the Mac's page. **Lands in:**
-a new "Usage" settings page, reading the engine's accounts.
+**Partly done, and the rest is a decision, not a port.** The engine has no usage route — we
+asked it (`api/usage`, `api/account`, `api/cost`: 404) — but its sessions carry the cost and
+the tokens, and the Mac's gauge shows them. **Done:** a "Usage" settings page (Settings ▸
+Usage) with what the engine ran and what it cost, by model and by session.
+**Not done, on purpose:** UsageKit (the Mac's menu-bar panel, a fork of OpenUsage) also reads
+each provider's *own* plan — Copilot, Codex, Grok, OpenRouter, Z.ai — with the keys the
+engine holds. Reading a provider's plan means asking the provider, with its key: that is
+item 6 below, and it is a decision about secrets, not a port. **Lands in:**
+`windows/app/src/Settings.tsx` (the page), the engine's own sessions.
 
 ### 4. The browser — the Mac's own, shipped as resources
 `browser-runtime.json`, `kuvo-browser.js`, `buildDomTree.js`: the Mac can show a page

@@ -56,6 +56,7 @@ mirrored in `windows/harness/engine.mjs` and typed in `windows/app/src/api.ts`).
 | `GeneralSettings` | ✅ (mises à jour, démarrage à l'login, veille, import opencode) |
 | `AppearanceSettings` | ✅ (accent, thème, taille du texte, mouvement) |
 | `ShortcutsSettings` | ✅ la liste, cherchable ; les raccourcis sont câblés et **enregistrables** (l'enregistreur du Mac : clic, puis les touches) |
+| `UsageKit` (le panneau de la barre des menus) | ◐ l'usage du moteur : ce que l'agent a dépensé, par modèle et par session. Les forfaits des fournisseurs (Copilot, Codex, Grok, OpenRouter, Z.ai) demanderaient la clé du fournisseur — on ne la prend pas. |
 | `MCPSettings` | ✅ (état, édition, catalogue, timeouts, import opencode) |
 | `AgentsSettings` | ✅ (défaut, mode, modèle, pas, instructions, règles) |
 | `SkillsSettings` | ✅ (liste, on/off, SKILL.md) |
