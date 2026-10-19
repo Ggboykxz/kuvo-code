@@ -69,6 +69,9 @@ struct Composer: View {
     @State private var historyIndex: Int?
     /// The project's files for "@", read when one is typed.
     @State private var mentionFiles: [ProjectFiles.File] = []
+    /// The folders `mentionFiles` were read in: a read for another session's project, coming in
+    /// after you went to this one, isn't this one's.
+    @State private var mentionFilesFolders: [String] = []
     @State private var mentionFilesRead: Date?
     @State private var mentionIndex = 0
     /// Where the "@" whose list was closed with Escape is, so it stays closed.
@@ -388,7 +391,7 @@ struct Composer: View {
     private var mention: (query: String, matches: [ProjectFiles.File])? {
         guard !folders.isEmpty, !isShell, let (query, start) = Mentions.query(in: text),
               text.distance(from: text.startIndex, to: start) != dismissedMention else { return nil }
-        let matches = Mentions.matches(query, in: mentionFiles)
+        let matches = Mentions.matches(query, in: mentionFilesFolders == folders ? mentionFiles : [])
         return matches.isEmpty ? nil : (query, matches)
     }
 
@@ -401,8 +404,13 @@ struct Composer: View {
         }
         guard mentionFilesRead.map({ Date().timeIntervalSince($0) > 30 }) ?? true else { return }
         mentionFilesRead = Date()
+        let folders = folders
         let roots = folders.map(RemoteFolder.url)
-        Task { mentionFiles = await Task.detached { ProjectFiles.mentionable(roots) }.value }
+        Task {
+            let files = await Task.detached { ProjectFiles.mentionable(roots) }.value
+            mentionFiles = files
+            mentionFilesFolders = folders
+        }
     }
 
     private func insertMention(_ file: ProjectFiles.File) {
@@ -646,9 +654,17 @@ private struct PasteAttachments: ViewModifier {
     let isActive: Bool
     let attach: ([URL]) -> Void
     @State private var monitor: Any?
+    /// What attaching does now: the composer stays as you go to another session, and the monitor
+    /// made in one must attach to the draft of the one in view.
+    @State private var current = Current()
+
+    private final class Current {
+        var attach: ([URL]) -> Void = { _ in }
+    }
 
     func body(content: Content) -> some View {
-        content
+        current.attach = attach
+        return content
             .onChange(of: isActive, initial: true) { _, active in
                 if active { install() } else { remove() }
             }
@@ -657,14 +673,14 @@ private struct PasteAttachments: ViewModifier {
 
     private func install() {
         guard monitor == nil else { return }
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [current] event in
             // Only in the window it's in: not in a sheet over it, nor a panel, where the paste is
             // that field's.
             guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
                   event.charactersIgnoringModifiers == "v",
                   let window = event.window, window.attachedSheet == nil, window.sheetParent == nil, !(window is NSPanel),
                   let urls = Self.pastedFiles() else { return event }
-            attach(urls)
+            current.attach(urls)
             return nil
         }
     }
