@@ -157,9 +157,25 @@ final class Bots {
     /// job comes from the conversation; `job` writes one in its memory from the start (for the
     /// demo copy).
     func create(name: String, job: (line: String, details: String)? = nil, look: BotLook, personality: String? = nil, model: ModelRef?, machine: String?, project: String?) async throws -> Bot {
+        let name = Self.oneLine(name)
         let memory = job.map { Self.addingJob($0.line, details: $0.details, to: Self.blankMemory(name)) } ?? Self.blankMemory(name)
         guard let app else { throw CancellationError() }
         let id = "bot_" + String((0..<10).map { _ in "abcdefghijklmnopqrstuvwxyz0123456789".randomElement()! })
+        // What's made before something fails is taken back: no folder or session half made.
+        var session: (id: String, api: OpenCodeAPI)?
+        do {
+            return try await create(id: id, name: name, memory: memory, look: look, personality: personality, model: model, machine: machine, project: project, app: app) { session = ($0, $1) }
+        } catch {
+            if let session {
+                try? await session.api.deleteSession(session.id)
+                app.workspace.botSessions.remove(session.id)
+            }
+            await discardFolder(of: id, on: machine)
+            throw error
+        }
+    }
+
+    private func create(id: String, name: String, memory: String, look: BotLook, personality: String?, model: ModelRef?, machine: String?, project: String?, app: AppModel, made: (String, OpenCodeAPI) -> Void) async throws -> Bot {
         let folder: String
         if let machine {
             guard let engine = app.machines.engine(machine), engine.isReady else { throw Failure.notConnected(machine) }
@@ -194,6 +210,7 @@ final class Bots {
         // last used, as it is.
         bot.model = catalog.startingModel(model, LastModel.current)
         let session = try await api.createSession(directory: bot.directory, title: name, model: bot.model, permissions: rules)
+        made(session.id, api)
         // The bot's from the start: not a project's session for the moment it takes to set up.
         app.workspace.botSessions.insert(session.id)
         bot.sessionID = session.id
@@ -207,6 +224,21 @@ final class Bots {
         app.workspace.botSessions = sessionIDs
         Analytics.shared.track("bot_created", ["machine": machine != nil, "project": project != nil])
         return bot
+    }
+
+    /// A bot that couldn't be made: its folder, which holds only what making it wrote (on a
+    /// machine, to Kuvo Code's trash there).
+    private func discardFolder(of id: String, on machine: String?) async {
+        if let machine {
+            let script = """
+                B="$HOME/\(RemoteEngineInstaller.root)/bots/\(id)"
+                T="$HOME/\(RemoteEngineInstaller.root)/trash/$(date +%Y%m%d-%H%M%S)-$$"
+                [ ! -e "$B" ] || { mkdir -p "$T" && mv -- "$B" "$T/"; }
+                """
+            _ = await Task.detached(operation: { RemoteShell.run(script, on: machine) }).value
+        } else {
+            try? FileManager.default.removeItem(at: Self.root.appending(path: id))
+        }
     }
 
     /// A new bot writes first: what it takes its job to be from its name, with what it needs to
@@ -704,6 +736,15 @@ final class Bots {
     // MARK: Its job, for the engine
 
     /// A new bot's memory file, so there's one to read from the start.
+    /// A name as one line of plain text, as a name field shows it: line breaks, control and
+    /// direction characters become spaces.
+    static func oneLine(_ name: String, limit: Int = .max) -> String {
+        let breaks = CharacterSet.newlines.union(.controlCharacters).union(CharacterSet(charactersIn: "\u{200E}\u{200F}\u{202A}\u{202B}\u{202C}\u{202D}\u{202E}\u{2066}\u{2067}\u{2068}\u{2069}"))
+        let words = name.components(separatedBy: breaks).joined(separator: " ")
+            .split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return String(words.prefix(limit)).trimmingCharacters(in: .whitespaces)
+    }
+
     static func blankMemory(_ name: String) -> String {
         "# \(name)'s memory\n\nWhat \(name) keeps for next time: preferences, how things are set up, where ongoing work stands. Nothing yet.\n"
     }

@@ -27,8 +27,19 @@ struct BotRecipe: Codable, Equatable {
 
     /// The recipe in a file.
     static func read(_ url: URL) throws -> BotRecipe {
-        let recipe = try JSONDecoder().decode(BotRecipe.self, from: Data(contentsOf: url))
+        // A file of its own, and a small one: not a pipe or a device, which would never finish.
+        let file = url.resolvingSymlinksInPath()
+        let values = try file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+        guard values.isRegularFile == true, values.fileSize ?? 0 <= 1 << 20 else { throw CocoaError(.fileReadCorruptFile) }
+        var recipe = try JSONDecoder().decode(BotRecipe.self, from: Data(contentsOf: file))
         guard recipe.kind == "kuvo-bot" else { throw CocoaError(.fileReadCorruptFile) }
+        // Names on one line, as you see them: one with line breaks could write a job of its own
+        // into the new bot's memory, which you'd never read.
+        recipe.name = Bots.oneLine(recipe.name)
+        if let shared = recipe.personality {
+            recipe.personality?.name = Bots.oneLine(shared.name)
+            recipe.personality?.description = String(shared.description.prefix(1000))
+        }
         return recipe
     }
 
@@ -49,13 +60,13 @@ struct BotRecipe: Codable, Equatable {
     }
 
     /// Its personality on this Mac: a preset by its ID; one of someone's own by its name and
-    /// words, added to yours if you don't have it.
-    func personalityHere() -> String? {
+    /// words, added to yours if you don't have it (`added`).
+    func personalityHere() -> (id: String, added: Bool)? {
         guard let shared = personality else { return nil }
         let personalities = Personalities.shared
-        if let known = personalities.all.first(where: { $0.id == shared.id && !$0.isCustom }) { return known.id }
-        if let same = personalities.all.first(where: { $0.name == shared.name && $0.description == shared.description }) { return same.id }
-        return personalities.add(name: shared.name, description: shared.description).id
+        if let known = personalities.all.first(where: { $0.id == shared.id && !$0.isCustom }) { return (known.id, false) }
+        if let same = personalities.all.first(where: { $0.name == shared.name && $0.description == shared.description }) { return (same.id, false) }
+        return (personalities.add(name: shared.name, description: shared.description).id, true)
     }
 
     /// Saves a bot's recipe where you choose.

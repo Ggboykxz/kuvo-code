@@ -44,6 +44,10 @@ struct BotEditor: View {
     /// The template a new bot started from.
     @State private var template: String?
     @State private var isHoveringAvatar = false
+    /// The shared bot's personality was looked for (once: the form appears again on coming back
+    /// from adding a machine), and the one added to yours for it, if it was.
+    @State private var adoptedRecipe = false
+    @State private var addedPersonality: String?
     @FocusState private var focus: Field?
 
     private enum Field { case name }
@@ -130,7 +134,13 @@ struct BotEditor: View {
             if isNew, let machine = ProcessInfo.processInfo.environment["KUVO_DEMO_NEW_BOT_MACHINE"] { self.machine = machine }
             #endif
             // A shared bot's personality, found here (or added) once, not at every redraw.
-            if isNew, personality == nil, let recipe { personality = recipe.personalityHere() }
+            if isNew, !adoptedRecipe, let recipe {
+                adoptedRecipe = true
+                if personality == nil, let found = recipe.personalityHere() {
+                    personality = found.id
+                    if found.added { addedPersonality = found.id }
+                }
+            }
             // A bot made before bots had a model: the one its conversation uses.
             if model == nil { model = bot.flatMap { workspace.session($0.sessionID)?.model } ?? placeCatalog.startingModel(lastModel) }
         }
@@ -325,6 +335,12 @@ struct BotEditor: View {
             Spacer(minLength: 0)
             Button("Cancel", role: .cancel) {
                 if waitsForMachine { creating?.cancel() }
+                // Opening a shared bot and not making it leaves none of its personality behind
+                // (one being made keeps it).
+                if !isWorking || waitsForMachine, let addedPersonality, !bots.list.contains(where: { $0.personality == addedPersonality }),
+                   let added = Personalities.shared.personality(addedPersonality) {
+                    Personalities.shared.delete(added)
+                }
                 close()
             }
                 .keyboardShortcut(.cancelAction)
