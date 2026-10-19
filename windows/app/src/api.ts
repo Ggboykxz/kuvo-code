@@ -180,6 +180,7 @@ export interface AppState {
   forms: FormRequest[];
   revert: { messageID: string } | null;
   files: { path: string; name: string; kind: string }[];
+  projectFiles: string[];
   openFile: string | null;
   paletteOpen: boolean;
   settingsOpen: boolean;

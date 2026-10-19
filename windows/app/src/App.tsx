@@ -28,6 +28,7 @@ import {
   loadVcs,
   newSession,
   notify,
+  openProjectFile,
   openSession,
   redoNow,
   render,
@@ -105,14 +106,16 @@ export function showDiff(title: string, oldText: string, newText: string) {
 /// A long message folds, the way the Mac app's does: the first lines, and a way to see
 /// the rest.
 function LongText({ text }: { text: string }) {
+  useStore();
   const [open, setOpen] = useState(false);
   const long = text.length > 900;
-  if (!long || open) return <div className="text markdown" dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }} />;
+  const files = state.projectFiles;
+  if (!long || open) return <div className="text markdown" dangerouslySetInnerHTML={{ __html: renderMarkdown(text, files) }} />;
   const cut = text.slice(0, 700);
   const line = cut.lastIndexOf("\n", 700);
   return (
     <div className="text markdown">
-      <div dangerouslySetInnerHTML={{ __html: renderMarkdown(cut.slice(0, line > 200 ? line : 700)) }} />
+      <div dangerouslySetInnerHTML={{ __html: renderMarkdown(cut.slice(0, line > 200 ? line : 700), files) }} />
       <button className="small long-more" onClick={() => setOpen(true)}>Show more</button>
     </div>
   );
@@ -239,7 +242,7 @@ function AssistantEntry({ entry }: { entry: TranscriptEntry }) {
           return (
             <details key={index} className="reasoning">
               <summary className={entry.running ? "shimmer" : ""}>Thinking</summary>
-              <div className="text markdown" dangerouslySetInnerHTML={{ __html: renderMarkdown(part.text ?? "") }} />
+              <div className="text markdown" dangerouslySetInnerHTML={{ __html: renderMarkdown(part.text ?? "", state.projectFiles) }} />
             </details>
           );
         }
@@ -1201,7 +1204,19 @@ export function App() {
             <button id="choose" className="primary" hidden={!needsFolder} onClick={() => { state.pickerOpen = true; render(); }}>Choose a folder</button>
             <button id="start" className="primary" hidden={needsFolder} onClick={() => void newSession()}>Start a session</button>
           </div>
-          <div id="entries" className="entries" ref={entriesRef}>
+          <div
+            id="entries"
+            className="entries"
+            ref={entriesRef}
+            onClick={event => {
+              // The Mac app's file links: a code span that names a file of the project opens
+              // it, in the side panel.
+              const link = (event.target as HTMLElement | null)?.closest?.("a.file-link") as HTMLAnchorElement | null;
+              if (!link) return;
+              event.preventDefault();
+              void openProjectFile(link.dataset.path ?? "");
+            }}
+          >
             {state.transcript ? <EntryNodes transcript={state.transcript} /> : null}
           </div>
           <button

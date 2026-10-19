@@ -696,6 +696,12 @@ echo "written"
 .markdown ul, .markdown ol { margin: var(--space-2) 0; padding-left: var(--space-5); }
 .markdown li { margin: var(--space-1) 0; }
 .markdown code { font-family: var(--font-mono); font-size: 0.9em; background: var(--code-bg); padding: 1px 5px; border-radius: var(--radius-sm); }
+/* The file links: a code span that names a file of the project opens it, in the side panel. */
+.markdown .file-link {
+  color: var(--accent); cursor: pointer; font-family: var(--font-mono); font-size: 0.9em;
+  border-bottom: 1px solid var(--accent-soft); transition: border-color var(--motion-quick) var(--ease-standard);
+}
+.markdown .file-link:hover { border-bottom-color: var(--accent); }
 .markdown pre {
   margin: var(--space-3) 0; padding: var(--space-3);
   background: var(--code-bg); border-radius: var(--radius);

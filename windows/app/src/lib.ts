@@ -3,6 +3,7 @@
 
 import katex from "katex";
 import { marked } from "marked";
+import { fileIn } from "./filelinks.mjs";
 
 export const escapeHtml = (text: unknown) =>
   String(text).replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]) as string);
@@ -42,7 +43,7 @@ export function renderMath(text: string): string {
   return source.replace(/\u0000(\d+)\u0000/g, (_, index) => kept[Number(index)]);
 }
 
-export function renderMarkdown(text: string): string {
+export function renderMarkdown(text: string, files: string[] = []): string {
   const html = sanitizeHtml(marked.parse(renderMath(text), { breaks: true, gfm: true }) as string);
   const doc = new DOMParser().parseFromString(html, "text/html");
   doc.querySelectorAll("pre").forEach(pre => {
@@ -57,6 +58,21 @@ export function renderMarkdown(text: string): string {
     pre.style.position = "relative";
     pre.append(button);
   });
+  // The Mac app's file links: a code span that names a file of the project opens it, in the
+  // side panel, when it is clicked.
+  if (files.length > 0) {
+    doc.querySelectorAll("code").forEach(code => {
+      if (code.closest("pre")) return;
+      const file = fileIn(code.textContent ?? "", files);
+      if (!file) return;
+      const link = doc.createElement("a");
+      link.className = "file-link";
+      link.dataset.path = file.path;
+      if (file.line) link.dataset.line = String(file.line);
+      link.textContent = file.label;
+      code.replaceWith(link);
+    });
+  }
   return doc.body.innerHTML;
 }
 

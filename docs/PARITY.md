@@ -29,7 +29,7 @@ mirrored in `windows/harness/engine.mjs` and typed in `windows/app/src/api.ts`).
 | `MathText` | ✅ (KaTeX, $inline$ et $$bloc$$, les polices embarquées) |
 | `MarkdownChunks` | ✅ (marked, assaini) |
 | `CodeTextView` | ✅ (copie, surlignage) |
-| `FileLinks` | ◐ les liens de fichiers (la recherche de fichiers existe) |
+| `FileLinks` | ✅ un span de code qui nomme un fichier du projet devient un lien : il l'ouvre dans le panneau latéral |
 | `WidgetView` | ⛔ c'est la fonction du navigateur intégré (`kuvo-browser_show_widget`), rendue en WebView : elle suit le navigateur |
 | `ConversationScroll` | ✅ (la conversation suit le bas ; *↓ Latest* quand on relit) |
 
@@ -43,7 +43,7 @@ mirrored in `windows/harness/engine.mjs` and typed in `windows/app/src/api.ts`).
 | `ChangesPanel` | ✅ l'onglet Changes : git, plis, notes de ligne, message écrit, commit |
 | `ProjectChanges` | ✅ les portées uncommitted / unstaged / staged / branch / session |
 | `TitleBar`, `RootView`, `MainView` | ✅ la coque, la bande de titre |
-| `CommandPalette` | ✅ (Ctrl+K) — il reste la recherche de fichiers à y ajouter |
+| `CommandPalette` | ✅ (Ctrl+K) : sessions, fichiers, commandes, et ce qu'on peut faire — avec les touches qui le font |
 | `OpenQuickly` | ✅ (la palette trouve les fichiers) |
 | `BrowserSession`, `BrowserChrome`, `BrowserAskCard` | ⛔ le navigateur intégré : surface **amont** |
 | `ImageViewer` | ✅ (la visionneuse par-dessus la page) |

@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { errorText } from "./lib";
 import { ChangesPanel } from "./Changes";
-import { complain, loadSessions, notify, openSession, render, state, useStore, newSession, exportConversation, stopRun } from "./store";
+import { complain, loadProjectFiles, loadSessions, notify, openSession, render, state, useStore, newSession, exportConversation, stopRun } from "./store";
 import { keysOf } from "./shortcuts";
 
 // ---- The command palette ----
@@ -218,6 +218,7 @@ export function Picker() {
               state.transcript = null;
               state.pickerOpen = false;
               await loadSessions();
+              await loadProjectFiles();
             } catch (error) {
               setNote(error instanceof Error ? error.message : String(error));
             }

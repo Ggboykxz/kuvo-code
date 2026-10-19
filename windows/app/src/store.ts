@@ -39,6 +39,7 @@ export const state: AppState = {
   forms: [],
   revert: null,
   files: [],
+  projectFiles: [] as string[],
   openFile: null,
   paletteOpen: false,
   settingsOpen: false,
@@ -155,6 +156,34 @@ export async function loadSessions() {
   }
   const { sessions } = await api<{ sessions: SessionSummary[] }>(`/api/sessions?directory=${encodeURIComponent(state.project)}`);
   state.sessions = sessions;
+  render();
+}
+
+/// A file of the project, opened in the side panel — the Mac app's file links.
+export async function openProjectFile(relative: string) {
+  if (!state.project || !relative) return;
+  try {
+    const { content } = await api<{ content: string }>(`/api/file?path=${encodeURIComponent(relative)}`);
+    state.openFile = relative;
+    state.openFileContent = content;
+    state.drawerOpen = true;
+    state.drawerTab = "files";
+    render();
+  } catch (error) {
+    complain(error);
+  }
+}
+
+/// The project's files, by their path in it: the file links of a reply ask which of them
+/// are real, the Mac app's way.
+export async function loadProjectFiles() {
+  if (!state.project) {
+    state.projectFiles = [];
+    render();
+    return;
+  }
+  const { files } = await api<{ files: string[] }>("/api/project-files").catch(() => ({ files: [] }));
+  state.projectFiles = files ?? [];
   render();
 }
 
@@ -511,6 +540,7 @@ export async function boot() {
   connectEvents();
   if (state.project) {
     await loadSessions();
+    await loadProjectFiles();
     const newest = state.sessions[0];
     if (newest) await openSession(newest.id);
   }

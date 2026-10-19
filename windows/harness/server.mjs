@@ -231,7 +231,8 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
   if (url.pathname === "/api/file" && request.method === "GET") {
     const asked = url.searchParams.get("path");
     if (!asked) throw new HttpError(400, "No file was given.");
-    const resolved = path.resolve(asked);
+    // A path in the project (what a reply's file link holds) or an absolute one.
+    const resolved = path.isAbsolute(asked) ? path.resolve(asked) : path.resolve(currentProject ?? ".", asked);
     if (currentProject && resolved !== currentProject && !resolved.startsWith(currentProject + path.sep)) {
       throw new HttpError(403, "That file is outside the project.");
     }
@@ -455,6 +456,27 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
 
     if (url.pathname === "/api/commands" && request.method === "GET") {
       return json({ commands: await client.commands(currentProject ?? undefined) });
+    }
+
+    // The project's files, by name: the file links of a reply (the Mac app's FileLinks) ask
+    // which of them are real, and the list is the answer.
+    if (url.pathname === "/api/project-files" && request.method === "GET") {
+      if (!currentProject) throw new HttpError(400, "No project is open.");
+      const found = [];
+      const skip = new Set(["node_modules", ".git", "dist", "build", ".next", "coverage", ".kuvo"]);
+      const walk = (folder, depth) => {
+        if (depth > 6 || found.length > 2000) return;
+        let entries;
+        try { entries = fs.readdirSync(folder, { withFileTypes: true }); }
+        catch { return; }
+        for (const entry of entries) {
+          const full = path.join(folder, entry.name);
+          if (entry.isDirectory()) { if (!skip.has(entry.name) && !entry.name.startsWith(".")) walk(full, depth + 1); continue; }
+          if (entry.isFile()) found.push(path.relative(currentProject, full).replace(/\\/g, "/"));
+        }
+      };
+      walk(currentProject, 0);
+      return json({ files: found });
     }
 
     // The project's files by name, for the prompt's @-mentions and the palette.

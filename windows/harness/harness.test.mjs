@@ -462,8 +462,28 @@ test("the page and the reducer are served", async t => {
   assert.match(await reducer.text(), /export function apply/);
 });
 
-test("a project folder that isn't there is refused with a word about it", async t => {
+test("the project's files are listed, and a file is read by its path in the project", async t => {
   const engine = await fakeEngine();
+  t.after(engine.close);
+  const { harness, url } = await inFront(engine);
+  t.after(() => harness.close());
+
+  const project = path.join(home, "files-project");
+  fs.mkdirSync(path.join(project, "src"), { recursive: true });
+  fs.writeFileSync(path.join(project, "notes.txt"), "Shopping list\n- coffee\n");
+  fs.writeFileSync(path.join(project, "src", "app.tsx"), "export const answer = 42;\n");
+  const opened = await fetch(`${url}api/project`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ directory: project }) });
+  assert.equal(opened.status, 200);
+
+  // The file links of a reply ask which files are real: the server answers with the list.
+  const listed = await (await fetch(`${url}api/project-files`)).json();
+  assert.deepEqual([...listed.files].sort(), ["notes.txt", "src/app.tsx"]);
+  // And the file itself is read by its path in the project.
+  const file = await (await fetch(`${url}api/file?path=${encodeURIComponent("src/app.tsx")}`)).json();
+  assert.match(file.content, /answer = 42/);
+});
+
+test("a project folder that isn't there is refused with a word about it", async t => {  const engine = await fakeEngine();
   t.after(engine.close);
   const { harness, url } = await inFront(engine);
   t.after(() => harness.close());

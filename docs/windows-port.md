@@ -105,6 +105,10 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
+  - **2.52 (this change).** The Mac app's file links: a code span in a reply that names a
+    file of the project — `src/App.tsx:42` — becomes a link, and clicking it opens the file
+    in the side panel, the Mac's way. The project asks the server which files are real, so
+    a link is a file, never a word.
   - **2.51 (this change).** The palette teaches the keys: it offers what can be done —
     a new session, the conversation as Markdown, the files, the changes, a new terminal — and
     says the keys that do it, the Mac app's way, the keys you recorded included.
