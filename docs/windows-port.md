@@ -105,7 +105,9 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
-  - **2.31 (this change).** The Mac app's steps row: between two replies, one line says what
+  - **2.32 (this change).** The image viewer: clicking an attached image opens it over the
+    page, the Mac app's way, instead of a new browser tab.
+  - **2.31. The Mac app's steps row: between two replies, one line says what
     the agent did — "Thought for 40s, ran 6 commands, read 3 files (1 failed)" — and it opens
     to each step, with the Mac's own words.
   - **2.30. Two more of the Mac app's behaviours: the conversation follows

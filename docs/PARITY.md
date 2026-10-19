@@ -46,7 +46,7 @@ mirrored in `windows/harness/engine.mjs` and typed in `windows/app/src/api.ts`).
 | `CommandPalette` | ✅ (Ctrl+K) — il reste la recherche de fichiers à y ajouter |
 | `OpenQuickly` | ✅ (la palette trouve les fichiers) |
 | `BrowserSession`, `BrowserChrome`, `BrowserAskCard` | ⛔ le navigateur intégré : surface **amont** |
-| `ImageViewer` | ◐ (l'image s'ouvre dans un onglet) |
+| `ImageViewer` | ✅ (la visionneuse par-dessus la page) |
 | `AgentBadge` | ⬜ |
 
 ## The settings

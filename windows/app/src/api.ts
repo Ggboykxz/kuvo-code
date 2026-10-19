@@ -195,6 +195,7 @@ export interface AppState {
   toast: { title: string; body: string } | null;
   lineComments?: { file: string; line: number; text: string }[];
   quote?: string;
+  viewing?: { source: string; name: string } | null;
 }
 
 /// One fetch, the way the page talks to the harness.

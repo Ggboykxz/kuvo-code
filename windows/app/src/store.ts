@@ -54,6 +54,7 @@ export const state: AppState = {
   toast: null,
   lineComments: [],
   quote: undefined,
+  viewing: null,
 };
 
 // ---- The redraw ----

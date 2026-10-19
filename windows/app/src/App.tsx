@@ -274,7 +274,14 @@ function AttachmentNode({ file }: { file: Attachment }) {
   const source = fromData ?? fromUri;
   if (!source) return <span className="attachment-chip">{file.name ?? "file"}</span>;
   if ((file.mime ?? "").startsWith("image/")) {
-    return <img className="attachment-image" src={source} alt={file.name ?? "image"} onClick={() => window.open(source, "_blank")} />;
+    return (
+      <img
+        className="attachment-image"
+        src={source}
+        alt={file.name ?? "image"}
+        onClick={() => { state.viewing = { source, name: file.name ?? "image" }; render(); }}
+      />
+    );
   }
   return <a className="attachment-chip" href={source} target="_blank" rel="noreferrer">{`${file.name ?? "file"} (${file.mime})`}</a>;
 }
@@ -888,6 +895,18 @@ function Composer() {
   );
 }
 
+/// An image, looked at: the Mac app's viewer, over the page.
+function ImageViewer() {
+  const viewing = state.viewing;
+  if (!viewing) return null;
+  return (
+    <div className="image-viewer" onClick={() => { state.viewing = null; render(); }}>
+      <img src={viewing.source} alt={viewing.name} />
+      <div className="image-viewer-foot">{viewing.name}</div>
+    </div>
+  );
+}
+
 /// What the app does with what it is told, said once.
 function AnalyticsNotice() {
   const [open, setOpen] = useState(() => !localStorage.getItem("kuvo-analytics-ack"));
@@ -1074,6 +1093,7 @@ export function App() {
       <Drawer />
       <DiffModal />
       <Toast />
+      <ImageViewer />
       <AnalyticsNotice />
       {!ready ? <div className="fatal">Starting…</div> : null}
     </>
