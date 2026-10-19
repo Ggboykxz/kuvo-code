@@ -105,7 +105,11 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
-  - **2.46 (this change).** What floats over the conversation is thicker glass: the
+  - **2.47 (this change).** The Mac app's shipped product inventoried with REA (the bundle:
+    157 nodes, complete coverage) and the plan that follows written down in
+    `docs/INTEGRATION-PLAN.md`: the icon, the shortcut recorder, the usage panel, the browser
+    resources, the commands' sign-ins, the secrets we do not touch, and the upstream surface.
+  - **2.46. What floats over the conversation is thicker glass: the
     palette, the gauge's popover, the menus and the note are cards of glass, readable over
     whatever is under them, with the light along their top edge.
   - **2.45 (this change).** The canvas carries a whisper of light, so the glass has
