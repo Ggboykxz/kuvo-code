@@ -12,10 +12,21 @@ final class EngineConfig {
     /// Why the file couldn't be read. It's left alone until it's fixed.
     private(set) var problem: String?
 
+    /// Settings kept only here, never written anywhere: something being made (a new agent),
+    /// filled in by the same controls, until it's created.
+    let isDraft: Bool
+
     init(file: URL) {
         self.file = file
+        isDraft = false
         reload()
         Self.current = self
+    }
+
+    init(draft settings: [String: JSONValue]) {
+        file = URL(filePath: "/dev/null")
+        isDraft = true
+        self.settings = settings
     }
 
     /// This Mac's, for the places that make a session's rules.
@@ -132,6 +143,7 @@ final class EngineConfig {
 
     /// Reads the file again, after it was changed elsewhere.
     func reload() {
+        guard !isDraft else { return }
         guard let data = try? Data(contentsOf: file) else {
             settings = [:]
             problem = nil
@@ -183,6 +195,7 @@ final class EngineConfig {
     }
 
     private func save() {
+        guard !isDraft else { return }
         // No "$schema": opencode's published schema is still v1's, and would mark v2's keys
         // as errors in an editor.
         let document = settings

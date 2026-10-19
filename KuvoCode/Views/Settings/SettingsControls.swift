@@ -25,6 +25,12 @@ extension EngineConfig {
     }
 }
 
+extension EnvironmentValues {
+    /// The settings the controls below edit, when it isn't the engine's file: a draft of
+    /// something being made (a new agent).
+    @Entry var editedConfig: EngineConfig?
+}
+
 /// A text setting, saved when you press Return or leave the field.
 struct ConfigTextField: View {
     let title: String
@@ -34,8 +40,11 @@ struct ConfigTextField: View {
     /// written in it, so all of it shows.
     var multiline = false
     @Environment(AppModel.self) private var app
+    @Environment(\.editedConfig) private var edited
     @State private var field = SettingField()
     @FocusState private var isFocused: Bool
+
+    private var config: EngineConfig { edited ?? app.engineConfig }
 
     var body: some View {
         if multiline {
@@ -51,11 +60,14 @@ struct ConfigTextField: View {
     }
 
     private var text: some View {
-        let stored = app.engineConfig.value(at: path)?.string ?? ""
+        let stored = config.value(at: path)?.string ?? ""
         return TextField(title, text: $field.text, prompt: Text(prompt), axis: multiline ? .vertical : .horizontal)
             .focused($isFocused)
             .onSubmit(commit)
             .onChange(of: isFocused) { if !isFocused { commit() } }
+            // A draft keeps up with every key: there's no file to write, and its Create can come
+            // before you leave the field.
+            .onChange(of: field.text) { if config.isDraft { commit() } }
             .onAppear { field.load(stored) }
             .onChange(of: stored) { if !isFocused { field.load(stored) } }
             .onDisappear(perform: commit)
@@ -63,7 +75,7 @@ struct ConfigTextField: View {
 
     private func commit() {
         guard let value = field.edit(trimming: true) else { return }
-        app.engineConfig.set(value.isEmpty ? nil : .string(value), at: path)
+        config.set(value.isEmpty ? nil : .string(value), at: path)
     }
 }
 
@@ -73,16 +85,20 @@ struct ConfigNumberField: View {
     let path: [String]
     var prompt = "Default"
     @Environment(AppModel.self) private var app
+    @Environment(\.editedConfig) private var edited
     @State private var field = SettingField()
     @FocusState private var isFocused: Bool
 
+    private var config: EngineConfig { edited ?? app.engineConfig }
+
     var body: some View {
-        let stored = app.engineConfig.value(at: path)?.int.map(String.init) ?? ""
+        let stored = config.value(at: path)?.int.map(String.init) ?? ""
         TextField(title, text: $field.text, prompt: Text(prompt))
             .multilineTextAlignment(.trailing)
             .focused($isFocused)
             .onSubmit(commit)
             .onChange(of: isFocused) { if !isFocused { commit() } }
+            .onChange(of: field.text) { if config.isDraft, isFocused { commit() } }
             .onAppear { field.load(stored) }
             .onChange(of: stored) { if !isFocused { field.load(stored) } }
             .onDisappear(perform: commit)
@@ -93,7 +109,7 @@ struct ConfigNumberField: View {
         let number = Int(field.text.filter(\.isNumber)).flatMap { $0 > 0 ? $0 : nil }
         field.text = number.map(String.init) ?? ""
         guard field.edit(trimming: true) != nil else { return }
-        app.engineConfig.set(number.map { .number(Double($0)) }, at: path)
+        config.set(number.map { .number(Double($0)) }, at: path)
     }
 }
 
@@ -102,18 +118,34 @@ struct ConfigNumberField: View {
 struct ConfigTextEditor: View {
     let path: [String]
     var minHeight: CGFloat = 120
+    /// Grey words in it while it's empty, like a text field's.
+    var prompt = ""
     @Environment(AppModel.self) private var app
+    @Environment(\.editedConfig) private var edited
     @State private var field = SettingField()
     @FocusState private var isFocused: Bool
 
+    private var config: EngineConfig { edited ?? app.engineConfig }
+
     var body: some View {
-        let stored = app.engineConfig.value(at: path)?.string ?? ""
+        let stored = config.value(at: path)?.string ?? ""
         TextEditor(text: $field.text)
             .font(.system(.body, design: .monospaced))
             .scrollContentBackground(.hidden)
             .frame(minHeight: minHeight)
+            .overlay(alignment: .topLeading) {
+                if field.text.isEmpty, !prompt.isEmpty {
+                    // Where the editor's first line starts.
+                    Text(prompt)
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .padding(.leading, 5)
+                        .allowsHitTesting(false)
+                }
+            }
             .focused($isFocused)
             .onChange(of: isFocused) { if !isFocused { commit() } }
+            .onChange(of: field.text) { if config.isDraft { commit() } }
             .onAppear { field.load(stored) }
             .onChange(of: stored) { if !isFocused { field.load(stored) } }
             .onDisappear(perform: commit)
@@ -121,7 +153,7 @@ struct ConfigTextEditor: View {
 
     private func commit() {
         guard let value = field.edit(trimming: true) else { return }
-        app.engineConfig.set(value.isEmpty ? nil : .string(value), at: path)
+        config.set(value.isEmpty ? nil : .string(value), at: path)
     }
 }
 
@@ -153,9 +185,12 @@ struct ConfigModelPicker: View {
     var defaultTitle = "Default"
     @Environment(AppModel.self) private var app
     @Environment(Catalog.self) private var catalog
+    @Environment(\.editedConfig) private var edited
+
+    private var config: EngineConfig { edited ?? app.engineConfig }
 
     var body: some View {
-        Picker(title, selection: app.engineConfig.string(path)) {
+        Picker(title, selection: config.string(path)) {
             Text(defaultTitle).tag(String?.none)
             ForEach(catalog.modelsByProvider, id: \.provider) { group in
                 Section(group.provider) {
@@ -166,7 +201,7 @@ struct ConfigModelPicker: View {
             }
             // One set by hand, or one the pickers don't offer (its account isn't connected here),
             // as it's written.
-            if let current = app.engineConfig.value(at: path)?.string,
+            if let current = config.value(at: path)?.string,
                !catalog.offered.contains(where: { "\($0.providerID)/\($0.id)" == current }) {
                 Text(current).tag(Optional(current))
             }
