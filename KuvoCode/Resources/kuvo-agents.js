@@ -285,6 +285,7 @@ class EngineLink {
     this.url = url?.replace(/\/$/, "");
     this.authorization = authorization;
     this.names.clear();
+    this.catalog = undefined;
     const generation = ++this.generation;
     if (this.url)
       this.feed(generation);
@@ -326,6 +327,8 @@ class EngineLink {
         for (const provider of answer?.data ?? [])
           if (provider?.id && provider?.name)
             this.names.set(provider.id, provider.name);
+        if (this.names.size === 1)
+          this.names.clear();
       }).catch(() => this.names.clear());
     }
     return this.names.get(providerID2);
@@ -336,7 +339,10 @@ class EngineLink {
     if (!this.catalog || Date.now() - this.catalog.at > 60000) {
       try {
         const [providers, models] = await Promise.all([this.request("GET", "/api/provider"), this.request("GET", "/api/model")]);
-        this.catalog = { at: Date.now(), ready: new Set((providers?.data ?? []).map((provider) => provider.id)), models: models?.data ?? [] };
+        const ready = new Set((providers?.data ?? []).map((provider) => provider.id));
+        if (!ready.size)
+          return { ready: false, models: [] };
+        this.catalog = { at: Date.now(), ready, models: models?.data ?? [] };
       } catch {
         return;
       }
@@ -361,9 +367,10 @@ class EngineLink {
     const data = event.data ?? {};
     if (event.type === "session.created") {
       const session = data.session ?? data.info;
-      const parent = session?.parentID;
-      if (parent && (this.listeners.has(parent) || this.children.has(parent)))
-        this.children.set(session.id, this.children.get(parent) ?? parent);
+      const child = data.sessionID ?? session?.id;
+      const parent = data.parentID ?? session?.parentID;
+      if (child && parent && (this.listeners.has(parent) || this.children.has(parent)))
+        this.children.set(child, this.children.get(parent) ?? parent);
       return;
     }
     let sessionID = data.sessionID ?? data.form?.sessionID;
@@ -546,7 +553,8 @@ class EngineThread {
         resources: data.resources ?? [],
         save: data.save,
         metadata: data.metadata,
-        message: data.message
+        message: data.message,
+        weighed: true
       };
       let decision = "reject";
       try {
@@ -688,7 +696,7 @@ class EngineThread {
           return;
         case "session.execution.failed": {
           const error = data.error ?? { type: "engine", message: "The engine stopped with an error." };
-          finish({ outcome: "failed", error, limit: limit ?? limitOf(error) });
+          finish({ outcome: "failed", error, limit: limit ?? limitOf(error), taken: delivered });
           return;
         }
       }
@@ -1090,6 +1098,7 @@ class AcpThread {
   active;
   loading = false;
   stale;
+  startedOver = false;
   constructor(flavor, session, state, name) {
     this.flavor = flavor;
     this.session = session;
@@ -1188,6 +1197,11 @@ class AcpThread {
       }
       this.setup = await rpc.request("session/new", { cwd, mcpServers: [] }, 120000);
       this.sessionID = this.setup?.sessionId;
+      if (previous && previous !== this.sessionID) {
+        this.startedOver = true;
+        delete this.state.acpInstructions;
+        delete this.state.acpInstructed;
+      }
       this.state.acpSession = this.sessionID;
       hooks.saveState();
     };
@@ -1201,6 +1215,12 @@ class AcpThread {
     }
     return rpc;
   }
+  async prepare(input, hooks) {
+    await this.open(input, hooks);
+    const fresh = this.startedOver;
+    this.startedOver = false;
+    return { fresh };
+  }
   async run(input, turn, hooks) {
     const rpc = await this.open(input, hooks);
     if (hooks.signal.aborted)
@@ -1208,6 +1228,8 @@ class AcpThread {
     const sessionId = this.sessionID;
     await this.flavor.selectModel(rpc, sessionId, input.model.id, this.setup).catch(() => {});
     await this.flavor.selectMode?.(rpc, sessionId, { approvesAll: hooks.approvesAll(), plan: input.plan }, this.setup).catch(() => {});
+    if (hooks.signal.aborted)
+      return { outcome: "interrupted" };
     const prompt = [];
     const others = [];
     for (const file of input.files) {
@@ -3297,6 +3319,7 @@ class CodexThread {
   instructions;
   active;
   inTurn = false;
+  startedOver = false;
   constructor(agent, session, state) {
     this.agent = agent;
     this.session = session;
@@ -3340,6 +3363,8 @@ class CodexThread {
       }
     }
     const started = await rpc.request("thread/start", common, 60000);
+    if (this.nativeID && this.nativeID !== started.thread.id)
+      this.startedOver = true;
     this.nativeID = started.thread.id;
     this.state.codexThread = this.nativeID;
     hooks.saveState();
@@ -3348,6 +3373,17 @@ class CodexThread {
   }
   get isRunning() {
     return this.inTurn;
+  }
+  async prepare(input, hooks) {
+    this.inTurn = true;
+    try {
+      await this.ensureThread(input, hooks);
+    } finally {
+      this.inTurn = false;
+    }
+    const fresh = this.startedOver;
+    this.startedOver = false;
+    return { fresh };
   }
   async run(input, turn, hooks) {
     this.inTurn = true;
@@ -3905,24 +3941,32 @@ class CursorThread {
   session;
   state;
   agent;
+  startedApproving;
   active;
   constructor(owner, session, state) {
     this.owner = owner;
     this.session = session;
     this.state = state;
   }
-  async run(input, turn, hooks) {
+  startedOver = false;
+  async prepare(input, hooks) {
     const sdk = await this.owner.sdk();
     const apiKey = await this.owner.apiKey(sdk);
-    if (!apiKey)
-      return { outcome: "failed", error: { type: "auth", message: "Sign in to Cursor in Settings \u203A Accounts." } };
-    if (hooks.signal.aborted)
-      return { outcome: "interrupted" };
-    const cwd = this.session.location.directory;
+    if (!apiKey || hooks.signal.aborted)
+      return;
+    if (hooks.approvesAll())
+      await this.owner.prime(sdk, apiKey, this.session.location.directory);
+    await this.ensureAgent(sdk, this.options(sdk, input, hooks, apiKey), hooks);
+    const fresh = this.startedOver;
+    this.startedOver = false;
+    return { fresh };
+  }
+  options(sdk, input, hooks, apiKey) {
     const approvesAll = hooks.approvesAll();
     const selection = { id: input.model.id, ...input.model.variant ? { params: [{ id: "effort", value: input.model.variant }] } : {} };
     const mode = input.plan ? "plan" : "agent";
-    const options = {
+    const cwd = this.session.location.directory;
+    return {
       model: selection,
       name: `Kuvo Code: ${this.session.title ?? "session"}`,
       mode,
@@ -3936,6 +3980,45 @@ class CursorThread {
         store: this.owner.agentStore(sdk)
       }
     };
+  }
+  async ensureAgent(sdk, options, hooks) {
+    const approvesAll = hooks.approvesAll();
+    if (this.agent && this.startedApproving !== approvesAll) {
+      try {
+        this.agent.close?.();
+      } catch {}
+      this.agent = undefined;
+    }
+    if (this.agent)
+      return;
+    this.startedApproving = approvesAll;
+    const id = this.state.cursorAgent;
+    this.agent = id ? await sdk.Agent.resume(id, options).catch(() => {
+      return;
+    }) : undefined;
+    if (!this.agent && id) {
+      this.startedOver = true;
+      delete this.state.cursorInstructions;
+      delete this.state.cursorInstructed;
+    }
+    this.agent ??= await sdk.Agent.create(options);
+    if (this.state.cursorAgent !== this.agent.agentId) {
+      this.state.cursorAgent = this.agent.agentId;
+      hooks.saveState();
+    }
+  }
+  async run(input, turn, hooks) {
+    const sdk = await this.owner.sdk();
+    const apiKey = await this.owner.apiKey(sdk);
+    if (!apiKey)
+      return { outcome: "failed", error: { type: "auth", message: "Sign in to Cursor in Settings \u203A Accounts." } };
+    if (hooks.signal.aborted)
+      return { outcome: "interrupted" };
+    const cwd = this.session.location.directory;
+    const approvesAll = hooks.approvesAll();
+    const selection = { id: input.model.id, ...input.model.variant ? { params: [{ id: "effort", value: input.model.variant }] } : {} };
+    const mode = input.plan ? "plan" : "agent";
+    const options = this.options(sdk, input, hooks, apiKey);
     if (approvesAll)
       await this.owner.prime(sdk, apiKey, cwd);
     if (!approvesAll && !input.plan && !this.state.cursorAskNoted) {
@@ -3943,17 +4026,7 @@ class CursorThread {
       this.state.cursorAskNoted = true;
       hooks.saveState();
     }
-    if (!this.agent) {
-      const id = this.state.cursorAgent;
-      this.agent = id ? await sdk.Agent.resume(id, options).catch(() => {
-        return;
-      }) : undefined;
-      this.agent ??= await sdk.Agent.create(options);
-      if (this.state.cursorAgent !== this.agent.agentId) {
-        this.state.cursorAgent = this.agent.agentId;
-        hooks.saveState();
-      }
-    }
+    await this.ensureAgent(sdk, options, hooks);
     const images = input.files.filter((file) => file.mime.startsWith("image/")).map((file) => ({ data: file.data ?? (file.path ? readFileSync8(file.path).toString("base64") : ""), mimeType: file.mime })).filter((image) => image.data);
     let text = input.text;
     const others = input.files.filter((file) => !file.mime.startsWith("image/") && file.path).map((file) => file.path);
@@ -3995,6 +4068,8 @@ ${text}`;
     try {
       const run2 = await this.agent.send(images.length ? { text, images } : text, { model: selection, mode, onDelta });
       active.run = run2;
+      if (hooks.signal.aborted)
+        await run2.cancel().catch(() => {});
       const result = await run2.wait();
       await chain;
       if (result?.status !== "error" || active.sawText || active.output.size)
@@ -4423,6 +4498,11 @@ Exit code: ${exit}` : ""}${trimmed ? `
 ${trimmed}` : ""}` });
           } else if (["edit", "write", "patch"].includes(content.name)) {
             const paths = input?.path ? [input.path] : Array.isArray(input?.files) ? input.files : [];
+            if (paths.length && words.length)
+              out.push({ role: "Agent", text: `(${names(message)})
+` + words.splice(0).join(`
+
+`) });
             for (const path of paths)
               out.push({ role: "File change", text: String(path) });
           }
@@ -4502,7 +4582,10 @@ function matches(pattern, value) {
   return new RegExp(expression).test(value);
 }
 function evaluate(rules, action, resources2) {
-  let effect = "allow";
+  return ruled(rules, action, resources2) ?? "allow";
+}
+function ruled(rules, action, resources2) {
+  let effect;
   for (const rule of rules ?? []) {
     if (!matches(rule.action, action))
       continue;
@@ -5257,6 +5340,14 @@ class Sessions {
       thread = agent.thread(record.session, slot.state);
       live.threads.set(model2.providerID, thread);
     }
+    const hooks = this.hooks(id, live, turn, signal, slot, input.plan);
+    const prepared = await thread.prepare?.({ ...input, model: model2 }, hooks).catch(() => {
+      return;
+    });
+    if (prepared?.fresh)
+      slot.seen = undefined;
+    if (signal.aborted)
+      return { outcome: "interrupted" };
     const at = record.messages.findIndex((message) => message.id === userMessage2);
     const seenAt = slot.seen ? record.messages.findIndex((message) => message.id === slot.seen) : -1;
     const hasMessage = at >= 0 && seenAt >= at;
@@ -5272,8 +5363,8 @@ class Sessions {
     live.running = running;
     const from = record.messages.length;
     try {
-      const result = await Promise.race([thread.run({ ...input, model: model2, text, files }, turn, this.hooks(id, live, turn, signal, slot, input.plan)), abandoned]);
-      if (result.outcome !== "failed" || record.messages.slice(from).some(didWork))
+      const result = await Promise.race([thread.run({ ...input, model: model2, text, files }, turn, hooks), abandoned]);
+      if (result.outcome !== "failed" || result.taken || record.messages.slice(from).some(didWork))
         slot.seen = record.messages[record.messages.length - 1]?.id;
       live.last = slot;
       return result;
@@ -5323,7 +5414,13 @@ class Sessions {
         turn.notice(`${note} Going on with ${this.entryName(entry)}.`);
       }
       const from = record.messages.length;
-      last2 = await this.runOn(id, record, live, model2, input, turn, signal, userMessage2);
+      try {
+        last2 = await this.runOn(id, record, live, model2, input, turn, signal, userMessage2);
+      } catch (error) {
+        if (signal.aborted || record.messages.slice(from).some(didWork))
+          throw error;
+        last2 = { outcome: "failed", error: failure(error) };
+      }
       if (last2.outcome !== "failed" || signal.aborted)
         return last2;
       if (!last2.limit) {
@@ -5427,7 +5524,7 @@ class Sessions {
     const session = this.record(id).session;
     if (plan && changes.has(ask.action))
       return Promise.resolve("reject");
-    const effect = evaluate(session.permissions, ask.action, ask.resources);
+    const effect = ask.weighed ? ruled(session.permissions, ask.action, ask.resources) : evaluate(session.permissions, ask.action, ask.resources);
     if (effect === "deny")
       return Promise.resolve("reject");
     const allowedBefore = live.always.some((rule) => rule.action === ask.action && ask.resources.every((resource) => rule.patterns.some((pattern) => matches(pattern, resource))));
