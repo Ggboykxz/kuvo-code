@@ -862,6 +862,9 @@ private struct WakeList: View {
     @State private var isAdding = false
     /// What a watch's check printed when you tried it, by its letters; nil while it runs.
     @State private var tried: [String: String?] = [:]
+    /// The wake-ups sent with Wake Up Now, by their ids: each goes once while the sheet is open,
+    /// so a second click doesn't have the bot do its job twice.
+    @State private var wokenNow: Set<String> = []
     @FocusState private var noteFocused: Bool
 
     private struct Draft {
@@ -885,7 +888,7 @@ private struct WakeList: View {
             if draft != nil {
                 form
             } else if let failure {
-                // Canceling or pausing on a machine that couldn't be reached (adding says so by its buttons).
+                // Waking, canceling or pausing on a machine that couldn’t be reached (adding says so by its buttons).
                 Text(failure)
                     .font(.callout)
                     .foregroundStyle(.red)
@@ -1012,10 +1015,18 @@ private struct WakeList: View {
                         }
                         .padding(.vertical, 8)
                         Spacer(minLength: 8)
-                        Button("Wake Up Now") {
-                            Task { try? await bots.wakeNow(wake, of: bot) }
+                        Button(wokenNow.contains(wake.id) ? "Woken Up" : "Wake Up Now") {
+                            wokenNow.insert(wake.id)
+                            failure = nil
+                            Task {
+                                do { try await bots.wakeNow(wake, of: bot) } catch {
+                                    wokenNow.remove(wake.id)
+                                    failure = error.localizedDescription
+                                }
+                            }
                         }
                         .buttonStyle(TextButtonStyle())
+                        .disabled(wokenNow.contains(wake.id))
                         .help(wake.every == nil ? "Send this wake-up now, to see the job run" : "Send this wake-up now, to see the job run; it still comes back at its time")
                         Button("Cancel Wake-Up", systemImage: "minus.circle.fill") {
                             attempt { try await bots.cancelWake(wake, of: bot) }

@@ -12,6 +12,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Picking another model while the agent works hands the run to it right away: the step under way stops and the new model carries on, or says why it can't (one that isn't available shows its error with Try Again). Before, the switch waited for the next step, so a step that had stalled kept the session working with nothing happening. And a reply that stops arriving partway now says it's waiting for the model to answer.
 - The usage item's first screen, with no account connected yet, no longer warns about macOS permission dialogs for providers you'd pick: there are none to pick.
 - A bot that works in one of your projects goes back to the branch your project was on once it has made a fix on a branch of its own. It left your checkout on its branch.
+- Wake Up Now, in Edit Bot, sends a wake-up once and turns into Woken Up, so a second click doesn't have the bot do its job again. For a bot on a machine that can't be reached, it says so rather than doing nothing.
 
 ## 0.5.19
 
