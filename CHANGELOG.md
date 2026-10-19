@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- The Changes panel shows files with Windows line endings line by line, and no longer folds the next changed file into them. It also reads changes right when your git settings change diff prefixes (diff.mnemonicPrefix, diff.noprefix), shows conflicted files during a merge, stages a renamed file, names a huge or minified file rather than drawing it, and Suggest a Message describes only what the commit takes.
 - Wake Up Now on a bot on a machine sends its whole note. It sent the shortened one from the list, on one line. And a watch whose check won't stop at its minute is killed, so the wake-ups after it still come.
 - A group chat that finished on its last allowed turn no longer offers Keep Going, and Keep Going shows once the wrap-up is done, when it works.
 - After you undo a message in a group chat, the bots are told to set aside what was taken back. The note never reached them, so they went on as if it still stood.

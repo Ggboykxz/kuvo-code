@@ -171,7 +171,9 @@ nonisolated enum Git {
             base = fork
         }
         let limit = relativePath(of: directory, in: root)
-        var arguments = ["-c", "core.quotepath=off", "diff", "--no-color", "--no-ext-diff", "--find-renames", "-U100000"]
+        // Its own prefixes, whatever the git settings (diff.noprefix, diff.mnemonicPrefix): the
+        // paths are read after them.
+        var arguments = ["-c", "core.quotepath=off", "diff", "--no-color", "--no-ext-diff", "--find-renames", "--src-prefix=a/", "--dst-prefix=b/", "-U100000"]
         switch scope {
         // The session's edits come from the engine, not git; read like Uncommitted here.
         case .uncommitted, .branch, .session: arguments.append(base)
@@ -205,7 +207,9 @@ nonisolated enum Git {
         }
         switch action {
         case .stage:
-            return git(["add", "-A", "--"] + paths)
+            // A rename's old path only while git still has it: once staged as moved, naming it fails.
+            let old = file.oldPath.flatMap { run(["ls-files", "--error-unmatch", "--", $0], in: root) != nil ? $0 : nil }
+            return git(["add", "-A", "--", file.path] + (old.map { [$0] } ?? []))
         case .unstage:
             return git(["restore", "--staged", "--"] + paths)
         case .discard:
@@ -236,7 +240,8 @@ nonisolated enum Git {
         if hasStaged(in: directory) {
             text = run(["diff", "--cached", "--no-color", "--no-ext-diff"], in: directory) ?? ""
         } else {
-            text = run(["diff", "HEAD", "--no-color", "--no-ext-diff"], in: directory) ?? ""
+            // What committing would take: this folder's, as `commit` adds only it.
+            text = run(["diff", "HEAD", "--no-color", "--no-ext-diff", "--", "."], in: directory) ?? ""
             let untracked = run(["ls-files", "--others", "--exclude-standard"], in: directory) ?? ""
             if !untracked.isEmpty { text += "\nNew files:\n" + untracked }
         }
@@ -301,7 +306,7 @@ nonisolated enum Git {
             file.isBinary = true
             return file
         }
-        var lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        var lines = DiffParser.lines(of: text).map(String.init)
         if lines.last == "" { lines.removeLast() }
         file.lines = lines.enumerated().map { DiffLine(kind: .added, newNumber: $0 + 1, text: $1) }
         return file
@@ -379,19 +384,23 @@ nonisolated enum DiffParser {
 
         func finish() { if let current { files.append(current) } }
 
-        for raw in patch.split(separator: "\n", omittingEmptySubsequences: false) {
+        // How many sides a line's marks are for: two in a conflicted file's combined diff.
+        var sides = 1
+        for raw in lines(of: patch) {
             let line = String(raw)
-            if line.hasPrefix("diff --git ") {
+            if line.hasPrefix("diff --git ") || line.hasPrefix("diff --cc ") {
                 finish()
-                let path = pathFromHeader(line)
+                let combined = line.hasPrefix("diff --cc ")
+                let path = combined ? String(line.dropFirst("diff --cc ".count)) : pathFromHeader(line)
                 current = ChangedFile(path: path, status: .modified, url: RemoteFolder.url(root).appending(path: path))
+                sides = combined ? 2 : 1
                 sawHunk = false
                 continue
             }
             guard var file = current else { continue }
             defer { current = file }
             if line.hasPrefix("@@") {
-                let numbers = hunkStarts(line)
+                let numbers = sides > 1 ? combinedHunkStarts(line) : hunkStarts(line)
                 oldLine = numbers.old
                 newLine = numbers.new
                 pendingGap = sawHunk || (numbers.old > 1 && numbers.new > 1)
@@ -411,17 +420,41 @@ nonisolated enum DiffParser {
             }
             guard let first = line.first else { continue }
             var parsed: DiffLine
-            switch first {
-            case "+": parsed = DiffLine(kind: .added, newNumber: newLine, text: String(line.dropFirst())); newLine += 1
-            case "-": parsed = DiffLine(kind: .removed, oldNumber: oldLine, text: String(line.dropFirst())); oldLine += 1
-            case " ": parsed = DiffLine(kind: .context, oldNumber: oldLine, newNumber: newLine, text: String(line.dropFirst())); oldLine += 1; newLine += 1
-            default: continue  // "\ No newline at end of file"
+            if sides > 1 {
+                // "++", " +", "- " …: a mark for each side, the file as it is after them.
+                let marks = line.prefix(sides)
+                guard marks.count == sides, marks.allSatisfy({ "+- ".contains($0) }) else { continue }
+                let text = String(line.dropFirst(sides))
+                if marks.contains("-") { parsed = DiffLine(kind: .removed, oldNumber: oldLine, text: text); oldLine += 1 }
+                else if marks.contains("+") { parsed = DiffLine(kind: .added, newNumber: newLine, text: text); newLine += 1 }
+                else { parsed = DiffLine(kind: .context, oldNumber: oldLine, newNumber: newLine, text: text); oldLine += 1; newLine += 1 }
+            } else {
+                switch first {
+                case "+": parsed = DiffLine(kind: .added, newNumber: newLine, text: String(line.dropFirst())); newLine += 1
+                case "-": parsed = DiffLine(kind: .removed, oldNumber: oldLine, text: String(line.dropFirst())); oldLine += 1
+                case " ": parsed = DiffLine(kind: .context, oldNumber: oldLine, newNumber: newLine, text: String(line.dropFirst())); oldLine += 1; newLine += 1
+                default: continue  // "\ No newline at end of file"
+                }
             }
             if pendingGap { parsed.gapBefore = true; pendingGap = false }
             file.lines.append(parsed)
         }
         finish()
+        // A file too big to read through (a huge or minified one): named, not shown.
+        for index in files.indices where files[index].lines.count > maxLines || files[index].lines.contains(where: { $0.text.utf8.count > maxLineLength }) {
+            files[index].lines = []
+            files[index].isTooBig = true
+        }
         return files
+    }
+
+    private static let maxLines = 20_000
+    private static let maxLineLength = 20_000
+
+    /// Text's lines, ending at "\n" or "\r\n" (which Swift counts as one character, so a split
+    /// at "\n" alone left a file with Windows line endings in one piece).
+    static func lines(of text: String) -> [Substring] {
+        text.split(omittingEmptySubsequences: false) { $0 == "\n" || $0 == "\r\n" }
     }
 
     /// The engine's diff of one file (patch text, a few lines of context).
@@ -453,6 +486,16 @@ nonisolated enum DiffParser {
             return String(rest[range.upperBound...])
         }
         return String(rest)
+    }
+
+    /// "@@@ -12,7 -12,8 +12,9 @@@" → (12, 12): the first side, and the file as it is.
+    private static func combinedHunkStarts(_ line: String) -> (old: Int, new: Int) {
+        let parts = line.split(separator: " ")
+        func start(_ part: Substring?) -> Int {
+            guard let part else { return 1 }
+            return max(part.dropFirst().split(separator: ",").first.flatMap { Int($0) } ?? 1, 1)
+        }
+        return (start(parts.first { $0.hasPrefix("-") }), start(parts.first { $0.hasPrefix("+") }))
     }
 
     /// "@@ -12,7 +12,9 @@" → (12, 12).
