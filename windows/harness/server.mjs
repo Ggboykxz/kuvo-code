@@ -792,14 +792,30 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
     /// opencode's own settings — the ones the CLI, another agent, or a tool like OpenDesign
     /// writes into. The engine here reads its own folder only, so what lands there is
     /// invisible until it is brought over.
-    const opencodeConfigFile = () =>
-      process.env.KUVO_OPENCODE_CONFIG_ROOT ?? path.join(os.homedir(), ".config", "opencode", "opencode.json");
+    const opencodeConfigFile = () => {
+      if (process.env.KUVO_OPENCODE_CONFIG_ROOT) return process.env.KUVO_OPENCODE_CONFIG_ROOT;
+      const folder = path.join(os.homedir(), ".config", "opencode");
+      // opencode reads both; the tools that write it (REA, for one) prefer .jsonc.
+      for (const name of ["opencode.jsonc", "opencode.json"]) {
+        const candidate = path.join(folder, name);
+        if (fs.existsSync(candidate)) return candidate;
+      }
+      return path.join(folder, "opencode.json");
+    };
+    /// JSON with comments and trailing commas, the way a .jsonc file is written.
+    const parseLoose = text => {
+      const without = text
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/(^|[^:"'\\])\/\/.*$/gm, "$1")
+        .replace(/,(\s*[}\]])/g, "$1");
+      return JSON.parse(without);
+    };
     const readOpencodeConfig = () => {
       const file = opencodeConfigFile();
       let text = "";
       try { text = fs.readFileSync(file, "utf8"); } catch {}
       if (text.trim() === "") return { settings: {}, problem: null, path: file, exists: false };
-      try { return { settings: JSON.parse(text), problem: null, path: file, exists: true }; }
+      try { return { settings: parseLoose(text), problem: null, path: file, exists: true }; }
       catch (error) { return { settings: null, problem: error.message, path: file, exists: true }; }
     };
 

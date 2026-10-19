@@ -792,3 +792,32 @@ test("the branch scope shows what the branch added since it left its base", asyn
   const uncommitted = await (await fetch(`${url}api/changes?directory=${encodeURIComponent(project)}&scope=uncommitted`)).json();
   assert.ok(uncommitted.files.some(file => file.file === "d.txt"));
 });
+
+test("opencode's own settings are read even when they are .jsonc, with comments", async t => {
+  const engine = await fakeEngine();
+  t.after(engine.close);
+  const file = path.join(home, "opencode.jsonc");
+  process.env.KUVO_OPENCODE_CONFIG_ROOT = file;
+  process.env.KUVO_ENGINE_CONFIG_ROOT = path.join(home, "app-empty", "opencode.json");
+  t.after(() => { delete process.env.KUVO_OPENCODE_CONFIG_ROOT; delete process.env.KUVO_ENGINE_CONFIG_ROOT; });
+  fs.writeFileSync(file, `{
+  // what REA and the CLI write
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "rea": { "type": "local", "command": ["npx", "-y", "rea-agents@6.7.0", "mcp"] },
+    },
+  },
+}`);
+  const { harness, url } = await inFront(engine);
+  t.after(() => harness.close());
+
+  const config = await (await fetch(`${url}api/config`)).json();
+  assert.equal(config.opencode.problem, null, "the file is read, comments and all");
+  assert.equal(config.opencode.settings.mcp.servers.rea.command[2], "rea-agents@6.7.0");
+
+  const brought = await (await fetch(`${url}api/config/import`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+  })).json();
+  assert.deepEqual(brought.added, ["mcp:rea"]);
+});

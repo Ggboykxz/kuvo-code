@@ -105,7 +105,12 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
-  - **2.34 (this change).** The composer's menus, the Mac app's way: the model and the agent
+  - **2.35 (this change).** The import reads opencode's own settings when they are
+    `.jsonc` — with comments and trailing commas, the way the tools that write them
+    (REA, for one) write them. That is what lets a server installed by another tool
+    (REA's 207 reverse-engineering tools, among them) come over to Kuvo Code with one
+    click.
+  - **2.34. The composer's menus, the Mac app's way: the model and the agent
     are chosen from a searchable list — the models grouped by provider, with their context
     window — instead of a plain drop-down.
   - **2.33. The formulas, the Mac app's MathText: KaTeX renders $inline$
