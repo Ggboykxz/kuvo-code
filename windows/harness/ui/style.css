@@ -625,3 +625,112 @@ echo "written"
   font-size: var(--text-xs); padding: 2px 8px;
 }
 .markdown pre:hover .code-copy { opacity: 1; }
+
+/* ---- Split view (two sessions beside each other) ---- */
+main { display: flex; }
+#conversation { flex: 1; min-width: 0; }
+.split-pane {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column;
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+}
+.split-pane[hidden] { display: none; }
+.split-head {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) var(--gutter);
+  border-bottom: 1px solid var(--line-soft);
+}
+.split-head select {
+  flex: 1; max-width: 320px;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--panel-2); color: var(--ink);
+  font-size: var(--text-sm);
+}
+#split-entries { flex: 1; overflow: auto; }
+#split.active {
+  background: var(--accent-soft);
+  border-color: color-mix(in oklab, var(--accent), transparent 60%);
+}
+
+/* ---- Command palette (the Mac app's ⌘K palette) ---- */
+.palette {
+  position: fixed; inset: 0; z-index: 60;
+  background: rgba(15, 23, 42, 0.25);
+  backdrop-filter: blur(2px);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding-top: 10vh;
+}
+.palette[hidden] { display: none; }
+.palette-input {
+  width: 100%;
+  border: 0; border-bottom: 1px solid var(--line);
+  background: transparent; color: var(--ink);
+  font-size: 17px;
+  padding: var(--space-3) var(--space-4) var(--space-3);
+  outline: none;
+}
+.palette-list { max-height: 50vh; overflow: auto; padding: var(--space-2); }
+.palette-title {
+  font-size: var(--text-xs); font-weight: 600; color: var(--ink-faint);
+  text-transform: uppercase; letter-spacing: 0.06em;
+  padding: var(--space-2) var(--space-2) var(--space-1);
+}
+.palette-item {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.palette-item:hover { background: var(--panel-2); }
+.palette-item.selected { background: var(--accent-soft); }
+.palette-name { font-size: var(--text-md); color: var(--ink); }
+.palette-detail { font-size: var(--text-xs); color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+.palette-empty { padding: var(--space-3); text-align: center; color: var(--ink-faint); }
+
+/* ---- Appearance settings (the Mac app's AppearanceSettings) ---- */
+.settings {
+  position: fixed; inset: 0; z-index: 70;
+  background: rgba(15, 23, 42, 0.3);
+  backdrop-filter: blur(2px);
+  display: flex; align-items: center; justify-content: center;
+}
+.settings[hidden] { display: none; }
+.settings-card {
+  width: min(440px, 92vw);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lifted);
+  padding: var(--space-5);
+  display: flex; flex-direction: column; gap: var(--space-3);
+}
+.settings-title { font-size: var(--text-xl); font-weight: 600; letter-spacing: var(--tracking-display); }
+.settings-row {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+  font-size: var(--text-md);
+}
+.settings-row select {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--panel-2); color: var(--ink);
+  font-size: var(--text-sm);
+}
+.settings-note { font-size: var(--text-sm); color: var(--ink-soft); }
+.settings-card .primary { align-self: flex-end; }
+.swatches { display: flex; gap: var(--space-2); }
+.swatch {
+  width: 20px; height: 20px; border-radius: 50%;
+  border: 2px solid var(--line);
+  cursor: pointer;
+  transition: transform var(--motion-fast) var(--ease-spring);
+}
+.swatch:hover { transform: scale(1.15); }
+.swatch.selected { border-color: var(--ink); box-shadow: 0 0 0 2px var(--panel), 0 0 0 3.5px var(--accent); }
+
+/* ---- Reduced motion (Appearance > Motion: Reduced) ---- */
+.reduced-motion *, .reduced-motion *::before, .reduced-motion *::after {
+  animation: none !important;
+  transition-duration: 1ms !important;
+}

@@ -130,6 +130,9 @@ const state = {
   openSessions: [],
   transcripts: new Map(),
   findQuery: "",
+  agents: [],
+  agent: "",
+  split: null,
 };
 
 let renderQueued = false;
@@ -283,9 +286,24 @@ function renderConversation() {
     return;
   }
 
-  const entries = state.transcript.entries;
+  $("entries").replaceChildren(...entryNodes(state.transcript));
+
+  const asks = $("asks");
+  asks.replaceChildren();
+  for (const request of state.transcript.permissions) {
+    asks.append(permissionCard(request));
+  }
+
+  $("stop").hidden = !state.transcript.running;
+  $("prompt").placeholder = state.transcript.running ? "Send while it works — delivered at its next step…" : "Ask for something…  (Enter sends, Shift+Enter for a new line)";
+  renderSplit();
+}
+
+// The conversation, as nodes — shared by the main pane and the split pane, like the
+// Mac app renders each half of a split from the same entry views.
+function entryNodes(transcript) {
   const rendered = [];
-  for (const entry of entries) {
+  for (const entry of transcript.entries) {
     if (entry.kind === "user") rendered.push(el("article", { class: "entry user" }, el("div", { class: "text", text: entry.text })));
     else if (entry.kind === "assistant") rendered.push(assistantEntry(entry));
     else if (entry.kind === "notice") rendered.push(el("div", { class: "notice", text: entry.text }));
@@ -300,22 +318,13 @@ function renderConversation() {
       rendered.push(el("div", { class: "notice", text: "Stopped." }));
     }
   }
-  for (const item of state.transcript.pending) {
+  for (const item of transcript.pending) {
     rendered.push(el("article", { class: "entry user pending" },
       el("div", { class: "text", text: item.text }),
       item.delivery === "queue" ? el("div", { class: "entry-meta", text: "queued" }) : null,
     ));
   }
-  $("entries").replaceChildren(...rendered);
-
-  const asks = $("asks");
-  asks.replaceChildren();
-  for (const request of state.transcript.permissions) {
-    asks.append(permissionCard(request));
-  }
-
-  $("stop").hidden = !state.transcript.running;
-  $("prompt").placeholder = state.transcript.running ? "Send while it works — delivered at its next step…" : "Ask for something…  (Enter sends, Shift+Enter for a new line)";
+  return rendered;
 }
 
 function permissionCard(request) {
@@ -354,6 +363,64 @@ function closeSessionTab(id) {
     render();
   }
 }
+
+// ---- Split view (the Mac app's split: two sessions beside each other) ----
+
+async function toggleSplit() {
+  const other = state.openSessions.find(id => id !== state.session?.id) ?? state.sessions.find(s => s.id !== state.session?.id)?.id;
+  if (state.split) {
+    state.split = null;
+    renderSplit();
+    return;
+  }
+  if (!other) return;
+  await loadSplit(other);
+  renderSplit();
+}
+
+async function loadSplit(id) {
+  let transcript = state.transcripts.get(id);
+  if (!transcript) {
+    try {
+      const detail = await api(`/api/sessions/${encodeURIComponent(id)}`);
+      transcript = fromHistory(id, detail.messages, detail.permissions, detail.running);
+      state.transcripts.set(id, transcript);
+    } catch (error) {
+      complain(null, error);
+      return;
+    }
+  }
+  state.split = id;
+}
+
+function renderSplit() {
+  const pane = $("split-pane");
+  pane.hidden = !state.split;
+  $("split").classList.toggle("active", Boolean(state.split));
+  if (!state.split) return;
+  const select = $("split-session");
+  select.innerHTML = "";
+  for (const id of state.openSessions.concat(state.split)) {
+    if (select.querySelector(`option[value="${id}"]`)) continue;
+    const session = state.sessions.find(s => s.id === id) || (id === state.session?.id ? state.session : null);
+    select.append(el("option", { value: id, text: session?.title || id.slice(0, 8) }));
+  }
+  for (const id of [...select.options].map(o => o.value)) {
+    if (!state.openSessions.includes(id) && id !== state.split) select.querySelector(`option[value="${id}"]`).remove();
+  }
+  for (const option of select.options) option.selected = option.value === state.split;
+  $("split-entries").replaceChildren(...entryNodes(state.transcripts.get(state.split) ?? { entries: [], pending: [] }));
+}
+
+$("split").addEventListener("click", () => toggleSplit().catch(error => complain(null, error)));
+$("split-close").addEventListener("click", () => {
+  state.split = null;
+  renderSplit();
+});
+$("split-session").addEventListener("change", async event => {
+  await loadSplit(event.target.value);
+  renderSplit();
+});
 
 function compactTokens(n) {
   if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
@@ -415,14 +482,16 @@ $("prompt").addEventListener("keydown", event => {
   }
 });
 
-$("stop").addEventListener("click", async () => {
+async function interruptRun() {
   if (!state.session) return;
   try {
     await api(`/api/sessions/${encodeURIComponent(state.session.id)}/interrupt`, { method: "POST", body: {} });
   } catch (error) {
     complain(null, error);
   }
-});
+}
+
+$("stop").addEventListener("click", () => interruptRun().catch(() => {}));
 
 $("session-search").addEventListener("input", (event) => {
   state.sessionQuery = event.target.value.trim().toLowerCase();
@@ -459,12 +528,43 @@ $("message-search").addEventListener("input", async (event) => {
 $("new-session").addEventListener("click", async () => {
   if (!state.project) return openPicker();
   try {
-    const { session } = await api("/api/sessions", { method: "POST", body: {} });
+    const { session } = await api("/api/sessions", { method: "POST", body: state.agent ? { agent: state.agent } : {} });
     await loadSessions();
     await openSession(session.id);
   } catch (error) {
     complain(null, error);
   }
+});
+
+// ---- Agents (the ones a person picks between, like the Mac app's agents) ----
+
+async function loadAgents() {
+  try {
+    const { agents } = await api("/api/agents");
+    const primary = agents.filter(agent => agent.mode !== "subagent" && !agent.hidden);
+    state.agents = primary;
+  } catch {
+    state.agents = [];
+  }
+  renderAgentPicker();
+}
+
+function renderAgentPicker() {
+  const select = $("agent");
+  select.replaceChildren();
+  if (state.agents.length === 0) { select.hidden = true; return; }
+  select.disabled = false;
+  select.append(el("option", { text: "Default agent", value: "" }));
+  for (const agent of state.agents) {
+    const title = agent.name ? `${agent.name}${agent.description ? ` — ${agent.description}` : ""}`.slice(0, 60) : agent.id;
+    select.append(el("option", { text: title, value: agent.id }));
+  }
+  select.value = state.agent;
+  select.hidden = false;
+}
+
+$("agent").addEventListener("change", event => {
+  state.agent = event.target.value;
 });
 
 // ---- Models ----
@@ -489,9 +589,20 @@ function selectModelInPicker() {
   }
   select.disabled = state.session === null;
   select.append(el("option", { text: "default model", value: "" }));
+  // Grouped by provider, like the Mac app's ModelPicker.
+  const byProvider = new Map();
   for (const model of state.models) {
-    const value = `${model.providerID}/${model.id}`;
-    select.append(el("option", { text: model.name ? `${model.name} — ${value}` : value, value }));
+    const group = byProvider.get(model.providerID) ?? [];
+    group.push(model);
+    byProvider.set(model.providerID, group);
+  }
+  for (const [providerID, models] of byProvider) {
+    const group = el("optgroup", { label: providerID });
+    for (const model of models) {
+      const value = `${model.providerID}/${model.id}`;
+      group.append(el("option", { text: model.name || model.id, value }));
+    }
+    select.append(group);
   }
   const current = state.session?.model;
   select.value = current ? `${current.providerID}/${current.id}` : "";
@@ -512,6 +623,11 @@ function handleEvent(event) {
   if (event.type === "harness.error") {
     state.engine = { status: "down" };
     return render();
+  }
+  // The split pane holds its own session: its events go there too.
+  if (state.split && event.data?.sessionID === state.split) {
+    const splitTranscript = state.transcripts.get(state.split);
+    if (splitTranscript) { apply(splitTranscript, event); renderSplit(); }
   }
   if (!state.transcript || !state.session) return;
   if (event.data?.sessionID !== state.session.id && event.data?.sessionID !== undefined) return;
@@ -890,12 +1006,178 @@ $("git-amend").addEventListener("click", async () => {
 const originalToggleDrawer = toggleDrawer;
 // wrap toggleDrawer to also refresh git
 
+// ---- Command palette (Ctrl+K, like the Mac app's ⌘K) ----
+
+const paletteActions = () => [
+  { id: "new", title: "New session", detail: "Ctrl+Shift+N", run: () => $("new-session").click() },
+  { id: "files", title: "Toggle files panel", detail: "Ctrl+O", run: () => $("toggle-files").click() },
+  { id: "terminal", title: "Toggle terminal", detail: "Ctrl+`", run: () => $("toggle-files").click(), after: () => setDrawerTab("terminal") },
+  { id: "find", title: "Find in this conversation", detail: "", run: () => $("find").focus() },
+  { id: "export", title: "Export conversation as Markdown", detail: "", run: () => exportConversation() },
+  { id: "split", title: state.split ? "Close the split view" : "Split: show a second session", detail: "", run: () => toggleSplit().catch(() => {}) },
+  { id: "appearance", title: "Appearance settings", detail: "", run: () => openSettings() },
+  { id: "folder", title: "Choose a project folder", detail: "", run: () => openPicker() },
+  { id: "stop", title: state.transcript?.running ? "Stop the run" : "Stop", detail: "", run: () => { if (state.session) interruptRun(); } },
+  { id: "project", title: state.project ? `Switch project away from ${state.project.split(/[\\/]/).pop()}` : "Choose project", detail: "", run: () => openPicker() },
+];
+
+let paletteIndex = 0;
+let paletteSectionsCache = [];
+
+function paletteSections() {
+  const raw = $("palette-input").value.trim().toLowerCase();
+  if (!raw) {
+    const sections = [
+      { title: "Recent sessions", items: state.sessions.slice(0, 5).map(s => ({ id: `session:${s.id}`, title: s.title || s.id.slice(0, 8), run: () => openSession(s.id) })) },
+      { title: "Actions", items: paletteActions().slice(0, 7).map(a => ({ ...a, id: `action:${a.id}` })) },
+    ];
+    return sections.filter(section => section.items.length > 0);
+  }
+  const matches = needle => needle.includes(raw) || needle.split(/\s+/).some(word => word.startsWith(raw));
+  const sections = [];
+  const actions = paletteActions().filter(a => matches(a.title.toLowerCase())).slice(0, 5).map(a => ({ ...a, id: `action:${a.id}` }));
+  if (actions.length) sections.push({ title: "Actions", items: actions });
+  const sessions = state.sessions.filter(s => matches((s.title || "").toLowerCase() + " " + s.id)).slice(0, 5).map(s => ({ id: `session:${s.id}`, title: s.title || s.id.slice(0, 8), run: () => openSession(s.id) }));
+  if (sessions.length) sections.push({ title: "Sessions", items: sessions });
+  return sections;
+}
+
+function renderPalette() {
+  paletteSectionsCache = paletteSections();
+  const list = $("palette-list");
+  list.innerHTML = "";
+  if (paletteSectionsCache.length === 0) {
+    list.append(el("div", { class: "palette-empty", text: "Nothing matches." }));
+    return;
+  }
+  const flat = [];
+  for (const section of paletteSectionsCache) {
+    list.append(el("div", { class: "palette-title", text: section.title }));
+    for (const item of section.items) {
+      const row = el("div", { class: `palette-item ${flat.length === paletteIndex ? "selected" : ""}` });
+      row.append(el("div", { class: "palette-name", text: item.title }));
+      if (item.detail) row.append(el("span", { class: "palette-detail", text: item.detail }));
+      row.addEventListener("click", () => choosePalette(item));
+      list.append(row);
+      flat.push(item);
+    }
+  }
+  paletteIndex = Math.min(paletteIndex, Math.max(flat.length - 1, 0));
+  list.querySelectorAll(".palette-item")[paletteIndex]?.classList.add("selected");
+}
+
+function choosePalette(item) {
+  closePalette();
+  item.run?.();
+  item.after?.();
+}
+
+function openPalette() {
+  $("palette").hidden = false;
+  $("palette-input").value = "";
+  paletteIndex = 0;
+  renderPalette();
+  $("palette-input").focus();
+}
+
+function closePalette() {
+  $("palette").hidden = true;
+}
+
+$("palette-open").addEventListener("click", openPalette);
+$("palette-input").addEventListener("input", () => { paletteIndex = 0; renderPalette(); });
+$("palette").addEventListener("click", event => { if (event.target === $("palette")) closePalette(); });
+
+// ---- Appearance settings (the Mac app's AppearanceSettings) ----
+
+const LOOK_KEY = "kuvo-look";
+const lookAccents = {
+  system: { color: "", title: "Default" },
+  blue: { color: "#0a84ff", title: "Blue" },
+  purple: { color: "#bf5af2", title: "Purple" },
+  pink: { color: "#ff375f", title: "Pink" },
+  red: { color: "#ff453a", title: "Red" },
+  orange: { color: "#ff9f0a", title: "Orange" },
+  yellow: { color: "#ffd60a", title: "Yellow" },
+  green: { color: "#32d74b", title: "Green" },
+  graphite: { color: "#8e8e93", title: "Graphite" },
+};
+
+const look = { accent: "system", textSize: "14", motion: "full" };
+
+function saveLook() {
+  localStorage.setItem(LOOK_KEY, JSON.stringify(look));
+}
+
+function applyLook() {
+  const root = document.documentElement;
+  const accent = lookAccents[look.accent] ?? lookAccents.system;
+  if (accent.color) {
+    root.style.setProperty("--accent", accent.color);
+    root.style.setProperty("--accent-hover", `color-mix(in oklab, ${accent.color}, black 12%)`);
+  } else {
+    root.style.removeProperty("--accent");
+    root.style.removeProperty("--accent-hover");
+  }
+  root.style.setProperty("--text-base", `${look.textSize}px`);
+  root.classList.toggle("reduced-motion", look.motion === "reduced");
+  $("setting-text-size").value = look.textSize;
+  $("setting-motion").value = look.motion;
+  for (const swatch of document.querySelectorAll("#accent-swatches .swatch")) {
+    swatch.classList.toggle("selected", swatch.dataset.accent === look.accent);
+  }
+  try { saveLook(); } catch {}
+}
+
+function renderAccentSwatches() {
+  const swatches = $("accent-swatches");
+  swatches.innerHTML = "";
+  for (const [key, value] of Object.entries(lookAccents)) {
+    const swatch = el("button", { class: "swatch", title: value.title, type: "button" });
+    swatch.dataset.accent = key;
+    swatch.style.background = value.color || "var(--accent)";
+    swatch.addEventListener("click", () => { look.accent = key; applyLook(); });
+    swatches.append(swatch);
+  }
+}
+
+function openSettings() {
+  applyLook();
+  $("settings-modal").hidden = false;
+}
+
+function closeSettings() {
+  $("settings-modal").hidden = true;
+}
+
+$("settings-open").addEventListener("click", openSettings);
+$("settings-close").addEventListener("click", closeSettings);
+$("settings-modal").addEventListener("click", event => { if (event.target === $("settings-modal")) closeSettings(); });
+$("setting-text-size").addEventListener("change", event => { look.textSize = event.target.value; applyLook(); });
+$("setting-motion").addEventListener("change", event => { look.motion = event.target.value; applyLook(); });
+
+try {
+  const stored = JSON.parse(localStorage.getItem(LOOK_KEY) || "{}");
+  if (stored.accent in lookAccents) look.accent = stored.accent;
+  if (["13", "14", "16"].includes(stored.textSize)) look.textSize = stored.textSize;
+  if (["full", "reduced"].includes(stored.motion)) look.motion = stored.motion;
+} catch {}
+
 // ---- Keyboard shortcuts ----
 
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    if (!$("palette").hidden) { closePalette(); return; }
+    if (!$("settings-modal").hidden) { closeSettings(); return; }
+  }
   if (!(event.ctrlKey || event.metaKey)) return;
   const key = event.key.toLowerCase();
-  if (key === "s" && state.openFile) {
+  if (key === "k") {
+    event.preventDefault();
+    if ($("palette").hidden) openPalette();
+    else closePalette();
+    return;
+  } else if (key === "s" && state.openFile) {
     event.preventDefault();
     saveFile();
   } else if (key === "o") {
@@ -927,19 +1209,6 @@ function exportConversation() {
   lines.push(`Project: ${state.project || ""}`);
   lines.push(`Session: ${state.session.id}`);
   lines.push("");
-  // A steps row: how much the agent did between its replies, like the Mac app's StepsRow.
-  const steps = state.transcript.entries.filter(entry => entry.kind === "assistant");
-  const stepCount = steps.length;
-  const toolCount = steps.reduce((sum, entry) => sum + entry.parts.filter(part => part.type === "tool").length, 0);
-  const totalMs = steps.reduce((sum, entry) => sum + ((entry.time?.completed ?? 0) - (entry.time?.started ?? 0)), 0);
-  const stepsRow = $("steps-row");
-  if (stepCount > 1 && !query) {
-    stepsRow.hidden = false;
-    const seconds = Math.round(totalMs / 1000);
-    stepsRow.textContent = `${stepCount} steps · ${seconds}s · ${toolCount} tools`;
-  } else {
-    stepsRow.hidden = true;
-  }
 
   const query = state.findQuery;
   const visibleEntries = query
@@ -994,6 +1263,9 @@ async function boot() {
     renderConversation();
   }
   loadModels();
+  loadAgents();
+  renderAccentSwatches();
+  applyLook();
   // The engine may still be starting: keep the header honest.
   setInterval(async () => {
     try {

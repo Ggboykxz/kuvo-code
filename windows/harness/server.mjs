@@ -400,6 +400,10 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
       return json({ models: await client.models(currentProject ?? undefined) });
     }
 
+    if (url.pathname === "/api/agents" && request.method === "GET") {
+      return json({ agents: await client.agents(currentProject ?? undefined) });
+    }
+
     const session = route(/^\/api\/sessions\/([^/]+)$/);
     if (session && request.method === "DELETE") {
       await client.deleteSession(session[0]);

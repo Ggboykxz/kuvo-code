@@ -15,6 +15,9 @@
   <button id="project" class="path" title="Change the project folder"></button>
   <div class="spacer"></div>
   <button id="toggle-files" class="small" title="Files and terminal">Files</button>
+  <button id="split" class="small" title="Show a second session beside this one">Split</button>
+  <button id="palette-open" class="small" title="Commands, sessions and files (Ctrl+K)">@</button>
+  <button id="settings-open" class="small" title="Appearance">Appearance</button>
   <button id="export" class="small" title="Export conversation as Markdown">Export</button>
   <div id="context-gauge" class="context-gauge" hidden title="Context window used"></div>
   <input id="find" class="file-search header-find" placeholder="Find in conversation…" spellcheck="false">
@@ -43,11 +46,12 @@
       <button id="start" class="primary" hidden>Start a session</button>
     </div>
     <div id="steps-row" class="steps-row" hidden></div>
-  <div id="entries" class="entries"></div>
+    <div id="entries" class="entries"></div>
     <div id="asks" class="asks"></div>
     <form id="composer" class="composer" hidden>
       <textarea id="prompt" rows="3" placeholder="Ask for something…  (Enter sends, Shift+Enter for a new line)"></textarea>
       <div class="composer-foot">
+        <select id="agent" title="Agent" hidden></select>
         <select id="model" title="Model"></select>
         <div class="spacer"></div>
         <button id="stop" type="button" class="small" hidden>Stop</button>
@@ -55,7 +59,46 @@
       </div>
     </form>
   </section>
+  <section id="split-pane" class="split-pane" hidden>
+    <div class="split-head">
+      <select id="split-session" title="The session shown here"></select>
+      <button id="split-close" class="small">✕</button>
+    </div>
+    <div id="split-entries" class="entries"></div>
+  </section>
 </main>
+
+<div id="palette" class="palette" hidden>
+  <input id="palette-input" placeholder="Search sessions, files and actions…" spellcheck="false" autocomplete="off">
+  <div id="palette-list" class="palette-list"></div>
+</div>
+
+<div id="settings-modal" class="settings" hidden>
+  <div class="settings-card">
+    <div class="settings-title">Appearance</div>
+    <div class="settings-row">
+      <span>Accent</span>
+      <div id="accent-swatches" class="swatches"></div>
+    </div>
+    <div class="settings-row">
+      <span>Text size</span>
+      <select id="setting-text-size">
+        <option value="13">Small</option>
+        <option value="14" selected>Default</option>
+        <option value="16">Large</option>
+      </select>
+    </div>
+    <div class="settings-row">
+      <span>Motion</span>
+      <select id="setting-motion">
+        <option value="full" selected>Full</option>
+        <option value="reduced">Reduced</option>
+      </select>
+    </div>
+    <div class="settings-note">Like the Mac app's Appearance settings: the accent colors the interface, the text size sets how messages read, and reduced motion stills the shimmer and springs.</div>
+    <button id="settings-close" class="primary">Done</button>
+  </div>
+</div>
 
 <div id="drawer" class="drawer" hidden>
   <div class="drawer-head">

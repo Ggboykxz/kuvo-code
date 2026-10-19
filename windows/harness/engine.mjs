@@ -143,6 +143,11 @@ export class EngineClient {
     return (await this.request("GET", "api/model", { directory })).data ?? [];
   }
 
+  /// The agents usable in a folder (the ones a person picks between, and the rest).
+  async agents(directory) {
+    return (await this.request("GET", "api/agent", { directory })).data ?? [];
+  }
+
   // ---- Events ----
 
   /// `GET /api/event`, as parsed events, until the signal says stop or the stream ends.
