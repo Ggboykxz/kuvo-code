@@ -223,13 +223,18 @@ struct ConnectView: View {
         .animation(.ui, value: keyError)
     }
 
+    /// Getting ready (an agent downloading first, its page not there yet): what it's doing, not
+    /// yet waiting on you.
+    private var gettingReady: String? {
+        progress ?? (signInURL.isEmpty ? "Getting ready…" : nil)
+    }
+
     private func waiting(_ attempt: OAuthAttempt) -> some View {
         VStack(spacing: 18) {
-            // Getting ready (an agent downloading first): what it's doing, not yet waiting on you.
-            if let progress {
+            if let gettingReady {
                 HStack(spacing: 8) {
                     Spinner(size: 16)
-                    Text(progress)
+                    Text(gettingReady)
                         .multilineTextAlignment(.center)
                         .foregroundStyle(.secondary)
                         .contentTransition(.numericText())
@@ -250,7 +255,7 @@ struct ConnectView: View {
                         .buttonStyle(TextButtonStyle())
                         .contentTransition(.symbolEffect(.replace))
                 }
-            } else if attempt.mode == .auto, progress == nil {
+            } else if attempt.mode == .auto, gettingReady == nil {
                 Text("Finish signing in with your browser. This updates on its own.")
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.secondary)
@@ -274,7 +279,7 @@ struct ConnectView: View {
                     .controlSize(.large)
                     .padding(.top, 8)
                 }
-            } else if progress == nil {
+            } else if gettingReady == nil {
                 HStack(spacing: 8) {
                     Spinner(size: 16)
                     Text(isCheckingCode ? "Checking the code…" : "Waiting for you to finish…")
@@ -306,7 +311,7 @@ struct ConnectView: View {
                 if !signInURL.isEmpty {
                     Button("Open the Page Again") { open(signInURL) }
                 }
-                if attempt.mode == .auto, attempt.acceptsCode == true, !isPastingCode, progress == nil {
+                if attempt.mode == .auto, attempt.acceptsCode == true, !isPastingCode, gettingReady == nil {
                     Button("Paste a Code") { isPastingCode = true }
                 }
                 // In a sheet, Cancel leaves it; here it goes back to the ways to sign in.
@@ -504,12 +509,15 @@ struct ConnectView: View {
             var misses = 0
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
-                guard !Task.isCancelled, let api = catalog.api(forIntegration: integrationID) else { return }
-                guard let status = try? await api.oauthStatus(integration: integrationID, attempt: attempt.attemptID) else {
+                guard !Task.isCancelled else { return }
+                // Not there (the coding agents starting over) counts as not knowing it.
+                let api = catalog.api(forIntegration: integrationID)
+                guard let api, let status = try? await api.oauthStatus(integration: integrationID, attempt: attempt.attemptID) else {
                     misses += 1
                     if misses >= 10 {
                         noteFailure(method: "oauth", "engine")
-                        step = .failed("The engine started over while you were signing in. Try again.")
+                        let who = OutsideAgents.isAgent(integrationID) ? "The coding agents" : "The engine"
+                        step = .failed("\(who) started over while you were signing in. Try again.")
                         return
                     }
                     continue
@@ -563,6 +571,12 @@ struct ConnectView: View {
         Task {
             do {
                 try await api.completeOAuth(integration: integrationID, attempt: attempt.attemptID, code: code)
+                // Still waiting a while later (it didn't take that code, and waits for another):
+                // the field again.
+                try? await Task.sleep(for: .seconds(10))
+                if isCheckingCode, case .waiting(let current) = step, current.attemptID == attempt.attemptID {
+                    isCheckingCode = false
+                }
             } catch {
                 // It may have finished in the browser meanwhile: the poll says how it went.
                 isCheckingCode = false
