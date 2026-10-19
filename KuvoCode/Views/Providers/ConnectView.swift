@@ -41,6 +41,8 @@ struct ConnectView: View {
     @State private var isPastingCode = false
     @State private var isCheckingCode = false
     @State private var codeError: String?
+    /// The sign-in said how it's going at least once (a page without a link is waited on as any).
+    @State private var hasStatus = false
     @State private var isWorking = false
     /// Why the engine didn't take the key, shown under it until you change it.
     @State private var keyError: String?
@@ -226,7 +228,7 @@ struct ConnectView: View {
     /// Getting ready (an agent downloading first, its page not there yet): what it's doing, not
     /// yet waiting on you.
     private var gettingReady: String? {
-        progress ?? (signInURL.isEmpty ? "Getting ready…" : nil)
+        progress ?? (signInURL.isEmpty && !hasStatus ? "Getting ready…" : nil)
     }
 
     private func waiting(_ attempt: OAuthAttempt) -> some View {
@@ -463,6 +465,7 @@ struct ConnectView: View {
                     isPastingCode = false
                     isCheckingCode = false
                     codeError = nil
+                    hasStatus = false
                     signInURL = attempt.url
                     if let code = attempt.userCode { copy(code) }
                     open(attempt.url)
@@ -523,6 +526,7 @@ struct ConnectView: View {
                     continue
                 }
                 misses = 0
+                hasStatus = true
                 switch status.status {
                 case .pending:
                     // The page came later (an agent was downloaded first): opened once, as it comes.
