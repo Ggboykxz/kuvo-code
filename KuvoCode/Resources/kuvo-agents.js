@@ -1220,6 +1220,7 @@ class AcpThread {
     let text = input.text;
     const instructions = hooks.instructions();
     const sent = typeof this.state.acpInstructions === "string" ? this.state.acpInstructions : this.state.acpInstructed ? undefined : "";
+    let instructed;
     if (instructions !== sent && (instructions || sent)) {
       if (instructions)
         text = `${sent ? `Your instructions from Kuvo Code changed. They're now:
@@ -1227,9 +1228,7 @@ class AcpThread {
 ` : ""}${instructions}
 
 ${text}`;
-      this.state.acpInstructions = instructions;
-      delete this.state.acpInstructed;
-      hooks.saveState();
+      instructed = { value: instructions };
     }
     if (others.length)
       text += `
@@ -1239,7 +1238,7 @@ ${others.map((path) => `- ${path}`).join(`
 `)}`;
     prompt.unshift({ type: "text", text });
     return new Promise((resolve) => {
-      const active = { turn, hooks, resolve, rpc, tools: new Map, toolsSinceText: false, ended: false };
+      const active = { turn, hooks, resolve, rpc, tools: new Map, toolsSinceText: false, ended: false, instructed };
       this.active = active;
       turn.startStep();
       const meta = this.flavor.promptMeta?.();
@@ -1261,6 +1260,11 @@ ${others.map((path) => `- ${path}`).join(`
     if (active.ended)
       return;
     active.ended = true;
+    if (active.instructed && (outcome !== "failed" || active.heard)) {
+      this.state.acpInstructions = active.instructed.value;
+      delete this.state.acpInstructed;
+      active.hooks.saveState();
+    }
     if (this.active === active)
       this.active = undefined;
     if (active.plan)
@@ -1292,6 +1296,7 @@ ${others.map((path) => `- ${path}`).join(`
     const active = this.active;
     if (!active || this.loading || params?._meta?.isReplay)
       return;
+    active.heard = true;
     const update = params?.update ?? {};
     const turn = active.turn;
     switch (update.sessionUpdate) {
@@ -3960,6 +3965,7 @@ ${others.map((path) => `- ${path}`).join(`
 `)}`;
     const instructions = hooks.instructions();
     const sent = typeof this.state.cursorInstructions === "string" ? this.state.cursorInstructions : this.state.cursorInstructed ? undefined : "";
+    let instructed;
     if (instructions !== sent && (instructions || sent)) {
       if (instructions)
         text = `${sent ? `Your instructions from Kuvo Code changed. They're now:
@@ -3967,10 +3973,16 @@ ${others.map((path) => `- ${path}`).join(`
 ` : ""}${instructions}
 
 ${text}`;
-      this.state.cursorInstructions = instructions;
+      instructed = { value: instructions };
+    }
+    const instructionsTaken = () => {
+      if (!instructed)
+        return;
+      this.state.cursorInstructions = instructed.value;
       delete this.state.cursorInstructed;
       hooks.saveState();
-    }
+      instructed = undefined;
+    };
     if (hooks.signal.aborted)
       return { outcome: "interrupted" };
     const active = { turn, hooks, toolsSinceText: false, sawText: false, output: new Map };
@@ -3985,6 +3997,8 @@ ${text}`;
       active.run = run2;
       const result = await run2.wait();
       await chain;
+      if (result?.status !== "error" || active.sawText || active.output.size)
+        instructionsTaken();
       if (!active.sawText && typeof result?.result === "string" && result.result.trim())
         turn.text(result.result);
       const usage = result?.usage;
@@ -4000,6 +4014,8 @@ ${text}`;
       }
       return { outcome: "succeeded" };
     } catch (error) {
+      if (active.sawText || active.output.size)
+        instructionsTaken();
       if (hooks.signal.aborted)
         return { outcome: "interrupted" };
       const message = String(error?.message ?? error);
@@ -4828,6 +4844,9 @@ var legacyKeys = ["claudeSession", "claudeStarted", "codexThread", "acpSession",
 var carryOn = "Carry on with my last message from where you left off: you're on another model now.";
 var timing = { stopGrace: 8000, idleClose: 15 * 60000 };
 var changes = new Set(["edit", "write", "patch"]);
+function didWork(message) {
+  return message.type === "assistant" && message.content.some((content) => content.type === "tool" || content.type === "text" && content.text.trim() !== "");
+}
 
 class Sessions {
   store;
@@ -5251,9 +5270,11 @@ class Sessions {
     const abandoned = new Promise((resolve) => abandon = () => resolve({ outcome: "interrupted" }));
     const running = { provider: model2.providerID, thread, abandon };
     live.running = running;
+    const from = record.messages.length;
     try {
       const result = await Promise.race([thread.run({ ...input, model: model2, text, files }, turn, this.hooks(id, live, turn, signal, slot, input.plan)), abandoned]);
-      slot.seen = record.messages[record.messages.length - 1]?.id;
+      if (result.outcome !== "failed" || record.messages.slice(from).some(didWork))
+        slot.seen = record.messages[record.messages.length - 1]?.id;
       live.last = slot;
       return result;
     } catch (error) {
@@ -5297,7 +5318,6 @@ class Sessions {
         turn.notice(`Back on ${this.entryName(entry)}: its limit has reset.`);
       tried.add(Auto.modelKey(entry));
       const model2 = { providerID: entry.providerID, id: entry.modelID, ...entry.variant ? { variant: entry.variant } : {} };
-      const seenBefore = this.slots(record)[entry.providerID]?.seen;
       if (note) {
         turn.stopTools("Stopped: going on with another model.");
         turn.notice(`${note} Going on with ${this.entryName(entry)}.`);
@@ -5307,12 +5327,8 @@ class Sessions {
       if (last2.outcome !== "failed" || signal.aborted)
         return last2;
       if (!last2.limit) {
-        const worked = record.messages.slice(from).some((message) => message.type === "assistant" && message.content.some((content) => content.type === "tool" || content.type === "text" && content.text.trim()));
-        if (worked)
+        if (record.messages.slice(from).some(didWork))
           return last2;
-        const slot = this.slots(record)[entry.providerID];
-        if (slot)
-          slot.seen = seenBefore;
         note = `${this.entryName(entry)} couldn't take it: ${last2.error?.message ?? "it stopped with an error"}`;
         continue;
       }
