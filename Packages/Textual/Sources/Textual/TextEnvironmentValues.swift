@@ -34,7 +34,8 @@ public struct TextEnvironmentValues: Hashable, Sendable {
     )
   }
 
-  init(
+  /// Values for drawing outside a view (an attachment drawn elsewhere, at a size of its own).
+  public init(
     font: Font? = nil,
     dynamicTypeSize: DynamicTypeSize = .large,
     legibilityWeight: LegibilityWeight? = nil,
