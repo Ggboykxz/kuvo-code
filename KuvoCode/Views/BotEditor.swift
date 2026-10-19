@@ -79,6 +79,12 @@ struct BotEditor: View {
     private var trimmedName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     var body: some View {
+        // The editor as a whole, for what goes when it's closed, however that is.
+        ZStack { content }
+            .onDisappear(perform: dropAddedPersonality)
+    }
+
+    @ViewBuilder private var content: some View {
         if showsAddMachine {
             // A machine to live on, added right here: the bot's form is as it was on coming back.
             EditorDetail(back: isNew ? "New Bot" : "Edit \(trimmedName)", title: "Add a Machine", onBack: { withAnimation(.ui) { showsAddMachine = false } }) {
@@ -335,12 +341,6 @@ struct BotEditor: View {
             Spacer(minLength: 0)
             Button("Cancel", role: .cancel) {
                 if waitsForMachine { creating?.cancel() }
-                // Opening a shared bot and not making it leaves none of its personality behind
-                // (one being made keeps it).
-                if !isWorking || waitsForMachine, let addedPersonality, !bots.list.contains(where: { $0.personality == addedPersonality }),
-                   let added = Personalities.shared.personality(addedPersonality) {
-                    Personalities.shared.delete(added)
-                }
                 close()
             }
                 .keyboardShortcut(.cancelAction)
@@ -454,6 +454,15 @@ struct BotEditor: View {
             }
             .contentShape(.rect)
         }
+    }
+
+    /// Opening a shared bot and not making it leaves none of its personality behind (one being
+    /// made keeps it).
+    private func dropAddedPersonality() {
+        guard !isWorking || waitsForMachine, let addedPersonality,
+              !bots.list.contains(where: { $0.personality == addedPersonality }),
+              let added = Personalities.shared.personality(addedPersonality) else { return }
+        Personalities.shared.delete(added)
     }
 
     // MARK: Saving
