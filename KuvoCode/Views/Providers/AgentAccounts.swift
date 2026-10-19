@@ -151,7 +151,7 @@ extension Integration {
     /// aren't offered: two ways to one plan read as two accounts. One made before still works,
     /// shows as connected, and can be signed in to again.
     var offeredSignInMethods: [Method] {
-        if isConnected { return signInMethods }
+        if connections.contains(where: { $0.method == "oauth" }) { return signInMethods }
         return signInMethods.filter { method in
             guard case .oauth(let id, _, _) = method else { return true }
             switch self.id {
@@ -520,13 +520,22 @@ private struct PlanAccountRow: View {
                 }
                 Button("Sign In Again…", action: connect)
                 Divider()
-                Button("Remove Account", role: .destructive) {
-                    guard let id = connection.credentialID else { return }
-                    Task { try? await app.api?.removeCredential(id) }
-                }
+                Button("Remove Account", role: .destructive, action: remove)
             } else {
                 Text("Set in your shell's environment")
             }
+        }
+    }
+
+    /// The last of your accounts with it goes from your machines too (they have a copy of it);
+    /// with others left, the machines get the one in use next.
+    private func remove() {
+        guard let id = connection.credentialID else { return }
+        let accounts = plan.connections.filter { $0.type == "credential" }
+        if accounts.count <= 1 {
+            app.forgetSignIn(plan.id)
+        } else {
+            Task { try? await app.api?.removeCredential(id) }
         }
     }
 }
