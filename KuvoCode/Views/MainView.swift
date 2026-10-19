@@ -1531,7 +1531,12 @@ struct MainView: View {
                     utilities.newMachinePage(rest[0], address: rest.count > 1 ? rest[1] : nil)
                 }
             case "files": utilities.showFiles()
-            case "file" where parts.count > 1: utilities.open(RemoteFolder.url(parts[1]))
+            case "file" where parts.count > 1:
+                // Once the conversation is in view, so the tab is its panel's.
+                Task {
+                    try? await Task.sleep(for: .seconds(1.5))
+                    utilities.show(RemoteFolder.url(parts[1]))
+                }
             case "changes": utilities.showChanges()
             case "run": runProject()
             case "expand": panelExpanded = true
