@@ -211,7 +211,7 @@ struct RulesEditor: View {
     static func problem(of rule: PermissionRule, hiding: Set<String>) -> String? {
         let pattern = rule.resource.trimmingCharacters(in: .whitespacesAndNewlines)
         if pattern.isEmpty { return "Needs a pattern." }
-        if pattern == "*", hiding.contains(rule.action) { return "For all of them, use the choice above." }
+        if pattern == "*", hiding.contains(rule.action) { return "For all of them, set \(PermissionsSettings.title(of: rule.action)) above." }
         return nil
     }
 
@@ -320,16 +320,19 @@ private struct RuleRow: View {
     var commit: () -> Void = {}
     @State private var resource = ""
     @FocusState private var isFocused: Bool
+    /// You've been in its pattern and left it: only then does an empty new one say it needs one
+    /// (not while the cursor is on its way there).
+    @State private var wasLeft = false
 
-    /// What's wrong with it as typed; an empty new one says so only once you've left it.
+    /// What's wrong with it as typed.
     private var shownProblem: String? {
         let typed = PermissionRule(action: rule.action, resource: resource, effect: rule.effect)
         guard let problem = problem(typed) else { return nil }
-        return resource.trimmingCharacters(in: .whitespaces).isEmpty && (isFocused || !isNew) ? nil : problem
+        return resource.trimmingCharacters(in: .whitespaces).isEmpty && !(isNew && wasLeft && !isFocused) ? nil : problem
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 8) {
                 // A fixed width that long titles truncate in, so the patterns line up.
                 Picker("Action", selection: Binding(get: { rule.action }, set: { change(PermissionRule(action: $0, resource: rule.resource, effect: rule.effect)) })) {
@@ -342,7 +345,12 @@ private struct RuleRow: View {
                     .labelsHidden()
                     .focused($isFocused)
                     .onSubmit(save)
-                    .onChange(of: isFocused) { if !isFocused { save() } }
+                    .onChange(of: isFocused) {
+                        if !isFocused {
+                            wasLeft = true
+                            save()
+                        }
+                    }
                     .onChange(of: resource) { typed(resource) }
                 Picker("Effect", selection: Binding(get: { rule.effect }, set: { change(PermissionRule(action: rule.action, resource: rule.resource, effect: $0)) })) {
                     ForEach(effects, id: \.self) { Text(Self.title(of: $0)).tag($0) }
@@ -360,11 +368,18 @@ private struct RuleRow: View {
                 .help("Remove Rule")
             }
             if let shownProblem {
-                Text(shownProblem)
-                    .font(.callout)
-                    .foregroundStyle(.red)
-                    // Under the pattern.
-                    .padding(.leading, 198)
+                Label {
+                    Text(shownProblem)
+                } icon: {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .foregroundStyle(.orange)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .labelStyle(.titleAndIcon)
+                // Under the pattern's words.
+                .padding(.leading, 198)
+                .transition(.opacity)
             }
         }
         .onAppear {

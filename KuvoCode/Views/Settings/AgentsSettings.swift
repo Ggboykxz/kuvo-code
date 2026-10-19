@@ -217,12 +217,14 @@ private struct AgentEditor: View {
     }
 
     /// The rules added on a new one's page that aren't saved into it yet (the cursor is still in
-    /// one), which Create takes too.
+    /// one), which Create takes too; one left without a pattern is no rule, and isn't.
     private var pendingRules: [PermissionRule] {
-        draft?.items([RulesEditor.pendingKey] + Self.draftPath + ["permissions"]).compactMap(\.rule) ?? []
+        (draft?.items([RulesEditor.pendingKey] + Self.draftPath + ["permissions"]).compactMap(\.rule) ?? [])
+            .filter { !$0.resource.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 
-    /// A rule that can't be made as it is (no pattern yet) keeps the agent from being created.
+    /// A rule written in a way that can't be made (* for a kind of action with its choice above)
+    /// keeps the agent from being created; it says why under it.
     private var rulesProblem: Bool {
         pendingRules.contains { RulesEditor.problem(of: $0, hiding: Set(PermissionsSettings.actions.map(\.id))) != nil }
     }
