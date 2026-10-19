@@ -1296,3 +1296,11 @@ li.unread .session { position: relative; padding-left: 16px; }
 }
 .choice-item:hover { background: var(--hover); }
 .choice-item.selected { color: var(--accent); }
+
+/* A checklist in a reply shows real checkboxes, ticked or not, as the Mac app's does. */
+.markdown input[type="checkbox"] {
+  width: auto; margin-right: var(--space-2);
+  accent-color: var(--accent);
+  vertical-align: middle;
+}
+.markdown li:has(> input[type="checkbox"]) { list-style: none; margin-left: calc(var(--space-4) * -1); }

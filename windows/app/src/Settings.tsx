@@ -210,6 +210,7 @@ function GeneralPage() {
     updates: true, startAtLogin: false, keepAwake: false, path: "",
   });
   const [imported, setImported] = useState<string[] | null>(null);
+  const [missing, setMissing] = useState<string[]>([]);
 
   useEffect(() => {
     void api<{ updates: boolean; startAtLogin: boolean; keepAwake: boolean; path: string }>("/api/app-settings")
@@ -251,6 +252,10 @@ function GeneralPage() {
               const answer = await api<{ added: string[]; skipped: string[] }>("/api/config/import", { method: "POST", body: {} });
               setImported(answer.added ?? []);
               await bootConfig();
+              // Everything may already be here, and a sign-in may still be missing — say which.
+              const { integrations } = await api<{ integrations: { id: string; name?: string; connections?: unknown[] }[] }>("/api/integrations")
+                .catch(() => ({ integrations: [] as { id: string; name?: string; connections?: unknown[] }[] }));
+              setMissing((integrations ?? []).filter(one => !(one.connections ?? []).length).map(one => one.name ?? one.id));
             } catch (error) {
               complain(error);
             }
@@ -261,7 +266,11 @@ function GeneralPage() {
       </div>
       {imported ? (
         <div className="settings-note">
-          {imported.length ? `Brought over: ${imported.join(", ")}.` : "Nothing new — it is all here already."}
+          {imported.length
+            ? `Brought over: ${imported.join(", ")}.`
+            : missing.length
+              ? `Everything from opencode is here already, but a sign-in is still missing: ${missing.join(", ")}.`
+              : "Everything from opencode is here already."}
         </div>
       ) : null}
       <div className="settings-note">The MCP servers, the agents, the commands and the model that opencode's own settings hold, copied into this app's settings. Your keys stay where they are.</div>

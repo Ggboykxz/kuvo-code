@@ -238,6 +238,12 @@ export class EngineClient {
     return answer?.data?.text ?? "";
   }
 
+  /// The sign-ins the engine knows: a provider or a service, and whether it is connected.
+  /// (No secret is read here — only the state.)
+  async integrations(directory) {
+    return ((await this.request("GET", "api/integration", { directory })).data) ?? [];
+  }
+
   /// The providers the engine knows: the built-in ones, and the ones its settings add.
   async providers(directory) {
     return ((await this.request("GET", "api/provider", { directory })).data) ?? [];
