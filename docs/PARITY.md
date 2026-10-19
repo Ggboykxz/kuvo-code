@@ -19,7 +19,7 @@ mirrored in `windows/harness/engine.mjs` and typed in `windows/app/src/api.ts`).
 | `QueueDock` | ✅ la file (steer/queue, reprendre), avec repli |
 | `ContextGauge` | ✅ la jauge + son popover (fenêtre de contexte, coût, compact) |
 | `StepsRow` | ✅ (le résumé des étapes, dépliable) |
-| `AttentionCards` | ✅ les demandes de permission et les formulaires |
+| `AttentionCards` | ✅ les demandes de permission et les formulaires, et *Try Again* sous un run échoué |
 | `YourMessage`, `AttachmentViews` | ✅ (pièces jointes, images) |
 | `ToolCallView`, `ShellRow` | ✅ (les outils se replient comme sur le Mac : ce qui a des détails s'ouvre, un filet le long, un sous-agent montre ses étapes) |
 | `DiffView` | ✅ la vue des changements d'un fichier |

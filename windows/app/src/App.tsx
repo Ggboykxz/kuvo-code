@@ -303,6 +303,8 @@ function AttachmentNode({ file }: { file: Attachment }) {
 }
 
 function EntryNodes({ transcript }: { transcript: Transcript }) {
+  // The message that started the turn: what "Try Again" sends again.
+  const lastMessage = [...transcript.entries].reverse().find(entry => entry.kind === "user")?.text ?? "";
   return (
     <>
       {transcript.entries.map((entry, index) => {
@@ -331,7 +333,20 @@ function EntryNodes({ transcript }: { transcript: Transcript }) {
           );
         }
         if (entry.kind === "idle" && entry.outcome === "failed") {
-          return <div key={key} className="entry-error">{errorText(entry.error) || "The run failed."}</div>;
+          return (
+            <div key={key} className="entry-failed">
+              <div className="entry-error">{errorText(entry.error) || "The run failed."}</div>
+              {lastMessage ? (
+                <button
+                  className="small"
+                  title="Send your last message again"
+                  onClick={() => void sendPrompt(lastMessage)}
+                >
+                  ↺ Try Again
+                </button>
+              ) : null}
+            </div>
+          );
         }
         if (entry.kind === "idle" && entry.outcome === "interrupted") return <div key={key} className="notice">Stopped.</div>;
         return null;

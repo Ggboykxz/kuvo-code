@@ -1329,3 +1329,8 @@ li.unread .session { position: relative; padding-left: 16px; }
 /* The image, looked at: a click zooms it in, a click again brings it back. */
 .image-viewer img { cursor: zoom-in; transition: transform var(--motion-base) var(--ease-spring); }
 .image-viewer img.zoomed { cursor: zoom-out; transform: scale(2.2); }
+
+/* A run that failed: what it said, and the way to have another go. */
+.entry-failed { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); }
+.entry-failed .small { color: var(--ink-soft); }
+.entry-failed .small:hover { color: var(--accent); border-color: var(--line); }
