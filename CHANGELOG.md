@@ -5,6 +5,7 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- A reply no longer shows its lines on top of each other, or with gaps, after you open or close the sidebar or the side panel. Its text could stay laid out for a width it wasn't shown at.
 - With anonymous usage on, the app also sends an empty note every couple of minutes while it's open and has sent nothing else, so it's known how many people have it open at a time. It carries nothing new about you.
 - Showing the sidebar again slides it straight in: it stays ready while hidden, bots included, rather than being drawn again first, which made the start of the slide stutter.
 
