@@ -6,6 +6,8 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- An engine waiting on a macOS prompt, like one asking for access to your Desktop folder, is no longer started over after a minute. That took the prompt away and asked again.
+
 ## 0.5.14
 
 - Models show once the engine has finished starting, even when that takes longer than a minute, like when a macOS folder prompt is answered late. The composer could stay on "Choose a Model".

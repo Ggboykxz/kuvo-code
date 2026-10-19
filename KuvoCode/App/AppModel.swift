@@ -126,6 +126,13 @@ final class AppModel {
     /// The engine this Mac runs (KUVO_OPENCODE_BINARY's, or the one installed), once it has started.
     private(set) var engineBinary: URL?
 
+    /// A macOS prompt is on screen, like "would like to access files in your Desktop folder":
+    /// those come from UserNotificationCenter, whose windows show only while it asks.
+    static var systemPromptShowing: Bool {
+        let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        return windows.contains { $0[kCGWindowOwnerName as String] as? String == "UserNotificationCenter" }
+    }
+
     private var installer: EngineInstaller {
         EngineInstaller(root: AppInfo.supportDirectory.appending(path: "engine"))
     }
@@ -228,10 +235,11 @@ final class AppModel {
             self.api = api
             catalog.api = api
             // An engine stuck starting (one of its own fetches never ended) is started over, once
-            // a launch: after that, a stall is left to show. (One waiting on a macOS prompt for
-            // folder access goes on waiting; the catalog fills once it's answered.)
+            // a launch: after that, a stall is left to show. Not while macOS asks you something
+            // (access to a folder the engine reads): it waits on your answer, and starting it over
+            // would only take the prompt away and ask again. The catalog fills once it's answered.
             catalog.onStalled = { [weak self] in
-                guard let self, !restartedStuckEngine else { return }
+                guard let self, !restartedStuckEngine, !Self.systemPromptShowing else { return }
                 restartedStuckEngine = true
                 Analytics.shared.track("engine_failed", ["reason": "stalled"])
                 Task { await self.restart() }
