@@ -168,7 +168,7 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 | L38 | It needs a decision: it asks plainly and stops, and carries on when you answer | ✅ asks what it needs (a question card) before booking |
 | L39 | "Ask Sage to research X and tell me what it finds" (bot to bot, and the answer back) | ✅ asked Reader and relayed its answer (Reader's answer itself was wrong: a model mistake) |
 | L40 | A bot reports back to the session that asked it for something | ✅ a session asked Reader through send_message, waited for its answer, and relayed it with the reasons |
-| L41 | It finishes while you're in another app: a notification you can answer | ⏳ |
+| L41 | It finishes while you're in another app: a notification you can answer | ✅ Reply on the banner sent a message to the session, and the agent answered it |
 
 ### Memory and the job
 
@@ -231,7 +231,7 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 | --- | --- | --- |
 | K1 | Every Settings page opens, reads well, and keeps what you change | ✅ all 22 Settings pages open with their content |
 | K2 | Every menu command and keyboard shortcut does what it says | ✅ every menu shortcut matches Settings › Keyboard Shortcuts and the docs; menu commands need the window in front (a copy in the background has them greyed), so pressed only through the palette and launch hooks |
-| K3 | Notifications: a finished task and a question while you're in another app | ⏳ |
+| K3 | Notifications: a finished task and a question while you're in another app | ✅ in the background: a finished run's banner named the session and project with the reply; a question's banner offered its choices and Other…, and Sun answered it; a permission's offered Deny, Always Allow and Allow, and Allow ran the command |
 | K4 | The menu bar's usage panel | ⏳ |
 | K5 | Storage: see what takes room, clear it | ✅ sizes add up to what's on disk; Delete… on Logs asks, then leaves only the live log; "Other" is mostly MCP servers' npm cache, described on hover |
 | K6 | Passwords: save one for a site, use it, remove it | ✅ on a local login page: Save this password?, filled with the key, no second offer, listed and deleted in Settings; ❌→✅ every copy shared one creator code, so a demo or test copy listed (and could delete) the passwords saved in the app (6546e76); Delete read "Trash" to VoiceOver |
