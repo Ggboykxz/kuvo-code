@@ -7,6 +7,7 @@ import type { Attachment, FormRequest, PermissionRequest, SessionSummary, Transc
 import { fromHistory } from "../../harness/transcript.mjs";
 import { brief, compactTokens, errorText, renderMarkdown, when } from "./lib";
 import { isRecording, keysOf, matchesEvent, shortcutFor } from "./shortcuts";
+import { draftKey, readDraft, saveDraft } from "./drafts.mjs";
 import {
   answerPermission,
   applyLook,
@@ -669,6 +670,23 @@ function Composer() {
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const allFiles = useRef<{ path: string; name: string; relative: string }[]>([]);
 
+  // The draft: what is typed but not sent, kept per session, across launches — the Mac's
+  // drafts. A message that could not be sent is back in the box, the same way.
+  const sessionKey = draftKey(state.session?.id ?? null, state.project);
+  const [draftFor, setDraftFor] = useState<string | null>(null);
+  useEffect(() => {
+    const draft = readDraft(localStorage, sessionKey);
+    setText(draft?.text ?? "");
+    setFiles((draft?.files ?? []) as Attachment[]);
+    setMentions([]);
+    setDraftFor(sessionKey);
+  }, [sessionKey]);
+  useEffect(() => {
+    if (draftFor !== sessionKey) return;
+    const timer = setTimeout(() => saveDraft(localStorage, sessionKey, { text, files }), 500);
+    return () => clearTimeout(timer);
+  }, [text, files, sessionKey, draftFor]);
+
   // What the typing is asking for: a file (@) or a command (/).
   const complete = async (value: string, caret: number) => {
     const upTo = value.slice(0, caret);
@@ -746,7 +764,12 @@ function Composer() {
     setText("");
     setFiles([]);
     state.lineComments = [];
-    await sendPrompt(sent, files, delivery);
+    const sent_ = await sendPrompt(sent, files, delivery);
+    // A message that did not go is back in the box, the Mac's way.
+    if (!sent_) {
+      setText(sent);
+      setFiles(files);
+    }
     render();
   };
 

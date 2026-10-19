@@ -410,7 +410,7 @@ export async function restartEngineNow() {
 // ---- Sending ----
 
 export async function sendPrompt(text: string, files: Attachment[] = [], delivery: "steer" | "queue" = "steer") {
-  if (!state.session) return;
+  if (!state.session) return false;
   try {
     const body: Record<string, unknown> = { text };
     if (files.length) body.files = files;
@@ -421,8 +421,10 @@ export async function sendPrompt(text: string, files: Attachment[] = [], deliver
     transcript.pending = [...transcript.pending, { id: `local_${Date.now()}`, text, files }];
     state.transcript = transcript;
     render();
+    return true;
   } catch (error) {
     complain(error);
+    return false;
   }
 }
 

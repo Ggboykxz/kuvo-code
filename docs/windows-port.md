@@ -105,6 +105,9 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
+  - **2.53 (this change).** The Mac app's drafts: what is typed in a composer but not sent
+    is kept, by session, across launches — the attachments that are gone are dropped, and a
+    message that could not be sent comes back to the box it was written in.
   - **2.52 (this change).** The Mac app's file links: a code span in a reply that names a
     file of the project — `src/App.tsx:42` — becomes a link, and clicking it opens the file
     in the side panel, the Mac's way. The project asks the server which files are real, so

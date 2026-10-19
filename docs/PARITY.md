@@ -91,7 +91,7 @@ mirrored in `windows/harness/engine.mjs` and typed in `windows/app/src/api.ts`).
 | `ReviewComments` | ✅ (les notes de ligne du panneau Changes) |
 | `ProjectChanges` (revert) | ✅ (remettre un fichier comme il était) |
 | Create Pull Request | ✅ (pousse la branche, le modèle écrit le titre et la description, la page de l'hôte s'ouvre) |
-| `Attachments`, `Drafts`, `Quoting` | ◐ |
+| `Attachments`, `Drafts`, `Quoting` | ✅ (les pièces jointes, la citation ; **les brouillons** : ce qui est tapé mais pas envoyé, par session, d'un lancement à l'autre — et un message qui n'a pas pu partir revient dans la boîte) |
 | `Updates`, `Awake`, `Notifier` | ✅ (via les réglages de la coquille) |
 | `Analytics` | ✅ (l'avis, rien n'est collecté) |
 | `PagePrinter`, `ImageViewer` | ⬜ / ◐ |

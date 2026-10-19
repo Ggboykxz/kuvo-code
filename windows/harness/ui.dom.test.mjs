@@ -73,6 +73,18 @@ test("the page, in a DOM, against the real engine", {
     app = fs.readFileSync(path.join(here, "ui/app.js"), "utf8").replace(/^import .*$/m, "");
   }
 
+  // The pages share one storage, the way a browser shares it for an address: a draft
+  // written by one is read by the next.
+  const held = new Map();
+  const storage = {
+    getItem: key => (held.has(key) ? held.get(key) : null),
+    setItem: (key, value) => { held.set(key, String(value)); },
+    removeItem: key => { held.delete(key); },
+    clear: () => { held.clear(); },
+    key: index => [...held.keys()][index] ?? null,
+    get length() { return held.size; },
+  };
+
   /** A page: jsdom with the two browser pieces it lacks, and the page's code run in it. */
   function open() {
     const errors = [];
@@ -80,6 +92,7 @@ test("the page, in a DOM, against the real engine", {
     virtualConsole.on("jsdomError", error => errors.push(error.message));
     const dom = new JSDOM(html, { url, runScripts: "dangerously", pretendToBeVisual: true, virtualConsole });
     const { window } = dom;
+    Object.defineProperty(window, "localStorage", { configurable: true, value: storage });
     window.fetch = (input, init) => fetch(new URL(input, url), init);
     window.alert = message => errors.push(`alert: ${message}`);
     // jsdom has no matchMedia; the page asks it about the dark mode.
@@ -269,6 +282,16 @@ test("the page, in a DOM, against the real engine", {
   assert.match(newSessionRow.textContent, /Ctrl\+N/, "the palette shows the keys that do it");
   page.document.body.dispatchEvent(new page.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   await page.seen("the palette to close", () => page.element("palette")?.hidden === true, 10_000);
+
+  // The draft: what is typed but not sent is kept, per session, across a reload.
+  const draftBox = page.element("prompt");
+  const draftSetter = Object.getOwnPropertyDescriptor(page.window.HTMLTextAreaElement.prototype, "value").set;
+  draftSetter.call(draftBox, "a half-written thought");
+  draftBox.dispatchEvent(new page.window.Event("input", { bubbles: true }));
+  await wait(900); // the draft is written down after a pause, the Mac's way
+  const drafted = open();
+  await drafted.seen("the draft to come back", () => drafted.element("prompt")?.value === "a half-written thought", 30_000);
+  drafted.window.close();
 
   assert.deepEqual([...page.errors, ...reloaded.errors], [], "the page had nothing to complain about");
 
