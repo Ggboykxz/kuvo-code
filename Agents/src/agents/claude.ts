@@ -145,8 +145,6 @@ export class ClaudeAgent implements Agent {
   async signIn(methodID: string): Promise<SignInAttempt> {
     const executable = this.executable()
     if (!executable) throw new Error("Install Claude Code first: curl -fsSL https://claude.ai/install.sh | bash")
-    // Signing in again: its end says how it went (another Claude Code writing its settings meanwhile isn't it).
-    this.authFailedAt = undefined
     return commandSignIn({
       command: executable,
       args: ["auth", "login", methodID === "console" ? "--console" : "--claudeai"],
@@ -154,8 +152,12 @@ export class ClaudeAgent implements Agent {
       home: this.context.home,
       temporary: this.context.temporary,
       instructions: "Finish signing in on Claude's page. Claude Code keeps the sign-in, as when you run claude auth login.",
-      signedIn: async () => (await this.account(true)).signedIn,
+      // Claude Code's word: a sign-in Claude ended still reads as signed in there, so signing in
+      // again counts once the command says it worked (another Claude Code writing its settings
+      // meanwhile isn't it).
+      signedIn: async () => Boolean((await this.readStatus(true)).loggedIn),
       codePrompt: /Paste code here if prompted >\s*/g,
+      onComplete: () => (this.authFailedAt = undefined),
     })
   }
 

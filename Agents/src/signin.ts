@@ -23,6 +23,8 @@ export interface CommandSignInOptions {
   instructions: string
   /** The command's prompt for a code from its page, when it takes one: a pasted code is typed there. */
   codePrompt?: RegExp
+  /** Signed in: what that changes (an ended sign-in is behind it). */
+  onComplete?: () => void
 }
 
 /** The catcher, in the temporary folder: a path without spaces (Python splits BROWSER on them). */
@@ -53,23 +55,33 @@ export async function commandSignIn(options: CommandSignInOptions): Promise<Sign
   void read(child.stdout)
   void read(child.stderr)
   let pasted = false
+  /** Whether it was signed in as it started (signing in again): undefined until known. */
+  let signedInBefore: boolean | undefined
+  const succeed = () => {
+    status = { status: "complete" }
+    options.onComplete?.()
+  }
   void child.exited.then(async (code) => {
     rmSync(urlFile, { force: true })
     if (status.status !== "pending") return
     const signedIn = await options.signedIn().catch(() => false)
-    if (signedIn) status = { status: "complete" }
+    if (status.status !== "pending") return
+    // Signed in before (an ended sign-in still reads as one): only the command's own success says
+    // this one worked.
+    if (signedIn && (code === 0 || signedInBefore === false)) succeed()
     else if (pasted) status = { status: "failed", message: "That code didn't work. Start again, and paste the code from the page this sign-in opens." }
     else status = { status: "failed", message: lastLines(options.codePrompt ? output.replace(options.codePrompt, "") : output) || `Signing in stopped (exit code ${code}).` }
   })
   // Signed in while the command lingers (it waits on something after the page): done then.
   // Not when it was signed in already (signing in again, another way): its end says.
   void (async () => {
-    if (await options.signedIn().catch(() => true)) return
+    signedInBefore = await options.signedIn().catch(() => true)
+    if (signedInBefore) return
     while (status.status === "pending") {
       await Bun.sleep(3_000)
       if (status.status !== "pending") return
       if (!(await options.signedIn().catch(() => false))) continue
-      if (status.status === "pending") status = { status: "complete" }
+      if (status.status === "pending") succeed()
       child.kill()
     }
   })()
@@ -96,8 +108,17 @@ export async function commandSignIn(options: CommandSignInOptions): Promise<Sign
       ? async (code: string) => {
           if (status.status !== "pending") throw new Error("That sign-in is over. Start it again.")
           pasted = true
+          const from = output.length
           child.stdin.write(code.trim() + "\n")
           await child.stdin.flush()
+          // A code it can't read (part of one) is turned away at once, and it waits for another.
+          for (let waited = 0; waited < 1_500 && status.status === "pending"; waited += 100) {
+            await Bun.sleep(100)
+            if (/invalid code/i.test(output.slice(from))) {
+              pasted = false
+              throw new Error("That code couldn't be read. Copy all of it from the page, and paste it again.")
+            }
+          }
         }
       : undefined,
     status: () => status,

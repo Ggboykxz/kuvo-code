@@ -154,6 +154,7 @@ sleep 0.5
 "$BROWSER" "https://example.com/browser?redirect=localhost"
 printf "Paste code here if prompted > "
 read code
+while [ "$code" = "part" ]; do echo "Invalid code. Please make sure the full code was copied" >&2; printf "Paste code here if prompted > "; read code; done
 [ "$code" = "good" ] && echo signed > "${join(folder, "account")}" && exit 0
 echo "Login failed: Request failed with status code 400"
 exit 1
@@ -163,15 +164,17 @@ exit 1
     return script
   }
 
-  async function attempt(folder: string) {
+  async function attempt(folder: string, options: { signedInBefore?: boolean; onComplete?: () => void } = {}) {
     return commandSignIn({
       command: fakeLogin(folder),
       args: [],
       home: folder,
       temporary: folder,
       instructions: "",
-      signedIn: async () => existsSync(join(folder, "account")),
+      // Signed in before: an ended sign-in still reads as one.
+      signedIn: async () => options.signedInBefore || existsSync(join(folder, "account")),
       codePrompt: /Paste code here if prompted >\s*/g,
+      onComplete: options.onComplete,
     })
   }
 
@@ -213,6 +216,47 @@ exit 1
       expect(status.status).toBe("failed")
       expect(status.message).toContain("That code didn't work")
       await expect(sign.complete!("good")).rejects.toThrow()
+    } finally {
+      rmSync(folder, { recursive: true, force: true })
+    }
+  })
+
+  test("signing in again: a wrong code fails, though the sign-in it replaces still reads as one", async () => {
+    const folder = mkdtempSync(join(process.env.KUVO_TEST_ROOT ?? tmpdir(), "kuvo-signin-"))
+    try {
+      let completed = 0
+      const sign = await attempt(folder, { signedInBefore: true, onComplete: () => completed++ })
+      await sign.complete!("bad")
+      const status = await settled(sign)
+      expect(status.status).toBe("failed")
+      expect(status.message).toContain("That code didn't work")
+      expect(completed).toBe(0)
+    } finally {
+      rmSync(folder, { recursive: true, force: true })
+    }
+  })
+
+  test("signing in again: the command's success completes it", async () => {
+    const folder = mkdtempSync(join(process.env.KUVO_TEST_ROOT ?? tmpdir(), "kuvo-signin-"))
+    try {
+      let completed = 0
+      const sign = await attempt(folder, { signedInBefore: true, onComplete: () => completed++ })
+      await sign.complete!("good")
+      expect((await settled(sign)).status).toBe("complete")
+      expect(completed).toBe(1)
+    } finally {
+      rmSync(folder, { recursive: true, force: true })
+    }
+  })
+
+  test("part of a code is turned away at once, and the whole one still works", async () => {
+    const folder = mkdtempSync(join(process.env.KUVO_TEST_ROOT ?? tmpdir(), "kuvo-signin-"))
+    try {
+      const sign = await attempt(folder)
+      await expect(sign.complete!("part")).rejects.toThrow("couldn't be read")
+      expect(sign.status().status).toBe("pending")
+      await sign.complete!("good")
+      expect((await settled(sign)).status).toBe("complete")
     } finally {
       rmSync(folder, { recursive: true, force: true })
     }
