@@ -46,7 +46,7 @@ here.
   Settings › Style switches back to the cards.
 - **Only the host's accounts** (`Stores/ProviderAvailability.swift`): the panel follows the providers whose accounts are connected in
   Kuvo Code (`HostAccounts.setConnectedProviders`), turning on newly connected ones, and leaves out tools signed in elsewhere on the
-  Mac. Of those, one whose refresh finds no login, or no usage for its account, stays off the dashboard, the menu bar and Total
+  Mac (its welcome warns about permission dialogs only when there's a provider to connect). Of those, one whose refresh finds no login, or no usage for its account, stays off the dashboard, the menu bar and Total
   Spend too, and Customize (which lists only connected providers) says why. Only those are refreshed, whatever's turned on, so a
   tool's own login (Claude Code's, the Codex CLI's) is never read or renewed for a provider that isn't connected; and
   `PlanLimits` leaves out readings past the Outdated age and limits whose reset time has passed.
