@@ -56,7 +56,8 @@ struct GroupChatView: View {
         }
         .safeAreaBar(edge: .bottom, spacing: 0) {
             VStack(spacing: 10) {
-                if groups.paused.contains(group.id) && speaker == nil {
+                // Once the wrap-up after the limit is done: Keep Going does nothing before.
+                if groups.paused.contains(group.id) && !groups.discussing.contains(group.id) {
                     PausedBar { groups.keepGoing(group.id) }
                         .transition(.opacity.combined(with: .offset(y: 6)))
                 }

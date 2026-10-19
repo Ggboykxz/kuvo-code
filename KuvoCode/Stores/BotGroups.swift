@@ -527,11 +527,12 @@ final class BotGroups {
                 said = 0
             }
             let members = group.members.filter { app.bots.bot($0) != nil && !absent.contains($0) }
+            // Nobody with more to say: it's over, at the limit or not.
+            guard let speaker = nextSpeaker(in: group, members: members, quiet: quiet) else { break }
             if turns >= Self.limit(members: group.members.count) {
                 paused.insert(id)
                 break
             }
-            guard let speaker = nextSpeaker(in: group, members: members, quiet: quiet) else { break }
             let outcome = await turn(of: speaker, in: id)
             guard !Task.isCancelled else { return epoch }
             turns += 1
