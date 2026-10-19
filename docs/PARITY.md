@@ -30,7 +30,7 @@ mirrored in `windows/harness/engine.mjs` and typed in `windows/app/src/api.ts`).
 | `MarkdownChunks` | ✅ (marked, assaini) |
 | `CodeTextView` | ✅ (copie, surlignage) |
 | `FileLinks` | ◐ les liens de fichiers (la recherche de fichiers existe) |
-| `WidgetView` | ⬜ |
+| `WidgetView` | ⛔ c'est la fonction du navigateur intégré (`kuvo-browser_show_widget`), rendue en WebView : elle suit le navigateur |
 | `ConversationScroll` | ✅ (la conversation suit le bas ; *↓ Latest* quand on relit) |
 
 ## The side panel and the window
