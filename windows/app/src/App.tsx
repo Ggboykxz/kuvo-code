@@ -326,6 +326,14 @@ function Header() {
           Compact context
         </button>
       </div>
+      <input
+        id="find"
+        className="file-search header-find"
+        placeholder="Find in conversation…"
+        spellCheck={false}
+        value={state.findQuery}
+        onChange={event => { state.findQuery = event.target.value; render(); }}
+      />
       <div id="engine" className={`engine ${running ? "up" : state.engine?.status === "starting" ? "starting" : "down"}`} title="The engine on this machine">
         {running ? `engine ${state.engine?.version ?? ""}`.trim() : state.engine?.status ?? "…"}
       </div>
@@ -345,7 +353,11 @@ async function exportConversation() {
   const transcript = state.transcript;
   if (!transcript) return;
   const lines: string[] = [];
-  for (const entry of transcript.entries) {
+  const query = state.findQuery.trim().toLowerCase();
+  const visible = query
+    ? transcript.entries.filter(entry => (entry.parts ?? []).map(part => part.text ?? "").join(" ").toLowerCase().includes(query))
+    : transcript.entries;
+  for (const entry of visible) {
     if (entry.kind === "user") lines.push(`## You\n\n${entry.text ?? ""}`);
     else if (entry.kind === "assistant") {
       for (const part of entry.parts ?? []) if (part.type === "text") lines.push(part.text ?? "");
@@ -380,6 +392,7 @@ function Sidebar() {
         value={state.sessionQuery}
         onChange={event => { state.sessionQuery = event.target.value; render(); }}
       />
+      <MessageSearch />
       <ul id="sessions">
         {visible.map(session => {
           const running = state.session?.id === session.id && state.transcript?.running;
@@ -397,6 +410,47 @@ function Sidebar() {
       </ul>
       <div id="sessions-empty" className="aside-empty" hidden={state.sessions.length > 0}>No sessions yet.</div>
     </aside>
+  );
+}
+
+/// Searching what was said, in every session: the Mac app's own search.
+function MessageSearch() {
+  const [query, setQuery] = useState("");
+  const [matches, setMatches] = useState<{ session: { id: string; title?: string | null }; hits: { snippet: string }[] }[]>([]);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    const text = query.trim();
+    if (text.length < 3) { setMatches([]); setOpen(false); return; }
+    const timer = setTimeout(() => {
+      void api<{ matches: { session: { id: string; title?: string | null }; hits: { snippet: string }[] }[] }>(`/api/search/sessions?q=${encodeURIComponent(text)}`)
+        .then(answer => { setMatches(answer.matches ?? []); setOpen(true); })
+        .catch(() => { setMatches([]); setOpen(false); });
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  return (
+    <>
+      <input
+        id="message-search"
+        className="file-search"
+        placeholder="Search messages…"
+        spellCheck={false}
+        value={query}
+        onChange={event => setQuery(event.target.value)}
+      />
+      <div id="message-search-results" className="search-results" hidden={!open}>
+        {matches.slice(0, 20).map(match => (
+          <div className="hit" key={match.session.id}>
+            <div>{match.session.title || match.session.id}</div>
+            {match.hits.map((hit, index) => (
+              <div className="where" key={index} onClick={() => void openSession(match.session.id)}>{hit.snippet}</div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </>
   );
 }
 

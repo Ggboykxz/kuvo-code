@@ -170,6 +170,20 @@ export function Drawer() {
   useStore();
   const terminalRef = useRef<HTMLDivElement>(null);
   const [terminalNote, setTerminalNote] = useState("");
+  const [fileQuery, setFileQuery] = useState("");
+  const [fileMatches, setFileMatches] = useState<{ path: string; hits: { snippet: string }[] }[]>([]);
+
+  // What is written in the project's files, found by its words.
+  useEffect(() => {
+    const query = fileQuery.trim();
+    if (query.length < 2) { setFileMatches([]); return; }
+    const timer = setTimeout(() => {
+      void api<{ matches: { path: string; hits: { snippet: string }[] }[] }>(`/api/search?q=${encodeURIComponent(query)}`)
+        .then(answer => setFileMatches(answer.matches ?? []))
+        .catch(() => setFileMatches([]));
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [fileQuery, state.project]);
 
   // The terminal: the shell's ConPTY, over a WebSocket on the port it passed.
   useEffect(() => {
@@ -220,6 +234,22 @@ export function Drawer() {
         <button id="drawer-close" className="small" onClick={() => { state.drawerOpen = false; render(); }}>✕</button>
       </div>
       <div id="drawer-files" className="drawer-body" hidden={state.drawerTab !== "files"}>
+        <input
+          id="files-search"
+          className="file-search"
+          placeholder="Search in files…"
+          spellCheck={false}
+          value={fileQuery}
+          onChange={event => setFileQuery(event.target.value)}
+        />
+        <div id="files-search-results" className="search-results" hidden={!fileMatches.length}>
+          {fileMatches.map(match => (
+            <div className="hit" key={match.path}>
+              <div>{match.path.replace(state.project ?? "", "").replace(/^[/\\]/, "")}</div>
+              {match.hits.map((hit, index) => <div className="where" key={index}>{hit.snippet}</div>)}
+            </div>
+          ))}
+        </div>
         {state.files.map(file => (
           <div key={file.path} className="file-row">
             <button className="small" onClick={async () => {

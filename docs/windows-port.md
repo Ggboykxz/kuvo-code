@@ -105,7 +105,10 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
-  - **2.23 (this change).** The Mac app's General settings on Windows: automatic updates,
+  - **2.24 (this change).** The Mac app's searching, in the React view: the sidebar finds
+    what was said in any session, the drawer finds the project's files by what is written
+    in them, and *Find in conversation* narrows what the export carries.
+  - **2.23. The Mac app's General settings on Windows: automatic updates,
     starting at login and keeping the machine awake now live in the app's own settings
     (the shell's file, reached through the harness), and *Bring over from opencode* copies
     the MCP servers, the agents, the commands and the model — the keys stay where they
