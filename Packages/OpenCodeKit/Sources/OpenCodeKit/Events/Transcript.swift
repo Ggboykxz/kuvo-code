@@ -54,17 +54,24 @@ public struct Transcript: Sendable, Equatable {
         // on this Mac (not one sent inline, to a machine), and none before any conversion.
         let picked = Dictionary(pending.map { ($0.id, $0.files) }, uniquingKeysWith: { first, _ in first })
         pending = inbox.filter { $0.type == "user" }.map { item in
+            let read = Pending(id: item.id, text: item.text ?? "", delivery: item.delivery, isLocal: false, files: item.files,
+                               inlineFiles: InboxItem.inlineFiles(in: item.payload))
             // Those picked here were what it carries inline, if any.
-            if let files = picked[item.id], !files.isEmpty {
+            if let files = picked[item.id], Self.keepsLocalFiles(files, over: read) {
                 return Pending(id: item.id, text: item.text ?? "", delivery: item.delivery, isLocal: false, files: files)
             }
-            return Pending(id: item.id, text: item.text ?? "", delivery: item.delivery, isLocal: false, files: item.files,
-                           inlineFiles: InboxItem.inlineFiles(in: item.payload))
+            return read
         } + local
         self.permissions = permissions
         self.forms = forms.filter(isOurs)
         self.isRunning = isRunning
         isStale = false
+    }
+
+    /// Whether a local copy's files stand for the engine's: files picked on this Mac, or ones the
+    /// engine's copy doesn't name at all.
+    private static func keepsLocalFiles(_ local: [URL], over item: Pending) -> Bool {
+        local.contains(where: \.isFileURL) || (!local.isEmpty && item.files.isEmpty && item.inlineFiles.isEmpty)
     }
 
     /// Shows a message right away, before the server echoes it back.
@@ -205,8 +212,8 @@ public struct Transcript: Sendable, Equatable {
             if let index = pending.firstIndex(where: { $0.id == item.id }) {
                 // A local copy knows the files on this Mac as they were picked, before any
                 // conversion: the same ones it carries inline, if it does. One that only carries
-                // them inline (a phone's) keeps the engine's, which have their names.
-                if pending[index].files.contains(where: \.isFileURL) {
+                // them inline (a phone's) keeps the engine's, which have their names, if it has any.
+                if Self.keepsLocalFiles(pending[index].files, over: item) {
                     item.files = pending[index].files
                     item.inlineFiles = []
                 }

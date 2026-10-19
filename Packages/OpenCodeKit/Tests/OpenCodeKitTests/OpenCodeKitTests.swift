@@ -110,7 +110,7 @@ import Testing
     let report = URL(filePath: "/Users/me/Desktop/research/Report.md")
     transcript.addLocal(id: "msg_1", text: "Read my reports", delivery: .steer, files: [report])
     transcript.apply(try event(#"""
-    {"id":"evt_1","created":1,"type":"session.inbox.enqueued","data":{"sessionID":"ses_1","inboxID":"msg_1","item":{"type":"user","payload":{"text":"Read my reports","files":[{"uri":"file:///Users/me/Desktop/research/Report.md","name":"Report.md"}]},"delivery":"steer"}}}
+    {"id":"evt_1","created":1,"type":"session.inbox.enqueued","data":{"sessionID":"ses_1","inboxID":"msg_1","item":{"type":"user","payload":{"text":"Read my reports","files":[{"data":"IyBSZXBvcnQ=","mime":"text/markdown","source":{"type":"uri","uri":"file:///Users/me/Desktop/research/Report.md"},"name":"Report.md"}]},"delivery":"steer"}}}
     """#))
     transcript.apply(try event(#"""
     {"id":"evt_2","created":2,"type":"session.inbox.delivered","data":{"sessionID":"ses_1","inboxID":"msg_1"}}
@@ -128,7 +128,7 @@ import Testing
     var transcript = Transcript(sessionID: "ses_1")
     transcript.load(messages: [], inbox: [], permissions: [], forms: [], isRunning: false)
     transcript.apply(try event(#"""
-    {"id":"evt_1","created":1,"type":"session.inbox.enqueued","data":{"sessionID":"ses_1","inboxID":"msg_1","item":{"type":"user","payload":{"text":"Look","files":[{"uri":"data:image/jpeg;base64,/9j/4AAQ","name":"IMG_0001.jpeg"}]},"delivery":"steer"}}}
+    {"id":"evt_1","created":1,"type":"session.inbox.enqueued","data":{"sessionID":"ses_1","inboxID":"msg_1","item":{"type":"user","payload":{"text":"Look","files":[{"data":"/9j/4AAQ","mime":"image/jpeg","source":{"type":"inline"},"name":"IMG_0001.jpeg"}]},"delivery":"steer"}}}
     """#))
     transcript.apply(try event(#"""
     {"id":"evt_2","created":2,"type":"session.inbox.delivered","data":{"sessionID":"ses_1","inboxID":"msg_1"}}
@@ -150,7 +150,7 @@ import Testing
     // and the name it was sent with stays.
     transcript.addLocal(id: "msg_3", text: "Photo", delivery: .steer, files: [URL(string: "data:image/heic;base64,AAAA")!])
     transcript.apply(try event(#"""
-    {"id":"evt_4","created":4,"type":"session.inbox.enqueued","data":{"sessionID":"ses_1","inboxID":"msg_3","item":{"type":"user","payload":{"text":"Photo","files":[{"uri":"data:image/heic;base64,AAAA","name":"IMG_0002.heic"}]},"delivery":"steer"}}}
+    {"id":"evt_4","created":4,"type":"session.inbox.enqueued","data":{"sessionID":"ses_1","inboxID":"msg_3","item":{"type":"user","payload":{"text":"Photo","files":[{"data":"AAAA","mime":"image/heic","source":{"type":"inline"},"name":"IMG_0002.heic"}]},"delivery":"steer"}}}
     """#))
     transcript.apply(try event(#"""
     {"id":"evt_5","created":5,"type":"session.inbox.delivered","data":{"sessionID":"ses_1","inboxID":"msg_3"}}
@@ -159,6 +159,17 @@ import Testing
     #expect(photo.files?.map(\.mime) == ["image/heic"])
     #expect(photo.files?.first?.name == "IMG_0002.heic")
     #expect(photo.files?.first?.bytes == Data([0, 0, 0]))
+
+    // An engine's copy that names no files: the local copy's stand, nameless.
+    transcript.addLocal(id: "msg_4", text: "Note", delivery: .steer, files: [URL(string: "data:text/plain;base64,aGk=")!])
+    transcript.apply(try event(#"""
+    {"id":"evt_6","created":6,"type":"session.inbox.enqueued","data":{"sessionID":"ses_1","inboxID":"msg_4","item":{"type":"user","payload":{"text":"Note"},"delivery":"steer"}}}
+    """#))
+    transcript.apply(try event(#"""
+    {"id":"evt_7","created":7,"type":"session.inbox.delivered","data":{"sessionID":"ses_1","inboxID":"msg_4"}}
+    """#))
+    guard case .user(let note) = transcript.messages.last else { Issue.record("no message"); return }
+    #expect(note.files?.map(\.mime) == ["text/plain"])
 }
 
 /// A file that comes as a `data:` URL has its bytes from it, base64 or percent-encoded; a
