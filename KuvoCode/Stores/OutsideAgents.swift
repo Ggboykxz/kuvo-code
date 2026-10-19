@@ -158,7 +158,8 @@ final class OutsideAgents {
             failure = nil
             listen(to: api)
             tellEngine()
-            await loadAuto()
+            // Not waited for here: one that stops meanwhile is started again (see `exited`).
+            Task { await loadAuto() }
         } catch {
             log.error("The agents bridge didn't start: \(error.localizedDescription, privacy: .public)")
             failure = error.localizedDescription
