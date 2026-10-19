@@ -4,7 +4,7 @@
 
 import { useEffect, useState } from "react";
 import { api } from "./api";
-import { complain, state, useStore } from "./store";
+import { complain, notify, state, useStore } from "./store";
 
 type ChangeFile = { file: string; patch?: string; additions?: number; deletions?: number; status?: string };
 
@@ -186,6 +186,37 @@ export function ChangesPanel() {
       </div>
 
       <div className="changes-foot">
+        <div className="changes-pr">
+          <button
+            className="small"
+            disabled={working || !git}
+            title="Push the branch and open the pull request's page, with a title and a description the model writes"
+            onClick={async () => {
+              setWorking(true);
+              setFailure("");
+              try {
+                const pushed = await api<{ page?: string | null; branch: string }>("/api/changes/push", {
+                  method: "POST",
+                  body: { directory: state.project, branch, base: base ?? "main" },
+                });
+                const written = await api<{ title: string; description: string }>("/api/changes/suggest-pr", {
+                  method: "POST",
+                  body: { directory: state.project, session: state.session?.id, base: base ?? "main", instructions },
+                });
+                const page = pushed.page
+                  ? `${pushed.page}&title=${encodeURIComponent(written.title)}&body=${encodeURIComponent(written.description)}`
+                  : null;
+                if (page) window.open(page, "_blank");
+                notify("Kuvo Code", page ? "The branch is pushed; the pull request's page is open." : "The branch is pushed.");
+              } catch (error) {
+                setFailure(error instanceof Error ? error.message : String(error));
+              }
+              setWorking(false);
+            }}
+          >
+            Create Pull Request
+          </button>
+        </div>
         <input
           id="changes-message"
           type="text"

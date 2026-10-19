@@ -756,6 +756,60 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
       return json({ message: text.trim().replace(/^[`"']+|[`"']+$/g, "") });
     }
 
+    // The host's page for a pull request, from the remote's address.
+    const pullRequestPage = async (directory, branch, base) => {
+      let remote = "";
+      try { remote = (await git(directory, ["remote", "get-url", "origin"])).trim(); } catch {}
+      if (!remote) return null;
+      const match = remote.match(/github\.com[:/]([^/]+\/[^/.]+)(?:\.git)?$/) || remote.match(/gitlab\.com[:/]([^/]+\/[^/.]+)(?:\.git)?$/);
+      if (!match) return null;
+      const host = remote.includes("gitlab.com") ? "gitlab" : "github";
+      const project = match[1];
+      return host === "github"
+        ? `https://github.com/${project}/compare/${base}...${branch}?expand=1`
+        : `https://gitlab.com/${project}/-/merge_requests/new?merge_request[source_branch]=${branch}&merge_request[target_branch]=${base}`;
+    };
+
+    // Pushing the branch, the way the Mac does before it opens the pull request's page.
+    if (url.pathname === "/api/changes/push" && request.method === "POST") {
+      const body = await readBody(request);
+      const directory = body?.directory ?? currentProject;
+      const branch = typeof body?.branch === "string" ? body.branch : "";
+      const base = typeof body?.base === "string" ? body.base : "main";
+      if (!directory) throw new HttpError(400, "No folder to push from.");
+      if (!branch) throw new HttpError(400, "No branch to push.");
+      if (!(await isGitProject(directory))) throw new HttpError(400, "That folder is not a git project.");
+      await git(directory, ["push", "-u", "origin", branch]);
+      return json({ ok: true, branch, page: await pullRequestPage(directory, branch, base) });
+    }
+
+    // The title and the description the session's model writes for the pull request.
+    if (url.pathname === "/api/changes/suggest-pr" && request.method === "POST") {
+      const body = await readBody(request);
+      const directory = body?.directory ?? currentProject;
+      const session = body?.session;
+      if (!directory) throw new HttpError(400, "No folder to read.");
+      if (!session) throw new HttpError(400, "No session to ask.");
+      const base = typeof body?.base === "string" ? body.base : "";
+      const summary = await git(directory, base ? ["log", `${base}..HEAD`, "--pretty=%s"] : ["log", "--pretty=%s"]).catch(() => "");
+      const diff = await git(directory, base ? ["diff", `${base}...HEAD`] : ["diff", "HEAD"]).catch(() => "");
+      const instructions = typeof body?.instructions === "string" ? body.instructions.trim() : "";
+      const prompt = [
+        instructions ? `${instructions}\n\n` : "",
+        "Write the title and the description of a pull request for the changes below. Reply with the title on the first line, a blank line, then the description. Say only that.",
+        "",
+        "The commits:",
+        summary,
+        "",
+        "The changes:",
+        diff.slice(0, 20000),
+      ].join("\n");
+      const text = await client.generate(session, prompt);
+      const clean = text.trim().replace(/^[`"']+|[`"']+$/g, "");
+      const [title, ...rest] = clean.split("\n\n");
+      return json({ title: (title ?? "").trim(), description: rest.join("\n\n").trim() });
+    }
+
     // Committing: what the panel's Commit button does. The message is the model's or yours.
     if (url.pathname === "/api/changes/commit" && request.method === "POST") {
       const body = await readBody(request);

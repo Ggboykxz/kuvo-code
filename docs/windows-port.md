@@ -105,7 +105,10 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
-  - **2.35 (this change).** The import reads opencode's own settings when they are
+  - **2.36 (this change).** The Changes panel's pull request, the Mac app's way: the
+    branch is pushed, the session's model writes the title and the description (with the
+    Git settings' instructions), and the host's pull request page opens with them filled in.
+  - **2.35. The import reads opencode's own settings when they are
     `.jsonc` — with comments and trailing commas, the way the tools that write them
     (REA, for one) write them. That is what lets a server installed by another tool
     (REA's 207 reverse-engineering tools, among them) come over to Kuvo Code with one
