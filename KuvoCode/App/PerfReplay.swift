@@ -639,6 +639,7 @@ enum PerfRender {
         window.orderFrontRegardless()
         let width: CGFloat = 680
         var lines: [String] = []
+        var slowest: [String] = []
         func measure<V: View>(_ name: String, _ make: (String) -> V) async {
             _ = time(make(pieces[0]), width: width, window: window)
             var times: [Double] = []
@@ -652,6 +653,15 @@ enum PerfRender {
             }
             let sorted = times.sorted()
             let chars = pieces.reduce(0) { $0 + $1.count }
+            // The slowest pieces, and what's in them.
+            for index in times.indices.sorted(by: { times[$0] > times[$1] }).prefix(5) {
+                let lines = pieces[index].split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+                let table = lines.filter { $0.hasPrefix("|") }.count
+                let fences = lines.filter { $0.hasPrefix("```") }.count
+                let items = lines.filter { $0.hasPrefix("- ") || $0.hasPrefix("* ") || ($0.first?.isNumber == true && $0.contains(". ")) }.count
+                let inline = pieces[index].components(separatedBy: "`").count / 2 - fences
+                slowest.append(String(format: "  %.0f ms: %d characters, %d lines, %d table rows, %d code fences, %d list items, %d inline code", times[index], pieces[index].count, lines.count, table, fences, items, inline))
+            }
             lines.append(String(format: "%@: %.0f ms for %d pieces (%d characters, %.0f pt): median %.1f ms, worst %.1f ms, %.1f ms per 1000 characters",
                                 name, times.reduce(0, +), pieces.count, chars, height, sorted[sorted.count / 2], sorted.last ?? 0, times.reduce(0, +) / Double(chars) * 1000))
         }
@@ -683,6 +693,17 @@ enum PerfRender {
                 .textual.highlighterTheme(CodeColors.theme)
                 .textual.structuredTextStyle(.gitHub)
         }
+        await measure("textual, code wrapped") { text in
+            StructuredText(text, parser: FileLinkingParser(folders: { [] }))
+                .transcriptFont()
+                .textual.codeBlockStyle(CopyableCodeBlockStyle())
+                .textual.listItemStyle(.firstLine)
+                .textual.inlineStyle(.gitHub)
+                .textual.highlighterTheme(CodeColors.theme)
+                .textual.structuredTextStyle(.gitHub)
+                .textual.textSelection(.enabled)
+                .textual.overflowMode(.wrap)
+        }
         await measure("textual, plain code blocks") { text in
             StructuredText(text, parser: FileLinkingParser(folders: { [] }))
                 .transcriptFont()
@@ -704,7 +725,7 @@ enum PerfRender {
         }
         await measure("NSTextView") { text in PlainTextView(text: NSAttributedString(parsed(text))) }
         window.orderOut(nil)
-        let line = "render " + lines.joined(separator: "\nrender ") + "\n"
+        let line = "render " + lines.joined(separator: "\nrender ") + "\nslowest (textual first):\n" + slowest.prefix(5).joined(separator: "\n") + "\n"
         if let file = ProcessInfo.processInfo.environment["KUVO_PERF_LOG"] {
             if let handle = FileHandle(forWritingAtPath: file) { handle.seekToEndOfFile(); handle.write(Foundation.Data(line.utf8)); try? handle.close() } else { FileManager.default.createFile(atPath: file, contents: Foundation.Data(line.utf8)) }
         }
@@ -795,6 +816,43 @@ enum PerfDrag {
         }
         try? await Task.sleep(for: .milliseconds(16))
         post(.leftMouseUp, xy[2], xy[3])
+    }
+}
+
+/// KUVO_PERF_LAYERS=<file>: the window's layers drawn on the CPU (with contents of their own)
+/// that were drawn again between two looks, KUVO_PERF_LAYERS_AT seconds after launch (12 by
+/// default) and 1.2 s later, largest first: class, size, what draws them, the view they're in.
+enum PerfLayers {
+    static func run() async {
+        let env = ProcessInfo.processInfo.environment
+        guard let file = env["KUVO_PERF_LAYERS"] else { return }
+        try? await Task.sleep(for: .seconds(env["KUVO_PERF_LAYERS_AT"].flatMap(Double.init) ?? 12))
+        func look() -> [ObjectIdentifier: (contents: ObjectIdentifier?, pixels: Double, line: String)] {
+            var found: [ObjectIdentifier: (ObjectIdentifier?, Double, String)] = [:]
+            func walk(_ layer: CALayer, depth: Int, view: String) {
+                let owner = (layer.delegate as? NSView).map { String(String(describing: type(of: $0)).prefix(60)) } ?? view
+                if let contents = layer.contents {
+                    let scale = layer.contentsScale
+                    let pixels = layer.bounds.width * scale * layer.bounds.height * scale
+                    found[ObjectIdentifier(layer)] = (ObjectIdentifier(contents as AnyObject), pixels, "\(Int(layer.bounds.width))x\(Int(layer.bounds.height)) \(type(of: layer)) in \(owner) at \(Int(layer.frame.minX)),\(Int(layer.frame.minY)) depth \(depth)")
+                }
+                for sub in layer.sublayers ?? [] { walk(sub, depth: depth + 1, view: owner) }
+            }
+            for window in NSApp.windows where window.isVisible {
+                if let layer = window.contentView?.superview?.layer ?? window.contentView?.layer { walk(layer, depth: 0, view: "window") }
+            }
+            return found
+        }
+        var lines: [String] = []
+        for round in 0..<4 {
+            let before = look()
+            try? await Task.sleep(for: .milliseconds(1500))
+            let after = look()
+            let redrawn = after.filter { id, now in before[id].map { $0.contents != now.contents } ?? true }
+            lines.append("round \(round): \(redrawn.count) of \(after.count) drawn layers new or drawn again, \(Int(redrawn.values.reduce(0) { $0 + $1.pixels } / 1_000_000)) MP")
+            lines += redrawn.values.sorted { $0.pixels > $1.pixels }.prefix(12).map { "  " + $0.line }
+        }
+        try? (lines.joined(separator: "\n") + "\n").write(toFile: file, atomically: true, encoding: .utf8)
     }
 }
 #endif
