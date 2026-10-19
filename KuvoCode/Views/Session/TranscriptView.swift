@@ -105,8 +105,7 @@ struct TranscriptView: View {
             ParseClock.total = .zero
             ParseClock.count = 0
             // How tall it is, from AppKit's scroll view (SwiftUI doesn't pass on every change).
-            func scrollViews(in view: NSView) -> [NSScrollView] { (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(scrollViews) }
-            let height = NSApp.windows.compactMap(\.contentView).flatMap(scrollViews).map { $0.documentView?.frame.height ?? 0 }.max() ?? 0
+            let height = ScrollAnchor.conversationScrollView()?.documentView?.frame.height ?? 0
             var y = height
             for _ in 0..<150 where y > 0 {
                 y -= 200
@@ -150,9 +149,8 @@ struct TranscriptView: View {
             guard let wait = environment["KUVO_DEMO_WANDER"].flatMap(Double.init) else { return }
             try? await Task.sleep(for: .seconds(wait))
             let end = ContinuousClock.now + .seconds(Double(environment["KUVO_DEMO_WANDER_FOR"] ?? "") ?? 30)
-            func scrollViews(in view: NSView) -> [NSScrollView] { (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(scrollViews) }
             // The conversation's: the tallest.
-            guard let view = NSApp.windows.compactMap(\.contentView).flatMap(scrollViews).max(by: { ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0) }) else { return }
+            guard let view = ScrollAnchor.conversationScrollView() else { return }
             var step = 0
             while ContinuousClock.now < end {
                 // 30 frames up, 30 down, 40 pt a frame, each way a gesture of its own.
@@ -362,6 +360,11 @@ struct TranscriptView: View {
         }
         // A step still going at the end is under way, whatever the running state says.
         flushSteps(live: model.transcript.isRunning || StepsRow.isUnfinished(steps.last))
+        // A run cut off with no end of its own (Kuvo Code quit, or its engine stopped, while it
+        // worked) says so, rather than ending on a failed step.
+        if !model.transcript.isRunning, cut == nil, let last, case .assistant(let step) = messages[last], step.error?.isInterruption == true {
+            rows.append(.notice(step.id + "#interrupted", "pause.circle", "Interrupted before it finished: send a message to carry on"))
+        }
         if let cut {
             let undone = all[cut...].count { if case .user = $0 { true } else { false } }
             rows.append(.undone(max(undone, 1)))

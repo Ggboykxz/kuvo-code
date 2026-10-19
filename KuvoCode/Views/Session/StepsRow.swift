@@ -90,7 +90,7 @@ struct StepsRow: View {
         blocks.count.counting("step")
     }
 
-    /// "Thought for 40s, ran 6 commands, read 3 files (1 failed)".
+    /// "Thought for 40s, ran 6 commands, read 3 files (1 failed)", or "(1 stopped)".
     static func summary(of blocks: [Message.Content]) -> String {
         let calls = blocks.compactMap { if case .tool(let call) = $0 { call } else { nil } }
         let thought = blocks.reduce(0.0) { total, block in
@@ -102,8 +102,11 @@ struct StepsRow: View {
             parts.append("thought for " + MessageTime.duration(max(1, Int(thought))))
         }
         if !calls.isEmpty { parts.append(StepsSummary.summary(of: calls, capitalized: false)) }
-        let failed = calls.count { if case .failed = $0.state { true } else { false } }
-        let text = parts.joined(separator: ", ") + (failed > 0 ? " (\(failed) failed)" : "")
+        // One you stopped (or that quitting cut off) says so, as its own row does.
+        let ended = calls.compactMap { if case .failed(_, let error, _, _) = $0.state { error } else { nil } }
+        let stopped = ended.count(where: \.isInterruption)
+        let outcomes = [(ended.count - stopped, "failed"), (stopped, "stopped")].filter { $0.0 > 0 }.map { "\($0.0) \($0.1)" }
+        let text = parts.joined(separator: ", ") + (outcomes.isEmpty ? "" : " (" + outcomes.joined(separator: ", ") + ")")
         return text.prefix(1).uppercased() + text.dropFirst()
     }
 }

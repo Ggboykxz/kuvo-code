@@ -187,7 +187,7 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 | L47 | Upload and download on a machine's browser | ⏳ |
 | L48 | The site it uses is down: it says so, and tries again later | ⏳ |
 | L49 | A long job (many steps, many pages) finishes without losing the thread | ⏳ |
-| L50 | The app quits mid-job; on reopening, the job carries on or says where it stopped | ⏳ |
+| L50 | The app quits mid-job; on reopening, the job carries on or says where it stopped | ❌→✅ it ended on "Ran a command (1 failed)" with nothing said; now "(1 stopped)" and "Interrupted before it finished: send a message to carry on", and "Carry on." ran the job to the end |
 
 ## G. Group chats
 
