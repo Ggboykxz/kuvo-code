@@ -248,6 +248,8 @@ interface Active {
   limit?: Limit
   /** You pressed Stop. */
   stopping?: boolean
+  /** Auto stopped it at a limit, to go on with the next model. */
+  stoppedForLimit?: boolean
   model: string
   /** Items whose words came as deltas (their completion doesn't add them again). */
   streamed: Set<string>
@@ -409,11 +411,20 @@ class CodexThread implements Thread {
       }
       case "error": {
         const limit = this.limitOf(params.error, active.model)
+        if (limit && params.willRetry) {
+          // On Auto, the next model goes on rather than waiting for Codex to try again; otherwise
+          // Codex's retry may well go through.
+          if (active.auto) {
+            active.limit = { ...limit, brief: limit.brief ?? params.error?.codexErrorInfo === "rateLimitExceeded" }
+            active.problem = params.error?.message || "Codex is rate limited for now."
+            active.stoppedForLimit = true
+            void this.stopTurn(active)
+          }
+          return
+        }
         if (limit) {
           active.limit = limit
           active.problem = params.error?.message || "You've reached your Codex usage limit for now."
-          // On Auto, the next model goes on rather than waiting for Codex to try again.
-          if (active.auto && params.willRetry) void this.stopTurn(active)
           return
         }
         if (!params.willRetry) active.problem = params.error?.additionalDetails || params.error?.message
@@ -423,7 +434,8 @@ class CodexThread implements Thread {
         this.active = undefined
         turn.endStep({ tokens: active.usage })
         const status = params.turn?.status
-        const limit = active.limit ?? this.limitOf(params.turn?.error, active.model)
+        // A limit only when the turn didn't go through: one it got past on a retry doesn't count.
+        const limit = status === "failed" ? (active.limit ?? this.limitOf(params.turn?.error, active.model)) : status === "interrupted" && active.stoppedForLimit ? active.limit : undefined
         if (limit && !active.stopping && !active.hooks.signal.aborted) {
           active.resolve({ outcome: "failed", error: { type: "limit", message: active.problem ?? params.turn?.error?.message ?? "You've reached your Codex usage limit for now." }, limit })
         } else if (active.hooks.signal.aborted || status === "interrupted") active.resolve({ outcome: "interrupted" })
@@ -601,10 +613,11 @@ class CodexThread implements Thread {
     // A model with a limit of its own, at it: only that model waits.
     for (const [id, snapshot] of this.agent.rateLimits) {
       if (id === "codex" || !reached(snapshot)) continue
-      if (!snapshot.normalModelSlug || model.startsWith(snapshot.normalModelSlug) || snapshot.normalModelSlug.startsWith(model)) return { scope: "model", resetsAt: resets(snapshot), message: error?.message }
+      const slug: string | undefined = snapshot.normalModelSlug
+      if (slug && (model === slug || model.startsWith(`${slug}-`))) return { scope: "model", resetsAt: resets(snapshot), message: error?.message }
     }
     const plan = this.agent.rateLimits.get("codex")
-    if (info === "rateLimitExceeded" && !reached(plan)) return { scope: "model", message: error?.message }
+    if (info === "rateLimitExceeded" && !reached(plan)) return { scope: "model", brief: true, message: error?.message }
     return { scope: "provider", resetsAt: resets(plan), message: error?.message }
   }
 

@@ -1,4 +1,11 @@
 import { describe, expect, test } from "bun:test"
+import { mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { subscribe } from "../src/events"
+import { Store } from "../src/store"
+import { Turn } from "../src/turn"
+import { noTokens, type ServerEvent } from "../src/wire"
 import { unwrapShell } from "../src/agents/codex"
 import { fileDiff, fromPatch, unified } from "../src/diff"
 import { messageID, newID } from "../src/ids"
@@ -99,5 +106,36 @@ describe("keeping an agent's program current", () => {
     expect(homebrewKeg("/opt/homebrew/Caskroom/codex/0.159.3/bin/codex")).toEqual({ kind: "cask", name: "codex", prefix: "/opt/homebrew" })
     expect(homebrewKeg("/usr/local/Cellar/gh/2.80.0/bin/gh")).toEqual({ kind: "formula", name: "gh", prefix: "/usr/local" })
     expect(homebrewKeg("/Users/me/.local/share/claude/versions/2.1.156")).toBeUndefined()
+  })
+})
+
+describe("blocks an agent keeps apart", () => {
+  test("thinking and words that interleave stay two blocks", () => {
+    const folder = mkdtempSync(join(process.env.KUVO_TEST_ROOT ?? tmpdir(), "kuvo-turn-"))
+    try {
+      const store = new Store(folder)
+      store.add({ id: "ses_t", projectID: "p", cost: 0, tokens: noTokens(), time: { created: 1, updated: 1 }, location: { directory: "/tmp" } })
+      const seen: ServerEvent[] = []
+      const stop = subscribe((event) => seen.push(event))
+      const turn = new Turn(store, "ses_t", "/tmp", { providerID: "opencode", id: "m" }, "build")
+      turn.startStep()
+      turn.blockDelta("reasoning-0", "reasoning", "Think")
+      turn.blockDelta("text-0", "text", "It ")
+      turn.blockDelta("reasoning-0", "reasoning", "ing.")
+      turn.blockDelta("text-0", "text", "printed hello.")
+      turn.blockEnd("reasoning-0")
+      turn.endStep()
+      turn.finish("succeeded")
+      stop()
+      const step = store.get("ses_t")!.messages.find((message) => message.type === "assistant") as any
+      expect(step.content.map((content: any) => [content.type, content.text])).toEqual([
+        ["reasoning", "Thinking."],
+        ["text", "It printed hello."],
+      ])
+      expect(seen.filter((event) => event.type === "session.text.ended")).toHaveLength(1)
+      expect(seen.filter((event) => event.type === "session.reasoning.ended")).toHaveLength(1)
+    } finally {
+      rmSync(folder, { recursive: true, force: true })
+    }
   })
 })

@@ -324,6 +324,8 @@ class ClaudeThread implements Thread {
       this.state.claudeSession = id
       hooks.saveState()
     }
+    // A new conversation counts its cost from nothing.
+    if (!resume) delete this.state.claudeCost
     this.input = new Queue()
     this.opened = { model: modelID, effort, plan, append }
     this.query = sdk.query({
@@ -424,7 +426,7 @@ class ClaudeThread implements Thread {
       case "system":
         // Waiting out a rate limit to try again: on Auto, the next model goes on instead.
         if (message.subtype === "api_retry" && (message.error === "rate_limit" || message.error === "billing_error") && active.auto) {
-          active.limit ??= { scope: message.error === "billing_error" ? "provider" : "model" }
+          active.limit ??= message.error === "billing_error" ? { scope: "provider" } : { scope: "model", brief: true }
           active.problem ??= "Claude's API is rate limiting this model."
           void this.query?.interrupt().catch(() => {})
         }
@@ -504,11 +506,17 @@ class ClaudeThread implements Thread {
 
   private finish(active: Active, result: any) {
     this.active = undefined
-    if (result.total_cost_usd && this.agent.usesKey()) active.turn.addUsage(undefined, result.total_cost_usd)
-    // Its words for a limit: "Claude AI usage limit reached|<when it resets>".
-    const text = typeof result.result === "string" ? result.result : ""
+    this.addCost(active, result)
+    const succeeded = result.subtype === "success" && !result.is_error
+    // A turn that went through went through, whatever was said of limits on the way.
+    if (succeeded && !active.stopping && !active.hooks.signal.aborted) {
+      active.resolve({ outcome: "succeeded" })
+      return
+    }
+    // Its words for a limit, when it stopped: "Claude AI usage limit reached|<when it resets>".
+    const text = !succeeded && typeof result.result === "string" ? result.result : ""
     const reached = /usage limit reached\|?(\d+)?/i.exec(text)
-    if (!active.limit && (reached || result.api_error_status === 429)) {
+    if (!succeeded && !active.limit && (reached || result.api_error_status === 429)) {
       const resetsAt = reached?.[1] ? Number(reached[1]) * 1000 : undefined
       active.limit = { scope: "provider", resetsAt }
       active.problem ??= "You've reached your Claude usage limit for now."
@@ -521,16 +529,27 @@ class ClaudeThread implements Thread {
       active.resolve({ outcome: "interrupted" })
       return
     }
-    if (result.subtype === "success" && !result.is_error) {
-      active.resolve({ outcome: "succeeded" })
-      return
-    }
     const message =
       active.problem ??
       (typeof result.result === "string" && result.result.trim() ? result.result.trim() : undefined) ??
       (Array.isArray(result.errors) && result.errors.length ? result.errors.join("\n") : undefined) ??
       reason(result)
     active.resolve({ outcome: "failed", error: { type: "agent", message } })
+  }
+
+  /**
+   * What the turn cost, with an API key: Claude Code says what its whole query has cost so far
+   * (from where a resumed conversation's transcript left it), so it's the difference.
+   */
+  private addCost(active: Active, result: any) {
+    const total = typeof result.total_cost_usd === "number" ? result.total_cost_usd : undefined
+    if (total === undefined) return
+    const before = typeof this.state.claudeCost === "number" ? this.state.claudeCost : 0
+    // Smaller than before: it started counting again (a new conversation, /clear).
+    const spent = total >= before ? total - before : total
+    this.state.claudeCost = total
+    active.hooks.saveState()
+    if (spent > 0 && this.agent.usesKey()) active.turn.addUsage(undefined, spent)
   }
 
   private async canUseTool(name: string, input: Record<string, any>, options: any): Promise<any> {

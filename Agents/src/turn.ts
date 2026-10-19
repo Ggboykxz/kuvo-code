@@ -21,6 +21,11 @@ export class Turn {
   private step?: AssistantMessage
   /** The block being written: its kind and which of its kind it is in the step. */
   private block?: { kind: "text" | "reasoning"; ordinal: number; content: Content }
+  /**
+   * Blocks an agent keeps apart itself (the engine's, by kind and number): what's written for
+   * each goes to it, even while another is being written (thinking and words interleave).
+   */
+  private keyed = new Map<string, { kind: "text" | "reasoning"; ordinal: number; content: Content }>()
   /** Each tool call's step: results come after the step that called them has ended. */
   private tools = new Map<string, { step: AssistantMessage; call: ToolCall }>()
   private ended = false
@@ -89,6 +94,7 @@ export class Turn {
     const step = this.step
     if (!step || this.ended) return
     this.endBlock()
+    for (const key of [...this.keyed.keys()]) this.blockEnd(key)
     step.time.completed = Date.now()
     if (end.finish) step.finish = end.finish
     if (end.tokens) {
@@ -143,6 +149,38 @@ export class Turn {
     ;(this.block.content as { text: string }).text += delta
     this.send(`session.${kind}.delta`, { assistantMessageID: step.id, ordinal: this.block.ordinal, delta })
     this.save()
+  }
+
+  /** A block of the agent's own (see `keyed`) begins, if it hasn't. */
+  blockStart(key: string, kind: "text" | "reasoning") {
+    if (this.ended || this.keyed.has(key)) return
+    const step = this.ensureStep()
+    const ordinal = step.content.filter((content) => content.type === kind).length
+    const content: Content = kind === "text" ? { type: "text", text: "" } : { type: "reasoning", text: "", time: { created: Date.now() } }
+    step.content.push(content)
+    this.keyed.set(key, { kind, ordinal, content })
+    if (!step.time.streamed) step.time.streamed = Date.now()
+    this.send(`session.${kind}.started`, { assistantMessageID: step.id, ordinal })
+  }
+
+  blockDelta(key: string, kind: "text" | "reasoning", delta: string) {
+    if (!delta || this.ended) return
+    if (!this.keyed.has(key)) this.blockStart(key, kind)
+    const block = this.keyed.get(key)
+    const step = this.step
+    if (!block || !step) return
+    ;(block.content as { text: string }).text += delta
+    this.send(`session.${kind}.delta`, { assistantMessageID: step.id, ordinal: block.ordinal, delta })
+    this.save()
+  }
+
+  blockEnd(key: string) {
+    const block = this.keyed.get(key)
+    const step = this.step
+    if (!block || !step) return
+    this.keyed.delete(key)
+    if (block.content.type === "reasoning") block.content.time = { created: block.content.time?.created ?? Date.now(), completed: Date.now() }
+    this.send(`session.${block.kind}.ended`, { assistantMessageID: step.id, ordinal: block.ordinal, text: (block.content as { text: string }).text })
   }
 
   /** The words or thinking being written are done (a tool call or another block follows). */

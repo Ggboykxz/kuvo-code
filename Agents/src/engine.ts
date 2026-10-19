@@ -10,7 +10,7 @@ import { failure } from "./agent"
 import type { Limit } from "./auto"
 import { newID } from "./ids"
 import type { Turn } from "./turn"
-import type { Decision, FormField, Session, StructuredError, TokenUsage, ToolOutput } from "./wire"
+import type { Decision, FormField, Model, Session, StructuredError, TokenUsage, ToolOutput } from "./wire"
 
 interface EngineEvent {
   id: string
@@ -29,6 +29,8 @@ export class EngineLink {
   /** Sessions the engine started under one of ours (a subagent's): asks from them are ours too. */
   private children = new Map<string, string>()
   private names = new Map<string, string>()
+  /** The engine's providers ready to use (connected, or needing no sign-in) and their models, a minute at a time. */
+  private catalog?: { at: number; ready: Set<string>; models: Model[] }
 
   get ready() {
     return Boolean(this.url)
@@ -46,11 +48,16 @@ export class EngineLink {
     for (const set of this.listeners.values()) for (const listener of set) listener.reconnected()
   }
 
-  async request<T = any>(method: string, path: string, body?: unknown, timeout = 30_000): Promise<T> {
+  async request<T = any>(method: string, path: string, body?: unknown, timeout = 30_000, directory?: string): Promise<T> {
     if (!this.url) throw new Error("The engine isn't running.")
     const response = await fetch(this.url + path, {
       method,
-      headers: { Authorization: this.authorization ?? "", ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
+      headers: {
+        Authorization: this.authorization ?? "",
+        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+        // What's tied to a project (a command's output) is asked for in its folder.
+        ...(directory ? { "x-opencode-directory": encodeURIComponent(directory) } : {}),
+      },
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: AbortSignal.timeout(timeout),
     })
@@ -80,6 +87,20 @@ export class EngineLink {
         .catch(() => this.names.clear())
     }
     return this.names.get(providerID)
+  }
+
+  /** Whether a provider is ready to use now, and its models; nothing known when the engine isn't. */
+  async offered(providerID: string): Promise<{ ready: boolean; models: Model[] } | undefined> {
+    if (!this.url) return undefined
+    if (!this.catalog || Date.now() - this.catalog.at > 60_000) {
+      try {
+        const [providers, models] = await Promise.all([this.request("GET", "/api/provider"), this.request("GET", "/api/model")])
+        this.catalog = { at: Date.now(), ready: new Set((providers?.data ?? []).map((provider: { id: string }) => provider.id)), models: models?.data ?? [] }
+      } catch {
+        return undefined
+      }
+    }
+    return { ready: this.catalog.ready.has(providerID), models: this.catalog.models.filter((model) => model.providerID === providerID) }
   }
 
   listen(sessionID: string, listener: Listener): () => void {
@@ -170,12 +191,15 @@ export class EngineAgent implements Agent {
     return []
   }
 
+  /** Signed in: the engine is there and has this provider ready (connected, or needing no sign-in). */
   async account() {
-    return { installed: true, signedIn: this.link.ready }
+    const offered = await this.link.offered(this.providerID)
+    return { installed: true, signedIn: this.link.ready && (offered?.ready ?? true) }
   }
 
+  /** Its models as the engine lists them (for Auto to pass by one it doesn't offer). */
   async models() {
-    return []
+    return (await this.link.offered(this.providerID))?.models ?? []
   }
 
   thread(session: Session, state: Record<string, unknown>): Thread {
@@ -249,6 +273,7 @@ class EngineThread implements Thread {
     if (active?.data?.[id]) await this.link.request("POST", `${path}/interrupt`).catch(() => {})
 
     const inputID = newID("msg")
+    const sentAt = Date.now()
     let step: string | undefined
     let delivered = false
     let limit: Limit | undefined
@@ -302,10 +327,23 @@ class EngineThread implements Thread {
 
     const followShell = (tool: string, shellID: string) => {
       if (shells.has(tool)) return
+      // Read on from where the last read ended, keeping its end.
+      let cursor = 0
+      let output = ""
+      let reading = false
       const read = async () => {
-        const answer = await this.link.request("GET", `/api/shell/${encodeURIComponent(shellID)}/output`).catch(() => undefined)
-        const output = String(answer?.data?.output ?? "")
-        if (output) turn.toolProgress(tool, { output: output.length > outputLimit ? output.slice(-outputLimit) : output })
+        if (reading) return
+        reading = true
+        try {
+          const answer = await this.link.request("GET", `/api/shell/${encodeURIComponent(shellID)}/output?cursor=${cursor}`, undefined, 10_000, this.session.location.directory).catch(() => undefined)
+          const more = String(answer?.data?.output ?? "")
+          if (typeof answer?.data?.cursor === "number") cursor = answer.data.cursor
+          if (!more) return
+          output = (output + more).slice(-outputLimit)
+          turn.toolProgress(tool, { output })
+        } finally {
+          reading = false
+        }
       }
       shells.set(tool, setInterval(read, 1000))
     }
@@ -333,11 +371,22 @@ class EngineThread implements Thread {
           step = data.assistantMessageID
           turn.startStep(data.model ?? input.model)
           return
-        case "session.text.delta":
-          turn.text(String(data.delta ?? ""))
+        // Thinking and words, each block where the engine says it is (they can interleave).
+        case "session.text.started":
+        case "session.reasoning.started": {
+          const kind = event.type === "session.text.started" ? "text" : "reasoning"
+          turn.blockStart(`${kind}-${data.ordinal ?? 0}`, kind)
           return
-        case "session.reasoning.delta":
-          turn.reasoning(String(data.delta ?? ""))
+        }
+        case "session.text.delta":
+        case "session.reasoning.delta": {
+          const kind = event.type === "session.text.delta" ? "text" : "reasoning"
+          turn.blockDelta(`${kind}-${data.ordinal ?? 0}`, kind, String(data.delta ?? ""))
+          return
+        }
+        case "session.text.ended":
+        case "session.reasoning.ended":
+          turn.blockEnd(`${event.type === "session.text.ended" ? "text" : "reasoning"}-${data.ordinal ?? 0}`)
           return
         case "session.tool.input.started":
           turn.toolStart(data.id, data.name)
@@ -403,7 +452,9 @@ class EngineThread implements Thread {
       if (active?.data?.[id]) return
       const session = await this.link.request("GET", path).catch(() => undefined)
       const outcome = session?.data?.outcome as RunResult["outcome"] | undefined
-      finish(outcome === "succeeded" ? { outcome } : { outcome: "failed", error: { type: "engine", message: "The engine restarted during this message." } })
+      // Its outcome is this message's only if it went idle after the message was sent.
+      const idle = Number(session?.data?.time?.idle ?? 0)
+      finish(outcome === "succeeded" && idle >= sentAt ? { outcome } : { outcome: "failed", error: { type: "engine", message: "The engine restarted during this message." } })
     }
 
     const unlisten = this.link.listen(id, { event: onEvent, reconnected: () => void onReconnected() })

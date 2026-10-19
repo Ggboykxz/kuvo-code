@@ -9,11 +9,14 @@ import type { RunInput, RunResult, Thread, TurnHooks } from "./agent"
 import { failure } from "./agent"
 import type { Limit } from "./auto"
 import { fileDiff } from "./diff"
+import { newID } from "./ids"
 import { RPC, RPCError } from "./rpc"
 import type { Turn } from "./turn"
 import type { Decision, FormField, Session } from "./wire"
 
 const outputLimit = 30_000
+/** An agent's words for a usage limit (not any error that mentions a quota). */
+const limitWords = /RESOURCE_EXHAUSTED|usage limit (?:reached|exceeded)|quota exceeded|exceeded your (?:current )?quota|rate limit exceeded|too many requests/i
 
 export interface AcpFlavor {
   /** The command that starts the agent, for this session's approval mode. */
@@ -236,7 +239,7 @@ export class AcpThread implements Thread {
           else this.end(active, result?.stopReason === "cancelled" ? "interrupted" : "succeeded")
         },
         (error) => {
-          const limited = (error instanceof RPCError && error.code === -32003) || /RESOURCE_EXHAUSTED|quota|usage limit|rate.?limit/i.test(errorText(error))
+          const limited = (error instanceof RPCError && error.code === -32003) || limitWords.test(errorText(error))
           this.end(active, "failed", limited ? `You've reached your ${this.name} usage limit for now.` : errorText(error), limited ? this.limit(errorText(error)) : undefined)
         },
       )
@@ -294,7 +297,8 @@ export class AcpThread implements Thread {
       case "plan": {
         // One to-do list a turn, brought up to date as the agent works through it.
         const todos = (update.entries ?? []).map((entry: any) => ({ content: entry.content, status: entry.status === "in_progress" ? "in_progress" : entry.status }))
-        const id = active.plan?.id ?? `plan-${turn.started}`
+        // Its own for each attempt: Auto may go on with another agent in the same turn.
+        const id = active.plan?.id ?? newID("call")
         active.plan = { id, todos }
         if (!turn.hasTool(id)) turn.toolStart(id, "todowrite", { todos })
         else turn.toolCalled(id, { todos })

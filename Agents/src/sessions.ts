@@ -63,6 +63,9 @@ interface Slot {
 /** What a session's `agent.json` held before sessions could move between agents. */
 const legacyKeys = ["claudeSession", "claudeStarted", "codexThread", "acpSession", "acpInstructed", "cursorAgent", "cursorInstructed"]
 
+/** What an agent that has your message already is told when it's to go on with it on another of its models. */
+const carryOn = "Carry on with my last message from where you left off: you're on another model now."
+
 /** How long an agent gets to stop when you press Stop, before its conversation is closed; how long a session's agents keep running with nothing to do (the next message starts them again, in the same conversation). */
 export const timing = { stopGrace: 8_000, idleClose: 15 * 60_000 }
 
@@ -71,6 +74,8 @@ const changes = new Set(["edit", "write", "patch"])
 
 export class Sessions {
   private live = new Map<string, Live>()
+  /** Sessions being deleted: nothing is taken or started for them any more. */
+  private removing = new Set<string>()
 
   constructor(
     private readonly store: Store,
@@ -144,7 +149,8 @@ export class Sessions {
     const record = this.store.get(id)
     if (!record) return
     let changed = false
-    const lastUser = record.messages.findLastIndex((message) => message.type === "user")
+    // A turn starts with your message, or with a note from the app (a mid-turn model switch).
+    const lastUser = record.messages.findLastIndex((message) => message.type === "user" || message.type === "synthetic")
     for (const message of record.messages) {
       if (message.type !== "assistant") continue
       if (!message.time.completed) {
@@ -269,14 +275,17 @@ export class Sessions {
 
   async remove(id: string) {
     const record = this.store.get(id)
-    if (!record) return
-    // Nothing waiting starts as it stops.
+    if (!record || this.removing.has(id)) return
+    // Nothing waiting starts as it stops, nor does anything sent meanwhile.
+    this.removing.add(id)
     record.agent.inbox = []
     await this.interrupt(id)
     for (const thread of this.live.get(id)?.threads.values() ?? []) thread.close()
     this.live.delete(id)
     for (const [provider, slot] of Object.entries(this.slots(record))) await this.agent(provider)?.forgetConversation?.(slot.state).catch(() => {})
     this.store.remove(id)
+    this.live.delete(id)
+    this.removing.delete(id)
     emit("session.deleted", { sessionID: id }, record.session.location.directory)
   }
 
@@ -354,6 +363,7 @@ export class Sessions {
   }
 
   prompt(id: string, input: Input) {
+    if (this.removing.has(id)) throw new NotFound(`No session ${id}.`)
     const record = this.record(id)
     const queue = this.queue(record)
     // Sent twice (a retry after a timeout): once is enough.
@@ -393,7 +403,7 @@ export class Sessions {
 
   /** Starts the first message you steered, if nothing runs. */
   private wake(id: string) {
-    if (this.isRunning(id)) return
+    if (this.isRunning(id) || this.removing.has(id)) return
     const record = this.store.get(id)
     if (!record) return
     const queue = this.queue(record)
@@ -405,6 +415,7 @@ export class Sessions {
 
   /** After a turn: the next message, if it ended on its own (or you stopped it to send one now). */
   private next(id: string, outcome: Outcome) {
+    if (this.removing.has(id) || !this.store.get(id)) return
     const live = this.state(id)
     const resume = live.resume
     live.resume = false
@@ -493,9 +504,14 @@ export class Sessions {
     // another agent did on this message before handing it over.
     const at = record.messages.findIndex((message) => message.id === userMessage)
     const seenAt = slot.seen ? record.messages.findIndex((message) => message.id === slot.seen) : -1
-    const before = record.messages.slice(seenAt + 1, at < 0 ? undefined : at)
-    const partway = at < 0 ? [] : record.messages.slice(at + 1)
+    // It has your message already (Auto went on with another of its models): it carries on from
+    // what it hasn't seen since, rather than getting the message again.
+    const hasMessage = at >= 0 && seenAt >= at
+    const before = hasMessage ? [] : record.messages.slice(seenAt + 1, at < 0 ? undefined : at)
+    const partway = at < 0 ? [] : record.messages.slice(Math.max(at, seenAt) + 1)
     const handed = handover(before, partway, (message) => this.stepName(message))
+    const text = withHandover(hasMessage ? carryOn : input.text, handed)
+    const files = hasMessage ? [] : input.files
     turn.setModel(model)
     // Given up on (it didn't stop when asked): the turn ends without it.
     let abandon!: () => void
@@ -503,7 +519,7 @@ export class Sessions {
     const running = { provider: model.providerID, thread, abandon }
     live.running = running
     try {
-      const result = await Promise.race([thread.run({ ...input, model, text: withHandover(input.text, handed) }, turn, this.hooks(id, live, turn, signal, slot, input.plan)), abandoned])
+      const result = await Promise.race([thread.run({ ...input, model, text, files }, turn, this.hooks(id, live, turn, signal, slot, input.plan)), abandoned])
       // It has seen all of it now, its own replies too.
       slot.seen = record.messages[record.messages.length - 1]?.id
       live.last = slot
@@ -540,8 +556,18 @@ export class Sessions {
         turn.stopTools("Stopped: going on with another model.")
         turn.notice(`${note} Going on with ${this.entryName(entry)}.`)
       }
+      const from = record.messages.length
       last = await this.runOn(id, record, live, model, input, turn, signal, userMessage)
-      if (last.outcome !== "failed" || !last.limit || signal.aborted) return last
+      if (last.outcome !== "failed" || signal.aborted) return last
+      if (!last.limit) {
+        // It couldn't take the message at all (its model is gone, its sign-in ended): the next
+        // one does, as nothing was done. Once it had done something, the error stands: going
+        // on with another could do it twice.
+        const worked = record.messages.slice(from).some((message) => message.type === "assistant" && message.content.some((content) => content.type === "tool" || (content.type === "text" && content.text.trim())))
+        if (worked) return last
+        note = `${this.entryName(entry)} couldn't take it: ${last.error?.message ?? "it stopped with an error"}`
+        continue
+      }
       this.auto.hold(entry, last.limit)
       emit("kuvo.auto.updated", {})
       const whole = last.limit.scope === "provider"
@@ -558,6 +584,11 @@ export class Sessions {
       // Signed out: skipped (an agent slow to say is tried anyway).
       const account = await Promise.race([agent.account().catch(() => undefined), Bun.sleep(10_000).then(() => undefined)])
       if (account && !account.signedIn) continue
+      // A model the engine doesn't offer now (its provider was disconnected): skipped.
+      if (agent.id === "engine") {
+        const models = await agent.models().catch(() => [])
+        if (models.length && !models.some((model) => model.id === entry.modelID)) continue
+      }
       return entry
     }
     return undefined

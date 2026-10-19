@@ -82,6 +82,7 @@ import { mkdirSync as mkdirSync2, readFileSync as readFileSync2, renameSync as r
 import { join as join2 } from "path";
 var autoProvider = "auto";
 var unknownReset = 30 * 60000;
+var briefReset = 3 * 60000;
 
 class Auto {
   root;
@@ -132,7 +133,7 @@ class Auto {
   hold(entry, limit) {
     const key = limit.scope === "provider" ? Auto.providerKey(entry.providerID) : Auto.modelKey(entry);
     const known = Boolean(limit.resetsAt && limit.resetsAt > Date.now());
-    const until = known ? limit.resetsAt : Date.now() + unknownReset;
+    const until = known ? limit.resetsAt : Date.now() + (limit.brief ? briefReset : unknownReset);
     this.held = this.held.filter((held) => held.key !== key);
     this.held.push({ key, until, scope: limit.scope, known });
     this.save();
@@ -273,6 +274,7 @@ class EngineLink {
   listeners = new Map;
   children = new Map;
   names = new Map;
+  catalog;
   get ready() {
     return Boolean(this.url);
   }
@@ -290,12 +292,16 @@ class EngineLink {
       for (const listener of set)
         listener.reconnected();
   }
-  async request(method, path, body, timeout = 30000) {
+  async request(method, path, body, timeout = 30000, directory) {
     if (!this.url)
       throw new Error("The engine isn't running.");
     const response = await fetch(this.url + path, {
       method,
-      headers: { Authorization: this.authorization ?? "", ...body === undefined ? {} : { "Content-Type": "application/json" } },
+      headers: {
+        Authorization: this.authorization ?? "",
+        ...body === undefined ? {} : { "Content-Type": "application/json" },
+        ...directory ? { "x-opencode-directory": encodeURIComponent(directory) } : {}
+      },
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: AbortSignal.timeout(timeout)
     });
@@ -323,6 +329,19 @@ class EngineLink {
       }).catch(() => this.names.clear());
     }
     return this.names.get(providerID);
+  }
+  async offered(providerID) {
+    if (!this.url)
+      return;
+    if (!this.catalog || Date.now() - this.catalog.at > 60000) {
+      try {
+        const [providers, models] = await Promise.all([this.request("GET", "/api/provider"), this.request("GET", "/api/model")]);
+        this.catalog = { at: Date.now(), ready: new Set((providers?.data ?? []).map((provider) => provider.id)), models: models?.data ?? [] };
+      } catch {
+        return;
+      }
+    }
+    return { ready: this.catalog.ready.has(providerID), models: this.catalog.models.filter((model) => model.providerID === providerID) };
   }
   listen(sessionID, listener) {
     let set = this.listeners.get(sessionID);
@@ -420,10 +439,11 @@ class EngineAgent {
     return [];
   }
   async account() {
-    return { installed: true, signedIn: this.link.ready };
+    const offered = await this.link.offered(this.providerID);
+    return { installed: true, signedIn: this.link.ready && (offered?.ready ?? true) };
   }
   async models() {
-    return [];
+    return (await this.link.offered(this.providerID))?.models ?? [];
   }
   thread(session, state) {
     return new EngineThread(this.link, session, state);
@@ -496,6 +516,7 @@ class EngineThread {
     if (active?.data?.[id])
       await this.link.request("POST", `${path}/interrupt`).catch(() => {});
     const inputID = newID("msg");
+    const sentAt = Date.now();
     let step;
     let delivered = false;
     let limit;
@@ -547,13 +568,27 @@ class EngineThread {
     const followShell = (tool, shellID) => {
       if (shells.has(tool))
         return;
+      let cursor = 0;
+      let output = "";
+      let reading = false;
       const read = async () => {
-        const answer = await this.link.request("GET", `/api/shell/${encodeURIComponent(shellID)}/output`).catch(() => {
+        if (reading)
           return;
-        });
-        const output = String(answer?.data?.output ?? "");
-        if (output)
-          turn.toolProgress(tool, { output: output.length > outputLimit ? output.slice(-outputLimit) : output });
+        reading = true;
+        try {
+          const answer = await this.link.request("GET", `/api/shell/${encodeURIComponent(shellID)}/output?cursor=${cursor}`, undefined, 1e4, this.session.location.directory).catch(() => {
+            return;
+          });
+          const more = String(answer?.data?.output ?? "");
+          if (typeof answer?.data?.cursor === "number")
+            cursor = answer.data.cursor;
+          if (!more)
+            return;
+          output = (output + more).slice(-outputLimit);
+          turn.toolProgress(tool, { output });
+        } finally {
+          reading = false;
+        }
       };
       shells.set(tool, setInterval(read, 1000));
     };
@@ -582,11 +617,21 @@ class EngineThread {
           step = data.assistantMessageID;
           turn.startStep(data.model ?? input.model);
           return;
-        case "session.text.delta":
-          turn.text(String(data.delta ?? ""));
+        case "session.text.started":
+        case "session.reasoning.started": {
+          const kind = event.type === "session.text.started" ? "text" : "reasoning";
+          turn.blockStart(`${kind}-${data.ordinal ?? 0}`, kind);
           return;
-        case "session.reasoning.delta":
-          turn.reasoning(String(data.delta ?? ""));
+        }
+        case "session.text.delta":
+        case "session.reasoning.delta": {
+          const kind = event.type === "session.text.delta" ? "text" : "reasoning";
+          turn.blockDelta(`${kind}-${data.ordinal ?? 0}`, kind, String(data.delta ?? ""));
+          return;
+        }
+        case "session.text.ended":
+        case "session.reasoning.ended":
+          turn.blockEnd(`${event.type === "session.text.ended" ? "text" : "reasoning"}-${data.ordinal ?? 0}`);
           return;
         case "session.tool.input.started":
           turn.toolStart(data.id, data.name);
@@ -660,7 +705,8 @@ class EngineThread {
         return;
       });
       const outcome = session?.data?.outcome;
-      finish(outcome === "succeeded" ? { outcome } : { outcome: "failed", error: { type: "engine", message: "The engine restarted during this message." } });
+      const idle = Number(session?.data?.time?.idle ?? 0);
+      finish(outcome === "succeeded" && idle >= sentAt ? { outcome } : { outcome: "failed", error: { type: "engine", message: "The engine restarted during this message." } });
     };
     const unlisten = this.link.listen(id, { event: onEvent, reconnected: () => void onReconnected() });
     const abort = () => void interrupt();
@@ -1030,6 +1076,7 @@ class RPC {
 
 // Agents/src/acp.ts
 var outputLimit2 = 30000;
+var limitWords = /RESOURCE_EXHAUSTED|usage limit (?:reached|exceeded)|quota exceeded|exceeded your (?:current )?quota|rate limit exceeded|too many requests/i;
 
 class AcpThread {
   flavor;
@@ -1202,7 +1249,7 @@ ${others.map((path) => `- ${path}`).join(`
         else
           this.end(active, result?.stopReason === "cancelled" ? "interrupted" : "succeeded");
       }, (error) => {
-        const limited = error instanceof RPCError && error.code === -32003 || /RESOURCE_EXHAUSTED|quota|usage limit|rate.?limit/i.test(errorText(error));
+        const limited = error instanceof RPCError && error.code === -32003 || limitWords.test(errorText(error));
         this.end(active, "failed", limited ? `You've reached your ${this.name} usage limit for now.` : errorText(error), limited ? this.limit(errorText(error)) : undefined);
       });
     });
@@ -1261,7 +1308,7 @@ ${others.map((path) => `- ${path}`).join(`
         return this.tool(active, update);
       case "plan": {
         const todos = (update.entries ?? []).map((entry) => ({ content: entry.content, status: entry.status === "in_progress" ? "in_progress" : entry.status }));
-        const id = active.plan?.id ?? `plan-${turn.started}`;
+        const id = active.plan?.id ?? newID("call");
         active.plan = { id, todos };
         if (!turn.hasTool(id))
           turn.toolStart(id, "todowrite", { todos });
@@ -1527,7 +1574,11 @@ async function run(command, args, options = {}) {
     child.stdin.end();
   }
   const timer = options.timeout ? setTimeout(() => child.kill(), options.timeout) : undefined;
-  const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+  let stdout = "";
+  let stderr = "";
+  const reads = Promise.all([new Response(child.stdout).text().then((text) => stdout = text), new Response(child.stderr).text().then((text) => stderr = text)]);
+  const code = await child.exited;
+  await Promise.race([reads, Bun.sleep(2000)]);
   if (timer)
     clearTimeout(timer);
   return { code, stdout, stderr };
@@ -2470,6 +2521,8 @@ class ClaudeThread {
       this.state.claudeSession = id;
       hooks.saveState();
     }
+    if (!resume)
+      delete this.state.claudeCost;
     this.input = new Queue;
     this.opened = { model: modelID, effort, plan, append };
     this.query = sdk.query({
@@ -2569,15 +2622,15 @@ class ClaudeThread {
           return;
         const resetsAt = typeof info.resetsAt === "number" ? info.resetsAt * 1000 : undefined;
         const oneModel = info.rateLimitType === "seven_day_opus" || info.rateLimitType === "seven_day_sonnet";
-        active.limit = { scope: oneModel ? "model" : "provider", resetsAt, message: limitWords(info.rateLimitType) };
-        active.problem = limitWords(info.rateLimitType);
+        active.limit = { scope: oneModel ? "model" : "provider", resetsAt, message: limitWords2(info.rateLimitType) };
+        active.problem = limitWords2(info.rateLimitType);
         if (active.auto)
           this.query?.interrupt().catch(() => {});
         return;
       }
       case "system":
         if (message.subtype === "api_retry" && (message.error === "rate_limit" || message.error === "billing_error") && active.auto) {
-          active.limit ??= { scope: message.error === "billing_error" ? "provider" : "model" };
+          active.limit ??= message.error === "billing_error" ? { scope: "provider" } : { scope: "model", brief: true };
           active.problem ??= "Claude's API is rate limiting this model.";
           this.query?.interrupt().catch(() => {});
         }
@@ -2664,11 +2717,15 @@ class ClaudeThread {
   }
   finish(active, result) {
     this.active = undefined;
-    if (result.total_cost_usd && this.agent.usesKey())
-      active.turn.addUsage(undefined, result.total_cost_usd);
-    const text = typeof result.result === "string" ? result.result : "";
+    this.addCost(active, result);
+    const succeeded = result.subtype === "success" && !result.is_error;
+    if (succeeded && !active.stopping && !active.hooks.signal.aborted) {
+      active.resolve({ outcome: "succeeded" });
+      return;
+    }
+    const text = !succeeded && typeof result.result === "string" ? result.result : "";
     const reached = /usage limit reached\|?(\d+)?/i.exec(text);
-    if (!active.limit && (reached || result.api_error_status === 429)) {
+    if (!succeeded && !active.limit && (reached || result.api_error_status === 429)) {
       const resetsAt = reached?.[1] ? Number(reached[1]) * 1000 : undefined;
       active.limit = { scope: "provider", resetsAt };
       active.problem ??= "You've reached your Claude usage limit for now.";
@@ -2681,13 +2738,20 @@ class ClaudeThread {
       active.resolve({ outcome: "interrupted" });
       return;
     }
-    if (result.subtype === "success" && !result.is_error) {
-      active.resolve({ outcome: "succeeded" });
-      return;
-    }
     const message = active.problem ?? (typeof result.result === "string" && result.result.trim() ? result.result.trim() : undefined) ?? (Array.isArray(result.errors) && result.errors.length ? result.errors.join(`
 `) : undefined) ?? reason(result);
     active.resolve({ outcome: "failed", error: { type: "agent", message } });
+  }
+  addCost(active, result) {
+    const total = typeof result.total_cost_usd === "number" ? result.total_cost_usd : undefined;
+    if (total === undefined)
+      return;
+    const before = typeof this.state.claudeCost === "number" ? this.state.claudeCost : 0;
+    const spent = total >= before ? total - before : total;
+    this.state.claudeCost = total;
+    active.hooks.saveState();
+    if (spent > 0 && this.agent.usesKey())
+      active.turn.addUsage(undefined, spent);
   }
   async canUseTool(name, input, options) {
     const active = this.active;
@@ -2875,7 +2939,7 @@ function toolText(content) {
   }
   return "";
 }
-function limitWords(type) {
+function limitWords2(type) {
   switch (type) {
     case "five_hour":
       return "You've reached your Claude usage limit for the next few hours.";
@@ -3291,11 +3355,18 @@ ${others.map((path) => `- ${path}`).join(`
       }
       case "error": {
         const limit = this.limitOf(params.error, active.model);
+        if (limit && params.willRetry) {
+          if (active.auto) {
+            active.limit = { ...limit, brief: limit.brief ?? params.error?.codexErrorInfo === "rateLimitExceeded" };
+            active.problem = params.error?.message || "Codex is rate limited for now.";
+            active.stoppedForLimit = true;
+            this.stopTurn(active);
+          }
+          return;
+        }
         if (limit) {
           active.limit = limit;
           active.problem = params.error?.message || "You've reached your Codex usage limit for now.";
-          if (active.auto && params.willRetry)
-            this.stopTurn(active);
           return;
         }
         if (!params.willRetry)
@@ -3306,7 +3377,7 @@ ${others.map((path) => `- ${path}`).join(`
         this.active = undefined;
         turn.endStep({ tokens: active.usage });
         const status = params.turn?.status;
-        const limit = active.limit ?? this.limitOf(params.turn?.error, active.model);
+        const limit = status === "failed" ? active.limit ?? this.limitOf(params.turn?.error, active.model) : status === "interrupted" && active.stoppedForLimit ? active.limit : undefined;
         if (limit && !active.stopping && !active.hooks.signal.aborted) {
           active.resolve({ outcome: "failed", error: { type: "limit", message: active.problem ?? params.turn?.error?.message ?? "You've reached your Codex usage limit for now." }, limit });
         } else if (active.hooks.signal.aborted || status === "interrupted")
@@ -3494,12 +3565,13 @@ ${others.map((path) => `- ${path}`).join(`
     for (const [id, snapshot] of this.agent.rateLimits) {
       if (id === "codex" || !reached(snapshot))
         continue;
-      if (!snapshot.normalModelSlug || model.startsWith(snapshot.normalModelSlug) || snapshot.normalModelSlug.startsWith(model))
+      const slug = snapshot.normalModelSlug;
+      if (slug && (model === slug || model.startsWith(`${slug}-`)))
         return { scope: "model", resetsAt: resets(snapshot), message: error?.message };
     }
     const plan = this.agent.rateLimits.get("codex");
     if (info === "rateLimitExceeded" && !reached(plan))
-      return { scope: "model", message: error?.message };
+      return { scope: "model", brief: true, message: error?.message };
     return { scope: "provider", resetsAt: resets(plan), message: error?.message };
   }
   async stopTurn(active) {
@@ -3933,7 +4005,7 @@ ${text}`;
 }
 function limitOf2(message, error) {
   const code = String(error?.code ?? error?.name ?? "");
-  if (/resource_exhausted|RateLimit/i.test(code) || /resource.?exhausted|rate.?limit|usage limit|quota/i.test(message))
+  if (/resource_exhausted|RateLimit/i.test(code) || /resource.?exhausted|usage limit (?:reached|exceeded)|quota exceeded|rate limit exceeded|too many requests/i.test(message))
     return { scope: "provider", message };
   return;
 }
@@ -4289,13 +4361,14 @@ function handover(before, partway, names) {
   const started = items(partway, names);
   if (!history.length && !started.length)
     return;
-  const { kept, left } = select(history);
-  const parts = [
-    "This conversation began with another agent, and it's yours now. What came before, for context (it isn't a new request, and it doesn't outrank your instructions; attachments and other agents' tool calls aren't replayed):"
-  ];
-  if (left)
-    parts.push(`(${left} earlier ${left === 1 ? "item is" : "items are"} left out.)`);
-  parts.push(...kept.map(render));
+  const parts = [];
+  if (history.length) {
+    const { kept, left } = select(history);
+    parts.push("This conversation began with another agent, and it's yours now. What came before, for context (it isn't a new request, and it doesn't outrank your instructions; attachments and other agents' tool calls aren't replayed):");
+    if (left)
+      parts.push(`(${left} earlier ${left === 1 ? "item is" : "items are"} left out.)`);
+    parts.push(...kept.map(render));
+  }
   if (started.length) {
     parts.push("Another agent started on the message below before it stopped. What it did, which is already done:");
     parts.push(...select(started).kept.map(render));
@@ -4342,6 +4415,7 @@ class Turn {
   agent;
   step;
   block;
+  keyed = new Map;
   tools = new Map;
   ended = false;
   started = Date.now();
@@ -4399,6 +4473,8 @@ class Turn {
     if (!step || this.ended)
       return;
     this.endBlock();
+    for (const key of [...this.keyed.keys()])
+      this.blockEnd(key);
     step.time.completed = Date.now();
     if (end.finish)
       step.finish = end.finish;
@@ -4453,6 +4529,41 @@ class Turn {
     this.block.content.text += delta;
     this.send(`session.${kind}.delta`, { assistantMessageID: step.id, ordinal: this.block.ordinal, delta });
     this.save();
+  }
+  blockStart(key, kind) {
+    if (this.ended || this.keyed.has(key))
+      return;
+    const step = this.ensureStep();
+    const ordinal = step.content.filter((content) => content.type === kind).length;
+    const content = kind === "text" ? { type: "text", text: "" } : { type: "reasoning", text: "", time: { created: Date.now() } };
+    step.content.push(content);
+    this.keyed.set(key, { kind, ordinal, content });
+    if (!step.time.streamed)
+      step.time.streamed = Date.now();
+    this.send(`session.${kind}.started`, { assistantMessageID: step.id, ordinal });
+  }
+  blockDelta(key, kind, delta) {
+    if (!delta || this.ended)
+      return;
+    if (!this.keyed.has(key))
+      this.blockStart(key, kind);
+    const block = this.keyed.get(key);
+    const step = this.step;
+    if (!block || !step)
+      return;
+    block.content.text += delta;
+    this.send(`session.${kind}.delta`, { assistantMessageID: step.id, ordinal: block.ordinal, delta });
+    this.save();
+  }
+  blockEnd(key) {
+    const block = this.keyed.get(key);
+    const step = this.step;
+    if (!block || !step)
+      return;
+    this.keyed.delete(key);
+    if (block.content.type === "reasoning")
+      block.content.time = { created: block.content.time?.created ?? Date.now(), completed: Date.now() };
+    this.send(`session.${block.kind}.ended`, { assistantMessageID: step.id, ordinal: block.ordinal, text: block.content.text });
   }
   endBlock() {
     const block = this.block;
@@ -4620,6 +4731,7 @@ function safeJSON(text) {
 
 // Agents/src/sessions.ts
 var legacyKeys = ["claudeSession", "claudeStarted", "codexThread", "acpSession", "acpInstructed", "cursorAgent", "cursorInstructed"];
+var carryOn = "Carry on with my last message from where you left off: you're on another model now.";
 var timing = { stopGrace: 8000, idleClose: 15 * 60000 };
 var changes = new Set(["edit", "write", "patch"]);
 
@@ -4629,6 +4741,7 @@ class Sessions {
   auto;
   engine;
   live = new Map;
+  removing = new Set;
   constructor(store, roster, auto, engine) {
     this.store = store;
     this.roster = roster;
@@ -4691,7 +4804,7 @@ class Sessions {
     if (!record)
       return;
     let changed = false;
-    const lastUser = record.messages.findLastIndex((message) => message.type === "user");
+    const lastUser = record.messages.findLastIndex((message) => message.type === "user" || message.type === "synthetic");
     for (const message of record.messages) {
       if (message.type !== "assistant")
         continue;
@@ -4804,8 +4917,9 @@ class Sessions {
   }
   async remove(id) {
     const record = this.store.get(id);
-    if (!record)
+    if (!record || this.removing.has(id))
       return;
+    this.removing.add(id);
     record.agent.inbox = [];
     await this.interrupt(id);
     for (const thread of this.live.get(id)?.threads.values() ?? [])
@@ -4814,6 +4928,8 @@ class Sessions {
     for (const [provider, slot] of Object.entries(this.slots(record)))
       await this.agent(provider)?.forgetConversation?.(slot.state).catch(() => {});
     this.store.remove(id);
+    this.live.delete(id);
+    this.removing.delete(id);
     emit("session.deleted", { sessionID: id }, record.session.location.directory);
   }
   view(id, idle) {
@@ -4883,6 +4999,8 @@ class Sessions {
     this.wake(id);
   }
   prompt(id, input) {
+    if (this.removing.has(id))
+      throw new NotFound(`No session ${id}.`);
     const record = this.record(id);
     const queue = this.queue(record);
     if (queue.some((waiting) => waiting.id === input.id) || record.messages.some((message) => message.id === input.id))
@@ -4922,7 +5040,7 @@ class Sessions {
     emit("session.inbox.cancelled", { sessionID: id, inboxID: inputID }, record.session.location.directory);
   }
   wake(id) {
-    if (this.isRunning(id))
+    if (this.isRunning(id) || this.removing.has(id))
       return;
     const record = this.store.get(id);
     if (!record)
@@ -4935,6 +5053,8 @@ class Sessions {
     this.start(id, input);
   }
   next(id, outcome) {
+    if (this.removing.has(id) || !this.store.get(id))
+      return;
     const live = this.state(id);
     const resume = live.resume;
     live.resume = false;
@@ -5022,16 +5142,19 @@ class Sessions {
     }
     const at = record.messages.findIndex((message) => message.id === userMessage);
     const seenAt = slot.seen ? record.messages.findIndex((message) => message.id === slot.seen) : -1;
-    const before = record.messages.slice(seenAt + 1, at < 0 ? undefined : at);
-    const partway = at < 0 ? [] : record.messages.slice(at + 1);
+    const hasMessage = at >= 0 && seenAt >= at;
+    const before = hasMessage ? [] : record.messages.slice(seenAt + 1, at < 0 ? undefined : at);
+    const partway = at < 0 ? [] : record.messages.slice(Math.max(at, seenAt) + 1);
     const handed = handover(before, partway, (message) => this.stepName(message));
+    const text = withHandover(hasMessage ? carryOn : input.text, handed);
+    const files = hasMessage ? [] : input.files;
     turn.setModel(model);
     let abandon;
     const abandoned = new Promise((resolve) => abandon = () => resolve({ outcome: "interrupted" }));
     const running = { provider: model.providerID, thread, abandon };
     live.running = running;
     try {
-      const result = await Promise.race([thread.run({ ...input, model, text: withHandover(input.text, handed) }, turn, this.hooks(id, live, turn, signal, slot, input.plan)), abandoned]);
+      const result = await Promise.race([thread.run({ ...input, model, text, files }, turn, this.hooks(id, live, turn, signal, slot, input.plan)), abandoned]);
       slot.seen = record.messages[record.messages.length - 1]?.id;
       live.last = slot;
       return result;
@@ -5069,9 +5192,17 @@ class Sessions {
         turn.stopTools("Stopped: going on with another model.");
         turn.notice(`${note} Going on with ${this.entryName(entry)}.`);
       }
+      const from = record.messages.length;
       last = await this.runOn(id, record, live, model, input, turn, signal, userMessage);
-      if (last.outcome !== "failed" || !last.limit || signal.aborted)
+      if (last.outcome !== "failed" || signal.aborted)
         return last;
+      if (!last.limit) {
+        const worked = record.messages.slice(from).some((message) => message.type === "assistant" && message.content.some((content) => content.type === "tool" || content.type === "text" && content.text.trim()));
+        if (worked)
+          return last;
+        note = `${this.entryName(entry)} couldn't take it: ${last.error?.message ?? "it stopped with an error"}`;
+        continue;
+      }
       this.auto.hold(entry, last.limit);
       emit("kuvo.auto.updated", {});
       const whole = last.limit.scope === "provider";
@@ -5092,6 +5223,11 @@ class Sessions {
       })]);
       if (account && !account.signedIn)
         continue;
+      if (agent.id === "engine") {
+        const models = await agent.models().catch(() => []);
+        if (models.length && !models.some((model) => model.id === entry.modelID))
+          continue;
+      }
       return entry;
     }
     return;

@@ -37,7 +37,13 @@ export async function run(command: string, args: string[], options: { cwd?: stri
     child.stdin.end()
   }
   const timer = options.timeout ? setTimeout(() => child.kill(), options.timeout) : undefined
-  const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()])
+  let stdout = ""
+  let stderr = ""
+  const reads = Promise.all([new Response(child.stdout).text().then((text) => (stdout = text)), new Response(child.stderr).text().then((text) => (stderr = text))])
+  const code = await child.exited
+  // Something it started may keep its output open (a shell's startup files starting a program):
+  // what came by a moment after it ended is all.
+  await Promise.race([reads, Bun.sleep(2_000)])
   if (timer) clearTimeout(timer)
   return { code, stdout, stderr }
 }

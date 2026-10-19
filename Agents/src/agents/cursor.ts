@@ -385,7 +385,7 @@ class CursorThread implements Thread {
 /** A usage or rate limit in Cursor's error: your plan's. */
 function limitOf(message: string, error: any): Limit | undefined {
   const code = String(error?.code ?? error?.name ?? "")
-  if (/resource_exhausted|RateLimit/i.test(code) || /resource.?exhausted|rate.?limit|usage limit|quota/i.test(message)) return { scope: "provider", message }
+  if (/resource_exhausted|RateLimit/i.test(code) || /resource.?exhausted|usage limit (?:reached|exceeded)|quota exceeded|rate limit exceeded|too many requests/i.test(message)) return { scope: "provider", message }
   return undefined
 }
 

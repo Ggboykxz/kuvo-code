@@ -255,6 +255,24 @@ describe("what's waiting", () => {
     expect(idles(id).at(-1)?.outcome).toBe("interrupted")
   })
 
+  test("a message sent while a session is being deleted starts nothing", async () => {
+    timing.stopGrace = 50
+    a.script = (_input, turn) => {
+      turn.startStep()
+      return new Promise(() => {})
+    }
+    const id = create()
+    send(id, "first")
+    await until(() => a.runs.length === 1)
+    const removed = sessions.remove(id)
+    expect(() => send(id, "late")).toThrow()
+    await removed
+    await Bun.sleep(100)
+    expect(a.runs).toHaveLength(1)
+    expect(sessions.list().some((session) => session.id === id)).toBe(false)
+    expect(sessions.active()).not.toContain(id)
+  })
+
   test("deleting a session starts nothing that waited", async () => {
     a.script = works
     const id = create()
@@ -596,6 +614,57 @@ describe("Auto", () => {
     expect(b.runs).toHaveLength(0)
   })
 
+  test("another model of the same agent carries on, without your message again", async () => {
+    auto.set([
+      { providerID: "alpha", modelID: "one" },
+      { providerID: "alpha", modelID: "two" },
+    ])
+    a.script = (input, turn, hooks, thread) => (input.model.id === "one" ? limited("model")(input, turn, hooks, thread) : replies(input, turn, hooks, thread))
+    const id = create({ providerID: "auto", id: "auto" })
+    send(id, "do it")
+    await settled(id, 1)
+    expect(a.runs.map((run) => run.model)).toEqual(["one", "two"])
+    const second = a.runs[1].text
+    expect(second).not.toContain("do it")
+    expect(second).not.toContain("began with another agent")
+    expect(second).toContain("Carry on with my last message")
+  })
+
+  test("a model that can't take the message is passed by; one that did some of it isn't", async () => {
+    auto.set([
+      { providerID: "alpha", modelID: "gone" },
+      { providerID: "beta", modelID: "one" },
+    ])
+    a.script = async () => ({ outcome: "failed", error: { type: "agent", message: "Unknown model gone" } })
+    const id = create({ providerID: "auto", id: "auto" })
+    send(id, "do it")
+    await settled(id, 1)
+    expect(idles(id)[0].outcome).toBe("succeeded")
+    expect(b.runs).toHaveLength(1)
+    expect(sessions.messages(id).some((message) => message.type === "synthetic" && message.text.includes("couldn't take it"))).toBe(true)
+    // Nothing held: it's tried again next time.
+    expect(auto.limits()).toHaveLength(0)
+
+    a.script = async (_input, turn) => {
+      turn.startStep()
+      turn.toolStart("call_x", "shell", { command: "rm build" })
+      turn.toolSucceeded("call_x", "")
+      turn.endStep()
+      return { outcome: "failed", error: { type: "agent", message: "broke halfway" } }
+    }
+    send(id, "again")
+    await settled(id, 2)
+    expect(idles(id)[1].outcome).toBe("failed")
+    expect(b.runs).toHaveLength(1)
+  })
+
+  test("a short rate limit is held a few minutes", () => {
+    auto.hold({ providerID: "alpha", modelID: "one" }, { scope: "model", brief: true })
+    const held = auto.limits()[0]
+    expect(held.until - Date.now()).toBeLessThan(4 * 60_000)
+    expect(held.until - Date.now()).toBeGreaterThan(2 * 60_000)
+  })
+
   test("an empty list can't be picked", () => {
     expect(() => create({ providerID: "auto", id: "auto" })).toThrow("Settings › Auto")
   })
@@ -636,6 +705,19 @@ describe("a session the bridge stopped in the middle of", () => {
     expect(step.time.completed).toBeDefined()
     expect(step.content[0].state.status).toBe("error")
     expect(sessions.get(id).outcome).toBe("interrupted")
+  })
+
+  test("a turn an app note started is ended too", () => {
+    const id = create()
+    const record = store.get(id)!
+    record.messages.push(
+      { type: "user", id: "msg_u", time: { created: 1 }, text: "go" },
+      { type: "idle", id: "msg_i", time: { created: 2 }, outcome: "interrupted" },
+      { type: "synthetic", id: "msg_s", time: { created: 3 }, text: "The user switched the model." },
+    )
+    store.save(id, true)
+    make()
+    expect(sessions.messages(id).at(-1)).toMatchObject({ type: "idle", outcome: "interrupted" })
   })
 
   test("a damaged session folder is skipped", () => {

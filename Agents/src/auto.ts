@@ -3,7 +3,7 @@
 // on with the next (the conversation carried over). A limit on a whole account (a plan's 5-hour
 // window) skips every model of that provider; a limit on one model (Claude's weekly Opus
 // allowance) skips only that model. A limit lasts until its reset, when the agent says when that
-// is, and otherwise half an hour.
+// is, and otherwise half an hour (a few minutes for requests too close together).
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
@@ -24,6 +24,8 @@ export interface Limit {
   resetsAt?: number
   /** The agent's own words for it. */
   message?: string
+  /** A short one (requests too close together), not a plan's allowance: held a few minutes. */
+  brief?: boolean
 }
 
 interface Held {
@@ -34,6 +36,7 @@ interface Held {
 }
 
 const unknownReset = 30 * 60_000
+const briefReset = 3 * 60_000
 
 export class Auto {
   private entries: AutoEntry[] = []
@@ -96,7 +99,7 @@ export class Auto {
   hold(entry: AutoEntry, limit: Limit) {
     const key = limit.scope === "provider" ? Auto.providerKey(entry.providerID) : Auto.modelKey(entry)
     const known = Boolean(limit.resetsAt && limit.resetsAt > Date.now())
-    const until = known ? limit.resetsAt! : Date.now() + unknownReset
+    const until = known ? limit.resetsAt! : Date.now() + (limit.brief ? briefReset : unknownReset)
     this.held = this.held.filter((held) => held.key !== key)
     this.held.push({ key, until, scope: limit.scope, known })
     this.save()
