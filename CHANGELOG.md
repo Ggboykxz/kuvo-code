@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Integrations: Change Key keeps how you set an integration up (turned off, Code Mode, your headers), a settings file Kuvo Code can't change says so on the page rather than failing quietly, Remove always signs you out, keys keep working when Kuvo Code runs for days, and a sign-in the engine lost stops waiting.
 - Adding a machine as `ssh://host:port` or by an IPv6 address is refused with how to do it (a Host in `~/.ssh/config`). The app then read your Mac's files at the machine's paths. And a dropped connection no longer starts two reconnect attempts at once, or replaces what went wrong with "the connection was lost".
 - Going back to one of the last few sessions you had open shows it at once, scrolled where you left it. Switching to a long conversation took up to a quarter of a second, and it opened at the end.
 - Resizing the window with a long conversation open is smoother: it took twice the work, as the conversation was laid out again to keep its end in view at every step, and the sidebar was made again each time too.

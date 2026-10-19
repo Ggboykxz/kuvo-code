@@ -196,6 +196,7 @@ final class AppModel {
             #endif
             // Read off the main thread: the keychain can wait on you (a prompt to allow it).
             await Task.detached { IntegrationKeys.writeFiles() }.value
+            IntegrationKeys.keepFresh()
             let integrations = AppInfo.supportDirectory.appending(path: "integrations")
             try? FileManager.default.createDirectory(at: integrations, withIntermediateDirectories: true)
             shell["KUVO_INTEGRATIONS"] = integrations.path

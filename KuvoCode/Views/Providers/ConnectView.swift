@@ -43,6 +43,8 @@ struct ConnectView: View {
     @State private var copied = false
     @State private var copyReset: Task<Void, Never>?
     @State private var pollTask: Task<Void, Never>?
+    /// The page was closed: a sign-in still starting then is called off, not opened.
+    @State private var left = false
 
     struct Highlight: Hashable {
         let symbol: String
@@ -88,7 +90,10 @@ struct ConnectView: View {
             Analytics.shared.onboardingStep("connect_account", ["provider": Analytics.provider(integrationID)])
             chooseOnlyMethod()
         }
-        .onDisappear(perform: cancelAttempt)
+        .onDisappear {
+            left = true
+            cancelAttempt()
+        }
     }
 
     // MARK: Steps
@@ -400,6 +405,10 @@ struct ConnectView: View {
                 switch method {
                 case .oauth(let id, _, _):
                     let attempt = try await api.startOAuth(integration: integrationID, method: id, answer: answer.isEmpty ? nil : answer)
+                    guard !left else {
+                        try? await api.cancelOAuth(integration: integrationID, attempt: attempt.attemptID)
+                        return
+                    }
                     step = .waiting(attempt)
                     if let code = attempt.userCode { copy(code) }
                     open(attempt.url)
@@ -441,10 +450,22 @@ struct ConnectView: View {
     private func poll(_ attempt: OAuthAttempt) {
         pollTask?.cancel()
         pollTask = Task {
+            // The engine not knowing the sign-in for ten seconds running: it started over, and the
+            // sign-in went with it.
+            var misses = 0
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
                 guard !Task.isCancelled, let api = app.api else { return }
-                guard let status = try? await api.oauthStatus(integration: integrationID, attempt: attempt.attemptID) else { continue }
+                guard let status = try? await api.oauthStatus(integration: integrationID, attempt: attempt.attemptID) else {
+                    misses += 1
+                    if misses >= 10 {
+                        noteFailure(method: "oauth", "engine")
+                        step = .failed("The engine started over while you were signing in. Try again.")
+                        return
+                    }
+                    continue
+                }
+                misses = 0
                 switch status.status {
                 case .pending: continue
                 case .complete: finish(method: "oauth"); return

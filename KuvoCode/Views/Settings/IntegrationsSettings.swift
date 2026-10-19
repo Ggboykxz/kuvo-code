@@ -95,6 +95,8 @@ struct IntegrationsSettings: View {
 
     private var list: some View {
         ScrollingSettingsForm {
+            // Integrations live in the settings file: one that can't be changed changes nothing here.
+            ConfigProblem()
             ForEach(Self.kinds, id: \.self) { kind in
                 Section(kind.rawValue) {
                     ForEach(Integrations.all.filter { $0.kind == kind }) { service in
@@ -274,9 +276,14 @@ struct IntegrationsSettings: View {
     }
 
     private func add(_ service: Integrations.Service) {
-        guard let settings = Integrations.settings(for: service) else { return }
-        config.set(settings, at: MCPSettings.path + [service.id])
-        Analytics.shared.track("integration_added", ["integration": service.id])
+        guard config.problem == nil else { return }
+        let path = MCPSettings.path + [service.id]
+        // Added already (a new key or app for it): as you set it up (turned off, Code Mode, headers
+        // you added), written again so the engine reads its keys again.
+        let existing = config.value(at: path)
+        guard let settings = existing ?? Integrations.settings(for: service) else { return }
+        config.set(settings, at: path)
+        if existing == nil { Analytics.shared.track("integration_added", ["integration": service.id]) }
         // One that needs a key waits for it (saving it renews them).
         // Machines' engines take their settings when they start (this Mac's reads the file).
         if Integrations.keys(of: service.way).isEmpty, !Integrations.macOnly.contains(service.id) { app.renewEngines(mac: false) }
@@ -284,7 +291,20 @@ struct IntegrationsSettings: View {
 
     /// Out of the engine's settings, with its keys, its sign-in and what its server kept.
     private func remove(_ service: Integrations.Service) {
-        let signIn = live.first { $0.name == service.id }?.integrationID
+        // Its keys and sign-in stay while it stays in a settings file that can't be changed.
+        guard config.problem == nil else { return }
+        let listed = live.first { $0.name == service.id }?.integrationID
+        Task {
+            // Its sign-in as the engine has it now (the page's last look may have missed it), asked
+            // before it leaves the settings, and then the server with it.
+            var signIn = listed
+            if signIn == nil, let api = app.api { signIn = (try? await api.mcpServers())?.first { $0.name == service.id }?.integrationID }
+            removeEntry(service)
+            if let signIn { app.forgetSignIn(signIn) }
+        }
+    }
+
+    private func removeEntry(_ service: Integrations.Service) {
         config.set(nil, at: MCPSettings.path + [service.id])
         for key in Integrations.keys(of: service.way) { IntegrationKeys.set(nil, for: IntegrationKeys.variable(service.id, key.name)) }
         // What its server kept: its own folder (and the file it once kept), here and on the
@@ -295,7 +315,6 @@ struct IntegrationsSettings: View {
             let machine = engine.machine.id
             Task.detached { _ = RemoteShell.run("rm -rf \(kept)", on: machine) }
         }
-        if let signIn { app.forgetSignIn(signIn) }
         if !Integrations.macOnly.contains(service.id) { app.renewEngines(mac: false) }
     }
 

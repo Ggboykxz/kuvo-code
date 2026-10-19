@@ -61,6 +61,28 @@ nonisolated enum IntegrationKeys {
         }
     }
 
+    /// macOS clears what's sat three days in a temporary folder, and Kuvo Code runs for longer:
+    /// each key's file is marked used twice a day (and written again if it went), so the engine
+    /// still finds it when it next reads its settings.
+    static func keepFresh() {
+        guard freshness == nil else { return }
+        freshness = Task.detached {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(12 * 3600))
+                let manager = FileManager.default
+                let keys = environment
+                if keys.contains(where: { !manager.fileExists(atPath: folder.appending(path: $0.key).path) }) {
+                    writeFiles()
+                } else {
+                    for name in keys.keys { utimes(folder.appending(path: name).path, nil) }
+                    utimes(folder.path, nil)
+                }
+            }
+        }
+    }
+
+    nonisolated(unsafe) private static var freshness: Task<Void, Never>?
+
     /// One key's file, for an engine that's running: its settings read it when they're next read
     /// (as adding the integration does), with no need to start it again.
     private static func writeFile(_ value: String, for variable: String) {
