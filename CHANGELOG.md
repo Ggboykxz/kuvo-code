@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- ⌘Return in a new session's composer sends the message. It did nothing.
 - A worktree isn't removed while any session works in it, even one you haven't opened, a subagent or a command left running there. And a merge stopped by a hook or commit signing is taken back, rather than leaving your checkout in the middle of it.
 - Colored lines in the Changes panel never show another line's text after the agent edits the file.
 - The Changes panel shows files with Windows line endings line by line, and no longer folds the next changed file into them. It also reads changes right when your git settings change diff prefixes (diff.mnemonicPrefix, diff.noprefix), shows conflicted files during a merge, stages a renamed file, names a huge or minified file rather than drawing it, and Suggest a Message describes only what the commit takes.
