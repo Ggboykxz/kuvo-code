@@ -278,7 +278,7 @@ nonisolated enum Integrations {
         Service(id: "microsoft-365", title: "Outlook and Microsoft 365", summary: "Mail, calendar, contacts and files; you sign in with a code the first time", kind: .mail, symbol: "envelope", site: "https://outlook.live.com",
                 // --discovery: its own way of keeping its 196 tools (about 280k tokens) out of every
                 // request; the agent searches them and runs the one it needs.
-                way: .package(command: ["@softeria/ms-365-mcp-server@0.170.1", "--discovery"], keys: [], help: nil, by: "Softeria's ms-365-mcp-server", environment: [
+                way: .package(command: ["@softeria/ms-365-mcp-server@0.170.2", "--discovery"], keys: [], help: nil, by: "Softeria's ms-365-mcp-server", environment: [
                     // Its sign-in, chosen account and logs in a folder of its own, not the home folder or the keychain.
                     "MS365_MCP_TOKEN_CACHE_PATH": "{env:KUVO_INTEGRATIONS}/microsoft-365/token-cache.json",
                     "MS365_MCP_SELECTED_ACCOUNT_PATH": "{env:KUVO_INTEGRATIONS}/microsoft-365/selected-account.json",
@@ -321,7 +321,7 @@ nonisolated enum Integrations {
         Service(id: "atlassian", title: "Jira and Confluence", summary: "Issues and pages at Atlassian", kind: .work, symbol: "square.stack.3d.up", site: "https://www.atlassian.com",
                 way: .official(url: "https://mcp.atlassian.com/v2/mcp")),
         Service(id: "todoist", title: "Todoist", summary: "Tasks and projects", kind: .work, symbol: "checkmark.circle", site: "https://app.todoist.com",
-                way: .package(command: ["@doist/todoist-mcp@13.6.0"], keys: [Key(name: "TODOIST_API_KEY", label: "API token", prompt: "From Settings › Integrations › Developer")], help: "https://app.todoist.com/app/settings/integrations/developer", by: "Doist's own todoist-mcp")),
+                way: .package(command: ["@doist/todoist-mcp@13.6.1"], keys: [Key(name: "TODOIST_API_KEY", label: "API token", prompt: "From Settings › Integrations › Developer")], help: "https://app.todoist.com/app/settings/integrations/developer", by: "Doist's own todoist-mcp")),
         Service(id: "calendly", title: "Calendly", summary: "Your event types, bookings and availability", kind: .work, symbol: "calendar.badge.plus", site: "https://calendly.com/app",
                 way: .official(url: "https://mcp.calendly.com")),
         Service(id: "figma", title: "Figma", summary: "Files and frames, to build designs from", kind: .work, symbol: "paintbrush", site: "https://www.figma.com",
