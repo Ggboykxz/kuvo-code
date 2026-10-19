@@ -322,7 +322,10 @@ final class AppModel {
             self?.catalog.handle(event)
             self?.workspace.handleAgents(event)
         }
-        agents.onStopped = { [weak self] in self?.catalog.forgetAgents() }
+        agents.onStopped = { [weak self] in
+            self?.catalog.forgetAgents()
+            self?.workspace.agentsStopped()
+        }
         agents.onConnected = { [weak self] in
             Task {
                 await self?.catalog.refreshAgents()

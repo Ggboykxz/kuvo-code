@@ -861,9 +861,28 @@ final class Workspace {
             if let active = try? await api.activeSessions() {
                 running = running.filter { id in !(session(id).map(OutsideAgents.isAgentSession) ?? false) }.union(active)
             }
+            // Questions it asked before starting over went with it (it keeps them in memory): only
+            // those it still asks stay.
+            for (request, id) in asking where session(id).map(OutsideAgents.isAgentSession) ?? false {
+                let permissions = (try? await api.permissions(session: id)) ?? []
+                let forms = (try? await api.forms(session: id)) ?? []
+                if !permissions.contains(where: { $0.id == request }) && !forms.contains(where: { $0.id == request }) {
+                    asking[request] = nil
+                    Notifier.shared.clear(request: request)
+                }
+            }
         } catch {
             log.error("agents' sessions: \(String(describing: error), privacy: .public)")
         }
+    }
+
+    /// The agents bridge stopped for good: its sessions aren't at work, nor asking anything.
+    func agentsStopped() {
+        for (request, id) in asking where session(id).map(OutsideAgents.isAgentSession) ?? false {
+            asking[request] = nil
+            Notifier.shared.clear(request: request)
+        }
+        running = running.filter { id in !(session(id).map(OutsideAgents.isAgentSession) ?? false) }
     }
 
     /// The folders of the sessions open or at work on `machine` (nil: this Mac): folders its
