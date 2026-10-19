@@ -28,6 +28,11 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            windows/app/package-lock.json
+            windows/harness/package-lock.json
+            windows/electron/package-lock.json
 
       - name: Test the engine bootstrap
         run: node --test "windows/*.test.mjs"
@@ -49,6 +54,11 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            windows/app/package-lock.json
+            windows/harness/package-lock.json
+            windows/electron/package-lock.json
 
       - name: Test the engine bootstrap
         run: node --test "windows/*.test.mjs"
@@ -63,7 +73,7 @@ jobs:
       - name: Build the app's interface
         working-directory: windows/app
         run: |
-          npm install --no-audit --no-fund
+          npm install --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000
           npm run build
 
       # Downloads the pinned Windows build, checks it against npm's checksum, starts it and
@@ -79,7 +89,7 @@ jobs:
           KUVO_HARNESS_LIVE: "1"
         working-directory: windows/harness
         run: |
-          npm install --no-audit --no-fund
+          npm install --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000
           npm run test:live
 
       # The same harness packed into one executable: this runner's own node.exe, the bundled
@@ -87,7 +97,7 @@ jobs:
       - name: Build the Windows executable
         working-directory: windows/harness
         run: |
-          npm install --no-audit --no-fund
+          npm install --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000
           npm run build:exe
 
       - name: Prove the executable serves the page by itself
@@ -112,18 +122,23 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            windows/app/package-lock.json
+            windows/harness/package-lock.json
+            windows/electron/package-lock.json
 
       # The shell wraps the harness executable, so build that first — with the page it shows.
       - name: Build the app's interface
         working-directory: windows/app
         run: |
-          npm install --no-audit --no-fund
+          npm install --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000
           npm run build
 
       - name: Build the harness executable
         working-directory: windows/harness
         run: |
-          npm install --no-audit --no-fund
+          npm install --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000
           npm run build:exe
 
       # node-pty is a native module: it needs the MSVC developer environment to build.
@@ -141,7 +156,7 @@ jobs:
           CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE }}
           CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: |
-          npm install --no-audit --no-fund
+          npm install --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000
           npm run build
 
       - name: Prove the shell starts
