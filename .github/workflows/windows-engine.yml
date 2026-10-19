@@ -5,6 +5,9 @@ on:
   # No path filter: a pull request has to be able to satisfy the checks the protected
   # branches require, whatever it touches.
   pull_request:
+  # The working line and main: the executable the release ships is built here.
+  push:
+    branches: [windows/harness, main]
 
 permissions:
   contents: read
