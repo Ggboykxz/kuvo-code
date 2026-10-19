@@ -93,6 +93,7 @@ struct ChangesPanel: View {
                         changes = ProjectChanges(directory: folder)
                         changes.scope = scope == .branch || scope == .session ? .uncommitted : scope
                         collapsed = []
+                        highlighting = [:]
                     })) {
                         ForEach(folders, id: \.self) { Text(($0 as NSString).lastPathComponent).tag($0) }
                     }
@@ -1015,12 +1016,18 @@ nonisolated struct DiffHighlighting: Sendable {
     }
 
     func runs(for line: DiffLine, at index: Int) -> [CodeHighlighter.Run]? {
+        let runs: [CodeHighlighter.Run]
         if line.kind == .removed {
             guard let position = oldIndex[index], position < oldSide.count else { return nil }
-            return oldSide[position]
+            runs = oldSide[position]
+        } else {
+            guard let position = newIndex[index], position < newSide.count else { return nil }
+            runs = newSide[position]
         }
-        guard let position = newIndex[index], position < newSide.count else { return nil }
-        return newSide[position]
+        // Made for the file before its latest change, where another line had this place: the
+        // line as it is, plain, until it's colored again.
+        guard runs.map(\.text).joined() == line.text else { return nil }
+        return runs
     }
 }
 
