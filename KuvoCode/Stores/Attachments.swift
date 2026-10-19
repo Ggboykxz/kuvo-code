@@ -50,7 +50,23 @@ nonisolated enum Attachments {
         case path(reason: String, isWarning: Bool)
     }
 
+    /// The composer asks again at every keystroke, and finding a file's kind can read it (one in
+    /// iCloud downloads): what was found, by file and model, until a couple of hundred pile up.
+    nonisolated(unsafe) private static var routes: [String: Route] = [:]
+    private static let routesLock = NSLock()
+
     static func route(_ url: URL, for model: Model?) -> Route {
+        let key = url.path + "\n" + (model?.key ?? "")
+        if let known = routesLock.withLock({ routes[key] }) { return known }
+        let route = findRoute(url, for: model)
+        routesLock.withLock {
+            if routes.count > 200 { routes.removeAll() }
+            routes[key] = route
+        }
+        return route
+    }
+
+    private static func findRoute(_ url: URL, for model: Model?) -> Route {
         let input = model?.capabilities.input
         let name = model?.name ?? "This model"
         let size = (try? target(of: url).resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
