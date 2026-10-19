@@ -52,12 +52,42 @@ public enum EngineInstallError: LocalizedError {
     case integrityMismatch
     case badSignature(OSStatus)
     case extractionFailed(String)
+    /// npm's server, or a proxy on the way, answered with an error: its HTTP status.
+    case serverAnswered(Int)
 
     public var errorDescription: String? {
         switch self {
         case .integrityMismatch: "The downloaded engine didn't match its checksum."
         case .badSignature: "The downloaded engine isn't signed by the opencode team."
         case .extractionFailed(let output): "The engine couldn't be unpacked. \(output)"
+        case .serverAnswered(let status):
+            "The engine's download (from registry.npmjs.org) was refused, with HTTP \(status)\(status == 407 ? ": a proxy wants you to sign in" : ""). Check that this Mac can reach registry.npmjs.org, then try again."
+        }
+    }
+
+    /// What kind of trouble getting or starting the engine ran into, in a word, for anonymous
+    /// usage: never the error's words.
+    public static func kind(of error: any Error) -> String {
+        switch error {
+        case EngineInstallError.integrityMismatch: return "checksum"
+        case EngineInstallError.badSignature: return "signature"
+        case EngineInstallError.extractionFailed: return "unpack"
+        case EngineInstallError.serverAnswered(let status): return "http_\(status)"
+        case let error as URLError:
+            switch error.code {
+            case .notConnectedToInternet, .dataNotAllowed, .internationalRoamingOff: return "offline"
+            case .timedOut: return "timeout"
+            case .cannotFindHost, .dnsLookupFailed: return "dns"
+            case .cannotConnectToHost: return "connect"
+            case .networkConnectionLost: return "dropped"
+            case .secureConnectionFailed, .serverCertificateUntrusted, .serverCertificateHasBadDate, .serverCertificateNotYetValid, .serverCertificateHasUnknownRoot, .clientCertificateRejected, .clientCertificateRequired: return "tls"
+            case .cancelled: return "cancelled"
+            case .cannotCreateFile, .cannotWriteToFile, .cannotMoveFile: return "disk"
+            default: return "network"
+            }
+        case let error as CocoaError where error.code == .fileWriteOutOfSpace: return "disk"
+        case let error as POSIXError where error.code == .ENOSPC: return "disk"
+        default: return "other"
         }
     }
 }
@@ -112,12 +142,29 @@ public struct EngineInstaller: Sendable {
     }
 
     /// Downloads a release's tarball to a temporary file and checks it against npm's checksum.
+    /// A connection that drops or stalls is tried again, twice, from where it stopped.
     static func download(_ release: EngineRelease, progress: @escaping @Sendable (Double) -> Void) async throws -> URL {
         let observer = DownloadProgress(report: progress)
-        let (download, response) = try await URLSession.shared.download(from: release.tarball, delegate: observer)
+        var resume: Data?
+        var attempt = 0
+        var finished: (URL, URLResponse)?
+        while finished == nil {
+            do {
+                if let resume {
+                    finished = try await URLSession.shared.download(resumeFrom: resume, delegate: observer)
+                } else {
+                    finished = try await URLSession.shared.download(from: release.tarball, delegate: observer)
+                }
+            } catch let error as URLError where attempt < 2 && Self.retries.contains(error.code) {
+                attempt += 1
+                resume = error.downloadTaskResumeData
+                try await Task.sleep(for: .seconds(2 * attempt))
+            }
+        }
+        guard let (download, response) = finished else { throw URLError(.unknown) }
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             try? FileManager.default.removeItem(at: download)
-            throw URLError(.badServerResponse)
+            throw EngineInstallError.serverAnswered(http.statusCode)
         }
         do {
             try verifyIntegrity(of: download, against: release)
@@ -127,6 +174,9 @@ public struct EngineInstaller: Sendable {
         }
         return download
     }
+
+    /// Network trouble that's often gone a moment later.
+    private static let retries: Set<URLError.Code> = [.networkConnectionLost, .timedOut, .cannotConnectToHost, .notConnectedToInternet, .dnsLookupFailed]
 
     static func verifyIntegrity(of file: URL, against release: EngineRelease) throws {
         guard release.integrity.hasPrefix("sha512-") else { throw EngineInstallError.integrityMismatch }

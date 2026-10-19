@@ -297,7 +297,7 @@ final class AppModel {
                 }
             }
             log.error("Engine failed to start: \(reason, privacy: .public)")
-            Analytics.shared.track("engine_failed", ["reason": stage])
+            Analytics.shared.track("engine_failed", ["reason": stage, "kind": EngineInstallError.kind(of: error)])
             // Nothing is left running (a server that never got ready is stopped). A start after an
             // automatic restart failing means the engine stopped.
             stop()
