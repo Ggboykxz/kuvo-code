@@ -122,9 +122,9 @@ final class MachineEngine {
         /// Changes when the settings do, so an engine started with older ones is known.
         /// The launch script's, the watchdog's and the browser helper's versions count too: an
         /// engine running older ones is started over the next time it's idle. (The launch script's
-        /// goes up when what it sets up changes: its folders, `kuvo-npx`.)
+        /// goes up when what it sets up changes: its folders, `kuvo-npx`, the commands' plugin.)
         var fingerprint: String {
-            let text = environment.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "\n") + "\nlaunch=5\nwatchdog=wakes\nbrowser=\(helper.hash)"
+            let text = environment.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "\n") + "\nlaunch=6\nwatchdog=wakes\nbrowser=\(helper.hash)"
             return SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
         }
     }
