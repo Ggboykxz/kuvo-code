@@ -1284,7 +1284,15 @@ final class MachineBrowserLink {
             let width = (metadata["deviceWidth"] as? NSNumber)?.doubleValue ?? Double(image.width)
             let height = (metadata["deviceHeight"] as? NSNumber)?.doubleValue ?? Double(image.height)
             let scroll = CGPoint(x: (metadata["scrollOffsetX"] as? NSNumber)?.doubleValue ?? 0, y: (metadata["scrollOffsetY"] as? NSNumber)?.doubleValue ?? 0)
-            deliverFrame(Frame(image: image, size: CGSize(width: width, height: height), scroll: scroll, session: session, bytes: data.count, digest: data.hashValue))
+            deliverFrame(Frame(image: image, size: CGSize(width: width, height: height), scroll: scroll, session: session, bytes: data.count, digest: Self.digest(data)))
+        }
+
+        /// A hash of all of it: `Data`'s own covers only its length and first 80 bytes, the same
+        /// JPEG header in every picture, so a changed one the same size passed for the last.
+        private static func digest(_ data: Data) -> Int {
+            var hasher = Hasher()
+            data.withUnsafeBytes { hasher.combine(bytes: $0) }
+            return hasher.finalize()
         }
     }
 }
