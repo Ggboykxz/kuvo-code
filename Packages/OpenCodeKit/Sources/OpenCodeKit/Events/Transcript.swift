@@ -42,6 +42,10 @@ public struct Transcript: Sendable, Equatable {
         }
     }
 
+    /// The sessions of subagents working for this one: what they ask (a permission, a question)
+    /// shows here, as this conversation's, and is answered in their session.
+    public var helpers: Set<String> = []
+
     public init(sessionID: String) {
         self.sessionID = sessionID
     }
@@ -158,7 +162,7 @@ public struct Transcript: Sendable, Equatable {
 
     /// This session's own forms, and what an MCP server asks while a tool of it runs here.
     private func isOurs(_ form: FormRequest) -> Bool {
-        if form.sessionID == sessionID { return true }
+        if form.sessionID == sessionID || helpers.contains(form.sessionID) { return true }
         guard form.sessionID == FormRequest.anySession, let server = form.server else { return false }
         return isWaiting(on: server)
     }
@@ -170,7 +174,7 @@ public struct Transcript: Sendable, Equatable {
         switch event.type {
         case "permission.asked":
             let request = try event.payload(as: PermissionRequest.self)
-            guard request.sessionID == sessionID else { return }
+            guard request.sessionID == sessionID || helpers.contains(request.sessionID) else { return }
             permissions.removeAll { $0.id == request.id }
             permissions.append(request)
             return

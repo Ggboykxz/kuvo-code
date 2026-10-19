@@ -501,7 +501,7 @@ final class Workspace {
     /// Waiting on you: a permission, a question or a sign-in, in a conversation you have open or
     /// not (a bot's work in a session of its own, say).
     func needsAttention(_ id: String) -> Bool {
-        if askingInBrowser.contains(id) || asking.values.contains(id) { return true }
+        if askingInBrowser.contains(id) || asking.values.contains(where: { $0 == id || root(of: $0) == id }) { return true }
         guard let model = models[id] else { return false }
         return !model.permissions.isEmpty || !model.forms.isEmpty
     }
@@ -1050,6 +1050,10 @@ final class Workspace {
         if let id = event.sessionID ?? Self.formSessionID(event), let model = models[id] {
             model.apply(event)
         }
+        // A subagent's asks: shown in the conversation it works for.
+        if Self.asksEvents.contains(event.type), let id = event.sessionID ?? Self.formSessionID(event), case let parent = root(of: id), parent != id, let model = models[parent] {
+            model.applyHelper(event, from: id)
+        }
         noteQuestions(event)
         guard let id = event.sessionID else { return }
         // A run's first words, thought or tool: how long the model took to start.
@@ -1227,6 +1231,8 @@ final class Workspace {
         Analytics.shared.track("turn_finished", props)
         Analytics.shared.noteTurn(in: id)
     }
+
+    private static let asksEvents: Set<String> = ["permission.asked", "permission.replied", "form.created", "form.replied", "form.cancelled"]
 
     /// Keeps `asking` current, and tells you about a new request while you're elsewhere.
     private func noteQuestions(_ event: ServerEvent) {

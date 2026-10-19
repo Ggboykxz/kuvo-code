@@ -67,6 +67,8 @@ final class BrowserAsks {
     @ObservationIgnored var askerName: (String) -> String? = { _ in nil }
     /// The tab that shows an ask, for its notification: its conversation, or a bot's group chat.
     @ObservationIgnored var tab: (Ask) -> String? = { $0.session }
+    /// The conversation a session's agent works for: a subagent's, its parent's.
+    @ObservationIgnored var conversation: (String) -> String = { $0 }
 
     /// The asks of one conversation.
     func asks(for session: String) -> [Ask] {
@@ -133,6 +135,8 @@ final class BrowserAsks {
     /// An ask from a machine's browser; `respond` sends the answer back there.
     func add(_ ask: Ask, respond: @escaping (Answer) -> Void) {
         var ask = ask
+        // A subagent's goes to the conversation it works for, which shows it and waits on you.
+        ask.session = ask.session.map(conversation)
         if let session = ask.session {
             // The engine said whose it is: that session's start of asking is accounted for.
             askers[ask.machine ?? ""]?.removeAll { $0.session == session }

@@ -1121,8 +1121,17 @@ final class SessionModel {
         guard canReach else { return }
         Analytics.shared.track("permission_answered", ["action": Analytics.action(request.action), "decision": decision.rawValue])
         Task {
-            do { try await api.reply(session: id, permission: request.id, decision: decision, message: message) } catch { failure = error.localizedDescription }
+            // In the session that asked: a subagent's own, for one of its asks shown here.
+            do { try await api.reply(session: request.sessionID, permission: request.id, decision: decision, message: message) } catch { failure = error.localizedDescription }
         }
+    }
+
+    /// Something a subagent of this conversation asks or settles (a permission, a question): it
+    /// shows here, as nothing else shows a subagent's.
+    func applyHelper(_ event: ServerEvent, from helper: String) {
+        if !transcript.helpers.contains(helper) { transcript.helpers.insert(helper) }
+        if live?.helpers.contains(helper) == false { live?.helpers.insert(helper) }
+        apply(event)
     }
 
     func answer(_ form: FormRequest, with answer: FormAnswer) {
