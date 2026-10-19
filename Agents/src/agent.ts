@@ -3,6 +3,7 @@
 
 import type { AgentAccount } from "./accounts"
 import type { Limit } from "./auto"
+import type { Maintenance, UpdateResult } from "./maintenance"
 import type { Deps } from "./deps"
 import type { Turn, Outcome } from "./turn"
 import type { Decision, FormAnswer, FormField, IntegrationMethod, Model, ModelRef, OAuthStatus, Session, StructuredError } from "./wire"
@@ -125,6 +126,10 @@ export interface Agent {
   removeAccount?(): Promise<void>
   /** Stops what it keeps running (an app-server): its account is gone. */
   shutdown?(): void
+  /** The version of its program you have, the newest, and how it's updated (an agent you install). */
+  maintenance?(fresh?: boolean): Promise<Maintenance>
+  /** Updates its program through the installer that owns it. */
+  update?(): Promise<UpdateResult>
   thread(session: Session, state: Record<string, unknown>): Thread
   /** A session here was deleted: its conversation where the agent keeps it goes too. */
   forgetConversation?(state: Record<string, unknown>): Promise<void>

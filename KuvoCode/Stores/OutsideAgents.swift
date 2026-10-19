@@ -249,6 +249,12 @@ final class OutsideAgents {
         try await api.removeAgentAccount(providerID)
     }
 
+    /// Updates an agent's program (Claude Code, Codex, Grok's CLI) through the installer that owns it.
+    func update(_ providerID: String) async throws -> AgentUpdate {
+        guard let api else { throw Failure.unavailable("Updating") }
+        return try await api.updateAgent(providerID)
+    }
+
     /// Signs out of an agent, where the agent lets an app do that (Cursor's browser sign-in).
     func signOut(_ providerID: String) async throws {
         guard let api else { return }
@@ -348,6 +354,13 @@ extension OpenCodeAPI {
         _ = try await client.send(try client.request("PATCH", "api/kuvo/accounts/\(providerID.pathComponentEscaped)", body: Body(label: label)), as: Empty.self)
     }
 
+    /// Runs the agent's update, which can take minutes (a download, Homebrew updating itself first).
+    func updateAgent(_ providerID: String) async throws -> AgentUpdate {
+        var request = try client.request("POST", "api/integration/\(providerID.pathComponentEscaped)/update")
+        request.timeoutInterval = 15 * 60
+        return try await client.send(request, as: DataEnvelope<AgentUpdate>.self).data
+    }
+
     func removeAgentAccount(_ providerID: String) async throws {
         _ = try await client.send(try client.request("DELETE", "api/kuvo/accounts/\(providerID.pathComponentEscaped)"), as: Empty.self)
     }
@@ -356,6 +369,14 @@ extension OpenCodeAPI {
     func disconnectAgent(_ providerID: String) async throws {
         _ = try await client.send(try client.request("POST", "api/integration/\(providerID.pathComponentEscaped)/disconnect"), as: Empty.self)
     }
+}
+
+/// How updating an agent's program went.
+nonisolated struct AgentUpdate: Decodable, Sendable {
+    var updated: Bool
+    var version: String?
+    /// What went wrong, in the installer's words.
+    var message: String?
 }
 
 nonisolated private struct AddedAccount: Decodable, Sendable {

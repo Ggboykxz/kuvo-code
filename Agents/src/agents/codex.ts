@@ -10,6 +10,7 @@ import type { Agent, AgentContext, Account, RunInput, RunResult, SignInAttempt, 
 import type { Limit } from "../auto"
 import { accountName, failure, model } from "../agent"
 import { fromPatch } from "../diff"
+import { maintenance, update, type MaintenanceDefinition } from "../maintenance"
 import { which } from "../proc"
 import { RPC, RPCError } from "../rpc"
 import type { Turn } from "../turn"
@@ -43,6 +44,31 @@ export class CodexAgent implements Agent {
 
   executable(): string | undefined {
     return which("codex", places)
+  }
+
+  /** Its own installer puts it in `~/.codex`: `codex update`. */
+  private get definition(): MaintenanceDefinition | undefined {
+    const executable = this.executable()
+    if (!executable) return undefined
+    return { name: "Codex", executable, npmPackage: "@openai/codex", nativeUpdate: { args: ["update"], isNative: (path) => path.includes("/.codex/") } }
+  }
+
+  async maintenance(fresh = false) {
+    const definition = this.definition
+    return definition ? maintenance(definition, fresh) : {}
+  }
+
+  async update() {
+    const definition = this.definition
+    if (!definition) return { updated: false, message: "Codex isn't installed." }
+    const result = await update(definition, this.context.temporary)
+    if (result.updated) {
+      this.modelList = undefined
+      this.accountCache = undefined
+      // The new Codex lists its models once its app-server starts again: now, if no session is using it.
+      if (!this.threads.size && !this.logins.size) this.shutdown()
+    }
+    return result
   }
 
   methods() {

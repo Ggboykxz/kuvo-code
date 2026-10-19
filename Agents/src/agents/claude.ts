@@ -11,6 +11,7 @@ import type { Agent, AgentContext, Account, RunInput, RunResult, SignInAttempt, 
 import type { Limit } from "../auto"
 import { accountName, failure, model } from "../agent"
 import { fileDiff, fromPatch } from "../diff"
+import { maintenance, update, type MaintenanceDefinition } from "../maintenance"
 import { emit } from "../events"
 import { run, which } from "../proc"
 import { Queue } from "../queue"
@@ -51,6 +52,32 @@ export class ClaudeAgent implements Agent {
 
   executable(): string | undefined {
     return which("claude", places)
+  }
+
+  /** Its own installer puts it in `~/.local/share/claude` (or `~/.claude/local`): `claude update`. */
+  private get definition(): MaintenanceDefinition | undefined {
+    const executable = this.executable()
+    if (!executable) return undefined
+    return {
+      name: "Claude Code",
+      executable,
+      npmPackage: "@anthropic-ai/claude-code",
+      nativeUpdate: { args: ["update"], isNative: (path) => /\/\.local\/share\/claude\/|\/\.claude\/local\//.test(path) },
+    }
+  }
+
+  async maintenance(fresh = false) {
+    const definition = this.definition
+    return definition ? maintenance(definition, fresh) : {}
+  }
+
+  async update() {
+    const definition = this.definition
+    if (!definition) return { updated: false, message: "Claude Code isn't installed." }
+    const result = await update(definition, this.context.temporary)
+    // Its models are the new Claude Code's.
+    if (result.updated) this.modelList = undefined
+    return result
   }
 
   methods() {

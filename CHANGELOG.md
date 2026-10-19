@@ -15,6 +15,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - **Auto**: your own order of models, from any agent or provider, each with its effort, in Settings › Auto. A session on Auto works on the first one in your list; when one reaches its usage limit partway, the next goes on with what was done. A limit on a whole account skips all of its models, a limit on one model only that model, until it resets.
 - A session with a coding agent can move to another model, another agent's or a provider's: the new one gets the conversation so far and carries on.
 - **Refresh** in Accounts checks your coding agents again, and so does coming back to the app: one you installed or signed in to in Terminal shows without restarting.
+- An agent whose own program is out of date (an old Claude Code lists old Claude models) says so in Accounts, with an **Update** button that updates it the way you installed it: Homebrew, npm or the agent's own updater. The model picker points there too.
 - Antigravity's **Sign In** shows its download, then opens Google's page when it's ready, rather than seeming to do nothing.
 - A ChatGPT or SuperGrok plan signs in once, through Codex or Grok under Coding Agents; Accounts no longer offers a second way to the same plan. One you connected before keeps working.
 

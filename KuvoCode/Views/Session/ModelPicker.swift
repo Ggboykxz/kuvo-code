@@ -230,6 +230,10 @@ struct ModelPicker: View {
                                 }
                             }
                         }
+                        if let outdated = provider.outdated {
+                            note(outdated)
+                            settingsButton("Update in Accounts", page: .accounts)
+                        }
                     }
                 } else {
                     note(scope == .all ? "Sign in to a coding agent or a provider in Settings › Accounts to use its models." : "Sign in to a provider in Settings › Accounts to use its models.")

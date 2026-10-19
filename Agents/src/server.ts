@@ -8,6 +8,7 @@ import type { Auto } from "./auto"
 import type { EngineLink } from "./engine"
 import type { Roster } from "./roster"
 import { emit, feed } from "./events"
+import { isOutdated } from "./maintenance"
 import { refreshLoginPath } from "./proc"
 import { newID } from "./ids"
 import { BadRequest, NotFound, Sessions } from "./sessions"
@@ -48,7 +49,11 @@ const error = (status: number, message: string) => json({ message }, status)
 const lastSeen = new Map<string, string>()
 
 export async function integration(agent: Agent, fresh = false): Promise<Integration> {
-  const account: Account = await agent.account(fresh).catch((error) => ({ installed: false, signedIn: false, message: String(error?.message ?? error) }))
+  const [account, maintained] = await Promise.all([
+    agent.account(fresh).catch((error): Account => ({ installed: false, signedIn: false, message: String(error?.message ?? error) })),
+    // Its version, if it says soon enough (it's asked again later).
+    agent.maintenance ? Promise.race([agent.maintenance(fresh).catch(() => undefined), Bun.sleep(15_000).then(() => undefined)]) : undefined,
+  ])
   const seen = JSON.stringify([account.installed, account.signedIn, account.label])
   const before = lastSeen.get(agent.providerID)
   lastSeen.set(agent.providerID, seen)
@@ -70,6 +75,12 @@ export async function integration(agent: Agent, fresh = false): Promise<Integrat
       account: account.label,
       install: agent.install,
       signsOut: Boolean(agent.signOut),
+      // Its program's version, and the newest (an old Claude Code lists old models).
+      version: maintained?.installed,
+      latestVersion: maintained?.latest,
+      outdated: maintained ? isOutdated(maintained) : false,
+      updateCommand: maintained?.shown,
+      updates: Boolean(agent.update && maintained?.command),
     },
     methods: agent.methods(),
     connections: account.signedIn
@@ -175,6 +186,17 @@ export function handler(context: Context) {
           if (!agent.signInWithKey) return error(400, `${agent.name} doesn't take a key here.`)
           await agent.signInWithKey(String(key ?? "").trim())
           return json({})
+        }
+        // Its program updated through the installer that owns it; then what it lists anew.
+        if (b === "update" && method === "POST") {
+          if (!agent.update) return error(400, `Update ${agent.name} the way you installed it.`)
+          const result = await agent.update()
+          if (result.updated) {
+            for (const each of roster.all()) if (each.id === agent.id) each.forgetModels?.()
+            emit("integration.updated", { integrationID: agent.providerID })
+            emit("model.updated", {})
+          }
+          return json({ data: result })
         }
         if (b === "disconnect" && method === "POST") {
           if (!agent.signOut) return error(400, `Sign out of ${agent.name} where you signed in.`)

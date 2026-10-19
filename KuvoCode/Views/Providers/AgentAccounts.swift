@@ -120,6 +120,8 @@ private struct AgentRow: View {
     @State private var name = ""
     @State private var confirmsRemove = false
     @State private var failure: String?
+    @State private var isUpdating = false
+    @State private var updateFailure: String?
 
     private enum Naming { case add, rename }
 
@@ -152,6 +154,10 @@ private struct AgentRow: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
                     .textSelection(.enabled)
+                // Its program is behind: an old one lists old models. (Accounts you added run the same program.)
+                if !isAdded, agent.metadata?["outdated"]?.bool == true, let latest = agent.metadata?["latestVersion"]?.string {
+                    updateLine(latest: latest)
+                }
             }
             Spacer(minLength: 8)
             if agent.isConnected {
@@ -218,6 +224,54 @@ private struct AgentRow: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(failure ?? "")
+        }
+    }
+
+    private func updateLine(latest: String) -> some View {
+        let installed = agent.metadata?["version"]?.string
+        let command = agent.metadata?["updateCommand"]?.string
+        return HStack(spacing: 8) {
+            Text("Version \(latest) is out\(installed.map { "; you have \($0)" } ?? ""). Newer models may need it.")
+                .font(.callout)
+                .foregroundStyle(.orange)
+            if isUpdating {
+                Spinner(size: 12)
+                Text("Updating…")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else if agent.metadata?["updates"]?.bool == true {
+                Button("Update", action: update)
+                    .buttonStyle(.glass)
+                    .controlSize(.small)
+                    .help(command.map { "Runs \($0)" } ?? "Updates it the way it was installed")
+            } else {
+                Text("Update it the way you installed it.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .alert("Couldn't Update \(agentName)", isPresented: Binding(get: { updateFailure != nil }, set: { if !$0 { updateFailure = nil } })) {
+            if let command {
+                Button("Copy Command") { Clipboard.copy(command) }
+            }
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(updateFailure ?? "")
+        }
+    }
+
+    private func update() {
+        isUpdating = true
+        Task {
+            defer { isUpdating = false }
+            do {
+                let result = try await app.agents.update(agent.id)
+                if !result.updated, let message = result.message { updateFailure = message }
+            } catch {
+                updateFailure = error.localizedDescription
+            }
+            // Its version and models, as they are now.
+            await catalog.refreshAgents(fresh: true)
         }
     }
 

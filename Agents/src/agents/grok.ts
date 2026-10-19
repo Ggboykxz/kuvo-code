@@ -7,6 +7,7 @@ import { providerID, type AgentAccount } from "../accounts"
 import type { Agent, AgentContext, Account, SignInAttempt, Thread } from "../agent"
 import { accountName, model } from "../agent"
 import { AcpThread, questionFields } from "../acp"
+import { maintenance, update, type MaintenanceDefinition } from "../maintenance"
 import { plain, run, which } from "../proc"
 import { commandSignIn } from "../signin"
 import type { Model, Session } from "../wire"
@@ -32,6 +33,26 @@ export class GrokAgent implements Agent {
 
   executable(): string | undefined {
     return which("grok", places)
+  }
+
+  /** Its own installer puts it in `~/.grok`: `grok update`. */
+  private get definition(): MaintenanceDefinition | undefined {
+    const executable = this.executable()
+    if (!executable) return undefined
+    return { name: "Grok's CLI", executable, npmPackage: "@xai-official/grok", nativeUpdate: { args: ["update"], isNative: (path) => path.includes("/.grok/") } }
+  }
+
+  async maintenance(fresh = false) {
+    const definition = this.definition
+    return definition ? maintenance(definition, fresh) : {}
+  }
+
+  async update() {
+    const definition = this.definition
+    if (!definition) return { updated: false, message: "Grok's CLI isn't installed." }
+    const result = await update(definition, this.context.temporary)
+    if (result.updated) this.status = undefined
+    return result
   }
 
   methods() {

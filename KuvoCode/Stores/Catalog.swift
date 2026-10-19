@@ -112,6 +112,8 @@ final class Catalog {
         let isAgent: Bool
         /// Why it has no models now (not signed in, not installed), for an agent's account.
         let unavailable: String?
+        /// Its program is behind, in words: the newest models may need the new version.
+        var outdated: String? = nil
     }
 
     /// The picker's providers: your coding agents' accounts (each its own), then the engine's
@@ -130,7 +132,12 @@ final class Catalog {
                 // An agent you don't have and haven't signed in to stays out of the way.
                 if models.isEmpty, account.metadata?["installed"]?.bool == false, OutsideAgents.account(account.id) == nil { continue }
                 let why = models.isEmpty ? (account.isConnected ? "Its models are loading." : account.metadata?["message"]?.string ?? "Sign in to it in Settings › Accounts.") : nil
-                agents.append(PickerProvider(id: account.id, name: account.name, logo: OutsideAgents.logo(account.id), models: models, isAgent: true, unavailable: why))
+                var outdated: String?
+                if account.metadata?["outdated"]?.bool == true, let latest = account.metadata?["latestVersion"]?.string {
+                    let installed = account.metadata?["version"]?.string.map { " \($0)" } ?? ""
+                    outdated = "\(OutsideAgents.name(account.id))\(installed) may not list the newest models: version \(latest) is out."
+                }
+                agents.append(PickerProvider(id: account.id, name: account.name, logo: OutsideAgents.logo(account.id), models: models, isAgent: true, unavailable: why, outdated: outdated))
             }
         }
         let engine = modelsByProvider.compactMap { group -> PickerProvider? in

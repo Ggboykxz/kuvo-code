@@ -1,7 +1,7 @@
 // @bun
 // Agents/src/main.ts
 import { mkdirSync as mkdirSync10, readdirSync as readdirSync4, rmSync as rmSync7 } from "fs";
-import { join as join12 } from "path";
+import { join as join13 } from "path";
 
 // Agents/src/accounts.ts
 import { randomBytes } from "crypto";
@@ -1970,9 +1970,170 @@ class AntigravityAgent {
 
 // Agents/src/agents/claude.ts
 import { randomUUID } from "crypto";
-import { existsSync as existsSync5, readFileSync as readFileSync7 } from "fs";
+import { existsSync as existsSync6, readFileSync as readFileSync7 } from "fs";
 import { homedir } from "os";
-import { join as join7 } from "path";
+import { join as join8 } from "path";
+
+// Agents/src/maintenance.ts
+import { existsSync as existsSync5, realpathSync } from "fs";
+import { basename, join as join7 } from "path";
+var checked = new Map;
+var newest = new Map;
+var updating = new Map;
+async function maintenance(definition, fresh = false) {
+  const kept = checked.get(definition.executable);
+  if (!fresh && kept && Date.now() - kept.at < 10 * 60000)
+    return kept.value;
+  const [installed, updater] = await Promise.all([installedVersion2(definition.executable), resolveUpdater(definition)]);
+  const latest = updater.latest ?? await npmLatest(definition.npmPackage, fresh);
+  const value = { installed, latest, command: updater.command, shown: updater.shown, env: updater.env };
+  checked.set(definition.executable, { at: Date.now(), value });
+  return value;
+}
+function isOutdated(maintenance) {
+  return Boolean(maintenance.installed && maintenance.latest && compareVersions(maintenance.installed, maintenance.latest) < 0);
+}
+function update(definition, temporary) {
+  const running = updating.get(definition.executable);
+  if (running)
+    return running;
+  const task = (async () => {
+    const before = await maintenance(definition, true);
+    if (!before.command)
+      return { updated: false, version: before.installed, message: `Update ${definition.name} the way you installed it.` };
+    const ran = await run(before.command[0], before.command.slice(1), { cwd: temporary, env: before.env, timeout: 10 * 60000 });
+    const after = await maintenance(definition, true);
+    const changed = Boolean(after.installed && after.installed !== before.installed);
+    if (changed || after.installed && !isOutdated(after))
+      return { updated: changed, version: after.installed };
+    const output = plain(ran.stderr + `
+` + ran.stdout).trim().split(`
+`).slice(-6).join(`
+`).trim();
+    return {
+      updated: false,
+      version: after.installed,
+      message: `${definition.name} is still ${after.installed ?? "the same version"} after \`${before.shown}\`.${output ? `
+
+${output}` : ""}`
+    };
+  })().finally(() => updating.delete(definition.executable));
+  updating.set(definition.executable, task);
+  return task;
+}
+async function installedVersion2(executable) {
+  const ran = await run(executable, ["--version"], { timeout: 15000 }).catch(() => {
+    return;
+  });
+  return ran ? versionIn(plain(ran.stdout + " " + ran.stderr)) : undefined;
+}
+function versionIn(text) {
+  return text.match(/\b(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)\b/)?.[1];
+}
+function compareVersions(a, b) {
+  const [mainA, preA] = a.split("-", 2);
+  const [mainB, preB] = b.split("-", 2);
+  const partsA = mainA.split(".").map(Number);
+  const partsB = mainB.split(".").map(Number);
+  for (let i = 0;i < Math.max(partsA.length, partsB.length); i++) {
+    const difference = (partsA[i] ?? 0) - (partsB[i] ?? 0);
+    if (difference)
+      return Math.sign(difference);
+  }
+  if (preA === preB)
+    return 0;
+  if (!preA)
+    return 1;
+  if (!preB)
+    return -1;
+  return preA < preB ? -1 : 1;
+}
+async function npmLatest(name, fresh) {
+  const kept = newest.get(name);
+  if (!fresh && kept && Date.now() - kept.at < 6 * 60 * 60000)
+    return kept.value;
+  try {
+    const response = await fetch(`https://registry.npmjs.org/${name.replace("/", "%2F")}/latest`, { signal: AbortSignal.timeout(1e4) });
+    const value = response.ok ? (await response.json()).version ?? undefined : undefined;
+    newest.set(name, { at: Date.now(), value });
+    return value;
+  } catch {
+    return kept?.value;
+  }
+}
+async function resolveUpdater(definition) {
+  let realPath = definition.executable;
+  try {
+    realPath = realpathSync(definition.executable);
+  } catch {}
+  const name = basename(definition.executable);
+  const native = definition.nativeUpdate;
+  const nativeUpdater = native ? { command: [definition.executable, ...native.args], shown: [name, ...native.args].join(" ") } : {};
+  if (native?.isNative(realPath) || native && native.isNative(definition.executable))
+    return nativeUpdater;
+  const prefix = npmGlobalPrefix(realPath, definition.npmPackage);
+  if (prefix) {
+    const npm = existsSync5(join7(prefix, "bin", "npm")) ? join7(prefix, "bin", "npm") : "npm";
+    return {
+      command: [npm, "install", "-g", "--prefix", prefix, `--allow-scripts=${definition.npmPackage}`, `${definition.npmPackage}@latest`],
+      shown: `npm install -g ${definition.npmPackage}@latest`,
+      env: { PATH: `${join7(prefix, "bin")}:${process.env.PATH ?? ""}` }
+    };
+  }
+  const keg = homebrewKeg(realPath);
+  if (keg && keg.name.toLowerCase() !== "mise") {
+    const brew = existsSync5(join7(keg.prefix, "bin", "brew")) ? join7(keg.prefix, "bin", "brew") : which("brew");
+    if (brew) {
+      const said = (await run(brew, ["--prefix"], { timeout: 15000 }).catch(() => {
+        return;
+      }))?.stdout.trim();
+      let brewPrefix = said;
+      try {
+        if (said)
+          brewPrefix = realpathSync(said);
+      } catch {}
+      if (brewPrefix && brewPrefix === keg.prefix) {
+        const cask = keg.kind === "cask";
+        const info = await run(brew, ["info", "--json=v2", ...cask ? ["--cask"] : [], keg.name], { timeout: 30000, env: { HOMEBREW_NO_AUTO_UPDATE: "1" } }).catch(() => {
+          return;
+        });
+        return {
+          command: [brew, "upgrade", ...cask ? ["--cask"] : [], keg.name],
+          shown: `brew upgrade ${cask ? "--cask " : ""}${keg.name}`,
+          latest: info ? homebrewLatest(info.stdout, cask) : undefined
+        };
+      }
+    }
+  }
+  if (realPath.includes("/node_modules/") || realPath.includes("/mise/"))
+    return {};
+  return nativeUpdater;
+}
+function npmGlobalPrefix(realPath, packageName) {
+  const segment = `/lib/node_modules/${packageName.toLowerCase()}/`;
+  const at = realPath.toLowerCase().lastIndexOf(segment);
+  if (at < 0 || realPath.slice(0, at).toLowerCase().includes("/node_modules/"))
+    return;
+  const miseTool = /\/mise\/installs\/([^/]+)\/[^/]+$/.exec(realPath.slice(0, at).toLowerCase())?.[1];
+  if (miseTool && miseTool !== "node")
+    return;
+  return at === 0 ? "/" : realPath.slice(0, at);
+}
+function homebrewKeg(realPath) {
+  const match = /^(.*)\/(cellar|caskroom)\/([^/]+)\/[^/]+\//i.exec(realPath);
+  if (!match)
+    return;
+  return { kind: match[2].toLowerCase() === "cellar" ? "formula" : "cask", name: match[3], prefix: match[1] };
+}
+function homebrewLatest(json, cask) {
+  try {
+    const info = JSON.parse(json);
+    const raw = cask ? info.casks?.[0]?.version?.split(",", 1)[0] : info.formulae?.[0]?.versions?.stable;
+    return raw && raw !== "latest" ? raw : undefined;
+  } catch {
+    return;
+  }
+}
 
 // Agents/src/events.ts
 var listeners = new Set;
@@ -2064,7 +2225,7 @@ class Queue {
 
 // Agents/src/agents/claude.ts
 var SDK = [{ name: "@anthropic-ai/claude-agent-sdk", version: "0.3.303" }];
-var places = [join7(homedir(), ".local/bin"), join7(homedir(), ".claude/local"), "/opt/homebrew/bin", "/usr/local/bin"];
+var places = [join8(homedir(), ".local/bin"), join8(homedir(), ".claude/local"), "/opt/homebrew/bin", "/usr/local/bin"];
 var outputLimit3 = 30000;
 
 class ClaudeAgent {
@@ -2086,6 +2247,30 @@ class ClaudeAgent {
   }
   executable() {
     return which("claude", places);
+  }
+  get definition() {
+    const executable = this.executable();
+    if (!executable)
+      return;
+    return {
+      name: "Claude Code",
+      executable,
+      npmPackage: "@anthropic-ai/claude-code",
+      nativeUpdate: { args: ["update"], isNative: (path) => /\/\.local\/share\/claude\/|\/\.claude\/local\//.test(path) }
+    };
+  }
+  async maintenance(fresh = false) {
+    const definition = this.definition;
+    return definition ? maintenance(definition, fresh) : {};
+  }
+  async update() {
+    const definition = this.definition;
+    if (!definition)
+      return { updated: false, message: "Claude Code isn't installed." };
+    const result = await update(definition, this.context.temporary);
+    if (result.updated)
+      this.modelList = undefined;
+    return result;
   }
   methods() {
     return [
@@ -2141,7 +2326,7 @@ class ClaudeAgent {
     return this.context.deps.load(this.id, SDK[0].name);
   }
   env() {
-    const env = { ...process.env, CLAUDE_CODE_TMPDIR: join7(this.context.temporary, "claude") };
+    const env = { ...process.env, CLAUDE_CODE_TMPDIR: join8(this.context.temporary, "claude") };
     if (this.instance.home)
       env.CLAUDE_CONFIG_DIR = this.instance.home;
     return env;
@@ -2626,7 +2811,7 @@ function previewDiff(name, input) {
   const path = String(input.file_path ?? "");
   if (!path)
     return;
-  const before = existsSync5(path) ? safeRead(path) : undefined;
+  const before = existsSync6(path) ? safeRead(path) : undefined;
   if (name === "Write")
     return fileDiff(path, before, String(input.content ?? ""));
   if (before === undefined)
@@ -2656,7 +2841,7 @@ function diffs(name, input, structured) {
 `).join("");
     return [fromPatch(path, patch)];
   }
-  if (typeof structured?.originalFile === "string" && existsSync5(path))
+  if (typeof structured?.originalFile === "string" && existsSync6(path))
     return [fileDiff(path, structured.originalFile, safeRead(path) ?? "")];
   return [];
 }
@@ -2728,10 +2913,10 @@ function safeBase642(path) {
 }
 
 // Agents/src/agents/codex.ts
-import { existsSync as existsSync6, lstatSync, mkdirSync as mkdirSync7, readdirSync as readdirSync2, readlinkSync, rmSync as rmSync4, symlinkSync } from "fs";
+import { existsSync as existsSync7, lstatSync, mkdirSync as mkdirSync7, readdirSync as readdirSync2, readlinkSync, rmSync as rmSync4, symlinkSync } from "fs";
 import { homedir as homedir2 } from "os";
-import { join as join8 } from "path";
-var places2 = ["/opt/homebrew/bin", "/usr/local/bin", join8(homedir2(), ".local/bin"), join8(homedir2(), ".codex/bin")];
+import { join as join9 } from "path";
+var places2 = ["/opt/homebrew/bin", "/usr/local/bin", join9(homedir2(), ".local/bin"), join9(homedir2(), ".codex/bin")];
 var outputLimit4 = 30000;
 
 class CodexAgent {
@@ -2757,6 +2942,29 @@ class CodexAgent {
   }
   executable() {
     return which("codex", places2);
+  }
+  get definition() {
+    const executable = this.executable();
+    if (!executable)
+      return;
+    return { name: "Codex", executable, npmPackage: "@openai/codex", nativeUpdate: { args: ["update"], isNative: (path) => path.includes("/.codex/") } };
+  }
+  async maintenance(fresh = false) {
+    const definition = this.definition;
+    return definition ? maintenance(definition, fresh) : {};
+  }
+  async update() {
+    const definition = this.definition;
+    if (!definition)
+      return { updated: false, message: "Codex isn't installed." };
+    const result = await update(definition, this.context.temporary);
+    if (result.updated) {
+      this.modelList = undefined;
+      this.accountCache = undefined;
+      if (!this.threads.size && !this.logins.size)
+        this.shutdown();
+    }
+    return result;
   }
   methods() {
     return [
@@ -3313,13 +3521,13 @@ ${others.map((path) => `- ${path}`).join(`
   }
 }
 function shadowHome(home) {
-  const own = join8(homedir2(), ".codex");
+  const own = join9(homedir2(), ".codex");
   const kept = new Set(["auth.json", "models_cache.json"]);
   mkdirSync7(home, { recursive: true, mode: 448 });
-  const wanted = existsSync6(own) ? readdirSync2(own).filter((name) => !kept.has(name)) : [];
+  const wanted = existsSync7(own) ? readdirSync2(own).filter((name) => !kept.has(name)) : [];
   for (const name of wanted) {
-    const link = join8(home, name);
-    const target = join8(own, name);
+    const link = join9(home, name);
+    const target = join9(own, name);
     try {
       const stat = lstatSync(link, { throwIfNoEntry: false });
       if (stat?.isSymbolicLink() && readlinkSync(link) === target)
@@ -3332,7 +3540,7 @@ function shadowHome(home) {
     } catch {}
   }
   for (const name of readdirSync2(home)) {
-    const link = join8(home, name);
+    const link = join9(home, name);
     try {
       if (lstatSync(link).isSymbolicLink() && !wanted.includes(name))
         rmSync4(link, { force: true });
@@ -3348,8 +3556,8 @@ function unwrapShell(command) {
 }
 
 // Agents/src/agents/cursor.ts
-import { existsSync as existsSync7, mkdirSync as mkdirSync8, readFileSync as readFileSync8, rmSync as rmSync5 } from "fs";
-import { join as join9 } from "path";
+import { existsSync as existsSync8, mkdirSync as mkdirSync8, readFileSync as readFileSync8, rmSync as rmSync5 } from "fs";
+import { join as join10 } from "path";
 var SDK2 = [{ name: "@cursor/sdk", version: "1.0.35" }];
 var outputLimit5 = 30000;
 
@@ -3370,10 +3578,10 @@ class CursorAgent {
     this.providerID = providerID("cursor", instance.id);
   }
   get folder() {
-    return this.instance.home ?? join9(this.context.home, "cursor");
+    return this.instance.home ?? join10(this.context.home, "cursor");
   }
   get authFile() {
-    return join9(this.folder, "auth.json");
+    return join10(this.folder, "auth.json");
   }
   methods() {
     return [
@@ -3393,7 +3601,7 @@ class CursorAgent {
     const fromEnvironment = this.instance.home ? undefined : process.env.CURSOR_API_KEY?.trim();
     if (fromEnvironment)
       return fromEnvironment;
-    if (!existsSync7(this.authFile))
+    if (!existsSync8(this.authFile))
       return;
     const loaded = await (await this.store(sdk ?? await this.sdk())).load();
     if (!loaded?.apiKey)
@@ -3403,7 +3611,7 @@ class CursorAgent {
     return loaded.apiKey;
   }
   async account(fresh = false) {
-    if ((this.instance.home || !process.env.CURSOR_API_KEY) && !existsSync7(this.authFile)) {
+    if ((this.instance.home || !process.env.CURSOR_API_KEY) && !existsSync8(this.authFile)) {
       return { installed: true, signedIn: false, message: "Sign in with your Cursor account. Kuvo Code downloads Cursor's agent the first time." };
     }
     if (!fresh && this.accountCache && Date.now() - this.accountCache.at < 60000)
@@ -3501,7 +3709,7 @@ class CursorAgent {
     } catch {}
   }
   agentStore(sdk) {
-    const root = join9(this.folder, "agents");
+    const root = join10(this.folder, "agents");
     mkdirSync8(root, { recursive: true });
     return new sdk.JsonlLocalAgentStore(root);
   }
@@ -3777,8 +3985,8 @@ function withTimeout(promise, milliseconds) {
 
 // Agents/src/agents/grok.ts
 import { homedir as homedir3 } from "os";
-import { join as join10 } from "path";
-var places3 = [join10(homedir3(), ".grok/bin"), join10(homedir3(), ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin"];
+import { join as join11 } from "path";
+var places3 = [join11(homedir3(), ".grok/bin"), join11(homedir3(), ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin"];
 
 class GrokAgent {
   context;
@@ -3798,6 +4006,25 @@ class GrokAgent {
   }
   executable() {
     return which("grok", places3);
+  }
+  get definition() {
+    const executable = this.executable();
+    if (!executable)
+      return;
+    return { name: "Grok's CLI", executable, npmPackage: "@xai-official/grok", nativeUpdate: { args: ["update"], isNative: (path) => path.includes("/.grok/") } };
+  }
+  async maintenance(fresh = false) {
+    const definition = this.definition;
+    return definition ? maintenance(definition, fresh) : {};
+  }
+  async update() {
+    const definition = this.definition;
+    if (!definition)
+      return { updated: false, message: "Grok's CLI isn't installed." };
+    const result = await update(definition, this.context.temporary);
+    if (result.updated)
+      this.status = undefined;
+    return result;
   }
   methods() {
     return [{ type: "oauth", id: "grok", label: "Sign in with Grok" }];
@@ -5081,7 +5308,14 @@ var located = (value) => json({ location: { directory: process.cwd() }, data: va
 var error = (status, message) => json({ message }, status);
 var lastSeen = new Map;
 async function integration(agent, fresh = false) {
-  const account = await agent.account(fresh).catch((error) => ({ installed: false, signedIn: false, message: String(error?.message ?? error) }));
+  const [account, maintained] = await Promise.all([
+    agent.account(fresh).catch((error) => ({ installed: false, signedIn: false, message: String(error?.message ?? error) })),
+    agent.maintenance ? Promise.race([agent.maintenance(fresh).catch(() => {
+      return;
+    }), Bun.sleep(15000).then(() => {
+      return;
+    })]) : undefined
+  ]);
   const seen = JSON.stringify([account.installed, account.signedIn, account.label]);
   const before = lastSeen.get(agent.providerID);
   lastSeen.set(agent.providerID, seen);
@@ -5101,7 +5335,12 @@ async function integration(agent, fresh = false) {
       message: account.message,
       account: account.label,
       install: agent.install,
-      signsOut: Boolean(agent.signOut)
+      signsOut: Boolean(agent.signOut),
+      version: maintained?.installed,
+      latestVersion: maintained?.latest,
+      outdated: maintained ? isOutdated(maintained) : false,
+      updateCommand: maintained?.shown,
+      updates: Boolean(agent.update && maintained?.command)
     },
     methods: agent.methods(),
     connections: account.signedIn ? [{ type: "agent", label: account.label, method: "oauth", status: { status: "connected", message: account.label ? `Signed in as ${account.label}` : "Signed in" } }] : []
@@ -5206,6 +5445,19 @@ function handler(context) {
             return error(400, `${agent.name} doesn't take a key here.`);
           await agent.signInWithKey(String(key ?? "").trim());
           return json({});
+        }
+        if (b === "update" && method === "POST") {
+          if (!agent.update)
+            return error(400, `Update ${agent.name} the way you installed it.`);
+          const result = await agent.update();
+          if (result.updated) {
+            for (const each of roster.all())
+              if (each.id === agent.id)
+                each.forgetModels?.();
+            emit("integration.updated", { integrationID: agent.providerID });
+            emit("model.updated", {});
+          }
+          return json({ data: result });
         }
         if (b === "disconnect" && method === "POST") {
           if (!agent.signOut)
@@ -5402,7 +5654,7 @@ function handler(context) {
 
 // Agents/src/store.ts
 import { mkdirSync as mkdirSync9, readdirSync as readdirSync3, readFileSync as readFileSync9, renameSync as renameSync4, rmSync as rmSync6, writeFileSync as writeFileSync7 } from "fs";
-import { join as join11 } from "path";
+import { join as join12 } from "path";
 
 class Store {
   root;
@@ -5413,15 +5665,15 @@ class Store {
     mkdirSync9(root, { recursive: true });
     for (const id of readdirSync3(root)) {
       try {
-        const folder = join11(root, id);
-        const session = JSON.parse(readFileSync9(join11(folder, "session.json"), "utf8"));
+        const folder = join12(root, id);
+        const session = JSON.parse(readFileSync9(join12(folder, "session.json"), "utf8"));
         let messages = [];
         try {
-          messages = JSON.parse(readFileSync9(join11(folder, "messages.json"), "utf8"));
+          messages = JSON.parse(readFileSync9(join12(folder, "messages.json"), "utf8"));
         } catch {}
         let agent = {};
         try {
-          agent = JSON.parse(readFileSync9(join11(folder, "agent.json"), "utf8"));
+          agent = JSON.parse(readFileSync9(join12(folder, "agent.json"), "utf8"));
         } catch {}
         this.records.set(session.id, { session, messages, agent });
       } catch {}
@@ -5441,7 +5693,7 @@ class Store {
     this.records.delete(id);
     clearTimeout(this.pending.get(id));
     this.pending.delete(id);
-    rmSync6(join11(this.root, id), { recursive: true, force: true });
+    rmSync6(join12(this.root, id), { recursive: true, force: true });
   }
   save(id, now = false) {
     clearTimeout(this.pending.get(id));
@@ -5463,14 +5715,14 @@ class Store {
     const record = this.records.get(id);
     if (!record)
       return;
-    const folder = join11(this.root, id);
+    const folder = join12(this.root, id);
     mkdirSync9(folder, { recursive: true });
     for (const [name, value] of [
       ["session.json", record.session],
       ["messages.json", record.messages],
       ["agent.json", record.agent]
     ]) {
-      const file = join11(folder, name);
+      const file = join12(folder, name);
       writeFileSync7(file + ".new", JSON.stringify(value));
       renameSync4(file + ".new", file);
     }
@@ -5485,20 +5737,20 @@ if (!home || !password) {
   console.error("KUVO_AGENTS_HOME and OPENCODE_PASSWORD are needed.");
   process.exit(2);
 }
-var temporary = process.env.TMPDIR?.replace(/\/$/, "") || join12(home, "tmp");
+var temporary = process.env.TMPDIR?.replace(/\/$/, "") || join13(home, "tmp");
 mkdirSync10(temporary, { recursive: true });
-rmSync7(join12(temporary, "antigravity"), { recursive: true, force: true });
+rmSync7(join13(temporary, "antigravity"), { recursive: true, force: true });
 try {
-  for (const name of readdirSync4(join12(home, "antigravity")))
+  for (const name of readdirSync4(join13(home, "antigravity")))
     if (name.startsWith(".install-"))
-      rmSync7(join12(home, "antigravity", name), { recursive: true, force: true });
+      rmSync7(join13(home, "antigravity", name), { recursive: true, force: true });
 } catch {}
 delete process.env.BUN_BE_BUN;
 process.on("unhandledRejection", (reason) => console.error("unhandled:", reason));
-var deps = new Deps(join12(home, "runtime"), join12(home, "cache"));
+var deps = new Deps(join13(home, "runtime"), join13(home, "cache"));
 var context = { home, temporary, deps };
 var roster = new Roster(new Accounts(home), context);
-var store = new Store(join12(home, "sessions"));
+var store = new Store(join13(home, "sessions"));
 var auto = new Auto(home);
 var link = new EngineLink;
 var engineAgents = new Map;
