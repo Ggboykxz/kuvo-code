@@ -776,7 +776,10 @@ final class Bots {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         guard trimmed.hasPrefix("#") else { return false }
         let title = trimmed.drop { $0 == "#" }.trimmingCharacters(in: .whitespaces).lowercased()
-        return title == "job" || title == "my job" || title == "the job" || title.hasPrefix("job:") || title.hasPrefix("job ")
+        if title == "job" || title == "my job" || title == "the job" || title.hasPrefix("job:") { return true }
+        // "Job — what I do" or "Job (keeps the build green)", not "Job log" or "Job history".
+        guard title.hasPrefix("job ") else { return false }
+        return title.dropFirst(4).trimmingCharacters(in: .whitespaces).first.map { "-–—:(".contains($0) } ?? false
     }
 
     /// A memory with a job section: the line, then the details, as its first section (after its
