@@ -4,7 +4,8 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
-## Unreleased
+## 0.5.22
+
 - Commands the agent runs no longer get the settings Kuvo Code gives the engine, which hold the key to its browser tools: a command that printed its environment showed it, there for the model to read.
 - The first message in a project after Kuvo Code starts has the browser's and your integrations' tools: it could go out just before they were connected, and the agent said it had no browser.
 - Tabs no longer run off the window when there are more than fit: they keep their names, and the row scrolls, with the tab you're on brought into view. Their ends fade where more tabs are out of sight.
