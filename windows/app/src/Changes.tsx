@@ -12,6 +12,7 @@ const SCOPES = [
   ["uncommitted", "Uncommitted"],
   ["unstaged", "Unstaged"],
   ["staged", "Staged"],
+  ["branch", "Branch"],
   ["session", "This session"],
 ] as const;
 
@@ -21,6 +22,8 @@ export function ChangesPanel() {
   const [files, setFiles] = useState<ChangeFile[]>([]);
   const [open, setOpen] = useState<string[]>([]);
   const [git, setGit] = useState(false);
+  const [base, setBase] = useState<string | null>(null);
+  const [branch, setBranch] = useState("");
   const [message, setMessage] = useState("");
   const [suggesting, setSuggesting] = useState(false);
   const [working, setWorking] = useState(false);
@@ -41,10 +44,12 @@ export function ChangesPanel() {
           if (alive) setFiles(Array.isArray(diff) ? diff : []);
           return;
         }
-        const answer = await api<{ files: ChangeFile[]; git: boolean }>(`/api/changes?directory=${encodeURIComponent(state.project)}&scope=${scope}`);
+        const answer = await api<{ files: ChangeFile[]; git: boolean; base?: string | null; branch?: string }>(`/api/changes?directory=${encodeURIComponent(state.project)}&scope=${scope}`);
         if (!alive) return;
         setFiles(answer.files ?? []);
         setGit(Boolean(answer.git));
+        setBase(answer.base ?? null);
+        setBranch(answer.branch ?? "");
       } catch {
         if (alive) setFiles([]);
       }
@@ -112,8 +117,11 @@ export function ChangesPanel() {
     <div id="changes-panel" className="changes-panel">
       <div className="changes-head">
         <select id="changes-scope" value={scope} onChange={event => setScope(event.target.value)}>
-          {SCOPES.map(([value, title]) => <option key={value} value={value}>{title}</option>)}
+          {SCOPES.map(([value, title]) => (
+            <option key={value} value={value} hidden={value === "branch" && !base}>{title}</option>
+          ))}
         </select>
+        {scope === "branch" && base ? <span className="where">{`${branch || "this branch"} against ${base}`}</span> : null}
         {!git && scope !== "session" ? <span className="where">Not a git project</span> : null}
       </div>
 

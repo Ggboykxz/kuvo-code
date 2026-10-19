@@ -750,3 +750,45 @@ test("the project's changes are read from git, and a commit is really made", asy
   answer = await (await fetch(`${url}api/changes?directory=${encodeURIComponent(project)}&scope=uncommitted`)).json();
   assert.equal(answer.files.length, 0);
 });
+
+test("the branch scope shows what the branch added since it left its base", async t => {
+  const engine = await fakeEngine();
+  t.after(engine.close);
+  const { execFileSync } = await import("node:child_process");
+  const project = fs.mkdtempSync(path.join(home, "git-branch-"));
+  const git = (...args) => execFileSync("git", ["-C", project, ...args], { encoding: "utf8" });
+  git("init", "-q", "-b", "main");
+  git("config", "user.email", "kuvo@example.test");
+  git("config", "user.name", "Kuvo");
+  fs.writeFileSync(path.join(project, "a.txt"), "one\n");
+  git("add", "-A");
+  git("commit", "-q", "-m", "first");
+
+  const { harness, url } = await inFront(engine);
+  t.after(() => harness.close());
+
+  // A branch that adds a file, and the base that moves on without it.
+  git("checkout", "-q", "-b", "feature");
+  fs.writeFileSync(path.join(project, "b.txt"), "on the branch\n");
+  git("add", "-A");
+  git("commit", "-q", "-m", "add b");
+  git("checkout", "-q", "main");
+  fs.writeFileSync(path.join(project, "c.txt"), "on main\n");
+  git("add", "-A");
+  git("commit", "-q", "-m", "add c");
+  git("checkout", "-q", "feature");
+
+  const answer = await (await fetch(`${url}api/changes?directory=${encodeURIComponent(project)}&scope=branch`)).json();
+  assert.equal(answer.git, true);
+  assert.equal(answer.base, "main");
+  assert.equal(answer.branch, "feature");
+  // What the branch added since it left main: b.txt — not c.txt, which is main's own work.
+  const names = answer.files.map(file => file.file);
+  assert.ok(names.includes("b.txt"), "the branch's own file is there");
+  assert.ok(!names.includes("c.txt"), "the base's work is not");
+
+  // Uncommitted shows only what is not committed, whatever the branch.
+  fs.writeFileSync(path.join(project, "d.txt"), "working\n");
+  const uncommitted = await (await fetch(`${url}api/changes?directory=${encodeURIComponent(project)}&scope=uncommitted`)).json();
+  assert.ok(uncommitted.files.some(file => file.file === "d.txt"));
+});

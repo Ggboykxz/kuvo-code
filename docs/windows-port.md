@@ -105,7 +105,11 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
-  - **2.27 (this change).** The Mac app's Changes panel: an extra tab in the side panel
+  - **2.28 (this change).** The Changes panel's Branch scope: what the branch added since
+    it left its base (the repository's default branch, and the point where they parted), and
+    the Mac app's Git settings — the branch prefix and the instructions the model writes
+    commit and pull-request messages with.
+  - **2.27. The Mac app's Changes panel: an extra tab in the side panel
     with the project's changes, read from git (uncommitted, unstaged, staged) or from the
     session's own edits, each file folded to its changes, a note written on a line that
     goes to the agent with the next message, a commit message the session's model writes

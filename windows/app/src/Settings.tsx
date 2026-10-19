@@ -29,6 +29,7 @@ const PAGES = [
   ["skills", "Skills"],
   ["commands", "Commands"],
   ["projects", "Projects"],
+  ["git", "Git"],
   ["archived", "Archived sessions"],
   ["permissions", "Permissions"],
   ["system", "Engine & storage"],
@@ -126,6 +127,7 @@ export function Settings() {
       case "skills": return <SkillsPage />;
       case "commands": return <CommandsPage />;
       case "projects": return <ProjectsPage />;
+      case "git": return <GitPage />;
       case "archived": return <ArchivedPage />;
       case "permissions": return <PermissionsPage permissions={savedPermissions} onChange={setSavedPermissions} />;
       default: return <SystemPage system={system} />;
@@ -328,6 +330,62 @@ function ProjectsPage() {
         </div>
       ))}
       <div className="settings-note">The folders this machine has worked in, newest first.</div>
+    </>
+  );
+}
+
+/// Git: how a branch is named, and how commit and pull-request messages are written —
+/// the Mac app's Git settings, ours.
+function GitPage() {
+  const [git, setGit] = useState({ branchPrefix: "", commitInstructions: "", pullRequestInstructions: "" });
+  useEffect(() => {
+    void api<{ git?: typeof git }>("/api/app-settings")
+      .then(answer => setGit({ branchPrefix: answer.git?.branchPrefix ?? "", commitInstructions: answer.git?.commitInstructions ?? "", pullRequestInstructions: answer.git?.pullRequestInstructions ?? "" }))
+      .catch(() => {});
+  }, []);
+
+  const set = async (next: Partial<typeof git>) => {
+    const merged = { ...git, ...next };
+    setGit(merged);
+    try {
+      await api("/api/app-settings", { method: "PUT", body: { git: merged } });
+    } catch (error) {
+      complain(error);
+    }
+  };
+
+  return (
+    <>
+      <div className="settings-row column">
+        <span>Branch prefix</span>
+        <input
+          type="text"
+          value={git.branchPrefix}
+          placeholder="kuvo/"
+          onChange={event => void set({ branchPrefix: event.target.value })}
+        />
+        <div className="where">What a session's own branch starts with. It is named after the session once it has a title.</div>
+      </div>
+      <div className="settings-row column">
+        <span>Commit Messages</span>
+        <textarea
+          rows={3}
+          value={git.commitInstructions}
+          placeholder="For example: Start with the area changed, like “ui: …”, and never mention tickets."
+          onChange={event => void set({ commitInstructions: event.target.value })}
+        />
+        <div className="where">Added when the Changes panel asks the model for a message.</div>
+      </div>
+      <div className="settings-row column">
+        <span>Pull Requests</span>
+        <textarea
+          rows={3}
+          value={git.pullRequestInstructions}
+          placeholder="For example: Add a Testing section, and link the issue if the branch names one."
+          onChange={event => void set({ pullRequestInstructions: event.target.value })}
+        />
+        <div className="where">Added when a pull request is written.</div>
+      </div>
     </>
   );
 }

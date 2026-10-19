@@ -645,6 +645,18 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
       }
     };
 
+    /// The branch the work is compared with: the repository's own default, when there is
+    /// one. The Mac app reads it from the engine's VCS; git knows it too.
+    const defaultBranch = async directory => {
+      for (const name of ["origin/HEAD", "main", "master", "trunk", "develop"]) {
+        try {
+          const answer = await git(directory, ["rev-parse", "--verify", "--quiet", name]);
+          if (answer.trim()) return name.replace(/^origin\//, "");
+        } catch {}
+      }
+      return null;
+    };
+
     /// The files git says have changed, with their patches: the same three scopes the Mac
     /// app offers (what is not committed, what is not staged, what is staged).
     const gitChanges = async (directory, scope) => {
@@ -657,6 +669,26 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
         const deletions = lines.filter(line => line.startsWith("-") && !line.startsWith("---")).length;
         files.push({ file: path, patch, additions, deletions, status });
       };
+      if (scope === "branch") {
+        // Since the branch left its base: from where they part, to the files as they are now.
+        const base = await defaultBranch(directory);
+        let fork = base;
+        if (base) {
+          try { fork = (await git(directory, ["merge-base", "HEAD", base])).trim() || base; } catch { fork = base; }
+        }
+        if (!fork) return files;
+        const names = (await git(directory, ["diff", "--name-only", fork])).split("\n").filter(Boolean);
+        for (const name of names) {
+          await add(name, await git(directory, ["diff", "--no-color", "--find-renames", "-U100000", fork, "--", name]), "modified");
+        }
+        const others = (await git(directory, ["ls-files", "--others", "--exclude-standard"])).split("\n").filter(Boolean);
+        for (const name of others) {
+          const content = await git(directory, ["diff", "--no-index", "--", "/dev/null", name]).catch(() => "");
+          const patch = content || `--- /dev/null\n+++ b/${name}\n@@ -0,0 +1,${content.split("\n").length} @@\n${content.split("\n").map(line => `+${line}`).join("\n")}`;
+          await add(name, patch, "added");
+        }
+        return files;
+      }
       if (scope === "unstaged") {
         const names = (await git(directory, ["diff", "--name-only"])).split("\n").filter(Boolean);
         for (const name of names) await add(name, await git(directory, ["diff", "--", name]), "modified");
@@ -684,7 +716,8 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
       const git_ = await isGitProject(directory);
       if (!git_) return json({ files: [], scope, git: false });
       try {
-        return json({ files: await gitChanges(directory, scope), scope, git: true });
+        const base = scope === "branch" ? await defaultBranch(directory) : null;
+        return json({ files: await gitChanges(directory, scope), scope, git: true, base, branch: (await git(directory, ["rev-parse", "--abbrev-ref", "HEAD"]).catch(() => "")).trim() });
       } catch (error) {
         return json({ files: [], scope, git: true, problem: error.message });
       }
