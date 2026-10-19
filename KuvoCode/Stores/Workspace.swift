@@ -577,7 +577,14 @@ final class Workspace {
         let folder = worktree ? try await makeWorktree(of: directory) : directory
         let extra = settings[directory]?.folders ?? []
         let rules = ProjectFolders.permissions(approval.rules(settings: EngineConfig.current?.permissionRules ?? []), folders: extra)
-        let session = try await api.createSession(directory: folder, agent: agent, model: model, permissions: rules.isEmpty ? nil : rules)
+        let session: Session
+        do {
+            session = try await api.createSession(directory: folder, agent: agent, model: model, permissions: rules.isEmpty ? nil : rules)
+        } catch {
+            // A worktree made for it goes too, with its branch (nothing's on it yet).
+            if worktree { await discardWorktree(folder) }
+            throw error
+        }
         if !extra.isEmpty {
             try? await api.setInstruction(session: session.id, key: ProjectFolders.instructionKey, text: ProjectFolders.instructions(primary: folder, folders: extra))
         }
@@ -616,11 +623,29 @@ final class Workspace {
         // The engine leaves it on no branch; one of its own makes the work easy to commit,
         // push and merge.
         let prefix = GitPreferences.branchPrefix
-        let branch = try await Task.detached { try Git.newBranch(named: prefix + (root as NSString).lastPathComponent, in: root) }.value
+        let branch: String
+        do {
+            branch = try await Task.detached { try Git.newBranch(named: prefix + (root as NSString).lastPathComponent, in: root) }.value
+        } catch {
+            // Not kept without its branch: nothing would list it, to remove it.
+            try? await api.removeWorktree(project: project.id, directory: root, force: true)
+            throw error
+        }
         let folder = subpath.isEmpty ? root : (root as NSString).appendingPathComponent(subpath)
         worktrees[folder] = Worktree(project: directory, root: root, branch: branch, base: base)
         saveWorktrees()
         return folder
+    }
+
+    /// A worktree made for a session that wasn't: removed, with its branch, and not recorded as
+    /// one you removed.
+    func discardWorktree(_ folder: String) async {
+        guard let tree = worktrees[folder], let api = api(forFolder: tree.project),
+              let project = try? await api.location(directory: tree.project).project else { return }
+        try? await api.removeWorktree(project: project.id, directory: tree.root, force: true)
+        _ = await Task.detached { Git.run(["branch", "-D", tree.branch], in: tree.project) }.value
+        worktrees = worktrees.filter { $0.value.root != tree.root }
+        saveWorktrees()
     }
 
     /// A worktree's branch starts with a made-up name; once its session has a title, the branch

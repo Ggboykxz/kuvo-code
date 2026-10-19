@@ -23,6 +23,9 @@ nonisolated extension Git {
             let candidate = suffix == 1 ? name : "\(name)-\(suffix)"
             guard run(["rev-parse", "--verify", "--quiet", "refs/heads/" + candidate], in: directory) == nil else { continue }
             guard let complaint = report(["switch", "--quiet", "-c", candidate], in: directory, environment: [:]) else { return candidate }
+            // Made and checked out, but a hook complained after (Git LFS's, say, without git-lfs
+            // on the app's PATH): it's the branch all the same.
+            if currentBranch(in: directory) == candidate { return candidate }
             failure = complaint
         }
         throw GitFailure(message: failure.isEmpty ? "Couldn't make a branch for the worktree." : failure)

@@ -11,6 +11,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - The Files tab lists names as the Finder does, file3 before file29, as on your phone.
 - A server you add in Settings › MCP Servers can't take an integration's name: it showed as that integration, and removing the integration removed it. And removing a server, agent or command right after typing in it no longer brings it back half made.
 - ⌘K and the Dock menu list chats too. Run and Edit Project don't take a chat or a bot's own folder for a project, and New Project on a folder that's one already keeps its name, run command and folders.
+- A worktree session that can't be made leaves no worktree behind, and in a repository using Git LFS, Kuvo Code opened from the Finder makes worktrees again (each failed, leaving up to 20 branches). When one of several attempts can't be made, the others go too, rather than staying behind empty.
 
 ## 0.5.16
 

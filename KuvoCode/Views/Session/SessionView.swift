@@ -388,9 +388,9 @@ struct DraftSessionView: View {
         let inWorktrees = isRepository && worktree
         let count = inWorktrees ? attempts : 1
         Task {
+            var sessions: [Session] = []
             do {
                 // One after another: each worktree's setup runs on its own.
-                var sessions: [Session] = []
                 for _ in 0..<count {
                     sessions.append(try await workspace.createSession(in: directory, model: startingModel, agent: agent, approval: approval, worktree: inWorktrees))
                 }
@@ -404,6 +404,12 @@ struct DraftSessionView: View {
                 for session in sessions { await workspace.model(for: session.id)?.messagesSent() }
                 Drafts.shared.sent(sending)
             } catch {
+                // Attempts made before one failed go too: they'd never get the message, and
+                // sending again makes them all anew.
+                for session in sessions {
+                    await workspace.delete(session.id)
+                    if inWorktrees { await workspace.discardWorktree(session.location.directory) }
+                }
                 Analytics.shared.firstMessageBlocked("session_failed_" + Analytics.trouble(error))
                 Drafts.shared.putBack(sending)
                 failure = error.localizedDescription
