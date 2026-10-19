@@ -140,6 +140,13 @@ const state = {
   inbox: [],
   vcs: null,
   sessionDiff: [],
+  config: null,
+  configPath: null,
+  configProblem: null,
+  configLive: null,
+  mcpLive: [],
+  skillsEngine: [],
+  cfgEditor: null,
 };
 
 let renderQueued = false;
@@ -1649,6 +1656,833 @@ async function renderConfigLists() {
   }
 }
 
+// ---- Config pages: the engine's settings file, read once, edited page by page ----
+// What the Mac app's EngineConfig does for its Settings pages, from this side: values in,
+// changes into one object, and saved whole as they're made — Done just goes back.
+
+const MCP_CATALOG = [
+  { id: "linear", title: "Linear", summary: "Issues, projects and cycles", access: "needs an account", settings: { type: "remote", url: "https://mcp.linear.app/mcp" } },
+  { id: "sentry", title: "Sentry", summary: "Errors and performance problems in your apps", access: "needs an account", settings: { type: "remote", url: "https://mcp.sentry.dev/mcp" } },
+  { id: "notion", title: "Notion", summary: "Pages and databases in your workspace", access: "needs an account", settings: { type: "remote", url: "https://mcp.notion.com/mcp" } },
+  { id: "atlassian", title: "Atlassian", summary: "Jira issues and Confluence pages", access: "needs an account", settings: { type: "remote", url: "https://mcp.atlassian.com/v2/mcp" } },
+  { id: "stripe", title: "Stripe", summary: "Payments, customers and Stripe's docs", access: "needs an account", settings: { type: "remote", url: "https://mcp.stripe.com" } },
+  { id: "supabase", title: "Supabase", summary: "Databases, auth and storage in your projects", access: "needs an account", settings: { type: "remote", url: "https://mcp.supabase.com/mcp" } },
+  { id: "neon", title: "Neon", summary: "Postgres databases and branches", access: "needs an account", settings: { type: "remote", url: "https://mcp.neon.tech/mcp" } },
+  { id: "context7", title: "Context7", summary: "Current docs and examples for libraries", access: "no account needed", settings: { type: "remote", url: "https://mcp.context7.com/mcp" } },
+  { id: "cloudflare-docs", title: "Cloudflare Docs", summary: "Cloudflare's documentation", access: "no account needed", settings: { type: "remote", url: "https://docs.mcp.cloudflare.com/mcp" } },
+  { id: "huggingface", title: "Hugging Face", summary: "Models, datasets, Spaces and papers", access: "no account needed", settings: { type: "remote", url: "https://huggingface.co/mcp" } },
+  { id: "chrome-devtools", title: "Chrome DevTools", summary: "Inspect and debug pages in Google Chrome", access: "runs on this machine", settings: { type: "local", command: ["npx", "chrome-devtools-mcp@latest"] } },
+];
+
+const CFG_ACTIONS = [
+  ["edit", "Edit files"], ["shell", "Run commands"], ["read", "Read files"],
+  ["external_directory", "Work outside the project"], ["webfetch", "Open web pages"],
+  ["websearch", "Search the web"], ["subagent", "Hand work to subagents"], ["skill", "Use skills"],
+];
+
+const cfgGet = path => path.reduce((node, key) => (node && typeof node === "object" ? node[key] : undefined), state.config);
+
+const cfgSet = (path, value) => {
+  if (!state.config) return;
+  let node = state.config;
+  for (const key of path.slice(0, -1)) {
+    if (typeof node[key] !== "object" || node[key] === null) node[key] = {};
+    node = node[key];
+  }
+  const key = path[path.length - 1];
+  if (value === null) delete node[key];
+  else node[key] = value;
+};
+
+async function saveConfig() {
+  try {
+    await api("/api/config", { method: "PUT", body: { settings: state.config } });
+    notify("Kuvo Code", "Saved to the engine's settings.");
+    await bootConfig();
+    return true;
+  } catch (error) {
+    complain(null, error);
+    return false;
+  }
+}
+
+/// Re-opens an existing editor so its fields line up with the file again, without bouncing.
+function reEditor(kind, id) {
+  if (state.cfgEditor?.kind !== kind || state.cfgEditor?.id !== id) return;
+  openCfgEditor(kind, id);
+}
+
+async function bootConfig() {
+  const [cfg, mcp, skills] = await Promise.all([
+    api("/api/config").catch(() => null),
+    api("/api/mcp").catch(() => null),
+    api("/api/skills").catch(() => null),
+  ]);
+  if (cfg) {
+    state.config = cfg.settings && typeof cfg.settings === "object" ? cfg.settings : {};
+    state.configPath = cfg.path;
+    state.configProblem = cfg.problem ?? null;
+    state.configLive = cfg.live ?? null;
+  }
+  state.mcpLive = mcp?.servers ?? [];
+  state.skillsEngine = skills?.skills ?? [];
+  $("skills-folder").textContent = skills?.folder ? `Skills folder: ${skills.folder}/<name>/SKILL.md` : "";
+  if (!state.cfgEditor) renderCfgPages();
+  else refreshMcp();
+  // What the composer and palette read reaches them again, as the engine sees it.
+  loadCommands().catch(() => {});
+  loadAgents().catch(() => {});
+}
+
+function renderCfgPages() {
+  for (const id of ["cfg-problem", "mcp-problem", "agents-problem", "skills-problem", "commands-problem"]) {
+    const box = $(id);
+    if (!box) continue;
+    box.hidden = !state.configProblem;
+    box.textContent = state.configProblem ? `The settings file (${state.configPath}) has a problem: ${state.configProblem}` : "";
+  }
+  renderMcp();
+  renderMcpCatalog();
+  renderMcpTimeouts();
+  renderAgentsPage();
+  renderSkillsPage();
+  renderCommandsPage();
+}
+
+async function refreshMcp() {
+  try { state.mcpLive = (await api("/api/mcp")).servers ?? []; } catch { state.mcpLive = []; }
+  if (!state.cfgEditor) renderMcp();
+}
+
+// ---- MCP page ----
+
+const mcpStatusOf = name => state.mcpLive.find(server => server.name === name)?.status;
+
+function mcpStatusText(name, isOn) {
+  if (!isOn) return ["Off", ""];
+  const status = mcpStatusOf(name);
+  switch (status?.status) {
+    case "connected": return ["Connected", "ok"];
+    case "pending": return ["Connecting…", "faint"];
+    case "needs_auth": return ["Needs sign-in", "warn"];
+    case "failed": return [`Couldn't connect${status?.error ? ` — ${status.error}` : ""}`, "danger"];
+    case "disabled": return ["Off", ""];
+    default: return ["Not started", "faint"];
+  }
+}
+
+function mcpDetail(settings) {
+  if (typeof settings?.url === "string") return settings.url;
+  if (Array.isArray(settings?.command)) return settings.command.filter(word => typeof word === "string").join(" ");
+  if (typeof settings?.command === "string") return settings.command;
+  return "";
+}
+
+function renderMcp() {
+  const list = $("mcp-list");
+  if (!list) return;
+  list.innerHTML = "";
+  if (!state.config) return;
+  const configured = Object.keys(state.config?.mcp?.servers ?? {}).filter(name => name !== "kuvo-browser");
+  const live = state.mcpLive.map(server => server.name).filter(name => name !== "kuvo-browser" && !configured.includes(name));
+  const names = [...new Set([...configured, ...live])].sort();
+  if (!names.length) list.append(el("div", { class: "where", text: "None yet." }));
+  for (const name of names) {
+    const settings = state.config?.mcp?.servers?.[name];
+    const isOn = settings ? settings.disabled !== true : true;
+    const [title, tone] = mcpStatusText(name, isOn);
+    const row = el("div", { class: "cfg-row" },
+      el("div", { class: "cfg-row-main" },
+        el("div", { class: "cfg-row-title" },
+          el("strong", { text: name }),
+          el("span", { class: `where ${tone}`, text: title }),
+        ),
+        settings ? el("div", { class: "where", text: mcpDetail(settings) }) : null,
+      ),
+    );
+    if (isOn && mcpStatusOf(name)?.status === "failed") {
+      row.append(el("button", { class: "small", text: "Try Again", onclick: async () => {
+        try { await api(`/api/mcp/${encodeURIComponent(name)}/connect`, { method: "POST", body: {} }); }
+        catch (error) { complain(null, error); }
+        await refreshMcp();
+      } }));
+    }
+    if (settings) {
+      row.append(el("button", { class: "small", text: "Edit…", onclick: () => openCfgEditor("mcp", name) }));
+      const toggle = el("input", { type: "checkbox", title: `Turn on or off ${name}` });
+      toggle.checked = isOn;
+      toggle.addEventListener("change", () => {
+        cfgSet(["mcp", "servers", name, "disabled"], toggle.checked ? null : true);
+        saveConfig();
+      });
+      row.append(toggle);
+    }
+    list.append(row);
+  }
+}
+
+function renderMcpCatalog() {
+  const list = $("mcp-catalog");
+  if (!list) return;
+  list.innerHTML = "";
+  for (const server of MCP_CATALOG) {
+    const added = state.config?.mcp?.servers?.[server.id] != null;
+    list.append(el("div", { class: "cfg-row" },
+      el("div", { class: "cfg-row-main" },
+        el("div", { class: "cfg-row-title" }, el("strong", { text: server.title }), el("span", { class: "where", text: server.access })),
+        el("div", { class: "where", text: server.summary }),
+      ),
+      added ? el("span", { class: "where", text: "Added" }) :
+        el("button", { class: "small", text: "Add", onclick: () => {
+          cfgSet(["mcp", "servers", server.id], { ...server.settings, codemode: false });
+          saveConfig();
+        } }),
+    ));
+  }
+}
+
+function renderMcpTimeouts() {
+  const put = (id, key) => { const box = $(id); if (box) box.value = cfgGet(["mcp", "timeout", key]) ?? ""; };
+  put("mcp-timeout-startup", "startup");
+  put("mcp-timeout-catalog", "catalog");
+  put("mcp-timeout-execution", "execution");
+}
+
+function timeoutSaved(key) {
+  return event => { cfgSet(["mcp", "timeout", key], event.target.value === "" ? null : Number(event.target.value)); saveConfig(); };
+}
+
+// ---- Agents page ----
+
+const AGENTS_BUILTIN = ["build", "plan", "general", "explore"];
+
+function agentRows() {
+  const configured = Object.keys(state.config?.agents ?? {});
+  const ids = [...AGENTS_BUILTIN, ...configured].filter((id, index, all) => all.indexOf(id) === index && !["compaction", "title", "summary"].includes(id));
+  return ids.map(id => {
+    const settings = state.config?.agents?.[id] ?? {};
+    const live = state.agents.find(agent => agent.id === id);
+    return {
+      id,
+      name: live?.name ?? id,
+      mode: settings.mode ?? live?.mode ?? "primary",
+      description: settings.description ?? live?.description ?? "",
+      isOff: settings.disabled === true,
+    };
+  });
+}
+
+function modelSelect(select, path, emptyTitle) {
+  select.innerHTML = "";
+  select.append(el("option", { value: "", text: emptyTitle }));
+  const current = typeof cfgGet(path) === "string" ? cfgGet(path) : "";
+  const offered = new Set();
+  const providers = new Map();
+  for (const model of state.models) {
+    if (!providers.has(model.providerID)) providers.set(model.providerID, []);
+    providers.get(model.providerID).push(model);
+  }
+  for (const [provider, models] of providers) {
+    const group = el("optgroup", { label: provider });
+    for (const model of models) {
+      const value = `${model.providerID}/${model.id}`;
+      offered.add(value);
+      group.append(el("option", { value, text: model.name }));
+    }
+    select.append(group);
+  }
+  if (current && !offered.has(current)) select.append(el("option", { value: current, text: current }));
+  select.value = current;
+  select.onchange = () => { cfgSet(path, select.value === "" ? null : select.value); saveConfig(); };
+}
+
+function renderAgentsPage() {
+  const defaultAgent = $("agent-default");
+  if (!defaultAgent || !state.config) return;
+  defaultAgent.innerHTML = "";
+  defaultAgent.append(el("option", { value: "", text: "Build" }));
+  const primary = state.agents.filter(agent => agent.mode === "primary" && !["build", "compaction", "title", "summary"].includes(agent.id));
+  for (const agent of primary) defaultAgent.append(el("option", { value: agent.id, text: agent.name }));
+  defaultAgent.value = cfgGet(["default_agent"]) ?? "";
+  defaultAgent.onchange = () => { cfgSet(["default_agent"], defaultAgent.value === "" ? null : defaultAgent.value); saveConfig(); };
+
+  modelSelect($("agent-default-model"), ["model"], "The engine's choice");
+  modelSelect($("agent-title-model"), ["agents", "title", "model"], "The session's model");
+
+  const list = $("agents-list");
+  list.innerHTML = "";
+  for (const agent of agentRows()) {
+    list.append(el("div", { class: "cfg-row" },
+      el("div", { class: "cfg-row-main" },
+        el("div", { class: "cfg-row-title" },
+          el("strong", { text: agent.name }),
+          el("span", { class: "where", text: agent.mode === "subagent" ? "Subagent" : agent.mode === "all" ? "Mode and subagent" : "Mode" }),
+          agent.isOff ? el("span", { class: "where warn", text: "Off" }) : null,
+        ),
+        agent.description ? el("div", { class: "where", text: agent.description }) : null,
+      ),
+      el("button", { class: "small", text: "Edit…", onclick: () => openCfgEditor("agent", agent.id) }),
+    ));
+  }
+}
+
+// ---- Skills page ----
+
+function skillOn(id) {
+  const items = state.config?.permissions ?? [];
+  return !items.some(item => item?.action === "skill" && item?.resource === id && item?.effect === "deny");
+}
+
+function renderSkillsPage() {
+  const list = $("skills-list");
+  if (!list) return;
+  list.innerHTML = "";
+  if (!state.skillsEngine.length) list.append(el("div", { class: "where", text: "None yet." }));
+  for (const skill of state.skillsEngine) {
+    const own = typeof skill.path === "string" && !skill.path.startsWith("/builtin");
+    const row = el("div", { class: "cfg-row" },
+      el("div", { class: "cfg-row-main" },
+        el("div", { class: "cfg-row-title" },
+          el("strong", { text: skill.name }),
+          el("span", { class: "where", text: own ? "the skills folder" : "the engine's own" })),
+        skill.description ? el("div", { class: "where", text: skill.description }) : null,
+      ),
+    );
+    if (own) row.append(el("button", { class: "small", text: "Edit…", onclick: () => openCfgEditor("skill", skill.id) }));
+    const toggle = el("input", { type: "checkbox", title: `Use ${skill.name}` });
+    toggle.checked = skillOn(skill.id);
+    toggle.addEventListener("change", () => {
+      const items = (state.config?.permissions ?? []).filter(item => !(item?.action === "skill" && item?.resource === skill.id && item?.effect === "deny"));
+      if (!toggle.checked) items.push({ action: "skill", resource: skill.id, effect: "deny" });
+      cfgSet(["permissions"], items.length ? items : null);
+      saveConfig();
+    });
+    row.append(toggle);
+    list.append(row);
+  }
+}
+
+// ---- Commands page ----
+
+function renderCommandsPage() {
+  const list = $("commands-list");
+  if (!list) return;
+  list.innerHTML = "";
+  const names = Object.keys(state.config?.commands ?? {}).sort();
+  if (!names.length) list.append(el("div", { class: "where", text: "None yet." }));
+  for (const name of names) {
+    const settings = state.config.commands[name] ?? {};
+    list.append(el("div", { class: "cfg-row" },
+      el("div", { class: "cfg-row-main" },
+        el("div", { class: "cfg-row-title" }, el("strong", { text: "/" + name })),
+        settings.description ? el("div", { class: "where", text: settings.description }) : null,
+      ),
+      el("button", { class: "small", text: "Edit…", onclick: () => openCfgEditor("command", name) }),
+    ));
+  }
+  const others = $("commands-others");
+  if (!others) return;
+  others.innerHTML = "";
+  const own = state.commands.filter(command => !names.includes(command.name));
+  if (!own.length) others.append(el("div", { class: "where", text: "None." }));
+  for (const command of own) {
+    others.append(el("div", { class: "cfg-row" },
+      el("div", { class: "cfg-row-main" },
+        el("div", { class: "cfg-row-title" }, el("strong", { text: "/" + command.name })),
+        command.description ? el("div", { class: "where", text: command.description }) : null,
+      ),
+    ));
+  }
+}
+
+// ---- The config editors: a settings sub-page, fields per kind, saved as they're made ----
+
+/// The command as words (quotes hold spaces together); a word typed back quoted where needed.
+function commandWords(line) {
+  const words = [];
+  let word = "";
+  let quote = null, escaped = false, hasWord = false;
+  for (const character of line) {
+    if (escaped) { word += character; escaped = false; }
+    else if (character === "\\" && quote !== "'") { escaped = true; hasWord = true; }
+    else if (quote) { if (character === quote) quote = null; else word += character; }
+    else if (character === '"' || character === "'") { quote = character; hasWord = true; }
+    else if (character === " " || character === "\t") { if (hasWord) { words.push(word); word = ""; hasWord = false; } }
+    else { word += character; hasWord = true; }
+  }
+  if (hasWord) words.push(word);
+  return words;
+}
+
+function commandQuoted(word) {
+  if (word.includes(" ") || word.includes('"') || word.includes("'") || word.includes("\\")) {
+    return '"' + word.replace(/\\/g, "\\\\").replace(/"/g, "\\\"") + '"';
+  }
+  return word;
+}
+
+const commandLine = command => (Array.isArray(command) ? command.filter(word => typeof word === "string") : [])
+  .map(commandQuoted).join(" ");
+
+function idForName(text) {
+  return text.trim().replace(/ /g, "-").replace(/[^a-zA-Z0-9_-]/g, "");
+}
+
+function lowerIDForName(text) {
+  return text.toLowerCase().trim().replace(/ /g, "-").replace(/[^a-z0-9_-]/g, "");
+}
+
+function openCfgEditor(kind, id) {
+  if (!$("settings-modal") || !$("editor-fields")) return;
+  if (!state.config) { bootConfig().then(() => { if (state.config) openCfgEditor(kind, id); }); return; }
+  state.cfgEditor = { kind, id };
+  state.settingsSection = "editor";
+  $("editor-title").textContent = { mcp: id ?? "Add Server", agent: id ?? "New Agent", skill: id ?? "New Skill", command: id ? "/" + id : "New Command" }[kind];
+  const fields = $("editor-fields");
+  fields.innerHTML = "";
+  $("editor-buttons").innerHTML = "";
+  if (kind === "mcp") editorMcp(fields, id);
+  else if (kind === "agent") editorAgent(fields, id);
+  else if (kind === "skill") editorSkill(fields, id);
+  else if (kind === "command") editorCommand(fields, id);
+  document.querySelectorAll(".settings-page").forEach(page => { page.hidden = page.dataset.section !== "editor"; });
+  document.querySelectorAll(".settings-nav button").forEach(button => { button.classList.toggle("active", button.dataset.section === "editor"); });
+  $("settings-modal").hidden = false;
+  $("settings-close").textContent = "Done";
+}
+
+function closeCfgEditor(kind) {
+  state.cfgEditor = null;
+  state.settingsSection = kind === "mcp" ? "mcp" : kind === "agent" ? "agents" : kind === "skill" ? "skills" : "commands";
+  openSettings();
+}
+
+function editorButtons(kind, id, { onRemove } = {}) {
+  const done = $("editor-buttons");
+  done.innerHTML = "";
+  if (id !== null && onRemove) {
+    done.append(el("button", { class: "danger small", text: { mcp: "Remove Server…", agent: "Remove Agent…", skill: "Delete Skill…", command: "Delete Command…" }[kind], onclick: () => {
+      if (!confirm("Remove it?")) return;
+      onRemove();
+    } }));
+  }
+  done.append(el("button", { class: "primary", text: "Done", onclick: () => closeCfgEditor(kind) }));
+}
+
+function fieldLine(fields, label, value, onchange, { placeholder, mono } = {}) {
+  const input = el("input", { type: "text", placeholder: placeholder ?? "" });
+  input.value = value ?? "";
+  input.addEventListener("change", () => { onchange(input.value); });
+  if (mono) input.classList.add("mono");
+  fields.append(el("div", { class: "settings-row" }, el("span", { text: label }), input));
+  return input;
+}
+
+function fieldToggle(fields, label, note, checked, onchange) {
+  const input = el("input", { type: "checkbox" });
+  input.checked = checked;
+  input.addEventListener("change", () => onchange(input.checked));
+  const labelBox = el("span", { class: "setting-label" });
+  labelBox.append(el("span", { text: label }));
+  if (note) labelBox.append(el("span", { class: "where", text: note }));
+  const row = el("div", { class: "settings-row" }, labelBox, input);
+  fields.append(row);
+  return input;
+}
+
+function fieldArea(fields, label, value, onchange, { placeholder, rows = 6, mono } = {}) {
+  const area = el("textarea", { placeholder: placeholder ?? "", rows: String(rows) });
+  area.value = value ?? "";
+  area.addEventListener("change", () => onchange(area.value));
+  if (mono) area.classList.add("mono");
+  const column = el("div", { class: "settings-row column" }, el("span", { text: label }), area);
+  fields.append(column);
+  return area;
+}
+
+function fieldPairs(fields, label, object, onChange) {
+  const values = object && typeof object === "object" && !Array.isArray(object) ? Object.entries(object).map(([key, value]) => (typeof value === "string" ? value : JSON.stringify(value))).map((value, index) => [Object.keys(object)[index], value]) : [];
+  const box = el("div", { class: "kvs" });
+  const commit = () => {
+    const next = {};
+    for (const [key, value] of values) if (key) next[key] = value;
+    onChange(next);
+  };
+  const draw = () => {
+    box.innerHTML = "";
+    for (const pair of values.values()) {
+      const holder = pair;
+      const keyInput = el("input", { type: "text", value: holder[0] ?? "", placeholder: "Name" });
+      const valueInput = el("input", { type: "text", value: holder[1] ?? "", placeholder: "Value" });
+      keyInput.addEventListener("change", () => { holder[0] = keyInput.value.trim(); draw(); commit(); });
+      valueInput.addEventListener("change", () => { holder[1] = valueInput.value; commit(); });
+      const del = el("button", { class: "small", text: "✕", title: "Remove this pair", onclick: () => { values.splice(values.indexOf(holder), 1); draw(); commit(); } });
+      box.append(el("div", { class: "kvs-row" }, keyInput, valueInput, del));
+    }
+    if (!values.length) box.append(el("div", { class: "where", text: "None." }));
+  };
+  draw();
+  const column = el("div", { class: "settings-row column" }, el("span", { text: label }), box,
+    el("button", { class: "small", text: "Add a pair", onclick: () => { values.push(["", ""]); draw(); } }));
+  fields.append(column);
+}
+
+function fieldPick(fields, label, value, options, onChange) {
+  const select = el("select");
+  for (const option of options) select.append(el("option", { value: option[0], text: option[1] }));
+  if (value && !options.some(option => option[0] === value)) select.append(el("option", { value, text: value }));
+  if (value == null) select.value = options[0]?.[0];
+  else select.value = value;
+  select.onchange = () => onChange(select.value);
+  fields.append(el("div", { class: "settings-row" }, el("span", { text: label }), select));
+  return select;
+}
+
+// ---- MCP server editor ----
+
+const MCP_KIND_FIELDS = ["command", "cwd", "environment", "url", "headers", "oauth"];
+
+function editorMcp(fields, id) {
+  if (!id) {
+    const nameInput = fieldLine(fields, "Name", "", () => {}, { placeholder: "github" });
+    const note = el("div", { class: "where", text: "Names use lowercase letters, digits, hyphens and underscores. The server's tools are named after it." });
+    fields.append(note);
+    nameInput.addEventListener("change", () => {
+      const fresh = idForName(nameInput.value);
+      if (!fresh) note.textContent = "A name needs a letter or a number.";
+      else if (cfgGet(["mcp", "servers", fresh]) != null || state.mcpLive.some(server => server.name === fresh)) note.textContent = `There's a server called ${fresh} already.`;
+      else if (fresh !== nameInput.value.trim()) note.textContent = `It'll be called ${fresh}.`;
+      else note.textContent = "Looks good. Done creates it, off until it has a command or URL.";
+    });
+    editorButtons("mcp", null, { onRemove: null });
+    $("editor-buttons").innerHTML = "";
+    $("editor-buttons").append(el("button", { class: "primary", text: "Create Server", onclick: () => {
+      const fresh = idForName(nameInput.value);
+      if (!fresh) { complain(null, "A name needs a letter or a number."); return; }
+      if (cfgGet(["mcp", "servers", fresh]) != null) { complain(null, `There's a server called ${fresh} already.`); return; }
+      // Off until it has a command or URL, so the engine doesn't try to run an empty one.
+      cfgSet(["mcp", "servers", fresh], { type: "local", command: [], disabled: true, codemode: false });
+      openCfgEditor("mcp", fresh);
+    } }));
+    return;
+  }
+
+  const base = ["mcp", "servers", id];
+  const settings = cfgGet(base) ?? {};
+  const isRemote = settings.type === "remote";
+
+  fieldPick(fields, "Runs", isRemote ? "remote" : "local", [["local", "On this machine"], ["remote", "On the web"]], value => {
+    if (value === (isRemote ? "remote" : "local")) return;
+    // What the kind you leave has is put aside; what the other had comes back — then it starts in the file again.
+    const leaving = {};
+    for (const key of MCP_KIND_FIELDS) { const had = settings[key]; if (had !== undefined) leaving[key] = had; }
+    for (const key of Object.keys(leaving)) cfgSet([...base, key], null);
+    for (const [key, had] of Object.entries(MCP_PUT_ASIDE.get(id) ?? {})) cfgSet([...base, key], had);
+    MCP_PUT_ASIDE.set(id, leaving);
+    cfgSet([...base, "disabled"], Object.keys(leaving).length ? settings.disabled : true);
+    cfgSet([...base, "type"], value);
+    saveConfig().then(() => reEditor("mcp", id));
+  });
+
+  if (isRemote) {
+    fieldLine(fields, "URL", settings.url ?? "", value => {
+      cfgSet([...base, "url"], value === "" ? null : value);
+      if (value === "") cfgSet([...base, "disabled"], true); else cfgSet([...base, "disabled"], null);
+      saveConfig();
+    }, { placeholder: "https://example.com/mcp" });
+    const oauth = settings.oauth;
+    fieldToggle(fields, "Sign in when the server asks", typeof oauth === "object" ? "With the sign-in set up in the settings file." : "Turn off for a server that takes an API key in a header instead.",
+      typeof oauth === "object" ? true : oauth !== false,
+      on => { if (typeof oauth !== "object") cfgSet([...base, "oauth"], on ? null : false); });
+    fieldPairs(fields, "Headers", settings.headers, next => { cfgSet([...base, "headers"], Object.keys(next).length ? next : null); saveConfig(); });
+  } else {
+    const commandArea = fieldArea(fields, "Command", commandLine(settings.command), value => {
+      const words = commandWords(value);
+      cfgSet([...base, "command"], words);
+      if (words.length) cfgSet([...base, "disabled"], null); else cfgSet([...base, "disabled"], true);
+      saveConfig().then(() => reEditor("mcp", id));
+    }, { placeholder: "npx -y @modelcontextprotocol/server-github", rows: 2, mono: true });
+    commandArea.addEventListener("change", () => reEditor("mcp", id));
+    fieldLine(fields, "Working folder", settings.cwd ?? "", value => { cfgSet([...base, "cwd"], value === "" ? null : value); saveConfig(); }, { placeholder: "The project's folder" });
+    fieldPairs(fields, "Environment Variables", settings.environment, next => { cfgSet([...base, "environment"], Object.keys(next).length ? next : null); saveConfig(); });
+  }
+  fieldToggle(fields, "Let the agent call its tools from code", "Code Mode: the agent looks up this server's tools and combines several in one step. Smaller models may not find its tools this way.", settings.codemode !== false, on => cfgSet([...base, "codemode"], on ? null : false));
+
+  editorButtons("mcp", id, {
+    onRemove: () => {
+      cfgSet(base, null);
+      saveConfig();
+      closeCfgEditor("mcp");
+    },
+  });
+}
+
+// A kind's put-aside fields, per server being edited (in memory, as the Mac app's editor does).
+const MCP_PUT_ASIDE = new Map();
+
+// ---- Agent editor ----
+
+function editorAgent(fields, id) {
+  if (!id) {
+    const nameInput = fieldLine(fields, "Name", "", () => {}, { placeholder: "reviewer" });
+    const note = el("div", { class: "where", text: "A short name without spaces. It's how the agent is chosen." });
+    fields.append(note);
+    nameInput.addEventListener("change", () => {
+      const fresh = lowerIDForName(nameInput.value);
+      if (!fresh) note.textContent = "A name needs a letter or a number.";
+      else if (cfgGet(["agents", fresh]) != null) note.textContent = `There's an agent called ${fresh} already.`;
+      else if (fresh !== nameInput.value.trim()) note.textContent = `It'll be called ${fresh}.`;
+      else note.textContent = "Looks good. Done creates it.";
+    });
+    const buttons = $("editor-buttons");
+    buttons.append(el("button", { class: "primary", text: "Create Agent", onclick: () => {
+      const fresh = lowerIDForName(nameInput.value);
+      if (!fresh) { complain(null, "A name needs a letter or a number."); return; }
+      if (cfgGet(["agents", fresh]) != null) { complain(null, `There's an agent called ${fresh} already.`); return; }
+      cfgSet(["agents", fresh], { mode: "primary", description: "" });
+      saveConfig();
+      openCfgEditor("agent", fresh);
+    } }));
+    return;
+  }
+
+  const base = ["agents", id];
+  const settings = cfgGet(base) ?? {};
+  const live = state.agents.find(agent => agent.id === id);
+  const builtIn = AGENTS_BUILTIN.includes(id) || live?.hidden === true;
+  fields.append(el("div", { class: "where", text: `Agent: ${live?.name ?? id}${builtIn ? " (built into the engine)" : ""}` }));
+  fieldArea(fields, "Description", settings.description ?? "", value => { cfgSet([...base, "description"], value === "" ? null : value); saveConfig(); }, { placeholder: builtIn ? (live?.description ?? "What it's for, so the agent knows when to use it") : "What it's for, so the agent knows when to use it", rows: 3 });
+  fieldPick(fields, "Use as", settings.mode ?? live?.mode ?? "primary",
+    [["primary", "Mode"], ["subagent", "Subagent"], ["all", "Mode and subagent"]],
+    value => { cfgSet([...base, "mode"], value); saveConfig(); });
+  const modelRow = el("div", { class: "settings-row" }, el("span", { text: "Model" }));
+  const modelInput = el("select");
+  modelRow.append(modelInput);
+  fields.append(modelRow);
+  modelSelect(modelInput, [...base, "model"], "The session's model");
+  fieldLine(fields, "Most steps per message", settings.steps ?? "", value => { cfgSet([...base, "steps"], value === "" ? null : Number(value)); saveConfig(); }, { placeholder: "No limit" });
+  fieldToggle(fields, "Use this agent", null, settings.disabled !== true, on => { cfgSet([...base, "disabled"], on ? null : true); saveConfig(); });
+  fieldArea(fields, "Instructions", settings.system ?? "", value => { cfgSet([...base, "system"], value === "" ? null : value); saveConfig(); }, { placeholder: builtIn ? "Leave empty to keep the engine's own. Anything here replaces them." : "How it should work. The project's AGENTS.md, skills and MCP servers still apply.", rows: 8 });
+
+  const rulesBox = el("div", { class: "rules" });
+  const items = () => Array.isArray(cfgGet([...base, "permissions"])) ? cfgGet([...base, "permissions"]).map(item => (item && typeof item === "object" ? { ...item } : item)) : [];
+  const redraw = () => {
+    rulesBox.innerHTML = "";
+    const all = items();
+    const shown = all.filter(item => item && typeof item === "object" && item.action !== "skill");
+    for (const rule of shown) {
+      const index = all.indexOf(rule);
+      const action = el("select");
+      for (const [value, label] of CFG_ACTIONS) action.append(el("option", { value, text: label }));
+      const resource = el("input", { type: "text", value: rule.resource ?? "*", placeholder: "Pattern, like git push *" });
+      const effect = el("select");
+      for (const value of ["allow", "ask", "deny"]) effect.append(el("option", { value, text: value }));
+      action.value = rule.action ?? "edit";
+      effect.value = rule.effect ?? "ask";
+      const commit = () => {
+        all[index] = { action: action.value, resource: resource.value === "" ? "*" : resource.value, effect: effect.value };
+        cfgSet([...base, "permissions"], all);
+        saveConfig();
+      };
+      action.onchange = commit;
+      effect.onchange = commit;
+      resource.onchange = commit;
+      rulesBox.append(el("div", { class: "kvs-row" }, action, resource, effect, el("button", { class: "small", text: "✕", onclick: () => {
+        all.splice(index, 1);
+        cfgSet([...base, "permissions"], all.length ? all : null);
+        saveConfig();
+        redraw();
+      } })));
+    }
+    if (!shown.length) rulesBox.append(el("div", { class: "where", text: "None yet." }));
+  };
+  redraw();
+  fields.append(el("div", { class: "settings-row column" },
+    el("span", { text: "Permissions" }),
+    rulesBox,
+    el("button", { class: "small", text: "Add a rule", onclick: () => {
+      const all = items();
+      all.push({ action: "edit", resource: "*", effect: "ask" });
+      cfgSet([...base, "permissions"], all);
+      saveConfig();
+      redraw();
+    } }),
+  ));
+  fields.append(el("div", { class: "where", text: "Added after the ones in Settings › Permissions, so these win for this agent." }));
+
+  editorButtons("agent", id, {
+    onRemove: () => {
+      cfgSet(base, null);
+      saveConfig();
+      closeCfgEditor("agent");
+    },
+  });
+}
+
+// ---- Skill editor: a SKILL.md in the skills folder, one file per skill, as the Mac app writes ----
+
+function skillNameFrom(text) {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 64).replace(/[^a-z0-9-]/g, "");
+}
+
+function skillText(name, summary, body, existing = "") {
+  let others = [];
+  if (existing.startsWith("---")) {
+    const end = existing.indexOf("\n---", 3);
+    if (end >= 0) {
+      others = existing.slice(3, end).split("\n").filter(line => line.trim() && !line.startsWith("name:") && !line.startsWith("description:"));
+    }
+  }
+  const summaryLine = String(summary).replace(/[\r\n]+/g, " ").trim();
+  const quote = text => '"' + text.replace(/\\/g, "\\\\").replace(/"/g, "\\\"") + '"';
+  const header = [`name: ${name}`, `description: ${quote(summaryLine)}`, ...others].join("\n");
+  return `---\n${header}\n---\n\n${String(body).trim()}\n`;
+}
+
+async function editorSkill(fields, id) {
+  let file = "";
+  if (id) {
+    try { file = (await api(`/api/skill-file/${id}`)).text ?? ""; } catch {}
+  }
+  const header = file.startsWith("---") ? file.indexOf("\n---", 3) : -1;
+  const summaryMatch = header >= 0 ? file.slice(3, header).match(/^description:\s*["']?(.*?)["']?\s*$/m) : null;
+  const summary = summaryMatch ? summaryMatch[1].replace(/\\(["\\])/g, "$1") : "";
+  const body = header >= 0 ? file.slice(file.indexOf("\n", header + 4) + 1) : file;
+
+  const nameLine = fieldLine(fields, "Name", id ?? "", () => {}, { placeholder: "writing well" });
+  const note = el("div", { class: "where", text: "Names use lowercase letters a to z, digits and hyphens." });
+  fields.append(note);
+  nameLine.disabled = id != null;
+  const summaryArea = fieldArea(fields, "Description", summary, () => {}, { rows: 2, placeholder: "What it's for: the agent reaches for the skill by this." });
+  const bodyArea = fieldArea(fields, "Instructions", body, () => {}, { rows: 10, placeholder: id ? "When a task calls for this, the agent loads it: how to do it, step by step." : "How to do the task, step by step. Scripts can sit in the same folder." });
+  if (!id) {
+    nameLine.addEventListener("change", () => {
+      const fresh = skillNameFrom(nameLine.value);
+      if (nameLine.value.trim() && !fresh) note.textContent = "Names use the letters a to z and digits, and this one has none.";
+      else if (state.skillsEngine.some(skill => skill.id === fresh)) note.textContent = `There's a skill called ${fresh} already.`;
+      else note.textContent = `It lives in the skills folder as ${fresh || "<name>"}/SKILL.md.`;
+    });
+  }
+
+  const write = async () => {
+    const fresh = id ?? skillNameFrom(nameLine.value);
+    if (!fresh) { complain(null, "Names use the letters a to z and digits, and this one has none."); return null; }
+    if (id == null && state.skillsEngine.some(skill => skill.id === fresh)) { complain(null, `There's a skill called ${fresh} already.`); return null; }
+    try {
+      await api(`/api/skill-file/${fresh}`, { method: "PUT", body: { text: skillText(fresh, summaryArea.value.trim(), bodyArea.value, file) } });
+    } catch (error) { complain(null, error); return null; }
+    await bootConfig();
+    return fresh;
+  };
+
+  const buttons = $("editor-buttons");
+  buttons.append(el("button", { class: "primary", text: "Save Skill", onclick: async () => {
+    const fresh = await write();
+    if (!fresh) return;
+    closeCfgEditor("skill");
+  } }));
+  buttons.append(el("button", { class: "primary", text: "Done", onclick: () => closeCfgEditor("skill") }));
+  buttons.append(el("button", { class: "danger small", text: "Delete Skill…", onclick: () => {
+    if (!confirm("Delete this skill?")) return;
+    api(`/api/skill-file/${id}`, { method: "DELETE" }).catch(error => complain(null, error));
+    bootConfig();
+    closeCfgEditor("skill");
+  } }));
+}
+
+// ---- Command editor ----
+
+function editorCommand(fields, id) {
+  const base = id ? ["commands", id] : null;
+  const settings = id ? cfgGet(base) ?? {} : {};
+  if (!id) {
+    const nameLine = fieldLine(fields, "Name", "", () => {}, { placeholder: "test" });
+    nameLine.dataset.forNew = "command-name";
+  } else {
+    nameLineEditing(fields, id);
+  }
+  fieldArea(fields, "Description", settings.description ?? "", value => { if (base) { cfgSet([...base, "description"], value === "" ? null : value); saveConfig(); } }, { placeholder: "Shown in the list when you type /", rows: 3 });
+  const agentSelect = el("select");
+  agentSelect.append(el("option", { value: "", text: "The session's agent" }));
+  for (const agent of state.agents.filter(agent => !agent.hidden)) agentSelect.append(el("option", { value: agent.id, text: agent.name }));
+  if (settings.agent && !state.agents.some(agent => agent.id === settings.agent)) agentSelect.append(el("option", { value: settings.agent, text: settings.agent }));
+  agentSelect.value = settings.agent ?? "";
+  agentSelect.onchange = () => { if (base) { cfgSet([...base, "agent"], agentSelect.value === "" ? null : agentSelect.value); saveConfig(); } };
+  fields.append(el("div", { class: "settings-row" }, el("span", { text: "Agent" }), agentSelect));
+
+  const modelRow = el("div", { class: "settings-row" }, el("span", { text: "Model" }));
+  const modelInput = el("select");
+  modelRow.append(modelInput);
+  fields.append(modelRow);
+  if (base) modelSelect(modelInput, [...base, "model"], "The agent's or session's model");
+
+  if (base) {
+    fieldToggle(fields, "Run as a subagent", "In the background, without filling up the conversation.", settings.subagent === true, on => { cfgSet([...base, "subagent"], on ? true : null); saveConfig(); });
+    fieldArea(fields, "Prompt", settings.template ?? "", value => { cfgSet([...base, "template"], value); saveConfig(); }, { rows: 9, placeholder: "What the agent gets. $ARGUMENTS is what you type after the command; $1, $2 and so on are its words." });
+  } else {
+    const template = fieldArea(fields, "Prompt", "", () => {}, { rows: 9, placeholder: "What the agent gets. $ARGUMENTS is what you type after the command; $1, $2 and so on are its words." });
+    template.dataset.forNew = "command-template";
+  }
+
+  if (!id) {
+    const note = el("div", { class: "where", text: "A short name without spaces: you'll type / and this name. A name that's taken can't be used." });
+    fields.append(note);
+    const buttons = $("editor-buttons");
+    const nameInput = fields.querySelector("[data-for-new='command-name']");
+    const templateArea = fields.querySelector("[data-for-new='command-template']");
+    nameInput.addEventListener("change", () => {
+      const fresh = idForName(nameInput.value);
+      note.textContent = !nameInput.value.trim() ? "A short name without spaces: you'll type / and this name." :
+        cfgGet(["commands", fresh]) != null || state.commands?.some(command => command.name === fresh) ? `There's a command called /${fresh} already.` : `You'll type /${fresh}.`;
+    });
+    buttons.querySelectorAll(".primary").forEach(button => button.remove());
+    buttons.append(el("button", { class: "primary", text: "Create Command", onclick: () => {
+      const fresh = idForName(nameInput.value);
+      if (!fresh) { complain(null, "A name needs a letter or a number."); return; }
+      if (cfgGet(["commands", fresh]) != null) { complain(null, `There's a command called /${fresh} already.`); return; }
+      cfgSet(["commands", fresh], { template: templateArea?.value ?? "" });
+      saveConfig();
+      openCfgEditor("command", fresh);
+    } }));
+    return;
+  }
+
+  editorButtons("command", id, {
+    onRemove: () => {
+      cfgSet(base, null);
+      saveConfig();
+      closeCfgEditor("command");
+    },
+  });
+}
+
+function nameLineEditing(fields, id) {
+  fields.append(el("div", { class: "where", text: `Run by typing /${id}.` }));
+}
+
+// The engine-side of settings changes: the engine reads them again when it starts over.
+$("engine-restart").addEventListener("click", async () => {
+  const button = $("engine-restart");
+  button.disabled = true;
+  try {
+    const { version } = await api("/api/engine/restart", { method: "POST", body: {} });
+    notify("Kuvo Code", `The engine is back (${version}).`);
+    await bootConfig();
+    await loadSessions();
+    if (state.session) await openSession(state.session.id).catch(() => {});
+  } catch (error) {
+    complain(null, error);
+  }
+  button.disabled = false;
+});
+$("mcp-timeout-startup").addEventListener("change", timeoutSaved("startup"));
+$("mcp-timeout-catalog").addEventListener("change", timeoutSaved("catalog"));
+$("mcp-timeout-execution").addEventListener("change", timeoutSaved("execution"));
+$("mcp-add").addEventListener("click", () => openCfgEditor("mcp", null));
+$("agent-new").addEventListener("click", () => openCfgEditor("agent", null));
+$("skill-new").addEventListener("click", () => openCfgEditor("skill", null));
+$("command-new").addEventListener("click", () => openCfgEditor("command", null));
+
 function openSettings() {
   applyLook();
   $("settings-modal").hidden = false;
@@ -1664,7 +2498,10 @@ function openSettings() {
   renderSystemSettings();
   renderSavedPermissions();
   renderConfigLists();
+  bootConfig();
   for (const button of document.querySelectorAll(".settings-nav button")) button.onclick = () => {
+    if (button.dataset.section === "editor") return;
+    state.cfgEditor = null;
     state.settingsSection = button.dataset.section;
     openSettings();
   };

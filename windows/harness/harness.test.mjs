@@ -467,3 +467,104 @@ test("a project folder that isn't there is refused with a word about it", async 
   assert.equal(response.status, 400);
   assert.match((await response.json()).error, /no such folder/i);
 });
+
+// ---- The settings file (what the Mac app edits through EngineConfig) ----
+
+test("the settings file is read, served with its problems, and written whole", async t => {
+  const engine = await fakeEngine();
+  t.after(engine.close);
+  const file = path.join(home, "config", "opencode", "opencode.json");
+  process.env.KUVO_ENGINE_CONFIG_ROOT = file;
+  t.after(() => { delete process.env.KUVO_ENGINE_CONFIG_ROOT; delete process.env.KUVO_SKILLS_ROOT; });
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const { harness, url } = await inFront(engine);
+  t.after(() => harness.close());
+
+  // Nothing yet: an empty object, no problem, and where it would live.
+  let fine = await fetch(`${url}api/config`);
+  assert.equal(fine.status, 200);
+  let body = await fine.json();
+  assert.deepEqual(body.settings, {});
+  assert.equal(body.problem, null);
+  assert.equal(body.path, file);
+
+  // A file with a whole server, a command and permissions reads back as it is.
+  const settings = {
+    mcp: { servers: { linear: { type: "remote", url: "https://mcp.linear.app/mcp", codemode: false } } },
+    commands: { test: { description: "Run the tests", template: "npm test" } },
+    permissions: [{ action: "skill", resource: "writing-well", effect: "deny" }],
+  };
+  fs.writeFileSync(file, JSON.stringify(settings, null, 2));
+  fine = await fetch(`${url}api/config`);
+  body = await fine.json();
+  assert.deepEqual(body.settings, settings);
+
+  // Unreadable JSON comes back as a problem, not as a crash.
+  fs.writeFileSync(file, "{ mcp: {");
+  fine = await fetch(`${url}api/config`);
+  body = await fine.json();
+  assert.equal(body.settings, null);
+  assert.match(body.problem, /JSON/i);
+
+  // PUT writes the file whole and pretty; a non-object is refused.
+  const written = await fetch(`${url}api/config`, {
+    method: "PUT", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ settings: { agents: { reviewer: { mode: "primary" } } } }),
+  });
+  assert.equal(written.status, 200);
+  assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).agents.reviewer.mode, "primary");
+
+  const bad = await fetch(`${url}api/config`, {
+    method: "PUT", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ settings: [1, 2] }),
+  });
+  assert.equal(bad.status, 400);
+
+  const missing = await fetch(`${url}api/config`, {
+    method: "PUT", headers: { "content-type": "application/json" },
+    body: "{}",
+  });
+  assert.equal(missing.status, 400);
+});
+
+test("a skill is written to its own folder as one SKILL.md, read back, deleted", async t => {
+  const engine = await fakeEngine();
+  t.after(engine.close);
+  const root = path.join(home, "skills-root");
+  process.env.KUVO_ENGINE_CONFIG_ROOT = path.join(home, "config", "opencode", "opencode.json");
+  process.env.KUVO_SKILLS_ROOT = root;
+  t.after(() => { delete process.env.KUVO_ENGINE_CONFIG_ROOT; delete process.env.KUVO_SKILLS_ROOT; });
+  const { harness, url } = await inFront(engine);
+  t.after(() => harness.close());
+
+  const put = await fetch(`${url}api/skill-file/writing-well`, {
+    method: "PUT", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ text: "---\nname: writing-well\ndescription: \"How to write\"\n---\n\nBe clear.\n" }),
+  });
+  assert.equal(put.status, 200);
+  assert.equal(put.ok, true);
+  assert.equal(fs.readFileSync(path.join(root, "writing-well", "SKILL.md"), "utf8"), "---\nname: writing-well\ndescription: \"How to write\"\n---\n\nBe clear.\n");
+  const got = await fetch(`${url}api/skill-file/writing-well`);
+  assert.deepEqual(await got.json(), { id: "writing-well", text: "---\nname: writing-well\ndescription: \"How to write\"\n---\n\nBe clear.\n" });
+
+  const gone = await fetch(`${url}api/skill-file/writing-well`, { method: "DELETE" });
+  assert.equal(gone.status, 200);
+  assert.ok(!fs.existsSync(path.join(root, "writing-well")));
+
+  // A name the page can't send (the ids are guarded) isn't a route.
+  const guarded = await fetch(`${url}api/skill-file/../escape`, { method: "DELETE" });
+  assert.notEqual(guarded.status, 200);
+});
+
+test("connecting an MCP server again reaches the engine the Mac app's way", async t => {
+  const engine = await fakeEngine();
+  t.after(engine.close);
+  const { harness, url } = await inFront(engine);
+  t.after(() => harness.close());
+  await fetch(`${url}api/mcp/jira/connect`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+  const go = engine.asked.find(asked => asked.path.startsWith("/api/experimental/mcp"));
+  assert.equal(go.path, "/api/experimental/mcp/jira/connect");
+  await fetch(`${url}api/mcp/jira/disconnect`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+  const stop = engine.asked.find(asked => asked.path.startsWith("/api/experimental/mcp") && asked.path.endsWith("/disconnect"));
+  assert.equal(stop.path, "/api/experimental/mcp/jira/disconnect");
+});

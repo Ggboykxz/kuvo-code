@@ -220,6 +220,21 @@ export class EngineClient {
     return (await this.request("GET", "api/model/default", { directory })).data;
   }
 
+  /// The engine's whole settings, merged live from every source it reads.
+  async configSources(directory) {
+    return await this.request("GET", "api/config", { directory });
+  }
+
+  /// Connects one again ("Try Again" on a failed server).
+  async mcpConnect(name, directory) {
+    await this.request("POST", `api/experimental/mcp/${encodeURIComponent(name)}/connect`, { directory, body: {} });
+  }
+
+  /// Lets go of one ("Try Again" never comes back from this).
+  async mcpDisconnect(name) {
+    await this.request("POST", `api/experimental/mcp/${encodeURIComponent(name)}/disconnect`, { body: {} });
+  }
+
   /// The models usable in a folder (an engine's list can differ per project).
   async models(directory) {
     return (await this.request("GET", "api/model", { directory })).data ?? [];

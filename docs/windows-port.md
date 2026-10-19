@@ -105,7 +105,12 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
-  - **2.16 (latest).** Engine-surface parity: header branch chip (`api/vcs`),
+  - **2.17 (latest).** The settings file: MCP servers (list, add, edit, catalog, timeouts,
+    on/off, Try Again), agents (defaults, mode, model, steps, instructions, permission
+    rules), skills (list, on/off via deny rule, own SKILL.md files), commands (own, with
+    agent/model/subagent/template + the engine's own read-only) — edited in pages like the
+    Mac app's, saved whole, with a Restart-the-engine button.
+  - **2.16. Engine-surface parity: header branch chip (`api/vcs`),
     per-session changed files (`api/session/:id/diff`), the real queue dock on
     the engine's inbox (steer/queue toggle, take back), context compaction,
     read/unread sessions (`api/session/:id/view`), saved-permission rules

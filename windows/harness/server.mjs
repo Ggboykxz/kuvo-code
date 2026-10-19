@@ -15,7 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { EngineClient, EngineError } from "./engine.mjs";
-import { install, launch } from "../kuvo-engine.mjs";
+import { engineFolders, install, launch } from "../kuvo-engine.mjs";
 
 // Packed into an executable (build-exe.mjs), the page's files live inside the binary rather
 // than next to it, and node:sea is how they're read back. Beside the source they are files.
@@ -107,6 +107,15 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
         starting = null;
       });
     return starting;
+  }
+
+  /// Stops the engine and starts it over: the settings file's changes, for instance, get read.
+  /// The client that comes back has the new engine's url and password.
+  async function restartEngine() {
+    if (engine) await engine.stop().catch(() => {});
+    engine = null;
+    starting = null;
+    return ensureEngine();
   }
 
   async function readBody(request) {
@@ -560,6 +569,82 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
     if (inbox && inbox[1] && request.method === "DELETE") {
       await client.cancelInbox(inbox[0], inbox[1]);
       return json({ ok: true });
+    }
+
+    // ---- The engine's settings file, as the Mac app's engine config is ----
+
+    /// Where the engine reads its settings: the Mac app's layout, in this machine's data
+    /// folder. A KUVO_ENGINE_CONFIG_ROOT names the file itself, for tests and for moving it.
+    const settingsFile = () =>
+      process.env.KUVO_ENGINE_CONFIG_ROOT ?? path.join(engineFolders().root, "config", "opencode", "opencode.json");
+    const skillsFolder = () => process.env.KUVO_SKILLS_ROOT ?? path.join(path.dirname(settingsFile()), "skills");
+
+    const readSettings = () => {
+      const file = settingsFile();
+      let text = "";
+      try { text = fs.readFileSync(file, "utf8"); } catch {}
+      if (text.trim() === "") return { settings: {}, problem: null, path: file };
+      try { return { settings: JSON.parse(text), problem: null, path: file }; }
+      catch (error) { return { settings: null, problem: error.message, path: file }; }
+    };
+
+    if (url.pathname === "/api/config" && request.method === "GET") {
+      const file = readSettings();
+      const live = await client.configSources().catch(() => null);
+      return json({ ...file, live });
+    }
+    if (url.pathname === "/api/config" && request.method === "PUT") {
+      const body = await readBody(request);
+      const settings = body?.settings;
+      if (typeof settings !== "object" || settings === null || Array.isArray(settings)) {
+        throw new HttpError(400, "That isn't a settings object.");
+      }
+      fs.mkdirSync(path.dirname(settingsFile()), { recursive: true });
+      fs.writeFileSync(settingsFile(), JSON.stringify(settings, null, 2) + "\n");
+      return json({ ok: true, path: settingsFile() });
+    }
+
+    if (url.pathname === "/api/engine/restart" && request.method === "POST") {
+      const made = await restartEngine();
+      log("engine started again");
+      return json({ ok: true, version: made.version });
+    }
+
+    // MCP: live states for the list, and the connect/disconnect of one.
+    if (url.pathname === "/api/mcp" && request.method === "GET") {
+      return json({ servers: await client.mcpServers(currentProject ?? undefined).catch(() => []) });
+    }
+    const mcp = route(/^\/api\/mcp\/([^/]+)\/(connect|disconnect)$/);
+    if (mcp && request.method === "POST") {
+      if (mcp[1] === "connect") await client.mcpConnect(mcp[0], currentProject ?? undefined);
+      else await client.mcpDisconnect(mcp[0]);
+      return json({ ok: true });
+    }
+
+    // Skills: the engine's own list, plus ours on disk, one SKILL.md per folder.
+    if (url.pathname === "/api/skills" && request.method === "GET") {
+      const skills = await client.skills(currentProject ?? undefined).catch(() => []);
+      return json({ skills, folder: skillsFolder() });
+    }
+    const skill = route(/^\/api\/skill-file\/([a-z0-9-]{1,64})$/);
+    if (skill) {
+      const folder = path.join(skillsFolder(), skill[0]);
+      if (request.method === "GET") {
+        let text = "";
+        try { text = fs.readFileSync(path.join(folder, "SKILL.md"), "utf8"); } catch {}
+        return json({ id: skill[0], text });
+      }
+      if (request.method === "PUT") {
+        const body = await readBody(request);
+        if (typeof body?.text !== "string") throw new HttpError(400, "That isn't skill text.");
+        fs.mkdirSync(folder, { recursive: true });
+        fs.writeFileSync(path.join(folder, "SKILL.md"), body.text);
+        return json({ ok: true, id: skill[0] });
+      }
+      if (request.method === "DELETE") {
+        fs.rmSync(folder, { recursive: true, force: true });
+        return json({ ok: true });
+      }
     }
 
     const rename = route(/^\/api\/sessions\/([^/]+)\/rename$/);

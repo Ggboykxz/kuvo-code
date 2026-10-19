@@ -957,3 +957,66 @@ li.unread .session { position: relative; padding-left: 16px; }
 
 /* ---- Saved permissions ---- */
 .saved-permissions { display: flex; flex-direction: column; gap: var(--space-1); }
+
+/* ---- Config pages: MCP, agents, skills, commands (the engine's settings file) ---- */
+.cfg-problem {
+  font-size: var(--text-sm); color: var(--danger);
+  border: 1px solid var(--danger); border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+}
+.cfg-row {
+  display: flex; align-items: baseline; gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: var(--text-md);
+}
+.cfg-row:last-child { border-bottom: 0; }
+.cfg-row-main { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.cfg-row-title { display: inline-flex; gap: var(--space-2); align-items: baseline; white-space: nowrap; }
+.cfg-row-title .where { font-size: var(--text-xs); }
+.where.ok { color: var(--ok); }
+.where.warn { color: var(--warn); }
+.where.danger { color: var(--danger); }
+.where.faint { color: var(--ink-faint); }
+.settings-row input[type="text"], .settings-row input[type="number"] {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--panel-2); color: var(--ink);
+  font-size: var(--text-sm); min-width: 0; width: 240px;
+}
+.settings-row input.mono, .settings-row textarea.mono { font-family: "JetBrains Mono", monospace; font-size: var(--text-sm); }
+.settings-row input[type="checkbox"] { width: auto; }
+.settings-row.column { flex-direction: column; align-items: stretch; gap: var(--space-1); }
+.settings-row.column textarea {
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--panel-2); color: var(--ink);
+  font-family: inherit; font-size: var(--text-sm);
+  padding: var(--space-2) var(--space-3);
+  resize: vertical; min-height: 44px;
+}
+.kvs { display: flex; flex-direction: column; gap: var(--space-1); }
+.kvs-row { display: flex; gap: var(--space-2); }
+.kvs-row input {
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--panel-2); color: var(--ink);
+  font-size: var(--text-sm); min-width: 0;
+}
+.kvs-row input:first-child { flex: 0 0 160px; }
+.kvs-row input:nth-child(2) { flex: 1; }
+.rules { display: flex; flex-direction: column; gap: var(--space-1); }
+.rules .kvs-row select {
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--panel-2); color: var(--ink);
+  font-size: var(--text-sm);
+}
+.rules .kvs-row select:first-child { flex: 0 0 170px; }
+.rules .kvs-row input { flex: 1; }
+.settings-detail-title { font-size: var(--text-lg); font-weight: 600; letter-spacing: var(--tracking-display); }
+.settings-editor-buttons { display: flex; gap: var(--space-2); justify-content: flex-end; margin-top: var(--space-3); }
+.settings-page h3 {
+  margin: var(--space-3) 0 var(--space-1);
+  font-size: var(--text-sm); font-weight: 600;
+  color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.06em;
+}

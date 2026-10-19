@@ -95,9 +95,66 @@
       <nav class="settings-nav">
         <button data-section="appearance" class="active">Appearance</button>
         <button data-section="keyboard">Keyboard</button>
+        <button data-section="mcp">MCP servers</button>
+        <button data-section="agents">Agents</button>
+        <button data-section="skills">Skills</button>
+        <button data-section="commands">Commands</button>
         <button data-section="projects">Projects</button>
         <button data-section="permissions">Permissions</button>
-        <button data-section="system">Engine &amp; storage</button>
+        <button         <!-- The config file the engine reads: loaded once, edited page by page, saved whole. -->
+        <div class="settings-page" data-section="editor" hidden>
+          <div class="cfg-problem" id="cfg-problem" hidden></div>
+          <div id="editor-title" class="settings-detail-title"></div>
+          <div id="editor-fields"></div>
+          <div class="settings-editor-buttons" id="editor-buttons"></div>
+        </div>
+
+        <div class="settings-page" data-section="mcp" hidden>
+          <div class="cfg-problem" id="mcp-problem" hidden></div>
+          <h3>Servers</h3>
+          <div id="mcp-list"></div>
+          <button id="mcp-add" class="primary">Add Server…</button>
+          <h3>Popular Servers</h3>
+          <div id="mcp-catalog"></div>
+          <h3>Timeouts</h3>
+          <div class="settings-row"><span>Time to start, in milliseconds</span><input id="mcp-timeout-startup" type="number" placeholder="30000"></div>
+          <div class="settings-row"><span>Time to list tools, in milliseconds</span><input id="mcp-timeout-catalog" type="number" placeholder="30000"></div>
+          <div class="settings-row"><span>Time for one tool call, in milliseconds</span><input id="mcp-timeout-execution" type="number" placeholder="43200000"></div>
+          <button id="engine-restart" class="secondary">Restart the engine</button>
+          <div class="settings-note">MCP servers give the agent more tools, like a database, an issue tracker or your design files. A server on this machine runs a command; one on the web is a URL. To keep a key out of the settings file, write {env:NAME} to use one of your environment variables.</div>
+        </div>
+
+        <div class="settings-page" data-section="agents" hidden>
+          <div class="cfg-problem" id="agents-problem" hidden></div>
+          <div class="settings-row"><span>Mode for new sessions</span><select id="agent-default"></select></div>
+          <div class="settings-row"><span>Model for new sessions</span><select id="agent-default-model"></select></div>
+          <div class="settings-row"><span>Model for session titles</span><select id="agent-title-model"></select></div>
+          <h3>Agents</h3>
+          <div id="agents-list"></div>
+          <button id="agent-new" class="primary">New Agent…</button>
+          <div class="settings-note">Modes are the agents you pick in the composer. Subagents are ones the agent hands part of a task to. New sessions use the model you picked last; the upper one is for when there's none. A small, fast model is enough for titles.</div>
+        </div>
+
+        <div class="settings-page" data-section="skills" hidden>
+          <div class="cfg-problem" id="skills-problem" hidden></div>
+          <h3>Skills the Agent Can Use</h3>
+          <div id="skills-list"><div class="where">Loading…</div></div>
+          <button id="skill-new" class="primary">New Skill…</button>
+          <div class="settings-note" id="skills-folder"></div>
+          <div class="settings-note">The agent loads a skill when a task calls for it. Skills in ~/.claude/skills and ~/.agents/skills, and in a project's .opencode/skills, are found on their own.</div>
+        </div>
+
+        <div class="settings-page" data-section="commands" hidden>
+          <div class="cfg-problem" id="commands-problem" hidden></div>
+          <h3>Your Commands</h3>
+          <div id="commands-list"></div>
+          <button id="command-new" class="primary">New Command…</button>
+          <h3>The engine's own</h3>
+          <div id="commands-others"></div>
+          <div class="settings-note">Type / and a command's name at the start of a message to run it. What you type after the name fills in $ARGUMENTS; $1, $2 and so on are its words. !`command` puts in a command's output.</div>
+        </div>
+
+data-section="system">Engine &amp; storage</button>
       </nav>
       <div class="settings-pages">
         <div class="settings-page" data-section="appearance">
