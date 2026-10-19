@@ -1425,7 +1425,10 @@ final class Workspace {
             // session that started it.
             var session = session(id)
             let api = api(forSession: id)
-            var parent = session == nil ? (try? await api?.session(id))?.parentID : nil
+            let unlisted = session == nil ? try? await api?.session(id) : nil
+            // The engine's run for a session with the coding agents: that session asks you itself.
+            if let unlisted, Self.isEngineRun(unlisted) { return }
+            var parent = unlisted?.parentID
             for _ in 0..<5 where session == nil {
                 guard let next = parent else { break }
                 session = self.session(next)

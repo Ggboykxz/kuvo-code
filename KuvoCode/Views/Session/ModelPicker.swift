@@ -118,6 +118,17 @@ struct ModelPicker: View {
             #if DEBUG
             // KUVO_DEMO_RAIL: open on this entry of the rail (`★`, `auto`, a provider's ID).
             if let rail = ProcessInfo.processInfo.environment["KUVO_DEMO_RAIL"] { chosenRail = rail }
+            // KUVO_DEMO_PICK: a moment after it opens, pick this model (`provider/model`), as a click would.
+            if let wanted = ProcessInfo.processInfo.environment["KUVO_DEMO_PICK"] {
+                Task {
+                    try? await Task.sleep(for: .seconds(1.5))
+                    if let model = providers.flatMap(\.models).first(where: { $0.key == wanted }) { pick(model) }
+                    // KUVO_DEMO_PICK_BACK: then back to the list, as clicking the model on the effort does.
+                    guard ProcessInfo.processInfo.environment["KUVO_DEMO_PICK_BACK"] != nil else { return }
+                    try? await Task.sleep(for: .seconds(1.5))
+                    go(.list)
+                }
+            }
             #endif
         }
         .onDisappear {
@@ -524,7 +535,11 @@ struct ModelPicker: View {
     // MARK: Choosing
 
     private func go(_ next: Page) {
-        withAnimation(.snappy(duration: 0.2)) { turnedTo = next }
+        // In one step: a popover animating its size between the two pages could lay itself out
+        // again and again, until AppKit stopped the app.
+        var instant = Transaction()
+        instant.disablesAnimations = true
+        withTransaction(instant) { turnedTo = next }
         query = ""
         focus = next == .list ? .search : .card
         highlight = next == .list ? current.map(rowID) : nil
