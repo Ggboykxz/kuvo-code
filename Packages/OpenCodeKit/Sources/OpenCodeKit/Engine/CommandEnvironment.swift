@@ -17,6 +17,10 @@ public enum CommandEnvironment {
     /// Where each one's own value goes in the engine's environment.
     public static let prefix = "KUVO_OWN_"
 
+    /// What commands don't get at all: the settings Kuvo Code gives the engine, with the key to
+    /// the browser tools in them, which the agent's `env` would print.
+    public static let withheld = ["OPENCODE_CONFIG_CONTENT"]
+
     /// The plugin's file, in the engine's `plugins` folder beside its settings file, where it
     /// finds plugins by itself.
     public static let file = "plugins/kuvo-code.js"
@@ -27,16 +31,19 @@ public enum CommandEnvironment {
     }
 
     /// The plugin: for each command, sets each name to its own value, or takes it away when it
-    /// had none, and takes the `KUVO_OWN_…` away.
+    /// had none, and takes the `KUVO_OWN_…` and what's withheld away.
     public static let plugin = """
         // Kuvo Code writes this each time its engine starts: changes here don't last.
         // The commands the agent runs get your own folders back (XDG_CONFIG_HOME and the like),
-        // so tools find their sign-ins and settings, as in your own terminal.
+        // so tools find their sign-ins and settings, as in your own terminal, and not the
+        // settings Kuvo Code gives the engine, with its keys.
         const prefix = "\(prefix)"
+        const withheld = \(withheld)
         export default {
           id: "kuvo-code.commands",
           setup: async (ctx) => {
             await ctx.shell.hook("create.before", (input) => {
+              for (const name of withheld) delete input.env[name]
               for (const key of Object.keys(input.env)) {
                 if (!key.startsWith(prefix)) continue
                 const name = key.slice(prefix.length)
