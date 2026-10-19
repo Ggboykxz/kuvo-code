@@ -364,12 +364,14 @@ public final class RemoteServer: @unchecked Sendable {
         onExit: @escaping @Sendable (Int32) -> Void = { _ in }
     ) async throws -> RemoteServer {
         let localPort = try freeLocalPort()
-        let forwards = ["-N", "-o", "ExitOnForwardFailure=yes", "-L", "\(localPort):127.0.0.1:\(engine.port)"]
+        let forwards = ["-o", "ExitOnForwardFailure=yes", "-L", "\(localPort):127.0.0.1:\(engine.port)"]
 
         let process = Process()
         process.executableURL = URL(filePath: "/usr/bin/ssh")
-        process.arguments = SSHConnection.options + SSHConnection.separate + forwards + [connection.destination]
-        process.standardInput = FileHandle.nullDevice
+        // Not `-N`: a command on the machine that reads this app's end of a pipe, so the tunnel
+        // ends when the app does, however it ends (a crash, a force quit), like this Mac's engine.
+        process.arguments = SSHConnection.options + SSHConnection.separate + forwards + [connection.destination, "cat >/dev/null"]
+        process.standardInput = Pipe.unshared()
         process.standardOutput = FileHandle.nullDevice
         let stderr = Pipe.unshared()
         process.standardError = stderr
@@ -388,19 +390,21 @@ public final class RemoteServer: @unchecked Sendable {
         let client = HTTPClient(endpoint: endpoint)
         struct Info: Decodable { var version: String }
         let deadline = ContinuousClock.now + timeout
-        while true {
-            if !process.isRunning {
-                process.waitUntilExit()
-                _ = exits.fire()
-                throw RemoteEngineError.exited(status: process.terminationStatus, output: log.text.trimmingCharacters(in: .whitespacesAndNewlines))
+        do {
+            while true {
+                if !process.isRunning {
+                    process.waitUntilExit()
+                    throw RemoteEngineError.exited(status: process.terminationStatus, output: log.text.trimmingCharacters(in: .whitespacesAndNewlines))
+                }
+                if (try? await client.send(client.request("GET", "api/info"), as: Info.self)) != nil { break }
+                if ContinuousClock.now > deadline { throw RemoteEngineError.timedOut }
+                try await Task.sleep(for: .milliseconds(150))
             }
-            if (try? await client.send(client.request("GET", "api/info"), as: Info.self)) != nil { break }
-            if ContinuousClock.now > deadline {
-                _ = exits.fire()
-                process.terminate()
-                throw RemoteEngineError.timedOut
-            }
-            try await Task.sleep(for: .milliseconds(150))
+        } catch {
+            // Given up on, or cancelled (a reconnect called off): the tunnel goes with it.
+            _ = exits.fire()
+            if process.isRunning { process.terminate() }
+            throw error
         }
         return RemoteServer(engine: engine, endpoint: endpoint, connection: connection, tunnel: process, log: log)
     }

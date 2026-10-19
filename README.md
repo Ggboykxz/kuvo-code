@@ -87,7 +87,8 @@ side panel and the usage menu.
 - **On a machine you add**, Kuvo Code reaches it with `ssh` and your keys. It
   sends the same engine version's Linux build, downloaded and checked on the
   Mac, to `~/.kuvo-code` there, runs it on the machine's localhost only, and
-  talks to it through an SSH tunnel. The engine outlives the connection, so a
+  talks to it through an SSH tunnel, which closes with the app however it ends.
+  The engine outlives the connection, so a
   task carries on while the Mac is off; it stops when the app quits with
   nothing running, or after a day without the app, unless a bot's wake-up or
   watch is waiting, which it sends or runs when it's due. API keys reach it in

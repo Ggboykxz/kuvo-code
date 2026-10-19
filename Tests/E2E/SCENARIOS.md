@@ -214,7 +214,7 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 | --- | --- | --- |
 | I1 | Add a Linux machine over SSH; its engine installs | ✅ lokum-local added in Settings › Machines: Connecting…, then Connected; the engine and browser went into ~/.kuvo-code-e2e only |
 | I2 | A project on the machine: ask, edit, run tests, review the changes, use its terminal | ⚠️ partly: sessions there, its agent browsing, each session's panel with its own machine pages; ❌→✅ the browser showed Chinese, Japanese and Korean as boxes (f7d0841), a Chrome started before an update kept the old build (08e3ec8), pages left open after a relaunch went to the panel in view (4fa480e); edits, tests, review and terminal there not run yet |
-| I3 | The machine drops off and comes back mid-task | ⏳ |
+| I3 | The machine drops off and comes back mid-task | ✅ the tunnel killed mid-command: a new one in 5 s, the command still running there, and its reply ("The last step number it printed was 90") arrived; ❌→✅ tunnels outlived a crashed or force-quit app (ten found, some days old), now they close with it |
 
 ## J. When things go wrong
 

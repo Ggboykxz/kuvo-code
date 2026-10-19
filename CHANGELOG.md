@@ -5,6 +5,7 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- A machine's SSH connection closes when Kuvo Code does, even if it crashes or is forced to quit, and so does one it gives up on while connecting. They could stay open in the background for days.
 
 ## 0.5.17
 
