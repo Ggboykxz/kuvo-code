@@ -193,9 +193,9 @@ struct MainView: View {
             let expands = showsPanel && panelExpanded
             HStack(spacing: 0) {
                 if let width = layout.sessions {
-                    sessionsCard
+                    // The sidebar's room; the sidebar itself is over it (below).
+                    Color.clear
                         .frame(width: width)
-                        .transition(.move(edge: .leading).combined(with: .opacity))
                     PaneResizer(
                         width: Binding(get: { width }, set: { sessionsWidth = $0 }),
                         range: PaneLayout.sessionsRange.lowerBound...max(PaneLayout.sessionsRange.lowerBound, layout.sessionsMax),
@@ -265,6 +265,20 @@ struct MainView: View {
                             .transition(.move(edge: .trailing).combined(with: .opacity))
                     }
                 }
+            }
+            // Made once and kept while it's hidden, out past the window's left edge: showing it
+            // again only slides it in. Made again each time, it (and each of its bots) took the
+            // first tenth of a second of the slide.
+            .overlay(alignment: .topLeading) {
+                let shown = layout.sessions != nil
+                let width = layout.sessions ?? sessionsWidth
+                sessionsCard
+                    .frame(width: width)
+                    .offset(x: shown ? 0 : -(width + Metrics.paneGap * 2))
+                    .opacity(shown ? 1 : 0)
+                    .allowsHitTesting(shown)
+                    .disabled(!shown)
+                    .accessibilityHidden(!shown)
             }
             // Settings take the window's place. The sessions stay underneath, hidden and out of
             // reach, so the panel's terminals and pages carry on and everything is where it was.
