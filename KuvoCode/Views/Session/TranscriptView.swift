@@ -386,8 +386,9 @@ struct TranscriptView: View {
                     rows.append(.notice(notice.id, "terminal", Self.backgroundEnd(notice)))
                 } else if notice.text.hasPrefix("<system-reminder>") {
                     // The engine's word to the model, not to you. Plan mode's rules say the mode,
-                    // for a session that starts in it (a switch says so itself).
-                    if notice.text.contains("Plan mode") {
+                    // for a session that starts in it (a switch says so itself); not the one that
+                    // says it's left ("You are NO LONGER in Plan mode", after Build It).
+                    if notice.text.contains("Plan mode"), notice.text.range(of: "no longer in Plan mode", options: .caseInsensitive) == nil {
                         if case .notice(_, "list.bullet.clipboard", _)? = rows.last {} else {
                             rows.append(.notice(notice.id, "list.bullet.clipboard", "Plan mode: it explores and plans, without changing files"))
                         }

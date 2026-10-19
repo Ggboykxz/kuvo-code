@@ -5,6 +5,7 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- After **Build It** leaves Plan mode, the conversation no longer shows "Plan mode: it explores and plans" under the "Build mode" line.
 - The bar over the composer for commands left running in the background no longer flashes for every command the agent runs, nor adds and drops quick ones from its list while a long one runs: a command shows there once it has run for a couple of seconds.
 - Bring the coding agent you already pay for: Claude Code, Codex, Cursor, Grok and Antigravity, signed in as you, under **Subscriptions** at the top of Settings › Accounts. Pick one of their models for a new session, and that agent does the work, on this Mac, with its replies, edits, permissions and questions in the conversation like any session's.
 - Keep up with subagents while they work: a bar over the composer lists the ones at work, with the step each is on, **Open** and **Stop**. **Open** (on its row in the conversation too) shows a subagent in a tab of the side panel, with everything it does as it does it and a composer of its own: tell it something while it works, give it another model, or stop it.
