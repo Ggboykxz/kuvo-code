@@ -14,7 +14,7 @@ real open-source projects cloned into the run's folder. Status: ✅ passes, ⚠�
 | A3 | Look for how to connect Claude, ChatGPT or an API key, and find where each account's usage shows | ⏳ |
 | A4 | Bring over an existing opencode setup from Settings › General | ⏳ |
 | A5 | Change the theme, the accent and the text size, and see them apply everywhere | ✅ Dark, Orange and Large applied to the sidebar, conversation and composer; FIX: the tab bar's badges, the agent's pointer and @User kept macOS's accent, and the swatches had no names for VoiceOver |
-| A6 | Quit with work running and open again: the conversation and the queue are as they were | ⏳ |
+| A6 | Quit with work running and open again: the conversation and the queue are as they were | ✅ quit mid-command with a message queued: on reopening, the run shows its interrupted command, the queued message waits under Paused, and Resume sends it (the agent re-ran the count, then answered it) |
 
 ## B. Working on a project
 
@@ -114,7 +114,7 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 | L9 | "Tell me when this product's price drops below €X" | ✅ asked which book it meant (a question card) before watching |
 | L10 | "Tell me when a new issue is opened on this GitHub repository" | ✅ a 30-minute watch on GitHub's API, with the newest issue as its baseline |
 | L11 | "Watch this RSS feed and send me new posts" | ✅ a 5-minute watch on the feed; posts already there kept as seen |
-| L12 | "Tell me when this file in my project changes" | ⏳ |
+| L12 | "Tell me when this file in my project changes" | ✅ Pip set a kuvo-wake watch (every 30m, its choice) on the file and noted it in its job; a change woke it and it reported the new line. Its first reply, after setting it up, had no words |
 | L13 | "Warn me 30 days before this domain's certificate expires" | ✅ a warning 30 days before, and a daily watch in case the certificate changes |
 | L14 | "Check my CI every hour and tell me when it fails" | ⏳ |
 
@@ -126,13 +126,13 @@ take, a result it can't deliver) is a finding even when nothing crashes.
 | L16 | "Every weekday at 9" / "every Monday" / "every 2 hours" (repeats, listed, in the right time zone) | ✅ weekdays at 9 and every 2 hours, listed |
 | L17 | "Move my morning reminder to 8:30" and "stop the hourly one" (changing and canceling by asking) | ✅ moved to 8:30, the 2-hour watch canceled, the list shows it |
 | L18 | "What do you have scheduled?" (it lists its wake-ups and watches) | ✅ lists its wake-ups with kuvo-wake |
-| L19 | A wake-up due while Kuvo Code was closed: it runs when the app opens | ⏳ |
+| L19 | A wake-up due while Kuvo Code was closed: it runs when the app opens | ✅ a wake-up due at 10:22 with the app quit ran 16 s after it opened at 10:22:45, and the bot answered it |
 
 ### Files and data
 
 | ID | Job | Status |
 | --- | --- | --- |
-| L20 | "Here's a CSV of my expenses: total by category and chart it" (an attached file, a widget) | ⏳ |
+| L20 | "Here's a CSV of my expenses: total by category and chart it" (an attached file, a widget) | ✅ the attached CSV was read, the totals were right (asked before writing them to a file; the session showed Waiting for you), and a bar chart showed in the conversation |
 | L21 | "Download the CSV on this page and tell me what's in it" | ✅ downloaded with curl, counted 200 rows, averaged, opened it in the panel |
 | L22 | "Upload this file to this website's form" (a real upload page) | ✅ a bot on this Mac made notes.txt and uploaded it (the-internet.herokuapp.com) |
 | L23 | "Rename the photos in this folder by date" (files in a folder you give it) | ✅ renamed by date |
