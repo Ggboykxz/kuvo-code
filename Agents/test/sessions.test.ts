@@ -596,6 +596,46 @@ describe("Auto", () => {
     expect(notes.at(-1)).toBe("Back on Alpha (two): its limit has reset.")
   })
 
+  test("a model that couldn't take your message: the next of that agent's gets the message itself", async () => {
+    auto.set([
+      { providerID: "alpha", modelID: "one" },
+      { providerID: "alpha", modelID: "two" },
+    ])
+    a.script = (input, turn, hooks, thread) =>
+      input.model.id === "one" ? Promise.resolve({ outcome: "failed", error: { type: "model", message: "Cannot use this model" } }) : replies(input, turn, hooks, thread)
+    const id = create({ providerID: "auto", id: "auto" })
+    sessions.prompt(id, { id: "msg_test_files_1", text: "build the thing", files: [{ uri: "file:///tmp/a.png", name: "a.png" }], delivery: "steer" })
+    await settled(id, 1)
+    expect(idles(id)[0].outcome).toBe("succeeded")
+    expect(a.runs.map((run) => run.model)).toEqual(["one", "two"])
+    expect(a.runs[1].text).toContain("build the thing")
+    expect(a.runs[1].text).not.toContain("Carry on")
+  })
+
+  test("not \"back on\" a model after a message on it you picked yourself", async () => {
+    auto.set([
+      { providerID: "alpha", modelID: "one" },
+      { providerID: "beta", modelID: "one" },
+    ])
+    a.script = async (input, turn, hooks, thread) => {
+      const result = await limited("provider")(input, turn, hooks, thread)
+      return { ...result, limit: { scope: "provider", resetsAt: Date.now() + 3_600_000 } }
+    }
+    const id = create({ providerID: "auto", id: "auto" })
+    send(id, "do it")
+    await settled(id, 1)
+    auto.clearLimits()
+    a.script = replies
+    sessions.selectModel(id, { providerID: "alpha", id: "one" })
+    send(id, "on alpha")
+    await settled(id, 2)
+    sessions.selectModel(id, { providerID: "auto", id: "auto" })
+    send(id, "on auto")
+    await settled(id, 3)
+    const notes = sessions.messages(id).flatMap((message) => (message.type === "synthetic" ? [message.text] : []))
+    expect(notes.some((note) => note.startsWith("Back on"))).toBe(false)
+  })
+
   test("an account's limit skips all of its models", async () => {
     auto.set([
       { providerID: "alpha", modelID: "one" },

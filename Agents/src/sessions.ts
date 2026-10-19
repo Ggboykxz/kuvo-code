@@ -234,6 +234,7 @@ export class Sessions {
     const copy = this.store.get(session.id)!
     copy.messages = structuredClone(record.messages.slice(0, at))
     if (record.agent.kuvoInstructions) copy.agent.kuvoInstructions = structuredClone(record.agent.kuvoInstructions)
+    if (Array.isArray(record.agent.autoHeld)) copy.agent.autoHeld = [...(record.agent.autoHeld as string[])]
     this.store.save(session.id, true)
     emit("session.created", { sessionID: session.id, session }, session.location.directory)
     return session
@@ -458,6 +459,8 @@ export class Sessions {
     let result: RunResult
     try {
       const run: RunInput = { text: input.text, files: input.files.map(promptFile), model, plan: session.agent === "plan" }
+      // A message on a model you picked: what Auto held back before isn't news when it's back on.
+      if (model.providerID !== autoProvider) delete record.agent.autoHeld
       result =
         model.providerID === autoProvider
           ? await this.runAuto(id, record, live, { ...run, auto: true }, turn, abort.signal, input.id)
@@ -568,6 +571,8 @@ export class Sessions {
       if (!tried.size && heldBefore.has(Auto.modelKey(entry))) turn.notice(`Back on ${this.entryName(entry)}: its limit has reset.`)
       tried.add(Auto.modelKey(entry))
       const model: ModelRef = { providerID: entry.providerID, id: entry.modelID, ...(entry.variant ? { variant: entry.variant } : {}) }
+      // What this agent had seen: one that couldn't take your message doesn't count as having it.
+      const seenBefore = this.slots(record)[entry.providerID]?.seen
       if (note) {
         turn.stopTools("Stopped: going on with another model.")
         turn.notice(`${note} Going on with ${this.entryName(entry)}.`)
@@ -581,6 +586,9 @@ export class Sessions {
         // on with another could do it twice.
         const worked = record.messages.slice(from).some((message) => message.type === "assistant" && message.content.some((content) => content.type === "tool" || (content.type === "text" && content.text.trim())))
         if (worked) return last
+        // The next of its models gets your message itself, not "carry on".
+        const slot = this.slots(record)[entry.providerID]
+        if (slot) slot.seen = seenBefore
         note = `${this.entryName(entry)} couldn't take it: ${last.error?.message ?? "it stopped with an error"}`
         continue
       }
