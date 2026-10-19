@@ -111,27 +111,37 @@ final class SessionModel {
     /// gave back without its session (read again from the engine mid-step, its stored copy has
     /// none: only its live events say).
     @ObservationIgnored private var foundSubagents: [String: String] = [:]
-    @ObservationIgnored private var lookingFor: Set<String> = []
+    /// Steps being looked for, and when a look that found nothing ended (another waits a while:
+    /// a step can wait minutes, for your approval, before its session exists).
+    @ObservationIgnored private var lookingFor: [String: ContinuousClock.Instant?] = [:]
+    private static let lookAgainAfter = Duration.seconds(20)
 
     /// Looks for the session of each subagent step under way that hasn't said which it is: the
-    /// newest of this session's subagents named after its task (the engine names it so).
+    /// newest of this session's subagents named after its task (the engine names it so), made
+    /// since the step began, and not another step's.
     private func findUnnamedSubagents() {
         guard let last = transcript.messages.last, case .assistant(let step) = last else { return }
         for case .tool(let call) in step.content where call.name == "subagent" && !call.state.isFinished
-            && call.state.metadata?["sessionID"]?.string == nil && foundSubagents[call.id] == nil && !lookingFor.contains(call.id) {
+            && call.state.metadata?["sessionID"]?.string == nil && foundSubagents[call.id] == nil {
             guard let task = call.state.input?["description"]?.string, !task.isEmpty else { continue }
-            lookingFor.insert(call.id)
+            if let looked = lookingFor[call.id] {
+                // Under way, or ended a moment ago.
+                guard let ended = looked, ContinuousClock.now - ended > Self.lookAgainAfter else { continue }
+            }
+            lookingFor[call.id] = .some(nil)
+            // The engine's clock and this Mac's may differ a little.
+            let since = (call.time?.created ?? 0) - 5000
             Task {
-                // Once the step has started it.
                 for attempt in 0..<5 where foundSubagents[call.id] == nil {
                     if attempt > 0 { try? await Task.sleep(for: .seconds(2)) }
-                    if let child = try? await api.children(of: id).first(where: { $0.title == task }) {
+                    let taken = Set(foundSubagents.values).union(subagents.map(\.id))
+                    if let child = try? await api.children(of: id).first(where: { $0.title == task && $0.time.created >= since && !taken.contains($0.id) }) {
                         foundSubagents[call.id] = child.id
                         earlierSubagents = nil
                         transcriptChanged()
                     }
                 }
-                lookingFor.remove(call.id)
+                lookingFor[call.id] = foundSubagents[call.id] == nil ? .some(.now) : nil
             }
         }
     }
@@ -148,9 +158,13 @@ final class SessionModel {
             found = cache.found
         } else {
             found = Self.subagents(in: earlier, adding: [], known: foundSubagents)
-            // Kept only while every step in them is done: one still under way (a message of
-            // yours came after it) can change yet.
-            let isSettled = earlier.allSatisfy { if case .assistant(let step) = $0 { step.time.completed != nil } else { true } }
+            // Kept only while none of them has a subagent's step that can change yet: one under
+            // way in a message still being written (a message of yours came after it). A message
+            // that ended, or failed, has all it will have.
+            let isSettled = earlier.allSatisfy { message in
+                guard case .assistant(let step) = message, step.time.completed == nil, step.error == nil else { return true }
+                return !step.content.contains { if case .tool(let call) = $0 { call.name == "subagent" && !call.state.isFinished } else { false } }
+            }
             earlierSubagents = isSettled ? (earlier.last?.id ?? "", found) : nil
         }
         return Self.subagents(in: [last], adding: found, known: foundSubagents)

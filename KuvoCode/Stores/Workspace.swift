@@ -357,6 +357,15 @@ final class Workspace {
         return model
     }
 
+    /// The subagent a step handed its task to, as the conversation it's in knows it (with the
+    /// session the step started, when the engine didn't say), and that conversation.
+    func subagent(forStep call: String) -> (subagent: SessionModel.Subagent, conversation: String)? {
+        for (id, model) in models {
+            if let subagent = model.subagents.first(where: { $0.call == call }) { return (subagent, id) }
+        }
+        return nil
+    }
+
     /// A subagent's task, as its session is called, once it's been read.
     func subagentTitle(_ id: String) -> String? {
         models[id]?.session.title

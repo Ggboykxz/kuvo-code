@@ -15,6 +15,17 @@ enum SubagentTask {
         guard text.hasPrefix(preamble) else { return nil }
         return text.dropFirst(preamble.count).trimmingCharacters(in: .whitespacesAndNewlines)
     }
+
+    /// What a subagent's row calls it: its task, or, with none, that it has one.
+    static func title(_ task: String) -> String {
+        task.isEmpty ? "A subagent's task" : task
+    }
+}
+
+extension EnvironmentValues {
+    /// The conversation shown is a subagent's (in its tab): its first message is its task, from
+    /// the agent that started it.
+    @Entry var isSubagentConversation = false
 }
 
 extension SessionModel {
@@ -62,7 +73,7 @@ struct SubagentsBar: View {
 
     var body: some View {
         WorkBar(items: subagents, title: subagents.count == 1 ? "A subagent is at work" : "\(subagents.count) subagents at work",
-                detail: subagents.count == 1 ? subagents.first.map { Text($0.task).font(.system(size: 12)) } : nil,
+                detail: subagents.count == 1 ? subagents.first.map { Text(SubagentTask.title($0.task)).font(.system(size: 12)) } : nil,
                 showHelp: "Show the subagents at work", hideHelp: "Hide them: this line stays while they work", isHidden: $isHidden) { subagent in
             SubagentsBarRow(subagent: subagent, folder: folder)
         }
@@ -83,7 +94,7 @@ private struct SubagentsBarRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Text(subagent.task.isEmpty ? "A subagent's task" : subagent.task)
+            Text(SubagentTask.title(subagent.task))
                 .font(.system(size: 13))
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -149,10 +160,18 @@ struct SubagentPane: View {
             }
         }
         .task(id: id) {
-            let model = await workspace.subagentModel(for: id, in: folder)
-            if let model, !model.isLoaded { await model.load() }
-            self.model = model
-            isMissing = model == nil
+            // Again every few seconds while it can't be read (its machine reconnecting), until it
+            // can; it says it's missing meanwhile.
+            while !Task.isCancelled {
+                if let model = await workspace.subagentModel(for: id, in: folder) {
+                    if !model.isLoaded { await model.load() }
+                    self.model = model
+                    isMissing = false
+                    return
+                }
+                isMissing = true
+                try? await Task.sleep(for: .seconds(3))
+            }
         }
     }
 }
@@ -165,6 +184,8 @@ private struct SubagentConversation: View {
     @LastModel private var lastModel
 
     private var isWorking: Bool { model.isRunning || workspace.running.contains(model.id) }
+    /// Its machine is out of reach: you can write, not send.
+    private var isOffline: Bool { SessionView.offlineMachine(of: model, in: app) != nil }
 
     private var agentName: String? {
         model.session.agent.map { agent in catalog.agents.first { $0.id == agent }?.name ?? agent }
@@ -174,6 +195,8 @@ private struct SubagentConversation: View {
         VStack(spacing: 0) {
             header
             TranscriptView(model: model)
+                .environment(\.isSubagentConversation, true)
+                .environment(\.isOffline, isOffline)
                 .frame(maxHeight: .infinity)
                 .safeAreaBar(edge: .bottom, spacing: 0) {
                     VStack(spacing: 10) {
@@ -256,6 +279,7 @@ private struct SubagentConversation: View {
             folders: [model.session.location.directory],
             commands: catalog.commands(in: model.session.location.directory),
             focusRequest: model.composerFocus,
+            isOffline: isOffline,
             onSelectAgent: { _ in },
             onSelectApproval: { _ in },
             onSelectModel: { ref in model.selectModel(ref) },
@@ -270,6 +294,7 @@ private struct SubagentConversation: View {
     }
 
     private func send() {
+        guard !isOffline else { return }
         Analytics.shared.track("subagent_messaged", ["working": isWorking])
         model.submitDraft(for: catalog.model(model.session.model), queue: false, commands: catalog.commands(in: model.session.location.directory))
     }

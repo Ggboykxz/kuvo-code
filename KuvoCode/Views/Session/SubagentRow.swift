@@ -18,13 +18,17 @@ struct SubagentRow: View {
     private static let iconGap: CGFloat = 8
 
     private var input: JSONValue? { call.state.input }
+    /// As the conversation knows it, which has its session when the step doesn't say (read back
+    /// from the engine while it's under way).
+    private var known: (subagent: SessionModel.Subagent, conversation: String)? { workspace.subagent(forStep: call.id) }
     /// Its session, once it has started.
-    private var session: String? { call.state.metadata?["sessionID"]?.string }
+    private var session: String? { call.state.metadata?["sessionID"]?.string ?? known?.subagent.id }
 
-    /// At work: its step not done yet, or done at once (sent off in the background) while its
-    /// session still runs.
+    /// At work, as the bar over the composer says: its session runs, or its step isn't done while
+    /// the conversation runs.
     private var isWorking: Bool {
-        !call.state.isFinished || session.map { workspace.running.contains($0) } == true
+        if let known { return workspace.isWorking(known.subagent, for: known.conversation) }
+        return !call.state.isFinished || session.map { workspace.running.contains($0) } == true
     }
 
     /// How it failed, once done: its step's error, or, for one sent off in the background (whose
