@@ -34,3 +34,26 @@ public enum CodeHighlighting {
     }
   }
 }
+
+extension CodeHighlighting {
+  /// A piece of code and what kind of token it is ("keyword", "string", …), as Prism reads it.
+  public struct Token: Sendable, Hashable {
+    public let text: String
+    public let type: String
+  }
+
+  /// `code`'s tokens in `language`, if they've been read lately (by this or by a code block).
+  @MainActor public static func cachedTokens(of code: String, in language: String) -> [Token]? {
+    TokenCache.shared.tokens(of: code, in: language)?.map { Token(text: $0.content, type: $0.type.rawValue) }
+  }
+
+  /// `code` read into tokens in `language`, off the main thread, and kept for next time; nil if
+  /// there's no tokenizer.
+  public static func tokens(of code: String, in language: String) async -> [Token]? {
+    if let cached = await cachedTokens(of: code, in: language) { return cached }
+    guard let tokenizer = await CodeTokenizer.loaded() else { return nil }
+    let tokens = await tokenizer.tokenize(code: code, language: language)
+    await MainActor.run { TokenCache.shared.insert(tokens, of: code, in: language) }
+    return tokens.map { Token(text: $0.content, type: $0.type.rawValue) }
+  }
+}

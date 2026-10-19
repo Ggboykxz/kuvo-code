@@ -63,7 +63,7 @@ extension Attachment {
 ///
 /// Textual uses `AnyAttachment` to store heterogeneous attachments in attributed content.
 public struct AnyAttachment: Attachment {
-  let base: any Attachment
+  public let base: any Attachment
 
   /// Creates a type-erased attachment from a concrete attachment.
   public init(_ base: some Attachment) {
