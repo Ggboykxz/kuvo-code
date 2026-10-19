@@ -105,7 +105,9 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
-  - **2.41 (this change).** The Mac app's tool steps, with its gestures: a step with
+  - **2.42 (this change).** The image viewer zooms, the Mac app's way: a click zooms it in,
+    a click again brings it back, Escape closes it, and +/− zoom from the keyboard.
+  - **2.41. The Mac app's tool steps, with its gestures: a step with
     details opens like a button and lights up like one, the rest stay plain lines, what opens
     comes down from the icon along a hairline, and a subagent at work shows its steps. The
     settings' detail pages push in. The motions are written down in DESIGN.md.

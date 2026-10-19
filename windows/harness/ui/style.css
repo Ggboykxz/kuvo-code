@@ -1325,3 +1325,7 @@ li.unread .session { position: relative; padding-left: 16px; }
 
 /* A detail page pushes in, the way the Mac app's settings do. */
 .settings-page[data-section="editor"] { animation: kuvo-rise var(--motion-base) var(--ease-spring) both; }
+
+/* The image, looked at: a click zooms it in, a click again brings it back. */
+.image-viewer img { cursor: zoom-in; transition: transform var(--motion-base) var(--ease-spring); }
+.image-viewer img.zoomed { cursor: zoom-out; transform: scale(2.2); }

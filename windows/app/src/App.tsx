@@ -940,13 +940,32 @@ function Composer() {
   );
 }
 
-/// An image, looked at: the Mac app's viewer, over the page.
+/// An image, looked at: the Mac app's viewer, over the page. A click zooms it in,
+/// a click again brings it back, Escape closes it.
 function ImageViewer() {
   const viewing = state.viewing;
+  const [zoomed, setZoomed] = useState(false);
+  useEffect(() => { if (!viewing) setZoomed(false); }, [viewing]);
+  useEffect(() => {
+    if (!viewing) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { state.viewing = null; render(); }
+      if (event.key === "+" || event.key === "=") setZoomed(true);
+      if (event.key === "-") setZoomed(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [viewing]);
   if (!viewing) return null;
   return (
     <div className="image-viewer" onClick={() => { state.viewing = null; render(); }}>
-      <img src={viewing.source} alt={viewing.name} />
+      <img
+        className={zoomed ? "zoomed" : ""}
+        src={viewing.source}
+        alt={viewing.name}
+        onClick={event => { event.stopPropagation(); setZoomed(value => !value); }}
+        title={zoomed ? "Click to bring it back" : "Click to zoom in"}
+      />
       <div className="image-viewer-foot">{viewing.name}</div>
     </div>
   );
