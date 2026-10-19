@@ -160,6 +160,7 @@ struct ModelPicker: View {
                                 .foregroundStyle(.tertiary)
                         }
                         .buttonStyle(.plain)
+                        .clickablePointer()
                         .help("Clear")
                     }
                 }
@@ -294,6 +295,7 @@ struct ModelPicker: View {
             .contentShape(.rect(cornerRadius: 10))
         }
         .buttonStyle(.plain)
+        .clickablePointer()
         .onHover { if $0 { highlight = id } }
         .id(id)
     }
@@ -344,6 +346,7 @@ struct ModelPicker: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
+        .clickablePointer()
         .padding(.top, 2)
     }
 
@@ -389,6 +392,7 @@ struct ModelPicker: View {
                         .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
+                .clickablePointer()
                 // Starred, or under the pointer: the star shows.
                 .opacity(isStarred || highlight == id ? 1 : 0)
                 .help(isStarred ? "Unstar" : "Star")
@@ -403,6 +407,7 @@ struct ModelPicker: View {
             .contentShape(.rect(cornerRadius: 10))
         }
         .buttonStyle(.plain)
+        .clickablePointer()
         .onHover { if $0 { highlight = id } }
         .id(id)
     }
@@ -465,6 +470,7 @@ struct ModelPicker: View {
                 .opacity(dimmed ? 0.45 : 1)
         }
         .buttonStyle(.plain)
+        .clickablePointer()
         .hoverHighlight(in: RoundedRectangle(cornerRadius: 8), selected: isSelected)
         .help(name)
     }
@@ -502,6 +508,7 @@ struct ModelPicker: View {
                     .contentShape(.rect(cornerRadius: 12))
                 }
                 .buttonStyle(.plain)
+                .clickablePointer()
                 .help("Choose another model")
                 // Room for the logo and the reset button beside it, outside what opens the list.
                 .padding(.horizontal, 32)
@@ -520,6 +527,7 @@ struct ModelPicker: View {
                             .contentShape(.rect)
                     }
                     .buttonStyle(.plain)
+                    .clickablePointer()
                     .foregroundStyle(.secondary)
                     .opacity(variant == nil ? 0 : 1)
                     .disabled(variant == nil)
