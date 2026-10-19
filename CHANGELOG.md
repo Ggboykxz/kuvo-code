@@ -4,6 +4,8 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
+## Unreleased
+
 ## 0.5.17
 
 - Codex in the usage item, and its limits next to a session and in Usage Remaining, are the ChatGPT account you connected in Kuvo Code. They came from the Codex app's sign-in on your Mac: without one, Codex said you weren't signed in, and with one on another account, they were that account's. And with SuperGrok connected, Kuvo Code no longer renews the Grok CLI's sign-in, which could sign it out.
