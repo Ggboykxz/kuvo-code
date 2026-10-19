@@ -80,6 +80,10 @@ interface Active {
   tools: Map<string, any>
   toolsSinceText: boolean
   ended: boolean
+  /** The app's instructions this message carries: kept as sent once the agent took it. */
+  instructed?: { value: string }
+  /** The agent said something about this prompt. */
+  heard?: boolean
 }
 
 export class AcpThread implements Thread {
@@ -222,16 +226,15 @@ export class AcpThread implements Thread {
     // The agent's own instructions can't be added to: they go with the first message, and again
     // when they change (a worktree, the project's other folders).
     const sent = typeof this.state.acpInstructions === "string" ? this.state.acpInstructions : this.state.acpInstructed ? undefined : ""
+    let instructed: { value: string } | undefined
     if (instructions !== sent && (instructions || sent)) {
       if (instructions) text = `${sent ? "Your instructions from Kuvo Code changed. They're now:\n\n" : ""}${instructions}\n\n${text}`
-      this.state.acpInstructions = instructions
-      delete this.state.acpInstructed
-      hooks.saveState()
+      instructed = { value: instructions }
     }
     if (others.length) text += `\n\nAttached files:\n${others.map((path) => `- ${path}`).join("\n")}`
     prompt.unshift({ type: "text", text })
     return new Promise<RunResult>((resolve) => {
-      const active: Active = { turn, hooks, resolve, rpc, tools: new Map(), toolsSinceText: false, ended: false }
+      const active: Active = { turn, hooks, resolve, rpc, tools: new Map(), toolsSinceText: false, ended: false, instructed }
       this.active = active
       turn.startStep()
       const meta = this.flavor.promptMeta?.()
@@ -255,6 +258,12 @@ export class AcpThread implements Thread {
   private end(active: Active, outcome: RunResult["outcome"], message?: string, limit?: Limit) {
     if (active.ended) return
     active.ended = true
+    // The instructions went with a message it took (not one turned away before it said anything).
+    if (active.instructed && (outcome !== "failed" || active.heard)) {
+      this.state.acpInstructions = active.instructed.value
+      delete this.state.acpInstructed
+      active.hooks.saveState()
+    }
     if (this.active === active) this.active = undefined
     if (active.plan) active.turn.toolSucceeded(active.plan.id, "", { todos: active.plan.todos })
     active.turn.endStep()
@@ -282,6 +291,7 @@ export class AcpThread implements Thread {
     const active = this.active
     // What a load replays is already in the conversation.
     if (!active || this.loading || params?._meta?.isReplay) return
+    active.heard = true
     const update = params?.update ?? {}
     const turn = active.turn
     switch (update.sessionUpdate) {

@@ -259,11 +259,18 @@ class CursorThread implements Thread {
     // The app's added instructions go with the first message, and again when they change.
     const instructions = hooks.instructions()
     const sent = typeof this.state.cursorInstructions === "string" ? this.state.cursorInstructions : this.state.cursorInstructed ? undefined : ""
+    let instructed: { value: string } | undefined
     if (instructions !== sent && (instructions || sent)) {
       if (instructions) text = `${sent ? "Your instructions from Kuvo Code changed. They're now:\n\n" : ""}${instructions}\n\n${text}`
-      this.state.cursorInstructions = instructions
+      instructed = { value: instructions }
+    }
+    // Kept as sent once Cursor took the message (not one it turned away before doing anything).
+    const instructionsTaken = () => {
+      if (!instructed) return
+      this.state.cursorInstructions = instructed.value
       delete this.state.cursorInstructed
       hooks.saveState()
+      instructed = undefined
     }
     if (hooks.signal.aborted) return { outcome: "interrupted" }
     const active: Active = { turn, hooks, toolsSinceText: false, sawText: false, output: new Map() }
@@ -279,6 +286,7 @@ class CursorThread implements Thread {
       active.run = run
       const result = await run.wait()
       await chain
+      if (result?.status !== "error" || active.sawText || active.output.size) instructionsTaken()
       if (!active.sawText && typeof result?.result === "string" && result.result.trim()) turn.text(result.result)
       const usage = result?.usage
       turn.endStep({
@@ -294,6 +302,7 @@ class CursorThread implements Thread {
       }
       return { outcome: "succeeded" }
     } catch (error: any) {
+      if (active.sawText || active.output.size) instructionsTaken()
       if (hooks.signal.aborted) return { outcome: "interrupted" }
       const message = String(error?.message ?? error)
       const limit = limitOf(message, error)
