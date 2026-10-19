@@ -588,10 +588,48 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
       catch (error) { return { settings: null, problem: error.message, path: file }; }
     };
 
+    /// opencode's own settings — the ones the CLI, another agent, or a tool like OpenDesign
+    /// writes into. The engine here reads its own folder only, so what lands there is
+    /// invisible until it is brought over.
+    const opencodeConfigFile = () =>
+      process.env.KUVO_OPENCODE_CONFIG_ROOT ?? path.join(os.homedir(), ".config", "opencode", "opencode.json");
+    const readOpencodeConfig = () => {
+      const file = opencodeConfigFile();
+      let text = "";
+      try { text = fs.readFileSync(file, "utf8"); } catch {}
+      if (text.trim() === "") return { settings: {}, problem: null, path: file, exists: false };
+      try { return { settings: JSON.parse(text), problem: null, path: file, exists: true }; }
+      catch (error) { return { settings: null, problem: error.message, path: file, exists: true }; }
+    };
+
+    /// The MCP servers in a settings file, in the shape this engine reads: under
+    /// `mcp.servers`. Older files (and other tools' installers) put them straight under
+    /// `mcp`, with `enabled` where this engine writes `disabled` — both are read here.
+    const mcpServersIn = settings => {
+      const mcp = settings?.mcp;
+      if (!mcp || typeof mcp !== "object") return {};
+      const servers = {};
+      const modern = mcp.servers && typeof mcp.servers === "object" ? mcp.servers : {};
+      for (const [name, entry] of Object.entries(modern)) {
+        if (entry && typeof entry === "object") servers[name] = entry;
+      }
+      for (const [name, entry] of Object.entries(mcp)) {
+        if (name === "servers" || !entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+        const modern_ = { ...entry };
+        if (modern_.enabled === false && modern_.disabled === undefined) modern_.disabled = true;
+        delete modern_.enabled;
+        if (typeof modern_.command === "string") modern_.command = [modern_.command];
+        if (modern_.env && !modern_.environment) modern_.environment = modern_.env;
+        delete modern_.env;
+        if (!servers[name]) servers[name] = modern_;
+      }
+      return servers;
+    };
+
     if (url.pathname === "/api/config" && request.method === "GET") {
       const file = readSettings();
       const live = await client.configSources().catch(() => null);
-      return json({ ...file, live });
+      return json({ ...file, live, opencode: readOpencodeConfig() });
     }
     if (url.pathname === "/api/config" && request.method === "PUT") {
       const body = await readBody(request);
@@ -602,6 +640,33 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
       fs.mkdirSync(path.dirname(settingsFile()), { recursive: true });
       fs.writeFileSync(settingsFile(), JSON.stringify(settings, null, 2) + "\n");
       return json({ ok: true, path: settingsFile() });
+    }
+
+    // Bringing over what another tool wrote into opencode's own settings: the MCP servers it
+    // lists, in the shape this engine reads. Nothing already here is overwritten.
+    if (url.pathname === "/api/config/import" && request.method === "POST") {
+      const body = await readBody(request);
+      const wanted = typeof body?.name === "string" && body.name ? body.name : null;
+      const theirs = readOpencodeConfig();
+      if (theirs.problem) throw new HttpError(400, `opencode's settings can't be read: ${theirs.problem}`);
+      const mine = readSettings();
+      if (!mine.settings) throw new HttpError(400, "This app's settings file has a problem; fix it first.");
+      const theirsServers = mcpServersIn(theirs.settings);
+      const mineServers = mcpServersIn(mine.settings);
+      const added = [];
+      const skipped = [];
+      for (const [name, entry] of Object.entries(theirsServers)) {
+        if (wanted && name !== wanted) continue;
+        if (mineServers[name]) { skipped.push(name); continue; }
+        mine.settings.mcp = { ...(mine.settings.mcp ?? {}) };
+        mine.settings.mcp.servers = { ...(mine.settings.mcp.servers ?? {}), [name]: entry };
+        added.push(name);
+      }
+      if (added.length) {
+        fs.mkdirSync(path.dirname(settingsFile()), { recursive: true });
+        fs.writeFileSync(settingsFile(), JSON.stringify(mine.settings, null, 2) + "\n");
+      }
+      return json({ ok: true, added, skipped, path: settingsFile() });
     }
 
     if (url.pathname === "/api/engine/restart" && request.method === "POST") {

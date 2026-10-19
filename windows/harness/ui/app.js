@@ -144,6 +144,7 @@ const state = {
   configPath: null,
   configProblem: null,
   configLive: null,
+  opencode: null,
   mcpLive: [],
   skillsEngine: [],
   cfgEditor: null,
@@ -1882,6 +1883,7 @@ async function bootConfig() {
     state.configPath = cfg.path;
     state.configProblem = cfg.problem ?? null;
     state.configLive = cfg.live ?? null;
+    state.opencode = cfg.opencode ?? null;
   }
   state.mcpLive = mcp?.servers ?? [];
   state.skillsEngine = skills?.skills ?? [];
@@ -1903,6 +1905,7 @@ function renderCfgPages() {
   renderMcp();
   renderMcpCatalog();
   renderMcpTimeouts();
+  renderOpencodeMcp();
   renderAgentsPage();
   renderSkillsPage();
   renderCommandsPage();
@@ -2005,6 +2008,73 @@ function renderMcpTimeouts() {
   put("mcp-timeout-startup", "startup");
   put("mcp-timeout-catalog", "catalog");
   put("mcp-timeout-execution", "execution");
+}
+
+/// The MCP servers in opencode's own settings — what the CLI, another agent, or a tool like
+/// OpenDesign wrote there. The engine here reads its own folder only, so these have to be
+/// brought over to be of any use.
+function opencodeServers() {
+  const theirs = state.opencode?.settings;
+  const mcp = theirs && typeof theirs.mcp === "object" && theirs.mcp ? theirs.mcp : {};
+  const servers = {};
+  for (const [name, entry] of Object.entries(mcp.servers ?? {})) {
+    if (entry && typeof entry === "object") servers[name] = entry;
+  }
+  for (const [name, entry] of Object.entries(mcp)) {
+    if (name === "servers" || !entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    if (!servers[name]) servers[name] = entry;
+  }
+  return servers;
+}
+
+function renderOpencodeMcp() {
+  const box = $("opencode-mcp");
+  if (!box) return;
+  box.innerHTML = "";
+  const note = $("opencode-path");
+  if (note) note.textContent = state.opencode?.path ? `opencode's own settings: ${state.opencode.path}` : "";
+  const theirs = opencodeServers();
+  const ours = state.config?.mcp?.servers ?? {};
+  const names = Object.keys(theirs);
+  if (!names.length) {
+    box.append(el("div", { class: "where", text: "Nothing there yet." }));
+    return;
+  }
+  const bring = async name => {
+    try {
+      const answer = await api("/api/config/import", { method: "POST", body: name ? { name } : {} });
+      if (answer.added?.length) {
+        notify("Kuvo Code", `${answer.added.join(", ")} ${answer.added.length === 1 ? "is" : "are"} here now. The engine reads them in a moment.`);
+        // The engine reads its settings when it starts: start it over, so the new servers
+        // are picked up without the user having to think about it.
+        await restartEngineNow();
+      } else {
+        notify("Kuvo Code", "It was already here.");
+      }
+      await bootConfig();
+      await refreshMcp();
+    } catch (error) {
+      complain(null, error);
+    }
+  };
+  for (const name of names) {
+    const here = ours[name] != null;
+    box.append(el("div", { class: "cfg-row" },
+      el("div", { class: "cfg-row-main" },
+        el("div", { class: "cfg-row-title" },
+          el("strong", { text: name }),
+          here ? el("span", { class: "where ok", text: "Already here" }) : null,
+        ),
+        el("div", { class: "where", text: mcpDetail(theirs[name]) }),
+      ),
+      here ? null : el("button", { class: "small", text: "Add here", onclick: () => bring(name) }),
+    ));
+  }
+  const all = $("opencode-import-all");
+  if (all) {
+    all.hidden = !names.some(name => ours[name] == null);
+    all.onclick = () => bring(null);
+  }
 }
 
 function timeoutSaved(key) {
@@ -2620,15 +2690,18 @@ function nameLineEditing(fields, id) {
 }
 
 // The engine-side of settings changes: the engine reads them again when it starts over.
+async function restartEngineNow() {
+  const { version } = await api("/api/engine/restart", { method: "POST", body: {} });
+  notify("Kuvo Code", `The engine is back (${version}).`);
+  await loadSessions();
+  if (state.session) await openSession(state.session.id).catch(() => {});
+}
 $("engine-restart").addEventListener("click", async () => {
   const button = $("engine-restart");
   button.disabled = true;
   try {
-    const { version } = await api("/api/engine/restart", { method: "POST", body: {} });
-    notify("Kuvo Code", `The engine is back (${version}).`);
+    await restartEngineNow();
     await bootConfig();
-    await loadSessions();
-    if (state.session) await openSession(state.session.id).catch(() => {});
   } catch (error) {
     complain(null, error);
   }

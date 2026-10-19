@@ -592,3 +592,54 @@ test("the page and its files are served, and a file that isn't there is a plain 
   assert.equal(missing.status, 404);
   assert.match(await missing.text(), /not found/i);
 });
+
+test("what opencode's own settings hold can be brought over, in the shape the engine reads", async t => {
+  const engine = await fakeEngine();
+  t.after(engine.close);
+  const mine = path.join(home, "mine", "opencode.json");
+  const theirs = path.join(home, "theirs", "opencode.json");
+  process.env.KUVO_ENGINE_CONFIG_ROOT = mine;
+  process.env.KUVO_OPENCODE_CONFIG_ROOT = theirs;
+  t.after(() => { delete process.env.KUVO_ENGINE_CONFIG_ROOT; delete process.env.KUVO_OPENCODE_CONFIG_ROOT; });
+  fs.mkdirSync(path.dirname(theirs), { recursive: true });
+  // The shape other tools write: straight under `mcp`, with `enabled` and `env`.
+  fs.writeFileSync(theirs, JSON.stringify({
+    mcp: {
+      "open-design": { type: "local", command: ["C:\\od\\od.mjs", "mcp"], enabled: true, env: { OD_DATA_DIR: "C:\\data" } },
+      context7: { type: "remote", url: "https://mcp.context7.com/mcp" },
+    },
+  }));
+  const { harness, url } = await inFront(engine);
+  t.after(() => harness.close());
+
+  const config = await (await fetch(`${url}api/config`)).json();
+  assert.equal(config.opencode.exists, true);
+  assert.equal(config.opencode.path, theirs);
+
+  const brought = await (await fetch(`${url}api/config/import`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+  })).json();
+  assert.deepEqual([...brought.added].sort(), ["context7", "open-design"]);
+
+  const written = JSON.parse(fs.readFileSync(mine, "utf8"));
+  const design = written.mcp.servers["open-design"];
+  assert.equal(design.type, "local");
+  assert.deepEqual(design.command, ["C:\\od\\od.mjs", "mcp"]);
+  assert.equal(design.environment.OD_DATA_DIR, "C:\\data");
+  assert.equal(design.enabled, undefined);
+  assert.equal(written.mcp.servers.context7.url, "https://mcp.context7.com/mcp");
+
+  // A second time, nothing is added and nothing already here is touched.
+  const again = await (await fetch(`${url}api/config/import`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+  })).json();
+  assert.deepEqual(again.added, []);
+  assert.deepEqual([...again.skipped].sort(), ["context7", "open-design"]);
+
+  // One server at a time.
+  const one = await (await fetch(`${url}api/config/import`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "context7" }),
+  })).json();
+  assert.deepEqual(one.added, []);
+  assert.deepEqual(one.skipped, ["context7"]);
+});

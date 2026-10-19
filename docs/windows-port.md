@@ -105,7 +105,13 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
-  - **2.19 (this change).** The packaged app served nothing: the executable's page
+  - **2.20 (this change).** What other tools write into opencode's own settings is now
+    visible and can be brought over: the MCP servers the CLI, another agent, or a tool
+    like OpenDesign put in `~/.config/opencode/opencode.json` are listed in Settings ▸
+    MCP servers, and one click copies them into this app's own settings — in the shape
+    this engine reads (`mcp.servers`, `disabled`), since the engine here reads its own
+    folder only. The engine is started over afterwards, so the server connects.
+  - **2.19. The packaged app served nothing: the executable's page
     files live inside the binary, and the server asked the disk before the blob, so
     every file came back "Not found." in the installed app (the source tree beside
     the build hid it in CI). The blob is asked first now, and the smoke runs the

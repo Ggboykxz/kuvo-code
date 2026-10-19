@@ -123,6 +123,10 @@
           <div class="settings-row"><span>Time to list tools, in milliseconds</span><input id="mcp-timeout-catalog" type="number" placeholder="30000"></div>
           <div class="settings-row"><span>Time for one tool call, in milliseconds</span><input id="mcp-timeout-execution" type="number" placeholder="43200000"></div>
           <button id="engine-restart" class="secondary">Restart the engine</button>
+          <h3>From opencode's own settings</h3>
+          <div id="opencode-mcp"></div>
+          <button id="opencode-import-all" class="secondary" hidden>Bring them all over</button>
+          <div class="settings-note" id="opencode-path"></div>
           <div class="settings-note">MCP servers give the agent more tools, like a database, an issue tracker or your design files. A server on this machine runs a command; one on the web is a URL. To keep a key out of the settings file, write {env:NAME} to use one of your environment variables.</div>
         </div>
 
