@@ -889,7 +889,7 @@ main { display: flex; }
   cursor: pointer;
   transition: transform var(--motion-fast) var(--ease-spring);
 }
-.swatch:hover { transform: scale(1.15); }
+.swatch:hover { transform: scale(1.12); filter: brightness(0.93); }
 .swatch.selected { border-color: var(--ink); box-shadow: 0 0 0 2px var(--panel), 0 0 0 3.5px var(--accent); }
 
 /* ---- The keyboard page: the keys, and the recorder that changes them ---- */
@@ -1294,8 +1294,8 @@ li.unread .session { position: relative; padding-left: 16px; }
 .cfg-row, .settings-row, .palette-item, .session { transition: background var(--motion-quick) var(--ease-standard), color var(--motion-quick) var(--ease-standard); }
 
 /* The accent swatches grow a touch when they are looked at. */
-.swatch { transition: transform var(--motion-fast) var(--ease-spring), box-shadow var(--motion-fast) var(--ease-standard); }
-.swatch:hover { transform: scale(1.12); }
+.swatch { transition: transform var(--motion-fast) var(--ease-spring), filter var(--motion-fast) var(--ease-standard); }
+.swatch:hover { transform: scale(1.12); filter: brightness(0.93); }
 
 /* The system asks for less movement: it gets none. */
 @media (prefers-reduced-motion: reduce) {
@@ -3280,3 +3280,18 @@ button > svg, .small > svg, .session-delete > svg, .keycap-clear > svg { display
    (Pressable.swift:192-198). */
 .choice-chevron { flex: 0 0 8px; color: var(--ink-faint); stroke-width: 2; }
 .choice-button { display: inline-flex; align-items: center; gap: 5px; }
+
+/* The accent badge (Pressable.swift:201-220): it grows to 1.12 and darkens a little under
+   the pointer, and darkens more while it is pressed. */
+.swatch {
+  transition: transform var(--motion-fast) var(--ease-spring),
+              filter var(--motion-fast) var(--ease-standard);
+}
+.swatch:hover { transform: scale(1.12); filter: brightness(0.93); }
+.swatch:active { transform: scale(1.12); filter: brightness(0.85); }
+
+/* The accent badge (Pressable.swift:201-220): it grows to 1.12 and darkens a little under
+   the pointer, and darkens more while it is pressed. */
+.swatch { transition: transform var(--motion-fast) var(--ease-spring), filter var(--motion-fast) var(--ease-standard); }
+.swatch:hover { transform: scale(1.12); filter: brightness(0.93); }
+.swatch:active { transform: scale(1.12); filter: brightness(0.85); }

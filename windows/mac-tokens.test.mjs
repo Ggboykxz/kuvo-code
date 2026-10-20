@@ -571,6 +571,23 @@ const checks = [
     assert.match(css, /\.choice-chevron \{[^}]*stroke-width: 2;/s);
   }],
 
+  ["the accent badge grows and darkens, as the Mac's does", ({ css, rule }) => {
+    // Pressable.swift:201-220 — it grows to 1.12 and darkens 7 % under the pointer, and
+    // darkens more while it is pressed.
+    assert.match(rule(".swatch {"), /transform var\(--motion-fast\) var\(--ease-spring\)/);
+    assert.match(css, /\.swatch:hover \{ transform: scale\(1\.12\); filter: brightness\(0\.93\); \}/);
+    assert.match(css, /\.swatch:active \{ transform: scale\(1\.12\); filter: brightness\(0\.85\); \}/);
+  }],
+
+  ["the changes panel says what the Mac's says", ({ changes }) => {
+    // ProjectChanges.swift:50-62 — the scopes' own names.
+    assert.match(changes, /\["uncommitted", "Uncommitted"\]/);
+    assert.match(changes, /\["unstaged", "Unstaged"\]/);
+    assert.match(changes, /\["staged", "Staged"\]/);
+    assert.match(changes, /\["branch", "Branch"\]/);
+    assert.match(changes, /\["session", "This Session"\]/);
+  }],
+
   ["the window is built by Next.js, and exported as the static files the harness serves", ({ next, page, build }) => {
     // The app talks to the engine over the harness's API: there is no server to render
     // it, so the export is the whole app.

@@ -14,7 +14,7 @@ const SCOPES = [
   ["unstaged", "Unstaged"],
   ["staged", "Staged"],
   ["branch", "Branch"],
-  ["session", "This session"],
+  ["session", "This Session"],
 ] as const;
 
 export function ChangesPanel() {
