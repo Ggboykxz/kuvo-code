@@ -5,6 +5,7 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- A message from an agent on a machine names its sender only when that agent is on the machine, and messages from a machine are limited as one sender's.
 - A file saved to your Mac from a machine's browser is marked as downloaded, so macOS checks it before it opens, as it does any download.
 - On a machine, the engine's password no longer appears on a command line while a bot's wake-up is sent (another user there could read it), nor in the environment of a watch's check.
 - A page the agent saves as a PDF leaves out what you filled in (a password, a code), as its screenshots do.

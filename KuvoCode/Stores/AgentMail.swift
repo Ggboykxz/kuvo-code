@@ -185,7 +185,9 @@ final class AgentMail {
         case done(String), unknown(String), refused(String), failed(String)
     }
 
-    private func deliver(from caller: String?, name: String, to: String, text: String, waits: Bool) async -> Outcome {
+    /// `limitKey`: what the few-at-a-time limit counts by, when not the caller (a machine's
+    /// letters, whose sender anything there could claim).
+    private func deliver(from caller: String?, name: String, to: String, text: String, waits: Bool, limitKey: String? = nil) async -> Outcome {
         let agents = directory()
         let wanted = to.trimmingCharacters(in: .whitespaces)
         let matches = agents.filter { $0.session == wanted } .nilIfEmpty
@@ -199,7 +201,7 @@ final class AgentMail {
         guard target.session != caller else { return .refused("That's you.") }
         // A few at a time: two agents shouldn't keep writing to each other unattended. (Counted
         // once it's sent, so one tried again isn't counted twice.)
-        let key = caller ?? "outside"
+        let key = limitKey ?? caller ?? "outside"
         let lately = (sent[key] ?? []).filter { $0.timeIntervalSinceNow > -600 }
         guard lately.count < 20 else {
             return .refused("You've sent a lot of messages in the last few minutes. Wait a while, or ask the user how to go on.")
@@ -367,7 +369,10 @@ final class AgentMail {
                 done.append(file)
                 continue
             }
-            switch await deliver(from: letter.from, name: letter.name ?? "an agent on \(machine)", to: letter.to, text: letter.text, waits: false) {
+            // Anything on the machine can write a letter, so who it's from is taken only from an
+            // agent that is there; else it's "an agent on" it. Counted by the machine.
+            let sender = letter.from.flatMap { from in directory().first { $0.session == from && $0.machine == machine } }
+            switch await deliver(from: sender?.session, name: sender?.name ?? "an agent on \(machine)", to: letter.to, text: letter.text, waits: false, limitKey: "machine:" + machine) {
             case .done:
                 done.append(file)
             case .unknown(let why):
