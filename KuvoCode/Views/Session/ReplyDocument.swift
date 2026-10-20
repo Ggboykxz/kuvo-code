@@ -75,6 +75,9 @@ struct ReplyDocument {
 
     private static var cache: [CacheKey: ReplyDocument] = [:]
     private static var cacheOrder: [CacheKey] = []
+    private static var cachedCharacters = 0
+    /// About what the documents kept may hold in all: some hundreds of replies' worth.
+    private static let cacheLimit = 600_000
 
     static func cached(markdown: String, parser: FileLinkingParser, style: Style) -> ReplyDocument {
         // With Find's marks or a group chat's faces, made each time (rarely).
@@ -97,7 +100,14 @@ struct ReplyDocument {
         }
         cache[key] = document
         cacheOrder.append(key)
-        if cacheOrder.count > 1500 { cache[cacheOrder.removeFirst()] = nil }
+        cachedCharacters += markdown.utf16.count
+        // Kept by how much they hold, not how many: a long block being written (a table, a code
+        // block, which can't be read in parts) is a new document with each few words.
+        while cachedCharacters > Self.cacheLimit || cacheOrder.count > 1500, !cacheOrder.isEmpty {
+            let oldest = cacheOrder.removeFirst()
+            cache[oldest] = nil
+            cachedCharacters -= oldest.markdown.utf16.count
+        }
         return document
     }
 
