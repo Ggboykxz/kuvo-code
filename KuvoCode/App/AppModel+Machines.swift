@@ -16,6 +16,10 @@ extension AppModel {
         workspace.onMachineBrowsing = { [weak self] machine, session in self?.utilities.revealMachineBrowser(machine, for: session) }
         workspace.onDeleted = { [weak self] session in self?.utilities.closeTabs(of: session) }
         BrowserTools.sessionFolder = { [weak self] session in self?.workspace.session(session)?.location.directory }
+        BrowserTools.readsAnywhere = { [weak self] session in
+            guard let self, let found = workspace.session(session), !workspace.seats.contains(session) else { return false }
+            return ToolApproval(rules: found.permissions) == .approveAll
+        }
         BrowserTools.isInView = { [weak self] session in self?.utilities.isInView(session) ?? false }
         // Agents writing to each other, here and on machines.
         AgentMail.shared.app = self

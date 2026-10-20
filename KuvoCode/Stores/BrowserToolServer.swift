@@ -249,6 +249,24 @@ enum BrowserTools {
     /// asked again a while after, the browser goes there.
     private static var sentAway: [String: Date] = [:]
 
+    /// Whether a conversation may read files outside its folder without asking (Approve All, not a
+    /// group chat's seat), by its session. Unknown, it asks.
+    static var readsAnywhere: (String) -> Bool = { _ in false }
+
+    /// What the browser says instead of opening `address`, a file outside the conversation's
+    /// folder (and the temporary folders, where an agent writes a page to open), when it asks
+    /// before reading those: opened, the browser read it without asking, where a command would
+    /// have asked. Links are followed to where they lead.
+    static func fileNote(for address: String, caller: String?) -> String? {
+        guard let url = URL(string: address), url.isFileURL else { return nil }
+        if let caller, readsAnywhere(caller) { return nil }
+        func real(_ path: String) -> String { URL(filePath: path).resolvingSymlinksInPath().path }
+        let path = real(url.path)
+        let places = [caller.flatMap(sessionFolder), NSTemporaryDirectory(), "/tmp", "/private/tmp"].compactMap { $0 }.map(real)
+        if places.contains(where: { path == $0 || path.hasPrefix($0.hasSuffix("/") ? $0 : $0 + "/") }) { return nil }
+        return "Not opened: \(url.path) is outside this conversation's folder, and this session asks before reading files elsewhere. Ask the user first; if they agree, copy it into the folder (a command, which asks them) and open it there."
+    }
+
     /// What the browser says instead of opening `address`, when it's an added integration's
     /// site: to use its tools. The first time only, so the agent can still open it when the user
     /// asked for the website itself.
@@ -365,6 +383,7 @@ enum BrowserTools {
         switch name {
         case "browser_navigate":
             guard let url = string("url") else { return text("Missing url.", error: true) }
+            if let note = fileNote(for: url, caller: caller) { return text(note, error: true) }
             if let note = integrationNote(for: url, caller: caller) { return text(note) }
             return text(await agent.navigate(url))
         case "browser_snapshot":
@@ -403,6 +422,7 @@ enum BrowserTools {
             guard let index = int("index") else { return text("Missing index.", error: true) }
             return text(await agent.hover(index))
         case "browser_new_tab":
+            if let url = string("url"), let note = fileNote(for: url, caller: caller) { return text(note, error: true) }
             if let url = string("url"), let note = integrationNote(for: url, caller: caller) { return text(note) }
             return text(await agent.newTab(string("url")))
         case "browser_upload":
