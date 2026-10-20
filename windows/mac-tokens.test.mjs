@@ -582,6 +582,18 @@ const checks = [
     assert.match(css, /\.provider-logo\.fallback \{[\s\S]*?font-weight: 600;/);
   }],
 
+  ["the press is the Mac's: the control darkens, it does not shrink", ({ css, rule }) => {
+    // Pressable.swift:8-9 (8 % under the pointer, 13 % while it is down) and 85 (the
+    // press is a fill) — the Mac's app has no press scale anywhere.
+    // The Mac's app has no press scale anywhere: a pressed control is filled, not squeezed.
+    assert.ok(!/button:active \{[^}]*scale\(/.test(css), "no press scale");
+    assert.match(rule("\nbutton:active {"), /transform: none/);
+    // And the fills are the Mac's own: 8 % under the pointer, 13 % while it is down.
+    assert.match(rule(":root {"), /--press-hover: color-mix\(in oklab, var\(--ink\) 8%, transparent\)/);
+    assert.match(rule(":root {"), /--press-active: color-mix\(in oklab, var\(--ink\) 13%, transparent\)/);
+    assert.match(rule("\nbutton.small:active {"), /background: var\(--press-active\)/);
+  }],
+
   ["the settings' pages carry the Mac's own symbols, drawn", ({ settings, symbols }) => {
     // SettingsView.swift:196-232 — the mark each page has.
     for (const [page, name] of Object.entries({

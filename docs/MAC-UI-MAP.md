@@ -80,8 +80,9 @@ the rendered page in a browser and holds it to the numbers in §2 and §3; the m
 captures is in `docs/captures/`, written by `windows/harness/captures.mjs`.
 
 **What is left, and why.** The rows still marked ◐ or ⬜ are: the Settings pages the
-maintainer has not reopened (Notifications, Privacy, Panel), the usage of a provider's plan
-(which needs the account's keys), and the worktrees. The provider's marks, which the Mac
+maintainer has not reopened (Notifications, Privacy, Panel) and the usage of a provider's
+plan (which needs the account's keys). The worktrees are out of reach on both sides — the
+engine exposes no worktrees to ask, and the Mac's own page is the maintainer's to reopen. The provider's marks, which the Mac
 takes from models.dev, are fetched and drawn in 0.5.63.
 The native menus became a real menu bar in 0.5.61, the code block's copy mark became the
 Mac's mark that becomes a check, the double-click on a title bar zooms the window as it
@@ -223,12 +224,12 @@ most behaviours but not for the values; Phase 1–4 port the values.
 | `FolderIcon.swift` | Drawn folder, closed or open | 16 × 13 grid, fill 20 %, stroke `size / 11.5`, round joins | ✅ (0.5.55) | 4 |
 | `HoverHighlight.swift` | Flat control: no fill, 6 % hover, 8 % selected, 0.12 s | `HoverHighlight.swift:14-26` | ✅ (0.5.40) | 3 |
 | `IconOnlyToolbar.swift` | AppKit toolbar without Icon/Text menu | `IconOnlyToolbar.swift:4-38` | — (no AppKit) | — |
-| `InlineTitleField.swift` | Rename where it shows: all selected, Return commits, Escape cancels, click-away keeps | `InlineTitleField.swift:4-55` | ⬜ (a rename prompt exists) | 7 |
+| `InlineTitleField.swift` | Rename where it shows: all selected, Return commits, Escape cancels, click-away keeps | `InlineTitleField.swift:4-55` | ✅ (0.5.48: the rename happens in the row, the way the Mac's does) | 7 |
 | `Look.swift` | Appearance: accent, window, text size, typeface | §3.2, §3.3 | ✅ (0.5.45) | 1 |
 | `NativeMenu.swift` | Real AppKit menus with values on the right and subtitles | `NativeMenu.swift:5-165` | ✅ (0.5.61: a real menu bar, the Mac's items and keys) | 6 |
 | `PillPicker.swift` | Glass track, raised pill slides to the choice | `.ui` spring, matched geometry | ✅ (0.5.40) | 3, 6 |
 | `PlainDatePicker.swift` | Date/time without a box, for a well row | `PlainDatePicker.swift:6-30` | ⛔ (only the bot editor asks for a date, and the bots are an upstream decision) | 6 |
-| `Pressable.swift` | Every small control's hover/pressed language | hover 8 %, pressed 13 %, hover 0.12 s; list selected 16 %, pressed 24 %; disabled 45 %; accent badge hover 1.12 / −0.07, press −0.15 | ◐ (press scale 0.97 is not Mac) | 3 |
+| `Pressable.swift` | Every small control's hover/pressed language | hover 8 %, pressed 13 %, hover 0.12 s; list selected 16 %, pressed 24 %; disabled 45 %; accent badge hover 1.12 / −0.07, press −0.15 | ✅ (0.5.64: the press is a fill, and the scale the old direction had is gone) | 3 |
 | `ProviderLogo.swift` | models.dev mark, monochrome or maker colour | 20 pt default; fallback initial 55 % size, semibold rounded | ✅ (0.5.63: the mark is fetched from models.opencode.ai and drawn in the ink; the initial stands in until it arrives) | 4 |
 | `QuoteViews.swift` | "Replying to" card over the composer | 3 pt tint capsule; caption medium; 3 lines; remove button, `.help("Drop the quote")` | ◐ (behaviour ✅) | ✅ (0.5.54) |
 | `RightClickMenu.swift` | One window-level right-click watcher, works in the title bar | `RightClickMenu.swift:4-65` | ✅ (HTML contextmenu) | 7 |
@@ -382,7 +383,7 @@ Mac pages in `SettingsView.swift:135-139`; Windows `PAGES` in `Settings.tsx:33-4
 | MCP | MCP servers | ✅ / ◐ | 6 |
 | Engine | Engine & storage | ✅ / ◐ (merged) | 6 |
 | Git | Git | ✅ / ◐ | 6 |
-| Worktrees | Projects | ◐ / ◐ | 6 |
+| Worktrees | Projects | ⛔ (the engine exposes no worktrees; and the Mac's own page is the maintainer's to reopen) | 6 |
 | Archived | Archived sessions | ✅ / ◐ | 6 |
 | Machines | — | ⛔ upstream | — |
 | Panel | — | ⬜ / ⬜ | 6 |

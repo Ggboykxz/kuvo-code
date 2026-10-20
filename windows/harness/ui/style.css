@@ -262,8 +262,7 @@ button {
               transform var(--motion-fast) var(--ease-standard);
 }
 button:hover { border-color: var(--ink-faint); background: var(--hover); }
-/* The press: a small compression, the way a key goes down. */
-button:active { transform: scale(0.97); }
+/* The press is a fill, not a squeeze — see the Mac binding at the end of this file. */
 button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 button.danger { color: var(--danger); }
