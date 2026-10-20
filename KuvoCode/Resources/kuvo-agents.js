@@ -1337,7 +1337,7 @@ class Snapshots {
 import { createHash as createHash2 } from "crypto";
 import { chmodSync as chmodSync2, existsSync as existsSync5, mkdirSync as mkdirSync7, readdirSync as readdirSync2, readFileSync as readFileSync7, renameSync as renameSync3, rmSync as rmSync4, statSync, writeFileSync as writeFileSync6 } from "fs";
 import { join as join8 } from "path";
-import { pathToFileURL } from "url";
+import { pathToFileURL as pathToFileURL2 } from "url";
 
 // Agents/src/acp.ts
 import { existsSync as existsSync3, mkdirSync as mkdirSync5, readFileSync as readFileSync5, writeFileSync as writeFileSync4 } from "fs";
@@ -1439,7 +1439,7 @@ class RPC {
   }
   async answer(id, method, params) {
     try {
-      const result = await this.onRequest(method, params);
+      const result = await this.onRequest(method, params, id);
       this.write({ id, result: result ?? null });
     } catch (error) {
       const code = error instanceof RPCError ? error.code : -32603;
@@ -1531,9 +1531,47 @@ function kuvoToolName(name, args) {
   return Object.keys(args).every((key) => known.has(key)) ? `${toolServerName}_${name}` : undefined;
 }
 
+// Agents/src/pictures.ts
+import { extname } from "path";
+import { pathToFileURL } from "url";
+var types = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".heic": "image/heic" };
+function pictureFile(path) {
+  if (typeof path !== "string" || !path)
+    return;
+  const mime = types[extname(path).toLowerCase()];
+  if (!mime)
+    return;
+  return { type: "file", uri: pathToFileURL(path).href, mime, name: path.split("/").pop() };
+}
+function pictureData(data, mime) {
+  if (typeof data !== "string" || !data || typeof mime !== "string" || !mime.startsWith("image/"))
+    return;
+  return { type: "file", uri: `data:${mime};base64,${data}`, mime };
+}
+function withPictures(text, pictures) {
+  const files = pictures.filter((picture) => Boolean(picture));
+  return files.length ? [{ type: "text", text }, ...files] : text;
+}
+
+// Agents/src/forms.ts
+function elicitationField(key, field, required) {
+  const title = field?.title ?? key;
+  const description = field?.description ?? undefined;
+  if (field?.type === "boolean")
+    return { key, title, description, required, type: "boolean" };
+  if (field?.type === "array") {
+    const options2 = (field.items?.anyOf ?? field.items?.oneOf ?? (field.items?.enum ?? []).map((value) => ({ const: value, title: value }))).map((option) => ({ value: String(option.const), label: String(option.title ?? option.const) }));
+    return { key, title, description, required, type: "multiselect", options: options2 };
+  }
+  const named = field?.oneOf ?? field?.anyOf;
+  const options = named ? named.map((option) => ({ value: String(option.const), label: String(option.title ?? option.const) })) : field?.enum?.map((value, index) => ({ value, label: field.enumNames?.[index] ?? value }));
+  return { key, title, description, required, type: "string", options, custom: !options, ...field?.format === "password" ? { format: "password" } : {} };
+}
+
 // Agents/src/acp.ts
 var outputLimit2 = 30000;
 var limitWords = /RESOURCE_EXHAUSTED|usage limit (?:reached|exceeded)|quota exceeded|exceeded your (?:current )?quota|rate limit exceeded|too many requests/i;
+var acpTiming = { ownQuiet: 20000 };
 
 class AcpThread {
   flavor;
@@ -1548,6 +1586,8 @@ class AcpThread {
   loading = false;
   stale;
   startedOver = false;
+  onOwnTurn;
+  own;
   constructor(flavor, session, state, name) {
     this.flavor = flavor;
     this.session = session;
@@ -1684,6 +1724,9 @@ class AcpThread {
     return { fresh };
   }
   async run(input, turn, hooks) {
+    if (input.adopt)
+      return this.adopt(turn, hooks);
+    this.own = undefined;
     const rpc = await this.open(input, hooks);
     if (hooks.signal.aborted)
       return { outcome: "interrupted" };
@@ -1722,7 +1765,7 @@ ${others.map((path) => `- ${path}`).join(`
 `)}`;
     prompt.unshift({ type: "text", text });
     return new Promise((resolve2) => {
-      const active = { turn, hooks, resolve: resolve2, rpc, tools: new Map, toolsSinceText: false, ended: false, instructed };
+      const active = { turn, hooks, resolve: resolve2, rpc, tools: new Map, toolsSinceText: false, ended: false, instructed, children: new Map };
       this.active = active;
       turn.startStep();
       active.follower = this.flavor.follow?.(sessionId, turn, hooks);
@@ -1753,9 +1796,15 @@ ${others.map((path) => `- ${path}`).join(`
     }
     if (this.active === active)
       this.active = undefined;
+    clearTimeout(active.quiet);
     if (active.plan)
       active.turn.toolSucceeded(active.plan.id, "", { todos: active.plan.todos });
     active.follower?.stop();
+    for (const child of active.children.values())
+      if ("run" in child) {
+        active.turn.toolSucceeded(child.row, "", { sessionID: child.run.sessionID });
+        child.run.end(outcome === "failed" ? "interrupted" : outcome);
+      }
     active.turn.endStep({ tokens: this.stepTokens(active) });
     if (active.hooks.signal.aborted)
       active.resolve({ outcome: "interrupted" });
@@ -1770,10 +1819,45 @@ ${others.map((path) => `- ${path}`).join(`
       turn: active?.turn,
       hooks: active?.hooks,
       endPrompt: (stopReason, error) => {
-        if (active)
+        if (active && !active.own)
           this.end(active, error ? "failed" : stopReason === "cancelled" ? "interrupted" : "succeeded", error, stopReason === "rate_limit" ? this.limit(error) : undefined);
+      },
+      endOwn: () => {
+        if (active?.own)
+          this.end(active, "succeeded");
+        else if (this.own && !this.own.turnedAway)
+          this.own.turnedAway = true;
       }
     };
+  }
+  adopt(turn, hooks) {
+    const own = this.own;
+    this.own = undefined;
+    const rpc = this.rpc;
+    if (!own || own.turnedAway || !rpc)
+      return Promise.resolve({ outcome: "succeeded" });
+    return new Promise((resolve2) => {
+      const active = { turn, hooks, resolve: resolve2, rpc, tools: new Map, toolsSinceText: false, ended: false, children: new Map, own: true };
+      this.active = active;
+      turn.startStep();
+      this.quietly(active);
+      for (const update of own.updates)
+        this.notification("session/update", update);
+    });
+  }
+  noticed = new Set;
+  noticeOnce(active, key, text) {
+    if (this.noticed.has(key))
+      return;
+    this.noticed.add(key);
+    active.turn.notice(text);
+  }
+  quietly(active) {
+    clearTimeout(active.quiet);
+    active.quiet = setTimeout(() => {
+      if (this.active === active)
+        this.end(active, "succeeded");
+    }, acpTiming.ownQuiet);
   }
   notification(method, params) {
     if (method !== "session/update") {
@@ -1781,21 +1865,29 @@ ${others.map((path) => `- ${path}`).join(`
       return;
     }
     const active = this.active;
-    if (!active || this.loading || params?._meta?.isReplay)
+    if (this.loading || params?._meta?.isReplay)
       return;
-    if (params?.sessionId && this.sessionID && params.sessionId !== this.sessionID)
-      return;
-    active.heard = true;
     const update = params?.update ?? {};
+    const ours = !params?.sessionId || !this.sessionID || params.sessionId === this.sessionID;
+    if (!active) {
+      if (ours && this.sessionID)
+        this.ownUpdate(params, update);
+      return;
+    }
+    if (active.own)
+      this.quietly(active);
+    if (!ours)
+      return this.childUpdate(active, String(params.sessionId), update);
+    active.heard = true;
     const turn = active.turn;
     switch (update.sessionUpdate) {
       case "agent_message_chunk":
         this.words(active);
-        turn.text(contentText(update.content));
+        this.content(active, turn, update.content, "text");
         return;
       case "agent_thought_chunk":
         this.words(active);
-        turn.reasoning(contentText(update.content));
+        this.content(active, turn, update.content, "reasoning");
         return;
       case "tool_call":
       case "tool_call_update":
@@ -1803,6 +1895,32 @@ ${others.map((path) => `- ${path}`).join(`
       case "usage_update":
         if (typeof update.used === "number")
           active.used = update.used;
+        if (typeof update.cost?.amount === "number" && (update.cost.currency ?? "USD") === "USD")
+          turn.addUsage(undefined, update.cost.amount);
+        return;
+      case "current_mode_update":
+        if (this.setup && update.currentModeId)
+          this.setup.kuvoMode = update.currentModeId;
+        if (update.currentModeId)
+          turn.notice(`${this.name} switched to its ${update.currentModeId} mode.`);
+        return;
+      case "config_option_update":
+        if (this.setup && Array.isArray(update.configOptions))
+          this.setup.configOptions = update.configOptions;
+        return;
+      case "notice":
+        if (typeof update.message === "string" || typeof update.text === "string")
+          turn.notice(String(update.message ?? update.text));
+        return;
+      case "compaction_update":
+      case "compaction_summary_chunk":
+        if (!active.compacted)
+          turn.notice(`${this.name} summarized the conversation to make room.`);
+        active.compacted = true;
+        return;
+      case "user_message_chunk":
+      case "available_commands_update":
+      case "session_info_update":
         return;
       case "plan": {
         const todos = (update.entries ?? []).map((entry) => ({ content: entry.content, status: entry.status === "in_progress" ? "in_progress" : entry.status }));
@@ -1814,7 +1932,84 @@ ${others.map((path) => `- ${path}`).join(`
           turn.toolCalled(id, { todos });
         return;
       }
+      default: {
+        const words = contentText(update.content) || (typeof update.message === "string" ? update.message : "");
+        if (words.trim())
+          turn.notice(words.trim());
+        console.error(`${this.name} sent ${update.sessionUpdate}, which Kuvo Code doesn't know.`);
+      }
     }
+  }
+  content(active, turn, content, kind) {
+    const picture = content?.type === "image" ? pictureData(content.data, content.mimeType) : content?.type === "resource" && content.resource?.blob ? pictureData(content.resource.blob, content.resource.mimeType) : undefined;
+    if (picture) {
+      const id = newID("call");
+      active.toolsSinceText = true;
+      turn.toolStart(id, "generate_image", {});
+      turn.toolSucceeded(id, withPictures("", [picture]));
+      return;
+    }
+    const text = content?.type === "resource_link" ? `[${content.name ?? content.title ?? content.uri}](${content.uri})` : content?.type === "audio" ? "(a sound clip)" : contentText(content);
+    if (kind === "text")
+      turn.text(text);
+    else
+      turn.reasoning(text);
+  }
+  childUpdate(active, sessionId, update) {
+    let child = active.children.get(sessionId);
+    if (!child || "prompt" in child) {
+      if (update.sessionUpdate === "user_message_chunk") {
+        active.children.set(sessionId, { prompt: (child?.prompt ?? "") + contentText(update.content) });
+        return;
+      }
+      const prompt = child?.prompt?.trim();
+      const row = `acp-subagent:${sessionId}`;
+      active.toolsSinceText = true;
+      active.turn.toolStart(row, "subagent", { description: firstLine(prompt) || "A subagent's task", prompt });
+      const run2 = active.hooks.subagent(row, { title: firstLine(prompt) || "A subagent's task", prompt });
+      child = { run: run2, row, toolsSinceText: false, tools: new Map };
+      active.children.set(sessionId, child);
+    }
+    const turn = child.run.turn;
+    switch (update.sessionUpdate) {
+      case "agent_message_chunk":
+        turn.text(contentText(update.content));
+        return;
+      case "agent_thought_chunk":
+        turn.reasoning(contentText(update.content));
+        return;
+      case "tool_call":
+      case "tool_call_update": {
+        const id = update.toolCallId;
+        if (!id)
+          return;
+        const merged = { ...child.tools.get(id) ?? {}, ...Object.fromEntries(Object.entries(update).filter(([, value]) => value !== undefined && value !== null)) };
+        child.tools.set(id, merged);
+        const kuvo = kuvoTool(merged);
+        if (!turn.hasTool(id))
+          turn.toolStart(id, kuvo.name, kuvo.input);
+        const { text, pictures } = toolOutput(merged);
+        if (merged.status === "completed")
+          turn.toolSucceeded(id, withPictures(text, pictures));
+        else if (merged.status === "failed")
+          turn.toolFailed(id, text || "The tool failed.");
+        return;
+      }
+    }
+  }
+  ownUpdate(params, update) {
+    const known = this.own;
+    if (known) {
+      if (!known.turnedAway)
+        known.updates.push(params);
+      return;
+    }
+    if (!["agent_message_chunk", "agent_thought_chunk", "tool_call"].includes(update.sessionUpdate))
+      return;
+    const own = { updates: [params], turnedAway: false };
+    this.own = own;
+    if (!(this.onOwnTurn?.({ text: `${this.name} carried on by itself.` }) ?? false))
+      own.turnedAway = true;
   }
   words(active) {
     if (!active.toolsSinceText)
@@ -1844,7 +2039,7 @@ ${others.map((path) => `- ${path}`).join(`
       if (merged.status !== "completed" && merged.status !== "failed")
         turn.toolCalled(id, kuvo.input);
     }
-    const output = toolOutput(merged);
+    const { text: output, pictures } = toolOutput(merged);
     const files = (merged.content ?? []).filter((part) => part?.type === "diff" && part.path).map((part) => fileDiff(part.path, part.oldText ?? undefined, part.newText ?? ""));
     const metadata = {};
     if (files.length)
@@ -1856,7 +2051,7 @@ ${others.map((path) => `- ${path}`).join(`
       metadata.output = output;
     const made = merged.status === "completed" && this.sessionID ? this.flavor.madeFiles?.(merged, this.sessionID) ?? [] : [];
     if (merged.status === "completed")
-      turn.toolSucceeded(id, made.length ? [{ type: "text", text: output }, ...made] : output, metadata);
+      turn.toolSucceeded(id, withPictures(output, [...pictures, ...made]), metadata);
     else if (merged.status === "failed")
       turn.toolFailed(id, output || "The tool failed.", metadata);
     else if (output)
@@ -1914,7 +2109,35 @@ ${others.map((path) => `- ${path}`).join(`
         writeFileSync4(params.path, params.content ?? "");
         return {};
       }
+      case "elicitation/create": {
+        if (!active)
+          return { action: "decline" };
+        if (params?.mode === "url" && params.url) {
+          const answer2 = await active.hooks.question({ title: `${this.name} asks`, fields: [{ key: "open", title: params.message ?? "Open this page to go on.", type: "external", url: params.url }] });
+          return { action: answer2 ? "accept" : "decline" };
+        }
+        const schema = params?.requestedSchema ?? {};
+        const required = new Set(Array.isArray(schema.required) ? schema.required : []);
+        const fields = Object.entries(schema.properties ?? {}).map(([key, field]) => elicitationField(key, field, required.has(key)));
+        if (fields[0] && params?.message)
+          fields[0] = { ...fields[0], description: [params.message, fields[0].description].filter(Boolean).join(`
+
+`) };
+        const answer = await active.hooks.question({ title: `${this.name} asks`, fields: fields.length ? fields : [{ key: "ok", title: params?.message ?? "Go on?", type: "boolean", required: true }] });
+        if (!answer)
+          return { action: "decline" };
+        const content = {};
+        for (const [key, field] of Object.entries(schema.properties ?? {})) {
+          const value = answer[key];
+          if (value === undefined || value === null || value === "")
+            continue;
+          content[key] = field?.type === "number" || field?.type === "integer" ? Number(value) : field?.type === "boolean" ? value === true || value === "true" : value;
+        }
+        return { action: "accept", content };
+      }
     }
+    if (active && !method.startsWith("terminal/"))
+      this.noticeOnce(active, method, `${this.name} asked Kuvo Code for something it can't do yet (${method}).`);
     throw new RPCError(-32601, `Method not found: ${method}`);
   }
   async interrupt() {
@@ -1946,13 +2169,13 @@ function kuvoTool(call) {
     case "execute":
       return { name: "shell", input: { command: command ?? backticked(call.title) ?? call.title, description: raw.description } };
     case "read":
-      return { name: "read", input: { path } };
+      return { name: "read", input: { ...raw, path, description: call.title } };
     case "edit":
     case "delete":
     case "move":
-      return { name: "edit", input: { path } };
+      return { name: "edit", input: { ...raw, path, description: call.title } };
     case "search":
-      return { name: "grep", input: { pattern: raw.pattern ?? raw.query ?? call.title, path } };
+      return { name: "grep", input: { ...raw, pattern: raw.pattern ?? raw.query ?? call.title, path, description: call.title } };
     case "fetch":
       return { name: raw.url ? "webfetch" : "websearch", input: { url: raw.url, query: raw.query ?? call.title } };
     case "think":
@@ -2009,25 +2232,48 @@ function contentText(content) {
 }
 function toolOutput(call) {
   const parts = [];
+  const pictures = [];
   for (const part of call.content ?? []) {
-    if (part?.type === "content")
-      parts.push(contentText(part.content));
-    else if (part?.type === "terminal")
+    if (part?.type === "content") {
+      const content = part.content;
+      if (content?.type === "image")
+        pictures.push(pictureData(content.data, content.mimeType));
+      else if (content?.type === "resource" && content.resource?.blob)
+        pictures.push(pictureData(content.resource.blob, content.resource.mimeType));
+      else if (content?.type === "resource_link")
+        parts.push(`${content.name ?? content.title ?? "Link"}: ${content.uri ?? ""}`);
+      else
+        parts.push(contentText(content));
+    } else if (part?.type === "terminal")
       continue;
   }
   const raw = call.rawOutput;
   if (!parts.length && raw) {
-    for (const key of ["output_for_prompt", "combinedOutput", "combined_output", "output", "stdout", "content"]) {
-      const value = raw[key];
-      if (typeof value === "string" && value) {
-        parts.push(value);
-        break;
+    if (typeof raw === "string")
+      parts.push(raw);
+    else {
+      for (const key of ["output_for_prompt", "combinedOutput", "combined_output", "output", "stdout", "content"]) {
+        const value = raw[key];
+        if (typeof value === "string" && value) {
+          parts.push(value);
+          break;
+        }
       }
+      for (const key of ["stderr", "error", "message"])
+        if (typeof raw[key] === "string" && raw[key] && !parts.includes(raw[key]))
+          parts.push(raw[key]);
+      if (!parts.length && typeof raw === "object" && Object.keys(raw).length)
+        parts.push(JSON.stringify(raw, null, 2));
     }
   }
   const text = parts.filter(Boolean).join(`
 `);
-  return text.length > outputLimit2 ? text.slice(-outputLimit2) : text;
+  return { text: text.length > outputLimit2 ? text.slice(-outputLimit2) : text, pictures };
+}
+function firstLine(text) {
+  const line = (text ?? "").split(`
+`).find((part) => part.trim())?.trim() ?? "";
+  return line.length > 80 ? line.slice(0, 79) + "\u2026" : line;
 }
 function errorText(error) {
   if (error instanceof RPCError) {
@@ -2243,8 +2489,8 @@ function generatedImages(folder, input) {
   } catch {
     return [];
   }
-  const types = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif" };
-  const images = names.map((name) => ({ name, type: types[name.split(".").pop()?.toLowerCase() ?? ""] })).filter((file) => file.type && (!stem || file.name.startsWith(`${stem}_`) || file.name.startsWith(`${stem}.`))).map((file) => ({ ...file, at: (() => {
+  const types2 = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif" };
+  const images = names.map((name) => ({ name, type: types2[name.split(".").pop()?.toLowerCase() ?? ""] })).filter((file) => file.type && (!stem || file.name.startsWith(`${stem}_`) || file.name.startsWith(`${stem}.`))).map((file) => ({ ...file, at: (() => {
     try {
       return statSync(join8(folder, file.name)).mtimeMs;
     } catch {
@@ -2252,7 +2498,7 @@ function generatedImages(folder, input) {
     }
   })() })).sort((a, b) => b.at - a.at);
   const newest = images[0];
-  return newest ? [{ type: "file", uri: pathToFileURL(join8(folder, newest.name)).href, mime: newest.type, name: newest.name }] : [];
+  return newest ? [{ type: "file", uri: pathToFileURL2(join8(folder, newest.name)).href, mime: newest.type, name: newest.name }] : [];
 }
 
 class AntigravityFollower {
@@ -2734,6 +2980,7 @@ import { randomUUID } from "crypto";
 import { existsSync as existsSync7, readFileSync as readFileSync8, statSync as statSync2 } from "fs";
 import { homedir } from "os";
 import { join as join10 } from "path";
+import { pathToFileURL as pathToFileURL3 } from "url";
 
 // Agents/src/maintenance.ts
 import { existsSync as existsSync6, realpathSync as realpathSync2 } from "fs";
@@ -3295,6 +3542,7 @@ class ClaudeThread {
   input;
   active;
   lastHooks;
+  noticed = new Set;
   onOwnTurn;
   own;
   backgroundLanes = new Map;
@@ -3604,25 +3852,34 @@ class ClaudeThread {
       case "assistant": {
         const content = message.message?.content ?? [];
         const id = message.message?.id;
-        if (message.error === "authentication_failed" || message.message?.error === "authentication_failed") {
+        const error = message.error ?? message.message?.error;
+        if (error === "authentication_failed") {
           this.agent.authFailedAt = Date.now();
           if (active)
             active.problem = "Claude Code isn't signed in. Sign in again in Settings \u203A Accounts.";
-        }
+        } else if (typeof error === "string" && active && lane === active)
+          active.problem ??= apiErrorWords(error);
         for (const block of content) {
-          if (block.type === "tool_use") {
-            lane.calls.set(block.id, { name: block.name, input: block.input ?? {} });
-            const tool = kuvoTool2(block.name, block.input ?? {});
+          if (block.type === "tool_use" || block.type === "server_tool_use" || block.type === "mcp_tool_use") {
+            const name = block.type === "mcp_tool_use" ? `mcp__${block.server_name ?? "mcp"}__${block.name}` : block.name;
+            lane.calls.set(block.id, { name, input: block.input ?? {} });
+            const tool = kuvoTool2(name, block.input ?? {});
             if (!turn.hasTool(block.id))
               turn.toolStart(block.id, tool.name);
             turn.toolCalled(block.id, tool.input);
             if (active && lane === active && tool.name === "subagent")
               this.subagentLane(active, block.id);
+          } else if (typeof block.type === "string" && block.type.endsWith("_tool_result")) {
+            this.serverResult(turn, block);
           } else if (!id || !lane.streamed.has(id)) {
             if (block.type === "text" && block.text)
               turn.text(block.text);
             else if (block.type === "thinking" && block.thinking)
               turn.reasoning(block.thinking);
+            else if (block.type === "redacted_thinking")
+              turn.reasoning("(The model kept this thinking to itself.)");
+            else if (block.type === "compaction")
+              this.noticeLater(lane, "Claude summarized the conversation to make room.");
           }
         }
         if (id && !lane.streamed.has(id))
@@ -3640,6 +3897,11 @@ class ClaudeThread {
         if (!active || lane !== active)
           return;
         const info = message.rate_limit_info ?? {};
+        if (info.status === "allowed_warning") {
+          const used = typeof info.utilization === "number" ? ` (${Math.round(info.utilization * 100)}% used)` : "";
+          this.noticeOnce(`warn:${info.rateLimitType}:${info.surpassedThreshold ?? ""}`, turn, `You're close to ${limitWords2(info.rateLimitType).replace(/^You've reached /, "").replace(/\.$/, "")}${used}.`);
+          return;
+        }
         if (info.status !== "rejected" || info.overageInUse || info.isUsingOverage)
           return;
         const resetsAt = typeof info.resetsAt === "number" ? info.resetsAt * 1000 : undefined;
@@ -3655,13 +3917,133 @@ class ClaudeThread {
           active.limit ??= message.error === "billing_error" ? { scope: "provider" } : { scope: "model", brief: true };
           active.problem ??= "Claude's API is rate limiting this model.";
           this.query?.interrupt().catch(() => {});
+          return;
         }
+        return this.systemFrame(active, lane, message);
+      case "conversation_reset":
+        delete this.state.claudeCost;
+        turn.notice("Claude Code started its conversation over.");
+        return;
+      case "auth_status":
+        if (message.error && active)
+          active.problem = String(message.error);
+        else if (Array.isArray(message.output) && message.output.length)
+          turn.notice(message.output.join(`
+`));
         return;
       case "result":
         if (!active || lane !== active)
           return;
         return this.finish(active, message);
+      default:
+        if (!claudeMessages.has(message.type))
+          this.unknownFrame(turn, String(message.type), message);
     }
+  }
+  systemFrame(active, lane, message) {
+    const turn = lane.turn;
+    switch (message.subtype) {
+      case "task_progress":
+        if (typeof message.tool_use_id === "string" && (message.summary || message.description))
+          turn.toolProgress(message.tool_use_id, { summary: message.summary ?? message.description, lastTool: message.last_tool_name });
+        return;
+      case "compact_boundary":
+        this.noticeLater(lane, "Claude Code summarized the conversation to make room.");
+        return;
+      case "status":
+        if (message.compact_result === "failed")
+          turn.notice(`Claude Code couldn't summarize the conversation${message.compact_error ? `: ${message.compact_error}` : ""}.`);
+        return;
+      case "api_retry":
+        this.noticeOnce(`retry:${lane.turn.currentModel.id}`, turn, `Claude's API ${message.error === "overloaded" || message.error_status === 529 ? "is overloaded" : "had a problem"}: trying again${message.max_retries ? ` (${message.attempt}/${message.max_retries})` : ""}.`);
+        return;
+      case "local_command_output":
+        if (typeof message.content === "string" && message.content.trim()) {
+          turn.text(message.content);
+          turn.endBlock();
+        }
+        return;
+      case "informational":
+        if (message.level !== "info" && typeof message.content === "string")
+          turn.notice(message.content);
+        return;
+      case "notification":
+        if (message.priority !== "low" && typeof message.text === "string")
+          turn.notice(message.text);
+        return;
+      case "model_refusal_fallback":
+      case "model_refusal_no_fallback":
+        if (typeof message.content === "string")
+          turn.notice(message.content);
+        return;
+      case "plugin_install":
+        if (message.status === "failed")
+          turn.notice(`A Claude Code plugin didn't install${message.name ? ` (${message.name})` : ""}${message.error ? `: ${message.error}` : ""}.`);
+        return;
+      case "hook_response":
+        if (message.outcome === "error" || message.exit_code)
+          turn.notice(`Your ${message.hook_name ?? message.hook_event ?? ""} hook failed${message.stderr ? `: ${String(message.stderr).trim()}` : ""}.`);
+        return;
+      case "memory_recall": {
+        const id = newID("call");
+        turn.toolStart(id, "memory", { description: "Recalled from memory" });
+        const paths = Array.isArray(message.paths) ? message.paths.join(`
+`) : "";
+        turn.toolSucceeded(id, paths || (typeof message.content === "string" ? message.content : ""));
+        return;
+      }
+    }
+    if (!claudeSystem.has(message.subtype))
+      this.unknownFrame(turn, `system:${message.subtype}`, message);
+  }
+  noticeLater(lane, text) {
+    lane.turn.notice(text);
+  }
+  noticeOnce(key, turn, text) {
+    if (this.noticed.has(key))
+      return;
+    this.noticed.add(key);
+    turn.notice(text);
+  }
+  unknownFrame(turn, key, message) {
+    const words = ["content", "text", "message", "summary"].map((field) => message?.[field]).find((value) => typeof value === "string" && value.trim());
+    if (words)
+      this.noticeOnce(`unknown:${key}:${words}`, turn, words);
+    if (!this.noticed.has(`log:${key}`)) {
+      this.noticed.add(`log:${key}`);
+      console.error(`Claude Code sent ${key}, which Kuvo Code doesn't know: ${JSON.stringify(message).slice(0, 300)}`);
+    }
+  }
+  serverResult(turn, block) {
+    const id = block.tool_use_id;
+    if (typeof id !== "string")
+      return;
+    if (!turn.hasTool(id))
+      turn.toolStart(id, block.type.replace(/_tool_result$/, ""), {});
+    const content = block.content;
+    const failed = content && typeof content === "object" && !Array.isArray(content) && String(content.type ?? "").endsWith("_error") || block.is_error;
+    const lines2 = [];
+    for (const part of Array.isArray(content) ? content : [content]) {
+      if (!part)
+        continue;
+      if (part.type === "web_search_result")
+        lines2.push([part.title, part.url].filter(Boolean).join(" \u2014 "));
+      else if (typeof part.text === "string")
+        lines2.push(part.text);
+      else if (typeof part.stdout === "string" || typeof part.stderr === "string")
+        lines2.push([part.stdout, part.stderr].filter(Boolean).join(`
+`));
+      else if (part.type === "web_fetch_result")
+        lines2.push(part.url ?? "");
+      else if (typeof part.error_code === "string")
+        lines2.push(part.error_code);
+    }
+    const text = lines2.filter(Boolean).join(`
+`).slice(0, outputLimit3);
+    if (failed)
+      turn.toolFailed(id, text || "The tool failed.");
+    else
+      turn.toolSucceeded(id, text);
   }
   subagentLane(active, callID) {
     const known = active.subagents.get(callID);
@@ -3673,7 +4055,7 @@ class ClaudeThread {
       active.subagents.set(callID, kept2);
       return kept2;
     }
-    const call = active.calls.get(callID);
+    const call = active.calls.get(callID) ?? [...active.subagents.values()].map((lane2) => lane2.calls.get(callID)).find(Boolean);
     const before = this.subagentSessions.get(callID);
     let run2;
     let background = false;
@@ -3713,10 +4095,13 @@ class ClaudeThread {
       }
       case "content_block_start": {
         const block = event.content_block;
-        if (block?.type === "tool_use") {
+        if (block?.type === "tool_use" || block?.type === "server_tool_use" || block?.type === "mcp_tool_use") {
           lane.blockTools.set(event.index, block.id);
-          turn.toolStart(block.id, kuvoTool2(block.name, {}).name);
-        }
+          turn.toolStart(block.id, kuvoTool2(block.type === "mcp_tool_use" ? `mcp__${block.server_name ?? "mcp"}__${block.name}` : block.name, {}).name);
+        } else if (block?.type === "redacted_thinking")
+          turn.reasoning("(The model kept this thinking to itself.)");
+        else if (typeof block?.type === "string" && block.type.endsWith("_tool_result"))
+          this.serverResult(turn, block);
         return;
       }
       case "content_block_delta": {
@@ -3753,6 +4138,7 @@ class ClaudeThread {
     if (text.length > outputLimit3)
       text = text.slice(0, outputLimit3) + `
 \u2026`;
+    const pictures = toolPictures(block.content, call?.input);
     const subagent = active && lane === active ? active.subagents.get(id) : undefined;
     if (active && subagent && !subagent.background) {
       subagent.run.end(block.is_error ? "failed" : "succeeded", block.is_error ? { type: "agent", message: text || "The subagent failed." } : undefined);
@@ -3767,13 +4153,21 @@ class ClaudeThread {
     if (files.length)
       metadata.files = files;
     if (call?.name === "Bash" && structured) {
-      const output = [structured.stdout, structured.stderr].filter((part) => part).join(`
+      if (structured.isImage && typeof structured.stdout === "string")
+        pictures.push(pictureUrl(structured.stdout.trim()));
+      else {
+        const output = [structured.stdout, structured.stderr].filter((part) => part).join(`
 `);
-      if (output)
-        text = output.length > outputLimit3 ? output.slice(0, outputLimit3) + `
+        if (output)
+          text = output.length > outputLimit3 ? output.slice(0, outputLimit3) + `
 \u2026` : output;
+      }
+      const notes = [structured.interrupted ? "It was stopped." : "", structured.returnCodeInterpretation ?? "", structured.persistedOutputPath ? `The rest of what it printed is in ${structured.persistedOutputPath}.` : ""].filter(Boolean);
+      if (notes.length)
+        text = [text, ...notes].filter(Boolean).join(`
+`);
     }
-    turn.toolSucceeded(id, text, Object.keys(metadata).length ? metadata : undefined);
+    turn.toolSucceeded(id, withPictures(text, pictures), Object.keys(metadata).length ? metadata : undefined);
   }
   finish(active, result) {
     this.addCost(active, result);
@@ -3966,6 +4360,39 @@ class ClaudeThread {
     this.own = undefined;
   }
 }
+var claudeMessages = new Set(["assistant", "user", "stream_event", "result", "system", "rate_limit_event", "auth_status", "conversation_reset", "tool_progress", "tool_use_summary", "prompt_suggestion"]);
+var claudeSystem = new Set([
+  "init",
+  "compact_boundary",
+  "status",
+  "api_retry",
+  "control_request_progress",
+  "model_refusal_fallback",
+  "model_refusal_no_fallback",
+  "local_command_output",
+  "hook_started",
+  "hook_progress",
+  "hook_response",
+  "plugin_install",
+  "task_notification",
+  "task_started",
+  "task_updated",
+  "task_progress",
+  "background_tasks_changed",
+  "thinking_tokens",
+  "session_state_changed",
+  "worker_shutting_down",
+  "commands_changed",
+  "notification",
+  "files_persisted",
+  "memory_recall",
+  "elicitation_complete",
+  "permission_denied",
+  "mirror_error",
+  "informational",
+  "task_summary",
+  "post_turn_summary"
+]);
 function kuvoTool2(name, input) {
   switch (name) {
     case "Bash":
@@ -3987,7 +4414,13 @@ function kuvoTool2(name, input) {
     case "WebFetch":
       return { name: "webfetch", input: { url: input.url, prompt: input.prompt } };
     case "WebSearch":
+    case "web_search":
       return { name: "websearch", input: { query: input.query } };
+    case "web_fetch":
+      return { name: "webfetch", input: { url: input.url } };
+    case "code_execution":
+    case "bash_code_execution":
+      return { name: "shell", input: { command: input.command ?? input.code, description: "Ran on Anthropic's servers" } };
     case "Task":
     case "Agent":
       return { name: "subagent", input: { description: input.description, agent: input.subagent_type, prompt: input.prompt } };
@@ -4066,6 +4499,8 @@ function diffs(name, input, structured) {
   }
   if (typeof structured?.originalFile === "string" && existsSync7(path))
     return [fileDiff(path, structured.originalFile, safeRead(path) ?? "")];
+  if (name === "NotebookEdit" && (typeof structured?.old_source === "string" || typeof structured?.new_source === "string"))
+    return [fileDiff(path, structured.old_source ?? "", structured.new_source ?? "")];
   return [];
 }
 function safeRead(path) {
@@ -4079,10 +4514,56 @@ function toolText(content) {
   if (typeof content === "string")
     return content;
   if (Array.isArray(content)) {
-    return content.map((part) => part?.type === "text" ? part.text : part?.type === "image" ? "[image]" : "").filter(Boolean).join(`
+    return content.map((part) => {
+      switch (part?.type) {
+        case "text":
+          return part.text;
+        case "tool_reference":
+          return `Loaded ${part.tool_name ?? "a tool"}`;
+        case "search_result":
+          return [part.title, part.source].filter(Boolean).join(" \u2014 ");
+        case "image":
+        case "document":
+          return "";
+      }
+      return typeof part?.text === "string" ? part.text : "";
+    }).filter(Boolean).join(`
 `);
   }
   return "";
+}
+function toolPictures(content, input) {
+  const pictures = [];
+  for (const part of Array.isArray(content) ? content : []) {
+    if (part?.type === "image")
+      pictures.push(part.source?.type === "base64" ? pictureData(part.source.data, part.source.media_type) : pictureUrl(part.source?.url));
+    if (part?.type === "document" && typeof input?.file_path === "string")
+      pictures.push({ type: "file", uri: pathToFileURL3(input.file_path).href, mime: "application/pdf", name: input.file_path.split("/").pop() });
+  }
+  return pictures;
+}
+function pictureUrl(url) {
+  if (typeof url !== "string")
+    return;
+  const data = /^data:([^;,]+);base64,(.*)$/s.exec(url);
+  if (data)
+    return pictureData(data[2], data[1]);
+  return url.startsWith("file://") ? pictureFile(decodeURIComponent(new URL(url).pathname)) : undefined;
+}
+function apiErrorWords(error) {
+  switch (error) {
+    case "billing_error":
+      return "Claude's API says there's a billing problem with this account.";
+    case "rate_limit":
+      return "Claude's API is rate limiting this model.";
+    case "invalid_request":
+      return "Claude's API turned the request away.";
+    case "server_error":
+      return "Claude's API had a problem.";
+    case "max_output_tokens":
+      return "The reply ran out of room.";
+  }
+  return `Claude's API reported an error (${error}).`;
 }
 function limitWords2(type) {
   switch (type) {
@@ -4139,30 +4620,6 @@ function safeBase642(path) {
 import { existsSync as existsSync8, lstatSync as lstatSync2, mkdirSync as mkdirSync8, readdirSync as readdirSync3, readlinkSync, rmSync as rmSync5, symlinkSync } from "fs";
 import { homedir as homedir2 } from "os";
 import { join as join11 } from "path";
-
-// Agents/src/pictures.ts
-import { extname } from "path";
-import { pathToFileURL as pathToFileURL2 } from "url";
-var types = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".heic": "image/heic" };
-function pictureFile(path) {
-  if (typeof path !== "string" || !path)
-    return;
-  const mime = types[extname(path).toLowerCase()];
-  if (!mime)
-    return;
-  return { type: "file", uri: pathToFileURL2(path).href, mime, name: path.split("/").pop() };
-}
-function pictureData(data, mime) {
-  if (typeof data !== "string" || !data || typeof mime !== "string" || !mime.startsWith("image/"))
-    return;
-  return { type: "file", uri: `data:${mime};base64,${data}`, mime };
-}
-function withPictures(text, pictures) {
-  const files = pictures.filter((picture) => Boolean(picture));
-  return files.length ? [{ type: "text", text }, ...files] : text;
-}
-
-// Agents/src/agents/codex.ts
 var places2 = ["/opt/homebrew/bin", "/usr/local/bin", join11(homedir2(), ".local/bin"), join11(homedir2(), ".codex/bin")];
 var outputLimit4 = 30000;
 
@@ -4263,7 +4720,7 @@ class CodexAgent {
       shadowHome(this.instance.home);
     const rpc = new RPC([executable, "app-server"], { cwd: this.context.temporary, env: this.instance.home ? { CODEX_HOME: this.instance.home } : undefined });
     rpc.onNotification = (method, params) => this.notification(method, params);
-    rpc.onRequest = (method, params) => this.request(method, params);
+    rpc.onRequest = (method, params, id) => this.request(method, params, id);
     rpc.onExit = () => {
       if (this.server !== rpc)
         return;
@@ -4297,29 +4754,60 @@ class CodexAgent {
       return;
     }
     if (method === "thread/started") {
-      const thread = params?.thread;
-      const parent = thread?.source?.subAgent?.thread_spawn?.parent_thread_id;
+      const thread2 = params?.thread;
+      const parent = thread2?.source?.subAgent?.thread_spawn?.parent_thread_id;
       const owner = parent ? this.threadFor(parent) : undefined;
-      if (owner && thread?.id) {
-        this.spawned.set(thread.id, owner);
-        owner.spawnStarted(thread.id);
+      if (owner && thread2?.id) {
+        this.spawned.set(thread2.id, owner);
+        owner.spawnStarted(thread2.id);
       }
       return;
     }
+    if (method === "serverRequest/resolved") {
+      this.asked.get(String(params?.requestId))?.abort();
+      return;
+    }
     const threadID = params?.threadId;
+    if (!threadID && ["warning", "deprecationNotice", "configWarning", "mcpServer/startupStatus/updated"].includes(method)) {
+      for (const thread2 of new Set(this.threads.values()))
+        thread2.notification(method, params);
+      return;
+    }
     const oneOff = threadID ? this.oneOffs.get(threadID) : undefined;
     if (oneOff)
       return oneOff(method, params);
-    if (threadID)
-      this.threadFor(threadID)?.notification(method, params);
+    if (!threadID)
+      return;
+    const thread = this.threadFor(threadID);
+    if (thread)
+      return thread.notification(method, params);
+    const now = Date.now();
+    for (const [id, kept3] of this.early)
+      if (now - kept3.at > 30000)
+        this.early.delete(id);
+    const kept2 = this.early.get(threadID) ?? { at: now, events: [] };
+    if (kept2.events.length < 500)
+      kept2.events.push([method, params]);
+    this.early.set(threadID, kept2);
   }
-  async request(method, params) {
+  asked = new Map;
+  async request(method, params, id) {
     const thread = params?.threadId ? this.threadFor(params.threadId) : params?.conversationId ? this.threadFor(params.conversationId) : undefined;
-    if (method === "mcpServer/elicitation/request")
-      return { action: "decline" };
-    if (!thread)
+    if (method === "item/tool/call")
+      return { success: false, contentItems: [{ type: "inputText", text: "Kuvo Code has no such tool." }] };
+    if (!thread) {
+      if (method === "mcpServer/elicitation/request")
+        return { action: "decline" };
       throw new RPCError(-32601, `No session for ${method}.`);
-    return thread.request(method, params);
+    }
+    const controller = new AbortController;
+    const key = String(id ?? newID("call"));
+    this.asked.set(key, controller);
+    try {
+      return await thread.request(method, params, controller.signal);
+    } finally {
+      this.asked.delete(key);
+    }
   }
   threadFor(nativeID) {
     for (const thread of this.threads.values())
@@ -4338,7 +4826,12 @@ class CodexAgent {
   spawned = new Map;
   adopt(threadID, thread) {
     this.spawned.set(threadID, thread);
+    const early = this.early.get(threadID);
+    this.early.delete(threadID);
+    for (const [method, params] of early?.events ?? [])
+      thread.notification(method, params);
   }
+  early = new Map;
   async account(fresh = false) {
     if (!this.executable())
       return { installed: false, signedIn: false, message: "Install Codex, then sign in here." };
@@ -4637,6 +5130,10 @@ ${others.map((path) => `- ${path}`).join(`
     const active = this.active;
     if (params?.threadId && this.nativeID && params.threadId !== this.nativeID)
       return this.subagentNotification(active, params.threadId, method, params);
+    if (method === "thread/closed") {
+      this.loaded = false;
+      return;
+    }
     if (!active)
       return;
     const turn = active.turn;
@@ -4647,48 +5144,11 @@ ${others.map((path) => `- ${path}`).join(`
       case "turn/started":
         active.turnID ??= params.turn?.id;
         return;
-      case "item/agentMessage/delta":
-        this.words(active);
-        active.streamed.add(params.itemId);
-        turn.text(params.delta ?? "");
-        return;
-      case "item/reasoning/summaryTextDelta":
-        this.words(active);
-        turn.reasoning(params.delta ?? "");
-        return;
-      case "item/commandExecution/outputDelta": {
-        const output = ((active.output.get(params.itemId) ?? "") + (params.delta ?? "")).slice(-outputLimit4);
-        active.output.set(params.itemId, output);
-        turn.toolProgress(params.itemId, { output });
-        return;
-      }
-      case "item/started":
-        return this.itemStarted(active, params.item);
-      case "item/completed":
-        return this.itemCompleted(active, params.item);
-      case "turn/plan/updated": {
-        const todos = (params.plan ?? []).map((entry) => ({ content: entry.step, status: entry.status === "inProgress" ? "in_progress" : entry.status }));
-        const id = active.plan?.id ?? newID("call");
-        active.plan = { id, todos };
-        if (!turn.hasTool(id))
-          turn.toolStart(id, "todowrite", { todos });
-        else
-          turn.toolCalled(id, { todos });
-        return;
-      }
       case "thread/tokenUsage/updated": {
         const window = params.tokenUsage?.modelContextWindow;
         if (typeof window === "number" && window > 0)
           this.agent.noteContext(active.model, window);
-        const last2 = params.tokenUsage?.last;
-        if (last2) {
-          active.usage = {
-            input: Math.max(0, (last2.inputTokens ?? 0) - (last2.cachedInputTokens ?? 0)),
-            output: Math.max(0, (last2.outputTokens ?? 0) - (last2.reasoningOutputTokens ?? 0)),
-            reasoning: last2.reasoningOutputTokens ?? 0,
-            cache: { read: last2.cachedInputTokens ?? 0, write: last2.cacheWriteInputTokens ?? 0 }
-          };
-        }
+        this.laneNotification(active, method, params);
         return;
       }
       case "error": {
@@ -4709,6 +5169,8 @@ ${others.map((path) => `- ${path}`).join(`
         }
         if (!params.willRetry)
           active.problem = params.error?.additionalDetails || params.error?.message;
+        else
+          this.noticeOnce(active, "retry", `Codex hit a problem and is trying again: ${params.error?.message ?? "the connection dropped"}.`);
         return;
       }
       case "turn/completed": {
@@ -4728,7 +5190,143 @@ ${others.map((path) => `- ${path}`).join(`
           active.resolve({ outcome: "succeeded" });
         return;
       }
+      default:
+        this.laneNotification(active, method, params);
     }
+  }
+  laneNotification(lane, method, params) {
+    const turn = lane.turn;
+    switch (method) {
+      case "item/agentMessage/delta":
+        this.words(lane);
+        lane.streamed.add(params.itemId);
+        turn.text(params.delta ?? "");
+        return;
+      case "item/reasoning/summaryTextDelta":
+        this.words(lane);
+        (lane.summarized ??= new Set).add(params.itemId);
+        turn.reasoning(params.delta ?? "");
+        return;
+      case "item/reasoning/summaryPartAdded":
+        if ((params.summaryIndex ?? 0) > 0)
+          turn.reasoning(`
+
+`);
+        return;
+      case "item/reasoning/textDelta":
+        if (lane.summarized?.has(params.itemId))
+          return;
+        this.words(lane);
+        (lane.reasoned ??= new Set).add(params.itemId);
+        turn.reasoning(params.delta ?? "");
+        return;
+      case "item/plan/delta":
+        this.words(lane);
+        lane.streamed.add(params.itemId);
+        turn.text(params.delta ?? "");
+        return;
+      case "item/commandExecution/outputDelta": {
+        const output = ((lane.output.get(params.itemId) ?? "") + (params.delta ?? "")).slice(-outputLimit4);
+        lane.output.set(params.itemId, output);
+        turn.toolProgress(params.itemId, { output });
+        return;
+      }
+      case "item/commandExecution/terminalInteraction": {
+        const output = ((lane.output.get(params.itemId) ?? "") + `
+> ${params.stdin ?? ""}
+`).slice(-outputLimit4);
+        lane.output.set(params.itemId, output);
+        turn.toolProgress(params.itemId, { output });
+        return;
+      }
+      case "item/fileChange/patchUpdated": {
+        const changes = codexChanges(params.changes);
+        lane.changes.set(params.itemId, changes);
+        turn.toolProgress(params.itemId, { files: changes.map(changeDiff) });
+        return;
+      }
+      case "item/mcpToolCall/progress":
+        if (typeof params.message === "string")
+          turn.toolProgress(params.itemId, { output: params.message });
+        return;
+      case "item/started":
+        return this.itemStarted(lane, params.item);
+      case "item/completed":
+        return this.itemCompleted(lane, params.item);
+      case "turn/plan/updated": {
+        const todos = (params.plan ?? []).map((entry) => ({ content: entry.step, status: entry.status === "inProgress" ? "in_progress" : entry.status }));
+        const id = lane.plan?.id ?? newID("call");
+        lane.plan = { id, todos };
+        if (!turn.hasTool(id))
+          turn.toolStart(id, "todowrite", { todos });
+        else
+          turn.toolCalled(id, { todos });
+        return;
+      }
+      case "thread/tokenUsage/updated": {
+        const last2 = params.tokenUsage?.last;
+        if (last2) {
+          lane.usage = {
+            input: Math.max(0, (last2.inputTokens ?? 0) - (last2.cachedInputTokens ?? 0)),
+            output: Math.max(0, (last2.outputTokens ?? 0) - (last2.reasoningOutputTokens ?? 0)),
+            reasoning: last2.reasoningOutputTokens ?? 0,
+            cache: { read: last2.cachedInputTokens ?? 0, write: last2.cacheWriteInputTokens ?? 0 }
+          };
+        }
+        return;
+      }
+      case "hook/started":
+      case "hook/completed": {
+        const run2 = params.run ?? {};
+        const id = `hook:${run2.id ?? newID("call")}`;
+        if (!turn.hasTool(id)) {
+          lane.toolsSinceText = true;
+          turn.toolStart(id, "hook", { description: `${run2.eventName ?? "hook"} hook`, source: run2.sourcePath });
+        }
+        if (method === "hook/started")
+          return;
+        const said = (run2.entries ?? []).map((entry) => entry.kind && entry.kind !== "context" ? `${entry.kind}: ${entry.text ?? ""}` : entry.text ?? "").filter(Boolean).join(`
+`);
+        if (run2.status === "failed" || run2.status === "blocked")
+          turn.toolFailed(id, said || (run2.statusMessage ?? `The hook ${run2.status}.`));
+        else
+          turn.toolSucceeded(id, said || (run2.statusMessage ?? ""));
+        return;
+      }
+      case "model/rerouted":
+        turn.notice(`${params.toModel ?? "Another model"} answered instead of ${params.fromModel ?? "the one you picked"}${params.reason === "highRiskCyberActivity" ? " (Codex moves security-sensitive work to it)" : ""}.`);
+        return;
+      case "model/verification":
+        if (Array.isArray(params.verifications) && params.verifications.length)
+          turn.notice(`Codex asks for verification to go on: ${params.verifications.join(", ")}.`);
+        return;
+      case "model/safetyBuffering/updated":
+        if (params.showBufferingUi)
+          this.noticeOnce(lane, "buffering", `Codex is checking ${params.model ?? "this model"}'s answer before showing it${params.fasterModel ? `; ${params.fasterModel} would be faster` : ""}.`);
+        return;
+      case "modelProvider/authRecoveryStarted":
+      case "modelProvider/authRecoveryCompleted":
+      case "warning":
+      case "guardianWarning":
+        if (typeof params.message === "string" && params.message.trim())
+          turn.notice(params.message.trim());
+        return;
+      case "deprecationNotice":
+      case "configWarning":
+        if (params.summary)
+          turn.notice([params.summary, params.details, params.path].filter(Boolean).join(" \u2014 "));
+        return;
+      case "mcpServer/startupStatus/updated":
+        if (params.name === toolServerName && params.status === "failed")
+          turn.notice(`Kuvo Code's tools didn't start for Codex${params.error ? `: ${params.error}` : ""}.`);
+        return;
+    }
+  }
+  noticeOnce(lane, key, text) {
+    if (lane.noticed?.has(key))
+      return;
+    (lane.noticed ??= new Set).add(key);
+    lane.turn.notice(text);
   }
   spawnStarted(threadID) {
     const active = this.active;
@@ -4763,39 +5361,21 @@ ${others.map((path) => `- ${path}`).join(`
         return;
       lane = this.continueSubagent(active, threadID, lane);
     }
-    const turn = lane.turn;
     switch (method) {
-      case "item/agentMessage/delta":
-        this.words(lane);
-        lane.streamed.add(params.itemId);
-        turn.text(params.delta ?? "");
+      case "error":
+        if (!params.willRetry && params.error?.message)
+          lane.turn.notice(params.error.message);
         return;
-      case "item/reasoning/summaryTextDelta":
-        this.words(lane);
-        turn.reasoning(params.delta ?? "");
-        return;
-      case "item/commandExecution/outputDelta": {
-        const output = ((lane.output.get(params.itemId) ?? "") + (params.delta ?? "")).slice(-outputLimit4);
-        lane.output.set(params.itemId, output);
-        turn.toolProgress(params.itemId, { output });
-        return;
-      }
-      case "item/started":
-        return this.itemStarted(lane, params.item);
-      case "item/completed":
-        return this.itemCompleted(lane, params.item);
-      case "thread/tokenUsage/updated": {
-        const last2 = params.tokenUsage?.last;
-        if (last2)
-          lane.usage = { input: Math.max(0, (last2.inputTokens ?? 0) - (last2.cachedInputTokens ?? 0)), output: Math.max(0, (last2.outputTokens ?? 0) - (last2.reasoningOutputTokens ?? 0)), reasoning: last2.reasoningOutputTokens ?? 0, cache: { read: last2.cachedInputTokens ?? 0, write: last2.cacheWriteInputTokens ?? 0 } };
-        return;
-      }
       case "turn/completed": {
         const status = params.turn?.status;
+        if (lane.plan)
+          lane.turn.toolSucceeded(lane.plan.id, "", { todos: lane.plan.todos });
         this.endSubagent(lane, status === "failed" ? "failed" : status === "interrupted" ? "interrupted" : "succeeded", params.turn?.error?.message);
         this.backgroundLanes.delete(threadID);
         return;
       }
+      default:
+        this.laneNotification(lane, method, params);
     }
   }
   spawned(main, item) {
@@ -4868,7 +5448,7 @@ ${others.map((path) => `- ${path}`).join(`
         const main = this.active;
         lane.toolsSinceText = true;
         const prompt = typeof item.prompt === "string" ? item.prompt : "";
-        turn.toolStart(item.id, "subagent", { description: firstLine(prompt) || "A spawned agent's task", prompt, background: true });
+        turn.toolStart(item.id, "subagent", { description: firstLine2(prompt) || "A spawned agent's task", prompt, background: true });
         main.spawning.push(item.id);
         const thread = item.receiverThreadIds?.[0];
         if (thread)
@@ -4890,11 +5470,15 @@ ${others.map((path) => `- ${path}`).join(`
         return;
       case "fileChange": {
         active.toolsSinceText = true;
-        const changes = (item.changes ?? []).map((change) => ({ path: change.path, kind: change.kind?.type ?? "update", diff: change.diff ?? "" }));
+        const changes = codexChanges(item.changes);
         active.changes.set(item.id, changes);
         turn.toolStart(item.id, "patch", { files: changes.map((change) => change.path) });
         return;
       }
+      case "functionCallOutput":
+        active.toolsSinceText = true;
+        turn.toolStart(item.id, [item.namespace, item.name].filter(Boolean).join(".") || "tool", {});
+        return;
       case "mcpToolCall":
         active.toolsSinceText = true;
         turn.toolStart(item.id, `${item.server}_${item.tool}`, item.arguments ?? {});
@@ -4925,6 +5509,8 @@ ${others.map((path) => `- ${path}`).join(`
   itemCompleted(lane, item) {
     const active = lane;
     const turn = lane.turn;
+    if (["commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "webSearch", "functionCallOutput"].includes(item?.type) && typeof item.id === "string" && !turn.hasTool(item.id))
+      this.itemStarted(lane, item);
     switch (item?.type) {
       case "sleep":
         if (turn.hasTool(item.id))
@@ -4932,8 +5518,10 @@ ${others.map((path) => `- ${path}`).join(`
         return;
       case "collabAgentToolCall": {
         if (item.tool === "wait") {
+          const states = Object.values(item.agentsStates ?? {}).map((state) => [state.status, state.message].filter(Boolean).join(": ")).filter(Boolean).join(`
+`);
           if (turn.hasTool(item.id))
-            item.status === "failed" ? turn.toolFailed(item.id, "It stopped waiting.") : turn.toolSucceeded(item.id, "Done waiting.");
+            item.status === "failed" ? turn.toolFailed(item.id, states || "It stopped waiting.") : turn.toolSucceeded(item.id, states || "Done waiting.");
           return;
         }
         if (item.tool !== "spawnAgent") {
@@ -4962,22 +5550,44 @@ ${others.map((path) => `- ${path}`).join(`
           this.endSubagent(spawned, item.kind === "completed" ? "succeeded" : "interrupted");
         return;
       }
-      case "agentMessage":
+      case "agentMessage": {
         if (!active.streamed.has(item.id) && item.text) {
           this.words(active);
           turn.text(item.text);
         }
+        const questions = (item.questions ?? []).map((question) => `- ${question.title ?? ""}${question.options?.length ? ` (${question.options.join(" / ")})` : ""}`);
+        if (questions.length)
+          turn.text(`
+
+${questions.join(`
+`)}`);
+        const cited = (item.memoryCitation?.entries ?? []).map((entry) => `${entry.path}:${entry.lineStart}-${entry.lineEnd}${entry.note ? ` (${entry.note})` : ""}`);
+        if (cited.length)
+          turn.text(`
+
+From memory: ${cited.join("; ")}`);
         turn.endBlock();
         return;
-      case "reasoning":
+      }
+      case "reasoning": {
+        if (!active.summarized?.has(item.id) && !active.reasoned?.has(item.id)) {
+          const said = [...item.summary ?? [], ...item.summary?.length ? [] : item.content ?? []].filter((part) => typeof part === "string" && part.trim()).join(`
+
+`);
+          if (said) {
+            this.words(active);
+            turn.reasoning(said);
+          }
+        }
         turn.endBlock();
         return;
+      }
       case "plan":
-        if (item.text) {
+        if (item.text && !active.streamed.has(item.id)) {
           this.words(active);
           turn.text(item.text);
-          turn.endBlock();
         }
+        turn.endBlock();
         return;
       case "commandExecution": {
         const output = (item.aggregatedOutput ?? active.output.get(item.id) ?? "").slice(-outputLimit4);
@@ -4990,47 +5600,71 @@ ${others.map((path) => `- ${path}`).join(`
         return;
       }
       case "fileChange": {
-        const changes = (item.changes ?? []).map((change) => ({ path: change.path, kind: change.kind?.type ?? "update", diff: change.diff ?? "" }));
-        const files = changes.map((change) => fromPatch(change.path, change.diff, change.kind === "add" ? "added" : change.kind === "delete" ? "deleted" : "modified"));
+        const changes = codexChanges(item.changes);
+        const files = changes.map(changeDiff);
+        const said = changes.map((change) => change.movedTo ? `${change.path} \u2192 ${change.movedTo}` : change.path).join(`
+`);
         if (item.status === "declined")
           turn.toolFailed(item.id, "Declined.", { files });
         else if (item.status === "failed")
           turn.toolFailed(item.id, "The change couldn't be made.", { files });
         else
-          turn.toolSucceeded(item.id, changes.map((change) => change.path).join(`
-`), { files });
+          turn.toolSucceeded(item.id, said, { files });
         return;
       }
       case "mcpToolCall": {
         const content = item.result?.content ?? [];
-        const text = content.map((part) => part?.text ?? "").filter(Boolean).join(`
-`);
+        const parts = mcpParts(content);
+        const text = parts.text || (item.result?.structuredContent !== undefined && item.result?.structuredContent !== null ? JSON.stringify(item.result.structuredContent, null, 2) : "");
         if (item.error || item.status === "failed")
-          turn.toolFailed(item.id, item.error?.message ?? text ?? "The tool failed.");
+          turn.toolFailed(item.id, item.error?.message || text || "The tool failed.");
         else
-          turn.toolSucceeded(item.id, withPictures(text.slice(0, outputLimit4), content.map((part) => part?.type === "image" ? pictureData(part.data, part.mimeType) : undefined)));
+          turn.toolSucceeded(item.id, withPictures(text.slice(0, outputLimit4), parts.pictures));
         return;
       }
       case "dynamicToolCall": {
-        const text = (item.contentItems ?? []).map((part) => part?.text ?? "").filter(Boolean).join(`
+        const items = item.contentItems ?? [];
+        const text = items.map((part) => part?.text ?? "").filter(Boolean).join(`
 `);
+        const pictures = items.map((part) => part?.type === "inputImage" ? pictureUrl2(part.imageUrl) : undefined);
         if (item.success === false)
           turn.toolFailed(item.id, text || "The tool failed.");
         else
-          turn.toolSucceeded(item.id, text.slice(0, outputLimit4));
+          turn.toolSucceeded(item.id, withPictures(text.slice(0, outputLimit4), pictures));
         return;
       }
-      case "webSearch":
-        turn.toolSucceeded(item.id, "");
+      case "webSearch": {
+        const action = item.action ?? {};
+        const lines2 = [action.url ? `Opened ${action.url}` : "", action.pattern ? `Looked for "${action.pattern}"` : "", ...(action.queries ?? []).map((query) => `Searched for "${query}"`)];
+        for (const result of item.results ?? [])
+          lines2.push([result?.title, result?.url].filter(Boolean).join(" \u2014 "));
+        turn.toolSucceeded(item.id, lines2.filter(Boolean).join(`
+`).slice(0, outputLimit4));
         return;
-      case "imageGeneration":
+      }
+      case "imageGeneration": {
         if (!turn.hasTool(item.id))
           turn.toolStart(item.id, "generate_image", { prompt: item.revisedPrompt ?? "" });
-        if (item.status === "failed" || item.failure)
-          turn.toolFailed(item.id, String(item.failure?.message ?? item.failure ?? "The image couldn't be made."));
-        else
-          turn.toolSucceeded(item.id, withPictures("", [pictureFile(item.savedPath)]));
+        const failure2 = item.failure;
+        if (item.status === "failed" || failure2) {
+          const resets = typeof failure2?.resetsAt === "number" ? ` It resets ${new Date(failure2.resetsAt * 1000).toLocaleString()}.` : "";
+          turn.toolFailed(item.id, failure2?.type === "usageLimitExceeded" ? `You've reached your limit for making images.${resets}` : "The image couldn't be made.");
+        } else
+          turn.toolSucceeded(item.id, withPictures("", [pictureFile(item.savedPath) ?? pictureData(item.result, "image/png")]));
         return;
+      }
+      case "functionCallOutput": {
+        const output = item.output;
+        if (typeof output === "string")
+          turn.toolSucceeded(item.id, output.slice(0, outputLimit4));
+        else {
+          const parts = Array.isArray(output) ? output : [];
+          const text = parts.map((part) => part?.text ?? "").filter(Boolean).join(`
+`);
+          turn.toolSucceeded(item.id, withPictures(text.slice(0, outputLimit4), parts.map((part) => pictureUrl2(part?.image_url))));
+        }
+        return;
+      }
       case "imageView":
         if (!turn.hasTool(item.id))
           turn.toolStart(item.id, "read", { path: item.path });
@@ -5061,21 +5695,29 @@ ${others.map((path) => `- ${path}`).join(`
         }
     }
   }
-  async request(method, params) {
+  async request(method, params, signal) {
     const active = this.active;
-    if (!active) {
+    const background = !active && params?.threadId ? this.backgroundLanes.get(params.threadId) : undefined;
+    if (!active && !background) {
       if (method === "item/tool/requestUserInput")
         return { answers: {} };
+      if (method === "mcpServer/elicitation/request")
+        return { action: "decline" };
       return method.endsWith("Approval") || method.endsWith("/requestApproval") ? method.startsWith("item/") ? { decision: "decline" } : { decision: "denied" } : {};
     }
-    const hooks = active.hooks;
+    const hooks = {
+      permission: (ask) => active ? active.hooks.permission({ ...ask, signal }) : background.run.permission({ ...ask, signal }),
+      question: (ask) => active ? active.hooks.question({ ...ask, signal }) : Promise.resolve(null)
+    };
     switch (method) {
       case "item/commandExecution/requestApproval": {
-        const decision = await hooks.permission({ toolCallID: params.itemId, action: "shell", resources: [unwrapShell(params.command ?? "")], message: params.reason ?? undefined });
+        const host = params.networkApprovalContext?.host;
+        const command = unwrapShell(params.command ?? "");
+        const decision = host && !command ? await hooks.permission({ toolCallID: params.itemId, action: "webfetch", resources: [host], message: params.reason ?? `Codex wants to reach ${host}.` }) : await hooks.permission({ toolCallID: params.itemId, action: "shell", resources: [command || "*"], message: params.reason ?? undefined });
         return { decision: decision === "always" ? "acceptForSession" : decision === "once" ? "accept" : "decline" };
       }
       case "item/fileChange/requestApproval": {
-        const lane = (params.threadId && params.threadId !== this.nativeID ? active.subagents.get(params.threadId) : undefined) ?? active;
+        const lane = (params.threadId && params.threadId !== this.nativeID ? active?.subagents.get(params.threadId) ?? background : undefined) ?? active ?? background;
         const changes = lane.changes.get(params.itemId) ?? [];
         const files = changes.map((change) => fromPatch(change.path, change.diff, change.kind === "add" ? "added" : change.kind === "delete" ? "deleted" : "modified"));
         const decision = await hooks.permission({
@@ -5089,7 +5731,8 @@ ${others.map((path) => `- ${path}`).join(`
       }
       case "item/permissions/requestApproval": {
         const paths = [...params.permissions?.fileSystem?.read ?? [], ...params.permissions?.fileSystem?.write ?? []];
-        const decision = await hooks.permission({ toolCallID: params.itemId, action: "external_directory", resources: paths.length ? paths : ["*"], message: params.reason ?? undefined });
+        const network = params.permissions?.network?.enabled;
+        const decision = await hooks.permission({ toolCallID: params.itemId, action: paths.length || !network ? "external_directory" : "webfetch", resources: paths.length ? paths : network ? ["the network"] : ["*"], message: params.reason ?? undefined });
         return decision === "reject" ? { permissions: {}, scope: "turn" } : { permissions: params.permissions, scope: decision === "always" ? "session" : "turn" };
       }
       case "execCommandApproval": {
@@ -5111,7 +5754,8 @@ ${others.map((path) => `- ${path}`).join(`
           required: true,
           type: "string",
           options: question.options?.map((option) => ({ value: option.label, label: option.label, description: option.description })),
-          custom: question.isOther ?? !question.options?.length
+          custom: question.isOther ?? !question.options?.length,
+          ...question.isSecret ? { format: "password" } : {}
         }));
         const answer = await hooks.question({ title: questions.length === 1 ? questions[0].header ?? "Question" : "Questions", fields, toolCallID: params.itemId });
         const answers = {};
@@ -5120,6 +5764,31 @@ ${others.map((path) => `- ${path}`).join(`
           answers[question.id] = { answers: value === undefined || value === null ? [] : Array.isArray(value) ? value.map(String) : [String(value)] };
         }
         return { answers };
+      }
+      case "mcpServer/elicitation/request": {
+        const title = `${params.serverName ?? "A tool"} asks`;
+        if (params.mode === "url") {
+          const answer2 = await hooks.question({ title, fields: [{ key: "open", title: params.message ?? "Open this page to go on.", type: "external", url: params.url }] });
+          return { action: answer2 ? "accept" : "decline" };
+        }
+        const schema = params.requestedSchema ?? {};
+        const required = new Set(Array.isArray(schema.required) ? schema.required : []);
+        const fields = Object.entries(schema.properties ?? {}).map(([key, field]) => elicitationField(key, field, required.has(key)));
+        if (fields[0] && params.message)
+          fields[0] = { ...fields[0], description: [params.message, fields[0].description].filter(Boolean).join(`
+
+`) };
+        const answer = await hooks.question({ title, fields: fields.length ? fields : [{ key: "ok", title: params.message ?? "Go on?", type: "boolean", required: true }] });
+        if (!answer)
+          return { action: "decline" };
+        const content = {};
+        for (const [key, field] of Object.entries(schema.properties ?? {})) {
+          const value = answer[key];
+          if (value === undefined || value === null || value === "")
+            continue;
+          content[key] = field?.type === "number" || field?.type === "integer" ? Number(value) : field?.type === "boolean" ? value === true || value === "true" : value;
+        }
+        return { action: "accept", content };
       }
     }
     throw new RPCError(-32601, `Method not found: ${method}`);
@@ -5196,10 +5865,66 @@ var codexItems = new Set([
   "imageView",
   "sleep",
   "imageGeneration",
+  "functionCallOutput",
   "enteredReviewMode",
   "exitedReviewMode",
   "contextCompaction"
 ]);
+function codexChanges(raw) {
+  return (Array.isArray(raw) ? raw : []).map((change) => ({ path: change.path, kind: change.kind?.type ?? "update", diff: change.diff ?? "", movedTo: change.kind?.move_path ?? undefined }));
+}
+function changeDiff(change) {
+  return fromPatch(change.movedTo ?? change.path, change.diff, change.kind === "add" ? "added" : change.kind === "delete" ? "deleted" : "modified");
+}
+function mcpParts(content) {
+  const lines2 = [];
+  const pictures = [];
+  for (const part of Array.isArray(content) ? content : []) {
+    switch (part?.type) {
+      case "text":
+        if (part.text)
+          lines2.push(part.text);
+        break;
+      case "image":
+        pictures.push(pictureData(part.data, part.mimeType));
+        break;
+      case "resource":
+        if (typeof part.resource?.text === "string")
+          lines2.push(part.resource.text);
+        else if (part.resource?.uri)
+          lines2.push(`Resource: ${part.resource.uri}`);
+        if (typeof part.resource?.blob === "string")
+          pictures.push(pictureData(part.resource.blob, part.resource.mimeType));
+        break;
+      case "resource_link":
+        lines2.push(`${part.name ?? part.title ?? "Link"}: ${part.uri ?? ""}`);
+        break;
+      case "audio":
+        lines2.push("(It sent a sound clip.)");
+        break;
+      default:
+        if (part)
+          lines2.push(typeof part.text === "string" ? part.text : JSON.stringify(part));
+    }
+  }
+  return { text: lines2.join(`
+`), pictures };
+}
+function pictureUrl2(url) {
+  if (typeof url !== "string")
+    return;
+  const data = /^data:([^;,]+);base64,(.*)$/s.exec(url);
+  if (data)
+    return pictureData(data[2], data[1]);
+  if (url.startsWith("file://")) {
+    try {
+      return pictureFile(decodeURIComponent(new URL(url).pathname));
+    } catch {
+      return;
+    }
+  }
+  return;
+}
 function collabWords(tool) {
   switch (tool) {
     case "sendInput":
@@ -5211,6 +5936,18 @@ function collabWords(tool) {
   }
   return `Subagents: ${String(tool ?? "")}`;
 }
+var codexRequests = new Set([
+  "item/commandExecution/requestApproval",
+  "item/fileChange/requestApproval",
+  "item/permissions/requestApproval",
+  "item/tool/requestUserInput",
+  "mcpServer/elicitation/request",
+  "item/tool/call",
+  "execCommandApproval",
+  "applyPatchApproval",
+  "account/chatgptAuthTokens/refresh",
+  "attestation/generate"
+]);
 function unknownInput(item) {
   const { type: _type, id: _id, ...rest } = item ?? {};
   return rest;
@@ -5264,7 +6001,7 @@ function unwrapShell(command) {
   const inner = match[2];
   return match[1] === '"' ? inner.replace(/\\(["\\$`])/g, "$1") : inner.replace(/'"'"'/g, "'");
 }
-function firstLine(text) {
+function firstLine2(text) {
   const line = text.trim().split(`
 `)[0] ?? "";
   return line.length > 80 ? line.slice(0, 79) + "\u2026" : line;
@@ -5555,12 +6292,12 @@ ${text}`;
     };
     if (hooks.signal.aborted)
       return { outcome: "interrupted" };
-    const active = { turn, hooks, toolsSinceText: false, sawText: false, output: new Map };
+    const active = { turn, hooks, toolsSinceText: false, sawText: false, output: new Map, subagents: new Map, listed: 0, told: 0 };
     this.active = active;
     turn.startStep();
     let chain = Promise.resolve();
     const onDelta = async ({ update: update2 }) => {
-      chain = chain.then(() => this.update(active, update2)).catch(() => {});
+      chain = chain.then(() => this.update(active, active, update2)).catch((error) => console.error(`Cursor sent an update Kuvo Code couldn't show: ${errorWords(error)}`));
     };
     try {
       const run2 = await this.agent.send(images.length ? { text, images } : text, { model: selection, mode, onDelta });
@@ -5574,13 +6311,17 @@ ${text}`;
       if (!active.sawText && typeof result?.result === "string" && result.result.trim())
         turn.text(result.result);
       const usage = result?.usage;
+      if (active.listed > active.told)
+        turn.notice(`Cursor used ${active.listed - active.told} more ${active.listed - active.told === 1 ? "tool" : "tools"} than it reports to Kuvo Code.`);
+      for (const lane of active.subagents.values())
+        lane.run.end(result?.status === "error" ? "interrupted" : "succeeded");
       turn.endStep({
-        tokens: usage ? { input: usage.inputTokens ?? 0, output: usage.outputTokens ?? 0, reasoning: 0, cache: { read: usage.cacheReadTokens ?? 0, write: usage.cacheWriteTokens ?? 0 } } : undefined
+        tokens: usage ? { input: usage.inputTokens ?? 0, output: usage.outputTokens ?? 0, reasoning: active.reasoningTokens ?? 0, cache: { read: usage.cacheReadTokens ?? 0, write: usage.cacheWriteTokens ?? 0 } } : undefined
       });
       if (hooks.signal.aborted || result?.status === "cancelled")
         return { outcome: "interrupted" };
       if (result?.status === "error") {
-        const message = String(result.error?.message ?? "Cursor stopped with an error.");
+        const message = errorWords(result.error) ?? "Cursor stopped with an error.";
         const limit = limitOf2(message, result.error);
         return limit ? { outcome: "failed", error: { type: "limit", message }, limit } : { outcome: "failed", error: failure(message) };
       }
@@ -5590,7 +6331,7 @@ ${text}`;
         instructionsTaken();
       if (hooks.signal.aborted)
         return { outcome: "interrupted" };
-      const message = String(error?.message ?? error);
+      const message = errorWords(error) ?? "Cursor stopped with an error.";
       const limit = limitOf2(message, error);
       if (limit)
         return { outcome: "failed", error: { type: "limit", message }, limit };
@@ -5602,23 +6343,23 @@ ${text}`;
         this.active = undefined;
     }
   }
-  words(active) {
-    active.sawText = true;
-    if (!active.toolsSinceText)
+  words(lane) {
+    lane.sawText = true;
+    if (!lane.toolsSinceText)
       return;
-    active.toolsSinceText = false;
-    active.turn.endStep();
-    active.turn.startStep();
+    lane.toolsSinceText = false;
+    lane.turn.endStep();
+    lane.turn.startStep();
   }
-  async update(active, update2) {
-    const turn = active.turn;
+  async update(active, lane, update2) {
+    const turn = lane.turn;
     switch (update2?.type) {
       case "text-delta":
-        this.words(active);
+        this.words(lane);
         turn.text(update2.text ?? "");
         return;
       case "thinking-delta":
-        this.words(active);
+        this.words(lane);
         turn.reasoning(update2.text ?? "");
         return;
       case "thinking-completed":
@@ -5634,10 +6375,14 @@ ${text}`;
           return;
         const kuvo = kuvoTool3(call);
         if (!turn.hasTool(id)) {
-          active.toolsSinceText = true;
+          lane.toolsSinceText = true;
+          if (lane === active)
+            active.told++;
           turn.toolStart(id, kuvo.name, kuvo.input);
           if (call.type === "shell")
-            active.lastShell = id;
+            lane.lastShell = id;
+          if (call.type === "task" && lane === active)
+            this.subagentLane(active, id, call);
         } else {
           turn.toolCalled(id, kuvo.input);
         }
@@ -5646,25 +6391,61 @@ ${text}`;
         const result = call.result ?? {};
         const value = result.value ?? {};
         const failed = result.status === "error" || call.type === "mcp" && value.isError;
-        const { output, metadata } = toolResult(call, value, active.output.get(id));
+        const { output, metadata } = toolResult(call, value, lane.output.get(id));
+        const subagent = lane === active ? active.subagents.get(id) : undefined;
+        if (subagent) {
+          subagent.run.end(failed ? "failed" : "succeeded", failed ? { type: "agent", message: errorWords(result.error) ?? "The subagent failed." } : undefined);
+          active.subagents.delete(id);
+        }
         if (failed)
-          turn.toolFailed(id, output || String(result.error?.message ?? result.error ?? "The tool failed."), metadata);
+          turn.toolFailed(id, (typeof output === "string" ? output : "") || errorWords(result.error) || "The tool failed.", metadata);
         else
-          turn.toolSucceeded(id, output, metadata);
+          turn.toolSucceeded(id, output, subagent ? { ...metadata, sessionID: subagent.run.sessionID } : metadata);
+        return;
+      }
+      case "tool-call-delta": {
+        const subagent = active.subagents.get(update2.callId) ?? (update2.callId ? this.subagentLane(active, update2.callId, {}) : undefined);
+        if (subagent && update2.taskUpdate)
+          await this.update(active, subagent, update2.taskUpdate);
         return;
       }
       case "shell-output-delta": {
-        const id = active.lastShell;
+        const id = lane.lastShell;
         if (!id)
           return;
-        const event = update2.event ?? {};
-        const chunk = [event.text, event.output, event.data, event.stdout, event.stderr, event.chunk].find((part) => typeof part === "string") ?? "";
-        const output = ((active.output.get(id) ?? "") + chunk).slice(-outputLimit5);
-        active.output.set(id, output);
+        const chunk = shellChunk(update2.event);
+        if (!chunk)
+          return;
+        const output = ((lane.output.get(id) ?? "") + chunk).slice(-outputLimit5);
+        lane.output.set(id, output);
         turn.toolProgress(id, { output });
         return;
       }
+      case "summary-completed":
+        turn.notice("Cursor summarized the conversation to make room.");
+        return;
+      case "turn-ended":
+        if (lane === active && typeof update2.usage?.reasoningTokens === "number")
+          active.reasoningTokens = update2.usage.reasoningTokens;
+        return;
+      case "tool-requests-listed":
+        if (lane === active && typeof update2.callCount === "number")
+          active.listed += update2.callCount;
+        return;
+      default:
+        if (!cursorUpdates.has(update2?.type))
+          console.error(`Cursor sent ${update2?.type}, which Kuvo Code doesn't know.`);
     }
+  }
+  subagentLane(active, id, call) {
+    const known = active.subagents.get(id);
+    if (known)
+      return known;
+    const args = call.args ?? {};
+    const run2 = active.hooks.subagent(id, { title: String(args.description ?? "A subagent's task"), prompt: typeof args.prompt === "string" ? args.prompt : undefined, agent: args.subagentType?.kind });
+    const lane = { turn: run2.turn, toolsSinceText: false, sawText: false, output: new Map, run: run2 };
+    active.subagents.set(id, lane);
+    return lane;
   }
   async interrupt() {
     const active = this.active;
@@ -5711,17 +6492,42 @@ function kuvoTool3(call) {
     case "mcp":
       return { name: `${args.providerIdentifier}_${args.toolName}`, input: args.args ?? {} };
     case "updateTodos":
-      return { name: "todowrite", input: { todos: args.todos } };
+      return { name: "todowrite", input: { todos: (args.todos ?? []).map((todo) => ({ ...todo, status: todo?.status === "inProgress" ? "in_progress" : todo?.status })) } };
+    case "generateImage":
+      return { name: "generate_image", input: { prompt: args.prompt ?? args.description } };
+    case "readLints":
+      return { name: "lints", input: { paths: args.paths } };
+    case "recordScreen":
+      return { name: "record_screen", input: args };
     case "task":
       return { name: "subagent", input: { description: args.description, prompt: args.prompt, agent: args.subagentType?.kind } };
     case "createPlan":
       return { name: "plan", input: { plan: args.plan } };
   }
-  return { name: String(call.type ?? "tool"), input: args };
+  return { name: String(call.type ?? call.case ?? "tool"), input: call.args ?? call.value?.args ?? {} };
 }
 function toolResult(call, value, streamed) {
   const args = call.args ?? {};
   switch (call.type) {
+    case "grep":
+      return { output: grepText(value).slice(0, outputLimit5) };
+    case "semSearch":
+      return { output: String(value.results ?? "").slice(0, outputLimit5) };
+    case "ls":
+      return { output: treeText(value.directoryTreeRoot).slice(0, outputLimit5) };
+    case "readLints":
+      return {
+        output: (value.fileDiagnostics ?? []).flatMap((file) => (file.diagnostics ?? []).map((diagnostic) => `${file.path}${diagnostic.range?.start?.line !== undefined ? `:${diagnostic.range.start.line + 1}` : ""}: ${diagnostic.severity ? `${diagnostic.severity}: ` : ""}${diagnostic.message ?? ""}`)).join(`
+`).slice(0, outputLimit5) || "No problems."
+      };
+    case "task":
+      return { output: String(value.resultSuffix ?? lastWords(value.conversationSteps) ?? "").slice(0, outputLimit5) };
+    case "generateImage":
+      return { output: withPictures("", [pictureFile(value.filePath) ?? pictureData(value.imageData, "image/png")]) };
+    case "recordScreen":
+      return { output: value.path ? `Recorded the screen: ${value.path}` : "Recorded the screen." };
+    case "delete":
+      return { output: `Deleted ${args.path ?? "the file"}.`, metadata: args.path ? { files: [fileDiff(args.path, "", "")] } : undefined };
     case "shell": {
       const output = [value.stdout, value.stderr].filter((part) => typeof part === "string" && part).join(`
 `) || streamed || "";
@@ -5735,8 +6541,10 @@ function toolResult(call, value, streamed) {
       return { output: (value.files ?? []).join(`
 `).slice(0, outputLimit5) };
     case "mcp":
-      return { output: (value.content ?? []).map((part) => part?.text?.text ?? "").filter(Boolean).join(`
-`).slice(0, outputLimit5) };
+      return {
+        output: withPictures((value.content ?? []).map((part) => part?.text?.text ?? "").filter(Boolean).join(`
+`).slice(0, outputLimit5), (value.content ?? []).map((part) => part?.image ? pictureData(part.image.data, part.image.mimeType ?? "image/png") : undefined))
+      };
     case "createPlan":
       return { output: String(args.plan ?? "") };
   }
@@ -5744,6 +6552,84 @@ function toolResult(call, value, streamed) {
     return { output: value.slice(0, outputLimit5) };
   return { output: "" };
 }
+function shellChunk(event) {
+  if (!event)
+    return "";
+  const data = event.case === "stdout" || event.case === "stderr" ? event.value?.data : undefined;
+  return [data, event.text, event.output, event.data, event.stdout, event.stderr, event.chunk].find((part) => typeof part === "string") ?? "";
+}
+function grepText(value) {
+  const results = [...Object.values(value?.workspaceResults ?? {}), value?.activeEditorResult].filter(Boolean);
+  const lines2 = [];
+  for (const result of results) {
+    const output = result.output ?? {};
+    if (result.type === "files")
+      lines2.push(...(output.files ?? []).map(String));
+    else if (result.type === "count")
+      lines2.push(...(output.counts ?? []).map((count) => `${count.file ?? count.path ?? ""}: ${count.count ?? count.matches ?? ""}`));
+    else
+      for (const match of output.matches ?? [])
+        lines2.push(typeof match === "string" ? match : [match.file ?? match.path, match.lineNumber ?? match.line, match.content ?? match.text].filter((part) => part !== undefined && part !== "").join(": "));
+  }
+  return lines2.join(`
+`);
+}
+function treeText(node, depth = 0) {
+  if (!node)
+    return "";
+  const indent = "  ".repeat(depth);
+  const name = depth === 0 ? node.absPath ?? "" : String(node.absPath ?? "").split("/").pop();
+  const lines2 = [`${indent}${name}${depth ? "/" : ""}`];
+  for (const child of node.childrenDirs ?? [])
+    lines2.push(treeText(child, depth + 1));
+  for (const file of node.childrenFiles ?? [])
+    lines2.push(`${indent}  ${file.name ?? file.path ?? file}`);
+  return lines2.filter(Boolean).join(`
+`);
+}
+function lastWords(steps) {
+  for (const step of [...Array.isArray(steps) ? steps : []].reverse()) {
+    const text = step?.assistantMessage?.text ?? step?.text ?? (step?.type === "assistant" ? step?.content : undefined);
+    if (typeof text === "string" && text.trim())
+      return text;
+  }
+  return;
+}
+function errorWords(error) {
+  if (!error)
+    return;
+  if (typeof error === "string")
+    return error;
+  if (typeof error.message === "string" && error.message)
+    return error.message;
+  if (typeof error.error === "string" && error.error)
+    return error.error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+var cursorUpdates = new Set([
+  "text-delta",
+  "thinking-delta",
+  "thinking-completed",
+  "step-completed",
+  "tool-call-started",
+  "partial-tool-call",
+  "tool-call-completed",
+  "tool-call-delta",
+  "shell-output-delta",
+  "summary",
+  "summary-started",
+  "summary-completed",
+  "turn-ended",
+  "tool-requests-listed",
+  "token-delta",
+  "step-started",
+  "user-message-appended"
+]);
+var cursorTools = new Set(["shell", "write", "delete", "glob", "grep", "read", "edit", "ls", "readLints", "mcp", "generateImage", "recordScreen", "semSearch", "createPlan", "updateTodos", "task"]);
 function withTimeout(promise, milliseconds) {
   return Promise.race([promise, Bun.sleep(milliseconds).then(() => Promise.reject(new Error("Cursor didn't answer in time.")))]);
 }
@@ -5872,6 +6758,8 @@ class GrokAgent {
       },
       notification(method, params, context) {
         const name = method.replace(/^_/, "");
+        if (name === "x.ai/session/prompt_complete" && String(params?.promptId ?? "").startsWith("task-completed-"))
+          context.endOwn();
         if (name === "x.ai/session/prompt_complete" && !String(params?.promptId ?? "").startsWith("task-completed-")) {
           context.endPrompt(params?.stopReason ?? "end_turn", params?.stopReason === "rate_limit" ? "You've reached your Grok usage limit for now." : params?.stopReason === "error" ? String(params?.agentResult ?? "Grok stopped with an error.") : undefined);
         }
@@ -5894,6 +6782,11 @@ class GrokAgent {
           })();
         }
         if (name === "x.ai/exit_plan_mode") {
+          const plan = [call?.plan, call?.planText, call?.content].find((value) => typeof value === "string" && value.trim());
+          if (plan && context.turn) {
+            context.turn.text(plan);
+            context.turn.endBlock();
+          }
           return Promise.resolve({ outcome: "abandoned", feedback: "The plan is shown to the user. Stop here and wait: they'll switch out of plan mode and ask you to build it when they're ready." });
         }
         return;
@@ -6329,8 +7222,9 @@ class Turn {
     const tool = this.tools.get(id);
     if (!tool || tool.call.state.status !== "running" || this.ended)
       return;
-    tool.call.state.metadata = metadata;
-    this.send("session.tool.progress", { assistantMessageID: tool.step.id, id, metadata });
+    const merged = { ...tool.call.state.metadata ?? {}, ...metadata };
+    tool.call.state.metadata = merged;
+    this.send("session.tool.progress", { assistantMessageID: tool.step.id, id, metadata: merged });
     this.save();
   }
   toolSucceeded(id, output, metadata) {
@@ -7934,6 +8828,12 @@ ${live.agentPrompt}` : ""
         }
       });
       emit("permission.asked", request, session.location.directory);
+      ask.signal?.addEventListener("abort", () => {
+        if (!live.permissions.delete(request.id))
+          return;
+        resolve2("reject");
+        emit("permission.replied", { sessionID: id, requestID: request.id }, session.location.directory);
+      });
     });
   }
   permissions(id) {
@@ -7971,6 +8871,12 @@ ${live.agentPrompt}` : ""
     return new Promise((resolve2) => {
       live.forms.set(form.id, { form, resolve: resolve2 });
       emit("form.created", { form }, session.location.directory);
+      ask.signal?.addEventListener("abort", () => {
+        if (!live.forms.delete(form.id))
+          return;
+        resolve2(null);
+        emit("form.cancelled", { id: form.id, sessionID: id }, session.location.directory);
+      });
     });
   }
   forms(id) {
