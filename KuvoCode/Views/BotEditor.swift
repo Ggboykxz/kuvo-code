@@ -350,6 +350,8 @@ struct BotEditor: View {
             }
                 .keyboardShortcut(.cancelAction)
                 .buttonStyle(.glass)
+                // Its folder is going: the editor closes once it's gone, or says why not.
+                .disabled(isDeleting)
             Button(isNew ? "Create Bot" : "Save", action: save)
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.glassProminent)

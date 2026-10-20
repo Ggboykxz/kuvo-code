@@ -832,7 +832,8 @@ struct MainView: View {
                         .help("Close")
                 } content: {
                     BotEditor(bot: request.bot, recipe: request.recipe) {
-                        withAnimation(.ui) { botEditor = nil }
+                        // This editor's, not one opened since (a delete that took a while).
+                        if botEditor?.id == request.id { withAnimation(.ui) { botEditor = nil } }
                     } created: { bot in
                         openTab(bot.sessionID)
                     }
