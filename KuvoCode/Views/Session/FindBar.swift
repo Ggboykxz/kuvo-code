@@ -90,15 +90,16 @@ final class ConversationFind {
 
     /// Looks in `rows` for the words, away from the main thread (it reads every reply). As you
     /// type, the first place found comes into view; as the conversation changes under it, the
-    /// place you're on stays it.
-    func look(in rows: [Row], folders: [String], showsFirst: Bool) {
+    /// place you're on stays it. The looking, to wait for.
+    @discardableResult
+    func look(in rows: [Row], folders: [String], showsFirst: Bool) -> Task<Void, Never>? {
         looking?.cancel()
         let query = query
         guard isOn, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             rowsFound = []
             places = []
             index = 0
-            return
+            return nil
         }
         let was = current
         looking = Task {
@@ -113,6 +114,7 @@ final class ConversationFind {
                 index = was.flatMap { was in found.firstIndex { $0.row == was.row && $0.number == was.number } } ?? min(index, max(found.count - 1, 0))
             }
         }
+        return looking
     }
 
     @concurrent
