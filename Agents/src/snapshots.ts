@@ -174,10 +174,11 @@ export class Snapshots {
       // One the rules leave out now (their files may have changed outside the session's folder,
       // or in git's own list) stays.
       if (gone.length) {
-        const ignored = await this.git(repository, ["check-ignore", "--no-index", "-z", "--stdin"], { input: gone.join("\0"), patterns: true })
+        // (Each as "./<path>": a name like ":(x)" isn't read as git's pathspec magic.)
+        const ignored = await this.git(repository, ["check-ignore", "--no-index", "-z", "--stdin"], { input: gone.map((path) => `./${path}`).join("\0"), patterns: true })
         // Not known (it failed): none deleted.
         if (ignored.code !== 0 && ignored.code !== 1) throw new Error("Kuvo Code couldn't tell which files the ignore rules left out.")
-        const left = new Set(ignored.stdout.split("\0").filter(Boolean))
+        const left = new Set(ignored.stdout.split("\0").filter(Boolean).map((path) => path.replace(/^\.\//, "")))
         gone = gone.filter((path) => !left.has(path))
       }
       // And one that's older than what was kept: it was there, left out then.

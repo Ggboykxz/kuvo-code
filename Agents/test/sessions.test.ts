@@ -1048,6 +1048,20 @@ describe("undo, carefully", () => {
     expect(readFileSync(join(folder, "a.txt"), "utf8")).toBe("one\n")
   })
 
+  test("a file it made whose name looks like git's pathspec magic goes with the undo", async () => {
+    const folder = repository({ "a.txt": "one\n" })
+    withSnapshots()
+    a.script = async (input, turn, hooks, thread) => {
+      writeFileSync(join(folder, ":(new)"), "made\n")
+      return replies(input, turn, hooks, thread)
+    }
+    const id = sessions.create({ model: { providerID: "alpha", id: "one" }, location: { directory: folder } }).id
+    const first = send(id, "make it")
+    await settled(id, 1)
+    await sessions.stageRevert(id, first)
+    expect(existsSync(join(folder, ":(new)"))).toBe(false)
+  })
+
   test("in a subfolder, a file the top folder's rules left out stays, though the agent changed those rules", async () => {
     const folder = repository({ ".gitignore": "sub/secret.txt\n", "sub/a.txt": "one\n", "sub/secret.txt": "mine\n" })
     withSnapshots()
