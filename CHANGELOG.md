@@ -5,6 +5,11 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- Discarding in Changes moves a folder that took a file's place (a repository cloned there, or new files) to the Trash before the file comes back, instead of git deleting it for good; and a changed file too big to show says so instead of looking unchanged.
+- Merge and Pull Request no longer ask you to commit files git is set to hide; removing a worktree still counts them.
+- Notifications hide more kinds of keys (DigitalOcean, Supabase, Pulumi, Groq, xAI, Hugging Face and others, and a token in an address), and show migration file names, temporary folders, `docker -u` and `mysql -P` in full.
+- Bring Over keeps opencode's `{env:…}` and `{file:…}` references as written instead of empty values or a file's contents, says when it can't read opencode's settings, and brings an MCP server that shares a name with one of Kuvo Code's integrations under a name of its own.
+- @ mentions and the file filter list the right paths in a project outside git that's in a linked folder, like `/tmp` or a cloud drive.
 - New Project and Edit Project open in a popup over the window again, instead of taking the place of the conversation.
 - Dragging or clicking around in a widget no longer shows Add to Chat and Copy as if you'd selected text; selecting a widget's text still does.
 - Discarding a new file in Changes that was staged and then edited again no longer leaves it to be committed; discarding a moved file puts the old one back also in Unstaged; a file that became a link comes back as it was; and the dialog says when a folder with its own repository goes to the Trash.
