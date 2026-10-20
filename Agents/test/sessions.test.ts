@@ -228,14 +228,25 @@ describe("what's waiting", () => {
     expect(sessions.inbox(id)).toHaveLength(0)
   })
 
-  test("a queued message while nothing runs waits for a nudge", async () => {
+  test("a queued message while nothing runs goes at once, as the engine's do; behind others held, it waits", async () => {
     const id = create()
-    const waiting = send(id, "later", "queue")
-    await Bun.sleep(30)
-    expect(a.runs).toHaveLength(0)
-    sessions.setDelivery(id, waiting, "steer")
+    send(id, "now", "queue")
     await settled(id, 1)
     expect(a.runs).toHaveLength(1)
+    a.script = works
+    send(id, "working")
+    await until(() => a.runs.length === 2)
+    const held = send(id, "held", "queue")
+    await sessions.interrupt(id)
+    await settled(id, 2)
+    // Held after the Stop: one queued behind it waits too, until a nudge.
+    send(id, "behind", "queue")
+    await Bun.sleep(30)
+    expect(a.runs).toHaveLength(2)
+    a.script = replies
+    sessions.setDelivery(id, held, "steer")
+    await settled(id, 4)
+    expect(a.runs.map((run) => run.text)).toEqual(["now", "working", "held", "behind"])
   })
 
   test("after an error, nothing more starts on its own", async () => {
@@ -1155,10 +1166,16 @@ describe("undo, carefully", () => {
     const id = sessions.create({ model: { providerID: "alpha", id: "one" }, location: { directory: folder } }).id
     const first = send(id, "change it")
     await settled(id, 1)
+    // One waiting, held after a Stop.
+    a.script = works
+    send(id, "working")
+    await until(() => a.runs.length === 2)
     send(id, "waits", "queue")
+    await sessions.interrupt(id)
+    await settled(id, 2)
     await sessions.stageRevert(id, first)
     await Bun.sleep(50)
-    expect(a.runs).toHaveLength(1)
+    expect(a.runs).toHaveLength(2)
     expect(sessions.get(id).revert?.messageID).toBe(first)
     expect(sessions.inbox(id)).toHaveLength(1)
   })

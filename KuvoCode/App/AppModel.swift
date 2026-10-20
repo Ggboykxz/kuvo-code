@@ -336,7 +336,13 @@ final class AppModel {
                 await self?.workspace.refreshAgents()
             }
         }
-        let environment = shellEnvironment
+        var environment = shellEnvironment
+        // Bots' wake-up command by name, and where their folders are, for their sessions with the
+        // coding agents too, as the engine's commands have them.
+        let bin = Bots.command.deletingLastPathComponent().path
+        environment["PATH"] = bin + ":" + (environment["PATH"] ?? "/usr/bin:/bin")
+        environment["KUVO_BOTS"] = Bots.root.path
+        environment["KUVO_BIN"] = bin
         Task { await agents.start(engine: binary, environment: environment) }
         // Back in the app, you may have installed an agent or signed in to one in Terminal.
         if agentsActivation == nil {

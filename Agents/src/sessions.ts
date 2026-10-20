@@ -1134,7 +1134,10 @@ export class Sessions {
     const steers = this.isRunning(id) && input.delivery !== "queue" && Boolean(running?.thread.steer)
     // Only files being kept or put back (no turn): it goes next, once that's done.
     const onlyBusy = this.busy.has(id) && !this.live.get(id)?.turn
-    const delivery: Delivery = steers || ((!this.isRunning(id) || onlyBusy) && input.delivery !== "queue") ? "steer" : "queue"
+    // While nothing runs, one to go after the turn goes now, as the engine's do (a bot's wake-up),
+    // unless others wait before it (held after a Stop).
+    const idle = !this.isRunning(id) || onlyBusy
+    const delivery: Delivery = steers || (idle && (input.delivery !== "queue" || !queue.length)) ? "steer" : "queue"
     queue.push({ ...input, delivery })
     this.store.save(id, true)
     emit("session.inbox.enqueued", { sessionID: id, inboxID: input.id, item: { type: "user", payload: { text: input.text, files: input.files }, delivery } }, record.session.location.directory)

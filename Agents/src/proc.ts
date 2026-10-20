@@ -64,7 +64,8 @@ export async function refreshLoginPath(): Promise<void> {
       const ran = await run(shell, [flags, 'printf "__KUVO_PATH__%s__KUVO_END__" "$PATH"'], { timeout: 8_000, env: { DISABLE_AUTO_UPDATE: "true" } })
       const found = ran.stdout.match(/__KUVO_PATH__([\s\S]*?)__KUVO_END__/)?.[1]
       if (found?.trim()) {
-        process.env.PATH = found.trim()
+        // Kuvo Code's own commands (kuvo-wake) first, as the app gave them.
+        process.env.PATH = [process.env.KUVO_BIN, found.trim()].filter(Boolean).join(":")
         return
       }
     } catch {}
