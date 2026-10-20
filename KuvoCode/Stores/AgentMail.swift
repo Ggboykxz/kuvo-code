@@ -216,6 +216,8 @@ final class AgentMail {
             return .done("\(target.name)'s machine (\(machine)) is away: the message goes to it as soon as it's back\(waits ? ", and its answer comes to you as a message" : "").")
         }
         let id = Identifier.message()
+        // What it had said already, so its answer is what comes after.
+        let known = waits ? await Self.replies(in: target.session, api: api) : []
         do {
             try await api.prompt(session: target.session, id: id, text: Self.compose(from: name, session: caller ?? "unknown", text: text, waits: waits), delivery: .steer)
         } catch {
@@ -224,7 +226,7 @@ final class AgentMail {
         sent[key] = lately + [.now]
         Analytics.shared.track("agent_message_sent", ["waits": waits, "bot": target.kind == "bot"])
         guard waits else { return .done("Sent to \(target.name). Its answer, if it writes one, comes to you as a message.") }
-        if let reply = await reply(in: target.session, after: id, api: api) {
+        if let reply = await reply(in: target.session, known: known, api: api) {
             return .done("\(target.name) answered:\n\n" + reply)
         }
         return .done("\(target.name) hasn't answered yet. It may still write back with send_message.")
@@ -292,14 +294,23 @@ final class AgentMail {
         guard waits else {
             return ("Started \(name)\(place)\(shown) (address \(session.id)). It's on it now. Write to it with send_message; it can write back to you the same way.", false)
         }
-        if let reply = await reply(in: session.id, after: id, api: api) {
+        // A new session: anything it says is its answer.
+        if let reply = await reply(in: session.id, known: [], api: api) {
             return ("Started \(name)\(place) (address \(session.id)). It answered:\n\n" + reply, false)
         }
         return ("Started \(name)\(place) (address \(session.id)). It hasn't answered yet; it may still write back with send_message.", false)
     }
 
-    /// The answer in `session` to the message `id`: its words once it's done, ten minutes at most.
-    private func reply(in session: String, after id: String, api: OpenCodeAPI) async -> String? {
+    /// The replies `session` has given so far, to tell its answer to a message sent now from them.
+    private static func replies(in session: String, api: OpenCodeAPI) async -> Set<String> {
+        let messages = (try? await api.messages(session: session, limit: 20).data) ?? []
+        return Set(messages.compactMap { if case .assistant(let assistant) = $0 { assistant.id } else { nil } })
+    }
+
+    /// The answer in `session` to a message sent to it: its words once it's done, ten minutes at
+    /// most; what it says that isn't among the replies `known` from before. (Not by comparing
+    /// IDs, nor where they come in the list: a machine's are made from its own clock.)
+    private func reply(in session: String, known: Set<String>, api: OpenCodeAPI) async -> String? {
         let began = Date.now
         var started = false
         while Date.now.timeIntervalSince(began) < 600 {
@@ -311,11 +322,8 @@ final class AgentMail {
             // Done; or not seen at work (a quick one, between looks): its words after ours.
             guard started || Date.now.timeIntervalSince(began) > 6 else { continue }
             guard let messages = try? await api.messages(session: session, limit: 20).data else { continue }
-            // What comes after ours in the conversation (all of it, when ours is further back), not
-            // by comparing IDs: a machine's are made from its own clock.
-            let ours = messages.firstIndex { if case .user(let user) = $0 { user.id == id } else { false } }
-            let words = messages[(ours.map { $0 + 1 } ?? 0)...].compactMap { message -> String? in
-                guard case .assistant(let assistant) = message else { return nil }
+            let words = messages.compactMap { message -> String? in
+                guard case .assistant(let assistant) = message, !known.contains(assistant.id) else { return nil }
                 let text = assistant.content.compactMap { if case .text(let part) = $0 { part.text } else { nil } }.joined(separator: "\n")
                 return text.isEmpty ? nil : text
             }
