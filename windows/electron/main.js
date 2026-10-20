@@ -1,7 +1,7 @@
 // Kuvo Code's Windows shell: a native window around the harness, which already knows how to
 // install and run the engine. This process owns the window, the tray, the terminal (ConPTY)
 // and the lifecycle.
-const { app, BrowserWindow, Tray, Menu, nativeImage, dialog, globalShortcut, Notification, powerSaveBlocker, shell } = require('electron');
+const { app, BrowserWindow, Tray, Menu, nativeImage, dialog, globalShortcut, Notification, powerSaveBlocker, shell, ipcMain } = require('electron');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
@@ -157,6 +157,73 @@ function applyShellPreferences() {
   }
 }
 
+/// The app's own menus, the Mac's (NativeMenu.swift:5-165): a real menu bar, with the
+/// items the Mac has, and the keys beside them. The items that act on the conversation
+/// ask the page to do it, by the shortcut the Mac uses.
+function applicationMenu() {
+  const ask = id => () => { if (mainWindow) mainWindow.webContents.send("kuvo:menu", id); };
+  const template = [
+    {
+      label: "Kuvo Code",
+      submenu: [
+        { role: "about" },
+        { type: "separator" },
+        { label: "Start at login", type: "checkbox", checked: loadConfig().autoStart === true, click: item => {
+          const next = loadConfig(); next.autoStart = item.checked; saveConfig(next);
+          app.setLoginItemSettings({ openAtLogin: item.checked });
+        } },
+        { label: "Automatic updates", type: "checkbox", checked: loadConfig().autoUpdate !== false, click: item => {
+          const next = loadConfig(); next.autoUpdate = item.checked; saveConfig(next);
+          if (item.checked) void checkForUpdates({ quiet: true });
+        } },
+        { label: "Check for Updates…", click: () => { void checkForUpdates(); } },
+        { type: "separator" },
+        { role: "quit" },
+      ],
+    },
+    {
+      label: "File",
+      submenu: [
+        { label: "New Session", accelerator: "CmdOrCtrl+N", click: ask("new-session") },
+        { label: "Open Folder…", accelerator: "CmdOrCtrl+O", click: ask("open-folder") },
+        { label: "Export Conversation as Markdown", accelerator: "CmdOrCtrl+S", click: ask("save") },
+        { type: "separator" },
+        { role: "close" },
+      ],
+    },
+    {
+      label: "Edit",
+      submenu: [
+        { role: "undo" }, { role: "redo" }, { type: "separator" },
+        { role: "cut" }, { role: "copy" }, { role: "paste" }, { role: "selectAll" },
+      ],
+    },
+    {
+      label: "View",
+      submenu: [
+        { label: "Command Palette", accelerator: "CmdOrCtrl+K", click: ask("palette") },
+        { label: "Settings…", accelerator: "CmdOrCtrl+,", click: ask("settings") },
+        { type: "separator" },
+        { label: "Show Panel", accelerator: "Alt+CmdOrCtrl+0", click: ask("panel") },
+        { label: "Show Sessions", accelerator: "CmdOrCtrl+0", click: ask("sidebar") },
+        { type: "separator" },
+        { role: "reload" }, { role: "toggleDevTools" }, { type: "separator" },
+        { role: "resetZoom" }, { role: "zoomIn" }, { role: "zoomOut" },
+        { type: "separator" },
+        { role: "togglefullscreen" },
+      ],
+    },
+    { label: "Window", submenu: [{ role: "minimize" }, { role: "zoom" }] },
+    {
+      label: "Help",
+      submenu: [
+        { label: "Kuvo Code on the web", click: () => shell.openExternal("https://www.kuvo.run/code/") },
+      ],
+    },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 function createTray() {
   tray = new Tray(ICON);
   tray.setToolTip('Kuvo Code');
@@ -198,6 +265,14 @@ function toggleWindow() {
   if (mainWindow.isVisible()) mainWindow.hide();
   else { mainWindow.show(); mainWindow.focus(); }
 }
+
+// The page's double-click on the title bar (Card.swift:186-198 — the system preference
+// decides; on Windows, that is the window maximised).
+ipcMain.on("kuvo:maximize", () => {
+  if (!mainWindow) return;
+  if (mainWindow.isMaximized()) mainWindow.unmaximize();
+  else mainWindow.maximize();
+});
 
 function shutdown() {
   if (terminalServer) { try { terminalServer.close(); } catch {} terminalServer = null; }
@@ -264,6 +339,7 @@ app.whenReady().then(async () => {
     if (cfg.autoStart) app.setLoginItemSettings({ openAtLogin: true });
     applyShellPreferences();
     globalShortcut.register('CommandOrControl+Shift+K', toggleWindow);
+    applicationMenu();
     // Auto-update on startup, unless the user turned it off: a note, not a question.
     if (cfg.autoUpdate !== false) {
       void checkForUpdates({ quiet: true });

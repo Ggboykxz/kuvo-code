@@ -23,6 +23,8 @@ export type SymbolName =
   | "tray.and.arrow.down"
   | "list.bullet"
   | "doc"
+  | "doc.on.doc"
+  | "checkmark"
   | "magnifyingglass"
   | "arrow.triangle.branch"
   | "arrow.uturn.backward"
@@ -53,6 +55,8 @@ const PATHS: Record<SymbolName, string[]> = {
   "arrow.clockwise": ["M4 9.5A4.5 4.5 0 1 1 12 8", "M12 8l-2-1.6", "M12 8l2-1.6"],
   "tray.and.arrow.down": ["M2.5 9.5v3h11v-3", "M8 2.5v5", "M5.5 5L8 7.5 10.5 5"],
   "list.bullet": ["M6 4.2h7.5", "M6 8h7.5", "M6 11.8h7.5", "M3 4.2h.01", "M3 8h.01", "M3 11.8h.01"],
+  "doc.on.doc": ["M5.5 5.5h-3A1.5 1.5 0 0 0 1.5 1.5H7.5", "M3 5.5H2.2A1.3 1.3 0 0 0 1.3 1.3H5.5", "M9 2.2h3.3A1.5 1.5 0 0 1 1.5 1.5v6.8a1.5 1.5 0 0 1-1.5 1.5H8.2a1.5 1.5 0 0 1-1.5-1.5V6.2a1.5 1.5 0 0 1 1.5-1.5", "M6 8.2h5"],
+  "checkmark": ["M3.2 8.4l3.1 3.1 6.5-6.5"],
   "doc": ["M4 2.6h5l3 3v7.8H4z", "M9 2.6v3h3"],
   "magnifyingglass": ["M7 2.6a4.4 4.4 0 1 0 0 8.8 4.4 4.4 0 0 0 0-8.8Z", "M10.4 10.4L13.4 13.4"],
   "arrow.triangle.branch": ["M5.2 2.6v7.2a2.6 2.6 0 0 0 2.6 2.6h4.4", "M5.2 2.6L2.6 5.2M5.2 2.6l2.6 2.6", "M11 9.6h1.2a1.4 1.4 0 0 0 1.4-1.4V4.4", "M11 9.6L9.4 8M11 9.6l1.6-1.6"],

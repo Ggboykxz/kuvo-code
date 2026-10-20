@@ -72,11 +72,19 @@ export function renderMarkdown(text: string, files: string[] = [], query = ""): 
   doc.querySelectorAll("pre").forEach(pre => {
     const button = doc.createElement("button");
     button.className = "small code-copy";
-    button.textContent = "Copy";
+    button.title = "Copy";
+    button.setAttribute("aria-label", "Copy");
+    // The Mac's copy mark, which becomes a check when the text is copied
+    // (CodeBlockStyle.swift).
+    const mark = (name: string) =>
+      `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="${
+        name === "checkmark" ? "M3.2 8.4l3.1 3.1 6.5-6.5" : "M5.5 5.5h-3A1.5 1.5 0 0 0 1 6.9h3.4M3 5.5H2.2A1.3 1.3 0 0 0 1.3 6.8h2.1M9 2.2h3.3A1.5 1.5 0 0 1 13.8 3.7v6.8a1.5 1.5 0 0 1-1.5 1.5H8.2a1.5 1.5 0 0 1-1.5-1.5V6.2a1.5 1.5 0 0 1 1.5-1.5M6 8.2h5"
+      }"/></svg>`;
+    button.innerHTML = mark("doc.on.doc");
     button.addEventListener("click", () => {
       void navigator.clipboard?.writeText(pre.querySelector("code")?.textContent ?? "").catch(() => {});
-      button.textContent = "Copied";
-      setTimeout(() => { button.textContent = "Copy"; }, 1200);
+      button.innerHTML = mark("checkmark");
+      setTimeout(() => { button.innerHTML = mark("doc.on.doc"); }, 1200);
     });
     pre.style.position = "relative";
     pre.append(button);

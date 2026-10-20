@@ -788,7 +788,15 @@ function Header() {
   const folder = state.project ? state.project.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? "" : "";
   const engineText = running ? `engine ${state.engine?.version ?? ""}`.trim() : state.engine?.status ?? "…";
   return (
-    <header className={`titlebar ${sidebarOpen ? "" : "sidebar-hidden"} ${showingSettings ? "showing-settings" : ""}`}>
+    <header
+      className={`titlebar ${sidebarOpen ? "" : "sidebar-hidden"} ${showingSettings ? "showing-settings" : ""}`}
+      onDoubleClick={event => {
+        // The Mac's double-click on the title bar zooms the window (Card.swift:186-198);
+        // on Windows, that is the window maximised.
+        if ((event.target as HTMLElement | null)?.closest("button, input, a, .tab")) return;
+        (window as unknown as { kuvo?: { maximize?: () => void } }).kuvo?.maximize?.();
+      }}
+    >
       <div className="titlebar-identity">
         {showingSettings ? (
           <button
@@ -1798,6 +1806,16 @@ export function App() {
     return () => box.removeEventListener("scroll", onScroll);
   }, []);
   useEffect(() => { scrollToLatest(); });
+
+  useEffect(() => {
+    // The shell's menu bar: the items that act on the conversation come here, by the
+    // shortcut the Mac uses (NativeMenu.swift).
+    const kuvo = (window as unknown as { kuvo?: { onMenu?: (callback: (id: string) => void) => void } }).kuvo;
+    kuvo?.onMenu?.(id => {
+      if (id === "open-folder") { state.pickerOpen = true; render(); return; }
+      runShortcut(id);
+    });
+  }, []);
 
   useEffect(() => {
     loadLook();

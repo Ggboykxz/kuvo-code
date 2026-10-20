@@ -588,6 +588,26 @@ const checks = [
     assert.match(changes, /\["session", "This Session"\]/);
   }],
 
+  ["the shell has a real menu bar, and the window can be zoomed with two clicks", ({ app, css, lib, rule }) => {
+    // NativeMenu.swift:5-165 — a real menu bar, with the items the Mac has.
+    const shell = fs.readFileSync(path.join(here, "electron", "main.js"), "utf8");
+    const preload = fs.readFileSync(path.join(here, "electron", "preload.js"), "utf8");
+    assert.match(shell, /Menu\.setApplicationMenu/);
+    for (const item of ["New Session", "Open Folder…", "Export Conversation as Markdown", "Command Palette", "Settings…", "Show Panel", "Show Sessions", "Check for Updates…"]) {
+      assert.ok(shell.includes(`label: "${item}"`), `the menu has "${item}"`);
+    }
+    assert.match(preload, /onMenu/);
+    assert.match(app, /kuvo\?\.onMenu\?\./);
+    // The Mac's double-click on the title bar zooms (Card.swift:186-198); on Windows, the
+    // window is maximised.
+    assert.match(preload, /maximize: \(\) => ipcRenderer\.send\("kuvo:maximize"\)/);
+    assert.match(shell, /ipcMain\.on\("kuvo:maximize"/);
+    assert.match(app, /kuvo\?\.maximize\?\.\(\)/);
+    // And the code block's copy mark, which becomes a check (CodeBlockStyle.swift).
+    assert.match(lib, /doc\.on\.doc/);
+    assert.match(lib, /checkmark/);
+  }],
+
   ["the window is built by Next.js, and exported as the static files the harness serves", ({ next, page, build }) => {
     // The app talks to the engine over the harness's API: there is no server to render
     // it, so the export is the whole app.
