@@ -957,6 +957,12 @@ final class MachineBrowser {
                 } catch {}
                 try? handle.close()
                 guard process.terminationStatus == 0 else { return .failed("The file isn't on the machine any more.") }
+                // Marked as downloaded, as a browser marks what it saves: macOS checks it before it
+                // opens (an app, a script) as it would any download.
+                var values = URLResourceValues()
+                values.quarantineProperties = [kLSQuarantineTypeKey as String: kLSQuarantineTypeWebDownload as String, kLSQuarantineAgentNameKey as String: "Kuvo Code"]
+                var quarantined = partial
+                try? quarantined.setResourceValues(values)
                 let destination = BrowserSession.free(BrowserSession.safeName(download.name), in: BrowserSession.downloadsFolder)
                 do { try FileManager.default.moveItem(at: partial, to: destination) } catch { return .failed("Couldn't write to Downloads.") }
                 return .saved(destination)
