@@ -42,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Notifier.shared.start()
+        FieldScrolling.start()
         // Agents' sign-in on their own, allowed before it kept its account: that account now.
         Task.detached { Passwords.keepAgentAccounts() }
         Notifier.shared.answer = { [model] session, request, answer in model.workspace.answer(request, in: session, with: answer) }
