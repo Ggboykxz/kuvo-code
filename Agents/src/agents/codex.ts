@@ -98,7 +98,7 @@ export class CodexAgent implements Agent {
       this.outdated = undefined
       return
     }
-    if (this.logins.size || [...this.threads.values()].some((thread) => thread !== starting && thread.isRunning)) return
+    if (this.logins.size || [...this.threads.values()].some((thread) => thread !== starting && (thread.isRunning || thread.keepsWorking))) return
     this.outdated = undefined
     this.shutdown()
     // What the old one listed meanwhile, asked anew.
@@ -403,6 +403,9 @@ interface Lane {
 /** An agent Codex spawned: its thread's work, told in a session of its own. */
 interface SubagentLane extends Lane {
   run: SubagentRun
+  /** Its thread, and the turn it's on there (to stop it). */
+  threadID: string
+  turnID?: string
   /** The spawn call that started it. */
   call: string
   title: string
@@ -454,9 +457,11 @@ class CodexThread implements Thread {
     this.nativeID = state.codexThread as string | undefined
   }
 
-  /** The app-server stopped: a thread must be loaded again, and a turn under way is over. */
+  /** The app-server stopped: a thread must be loaded again, and a turn under way is over, and the agents it left at work. */
   serverStopped() {
     this.loaded = false
+    for (const lane of this.backgroundLanes.values()) this.endSubagent(lane, "interrupted")
+    this.backgroundLanes.clear()
     const active = this.active
     if (!active) return
     this.active = undefined
@@ -508,6 +513,11 @@ class CodexThread implements Thread {
 
   get isRunning(): boolean {
     return this.inTurn
+  }
+
+  /** Agents it spawned are still at work after the turn: it's kept open for them. */
+  get keepsWorking(): boolean {
+    return this.backgroundLanes.size > 0
   }
 
   /** Your message, into the turn under way (Codex's turn/steer). */
@@ -822,7 +832,8 @@ class CodexThread implements Thread {
       const before = this.spawnedSessions.get(threadID)
       if (!before) return
       const run = active.hooks.subagent(before.call, { title: before.title, sessionID: before.sessionID, background: true })
-      lane = { turn: run.turn, streamed: new Set(), changes: new Map(), output: new Map(), toolsSinceText: false, run, call: before.call, title: before.title, ended: false }
+      run.stop = () => this.stopSubagent(threadID)
+      lane = { turn: run.turn, streamed: new Set(), changes: new Map(), output: new Map(), toolsSinceText: false, run, threadID, call: before.call, title: before.title, ended: false }
       active.subagents.set(threadID, lane)
     }
     if (lane.ended) {
@@ -831,6 +842,8 @@ class CodexThread implements Thread {
       if (method !== "turn/started" || !active) return
       lane = this.continueSubagent(active, threadID, lane)
     }
+    const turnID = params?.turn?.id ?? params?.turnId
+    if (typeof turnID === "string" && method !== "turn/completed") lane.turnID = turnID
     switch (method) {
       case "error":
         if (!params.willRetry && params.error?.message) lane.turn.notice(params.error.message)
@@ -870,7 +883,8 @@ class CodexThread implements Thread {
     const title = String(input.description ?? "") || "A spawned agent's task"
     // It works on its own, past the turn that spawned it.
     const run = active.hooks.subagent(call, { title, prompt: prompt ?? input.prompt, background: true })
-    const lane: SubagentLane = { turn: run.turn, streamed: new Set(), changes: new Map(), output: new Map(), toolsSinceText: false, run, call, title, ended: false }
+    run.stop = () => this.stopSubagent(threadID)
+    const lane: SubagentLane = { turn: run.turn, streamed: new Set(), changes: new Map(), output: new Map(), toolsSinceText: false, run, threadID, call, title, ended: false }
     active.subagents.set(threadID, lane)
     this.spawnedSessions.set(threadID, { call, title, sessionID: run.sessionID })
     // Its approvals come to this session's.
@@ -880,9 +894,18 @@ class CodexThread implements Thread {
 
   private continueSubagent(active: Active, threadID: string, lane: SubagentLane): SubagentLane {
     const run = active.hooks.subagent(lane.call, { title: lane.title, sessionID: lane.run.sessionID, background: true })
-    const next: SubagentLane = { turn: run.turn, streamed: new Set(), changes: new Map(), output: new Map(), toolsSinceText: false, run, call: lane.call, title: lane.title, ended: false }
+    run.stop = () => this.stopSubagent(threadID)
+    const next: SubagentLane = { turn: run.turn, streamed: new Set(), changes: new Map(), output: new Map(), toolsSinceText: false, run, threadID, call: lane.call, title: lane.title, ended: false }
     active.subagents.set(threadID, next)
     return next
+  }
+
+  /** A spawned agent stopped from Kuvo Code: its turn on its thread is interrupted (it then says so). */
+  private async stopSubagent(threadID: string) {
+    const lane = this.active?.subagents.get(threadID) ?? this.backgroundLanes.get(threadID)
+    if (!lane || lane.ended || !lane.turnID) return
+    const rpc = await this.agent.rpc().catch(() => undefined)
+    await rpc?.request("turn/interrupt", { threadId: threadID, turnId: lane.turnID }, 10_000).catch(() => {})
   }
 
   private endSubagent(lane: SubagentLane, outcome: "succeeded" | "failed" | "interrupted", message?: string) {
@@ -1147,15 +1170,15 @@ class CodexThread implements Thread {
 
   async request(method: string, params: any, signal?: AbortSignal): Promise<unknown> {
     const active = this.active
-    // An agent it spawned, still at work after the turn: it asks as its own.
-    const background = !active && params?.threadId ? this.backgroundLanes.get(params.threadId) : undefined
-    if (!active && !background) {
+    // An agent it spawned asks as its own: its asks go on with it, after the turn that spawned it too.
+    const lane = params?.threadId && params.threadId !== this.nativeID ? (active?.subagents.get(params.threadId) ?? this.backgroundLanes.get(params.threadId)) : undefined
+    if (!active && !lane) {
       if (method === "item/tool/requestUserInput") return { answers: {} }
       if (method === "mcpServer/elicitation/request") return { action: "decline" }
       return method.endsWith("Approval") || method.endsWith("/requestApproval") ? (method.startsWith("item/") ? { decision: "decline" } : { decision: "denied" }) : {}
     }
     const hooks = {
-      permission: (ask: Parameters<TurnHooks["permission"]>[0]) => (active ? active.hooks.permission({ ...ask, signal }) : background!.run.permission({ ...ask, signal })),
+      permission: (ask: Parameters<TurnHooks["permission"]>[0]) => (lane ? lane.run.permission({ ...ask, signal }) : active!.hooks.permission({ ...ask, signal })),
       question: (ask: Parameters<TurnHooks["question"]>[0]) => (active ? active.hooks.question({ ...ask, signal }) : Promise.resolve(null)),
     }
     switch (method) {
@@ -1168,8 +1191,7 @@ class CodexThread implements Thread {
       }
       case "item/fileChange/requestApproval": {
         // A spawned agent's change: its session has it.
-        const lane: Lane = (params.threadId && params.threadId !== this.nativeID ? (active?.subagents.get(params.threadId) ?? background) : undefined) ?? active ?? background!
-        const changes = lane.changes.get(params.itemId) ?? []
+        const changes = (lane ?? active!).changes.get(params.itemId) ?? []
         const files = changes.map((change) => fromPatch(change.path, change.diff, change.kind === "add" ? "added" : change.kind === "delete" ? "deleted" : "modified"))
         const decision = await hooks.permission({
           toolCallID: params.itemId,

@@ -884,10 +884,12 @@ class ClaudeThread implements Thread {
       if (kuvoTool(call.name, input).name !== "subagent") return undefined
       background = input.run_in_background === true
       run = active.hooks.subagent(callID, { title: String(input.description ?? ""), prompt: typeof input.prompt === "string" ? input.prompt : undefined, agent: input.subagent_type, background })
+      run.stop = () => this.stopSubagent(callID)
       this.subagentSessions.set(callID, { sessionID: run.sessionID, title: String(input.description ?? "") })
     } else if (before) {
       // One sent off in the background in an earlier turn, still at work: its session goes on.
       run = active.hooks.subagent(callID, { title: before.title, sessionID: before.sessionID, background: true })
+      run.stop = () => this.stopSubagent(callID)
       background = true
     } else {
       return undefined
@@ -1116,6 +1118,11 @@ class ClaudeThread implements Thread {
       }
     }
     return this.decide(name, input, options, background ? (ask) => background.run.permission(ask) : hooks.permission)
+  }
+
+  /** A subagent stopped from Kuvo Code: its task, as Claude Code's own Stop does (it then says it stopped). */
+  private async stopSubagent(callID: string) {
+    for (const [taskID, task] of this.tasks) if (task.toolUseID === callID) await this.query?.stopTask?.(taskID).catch(() => {})
   }
 
   /** A subagent at work in the background, by Claude Code's id for it (its task's). */

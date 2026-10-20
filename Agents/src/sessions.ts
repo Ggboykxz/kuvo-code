@@ -58,6 +58,8 @@ interface Live {
   last?: Slot
   /** Its subagents at work, each a session of its own: their turns, by session. */
   subagents: Map<string, Turn>
+  /** And their runs (to stop one), by session. */
+  runs: Map<string, SubagentRun>
   /** Those sent off in the background: they go on after the turn that started them. */
   background: Set<string>
   /** Settings › Permissions' Blocks as the turn began: what nothing allows (undefined: not known). */
@@ -487,7 +489,7 @@ export class Sessions {
     let live = this.live.get(id)
     if (!live) {
       // Blocks aren't known until the engine says (none, without an engine to ask).
-      live = { threads: new Map(), permissions: new Map(), forms: new Map(), always: [], subagents: new Map(), blocks: this.policies ? undefined : [], steeredNotes: [], models: new Map(), background: new Set() }
+      live = { threads: new Map(), permissions: new Map(), forms: new Map(), always: [], subagents: new Map(), runs: new Map(), blocks: this.policies ? undefined : [], steeredNotes: [], models: new Map(), background: new Set() }
       this.live.set(id, live)
     }
     return live
@@ -1542,8 +1544,9 @@ export class Sessions {
   async interrupt(id: string, resume = false) {
     const live = this.live.get(id)
     if (!live?.turn || live.turn.isEnded) {
+      const stopped = await this.stopSubagents(id)
       if (resume) this.wake(id)
-      return false
+      return stopped
     }
     const turn = live.turn
     live.resume = resume
@@ -1656,7 +1659,7 @@ export class Sessions {
     else live.background.delete(session.id)
     // Its step in the conversation that started it says which session it is.
     parentTurn.toolProgress(toolCallID, { sessionID: session.id })
-    return {
+    const run: SubagentRun = {
       sessionID: session.id,
       turn,
       end: (outcome, error) => {
@@ -1665,10 +1668,43 @@ export class Sessions {
           live.subagents.delete(session.id)
           live.background.delete(session.id)
         }
+        if (live.runs.get(session.id) === run) live.runs.delete(session.id)
+        // What it asked and nobody answered goes with it.
+        const directory = this.store.get(id)?.session.location.directory
+        for (const [requestID, pending] of [...live.permissions]) {
+          if (pending.turn !== turn) continue
+          live.permissions.delete(requestID)
+          pending.resolve("reject")
+          emit("permission.replied", { sessionID: id, requestID }, directory)
+        }
       },
       // Asked in the conversation that started it, while it works.
       permission: (ask) => this.askPermission(id, live, turn, ask, plan),
     }
+    live.runs.set(session.id, run)
+    return run
+  }
+
+  /**
+   * Stop with no turn under way: in a subagent's session, its agent stops it; in a session whose
+   * subagents went on in the background, those stop. False when there was nothing to stop.
+   */
+  private async stopSubagents(id: string): Promise<boolean> {
+    const parent = this.store.get(id)?.session.parentID
+    const runs = parent ? [this.live.get(parent)?.runs.get(id)] : [...(this.live.get(id)?.runs.values() ?? [])]
+    const going = runs.filter((run): run is SubagentRun => Boolean(run && !run.turn.isEnded))
+    for (const run of going) {
+      // One its agent can't stop ends here; one that doesn't say it stopped, a moment later.
+      if (!run.stop) {
+        run.end("interrupted")
+        continue
+      }
+      setTimeout(() => {
+        if (!run.turn.isEnded) run.end("interrupted")
+      }, timing.stopGrace)
+      await run.stop().catch(() => {})
+    }
+    return going.length > 0
   }
 
   /** What Blocks and rules say of an action without asking you: refused, or to ask first. */

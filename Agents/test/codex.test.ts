@@ -132,3 +132,89 @@ describe("Codex, nothing dropped", () => {
     expect(search.state.content[0].text).toContain("Opened https://kuvo.run")
   })
 })
+
+/** A Codex whose turn spawns an agent (thread t2) that goes on after it: asks first if `asks`, and works until it's stopped otherwise. */
+function spawningCodex(folder: string, asks: boolean): string {
+  const script = join(folder, "app-server.js")
+  writeFileSync(
+    script,
+    `let buffer = ""
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n")
+process.stdin.on("data", (chunk) => {
+  buffer += chunk
+  let at
+  while ((at = buffer.indexOf("\\n")) >= 0) {
+    const line = buffer.slice(0, at)
+    buffer = buffer.slice(at + 1)
+    if (!line.trim()) continue
+    const message = JSON.parse(line)
+    if (message.method === "thread/start") send({ id: message.id, result: { thread: { id: "t1" } } })
+    else if (message.method === "turn/start") {
+      send({ id: message.id, result: { turn: { id: "u1", status: "inProgress" } } })
+      send({ method: "turn/started", params: { threadId: "t1", turn: { id: "u1" } } })
+      send({ method: "item/completed", params: { threadId: "t1", turnId: "u1", item: { type: "subAgentActivity", id: "sa1", kind: "started", agentThreadId: "t2", agentPath: "/root/worker" } } })
+      send({ method: "turn/started", params: { threadId: "t2", turn: { id: "u2" } } })
+      if (${asks}) send({ id: 500, method: "item/commandExecution/requestApproval", params: { threadId: "t2", turnId: "u2", itemId: "c1", command: "rm -rf build" } })
+      setTimeout(() => send({ method: "turn/completed", params: { threadId: "t1", turn: { id: "u1", status: "completed" } } }), 50)
+    } else if (message.id === 500) {
+      send({ method: "item/completed", params: { threadId: "t2", turnId: "u2", item: { type: "agentMessage", id: "a2", text: "Answered: " + message.result.decision } } })
+      send({ method: "turn/completed", params: { threadId: "t2", turn: { id: "u2", status: "completed" } } })
+    } else if (message.method === "turn/interrupt") {
+      send({ id: message.id, result: {} })
+      send({ method: "turn/completed", params: { threadId: message.params.threadId, turn: { id: message.params.turnId, status: "interrupted" } } })
+    } else if (message.id !== undefined) send({ id: message.id, result: {} })
+  }
+})
+`,
+  )
+  const launcher = join(folder, "codex")
+  writeFileSync(launcher, `#!/bin/sh\nexec "${process.execPath}" "${script}" "$@"\n`)
+  chmodSync(launcher, 0o755)
+  return launcher
+}
+
+async function until(condition: () => boolean, ms = 10_000) {
+  const start = Date.now()
+  while (!condition()) {
+    if (Date.now() - start > ms) throw new Error("timed out")
+    await Bun.sleep(10)
+  }
+}
+
+describe("Codex's agents in the background", () => {
+  async function spawn(asks: boolean) {
+    codex = new TestCodex(spawningCodex(root, asks), root)
+    const agent = codex
+    sessions = new Sessions(new Store(join(root, "sessions")), { find: (id: string | undefined) => (id === agent.providerID ? agent : undefined) } as unknown as Roster, new Auto(root))
+    // (Titled: no title is asked of this Codex.)
+    const id = sessions.create({ title: "Spawn", model: { providerID: agent.providerID, id: "gpt-test" }, location: { directory: root }, permissions: [{ action: "shell", resource: "*", effect: "ask" }] }).id
+    sessions.prompt(id, { id: "msg_codex_test_002", text: "go", files: [], delivery: "steer" })
+    await until(() => sessions.messages(id).some((message) => message.type === "idle"))
+    const child = tools(id)[0].state.metadata.sessionID as string
+    return { id, child }
+  }
+
+  test("what one asks during the turn that spawned it is still yours to answer after that turn", async () => {
+    const { id, child } = await spawn(true)
+    await Bun.sleep(50)
+    expect(sessions.permissions(id)).toHaveLength(1)
+    sessions.replyPermission(id, sessions.permissions(id)[0].id, "once")
+    await until(() => sessions.messages(child).some((message) => message.type === "idle"))
+    expect(JSON.stringify(sessions.messages(child))).toContain("Answered: accept")
+  })
+
+  test("Stop in its session stops it, and so does Codex stopping", async () => {
+    const { child } = await spawn(false)
+    expect(sessions.active()).toContain(child)
+    expect(await sessions.interrupt(child)).toBe(true)
+    await until(() => sessions.messages(child).some((message) => message.type === "idle"))
+    expect(sessions.messages(child).at(-1)).toMatchObject({ type: "idle", outcome: "interrupted" })
+  })
+
+  test("one still at work when Codex stops ends with it", async () => {
+    const { child } = await spawn(false)
+    codex!.shutdown()
+    await until(() => sessions.messages(child).some((message) => message.type === "idle"))
+    expect(sessions.messages(child).at(-1)).toMatchObject({ type: "idle", outcome: "interrupted" })
+  })
+})

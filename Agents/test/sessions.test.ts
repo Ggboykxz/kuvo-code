@@ -1548,6 +1548,39 @@ process.stdin.on("data", (chunk) => {
     expect(call.state.metadata.sessionID).toBe(child)
   })
 
+  test("a subagent in the background: what it asked goes when it ends, and Stop in its session stops it", async () => {
+    let run: any
+    a.script = async (_input, turn, hooks) => {
+      turn.startStep()
+      turn.toolStart("call_task", "subagent")
+      turn.toolCalled("call_task", { description: "Wait" })
+      run = hooks.subagent("call_task", { title: "Wait", background: true })
+      turn.endStep()
+      return { outcome: "succeeded" }
+    }
+    const id = create()
+    sessions.update(id, { permissions: [{ action: "shell", resource: "*", effect: "ask" }] })
+    send(id, "go")
+    await settled(id, 1)
+    const asked = run.permission({ toolCallID: "t1", action: "shell", resources: ["rm -rf build"] })
+    await until(() => sessions.permissions(id).length === 1)
+    run.end("succeeded")
+    expect(await asked).toBe("reject")
+    expect(sessions.permissions(id)).toHaveLength(0)
+    // Another, with no way for its agent to stop it: Stop in its session ends it there.
+    a.script = async (_input, turn, hooks) => {
+      turn.startStep()
+      turn.toolStart("call_task2", "subagent")
+      run = hooks.subagent("call_task2", { title: "Wait", background: true })
+      turn.endStep()
+      return { outcome: "succeeded" }
+    }
+    send(id, "again")
+    await settled(id, 2)
+    expect(await sessions.interrupt(run.sessionID)).toBe(true)
+    expect(sessions.messages(run.sessionID).at(-1)).toMatchObject({ type: "idle", outcome: "interrupted" })
+  })
+
   test("a subagent at work when the bridge stops ends with it", async () => {
     let child = ""
     a.script = (_input, turn, hooks) => {
