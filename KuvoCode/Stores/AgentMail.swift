@@ -174,7 +174,7 @@ final class AgentMail {
     func send(from caller: String?, name: String, to: String, text: String, waits: Bool) async -> (text: String, isError: Bool) {
         switch await deliver(from: caller, name: name, to: to, text: text, waits: waits) {
         case .done(let text): (text, false)
-        case .unknown(let text), .refused(let text), .failed(let text): (text, true)
+        case .unknown(let text), .refused(let text), .limited(let text), .failed(let text): (text, true)
         }
     }
 
@@ -182,7 +182,8 @@ final class AgentMail {
     /// another Mac does may take it), not one to send (too many), or not there now, and worth
     /// sending again.
     private enum Outcome {
-        case done(String), unknown(String), refused(String), failed(String)
+        /// `limited`: too many lately; it can go in a while.
+        case done(String), unknown(String), refused(String), limited(String), failed(String)
     }
 
     /// `limitKey`: what the few-at-a-time limit counts by, when not the caller (a machine's
@@ -204,7 +205,7 @@ final class AgentMail {
         let key = limitKey ?? caller ?? "outside"
         let lately = (sent[key] ?? []).filter { $0.timeIntervalSinceNow > -600 }
         guard lately.count < 20 else {
-            return .refused("You've sent a lot of messages in the last few minutes. Wait a while, or ask the user how to go on.")
+            return .limited("You've sent a lot of messages in the last few minutes. Wait a while, or ask the user how to go on.")
         }
         guard let app, let api = app.workspace.api(forSession: target.session) else {
             // Its machine is away: it goes when it's back.
@@ -348,8 +349,9 @@ final class AgentMail {
 
     /// Delivers what `engine`'s machine's agents left for agents elsewhere. Each letter's file
     /// there goes once it's delivered, or can't ever be; one that can't go now (the engine it's
-    /// for is starting over), or whose reading was cut off, goes next time. One for an agent this
-    /// Mac doesn't know waits two days, for another Mac connected to the machine that may.
+    /// for is starting over, or the machine sent many lately), or whose reading was cut off, goes
+    /// next time. One for an agent this Mac doesn't know waits two days, for another Mac connected
+    /// to the machine that may, and so does one held back that long.
     func collect(from engine: MachineEngine) async {
         let machine = engine.machine.id
         let folder = "\"$HOME/\(RemoteEngineInstaller.root)/run/outbox\""
@@ -375,7 +377,7 @@ final class AgentMail {
             switch await deliver(from: sender?.session, name: sender?.name ?? "an agent on \(machine)", to: letter.to, text: letter.text, waits: false, limitKey: "machine:" + machine) {
             case .done:
                 done.append(file)
-            case .unknown(let why):
+            case .unknown(let why), .limited(let why):
                 guard written.timeIntervalSinceNow < -2 * 86_400 else { continue }
                 log.error("A message from \(machine, privacy: .public) didn't go: \(why, privacy: .public)")
                 done.append(file)
