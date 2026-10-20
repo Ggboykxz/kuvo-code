@@ -153,6 +153,11 @@ final class OutsideAgents {
                 onExit: { [weak self] status in Task { @MainActor in self?.exited(status: status) } }
             )
             self.server = server
+            // Stopped already, its exit heard before this: as `exited` would have it then.
+            if let status = server.exitStatus {
+                exited(status: status)
+                return
+            }
             let api = OpenCodeAPI(endpoint: server.endpoint)
             self.api = api
             failure = nil
@@ -226,8 +231,15 @@ final class OutsideAgents {
     /// Your list as you arranged it.
     func saveAuto(_ entries: [AutoEntry]) async throws {
         guard let api else { throw Failure.unavailable("Auto") }
+        let saved = auto
         auto = AutoList(entries: entries, limits: auto.limits)
-        auto = try await api.saveAutoList(entries)
+        do {
+            auto = try await api.saveAutoList(entries)
+        } catch {
+            // Not saved: the list Auto still uses.
+            auto = saved
+            throw error
+        }
     }
 
     /// Every model at a limit tried again.

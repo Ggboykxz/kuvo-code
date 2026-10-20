@@ -5,6 +5,7 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- If saving your Auto list fails, Settings › Auto shows the list Auto still uses, rather than the one that didn't save.
 - On a machine whose clock is behind your Mac's, a reply being written no longer says "Waiting for the model to answer" the whole time it streams in.
 - Picking another model just as the agent finishes no longer starts it working again on a task that was done: the run is handed to the new model only if it was still going.
 - A conversation no longer opens with "Something went wrong: cancelled" over the composer: when Kuvo Code started its engine over while reading a conversation (or a request was called off for another reason), that showed as an error.
