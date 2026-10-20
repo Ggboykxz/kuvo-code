@@ -5617,6 +5617,18 @@ class Sessions {
       return autoProvider;
     return this.agent(providerID2)?.id ?? "engine";
   }
+  importSession(body) {
+    const session = this.create(body);
+    const record = this.store.get(session.id);
+    const known = new Set(["user", "assistant", "synthetic", "system", "idle", "model-switched", "agent-switched", "shell"]);
+    record.messages = (Array.isArray(body.messages) ? body.messages : []).filter((message) => typeof message === "object" && message !== null && known.has(message.type) && typeof message.id === "string");
+    this.repair(session.id);
+    session.title = body.title ?? session.title;
+    session.time.updated = Date.now();
+    this.store.save(session.id, true);
+    emit("session.updated", { sessionID: session.id, session }, session.location.directory);
+    return session;
+  }
   fork(id, before) {
     const record = this.record(id);
     const at = record.messages.findIndex((message) => message.id === before);
@@ -6713,6 +6725,8 @@ function handler(context) {
         }
         if (a === "active")
           return json({ data: Object.fromEntries(sessions.active().map((id2) => [id2, { type: "busy" }])) });
+        if (a === "import" && method === "POST")
+          return json({ data: sessions.importSession(await body()) });
         const id = a;
         if (!b) {
           if (method === "GET")

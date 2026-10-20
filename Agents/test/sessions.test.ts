@@ -805,6 +805,30 @@ process.stdin.on("data", (chunk) => {
   })
 })
 
+describe("from the engine", () => {
+  test("a conversation from the engine carries on here, its first agent handed all of it", async () => {
+    const id = sessions.importSession({
+      title: "Fix the parser",
+      model: { providerID: "alpha", id: "one" },
+      location: { directory: "/tmp/project" },
+      messages: [
+        { type: "user", id: "msg_0001", time: { created: 1 }, text: "the parser drops commas" },
+        { type: "assistant", id: "msg_0002", time: { created: 2, completed: 3 }, agent: "build", model: { providerID: "opencode", id: "big-pickle" }, content: [{ type: "text", text: "It splits on spaces only." }] },
+        { type: "idle", id: "msg_0003", time: { created: 3 }, outcome: "succeeded" },
+        { type: "compaction", id: "msg_0004", time: { created: 4 } },
+      ],
+    }).id
+    expect(sessions.get(id).title).toBe("Fix the parser")
+    expect(sessions.messages(id).map((message) => message.type)).toEqual(["user", "assistant", "idle"])
+    send(id, "now fix it")
+    await settled(id, 2)
+    const told = a.runs[0].text
+    expect(told).toContain("the parser drops commas")
+    expect(told).toContain("It splits on spaces only.")
+    expect(told.endsWith("User message:\nnow fix it")).toBe(true)
+  })
+})
+
 describe("moving between agents", () => {
   test("the next agent gets what it hasn't seen, and the first only what came since", async () => {
     const id = create()

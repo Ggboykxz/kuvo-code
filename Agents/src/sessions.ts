@@ -284,6 +284,26 @@ export class Sessions {
    * another way from there. The agents' own conversations can't be copied: whichever runs it
    * gets what came before as a handover.
    */
+  /**
+   * A conversation from the engine, carried on here (you picked a coding agent's model in it): a
+   * session with its messages, whose agents are handed all of it as they first run.
+   */
+  importSession(body: { title?: string; agent?: string; model?: ModelRef; location: { directory: string }; permissions?: PermissionRule[]; messages?: unknown[] }): Session {
+    const session = this.create(body)
+    const record = this.store.get(session.id)!
+    const known = new Set(["user", "assistant", "synthetic", "system", "idle", "model-switched", "agent-switched", "shell"])
+    record.messages = (Array.isArray(body.messages) ? body.messages : []).filter(
+      (message): message is Message => typeof message === "object" && message !== null && known.has((message as any).type) && typeof (message as any).id === "string",
+    )
+    // Its last turn is over (a run left open there isn't one here).
+    this.repair(session.id)
+    session.title = body.title ?? session.title
+    session.time.updated = Date.now()
+    this.store.save(session.id, true)
+    emit("session.updated", { sessionID: session.id, session }, session.location.directory)
+    return session
+  }
+
   fork(id: string, before: string): Session {
     const record = this.record(id)
     const at = record.messages.findIndex((message) => message.id === before)

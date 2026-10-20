@@ -251,6 +251,8 @@ export function handler(context: Context) {
           return json(page(ordered, url))
         }
         if (a === "active") return json({ data: Object.fromEntries(sessions.active().map((id) => [id, { type: "busy" }])) })
+        // A conversation from the engine, carried on here.
+        if (a === "import" && method === "POST") return json({ data: sessions.importSession(await body()) })
         const id = a
         if (!b) {
           if (method === "GET") return json({ data: sessions.get(id) })
