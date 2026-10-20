@@ -905,6 +905,13 @@ final class Workspace {
         do {
             let listed = try await api.allSessions().filter { !isHidden($0) }
             sessions = sessions.filter { !OutsideAgents.isAgentSession($0) } + listed
+            // Read while the bridge was away: so here, and told it now.
+            let listedIDs = Set(listed.map(\.id))
+            for (id, idle) in unsentViews where listedIDs.contains(id) {
+                unsentViews[id] = nil
+                if let index = sessions.firstIndex(where: { $0.id == id }), (sessions[index].time.viewed ?? 0) < idle { sessions[index].time.viewed = idle }
+                Task { try? await api.markViewed(id, idle: idle) }
+            }
             for (id, model) in models where OutsideAgents.isAgentSession(model.session) {
                 guard let session = listed.first(where: { $0.id == id }) else {
                     models[id] = nil
