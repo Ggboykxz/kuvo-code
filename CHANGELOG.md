@@ -5,6 +5,10 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- Settings › Permissions › Always Allowed lists approvals you saved in sessions on your machines too, and removes them there.
+- Notifications hide a hex value after any name that isn't a hash's (AESKey, SECRETKEY, SIGNATURE…), and show commit hashes, checksums and cache keys.
+- A permission card for a huge new file shows its first 400 lines with Show All, instead of holding the window up.
+- A new skill can't overwrite one already there, a Claude Code command named like one of the engine's comes over with -claude, and New Agent and New Command say when the settings file can't be changed rather than losing what you write.
 - Canceling Add a Machine while it connects no longer adds the machine (and copies your accounts to it) a moment later.
 - Notifications hide keys given with flags like --apiKey or --db_password again.
 - A permission card shows each file's changes in full, and deleting a bot can't close an editor you opened meanwhile.
