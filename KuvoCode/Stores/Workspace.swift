@@ -946,7 +946,8 @@ final class Workspace {
         guard let api else { return }
         do {
             let local = try await api.allSessions().filter { !isHidden($0) }
-            let theAgents = sessions.filter(OutsideAgents.isAgentSession)
+            // (This Mac's: a machine's agents' are its own, with its engine's.)
+            let theAgents = sessions.filter { OutsideAgents.isAgentSession($0) && !RemoteFolder.isRemote($0.location.directory) }
             sessions = local + theAgents + sessions.filter { RemoteFolder.isRemote($0.location.directory) }
             SessionCopies.saveLocalSessions(local + theAgents)
             // Read before the engine was up: so here, and told it now.
@@ -1223,7 +1224,8 @@ final class Workspace {
             folders.formUnion(jobFolders.removeValue(forKey: machine) ?? [])
             Task { [weak self] in for folder in folders { await self?.readShellJobs(in: folder) } }
             if let active = try? await api.activeSessions(), isCurrent() {
-                let bridgeActive = bridgeListed == nil ? nil : try? await bridge?.activeSessions()
+                // (No bridge there, none at work; one not read, as they were.)
+                let bridgeActive: Set<String>? = if let bridge { bridgeListed == nil ? nil : try? await bridge.activeSessions() } else { [] }
                 // A subagent's session has no row: its machine is the one its events came from.
                 // (Its agents' as they were, when they couldn't be read.)
                 running = running.filter { id in

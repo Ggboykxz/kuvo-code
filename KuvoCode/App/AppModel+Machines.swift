@@ -208,7 +208,8 @@ extension AppModel {
             Task {
                 await engine.catalog.refreshAgents()
                 _ = await self.workspace.refresh(engine)
-                if self.agents.isAutoLoaded { await engine.agents.copyLists(self.agents.auto.all) }
+                // (Not to an engine another Mac started: it has that Mac's.)
+                if self.agents.isAutoLoaded, !engine.isAnotherMacsEngine { await engine.agents.copyLists(self.agents.auto.all) }
                 // Your sign-ins that work there too (its bridge started since the machine connected).
                 await self.syncAgentSignIns(with: engine)
             }

@@ -594,8 +594,13 @@ struct ConnectView: View {
 
     private func finish(method: String) {
         forward.stop()
-        // Signed in anew: Custom Auto tries it again.
-        app.releaseLimit(integrationID)
+        // Signed in anew: Custom Auto tries it again where you signed in (an agent's sign-in is
+        // that place's own; a plan's goes to your machines too).
+        if OutsideAgents.isAgent(integrationID) {
+            if let agents = catalog.outsideAgents { Task { await agents.releaseLimit(integrationID) } }
+        } else {
+            app.releaseLimit(integrationID)
+        }
         Analytics.shared.track("account_connected", ["provider": Analytics.provider(integrationID), "method": method])
         Analytics.shared.accountConnected()
         pollTask?.cancel()

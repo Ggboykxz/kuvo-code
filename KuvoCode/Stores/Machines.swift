@@ -28,6 +28,8 @@ final class MachineEngine {
     let catalog = Catalog()
     /// The coding agents there: the agents bridge beside its engine, through the same tunnel.
     let agents: OutsideAgents
+    /// Its engine started with the agents bridge beside it (an older one didn't).
+    var hasAgentsBridge: Bool { server?.agentsEndpoint != nil }
     /// Its browser, which its agents browse with, shown live in the panel.
     let browser: MachineBrowser
 

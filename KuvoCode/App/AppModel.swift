@@ -359,13 +359,14 @@ final class AppModel {
                 await self?.workspace.refreshAgents()
                 // Your Custom Auto lists, as the machines connected meanwhile copy them.
                 guard let self, self.agents.isAutoLoaded else { return }
-                for engine in self.machines.engines.values where engine.isReady { await engine.agents.copyLists(self.agents.auto.all) }
+                for engine in self.machines.engines.values where engine.isReady && !engine.isAnotherMacsEngine { await engine.agents.copyLists(self.agents.auto.all) }
             }
         }
         // Each machine's bridge has a copy of your Custom Auto lists.
         agents.onListsChanged = { [weak self] lists in
             guard let self else { return }
-            for engine in machines.engines.values where engine.isReady { Task { await engine.agents.copyLists(lists) } }
+            // (Not to an engine another Mac started: it keeps that Mac's.)
+            for engine in machines.engines.values where engine.isReady && !engine.isAnotherMacsEngine { Task { await engine.agents.copyLists(lists) } }
         }
         var environment = shellEnvironment
         // Bots' wake-up command by name, and where their folders are, for their sessions with the

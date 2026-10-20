@@ -46,16 +46,26 @@ final class AgentMail {
         let machine = engine.machine.id
         for letter in waiting where letter.machine == machine {
             guard engine.api != nil else { return }
-            // (A session of its coding agents': through their bridge there.)
-            guard let api = app?.workspace.session(letter.to).flatMap({ app?.workspace.api(for: $0) }) ?? engine.api else { continue }
-            do {
-                try await api.prompt(session: letter.to, id: Identifier.message(),
-                                     text: Self.compose(from: letter.name, session: letter.from ?? "unknown", text: letter.text, waits: false), delivery: .steer)
-                Analytics.shared.track("agent_message_sent", ["waits": false, "bot": app?.bots.bot(forSession: letter.to) != nil])
-            } catch {
-                log.error("A message for \(machine, privacy: .public) didn't go: \(error.localizedDescription, privacy: .public)")
-                guard (error as? ServerError)?.status == 404 else { continue }
+            // Where its session is: known, or its engine's, else its coding agents' (their bridge
+            // there); gone only when both say so.
+            let known = app?.workspace.session(letter.to).flatMap { app?.workspace.api(for: $0) }
+            let places = known.map { [$0] } ?? [engine.api, engine.agents.api].compactMap(\.self)
+            var gone = !places.isEmpty
+            var sent = false
+            for api in places where !sent {
+                do {
+                    try await api.prompt(session: letter.to, id: Identifier.message(),
+                                         text: Self.compose(from: letter.name, session: letter.from ?? "unknown", text: letter.text, waits: false), delivery: .steer)
+                    sent = true
+                    Analytics.shared.track("agent_message_sent", ["waits": false, "bot": app?.bots.bot(forSession: letter.to) != nil])
+                } catch {
+                    log.error("A message for \(machine, privacy: .public) didn't go: \(error.localizedDescription, privacy: .public)")
+                    if (error as? ServerError)?.status != 404 { gone = false }
+                }
             }
+            // Not there yet (its bridge starting, the connection dropped): next time. While its
+            // coding agents' bridge can't be reached, it can't say a session of theirs is gone.
+            if !sent && (!gone || engine.hasAgentsBridge && engine.agents.api == nil && known == nil) { continue }
             if let index = waiting.firstIndex(of: letter) { waiting.remove(at: index) }
             save()
         }
