@@ -37,7 +37,7 @@ struct ShellRow: View {
             }
             if isExpanded, !output.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    OutputBlock(text: output)
+                    OutputBlock(text: output, command: shell.command)
                         .environment(\.findHighlight, marks?[1])
                     if shell.output?.truncated == true {
                         Text("Only the end is kept; it printed more.")

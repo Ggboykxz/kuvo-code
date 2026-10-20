@@ -396,7 +396,7 @@ struct ToolCallView: View {
                 }
             }
         } else {
-            OutputBlock(text: outputText)
+            OutputBlock(text: outputText, command: call.name == "shell" ? string("command") ?? "" : nil)
         }
     }
 }
@@ -404,11 +404,15 @@ struct ToolCallView: View {
 /// A command's output or a step's code, in a recessed well that scrolls sideways for long lines.
 struct OutputBlock: View {
     let text: String
+    /// The command that printed it, to color it as a terminal would; nil for code and other text.
+    var command: String?
     @Environment(\.findHighlight) private var highlight
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         ScrollView(.horizontal) {
-            Text(FindText.marked(AttributedString(text.trimmingCharacters(in: .whitespacesAndNewlines)), highlight))
+            Text(FindText.marked(command.map { TerminalColors.colored(text, command: $0, dark: scheme == .dark) } ?? AttributedString(text), highlight))
                 .transcriptCodeFont()
                 .textSelection(.enabled)
                 .fixedSize(horizontal: true, vertical: false)
