@@ -10,6 +10,11 @@ struct PermissionCard: View {
     let directory: String
     let reply: (PermissionRequest.Decision) -> Void
     @Environment(\.takesCardKeys) private var takesKeys
+    /// Files whose changes you asked to see all of.
+    @State private var shownWhole: Set<String> = []
+    /// A file's lines shown before Show All: enough to read, not so many that a huge new file
+    /// holds the window up.
+    private static let linesShown = 400
 
     var body: some View {
         // Read from its metadata once a drawing, not for each use.
@@ -33,11 +38,17 @@ struct PermissionCard: View {
 
             // All that Allow allows: every file's changes, the whole command, scrolling when long.
             if !diffs.isEmpty {
-                // Each file's changes whole (no "more lines"), made as they scroll into view.
+                // Each file's changes, made as they scroll into view; a long one's rest a click
+                // away, so nothing Allow allows is out of reach.
                 AllowedWell(maxHeight: 360) {
                     LazyVStack(alignment: .leading, spacing: 10) {
                         ForEach(diffs) { diff in
-                            DiffView(diff: diff, title: relative(diff.file))
+                            let whole = shownWhole.contains(diff.id)
+                            DiffView(diff: diff, title: relative(diff.file), maxLines: whole ? .max : Self.linesShown)
+                            if !whole, diff.patch.utf8.count(where: { $0 == 10 }) > Self.linesShown {
+                                Button("Show All") { shownWhole.insert(diff.id) }
+                                    .buttonStyle(TextButtonStyle())
+                            }
                         }
                     }
                 }
