@@ -14,6 +14,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const css = fs.readFileSync(path.join(here, "harness", "ui", "style.css"), "utf8");
 const store = fs.readFileSync(path.join(here, "app", "src", "store.ts"), "utf8");
 const settings = fs.readFileSync(path.join(here, "app", "src", "Settings.tsx"), "utf8");
+const app = fs.readFileSync(path.join(here, "app", "src", "App.tsx"), "utf8");
 const design = fs.readFileSync(path.join(here, "harness", "ui", "DESIGN.md"), "utf8");
 
 // The Mac binding is the last block of the file; a token's last declaration in that block is
@@ -85,4 +86,49 @@ test("the design doc is bound to the Mac, not to OpenDesign", () => {
   assert.match(design, /Surfaces\.swift/);
   assert.match(design, /The OpenDesign direction `modern-minimal`.*is retired/s);
   assert.doesNotMatch(settings, /The look is bound to OpenDesign/);
+});
+
+test("the window's panes are on the glass, 8 pt apart, and the sidebar has no surface", () => {
+  assert.match(css, /--pane-gap:\s*8px/);
+  const main = css.slice(css.lastIndexOf("main {"));
+  assert.match(main, /gap: var\(--pane-gap\)/);
+  assert.match(main, /padding: 0 var\(--pane-gap\) var\(--pane-gap\)/);
+  const aside = css.slice(css.lastIndexOf("/* The sessions have no card of their own"));
+  assert.match(aside, /background: transparent/);
+  assert.match(aside, /border: 0/);
+});
+
+test("the conversation is a card, with the Mac's 38 pt header and 62 pt fade", () => {
+  assert.match(css, /#conversation\.conversation-card\s*\{[^}]*border-radius: var\(--radius-card\)/s);
+  assert.match(css, /--card-header:\s*38px/);
+  const fade = css.slice(css.lastIndexOf(".card-fade {"));
+  assert.match(fade, /height: 62px/);
+  assert.match(fade, /mask-image: linear-gradient/);
+  assert.match(app, /className="card conversation-card"/);
+  assert.match(app, /<CardHeader \/>/);
+});
+
+test("the conversation runs under the header, and the composer is inside the card", () => {
+  assert.match(css, /#conversation #entries \{ padding: calc\(var\(--card-header\) \+ 16px\)/);
+  const composer = css.slice(css.lastIndexOf(".composer {"));
+  assert.match(composer, /max-width: var\(--readable-width\)/);
+  assert.match(app, /<Composer \/>/);
+  assert.match(app, /id="conversation"/);
+});
+
+test("the sidebar is one search, with 32 pt rows and the state dot", () => {
+  assert.match(css, /#sessions li \{ height: 32px; \}/);
+  assert.match(css, /\.session \{[^}]*height: 32px/s);
+  assert.match(app, /placeholder="Search"/);
+  assert.doesNotMatch(app, /placeholder="Search sessions…"/);
+  assert.doesNotMatch(app, /placeholder="Search messages…"/);
+  assert.match(app, /className="sidebar-new"/);
+});
+
+test("the palette floats over the page, and the card inside it is the glass", () => {
+  const palette = css.slice(css.lastIndexOf(".palette {"));
+  assert.match(palette, /position: fixed/);
+  assert.match(palette, /inset: 0/);
+  assert.match(css, /\.palette-card::before/);
+  assert.match(css, /\.gauge-pop \{ position: fixed; \}/);
 });

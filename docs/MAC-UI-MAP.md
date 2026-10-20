@@ -596,13 +596,14 @@ interpretation of it.
 | --- | --- | --- | --- |
 | **0. Extraction** | This document, the generated inventory, the generator | all rows extracted; statuses set | docs commit (no release) |
 | **1. Tokens** | Rebind `DESIGN.md`; replace `:root` light/dark with §3; radii 14/18/10/8/7/6/5; shadows; type sizes and faces; accent presets | §1 rows 1, 3, 7, 9, 10, 12, 13; §3 | 0.5.37 ✅ |
-| **2. Surfaces & chrome** | Cards, header + fade, window gaps, sidebar on the glass (no surface), title-bar tabs, composer inside the conversation card, wells, palette/settings/drawer materials | §1 rows 3–8, 15, 16; §2; §4 Card/Composer/Bubble | 0.5.38 |
-| **3. Motion** | Analytic spring `linear()`, hover 0.12, press fills, list tint, shimmer, spinner, image-viewer transitions, reduced motion | §5 | 0.5.39 |
-| **4. Icons** | 89 symbols → drawn SVGs; FolderIcon; PromptMark; provider logos; remove text glyphs and the naked `@` | §7 | 0.5.40 |
-| **5. Wording** | 1 208 sites compared; menus, tooltips, accessibility labels; punctuation | §8 | 0.5.41 |
-| **6. Screens** | Sidebar + title bar; transcript; composer + queue + gauge; palette + drawer; settings (14 existing + 3 missing: Notifications, Privacy, Panel; Worktrees maps to Projects); files/changes/terminal | §6.1–6.3 | 0.5.42 → 0.5.47 |
-| **7. Gestures & micro-UX** | Rename, double-click, resize grabber, history, popover flip, clear/remove/badge behaviours, find and search field shape | §9 | 0.5.48 |
-| **8. Verification** | Full capture matrix, computed-value checks, close every ◐; final side-by-side | all in-scope rows | 0.5.49 |
+| **2a. Cards & glass** | The conversation card, 38 pt header + 62 pt fade, 8 pt window gaps, the sidebar on the glass (no surface), 32 pt rows, one search, the composer inside the card | §1 rows 3–8, 15, 16; §2; §4 Card/Composer/Bubble | 0.5.38 |
+| **2b. Title bar & overlays** | Title-bar tabs, drawer, palette 600/18, settings card, gauge popover, wells | §1 rows 15, 16; §2; §4 | 0.5.39 |
+| **3. Motion** | Analytic spring `linear()`, hover 0.12, press fills, list tint, shimmer, spinner, image-viewer transitions, reduced motion | §5 | 0.5.40 |
+| **4. Icons** | 89 symbols → drawn SVGs; FolderIcon; PromptMark; provider logos; remove text glyphs and the naked `@` | §7 | 0.5.41 |
+| **5. Wording** | 1 208 sites compared; menus, tooltips, accessibility labels; punctuation | §8 | 0.5.42 |
+| **6. Screens** | Sidebar + title bar; transcript; composer + queue + gauge; palette + drawer; settings (14 existing + 3 missing: Notifications, Privacy, Panel; Worktrees maps to Projects); files/changes/terminal | §6.1–6.3 | 0.5.43 → 0.5.48 |
+| **7. Gestures & micro-UX** | Rename, double-click, resize grabber, history, popover flip, clear/remove/badge behaviours, find and search field shape | §9 | 0.5.49 |
+| **8. Verification** | Full capture matrix, computed-value checks, close every ◐; final side-by-side | all in-scope rows | 0.5.50 |
 
 One release per batch, one descriptive commit line, CI green on `windows/harness` and `main`
 before the tag. The 20 excluded view files — five of them the excluded Settings pages — stay

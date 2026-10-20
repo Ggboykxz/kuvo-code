@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import type { Attachment, FormRequest, PermissionRequest, SessionSummary, Transcript, TranscriptEntry } from "./api";
 import { fromHistory } from "../../harness/transcript.mjs";
-import { brief, compactTokens, errorText, renderMarkdown, when } from "./lib";
+import { brief, compactTokens, errorText, renderMarkdown } from "./lib";
 import { isRecording, keysOf, matchesEvent, shortcutFor } from "./shortcuts";
 import { draftKey, readDraft, saveDraft } from "./drafts.mjs";
 import {
@@ -460,38 +460,15 @@ function FormCard({ form }: { form: FormRequest }) {
 
 // ---- The header ----
 
-function Header() {
+/// The Mac's context ring, in the conversation card's header (the same figures as before).
+function ContextGauge() {
   const [gaugeOpen, setGaugeOpen] = useState(false);
-  const running = state.engine?.status === "running";
   const total = state.session?.tokens?.total ?? 0;
   const model = state.models.find(item => state.session?.model && `${item.providerID}/${item.id}` === `${state.session.model.providerID}/${state.session.model.id}`);
   const limit = model?.limit?.context ?? 0;
   const fraction = limit > 0 ? Math.min(total / limit, 1) : null;
-  const branch = state.vcs?.branch?.current;
   return (
-    <header>
-      <div className="brand">Kuvo&nbsp;Code</div>
-      <button id="project" className="path" title="Change the project folder" onClick={() => { state.pickerOpen = true; render(); }}>
-        {state.project ?? "choose a folder…"}
-      </button>
-      <div className="spacer" />
-      <button id="toggle-files" className="small" title="Files and terminal" onClick={() => { state.drawerOpen = !state.drawerOpen; render(); }}>Files</button>
-      <button
-        id="toggle-sidebar"
-        className="small"
-        title="Show or hide the sidebar"
-        onClick={() => { state.sidebarOpen = !state.sidebarOpen; render(); }}
-      >
-        {state.sidebarOpen === false ? "Show sessions" : "Hide sessions"}
-      </button>
-      <button id="split" className={`small ${state.split ? "active" : ""}`} title="Show a second session beside this one" onClick={() => void toggleSplit()}>Split</button>
-      <button id="palette-open" className="small" title="Commands, sessions and files (Ctrl+K)" onClick={() => { state.paletteOpen = true; render(); }}>@</button>
-      <button id="settings-open" className="small" title="Appearance" onClick={() => { state.settingsOpen = true; state.settingsSection = "appearance"; render(); }}>Appearance</button>
-      <button id="export" className="small" title="Export conversation as Markdown" onClick={() => void exportConversation()}>Export</button>
-      <span id="vcs" className="vcs-chip" hidden={!branch}>{branch ?? ""}</span>
-      <button id="changes" className="small" hidden={state.sessionDiff.length === 0} title="The files this session changed" onClick={() => { state.diffOpen = true; render(); }}>
-        {state.sessionDiff.length ? `Changes (${state.sessionDiff.length})` : "Changes"}
-      </button>
+    <>
       <div
         id="context-gauge"
         className="context-gauge"
@@ -523,6 +500,79 @@ function Header() {
           Compact context
         </button>
       </div>
+    </>
+  );
+}
+
+/// The conversation card's 38 pt header: the session, its project, and the card's own
+/// actions (Card.swift:91-124). The title bar above keeps the window's own controls.
+function CardHeader() {
+  const title = state.session?.title || "New Session";
+  const folder = state.project ? state.project.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? "" : "";
+  return (
+    <div className="card-header">
+      <span className="card-icon" aria-hidden="true">
+        <svg viewBox="0 0 16 16" width="16" height="16" fill="none">
+          <path d="M2.75 3.25h10.5v6.9H8.1l-3.1 2.6v-2.6H2.75z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+        </svg>
+      </span>
+      <div className="card-title" title={state.project ?? undefined}>
+        <span>{title}</span>
+        {folder ? <span className="card-detail">{"\u00A0| "}{folder}</span> : null}
+      </div>
+      <div className="spacer" />
+      <div className="card-actions">
+        {state.sessionDiff.length ? (
+          <button
+            id="changes"
+            className="card-action"
+            title="The files this session changed"
+            onClick={() => { state.diffOpen = true; render(); }}
+          >
+            {`Changes (${state.sessionDiff.length})`}
+          </button>
+        ) : null}
+        <ContextGauge />
+      </div>
+    </div>
+  );
+}
+
+function Header() {
+  const running = state.engine?.status === "running";
+  const branch = state.vcs?.branch?.current;
+  return (
+    <header>
+      <div className="brand">Kuvo&nbsp;Code</div>
+      <button id="project" className="path" title="Change the project folder" onClick={() => { state.pickerOpen = true; render(); }}>
+        {state.project ?? "choose a folder…"}
+      </button>
+      <div className="spacer" />
+      <button id="toggle-files" className="small" title="Files and terminal" onClick={() => { state.drawerOpen = !state.drawerOpen; render(); }}>Files</button>
+      <button
+        id="toggle-sidebar"
+        className="small"
+        title="Show or hide the sidebar"
+        onClick={() => { state.sidebarOpen = !state.sidebarOpen; render(); }}
+      >
+        {state.sidebarOpen === false ? "Show sessions" : "Hide sessions"}
+      </button>
+      <button id="split" className={`small ${state.split ? "active" : ""}`} title="Show a second session beside this one" onClick={() => void toggleSplit()}>Split</button>
+      <button
+        id="palette-open"
+        className="small icon"
+        title="Commands, sessions and files (Ctrl+K)"
+        aria-label="Commands, sessions and files"
+        onClick={() => { state.paletteOpen = true; render(); }}
+      >
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
+          <circle cx="6.8" cy="6.8" r="4.1" stroke="currentColor" strokeWidth="1.3" />
+          <path d="M9.9 9.9L13.4 13.4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+        </svg>
+      </button>
+      <button id="settings-open" className="small" title="Appearance" onClick={() => { state.settingsOpen = true; state.settingsSection = "appearance"; render(); }}>Appearance</button>
+      <button id="export" className="small" title="Export conversation as Markdown" onClick={() => void exportConversation()}>Export</button>
+      <span id="vcs" className="vcs-chip" hidden={!branch}>{branch ?? ""}</span>
       <input
         id="find"
         className="file-search header-find"
@@ -563,26 +613,28 @@ async function toggleSplit() {
 
 function Sidebar() {
   const archived = (session: SessionSummary) => Boolean(session.time?.archived) || session.metadata?.["kuvo.archived"] === true;
+  const query = state.sessionQuery.trim().toLowerCase();
   const visible = state.sessions
     .filter(session => !archived(session))
-    .filter(s => (state.sessionQuery
-      ? (s.title || "").toLowerCase().includes(state.sessionQuery)
-      : true));
+    .filter(s => (query ? (s.title || "").toLowerCase().includes(query) : true));
   return (
     <aside>
-      <div className="aside-head">
-        <span>Sessions</span>
-        <button id="new-session" className="small" onClick={() => void newSession()}>New</button>
-      </div>
+      <button id="new-session" className="sidebar-new" onClick={() => void newSession()}>
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
+          <path d="M3 12.5L3.7 9.6 9.9 3.4l2.7 2.7-6.2 6.2z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+          <path d="M8.8 4.5l2.7 2.7" stroke="currentColor" strokeWidth="1.2" />
+        </svg>
+        <span>New Session</span>
+      </button>
       <input
         id="session-search"
-        className="file-search"
-        placeholder="Search sessions…"
+        className="file-search sidebar-search"
+        placeholder="Search"
         spellCheck={false}
         value={state.sessionQuery}
         onChange={event => { state.sessionQuery = event.target.value; render(); }}
       />
-      <MessageSearch />
+      <div className="sidebar-scroll">
       <ul id="sessions">
         {visible.map(session => {
           const running = state.session?.id === session.id && state.transcript?.running;
@@ -590,8 +642,8 @@ function Sidebar() {
           return (
             <li key={session.id} className={`${session.id === state.session?.id ? "current" : ""} ${unread ? "unread" : ""}`}>
               <button className="session" data-id={session.id} onClick={() => void openSession(session.id)}>
-                <span className="session-title">{session.title || "Untitled"}</span>
-                <span className="session-sub">{`${running ? "running · " : ""}${when(session.time?.updated)}`}</span>
+                <span className="session-title">{session.title || "New Session"}</span>
+                {running || unread ? <span className={`session-state ${running ? "running" : "unread"}`} aria-hidden="true" /> : null}
               </button>
               <button
                 className="session-delete"
@@ -611,14 +663,16 @@ function Sidebar() {
           );
         })}
       </ul>
-      <div id="sessions-empty" className="aside-empty" hidden={state.sessions.length > 0}>No sessions yet.</div>
+      <MessageSearch query={state.sessionQuery} />
+      </div>
+      <div id="sessions-empty" className="aside-empty" hidden={state.sessions.length > 0 || query.length > 0}>No sessions yet.</div>
     </aside>
   );
 }
 
-/// Searching what was said, in every session: the Mac app's own search.
-function MessageSearch() {
-  const [query, setQuery] = useState("");
+/// What was said, in every session: the one sidebar search looks in the titles and in the
+/// conversations, the way the Mac app's does (SidebarView.swift:84-112).
+function MessageSearch({ query }: { query: string }) {
   const [matches, setMatches] = useState<{ session: { id: string; title?: string | null }; hits: { snippet: string }[] }[]>([]);
   const [open, setOpen] = useState(false);
 
@@ -634,26 +688,18 @@ function MessageSearch() {
   }, [query]);
 
   return (
-    <>
-      <input
-        id="message-search"
-        className="file-search"
-        placeholder="Search messages…"
-        spellCheck={false}
-        value={query}
-        onChange={event => setQuery(event.target.value)}
-      />
-      <div id="message-search-results" className="search-results" hidden={!open}>
-        {matches.slice(0, 20).map(match => (
-          <div className="hit" key={match.session.id}>
-            <div>{match.session.title || match.session.id}</div>
-            {match.hits.map((hit, index) => (
-              <div className="where" key={index} onClick={() => void openSession(match.session.id)}>{hit.snippet}</div>
-            ))}
-          </div>
-        ))}
-      </div>
-    </>
+    <div id="message-search-results" className="search-results" hidden={!open}>
+      <div className="search-heading">In Conversations</div>
+      {matches.length === 0 ? <div className="search-empty">No conversations match.</div> : null}
+      {matches.slice(0, 20).map(match => (
+        <div className="hit" key={match.session.id}>
+          <div>{match.session.title || match.session.id}</div>
+          {match.hits.map((hit, index) => (
+            <div className="where" key={index} onClick={() => void openSession(match.session.id)}>{hit.snippet}</div>
+          ))}
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -1183,6 +1229,7 @@ export function App() {
         return;
       }
       if (event.key === "Escape") {
+        if ((document.activeElement as HTMLElement | null)?.id === "find") (document.activeElement as HTMLElement).blur();
         state.paletteOpen = false;
         state.settingsOpen = false;
         state.diffOpen = false;
@@ -1210,7 +1257,9 @@ export function App() {
       <Header />
       <main className={state.sidebarOpen === false ? "sidebar-hidden" : ""}>
         <Sidebar />
-        <section id="conversation">
+        <section id="conversation" className="card conversation-card">
+          <div className="card-fade" aria-hidden="true" />
+          <CardHeader />
           <div id="session-tabs" className="session-tabs" hidden={state.openSessions.length < 2}>
             {state.openSessions.map(id => {
               const session = state.sessions.find(s => s.id === id) ?? (state.session?.id === id ? state.session : null);
