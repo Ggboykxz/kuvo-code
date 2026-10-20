@@ -2974,13 +2974,19 @@ button > svg, .small > svg, .session-delete > svg, .keycap-clear > svg { display
   color: var(--ink-soft);
   animation: none;
 }
-.spinner { display: inline-block; flex: 0 0 auto; color: var(--ink-soft); }
+/* The mark fades as a whole, the Mac's way: the layer that holds both copies fades
+   (Spinner.swift:141-143), so the faint one fades with the drawn one. */
+.spinner {
+  display: inline-block;
+  flex: 0 0 auto;
+  color: var(--ink-soft);
+  animation: kuvo-spinner-fade 1.6s linear infinite;
+}
 .spinner-faint { opacity: 0.18; }
 .spinner-drawn { opacity: 1; }
 .spinner-reveal { stroke-dasharray: 1 1; }
 .spinner-reveal-chevron { animation: kuvo-spinner-chevron 1.6s linear infinite; }
 .spinner-reveal-cursor { animation: kuvo-spinner-cursor 1.6s linear infinite; }
-.spinner-drawn { animation: kuvo-spinner-fade 1.6s linear infinite; }
 @keyframes kuvo-spinner-chevron {
   0% { stroke-dashoffset: 1; }
   40% { stroke-dashoffset: 0; }
@@ -2999,7 +3005,8 @@ button > svg, .small > svg, .session-delete > svg, .keycap-clear > svg { display
 /* The system asks for less movement: it gets less. The Mac's still mark — the whole
    prompt mark, held (Spinner.swift:19-24). */
 @media (prefers-reduced-motion: reduce) {
-  .spinner-faint { opacity: 1; }
+  .spinner { animation: none; opacity: 0.8; }
+  .spinner-faint { opacity: 0.8; }
   .spinner-drawn { display: none; }
 }
 

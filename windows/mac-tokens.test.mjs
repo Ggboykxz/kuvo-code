@@ -347,8 +347,10 @@ const checks = [
     assert.match(css, /animation: kuvo-spinner-fade 1\.6s linear infinite/);
     assert.match(css, /@keyframes kuvo-spinner-chevron \{\n  0% \{ stroke-dashoffset: 1; \}/);
     assert.match(css, /@keyframes kuvo-spinner-fade \{\n  0%, 78% \{ opacity: 1; \}/);
-    // The faint copy is the Mac's: the mark at 18 % of the ink (Spinner.swift:104-108).
+    // The faint copy is the Mac's: the mark at 18 % of the ink (Spinner.swift:104-108),
+    // and the whole mark fades together (Spinner.swift:141-143).
     assert.match(css, /\.spinner-faint \{ opacity: 0\.18; \}/);
+    assert.match(css, /\.spinner \{[^}]*animation: kuvo-spinner-fade 1\.6s linear infinite;/s);
     // And it stands still when the system asks for less movement (Spinner.swift:19-24).
     assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.spinner-drawn \{ display: none; \}/);
     // The mark itself is the Mac's own: the chevron and the cursor, on the icon's
