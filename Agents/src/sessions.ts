@@ -1693,6 +1693,12 @@ export class Sessions {
         },
       })
       emit("permission.asked", request as unknown as Record<string, unknown>, session.location.directory)
+      // Settled by the agent itself: the card goes.
+      ask.signal?.addEventListener("abort", () => {
+        if (!live.permissions.delete(request.id)) return
+        resolve("reject")
+        emit("permission.replied", { sessionID: id, requestID: request.id }, session.location.directory)
+      })
     })
   }
 
@@ -1729,6 +1735,11 @@ export class Sessions {
     return new Promise((resolve) => {
       live.forms.set(form.id, { form, resolve })
       emit("form.created", { form }, session.location.directory)
+      ask.signal?.addEventListener("abort", () => {
+        if (!live.forms.delete(form.id)) return
+        resolve(null)
+        emit("form.cancelled", { id: form.id, sessionID: id }, session.location.directory)
+      })
     })
   }
 

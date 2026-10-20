@@ -184,6 +184,8 @@ export interface FormField {
   options?: FormOption[]
   custom?: boolean
   url?: string
+  /** How a string is written: "password" hides it as you type. */
+  format?: string
 }
 
 export interface FormRequest {

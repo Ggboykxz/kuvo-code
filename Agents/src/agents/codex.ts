@@ -11,7 +11,7 @@ import type { Limit } from "../auto"
 import { accountName, failure, model } from "../agent"
 import { fromPatch } from "../diff"
 import { emit } from "../events"
-import { kuvoTools } from "../kuvotools"
+import { kuvoTools, toolServerName } from "../kuvotools"
 import { pictureData, pictureFile, withPictures } from "../pictures"
 import { newID } from "../ids"
 import { maintenance, update, type MaintenanceDefinition } from "../maintenance"
@@ -137,7 +137,7 @@ export class CodexAgent implements Agent {
     if (this.instance.home) shadowHome(this.instance.home)
     const rpc = new RPC([executable, "app-server"], { cwd: this.context.temporary, env: this.instance.home ? { CODEX_HOME: this.instance.home } : undefined })
     rpc.onNotification = (method, params) => this.notification(method, params)
-    rpc.onRequest = (method, params) => this.request(method, params)
+    rpc.onRequest = (method, params, id) => this.request(method, params, id)
     rpc.onExit = () => {
       // Stopped on purpose: the threads were told then (they may be on a newer one by now).
       if (this.server !== rpc) return
@@ -180,17 +180,49 @@ export class CodexAgent implements Agent {
       }
       return
     }
+    // Codex settled an ask itself: its card goes.
+    if (method === "serverRequest/resolved") {
+      this.asked.get(String(params?.requestId))?.abort()
+      return
+    }
     const threadID = params?.threadId
+    // For whoever's at work (a warning, Codex's settings): each session with a turn under way hears it.
+    if (!threadID && ["warning", "deprecationNotice", "configWarning", "mcpServer/startupStatus/updated"].includes(method)) {
+      for (const thread of new Set(this.threads.values())) thread.notification(method, params)
+      return
+    }
     const oneOff = threadID ? this.oneOffs.get(threadID) : undefined
     if (oneOff) return oneOff(method, params)
-    if (threadID) this.threadFor(threadID)?.notification(method, params)
+    if (!threadID) return
+    const thread = this.threadFor(threadID)
+    if (thread) return thread.notification(method, params)
+    // Kept a moment, for a spawned agent's thread its spawn hasn't named yet.
+    const now = Date.now()
+    for (const [id, kept] of this.early) if (now - kept.at > 30_000) this.early.delete(id)
+    const kept = this.early.get(threadID) ?? { at: now, events: [] }
+    if (kept.events.length < 500) kept.events.push([method, params])
+    this.early.set(threadID, kept)
   }
 
-  private async request(method: string, params: any): Promise<unknown> {
+  /** Asks under way, by Codex's request: one it settles itself (`serverRequest/resolved`) is taken back. */
+  private asked = new Map<string, AbortController>()
+
+  private async request(method: string, params: any, id?: number | string): Promise<unknown> {
     const thread = params?.threadId ? this.threadFor(params.threadId) : params?.conversationId ? this.threadFor(params.conversationId) : undefined
-    if (method === "mcpServer/elicitation/request") return { action: "decline" }
-    if (!thread) throw new RPCError(-32601, `No session for ${method}.`)
-    return thread.request(method, params)
+    // A tool of the app's: it gives Codex none.
+    if (method === "item/tool/call") return { success: false, contentItems: [{ type: "inputText", text: "Kuvo Code has no such tool." }] }
+    if (!thread) {
+      if (method === "mcpServer/elicitation/request") return { action: "decline" }
+      throw new RPCError(-32601, `No session for ${method}.`)
+    }
+    const controller = new AbortController()
+    const key = String(id ?? newID("call"))
+    this.asked.set(key, controller)
+    try {
+      return await thread.request(method, params, controller.signal)
+    } finally {
+      this.asked.delete(key)
+    }
   }
 
   private threadFor(nativeID: string): CodexThread | undefined {
@@ -213,7 +245,14 @@ export class CodexAgent implements Agent {
 
   adopt(threadID: string, thread: CodexThread) {
     this.spawned.set(threadID, thread)
+    // What its thread said before it was known (it began at once): told now, in order.
+    const early = this.early.get(threadID)
+    this.early.delete(threadID)
+    for (const [method, params] of early?.events ?? []) thread.notification(method, params)
   }
+
+  /** What threads not known yet said, for a little while (a spawned agent's first words can come before its spawn is). */
+  private early = new Map<string, { at: number; events: [string, any][] }>()
 
   async account(fresh = false): Promise<Account> {
     if (!this.executable()) return { installed: false, signedIn: false, message: "Install Codex, then sign in here." }
@@ -351,6 +390,13 @@ interface Lane {
   /** A tool ran since the last words: the next words start a new step. */
   toolsSinceText: boolean
   usage?: TokenUsage
+  /** Reasoning items whose summary came as deltas (their raw text then isn't shown too), and those whose raw text did. */
+  summarized?: Set<string>
+  reasoned?: Set<string>
+  /** Its to-do list's tool call, kept up to date until the turn ends. */
+  plan?: { id: string; todos: { content: string; status: string }[] }
+  /** Notices it has given this turn (a reconnect's is given once). */
+  noticed?: Set<string>
 }
 
 /** An agent Codex spawned: its thread's work, told in a session of its own. */
@@ -368,8 +414,6 @@ interface Active extends Lane {
   subagents: Map<string, SubagentLane>
   /** Spawn calls under way whose thread isn't known yet, oldest first. */
   spawning: string[]
-  /** Its to-do list's tool call, kept up to date until the turn ends. */
-  plan?: { id: string; todos: { content: string; status: string }[] }
   resolve: (result: RunResult) => void
   turnID?: string
   /** On Auto: a limit ends the turn rather than being waited out. */
@@ -561,6 +605,11 @@ class CodexThread implements Thread {
     const active = this.active
     // An agent it spawned: told in its session (one still at work after the turn too).
     if (params?.threadId && this.nativeID && params.threadId !== this.nativeID) return this.subagentNotification(active, params.threadId, method, params)
+    // Codex let go of the thread: the next turn loads it again.
+    if (method === "thread/closed") {
+      this.loaded = false
+      return
+    }
     if (!active) return
     const turn = active.turn
     // Another turn's (one stopped before, ending late).
@@ -570,47 +619,11 @@ class CodexThread implements Thread {
       case "turn/started":
         active.turnID ??= params.turn?.id
         return
-      case "item/agentMessage/delta":
-        this.words(active)
-        active.streamed.add(params.itemId)
-        turn.text(params.delta ?? "")
-        return
-      case "item/reasoning/summaryTextDelta":
-        this.words(active)
-        turn.reasoning(params.delta ?? "")
-        return
-      case "item/commandExecution/outputDelta": {
-        const output = ((active.output.get(params.itemId) ?? "") + (params.delta ?? "")).slice(-outputLimit)
-        active.output.set(params.itemId, output)
-        turn.toolProgress(params.itemId, { output })
-        return
-      }
-      case "item/started":
-        return this.itemStarted(active, params.item)
-      case "item/completed":
-        return this.itemCompleted(active, params.item)
-      case "turn/plan/updated": {
-        // Its to-do list, one a turn, brought up to date as it works through it.
-        const todos = ((params.plan ?? []) as { step: string; status: string }[]).map((entry) => ({ content: entry.step, status: entry.status === "inProgress" ? "in_progress" : entry.status }))
-        const id = active.plan?.id ?? newID("call")
-        active.plan = { id, todos }
-        if (!turn.hasTool(id)) turn.toolStart(id, "todowrite", { todos })
-        else turn.toolCalled(id, { todos })
-        return
-      }
       case "thread/tokenUsage/updated": {
         // How much its model holds, as Codex says: the models list it.
         const window = params.tokenUsage?.modelContextWindow
         if (typeof window === "number" && window > 0) this.agent.noteContext(active.model, window)
-        const last = params.tokenUsage?.last
-        if (last) {
-          active.usage = {
-            input: Math.max(0, (last.inputTokens ?? 0) - (last.cachedInputTokens ?? 0)),
-            output: Math.max(0, (last.outputTokens ?? 0) - (last.reasoningOutputTokens ?? 0)),
-            reasoning: last.reasoningOutputTokens ?? 0,
-            cache: { read: last.cachedInputTokens ?? 0, write: last.cacheWriteInputTokens ?? 0 },
-          }
-        }
+        this.laneNotification(active, method, params)
         return
       }
       case "error": {
@@ -632,6 +645,8 @@ class CodexThread implements Thread {
           return
         }
         if (!params.willRetry) active.problem = params.error?.additionalDetails || params.error?.message
+        // Trying again (a dropped connection, an overloaded server): said once, so it isn't a silent stall.
+        else this.noticeOnce(active, "retry", `Codex hit a problem and is trying again: ${params.error?.message ?? "the connection dropped"}.`)
         return
       }
       case "turn/completed": {
@@ -648,7 +663,136 @@ class CodexThread implements Thread {
         else active.resolve({ outcome: "succeeded" })
         return
       }
+      default:
+        this.laneNotification(active, method, params)
     }
+  }
+
+  /**
+   * What a thread says that's the same for the turn's own and a spawned agent's: words, thinking,
+   * steps, its to-do list, and what Codex says for you to read (warnings, hooks, a model switched).
+   */
+  private laneNotification(lane: Lane, method: string, params: any) {
+    const turn = lane.turn
+    switch (method) {
+      case "item/agentMessage/delta":
+        this.words(lane)
+        lane.streamed.add(params.itemId)
+        turn.text(params.delta ?? "")
+        return
+      case "item/reasoning/summaryTextDelta":
+        this.words(lane)
+        ;(lane.summarized ??= new Set()).add(params.itemId)
+        turn.reasoning(params.delta ?? "")
+        return
+      case "item/reasoning/summaryPartAdded":
+        if ((params.summaryIndex ?? 0) > 0) turn.reasoning("\n\n")
+        return
+      case "item/reasoning/textDelta":
+        // Its own thinking, for a model that sends no summary of it.
+        if (lane.summarized?.has(params.itemId)) return
+        this.words(lane)
+        ;(lane.reasoned ??= new Set()).add(params.itemId)
+        turn.reasoning(params.delta ?? "")
+        return
+      case "item/plan/delta":
+        this.words(lane)
+        lane.streamed.add(params.itemId)
+        turn.text(params.delta ?? "")
+        return
+      case "item/commandExecution/outputDelta": {
+        const output = ((lane.output.get(params.itemId) ?? "") + (params.delta ?? "")).slice(-outputLimit)
+        lane.output.set(params.itemId, output)
+        turn.toolProgress(params.itemId, { output })
+        return
+      }
+      case "item/commandExecution/terminalInteraction": {
+        // What it typed into the command while it ran.
+        const output = ((lane.output.get(params.itemId) ?? "") + `\n> ${params.stdin ?? ""}\n`).slice(-outputLimit)
+        lane.output.set(params.itemId, output)
+        turn.toolProgress(params.itemId, { output })
+        return
+      }
+      case "item/fileChange/patchUpdated": {
+        const changes = codexChanges(params.changes)
+        lane.changes.set(params.itemId, changes)
+        turn.toolProgress(params.itemId, { files: changes.map(changeDiff) })
+        return
+      }
+      case "item/mcpToolCall/progress":
+        if (typeof params.message === "string") turn.toolProgress(params.itemId, { output: params.message })
+        return
+      case "item/started":
+        return this.itemStarted(lane, params.item)
+      case "item/completed":
+        return this.itemCompleted(lane, params.item)
+      case "turn/plan/updated": {
+        // Its to-do list, one a turn, brought up to date as it works through it.
+        const todos = ((params.plan ?? []) as { step: string; status: string }[]).map((entry) => ({ content: entry.step, status: entry.status === "inProgress" ? "in_progress" : entry.status }))
+        const id = lane.plan?.id ?? newID("call")
+        lane.plan = { id, todos }
+        if (!turn.hasTool(id)) turn.toolStart(id, "todowrite", { todos })
+        else turn.toolCalled(id, { todos })
+        return
+      }
+      case "thread/tokenUsage/updated": {
+        const last = params.tokenUsage?.last
+        if (last) {
+          lane.usage = {
+            input: Math.max(0, (last.inputTokens ?? 0) - (last.cachedInputTokens ?? 0)),
+            output: Math.max(0, (last.outputTokens ?? 0) - (last.reasoningOutputTokens ?? 0)),
+            reasoning: last.reasoningOutputTokens ?? 0,
+            cache: { read: last.cachedInputTokens ?? 0, write: last.cacheWriteInputTokens ?? 0 },
+          }
+        }
+        return
+      }
+      case "hook/started":
+      case "hook/completed": {
+        // A hook of yours ran (Codex's settings): a step, with what it said.
+        const run = params.run ?? {}
+        const id = `hook:${run.id ?? newID("call")}`
+        if (!turn.hasTool(id)) {
+          lane.toolsSinceText = true
+          turn.toolStart(id, "hook", { description: `${run.eventName ?? "hook"} hook`, source: run.sourcePath })
+        }
+        if (method === "hook/started") return
+        const said = ((run.entries ?? []) as { kind?: string; text?: string }[]).map((entry) => (entry.kind && entry.kind !== "context" ? `${entry.kind}: ${entry.text ?? ""}` : (entry.text ?? ""))).filter(Boolean).join("\n")
+        if (run.status === "failed" || run.status === "blocked") turn.toolFailed(id, said || (run.statusMessage ?? `The hook ${run.status}.`))
+        else turn.toolSucceeded(id, said || (run.statusMessage ?? ""))
+        return
+      }
+      case "model/rerouted":
+        turn.notice(`${params.toModel ?? "Another model"} answered instead of ${params.fromModel ?? "the one you picked"}${params.reason === "highRiskCyberActivity" ? " (Codex moves security-sensitive work to it)" : ""}.`)
+        return
+      case "model/verification":
+        if (Array.isArray(params.verifications) && params.verifications.length) turn.notice(`Codex asks for verification to go on: ${params.verifications.join(", ")}.`)
+        return
+      case "model/safetyBuffering/updated":
+        if (params.showBufferingUi) this.noticeOnce(lane, "buffering", `Codex is checking ${params.model ?? "this model"}'s answer before showing it${params.fasterModel ? `; ${params.fasterModel} would be faster` : ""}.`)
+        return
+      case "modelProvider/authRecoveryStarted":
+      case "modelProvider/authRecoveryCompleted":
+      case "warning":
+      case "guardianWarning":
+        if (typeof params.message === "string" && params.message.trim()) turn.notice(params.message.trim())
+        return
+      case "deprecationNotice":
+      case "configWarning":
+        if (params.summary) turn.notice([params.summary, params.details, params.path].filter(Boolean).join(" — "))
+        return
+      case "mcpServer/startupStatus/updated":
+        // Kuvo Code's own tools, there or not: the agent works without them when they don't start.
+        if (params.name === toolServerName && params.status === "failed") turn.notice(`Kuvo Code's tools didn't start for Codex${params.error ? `: ${params.error}` : ""}.`)
+        return
+    }
+  }
+
+  /** A notice for this turn, once. */
+  private noticeOnce(lane: Lane, key: string, text: string) {
+    if (lane.noticed?.has(key)) return
+    ;(lane.noticed ??= new Set()).add(key)
+    lane.turn.notice(text)
   }
 
   /** A thread this session's Codex spawned started: the oldest spawn call under way is its. */
@@ -686,38 +830,19 @@ class CodexThread implements Thread {
       if (method !== "turn/started" || !active) return
       lane = this.continueSubagent(active, threadID, lane)
     }
-    const turn = lane.turn
     switch (method) {
-      case "item/agentMessage/delta":
-        this.words(lane)
-        lane.streamed.add(params.itemId)
-        turn.text(params.delta ?? "")
+      case "error":
+        if (!params.willRetry && params.error?.message) lane.turn.notice(params.error.message)
         return
-      case "item/reasoning/summaryTextDelta":
-        this.words(lane)
-        turn.reasoning(params.delta ?? "")
-        return
-      case "item/commandExecution/outputDelta": {
-        const output = ((lane.output.get(params.itemId) ?? "") + (params.delta ?? "")).slice(-outputLimit)
-        lane.output.set(params.itemId, output)
-        turn.toolProgress(params.itemId, { output })
-        return
-      }
-      case "item/started":
-        return this.itemStarted(lane, params.item)
-      case "item/completed":
-        return this.itemCompleted(lane, params.item)
-      case "thread/tokenUsage/updated": {
-        const last = params.tokenUsage?.last
-        if (last) lane.usage = { input: Math.max(0, (last.inputTokens ?? 0) - (last.cachedInputTokens ?? 0)), output: Math.max(0, (last.outputTokens ?? 0) - (last.reasoningOutputTokens ?? 0)), reasoning: last.reasoningOutputTokens ?? 0, cache: { read: last.cachedInputTokens ?? 0, write: last.cacheWriteInputTokens ?? 0 } }
-        return
-      }
       case "turn/completed": {
         const status = params.turn?.status
+        if (lane.plan) lane.turn.toolSucceeded(lane.plan.id, "", { todos: lane.plan.todos })
         this.endSubagent(lane, status === "failed" ? "failed" : status === "interrupted" ? "interrupted" : "succeeded", params.turn?.error?.message)
         this.backgroundLanes.delete(threadID)
         return
       }
+      default:
+        this.laneNotification(lane, method, params)
     }
   }
 
@@ -821,11 +946,16 @@ class CodexThread implements Thread {
         return
       case "fileChange": {
         active.toolsSinceText = true
-        const changes = (item.changes ?? []).map((change: any) => ({ path: change.path, kind: change.kind?.type ?? "update", diff: change.diff ?? "" }))
+        const changes = codexChanges(item.changes)
         active.changes.set(item.id, changes)
-        turn.toolStart(item.id, "patch", { files: changes.map((change: { path: string }) => change.path) })
+        turn.toolStart(item.id, "patch", { files: changes.map((change) => change.path) })
         return
       }
+      case "functionCallOutput":
+        // A tool of Codex's own that has no item of its own: what it came back with.
+        active.toolsSinceText = true
+        turn.toolStart(item.id, [item.namespace, item.name].filter(Boolean).join(".") || "tool", {})
+        return
       case "mcpToolCall":
         active.toolsSinceText = true
         turn.toolStart(item.id, `${item.server}_${item.tool}`, item.arguments ?? {})
@@ -858,13 +988,20 @@ class CodexThread implements Thread {
   private itemCompleted(lane: Lane, item: any) {
     const active = lane
     const turn = lane.turn
+    // A step whose start wasn't told (it came whole): started now, so its end isn't lost.
+    if (["commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "webSearch", "functionCallOutput"].includes(item?.type) && typeof item.id === "string" && !turn.hasTool(item.id)) this.itemStarted(lane, item)
     switch (item?.type) {
       case "sleep":
         if (turn.hasTool(item.id)) turn.toolSucceeded(item.id, `Waited ${Math.round((item.durationMs ?? 0) / 1000)} seconds.`)
         return
       case "collabAgentToolCall": {
         if (item.tool === "wait") {
-          if (turn.hasTool(item.id)) item.status === "failed" ? turn.toolFailed(item.id, "It stopped waiting.") : turn.toolSucceeded(item.id, "Done waiting.")
+          // What each agent it waited for said.
+          const states = Object.values((item.agentsStates ?? {}) as Record<string, { status?: string; message?: string | null }>)
+            .map((state) => [state.status, state.message].filter(Boolean).join(": "))
+            .filter(Boolean)
+            .join("\n")
+          if (turn.hasTool(item.id)) item.status === "failed" ? turn.toolFailed(item.id, states || "It stopped waiting.") : turn.toolSucceeded(item.id, states || "Done waiting.")
           return
         }
         if (item.tool !== "spawnAgent") {
@@ -887,23 +1024,38 @@ class CodexThread implements Thread {
         if (spawned && (item.kind === "completed" || item.kind === "interrupted")) this.endSubagent(spawned, item.kind === "completed" ? "succeeded" : "interrupted")
         return
       }
-      case "agentMessage":
+      case "agentMessage": {
         if (!active.streamed.has(item.id) && item.text) {
           this.words(active)
           turn.text(item.text)
         }
+        // Questions it leaves for you, and what it remembered and where from.
+        const questions = ((item.questions ?? []) as { title?: string; options?: string[] | null }[]).map((question) => `- ${question.title ?? ""}${question.options?.length ? ` (${question.options.join(" / ")})` : ""}`)
+        if (questions.length) turn.text(`\n\n${questions.join("\n")}`)
+        const cited = ((item.memoryCitation?.entries ?? []) as { path?: string; lineStart?: number; lineEnd?: number; note?: string }[]).map((entry) => `${entry.path}:${entry.lineStart}-${entry.lineEnd}${entry.note ? ` (${entry.note})` : ""}`)
+        if (cited.length) turn.text(`\n\nFrom memory: ${cited.join("; ")}`)
         turn.endBlock()
         return
-      case "reasoning":
+      }
+      case "reasoning": {
+        // Thinking that wasn't told as it came: told now.
+        if (!active.summarized?.has(item.id) && !active.reasoned?.has(item.id)) {
+          const said = [...(item.summary ?? []), ...(item.summary?.length ? [] : (item.content ?? []))].filter((part: unknown) => typeof part === "string" && part.trim()).join("\n\n")
+          if (said) {
+            this.words(active)
+            turn.reasoning(said)
+          }
+        }
         turn.endBlock()
         return
+      }
       case "plan":
-        // Plan mode's proposal: the plan, in words.
-        if (item.text) {
+        // Plan mode's proposal: the plan, in words (unless it came as it was written).
+        if (item.text && !active.streamed.has(item.id)) {
           this.words(active)
           turn.text(item.text)
-          turn.endBlock()
         }
+        turn.endBlock()
         return
       case "commandExecution": {
         const output = (item.aggregatedOutput ?? active.output.get(item.id) ?? "").slice(-outputLimit)
@@ -913,34 +1065,57 @@ class CodexThread implements Thread {
         return
       }
       case "fileChange": {
-        const changes: { path: string; kind: string; diff: string }[] = (item.changes ?? []).map((change: any) => ({ path: change.path, kind: change.kind?.type ?? "update", diff: change.diff ?? "" }))
-        const files: FileDiff[] = changes.map((change) => fromPatch(change.path, change.diff, change.kind === "add" ? "added" : change.kind === "delete" ? "deleted" : "modified"))
+        const changes = codexChanges(item.changes)
+        const files: FileDiff[] = changes.map(changeDiff)
+        const said = changes.map((change) => (change.movedTo ? `${change.path} → ${change.movedTo}` : change.path)).join("\n")
         if (item.status === "declined") turn.toolFailed(item.id, "Declined.", { files })
         else if (item.status === "failed") turn.toolFailed(item.id, "The change couldn't be made.", { files })
-        else turn.toolSucceeded(item.id, changes.map((change) => change.path).join("\n"), { files })
+        else turn.toolSucceeded(item.id, said, { files })
         return
       }
       case "mcpToolCall": {
         const content = item.result?.content ?? []
-        const text = content.map((part: any) => part?.text ?? "").filter(Boolean).join("\n")
-        if (item.error || item.status === "failed") turn.toolFailed(item.id, item.error?.message ?? text ?? "The tool failed.")
-        else turn.toolSucceeded(item.id, withPictures(text.slice(0, outputLimit), content.map((part: any) => (part?.type === "image" ? pictureData(part.data, part.mimeType) : undefined))))
+        const parts = mcpParts(content)
+        const text = parts.text || (item.result?.structuredContent !== undefined && item.result?.structuredContent !== null ? JSON.stringify(item.result.structuredContent, null, 2) : "")
+        if (item.error || item.status === "failed") turn.toolFailed(item.id, item.error?.message || text || "The tool failed.")
+        else turn.toolSucceeded(item.id, withPictures(text.slice(0, outputLimit), parts.pictures))
         return
       }
       case "dynamicToolCall": {
-        const text = (item.contentItems ?? []).map((part: any) => part?.text ?? "").filter(Boolean).join("\n")
+        const items = (item.contentItems ?? []) as { type?: string; text?: string; imageUrl?: string }[]
+        const text = items.map((part) => part?.text ?? "").filter(Boolean).join("\n")
+        const pictures = items.map((part) => (part?.type === "inputImage" ? pictureUrl(part.imageUrl) : undefined))
         if (item.success === false) turn.toolFailed(item.id, text || "The tool failed.")
-        else turn.toolSucceeded(item.id, text.slice(0, outputLimit))
+        else turn.toolSucceeded(item.id, withPictures(text.slice(0, outputLimit), pictures))
         return
       }
-      case "webSearch":
-        turn.toolSucceeded(item.id, "")
+      case "webSearch": {
+        // What it searched for or opened, and what came back.
+        const action = item.action ?? {}
+        const lines = [action.url ? `Opened ${action.url}` : "", action.pattern ? `Looked for "${action.pattern}"` : "", ...((action.queries ?? []) as string[]).map((query) => `Searched for "${query}"`)]
+        for (const result of (item.results ?? []) as any[]) lines.push([result?.title, result?.url].filter(Boolean).join(" — "))
+        turn.toolSucceeded(item.id, lines.filter(Boolean).join("\n").slice(0, outputLimit))
         return
-      case "imageGeneration":
+      }
+      case "imageGeneration": {
         if (!turn.hasTool(item.id)) turn.toolStart(item.id, "generate_image", { prompt: item.revisedPrompt ?? "" })
-        if (item.status === "failed" || item.failure) turn.toolFailed(item.id, String(item.failure?.message ?? item.failure ?? "The image couldn't be made."))
-        else turn.toolSucceeded(item.id, withPictures("", [pictureFile(item.savedPath)]))
+        const failure = item.failure
+        if (item.status === "failed" || failure) {
+          const resets = typeof failure?.resetsAt === "number" ? ` It resets ${new Date(failure.resetsAt * 1000).toLocaleString()}.` : ""
+          turn.toolFailed(item.id, failure?.type === "usageLimitExceeded" ? `You've reached your limit for making images.${resets}` : "The image couldn't be made.")
+        } else turn.toolSucceeded(item.id, withPictures("", [pictureFile(item.savedPath) ?? pictureData(item.result, "image/png")]))
         return
+      }
+      case "functionCallOutput": {
+        const output = item.output
+        if (typeof output === "string") turn.toolSucceeded(item.id, output.slice(0, outputLimit))
+        else {
+          const parts = (Array.isArray(output) ? output : []) as { type?: string; text?: string; image_url?: string }[]
+          const text = parts.map((part) => part?.text ?? "").filter(Boolean).join("\n")
+          turn.toolSucceeded(item.id, withPictures(text.slice(0, outputLimit), parts.map((part) => pictureUrl(part?.image_url))))
+        }
+        return
+      }
       case "imageView":
         if (!turn.hasTool(item.id)) turn.toolStart(item.id, "read", { path: item.path })
         turn.toolSucceeded(item.id, withPictures("", [pictureFile(item.path)]))
@@ -969,21 +1144,30 @@ class CodexThread implements Thread {
     }
   }
 
-  async request(method: string, params: any): Promise<unknown> {
+  async request(method: string, params: any, signal?: AbortSignal): Promise<unknown> {
     const active = this.active
-    if (!active) {
+    // An agent it spawned, still at work after the turn: it asks as its own.
+    const background = !active && params?.threadId ? this.backgroundLanes.get(params.threadId) : undefined
+    if (!active && !background) {
       if (method === "item/tool/requestUserInput") return { answers: {} }
+      if (method === "mcpServer/elicitation/request") return { action: "decline" }
       return method.endsWith("Approval") || method.endsWith("/requestApproval") ? (method.startsWith("item/") ? { decision: "decline" } : { decision: "denied" }) : {}
     }
-    const hooks = active.hooks
+    const hooks = {
+      permission: (ask: Parameters<TurnHooks["permission"]>[0]) => (active ? active.hooks.permission({ ...ask, signal }) : background!.run.permission({ ...ask, signal })),
+      question: (ask: Parameters<TurnHooks["question"]>[0]) => (active ? active.hooks.question({ ...ask, signal }) : Promise.resolve(null)),
+    }
     switch (method) {
       case "item/commandExecution/requestApproval": {
-        const decision = await hooks.permission({ toolCallID: params.itemId, action: "shell", resources: [unwrapShell(params.command ?? "")], message: params.reason ?? undefined })
+        // A command, or a connection to a site it wants (its sandbox keeps it off the network).
+        const host = params.networkApprovalContext?.host
+        const command = unwrapShell(params.command ?? "")
+        const decision = host && !command ? await hooks.permission({ toolCallID: params.itemId, action: "webfetch", resources: [host], message: params.reason ?? `Codex wants to reach ${host}.` }) : await hooks.permission({ toolCallID: params.itemId, action: "shell", resources: [command || "*"], message: params.reason ?? undefined })
         return { decision: decision === "always" ? "acceptForSession" : decision === "once" ? "accept" : "decline" }
       }
       case "item/fileChange/requestApproval": {
         // A spawned agent's change: its session has it.
-        const lane: Lane = (params.threadId && params.threadId !== this.nativeID ? active.subagents.get(params.threadId) : undefined) ?? active
+        const lane: Lane = (params.threadId && params.threadId !== this.nativeID ? (active?.subagents.get(params.threadId) ?? background) : undefined) ?? active ?? background!
         const changes = lane.changes.get(params.itemId) ?? []
         const files = changes.map((change) => fromPatch(change.path, change.diff, change.kind === "add" ? "added" : change.kind === "delete" ? "deleted" : "modified"))
         const decision = await hooks.permission({
@@ -997,7 +1181,8 @@ class CodexThread implements Thread {
       }
       case "item/permissions/requestApproval": {
         const paths = [...(params.permissions?.fileSystem?.read ?? []), ...(params.permissions?.fileSystem?.write ?? [])]
-        const decision = await hooks.permission({ toolCallID: params.itemId, action: "external_directory", resources: paths.length ? paths : ["*"], message: params.reason ?? undefined })
+        const network = params.permissions?.network?.enabled
+        const decision = await hooks.permission({ toolCallID: params.itemId, action: paths.length || !network ? "external_directory" : "webfetch", resources: paths.length ? paths : network ? ["the network"] : ["*"], message: params.reason ?? undefined })
         return decision === "reject" ? { permissions: {}, scope: "turn" } : { permissions: params.permissions, scope: decision === "always" ? "session" : "turn" }
       }
       case "execCommandApproval": {
@@ -1011,7 +1196,7 @@ class CodexThread implements Thread {
         return { decision: decision === "always" ? "approved_for_session" : decision === "once" ? "approved" : "denied" }
       }
       case "item/tool/requestUserInput": {
-        const questions = (params.questions ?? []) as { id: string; header?: string; question: string; options?: { label: string; description?: string }[]; isOther?: boolean }[]
+        const questions = (params.questions ?? []) as { id: string; header?: string; question: string; options?: { label: string; description?: string }[]; isOther?: boolean; isSecret?: boolean }[]
         const fields: FormField[] = questions.map((question) => ({
           key: question.id,
           title: question.header ?? "Question",
@@ -1020,6 +1205,8 @@ class CodexThread implements Thread {
           type: "string",
           options: question.options?.map((option) => ({ value: option.label, label: option.label, description: option.description })),
           custom: question.isOther ?? !question.options?.length,
+          // A secret (a password, a key): hidden as it's typed.
+          ...(question.isSecret ? { format: "password" } : {}),
         }))
         const answer = await hooks.question({ title: questions.length === 1 ? questions[0].header ?? "Question" : "Questions", fields, toolCallID: params.itemId })
         const answers: Record<string, { answers: string[] }> = {}
@@ -1028,6 +1215,28 @@ class CodexThread implements Thread {
           answers[question.id] = { answers: value === undefined || value === null ? [] : Array.isArray(value) ? value.map(String) : [String(value)] }
         }
         return { answers }
+      }
+      case "mcpServer/elicitation/request": {
+        // An MCP server asks you something (a form), or to open a page (a sign-in).
+        const title = `${params.serverName ?? "A tool"} asks`
+        if (params.mode === "url") {
+          const answer = await hooks.question({ title, fields: [{ key: "open", title: params.message ?? "Open this page to go on.", type: "external", url: params.url }] })
+          return { action: answer ? "accept" : "decline" }
+        }
+        const schema = params.requestedSchema ?? {}
+        const required = new Set<string>(Array.isArray(schema.required) ? schema.required : [])
+        const fields: FormField[] = Object.entries((schema.properties ?? {}) as Record<string, any>).map(([key, field]) => elicitationField(key, field, required.has(key)))
+        // Its message goes with the form's first field; a form with no fields is a yes or no.
+        if (fields[0] && params.message) fields[0] = { ...fields[0], description: [params.message, fields[0].description].filter(Boolean).join("\n\n") }
+        const answer = await hooks.question({ title, fields: fields.length ? fields : [{ key: "ok", title: params.message ?? "Go on?", type: "boolean", required: true }] })
+        if (!answer) return { action: "decline" }
+        const content: Record<string, unknown> = {}
+        for (const [key, field] of Object.entries((schema.properties ?? {}) as Record<string, any>)) {
+          const value = answer[key]
+          if (value === undefined || value === null || value === "") continue
+          content[key] = field?.type === "number" || field?.type === "integer" ? Number(value) : field?.type === "boolean" ? value === true || value === "true" : value
+        }
+        return { action: "accept", content }
       }
     }
     throw new RPCError(-32601, `Method not found: ${method}`)
@@ -1101,10 +1310,79 @@ export const codexItems = new Set([
   "imageView",
   "sleep",
   "imageGeneration",
+  "functionCallOutput",
   "enteredReviewMode",
   "exitedReviewMode",
   "contextCompaction",
 ])
+
+/** One field of an MCP server's form (its JSON schema), as the app asks it. */
+function elicitationField(key: string, field: any, required: boolean): FormField {
+  const title = field?.title ?? key
+  const description = field?.description ?? undefined
+  if (field?.type === "boolean") return { key, title, description, required, type: "boolean" }
+  if (field?.type === "array") {
+    const options = (field.items?.anyOf ?? field.items?.oneOf ?? (field.items?.enum ?? []).map((value: string) => ({ const: value, title: value }))).map((option: any) => ({ value: String(option.const), label: String(option.title ?? option.const) }))
+    return { key, title, description, required, type: "multiselect", options }
+  }
+  const named = field?.oneOf ?? field?.anyOf
+  const options = named ? named.map((option: any) => ({ value: String(option.const), label: String(option.title ?? option.const) })) : field?.enum?.map((value: string, index: number) => ({ value, label: field.enumNames?.[index] ?? value }))
+  return { key, title, description, required, type: "string", options, custom: !options, ...(field?.format === "password" ? { format: "password" } : {}) }
+}
+
+/** Codex's file changes, as the bridge keeps them (a rename says where it went). */
+function codexChanges(raw: unknown): { path: string; kind: string; diff: string; movedTo?: string }[] {
+  return ((Array.isArray(raw) ? raw : []) as any[]).map((change) => ({ path: change.path, kind: change.kind?.type ?? "update", diff: change.diff ?? "", movedTo: change.kind?.move_path ?? undefined }))
+}
+
+function changeDiff(change: { path: string; kind: string; diff: string; movedTo?: string }): FileDiff {
+  return fromPatch(change.movedTo ?? change.path, change.diff, change.kind === "add" ? "added" : change.kind === "delete" ? "deleted" : "modified")
+}
+
+/** An MCP tool's result, as words and pictures (resources and links named, audio said). */
+export function mcpParts(content: unknown): { text: string; pictures: ReturnType<typeof pictureData>[] } {
+  const lines: string[] = []
+  const pictures: ReturnType<typeof pictureData>[] = []
+  for (const part of (Array.isArray(content) ? content : []) as any[]) {
+    switch (part?.type) {
+      case "text":
+        if (part.text) lines.push(part.text)
+        break
+      case "image":
+        pictures.push(pictureData(part.data, part.mimeType))
+        break
+      case "resource":
+        if (typeof part.resource?.text === "string") lines.push(part.resource.text)
+        else if (part.resource?.uri) lines.push(`Resource: ${part.resource.uri}`)
+        if (typeof part.resource?.blob === "string") pictures.push(pictureData(part.resource.blob, part.resource.mimeType))
+        break
+      case "resource_link":
+        lines.push(`${part.name ?? part.title ?? "Link"}: ${part.uri ?? ""}`)
+        break
+      case "audio":
+        lines.push("(It sent a sound clip.)")
+        break
+      default:
+        if (part) lines.push(typeof part.text === "string" ? part.text : JSON.stringify(part))
+    }
+  }
+  return { text: lines.join("\n"), pictures }
+}
+
+/** A picture by its address: data, or a file on this Mac (one on the web is a link, not shown here). */
+function pictureUrl(url: unknown): ReturnType<typeof pictureData> {
+  if (typeof url !== "string") return undefined
+  const data = /^data:([^;,]+);base64,(.*)$/s.exec(url)
+  if (data) return pictureData(data[2], data[1])
+  if (url.startsWith("file://")) {
+    try {
+      return pictureFile(decodeURIComponent(new URL(url).pathname))
+    } catch {
+      return undefined
+    }
+  }
+  return undefined
+}
 
 /** What a step with its subagents does, in words. */
 function collabWords(tool: unknown): string {
@@ -1118,6 +1396,43 @@ function collabWords(tool: unknown): string {
   }
   return `Subagents: ${String(tool ?? "")}`
 }
+
+/**
+ * Codex's notifications: those shown (or used), and those left out on purpose (its own
+ * bookkeeping, or kinds for clients that start commands, realtime audio or file search, which
+ * Kuvo Code doesn't). A test checks the installed Codex sends no other.
+ */
+export const codexNotifications = {
+  shown: [
+    "error", "thread/started", "thread/closed", "thread/tokenUsage/updated", "turn/started", "turn/completed", "turn/plan/updated",
+    "hook/started", "hook/completed", "item/started", "item/completed", "item/agentMessage/delta", "item/plan/delta",
+    "item/reasoning/summaryTextDelta", "item/reasoning/summaryPartAdded", "item/reasoning/textDelta",
+    "item/commandExecution/outputDelta", "item/commandExecution/terminalInteraction", "item/fileChange/patchUpdated", "item/mcpToolCall/progress",
+    "serverRequest/resolved", "mcpServer/startupStatus/updated", "account/updated", "account/rateLimits/updated", "account/login/completed",
+    "model/rerouted", "model/verification", "model/safetyBuffering/updated", "modelProvider/authRecoveryStarted", "modelProvider/authRecoveryCompleted",
+    "warning", "guardianWarning", "deprecationNotice", "configWarning",
+  ],
+  ignored: [
+    "thread/status/changed", "thread/readState/changed", "thread/archived", "thread/unarchived", "thread/deleted", "thread/reverted",
+    "thread/name/updated", "thread/settings/updated", "thread/goal/updated", "thread/goal/cleared", "thread/compacted", "turn/diff/updated",
+    "turn/moderationMetadata", "item/fileChange/outputDelta", "item/autoApprovalReview/started", "item/autoApprovalReview/completed",
+    "skills/changed", "app/list/updated", "project/changed", "fs/changed", "mcpServer/oauthLogin/completed", "mcpServer/event/stream/notification",
+    "account/gatewayOAuth/changed", "remoteControl/status/changed", "thread/attachment/updated", "thread/prediction/updated",
+    "thread/queue/changed", "thread/project/updated", "thread/environment/connected", "thread/environment/disconnected",
+    "autoApprovalReview/strictReviewRequired", "command/exec/outputDelta", "process/outputDelta", "process/exited",
+    "externalAgentConfig/import/progress", "externalAgentConfig/import/completed", "fuzzyFileSearch/sessionUpdated", "fuzzyFileSearch/sessionCompleted",
+    "thread/realtime/started", "thread/realtime/itemAdded", "thread/realtime/item/started", "thread/realtime/item/transcript/delta",
+    "thread/realtime/item/completed", "thread/realtime/transcript/delta", "thread/realtime/transcript/done", "thread/realtime/outputAudio/delta",
+    "thread/realtime/sdp", "thread/realtime/error", "thread/realtime/closed", "windows/worldWritableWarning", "windowsSandbox/setupCompleted",
+  ],
+}
+
+/** Codex's requests of the app: each answered (the last three never come: Kuvo Code doesn't opt in to them). */
+export const codexRequests = new Set([
+  "item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/permissions/requestApproval", "item/tool/requestUserInput",
+  "mcpServer/elicitation/request", "item/tool/call", "execCommandApproval", "applyPatchApproval",
+  "account/chatgptAuthTokens/refresh", "attestation/generate",
+])
 
 /** An item this bridge doesn't know, as a step's input: what it says, without its type and id. */
 function unknownInput(item: any): Record<string, unknown> {

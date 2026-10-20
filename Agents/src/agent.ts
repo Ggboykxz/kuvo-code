@@ -80,6 +80,8 @@ export interface PermissionAsk {
   metadata?: Record<string, unknown>
   /** The agent's own words for it, when it has them. */
   message?: string
+  /** The agent settled it itself (it timed out there): it's taken back, refused. */
+  signal?: AbortSignal
   /**
    * Asked by the engine, which already weighed your rules and its own (reading `.env` asks even
    * with Approve All): only a rule of yours or an earlier "Always" answers it without you.
@@ -91,6 +93,8 @@ export interface QuestionAsk {
   title: string
   fields: FormField[]
   toolCallID?: string
+  /** The agent settled it itself (it timed out there): it's taken back, unanswered. */
+  signal?: AbortSignal
 }
 
 export interface TurnHooks {

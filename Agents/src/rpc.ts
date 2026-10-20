@@ -14,7 +14,8 @@ export class RPCError extends Error {
   }
 }
 
-type Handler = (method: string, params: any) => Promise<unknown>
+/** Answers a request of the child's; `id` names it, should the child settle it itself later. */
+type Handler = (method: string, params: any, id: number | string) => Promise<unknown>
 
 export class RPC {
   private next = 1
@@ -105,7 +106,7 @@ export class RPC {
 
   private async answer(id: number | string, method: string, params: unknown) {
     try {
-      const result = await this.onRequest(method, params)
+      const result = await this.onRequest(method, params, id)
       this.write({ id, result: result ?? null })
     } catch (error) {
       const code = error instanceof RPCError ? error.code : -32603
