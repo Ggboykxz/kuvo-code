@@ -1183,12 +1183,14 @@ private struct TurnEndView: View {
             VStack(alignment: .leading, spacing: 8) {
                 ErrorCard(message: idle.error?.message ?? "The run failed.")
                 HStack(spacing: 8) {
-                    // A coding agent to sign in to (here, or on the machine: Accounts lists both).
+                    // A coding agent to sign in to: where this conversation runs (a machine signs in
+                    // on its own), Accounts open on it.
                     if idle.error?.type == "signin" {
-                        Button("Open Accounts", systemImage: "person.crop.circle") { app.openSettings(.accounts) }
+                        let machine = RemoteFolder.machine(of: directory)
+                        Button(machine.map { "Sign In on \($0)" } ?? "Open Accounts", systemImage: "person.crop.circle") { app.openAccounts(on: machine) }
                             .buttonStyle(.glass)
                             .controlSize(.small)
-                            .help("Sign in to the coding agents, on this Mac and on your machines")
+                            .help(machine.map { "Sign in to the coding agents on \($0): its sign-ins are its own" } ?? "Sign in to the coding agents")
                     }
                     if let retry {
                         Button("Try Again", systemImage: "arrow.clockwise", action: retry)

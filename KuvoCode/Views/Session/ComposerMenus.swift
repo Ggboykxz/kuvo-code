@@ -234,7 +234,9 @@ struct ModelChip<Label: View>: View {
         .background(ScreenRoomReader(room: anchor))
         .popover(isPresented: $isOpen, arrowEdge: placement.below ? .bottom : .top) {
             ModelPicker(catalog: catalog, selection: selection, onSelect: onSelect, close: { isOpen = false }, scope: scope, offersAuto: offersAuto,
-                        startsExpanded: startsExpanded, startsOnList: startsOnList, maxHeight: placement.height, openSettings: { app.openSettings($0) })
+                        startsExpanded: startsExpanded, startsOnList: startsOnList, maxHeight: placement.height,
+                        // Accounts on the machine whose models these are (each signs in on its own).
+                        openSettings: { page in page == .accounts ? app.openAccounts(on: catalog.machine) : app.openSettings(page) })
         }
         .onAppear { LogoImages.shared.prefetch(catalog.models.flatMap { [$0.makerLogoID, $0.providerID] }) }
         #if DEBUG

@@ -6,7 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 - Settings › Skills no longer shows the folder each skill is in; hover over one to see it.
-- Settings › Accounts lists your machines under each coding agent, with who's signed in on each and Sign In for the rest; each machine keeps a sign-in of its own, and right after you sign in on your Mac, Kuvo Code offers your machines too. Signing in on a machine says it's installing the agent there first.
+- Settings › Accounts has a picker at the top, This Mac or one of your machines: pick a machine to see its coding agents and sign in to each there (each machine signs in on its own). A conversation on a machine that needs a sign-in says which machine, with Sign In on it. Signing in on a machine says it's installing the agent there first.
 - With Ask First, Grok and Antigravity ask before using Kuvo Code's tools that should ask, and before anything else they ask about that Kuvo Code can't tell the kind of.
 - In Ask First, an agent's watch asks you first with its check written out, also in older sessions and with the coding agents; a wake-up a coding agent's session set on a machine is no longer lost.
 - When no model in a Custom Auto list can run, the conversation says why: which agents aren't signed in (on your Mac or on the machine), with a button to sign in, or which limits hold and when each resets, in your time zone.

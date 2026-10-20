@@ -241,7 +241,7 @@ extension AppModel {
         for _ in 0..<240 where api == nil { try? await Task.sleep(for: .milliseconds(250)) }
         // Removed a moment ago and added again: after the removal there has finished.
         await machines.waitForRemoval(of: engine.machine.id)
-        await engine.start(machineLaunch(), cache: AppInfo.supportDirectory.appending(path: "engine-linux"))
+        await engine.start(machineLaunch(engine), cache: AppInfo.supportDirectory.appending(path: "engine-linux"))
         // Removed while it started: nothing of yours goes there (its removal waits in the queue).
         // Checked again before each step that sends it something, as removing can come any time.
         guard machines.engine(engine.machine.id) === engine else {
@@ -345,8 +345,10 @@ extension AppModel {
 
     /// What a machine's engine starts with: this Mac's accounts and settings, and the browser tools
     /// with the machine's own browser.
-    private func machineLaunch() async -> MachineEngine.Launch {
+    private func machineLaunch(_ engine: MachineEngine) async -> MachineEngine.Launch {
         var environment = await machineEnvironment()
+        // Its name as you know it, for what its agents bridge says ("not signed in on …").
+        environment["KUVO_MACHINE_NAME"] = engine.machine.name
         let sites = Integrations.sites(Integrations.added(in: engineConfig).filter { !Integrations.macOnly.contains($0) })
         environment["OPENCODE_CONFIG_CONTENT"] = AppModel.merged(MachineBrowserInstaller.engineConfig(sites: sites), into: environment["OPENCODE_CONFIG_CONTENT"])
         return MachineEngine.Launch(environment: environment, helper: MachineBrowserInstaller.helper, agents: MachineEngine.agentsBridge)
@@ -362,7 +364,7 @@ extension AppModel {
             var wait = 30
             while !Task.isCancelled {
                 guard let self, let engine, engine.isReady else { return }
-                guard engine.isBehind(await self.machineLaunch()) else { return }
+                guard engine.isBehind(await self.machineLaunch(engine)) else { return }
                 if !self.workspace.isRunning(on: engine.machine.id), (try? await engine.api?.activeSessions())?.isEmpty == true {
                     // Said in the log, so one that keeps starting over is seen there.
                     Logger(subsystem: "run.kuvo.code", category: "machine").info("\(engine.machine.id, privacy: .public)'s engine starts over with this Mac's newer settings")

@@ -1808,13 +1808,16 @@ export class Sessions {
       else gone.push(this.entryName(entry))
     }
     if (!signIn.size && !held.size && !gone.length) return undefined
-    const where = onMachine ? " on this machine" : ""
-    // (Accounts lists your machines under each agent.)
-    const signInPage = "Settings › Accounts"
+    // On a machine, which (by the name you know it by), and that your Mac's sign-ins don't reach it.
+    const machine = onMachine ? process.env.KUVO_MACHINE_NAME || "this machine" : undefined
+    const where = machine ? ` on ${machine}` : ""
+    const signInPage = machine ? `Settings › Accounts, with ${machine} picked` : "Settings › Accounts"
     const agents = [...signIn].join(", ").replace(/, ([^,]*)$/, " and $1")
     // Only sign-ins in the way: what to sign in to, and where.
     if (!held.size && !gone.length) {
-      return { type: "signin", message: `${tried.size ? "The rest of the agents" : "None of the agents"} in your Custom Auto list ${tried.size ? "aren't" : "is"} signed in${where}. Sign in to ${agents} in ${signInPage}.` }
+      const subject = `${tried.size ? "The rest of the agents" : "None of the agents"} in your Custom Auto list ${tried.size ? "aren't" : "is"} signed in`
+      if (!machine) return { type: "signin", message: `${subject}. Sign in to ${agents} in ${signInPage}.` }
+      return { type: "signin", message: `${subject}${where}, where this conversation runs (each machine signs in on its own: your Mac's sign-ins don't reach it). Sign in to ${agents} there in ${signInPage}.` }
     }
     const limits = [...held].map(([name, until]) => `${name} until ${resetTime(until)}`).join("; ")
     if (!signIn.size && !gone.length && !tried.size) return { type: "limit", message: `Every model in your Custom Auto list is at a usage limit for now: ${limits}.` }

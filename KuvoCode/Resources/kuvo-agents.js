@@ -9750,11 +9750,15 @@ ${text.slice(0, 4000)}
     }
     if (!signIn.size && !held.size && !gone.length)
       return;
-    const where = onMachine ? " on this machine" : "";
-    const signInPage = "Settings \u203A Accounts";
+    const machine = onMachine ? process.env.KUVO_MACHINE_NAME || "this machine" : undefined;
+    const where = machine ? ` on ${machine}` : "";
+    const signInPage = machine ? `Settings \u203A Accounts, with ${machine} picked` : "Settings \u203A Accounts";
     const agents = [...signIn].join(", ").replace(/, ([^,]*)$/, " and $1");
     if (!held.size && !gone.length) {
-      return { type: "signin", message: `${tried.size ? "The rest of the agents" : "None of the agents"} in your Custom Auto list ${tried.size ? "aren't" : "is"} signed in${where}. Sign in to ${agents} in ${signInPage}.` };
+      const subject = `${tried.size ? "The rest of the agents" : "None of the agents"} in your Custom Auto list ${tried.size ? "aren't" : "is"} signed in`;
+      if (!machine)
+        return { type: "signin", message: `${subject}. Sign in to ${agents} in ${signInPage}.` };
+      return { type: "signin", message: `${subject}${where}, where this conversation runs (each machine signs in on its own: your Mac's sign-ins don't reach it). Sign in to ${agents} there in ${signInPage}.` };
     }
     const limits = [...held].map(([name, until]) => `${name} until ${resetTime(until)}`).join("; ");
     if (!signIn.size && !gone.length && !tried.size)

@@ -23,9 +23,8 @@ struct SubscriptionsSection: View {
 
     var body: some View {
         let products = self.products
-        // One signed in on a machine only is yours to manage here too.
-        let used = products.filter { $0.hasAccounts || isOnMachines($0) }
-        let more = products.filter { !$0.hasAccounts && !isOnMachines($0) }
+        let used = products.filter(\.hasAccounts)
+        let more = products.filter { !$0.hasAccounts }
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 3) {
@@ -85,12 +84,6 @@ struct SubscriptionsSection: View {
             }
         }
         .task(id: agents.api != nil) { await catalog.refreshAgents(fresh: true) }
-    }
-
-    /// A coding agent signed in on one of your machines (on this Mac's page).
-    private func isOnMachines(_ product: Product) -> Bool {
-        guard bridge == nil, product.isAgent else { return false }
-        return app.machineAgentLines(product.main.id).contains { $0.account?.isConnected == true }
     }
 
     /// In a fixed order: the coding agents, then the plans.
@@ -220,12 +213,6 @@ private struct ProductBlock: View {
                     if own.isListed { AgentAccountRow(account: own, connect: { connect(own) }) }
                     ForEach(added) { account in
                         AgentAccountRow(account: account, connect: { connect(account) })
-                    }
-                    // Each of your machines, signed in on its own (on this Mac's page).
-                    if bridge == nil {
-                        ForEach(app.machineAgentLines(own.id), id: \.engine.machine.id) { line in
-                            MachineAccountRow(line: line, integrationID: own.id)
-                        }
                     }
                 case .plan(let plan):
                     ForEach(Array(plan.connections.enumerated()), id: \.element.id) { index, connection in
@@ -582,76 +569,6 @@ private struct PlanAccountRow: View {
     }
 }
 
-/// A coding agent on one of your machines, as Accounts lists it under the agent: who's signed in
-/// there (it signs in on its own, apart from this Mac), or Sign In, which signs in there, finishing
-/// in this Mac's browser.
-private struct MachineAccountRow: View {
-    let line: AppModel.MachineAgentLine
-    let integrationID: String
-    @State private var signingIn: MachineSignIn?
-
-    private var account: Integration? { line.account }
-    private var isSignedIn: Bool { account?.isConnected == true }
-    private var ended: Bool { account?.metadata?["signInEnded"]?.bool == true }
-    private var who: String? { account?.connections.first?.label }
-    private var signsOut: Bool { account?.metadata?["signsOut"]?.bool ?? false }
-
-    /// Who's signed in there.
-    private var shownWho: String? { isSignedIn ? (who ?? "Signed in") : nil }
-    /// How it stands, quietly.
-    private var note: String? {
-        if let note = line.note { return note }
-        return isSignedIn || ended ? nil : "Not signed in"
-    }
-    /// Sign In, while it can be and isn't.
-    private var signInAction: (() -> Void)? {
-        guard !isSignedIn, line.note == nil else { return nil }
-        return { signIn() }
-    }
-
-    var body: some View {
-        AccountLine(label: nil, who: shownWho, note: note,
-                    problem: ended ? AccountProblem.signInEnded.text : nil,
-                    signIn: signInAction,
-                    machine: line.engine.machine.name) {
-            if line.note == nil { Button("Sign In Again…", action: signIn) }
-            if isSignedIn, signsOut {
-                Divider()
-                Button("Sign Out", role: .destructive) {
-                    Task { try? await line.engine.agents.signOut(integrationID); await line.engine.catalog.refreshAgents(fresh: true) }
-                }
-            }
-        }
-        .machineSignIn($signingIn)
-    }
-
-    private func signIn() {
-        signingIn = MachineSignIn(machine: line.engine.machine.id, integrationID: integrationID)
-    }
-}
-
-extension AppModel {
-    /// A coding agent on one of your machines: its account there, once its agents are reachable,
-    /// or why it can't be signed in now.
-    struct MachineAgentLine {
-        let engine: MachineEngine
-        let account: Integration?
-        /// Why it can't be signed in now ("Not connected"), when it can't.
-        let note: String?
-    }
-
-    /// Each of your machines, for a coding agent's block in Accounts.
-    func machineAgentLines(_ integrationID: String) -> [MachineAgentLine] {
-        machines.list.compactMap { machines.engine($0.id) }.map { engine in
-            let account = engine.catalog.codingAgents.first { $0.id == integrationID }
-            let note: String? = !engine.isReady ? "Not connected"
-                : engine.agents.api == nil || engine.agents.isDown ? "Coding agents not running there"
-                : account == nil ? "Looking…" : nil
-            return MachineAgentLine(engine: engine, account: account, note: note)
-        }
-    }
-}
-
 /// An account's line: the name you gave it, who's signed in, a note when it's in use, and its
 /// menu at the right edge, where every account's is. Not signed in, it says so, with Sign In;
 /// a sign-in that ended says so in orange.
@@ -663,19 +580,11 @@ private struct AccountLine<Menu: View>: View {
     let problem: String?
     let signIn: (() -> Void)?
     var badge: String? = nil
-    /// The machine it's on, when it isn't this Mac.
-    var machine: String? = nil
     @ViewBuilder let menu: () -> Menu
     @State private var isHovering = false
 
     var body: some View {
         HStack(spacing: 8) {
-            if let machine {
-                Label(machine, systemImage: "server.rack")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
             if let label, !label.isEmpty {
                 Text(label)
                     .font(.callout.weight(.medium))
