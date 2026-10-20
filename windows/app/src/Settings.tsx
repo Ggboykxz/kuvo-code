@@ -55,6 +55,13 @@ const PAGE_GROUPS = [
   ["Projects", ["projects", "git", "archived"]],
 ] as const;
 
+/// The Mac's three modes, in its order (Look.Mode).
+const MODES = [
+  { value: "system", title: "System" },
+  { value: "light", title: "Light" },
+  { value: "dark", title: "Dark" },
+];
+
 const PAGE_SUBTITLES: Record<string, string> = {
   appearance: "How Kuvo Code looks, and how conversations read.",
   keyboard: "Every keyboard shortcut in Kuvo Code.",
@@ -351,51 +358,89 @@ function SettingsPageIcon({ id }: { id: string }) {
 function AppearancePage() {
   return (
     <>
-      <div className="settings-row">
-        <span>Accent</span>
-        <div id="accent-swatches" className="swatches">
-          {Object.entries(lookAccents).map(([key, accent]) => (
+      {/* The Mac's page: the mode first, then the colors, then the messages
+          (AppearanceSettings.swift:16-80). */}
+      <SettingGroup title="Mode">
+        <div className="mode-choices">
+          {MODES.map(mode => (
             <button
-              key={key}
-              className={`swatch ${look.accent === key ? "selected" : ""}`}
-              data-accent={key}
-              title={accent.title}
-              style={{ background: accent.color || "var(--accent)" }}
-              onClick={() => { look.accent = key; applyLook(); render(); }}
-            />
+              key={mode.value}
+              id={`mode-${mode.value}`}
+              className={`mode-choice ${look.theme === mode.value ? "active" : ""}`}
+              aria-pressed={look.theme === mode.value}
+              onClick={() => { look.theme = mode.value; applyLook(); render(); }}
+            >
+              <span className={`mode-thumb ${mode.value}`} aria-hidden="true">
+                <span className="mode-thumb-bar" />
+                <span className="mode-thumb-card" />
+              </span>
+              <span className="mode-choice-title">{mode.title}</span>
+            </button>
           ))}
         </div>
-      </div>
-      <div className="settings-row">
-        <span>Mode</span>
-        <select id="setting-theme" value={look.theme} onChange={event => { look.theme = event.target.value; applyLook(); render(); }}>
-          <option value="system">System</option>
-          <option value="light">Light</option>
-          <option value="dark">Dark</option>
-        </select>
-      </div>
-      <div className="settings-row">
-        <span>Text size</span>
-        <select id="setting-text-size" value={look.textSize} onChange={event => { look.textSize = event.target.value; applyLook(); render(); }}>
-          <option value="13">Small</option>
-          <option value="14">Default</option>
+      </SettingGroup>
+      <SettingGroup title="Colors">
+        <SettingRow label="Accent" note={lookAccents[look.accent]?.title}>
+          <div id="accent-swatches" className="swatches">
+            {Object.entries(lookAccents).map(([key, accent]) => (
+              <button
+                key={key}
+                className={`swatch ${look.accent === key ? "selected" : ""}`}
+                data-accent={key}
+                title={accent.title}
+                style={{ background: accent.color || "var(--accent)" }}
+                onClick={() => { look.accent = key; applyLook(); render(); }}
+              />
+            ))}
+          </div>
+        </SettingRow>
+      </SettingGroup>
+      <SettingGroup title="Messages">
+        <SettingRow label="Text size" note="Messages, replies and the composer.">
+          <select id="setting-text-size" value={look.textSize} onChange={event => { look.textSize = event.target.value; applyLook(); render(); }}>
+            <option value="13">Small</option>
+            <option value="14">Default</option>
           <option value="15.5">Large</option>
           <option value="17">Larger</option>
-        </select>
-      </div>
-      <div className="settings-row">
-        <span>Motion</span>
-        <select id="setting-motion" value={look.motion} onChange={event => { look.motion = event.target.value; applyLook(); render(); }}>
-          <option value="full">Full</option>
-          <option value="reduced">Reduced</option>
-        </select>
-      </div>
+          </select>
+        </SettingRow>
+        <SettingRow label="Motion" note="How much the app moves when something happens.">
+          <select id="setting-motion" value={look.motion} onChange={event => { look.motion = event.target.value; applyLook(); render(); }}>
+            <option value="full">Full</option>
+            <option value="reduced">Reduced</option>
+          </select>
+        </SettingRow>
+      </SettingGroup>
     </>
   );
 }
 
 /// General: the app's own ways — updates, starting at login, staying awake — and what
 /// opencode already knows that this app could take over.
+/// A group of settings, the Mac's grouped form (SettingsControls.swift:350-367): the
+/// group's name, and its rows in a card under it.
+function SettingGroup({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="setting-group">
+      <h3 className="setting-group-title">{title}</h3>
+      <div className="setting-group-card">{children}</div>
+    </section>
+  );
+}
+
+/// A row: the setting's name, what it does under it, and the control at the right.
+function SettingRow({ label, note, children }: { label: string; note?: string; children?: React.ReactNode }) {
+  return (
+    <div className="settings-row">
+      <span className="setting-row-label">
+        <span>{label}</span>
+        {note ? <span className="setting-row-note">{note}</span> : null}
+      </span>
+      <span className="setting-row-control">{children}</span>
+    </div>
+  );
+}
+
 function GeneralPage() {
   const [settings, setSettings] = useState<{ updates: boolean; startAtLogin: boolean; keepAwake: boolean; path: string }>({
     updates: true, startAtLogin: false, keepAwake: false, path: "",
@@ -420,19 +465,25 @@ function GeneralPage() {
 
   return (
     <>
-      <div className="settings-row">
-        <span>Automatic updates</span>
-        <input type="checkbox" checked={settings.updates} onChange={event => void set({ updates: event.target.checked })} />
-      </div>
-      <div className="settings-row">
-        <span>Start at login</span>
-        <input type="checkbox" checked={settings.startAtLogin} onChange={event => void set({ startAtLogin: event.target.checked })} />
-      </div>
-      <div className="settings-row">
-        <span>Keep this machine awake</span>
-        <input type="checkbox" checked={settings.keepAwake} onChange={event => void set({ keepAwake: event.target.checked })} />
-      </div>
-      <div className="settings-note">The app's own settings live next to its data ({settings.path || "in the shell's folder"}). Keeping the machine awake stops the screen from sleeping while a long run is going.</div>
+      <SettingGroup title="Updates">
+        <SettingRow label="Check for updates automatically" note="Updates are signed and come from Kuvo Code's releases.">
+          <input type="checkbox" checked={settings.updates} onChange={event => void set({ updates: event.target.checked })} />
+        </SettingRow>
+      </SettingGroup>
+      <SettingGroup title="While Agents Work">
+        <SettingRow
+          label="Keep this machine awake"
+          note="It doesn't go to sleep on its own while an agent works on it; the display still can."
+        >
+          <input type="checkbox" checked={settings.keepAwake} onChange={event => void set({ keepAwake: event.target.checked })} />
+        </SettingRow>
+      </SettingGroup>
+      <SettingGroup title="Startup">
+        <SettingRow label="Start at login" note="Open Kuvo Code when you sign in to this machine.">
+          <input type="checkbox" checked={settings.startAtLogin} onChange={event => void set({ startAtLogin: event.target.checked })} />
+        </SettingRow>
+      </SettingGroup>
+      <div className="settings-note">The app's own settings live next to its data ({settings.path || "in the shell's folder"}).</div>
       <h3>Bring over from opencode</h3>
       <div className="settings-row">
         <span>What opencode already knows</span>

@@ -187,7 +187,9 @@ test("the page, in a browser, against the real engine", {
   assert.equal(await reloaded.page.locator("#sessions li").count(), 1, "the session is listed again");
   // The engine can still call a session active for a moment after a turn; the page reads that
   // the same way the Mac app does, and settles as soon as there's nothing to stop.
-  await reloaded.seen("nothing to be running", () => document.getElementById("stop")?.hidden, null, 45_000);
+  // The engine's own history catches up a moment after the turn ends: the Mac reads the
+  // same words, and waits the same way.
+  await reloaded.seen("nothing to be running", () => document.getElementById("stop")?.hidden, null, 90_000);
 
   // The reloaded page is in front now; the first one is taken back, so its buttons are
   // drawn and can be pressed (a page in the background does not animate, and Playwright

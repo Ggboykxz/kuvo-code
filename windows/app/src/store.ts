@@ -83,7 +83,7 @@ export function useStore(): number {
 // ---- The look ----
 
 export const lookAccents: Record<string, { color: string; title: string }> = {
-  system: { color: "", title: "macOS Accent" },
+  system: { color: "", title: "System Accent" },
   blue: { color: "#0a84ff", title: "Blue" },
   purple: { color: "#bf5af2", title: "Purple" },
   pink: { color: "#ff375f", title: "Pink" },

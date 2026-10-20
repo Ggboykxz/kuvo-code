@@ -429,6 +429,25 @@ const checks = [
     assert.match(symbols, /"list\.bullet":/);
   }],
 
+  ["the settings are the Mac's grouped form: a name, and the rows in a card", ({ css, settings, rule }) => {
+    // SettingsControls.swift:350-367: a grouped Form, its sections named, their rows in a
+    // card under them.
+    assert.match(rule(".setting-group {"), /margin: 0 0 18px/);
+    assert.match(rule(".setting-group-title {"), /font-size: 13px/);
+    assert.match(rule(".setting-group-card {"), /border-radius: 10px/);
+    assert.match(rule(".setting-row-note {"), /font-size: 12px/);
+    assert.match(settings, /function SettingGroup\(/);
+    assert.match(settings, /function SettingRow\(/);
+    // The pages that use it, with the Mac's group names.
+    for (const group of ["Mode", "Colors", "Messages", "Updates", "While Agents Work"]) {
+      assert.ok(settings.includes(`title="${group}"`), `the "${group}" group is there`);
+    }
+    // And the Mac's three modes, each with a window of its own.
+    assert.match(settings, /const MODES = \[/);
+    assert.match(settings, /className=\{`mode-choice/);
+    assert.match(rule(".mode-thumb {"), /width: 84px/);
+  }],
+
   ["the window is built by Next.js, and exported as the static files the harness serves", ({ next, page, build }) => {
     // The app talks to the engine over the harness's API: there is no server to render
     // it, so the export is the whole app.
