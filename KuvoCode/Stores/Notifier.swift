@@ -109,13 +109,20 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         let text = maskedNamed(text.count > shownLength ? Self.cut(text) : text)
         // A long run of letters and digits, as a key is: 24 or more with both, or a key's own
         // start (sk-, ghp_, xoxb-, AKIA…). Not a commit's hash or a UUID, nor a path or a name
-        // made of words (a branch, a package, a test), which aren't secret.
-        guard let long = try? NSRegularExpression(pattern: #"[A-Za-z0-9_\-+/=]{24,}"#) else { return text }
+        // made of words (a branch, a package, a test), which aren't secret. An AWS access key's
+        // ID is shorter, 20: that one by its shape.
+        guard let long = try? NSRegularExpression(pattern: #"[A-Za-z0-9_\-+/=]{20,}"#) else { return text }
         let source = text as NSString
         var result = ""
         var at = 0
         for match in long.matches(in: text, range: NSRange(location: 0, length: source.length)) {
             let run = source.substring(with: match.range)
+            if run.count < 24 {
+                guard run.range(of: #"^(AKIA|ASIA)[0-9A-Z]{16}$"#, options: .regularExpression) != nil else { continue }
+                result += source.substring(with: NSRange(location: at, length: match.range.location - at)) + "•••"
+                at = match.range.location + match.range.length
+                continue
+            }
             // A key's own start, also as a part of a path (…/keys/sk-…).
             let prefixed = run.split(separator: "/").contains { part in
                 part.range(of: #"^(sk-|sk_live_|sk_test_|rk_live_|rk_test_|whsec_|ghp_|gho_|ghs_|github_pat_|xox[abpe]-|AKIA|AIza|glpat-|dop_v1_|sbp_|pul-|npm_|hf_|gsk_|xai-|pplx-|r8_|lin_api_|ntn_|shp(at|ss|ca)_)"#, options: .regularExpression) != nil
@@ -138,7 +145,9 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
                 return Double(part.count) / Double(max(1, Self.words.numberOfMatches(in: String(part), range: NSRange(location: 0, length: (part as Substring).utf16.count)))) >= 3.5
             }
             let mixed = run.range(of: #"[A-Za-z]"#, options: .regularExpression) != nil && run.range(of: #"\d"#, options: .regularExpression) != nil
-            guard prefixed || (mixed && !isHash && !wordy) else { continue }
+            // A key's start with letters and digits after it: a name that starts alike, all words
+            // (npm_config_registry), isn't one.
+            guard (prefixed && mixed) || (mixed && !isHash && !wordy) else { continue }
             result += source.substring(with: NSRange(location: at, length: match.range.location - at)) + "•••"
             at = match.range.location + match.range.length
         }

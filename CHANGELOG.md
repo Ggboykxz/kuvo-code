@@ -6,6 +6,8 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Notifications hide AWS access key IDs (AKIA…) too, and no longer hide names that only start like a key (npm_config_…), which also took their answer buttons away.
+
 ## 0.6.1
 
 - Requests to a model whose sign-in ran out and couldn't be renewed (shown only as "Request failed: 400") now say so, with Sign In Again, and Accounts and the sidebar mark that account.
