@@ -63,6 +63,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - An agent of yours from Settings › Agents works in sessions with a coding agent too, and Codex's to-do list and This Session's changes show there as in any session.
 - In sessions with a coding agent, Settings › Permissions' Blocks hold as they do on the engine, and reading a .env file asks first.
 - Subagents of Claude Code and Codex show in the bar over the composer, and **Open** shows what each does in the side panel, as the engine's do; you steer or stop them in the conversation that started them. Antigravity's show there too, with their task.
+- A session on an engine model can move to a coding agent or Auto: pick one of their models, and the conversation carries on in a session of theirs, with the old one archived.
 - A session with a coding agent can move to another model, another agent's or a provider's: the new one gets the conversation so far and carries on.
 - The refresh button in Accounts checks your coding agents again, and so does coming back to the app: one you installed or signed in to in Terminal shows without restarting.
 - An agent whose own program is out of date (an old Claude Code lists old Claude models) says so in Accounts, with an **Update** button that updates it the way you installed it: Homebrew, npm or the agent's own updater. Its new models show once it's done, without restarting, and sessions use the new version from their next message. The model picker points there too.
