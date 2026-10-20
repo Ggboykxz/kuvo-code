@@ -360,6 +360,15 @@ class EngineLink {
     }
     return rules;
   }
+  async commandTemplate(name, directory) {
+    let template;
+    for (const source of await this.settingsFiles(directory)) {
+      const own = source?.info?.commands?.[name]?.template ?? source?.info?.command?.[name]?.template;
+      if (typeof own === "string" && own.trim())
+        template = own;
+    }
+    return template;
+  }
   async agentPrompt(name, directory) {
     let prompt;
     for (const source of await this.settingsFiles(directory)) {
@@ -6554,7 +6563,11 @@ function handler(context) {
           }
           case "command": {
             const input = await body();
-            sessions.prompt(id, { id: newID("msg"), text: `/${input.name} ${input.text ?? ""}`.trim(), files: input.files ?? [], delivery: input.delivery ?? "steer" });
+            const name = String(input.name ?? "");
+            const written = String(input.text ?? "");
+            const template = name ? await link.commandTemplate(name, sessions.get(id).location.directory) : undefined;
+            const text = template ? expandCommand(template, written) : `/${name} ${written}`.trim();
+            sessions.prompt(id, { id: newID("msg"), text, files: input.files ?? [], delivery: input.delivery ?? "steer" });
             return json({});
           }
           case "interrupt":
@@ -6675,6 +6688,14 @@ function handler(context) {
       return error(500, caught instanceof Error ? caught.message : String(caught));
     }
   };
+}
+function expandCommand(template, written) {
+  const words = written.trim() ? written.trim().split(/\s+/) : [];
+  const named = /\$ARGUMENTS|\$\d/.test(template);
+  const filled = template.replace(/\$ARGUMENTS/g, written.trim()).replace(/\$(\d)/g, (_, index) => words[Number(index) - 1] ?? "");
+  return named || !written.trim() ? filled.trim() : `${filled.trim()}
+
+${written.trim()}`;
 }
 
 // Agents/src/store.ts

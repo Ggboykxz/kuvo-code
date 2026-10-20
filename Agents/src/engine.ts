@@ -124,6 +124,16 @@ export class EngineLink {
     return rules
   }
 
+  /** A command of yours (Settings › Commands): what it says, from the last file that has it. */
+  async commandTemplate(name: string, directory: string): Promise<string | undefined> {
+    let template: string | undefined
+    for (const source of await this.settingsFiles(directory)) {
+      const own = source?.info?.commands?.[name]?.template ?? source?.info?.command?.[name]?.template
+      if (typeof own === "string" && own.trim()) template = own
+    }
+    return template
+  }
+
   /** What an agent of yours (Settings › Agents) is told to be: its prompt, from the last file that has it. */
   async agentPrompt(name: string, directory: string): Promise<string | undefined> {
     let prompt: string | undefined

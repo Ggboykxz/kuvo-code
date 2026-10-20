@@ -308,9 +308,14 @@ export function handler(context: Context) {
             return json({})
           }
           case "command": {
-            // The agent's own slash commands, as it takes them: typed.
+            // One of yours (Settings › Commands): what it says, with what you wrote after it. Any
+            // other: the agent's own, as it takes them, typed.
             const input = await body()
-            sessions.prompt(id, { id: newID("msg"), text: `/${input.name} ${input.text ?? ""}`.trim(), files: input.files ?? [], delivery: input.delivery ?? "steer" })
+            const name = String(input.name ?? "")
+            const written = String(input.text ?? "")
+            const template = name ? await link.commandTemplate(name, sessions.get(id).location.directory) : undefined
+            const text = template ? expandCommand(template, written) : `/${name} ${written}`.trim()
+            sessions.prompt(id, { id: newID("msg"), text, files: input.files ?? [], delivery: input.delivery ?? "steer" })
             return json({})
           }
           case "interrupt":
@@ -432,4 +437,15 @@ export function handler(context: Context) {
       return error(500, caught instanceof Error ? caught.message : String(caught))
     }
   }
+}
+
+/**
+ * A command's text with what you wrote after its name: in place of $ARGUMENTS (and $1, $2… for
+ * its words), as the engine fills it in; after it, when it names none.
+ */
+export function expandCommand(template: string, written: string): string {
+  const words = written.trim() ? written.trim().split(/\s+/) : []
+  const named = /\$ARGUMENTS|\$\d/.test(template)
+  const filled = template.replace(/\$ARGUMENTS/g, written.trim()).replace(/\$(\d)/g, (_, index: string) => words[Number(index) - 1] ?? "")
+  return named || !written.trim() ? filled.trim() : `${filled.trim()}\n\n${written.trim()}`
 }

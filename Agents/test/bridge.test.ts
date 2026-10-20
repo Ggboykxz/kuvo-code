@@ -12,6 +12,7 @@ import { messageID, newID } from "../src/ids"
 import { compareVersions, homebrewKeg, npmGlobalPrefix, versionIn } from "../src/maintenance"
 import { evaluate, matches } from "../src/rules"
 import { handover } from "../src/handover"
+import { expandCommand } from "../src/server"
 import { commandSignIn } from "../src/signin"
 
 describe("diffs", () => {
@@ -285,5 +286,14 @@ describe("handovers", () => {
       () => "Alpha, one",
     )!
     expect(text.indexOf("I'll fix the parser.")).toBeLessThan(text.indexOf("src/parser.ts"))
+  })
+})
+
+describe("your commands", () => {
+  test("what you write after a command fills it in, as the engine does", () => {
+    expect(expandCommand("Review $ARGUMENTS carefully.", "src/a.ts")).toBe("Review src/a.ts carefully.")
+    expect(expandCommand("Compare $1 with $2.", "a.ts b.ts")).toBe("Compare a.ts with b.ts.")
+    expect(expandCommand("Write the changelog.", "")).toBe("Write the changelog.")
+    expect(expandCommand("Write the changelog.", "for 1.2")).toBe("Write the changelog.\n\nfor 1.2")
   })
 })
