@@ -31,6 +31,7 @@ const sources = {
   styles: read("harness", "ui", "style.css"),
   shimmer: read("app", "src", "components", "ai-elements", "shimmer.tsx"),
   logo: read("app", "src", "components", "provider-logo.tsx"),
+  spinner: read("app", "src", "components", "spinner.tsx"),
   tailwind: read("app", "app", "globals.css"),
   postcss: read("app", "postcss.config.mjs"),
   next: read("app", "next.config.mjs"),
@@ -338,16 +339,27 @@ const checks = [
     assert.match(thinking, /--color-muted-foreground: var\(--ink-soft\)/);
   }],
 
-  ["the working mark is the app's own, written at the Mac's beat", ({ css, rule }) => {
+  ["the working mark is the app's own, written at the Mac's beat", ({ css, symbols, spinner }) => {
     // The Mac's spinner writes the app's prompt mark: the chevron first, the cursor next,
     // a hold, and a fade, over its 1.6 s round (Spinner.swift:40-54).
-    assert.match(css, /animation: kuvo-mark-chevron 1\.6s ease-in-out infinite/);
-    assert.match(css, /animation: kuvo-mark-cursor 1\.6s ease-in-out infinite/);
-    assert.match(css, /animation: kuvo-mark-fade 1\.6s linear infinite/);
-    assert.match(css, /@keyframes kuvo-mark-chevron \{\n  0% \{ stroke-dashoffset: 100; \}/);
-    assert.match(css, /@keyframes kuvo-mark-fade \{\n  0%, 78% \{ opacity: 1; \}/);
-    // And it stands still when the system asks for less movement.
-    assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{[^}]*\.tab-status\.running[^}]*\}/s);
+    assert.match(css, /animation: kuvo-spinner-chevron 1\.6s linear infinite/);
+    assert.match(css, /animation: kuvo-spinner-cursor 1\.6s linear infinite/);
+    assert.match(css, /animation: kuvo-spinner-fade 1\.6s linear infinite/);
+    assert.match(css, /@keyframes kuvo-spinner-chevron \{\n  0% \{ stroke-dashoffset: 1; \}/);
+    assert.match(css, /@keyframes kuvo-spinner-fade \{\n  0%, 78% \{ opacity: 1; \}/);
+    // The faint copy is the Mac's: the mark at 18 % of the ink (Spinner.swift:104-108).
+    assert.match(css, /\.spinner-faint \{ opacity: 0\.18; \}/);
+    // And it stands still when the system asks for less movement (Spinner.swift:19-24).
+    assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.spinner-drawn \{ display: none; \}/);
+    // The mark itself is the Mac's own: the chevron and the cursor, on the icon's
+    // coordinates, with the icon's stroke (Spinner.swift:153-177, scripts/icon.py:15-17).
+    assert.match(symbols, /export const PROMPT_CHEVRON = "M77 74L267 262 77 450"/);
+    assert.match(symbols, /export const PROMPT_CURSOR = "M377 450h230"/);
+    assert.match(symbols, /Math\.max\(1, size \* 0\.11\) \* \(PROMPT_BOX \/ size\)/);
+    // And the spinner draws the faint copy under the drawn one (Spinner.swift:118-126).
+    assert.match(spinner, /className="spinner-faint"/);
+    assert.match(spinner, /className="spinner-drawn"/);
+    assert.match(spinner, /strokeDasharray=\{dash\}/);
   }],
 
   ["the stylesheet is compiled with Tailwind, and only the AI Elements' classes are in it", ({ build, tailwind, postcss }) => {

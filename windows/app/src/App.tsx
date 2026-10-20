@@ -48,7 +48,8 @@ import {
 import { Settings, settingsPageTitle } from "./Settings";
 import { DiffModal, Drawer, Palette, Picker, Toast } from "./Overlays";
 import { Shimmer } from "./components/ai-elements/shimmer";
-import { FolderIcon, PromptMark, Symbol } from "./components/symbols";
+import { FolderIcon, Symbol } from "./components/symbols";
+import { Spinner } from "./components/spinner";
 import { ProviderLogo } from "./components/provider-logo";
 import { motion } from "motion/react";
 import { macSpringOrStill } from "./motion";
@@ -956,7 +957,7 @@ function SessionTabs() {
               </svg>
               {status ? (
                 <span className={`tab-status ${status}`}>
-                  {status === "running" ? <PromptMark size={9} /> : null}
+                  {status === "running" ? <Spinner size={8} /> : null}
                 </span>
               ) : null}
             </span>

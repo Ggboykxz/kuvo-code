@@ -154,9 +154,21 @@ export function FolderIcon({ open = false, size = 16, className }: { open?: bool
 
 /// The app's own mark, the `>_` the spinner draws (Spinner.swift:153-177): the chevron and
 /// the cursor, on the coordinates of the app's icon.
+export const PROMPT_BOX = 690;
+export const PROMPT_HEIGHT = 530;
+export const PROMPT_CHEVRON = "M77 74L267 262 77 450";
+export const PROMPT_CURSOR = "M377 450h230";
+
+/// The mark's stroke, in the box's own units. The Mac draws the mark with a line of
+/// `max(1, size × 0.11)` points in a box of `size` points (Spinner.swift:39-42), so the
+/// line is a fraction of the box that never falls below a point.
+export function promptStroke(size: number): number {
+  return Math.max(1, size * 0.11) * (PROMPT_BOX / size);
+}
+
 export function PromptMark({ size = 11, className }: { size?: number; className?: string }) {
-  const height = (size * 530) / 690;
-  const stroke = Math.max(0.9, size / 9);
+  const height = (size * PROMPT_HEIGHT) / PROMPT_BOX;
+  const stroke = promptStroke(size);
   return (
     <svg
       className={className}
@@ -171,8 +183,8 @@ export function PromptMark({ size = 11, className }: { size?: number; className?
       aria-hidden="true"
       focusable="false"
     >
-      <path d="M77 74L267 262 77 450" />
-      <path d="M377 450h230" />
+      <path d={PROMPT_CHEVRON} />
+      <path d={PROMPT_CURSOR} />
     </svg>
   );
 }

@@ -251,24 +251,52 @@ export function connectEvents() {
   source.onerror = () => {};
 }
 
+/// The events the engine sends, and the transcript's own names for them
+/// (OpenCodeKit's `Transcript`, the Mac app's). The names here are the engine's: the
+/// words of a reply come as `session.text.delta`, the run's end as
+/// `session.execution.succeeded`.
+const CONVERSATION_EVENTS = new Set([
+  "session.execution.started",
+  "session.execution.succeeded",
+  "session.execution.failed",
+  "session.execution.interrupted",
+  "session.step.started",
+  "session.step.streamed",
+  "session.step.ended",
+  "session.step.failed",
+  "session.retry.scheduled",
+  "session.text.started",
+  "session.text.delta",
+  "session.text.ended",
+  "session.reasoning.started",
+  "session.reasoning.delta",
+  "session.reasoning.ended",
+  "session.tool.input.started",
+  "session.tool.input.delta",
+  "session.tool.input.ended",
+  "session.tool.called",
+  "session.tool.success",
+  "session.tool.failed",
+  "session.synthetic",
+  "permission.asked",
+  "permission.replied",
+]);
+
 function handleEvent(event: { type: string; data?: unknown }) {
   const properties = (event.data ?? {}) as Record<string, unknown>;
   if (!state.transcript) return;
-  if (event.type === "message.part.updated" || event.type === "message.updated") {
+  if (CONVERSATION_EVENTS.has(event.type)) {
     state.transcript = apply(state.transcript, event as never);
     render();
-  } else if (event.type === "session.idle" || event.type === "session.error") {
-    const transcript = apply(state.transcript, event as never);
-    transcript.running = false;
-    state.transcript = transcript;
-    render();
-    void (async () => {
-      await openSession(state.session!.id);
-      await loadSessions();
-    })();
-  } else if (event.type === "permission.updated" || event.type === "permission.asked") {
-    state.transcript = apply(state.transcript, event as never);
-    render();
+    // The run is over: read it back, the way the Mac does when the engine says the
+    // turn ended (SessionModel.swift:640-655) — the words it has now are the words
+    // there are.
+    if (event.type === "session.execution.succeeded" || event.type === "session.execution.failed" || event.type === "session.execution.interrupted") {
+      void (async () => {
+        await openSession(state.session!.id);
+        await loadSessions();
+      })();
+    }
   }
   void properties;
 }

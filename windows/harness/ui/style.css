@@ -2872,9 +2872,10 @@ button.small:active { background: var(--press-active); }
               background-color var(--motion-spring) var(--ease-spring);
 }
 
-/* The working mark: the Mac's spinner is the app's own prompt mark, drawn as it
-   works (Spinner.swift:11-55); the mark itself lands with the icons (Phase 4),
-   and until then this is the same beat — a round every 1.6 s. */
+/* The working mark: the Mac's loader (Spinner.swift:1-177) — the app's own prompt
+   mark, the `>_`, drawing itself in short dashes over a faint copy of itself, then
+   fading to start again. A round is 1.6 s: the chevron draws over the first 40 % of
+   it, the cursor from 32 % to 60 %, and the mark fades from 78 % to the end. */
 .tab-status.running {
   width: 7px;
   height: 7px;
@@ -2956,7 +2957,9 @@ button > svg, .small > svg, .session-delete > svg, .keycap-clear > svg { display
 
 /* The working mark: the app's own prompt mark, written and erased as the Mac's
    spinner writes it (Spinner.swift:40-54) — the chevron first, the cursor next,
-   a hold, and a fade, over the Mac's 1.6 s round. */
+   a hold, and a fade, over the Mac's 1.6 s round. The mark itself is the
+   `Spinner` component (windows/app/src/components/spinner.tsx), which draws the
+   faint copy and the drawn one; the rules that move them are here. */
 .tab-status.running {
   width: 13px;
   height: 13px;
@@ -2971,28 +2974,33 @@ button > svg, .small > svg, .session-delete > svg, .keycap-clear > svg { display
   color: var(--ink-soft);
   animation: none;
 }
-.tab-status.running path:first-child {
-  stroke-dasharray: 100;
-  stroke-dashoffset: 100;
-  animation: kuvo-mark-chevron 1.6s ease-in-out infinite;
+.spinner { display: inline-block; flex: 0 0 auto; color: var(--ink-soft); }
+.spinner-faint { opacity: 0.18; }
+.spinner-drawn { opacity: 1; }
+.spinner-reveal { stroke-dasharray: 1 1; }
+.spinner-reveal-chevron { animation: kuvo-spinner-chevron 1.6s linear infinite; }
+.spinner-reveal-cursor { animation: kuvo-spinner-cursor 1.6s linear infinite; }
+.spinner-drawn { animation: kuvo-spinner-fade 1.6s linear infinite; }
+@keyframes kuvo-spinner-chevron {
+  0% { stroke-dashoffset: 1; }
+  40% { stroke-dashoffset: 0; }
+  100% { stroke-dashoffset: 0; }
 }
-.tab-status.running path:last-child {
-  stroke-dasharray: 100;
-  stroke-dashoffset: 100;
-  animation: kuvo-mark-cursor 1.6s ease-in-out infinite;
+@keyframes kuvo-spinner-cursor {
+  0% { stroke-dashoffset: 1; }
+  32% { stroke-dashoffset: 1; }
+  60% { stroke-dashoffset: 0; }
+  100% { stroke-dashoffset: 0; }
 }
-.tab-status.running svg { animation: kuvo-mark-fade 1.6s linear infinite; }
-@keyframes kuvo-mark-chevron {
-  0% { stroke-dashoffset: 100; }
-  40%, 100% { stroke-dashoffset: 0; }
-}
-@keyframes kuvo-mark-cursor {
-  0%, 32% { stroke-dashoffset: 100; }
-  60%, 100% { stroke-dashoffset: 0; }
-}
-@keyframes kuvo-mark-fade {
+@keyframes kuvo-spinner-fade {
   0%, 78% { opacity: 1; }
   100% { opacity: 0.35; }
+}
+/* The system asks for less movement: it gets less. The Mac's still mark — the whole
+   prompt mark, held (Spinner.swift:19-24). */
+@media (prefers-reduced-motion: reduce) {
+  .spinner-faint { opacity: 1; }
+  .spinner-drawn { display: none; }
 }
 
 /* The line while the agent is working (TranscriptView.swift:598-610): the Mac's words,
