@@ -330,7 +330,7 @@ struct SidebarView: View {
         guard hasOwnWorktree(session) else { return ask(session) }
         let directory = session.location.directory
         Task {
-            worktreeIsDirty = await Task.detached { Git.hasUncommittedChanges(in: directory) }.value
+            worktreeIsDirty = await Task.detached { Git.hasUncommittedChanges(in: directory, includingHidden: true) }.value
             ask(session)
         }
     }

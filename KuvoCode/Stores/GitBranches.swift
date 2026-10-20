@@ -57,11 +57,13 @@ nonisolated extension Git {
     }
 
     /// Changes that aren't committed, new files included; and, when git can't say (a machine's
-    /// connection dropped), as if there were, so nothing is thrown away on a guess. New files
-    /// and submodules count whatever git's settings say (`status.showUntrackedFiles=no` hides
-    /// them, and removing a worktree would delete them unasked).
-    static func hasUncommittedChanges(in directory: String) -> Bool {
-        guard let status = run(["status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=none"], in: directory) else { return true }
+    /// connection dropped), as if there were, so nothing is thrown away on a guess.
+    /// `includingHidden`: also new files and submodules git's settings leave out
+    /// (`status.showUntrackedFiles=no`, a submodule's `ignore`), for before a worktree is removed,
+    /// which would delete them unasked.
+    static func hasUncommittedChanges(in directory: String, includingHidden: Bool = false) -> Bool {
+        let hidden = includingHidden ? ["--untracked-files=normal", "--ignore-submodules=none"] : []
+        guard let status = run(["status", "--porcelain"] + hidden, in: directory) else { return true }
         return !status.isEmpty
     }
 

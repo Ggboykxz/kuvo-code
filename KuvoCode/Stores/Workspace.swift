@@ -746,7 +746,7 @@ final class Workspace {
         if sessions.contains(where: { worktrees[$0.location.directory]?.root == tree.root && isWorking($0.id) }) {
             throw GitFailure(message: "An agent is still working in the worktree of \(tree.branch), so it stays. Stop it first, then remove the worktree.")
         }
-        if !discardingChanges, await Task.detached(operation: { Git.hasUncommittedChanges(in: tree.root) }).value {
+        if !discardingChanges, await Task.detached(operation: { Git.hasUncommittedChanges(in: tree.root, includingHidden: true) }).value {
             throw GitFailure(message: "The worktree of \(tree.branch) has changes that aren’t committed, so it stays. Commit them, or remove it in Settings › Worktrees, which throws them away.")
         }
         let project = try await api.location(directory: tree.project).project
