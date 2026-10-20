@@ -5,6 +5,7 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- Editing a queued message no longer loses it when the engine is slow to answer; Undo twice, then Redo, leaves the composer as it was; messages that couldn't be sent come back in the order you wrote them; and a model the engine won't switch to doesn't stay picked.
 - A message you send just as you press Stop waits in the queue rather than starting the agent again, and one sent for the next step of a run that then fails waits there too, where you see it.
 - A conversation on a machine you read while it was away stays read when the machine is back, and a session deleted from another Mac or your phone closes its tabs in the panel.
 - In a group chat, a bot's report on its part is what it did for that part, all of it, even when another agent wrote to it meanwhile.
