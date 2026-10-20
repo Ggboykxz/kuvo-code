@@ -314,6 +314,27 @@ describe("a command line's commands", () => {
     expect(commands("diff <(git show HEAD:a) a")).toContain("git show HEAD:a")
   })
 
+  test("comments, here-documents, line breaks and what comes before a command don't hide it", () => {
+    const blocked = (line: string) => commandParts(line).some((part) => /^git push( |$)/.test(part))
+    expect(blocked("# now let's push\ngit push origin main")).toBe(true)
+    expect(blocked(`git commit -m "$(cat <<'EOF'\nIt's a fix (really)\nEOF\n)" && git push origin main`)).toBe(true)
+    expect(blocked("cat <<EOF && git push origin main\nbody\nEOF")).toBe(true)
+    expect(blocked("git \\\npush")).toBe(true)
+    expect(blocked("VAR=1 git push")).toBe(true)
+    expect(blocked("2>/dev/null git push")).toBe(true)
+    expect(blocked("sudo -u me git push")).toBe(true)
+    expect(blocked("env FOO=1 nohup git push &")).toBe(true)
+    expect(blocked("git -C ../other push origin")).toBe(true)
+    expect(blocked("bash -c 'cd x && git push'")).toBe(true)
+    expect(blocked("sh -lc \"git push\"")).toBe(true)
+    // A quote never closed: still split, the plain way.
+    expect(blocked("echo 'oops; git push")).toBe(true)
+    // What only looks like it stays where it is.
+    expect(blocked('git commit -m "wip; git push later"')).toBe(false)
+    expect(blocked("cat <<'EOF' > notes.md\ngit push\nEOF")).toBe(false)
+    expect(blocked("echo done # git push later")).toBe(false)
+  })
+
   test("what's quoted, redirected or read from a here-document stays in its command", () => {
     expect(commandParts('git commit -m "wip; git push later"')).toEqual(['git commit -m "wip; git push later"'])
     expect(commandParts("git commit -m 'docs (git push) flow'")).toEqual(["git commit -m 'docs (git push) flow'"])

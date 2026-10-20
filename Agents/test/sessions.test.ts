@@ -394,6 +394,27 @@ describe("permissions", () => {
     expect(answers).toEqual(["always", "once", "reject"])
   })
 
+  test("Always on a command doesn't let through one after a comment or in a here-document's line", async () => {
+    const answers: string[] = []
+    a.script = async (_input, _turn, hooks) => {
+      answers.push(await hooks.permission({ action: "shell", resources: ["npm test"], save: ["npm test *"] }))
+      answers.push(await hooks.permission({ action: "shell", resources: ["npm test # it's quick\nrm -rf build"] }))
+      answers.push(await hooks.permission({ action: "shell", resources: ["npm test <<EOF && rm -rf build\nx\nEOF"] }))
+      return { outcome: "succeeded" }
+    }
+    const id = create()
+    sessions.update(id, { permissions: [{ action: "shell", resource: "*", effect: "ask" }] })
+    send(id, "go")
+    await until(() => sessions.permissions(id).length === 1)
+    sessions.replyPermission(id, sessions.permissions(id)[0].id, "always")
+    await until(() => sessions.permissions(id).length === 1 && sessions.permissions(id)[0].resources[0].includes("rm"))
+    sessions.replyPermission(id, sessions.permissions(id)[0].id, "reject")
+    await until(() => sessions.permissions(id).length === 1 && sessions.permissions(id)[0].resources[0].includes("EOF"))
+    sessions.replyPermission(id, sessions.permissions(id)[0].id, "reject")
+    await settled(id, 1)
+    expect(answers).toEqual(["always", "reject", "reject"])
+  })
+
   test("Always also lets through what else waits on the same thing", async () => {
     const answers: string[] = []
     a.script = async (_input, _turn, hooks) => {

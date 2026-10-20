@@ -170,42 +170,59 @@ const engineDefaults: PermissionRule[] = [
 /**
  * A command line's commands, each checked on its own as the engine does (it checks every command
  * in the line: `a && b`, `a | b`, `a & b`, `a; b`, `$(b)`, `if a; then b; fi`, `{ b; }`), with
- * the whole line: a rule for one of them holds in any line. What's quoted stays in its command.
+ * the whole line: a rule for one of them holds in any line. What's quoted, commented out or read
+ * from a here-document stays in its command; one line that can't be read through (a quote never
+ * closed) is also split the plain way, so a Block still finds what's in it.
  */
 export function commandParts(line: string): string[] {
   const whole = line.trim()
-  const parts: string[] = []
-  splitCommands(whole, parts)
-  return [whole, ...new Set(parts.filter((part) => part !== whole))]
+  const { commands, sure } = parseCommands(whole)
+  const parts = new Set(commands.filter((part) => part !== whole))
+  if (!sure)
+    for (const part of whole.split(/&&|\|\||[;|&\n`()]|\$\(/)) {
+      const trimmed = part.trim()
+      if (trimmed && trimmed !== whole) parts.add(trimmed)
+    }
+  return [whole, ...parts]
+}
+
+/** The commands a shell would run for a line, and whether it could be read through. */
+export function parseCommands(line: string): { commands: string[]; sure: boolean } {
+  const state = { sure: true }
+  const out: string[] = []
+  // A backslash at a line's end joins the next line to it.
+  scanCommands(line.replace(/\\\n/g, ""), 0, "", out, state)
+  return { commands: [...new Set(out)], sure: state.sure }
 }
 
 /** Words that open or close a block around commands, not commands themselves. */
 const shellKeywords = new Set(["if", "then", "else", "elif", "do", "while", "until", "!", "time", "{", "}", "fi", "done", "esac"])
 
-function splitCommands(text: string, out: string[]) {
+/**
+ * Reads commands from `start` until `close` (the `)` of a `$(`, the closing backtick, or the end),
+ * adding each to `out`; where it stopped (at the closer, or the end).
+ */
+function scanCommands(text: string, start: number, close: string, out: string[], state: { sure: boolean }): number {
   let current = ""
+  let depth = 0
+  const heredocs: { word: string; tabs: boolean }[] = []
   const push = () => {
-    const words = current.trim().split(/\s+/)
-    while (words.length && shellKeywords.has(words[0])) words.shift()
-    const part = words.join(" ")
-    // A loop's or a case's own line: what runs is inside it.
-    if (part && !/^(for|case|select|function)\s/.test(part)) out.push(part)
+    addCommand(current, out)
     current = ""
   }
-  // A command inside this one ($(…), <(…), `…`): checked on its own, and kept in this one's text.
-  const inner = (start: number, open: number): number => {
-    const end = open === -1 ? backtickEnd(text, start) : parenEnd(text, start)
-    splitCommands(text.slice(start, end), out)
-    return end
-  }
-  let i = 0
+  let i = start
   while (i < text.length) {
     const ch = text[i]
+    if (close && ch === close && (close !== ")" || depth === 0)) {
+      push()
+      return i
+    }
     if (ch === "\\") {
       current += text.slice(i, i + 2)
       i += 2
     } else if (ch === "'") {
       const end = text.indexOf("'", i + 1)
+      if (end < 0) state.sure = false
       const stop = end < 0 ? text.length : end + 1
       current += text.slice(i, stop)
       i = stop
@@ -213,46 +230,48 @@ function splitCommands(text: string, out: string[]) {
       let j = i + 1
       while (j < text.length && text[j] !== '"') {
         if (text[j] === "\\") j += 2
-        else if (text.startsWith("$(", j)) j = inner(j + 2, 0) + 1
-        else if (text[j] === "`") j = inner(j + 1, -1) + 1
+        else if (text.startsWith("$(", j)) j = scanCommands(text, j + 2, ")", out, state) + 1
+        else if (text[j] === "`") j = scanCommands(text, j + 1, "`", out, state) + 1
         else j++
       }
+      if (j >= text.length) state.sure = false
       current += text.slice(i, j + 1)
       i = j + 1
-    } else if (text.startsWith("$(", i) || text.startsWith("<(", i) || text.startsWith(">(", i)) {
-      const end = inner(i + 2, 0)
+    } else if (text.startsWith("$(", i) || text.startsWith("<(", i) || text.startsWith(">(", i) || ch === "`") {
+      // A command inside this one: checked on its own, and kept in this one's text.
+      const from = ch === "`" ? i + 1 : i + 2
+      const end = scanCommands(text, from, ch === "`" ? "`" : ")", out, state)
+      if (end >= text.length) state.sure = false
       current += text.slice(i, end + 1)
       i = end + 1
-    } else if (ch === "`") {
-      const end = inner(i + 1, -1)
-      current += text.slice(i, end + 1)
-      i = end + 1
-    } else if (ch === "<" && text.startsWith("<<", i) && text[i + 2] !== "<") {
-      // A here-document: its lines are what it reads, not commands.
-      const match = /^<<-?\s*(['"]?)([\w.-]+)\1/.exec(text.slice(i))
-      if (!match) {
-        current += "<<"
-        i += 2
-        continue
-      }
-      current += match[0]
-      i += match[0].length
+    } else if (ch === "#" && (current === "" || /\s$/.test(current))) {
+      // A comment, to the end of its line.
       const lineEnd = text.indexOf("\n", i)
-      if (lineEnd < 0) continue
-      current += text.slice(i, lineEnd)
-      let at = lineEnd + 1
-      let found = -1
-      while (at <= text.length) {
-        const next = text.indexOf("\n", at)
-        const body = text.slice(at, next < 0 ? text.length : next)
-        if (body.trim() === match[2]) {
-          found = next < 0 ? text.length : next
-          break
+      i = lineEnd < 0 ? text.length : lineEnd
+    } else if (ch === "<" && text.startsWith("<<", i) && text[i + 2] !== "<") {
+      // A here-document: its lines (from the next one on) are what it reads, not commands; the
+      // rest of this line goes on as usual.
+      const match = /^<<(-?)\s*(['"]?)([^\s'"<>;&|()]+)\2/.exec(text.slice(i))
+      if (match) heredocs.push({ word: match[3], tabs: match[1] === "-" })
+      const taken = match ? match[0].length : 2
+      current += text.slice(i, i + taken)
+      i += taken
+    } else if (ch === "\n") {
+      push()
+      i++
+      for (const doc of heredocs.splice(0)) {
+        let found = false
+        while (i < text.length) {
+          const lineEnd = text.indexOf("\n", i)
+          const body = text.slice(i, lineEnd < 0 ? text.length : lineEnd)
+          i = lineEnd < 0 ? text.length : lineEnd + 1
+          if ((doc.tabs ? body.replace(/^\t+/, "") : body) === doc.word) {
+            found = true
+            break
+          }
         }
-        if (next < 0) break
-        at = next + 1
+        if (!found) state.sure = false
       }
-      i = found < 0 ? text.length : found
     } else if (ch === "&" && (text[i + 1] === ">" || /[<>]$/.test(current))) {
       // A redirection (2>&1, &>file), not a command of its own.
       current += ch
@@ -260,7 +279,13 @@ function splitCommands(text: string, out: string[]) {
     } else if (ch === "|" && /[>]$/.test(current)) {
       current += ch
       i++
-    } else if (ch === "&" || ch === "|" || ch === ";" || ch === "\n" || ch === "(" || ch === ")") {
+    } else if (ch === "&" || ch === "|" || ch === ";" || ch === "(" || ch === ")") {
+      if (ch === "(") depth++
+      else if (ch === ")") {
+        if (depth > 0) depth--
+        // One that closes nothing (a case's pattern, say): read as a break, not sure.
+        else state.sure = false
+      }
       push()
       i += text[i + 1] === ch || (ch === "|" && text[i + 1] === "&") ? 2 : 1
     } else {
@@ -269,37 +294,102 @@ function splitCommands(text: string, out: string[]) {
     }
   }
   push()
-}
-
-/** Where the `)` that closes what starts at `start` is (quotes and nesting followed), or the end. */
-function parenEnd(text: string, start: number): number {
-  let depth = 1
-  let i = start
-  while (i < text.length) {
-    const ch = text[i]
-    if (ch === "\\") i += 2
-    else if (ch === "'") {
-      const end = text.indexOf("'", i + 1)
-      i = end < 0 ? text.length : end + 1
-    } else if (ch === '"') {
-      let j = i + 1
-      while (j < text.length && text[j] !== '"') j += text[j] === "\\" ? 2 : 1
-      i = j + 1
-    } else if (ch === "(") {
-      depth++
-      i++
-    } else if (ch === ")") {
-      if (--depth === 0) return i
-      i++
-    } else i++
-  }
+  if (close || heredocs.length || depth) state.sure = false
   return text.length
 }
 
-function backtickEnd(text: string, start: number): number {
-  let i = start
-  while (i < text.length && text[i] !== "`") i += text[i] === "\\" ? 2 : 1
-  return Math.min(i, text.length)
+/**
+ * One command, as written, and as it runs: without assignments, redirections and wrappers before
+ * it (`FOO=1`, `2>/dev/null`, `env`, `sudo`, `nohup`…), and for git, without its own options
+ * before the subcommand (`git -C dir push`); a shell given a command line (`bash -c '…'`), that
+ * line's commands too.
+ */
+function addCommand(raw: string, out: string[]) {
+  const words = shellWords(raw.trim())
+  while (words.length && shellKeywords.has(words[0])) words.shift()
+  // A loop's or a case's own line: what runs is inside it.
+  if (!words.length || /^(for|case|select|function)$/.test(words[0])) return
+  out.push(words.join(" "))
+  const bare = withoutPrefix(words)
+  if (!bare.length) return
+  out.push(bare.join(" "))
+  if (bare[0] === "git") {
+    const rest = bare.slice(1)
+    while (rest.length) {
+      if (rest[0] === "-C" || rest[0] === "-c" || rest[0] === "--git-dir" || rest[0] === "--work-tree" || rest[0] === "--namespace") rest.splice(0, 2)
+      else if (rest[0].startsWith("-")) rest.shift()
+      else break
+    }
+    out.push(["git", ...rest].join(" "))
+  }
+  const program = bare[0].split("/").pop() ?? ""
+  if (/^(ba|z|da|k|fi)?sh$/.test(program)) {
+    const at = bare.findIndex((word, index) => index > 0 && /^-[a-z]*c[a-z]*$/.test(word))
+    if (at > 0 && bare[at + 1]) out.push(...parseCommands(unquote(bare[at + 1])).commands)
+  }
+}
+
+const wrappers = new Set(["env", "command", "exec", "nohup", "builtin", "sudo", "doas", "time", "nice", "caffeinate"])
+
+function withoutPrefix(words: string[]): string[] {
+  let i = 0
+  while (i < words.length) {
+    const word = words[i]
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) i++
+    else if (/^\d*(>>?|<|&>|>&|<&|&>>)$/.test(word)) i += 2
+    else if (/^\d*(>>?|<|&>|>&|<&|&>>)\S/.test(word)) i++
+    else if (wrappers.has(word.split("/").pop() ?? "")) {
+      i++
+      while (i < words.length && words[i].startsWith("-")) {
+        // sudo -u bob, nice -n 10: the flag's value too.
+        i += /^-[ugCDhprtUn]$/.test(words[i]) ? 2 : 1
+      }
+    } else break
+  }
+  return words.slice(i)
+}
+
+/** A command's words: split where a shell would, quotes and substitutions kept whole. */
+function shellWords(text: string): string[] {
+  const words: string[] = []
+  let word = ""
+  let i = 0
+  while (i < text.length) {
+    const ch = text[i]
+    if (/\s/.test(ch)) {
+      if (word) words.push(word)
+      word = ""
+      i++
+    } else if (ch === "\\") {
+      word += text.slice(i, i + 2)
+      i += 2
+    } else if (ch === "'" || ch === '"' || ch === "`") {
+      let j = i + 1
+      while (j < text.length && text[j] !== ch) j += ch !== "'" && text[j] === "\\" ? 2 : 1
+      word += text.slice(i, j + 1)
+      i = j + 1
+    } else if (text.startsWith("$(", i)) {
+      let depth = 0
+      let j = i + 1
+      for (; j < text.length; j++) {
+        if (text[j] === "(") depth++
+        else if (text[j] === ")" && --depth === 0) break
+      }
+      word += text.slice(i, j + 1)
+      i = j + 1
+    } else {
+      word += ch
+      i++
+    }
+  }
+  if (word) words.push(word)
+  return words
+}
+
+/** A word as the program gets it: quotes taken off. */
+function unquote(word: string): string {
+  if (word.length >= 2 && (word[0] === "'" || word[0] === '"') && word.at(-1) === word[0]) return word.slice(1, -1)
+  return word
 }
 
 /** What an ask is about, a command line's commands one by one. */
@@ -319,7 +409,9 @@ function coveredBy(patterns: string[], action: string, resources: string[]): boo
   return resources.every((resource) => {
     if (patterns.includes(resource)) return true
     if (!isShell(action)) return patterns.some((pattern) => matches(pattern, resource))
-    const [, ...commands] = commandParts(resource)
+    // A line that can't be read through is never let through on its own.
+    const { commands, sure } = parseCommands(resource.trim())
+    if (!sure) return false
     return (commands.length ? commands : [resource.trim()]).every((command) => patterns.some((pattern) => matches(pattern, command)))
   })
 }
