@@ -12,6 +12,8 @@ export interface SessionSummary {
   model?: { providerID?: string; id?: string } | null;
   parentID?: string | null;
   cost?: number;
+  /** Where the session runs: the folder of its project (Workspace.Project.directory). */
+  location?: { directory?: string };
 }
 
 export interface MessagePart {
@@ -171,6 +173,11 @@ export interface AppState {
   agent: string;
   split: string | null;
   projects: string[];
+  /** The sessions of every project, by its folder (SidebarView.swift:194). */
+  sessionsByProject: Record<string, SessionSummary[]>;
+  /** What the user folded away: the sections' names and the projects' folders
+   *  (SidebarView.swift:33-37). */
+  collapsed: Record<string, boolean>;
   contextGauge: unknown;
   inbox: { id: string; delivery?: string; payload?: { text?: string } }[];
   vcs: VcsInfo | null;

@@ -118,6 +118,22 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     travel with the app, in `windows/THIRD_PARTY_LICENSES.txt`, written by
     `windows/tools/third-party-licenses.mjs` and checked in CI. The app is linted too
     (oxlint) and type-checked before it is built, in CI and before every push.
+  - **2.60 (this change). The sidebar holds every project, and the window has a menu bar.**
+    The last of the behaviour differences this port had was the sidebar: the Mac keeps
+    several projects, each with its own sessions, and the Recents below them; ours kept
+    one folder at a time. Now the sidebar is the Mac's: a *Projects* heading that folds
+    away, every project with its drawn folder, its name and a compose button (a session
+    in that project), its sessions — five to a project, the rest on request, as
+    `SidebarView.swift:62-63` says — and the *Recents*: the eight most recent sessions
+    across the projects. The harness serves any project it is asked for
+    (`POST /api/project`), the engine already lists the sessions of any directory, and
+    the shell and the harness now keep **one** list of recent projects (the same file),
+    so the tray's menu and the sidebar are the same list. The shell also grew a real
+    menu bar (`NativeMenu.swift:5-165`): the app's own menu, File, Edit, View, Window
+    and Help, with the Mac's items and keys; the items that act on the conversation ask
+    the page to do it, by the shortcut the Mac uses. And a double-click on the title bar
+    zooms the window, as it does on the Mac (`Card.swift:186-198`) — on Windows, that is
+    the window maximised.
   - **2.59. The window is built by Next.js, and the page is read in a real browser. The
     app's own code (React and TypeScript, in `windows/app/src`) is the page: Next.js
     builds it as a static export (`output: "export"`), the harness serves those files

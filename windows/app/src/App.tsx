@@ -23,6 +23,7 @@ import {
   loadInbox,
   loadLook,
   loadModels,
+  loadProjectSessions,
   loadProjects,
   loadSessionDiff,
   loadSessions,
@@ -30,10 +31,12 @@ import {
   look,
   newSession,
   notify,
+  openProject,
   openProjectFile,
   openSession,
   redoNow,
   render,
+  removeProject,
   replyForm,
   saveConfig,
   sendPrompt,
@@ -1021,55 +1024,122 @@ function ContextMenu({ x, y, items, onClose }: {
   );
 }
 
+/// The Mac's section heading (SidebarView.swift:1039-1088): the title, a chevron that
+/// folds the section away, and what the section has on the right.
+function SectionHeader({ title, folded, onToggle, action }: { title: string; folded: boolean; onToggle: () => void; action?: React.ReactNode }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <div className="section-header">
+      <button
+        className="section-title"
+        onClick={onToggle}
+        title={folded ? `Show ${title}` : `Hide ${title}`}
+        aria-expanded={!folded}
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
+      >
+        <span>{title}</span>
+        <Symbol name="chevron.down" size={9} className={`section-chevron ${folded ? "folded" : ""} ${hover ? "hover" : ""}`} />
+      </button>
+      {action ? <span className="section-action">{action}</span> : null}
+    </div>
+  );
+}
+
 function Sidebar() {
   const archived = (session: SessionSummary) => Boolean(session.time?.archived) || session.metadata?.["kuvo.archived"] === true;
   const query = state.sessionQuery.trim().toLowerCase();
-  const visible = state.sessions
-    .filter(session => !archived(session))
-    .filter(s => (query ? (s.title || "").toLowerCase().includes(query) : true));
-  // Whether the project is open — the Mac's projects fold (SidebarView.swift:798).
-  const [projectOpen, setProjectOpen] = useState(true);
   // A session being renamed, in its row where Rename was chosen (SidebarView.swift:41-52),
-  // and the row's own menu, which is where the Mac offers it (SidebarView.swift:586).
+  // and the rows' own menus, which are where the Mac offers it (SidebarView.swift:586).
   const [renaming, setRenaming] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [projectMenu, setProjectMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  // Which project shows all its sessions, and which only the first few
+  // (SidebarView.swift:62-63, 386-398).
+  const [showsAll, setShowsAll] = useState<Record<string, boolean>>({});
   const commitRename = async (id: string, title: string) => {
     setRenaming(null);
     const name = title.trim();
-    if (!name || name === (state.sessions.find(session => session.id === id)?.title ?? "")) return;
+    const known = [...state.sessions, ...Object.values(state.sessionsByProject).flat()].find(session => session.id === id);
+    if (!name || name === (known?.title ?? "")) return;
     try {
       await api(`/api/sessions/${encodeURIComponent(id)}/rename`, { method: "POST", body: { title: name } });
       await loadSessions();
+      await loadProjectSessions();
     } catch (error) { complain(error); }
   };
+
+  // The Mac's projects, each with its own sessions (SidebarView.swift:178-196), and the
+  // Recents: the most recent sessions across them (SidebarView.swift:490-493).
+  const sessionsOf = (folder: string) => {
+    const list = folder === state.project ? state.sessions : state.sessionsByProject[folder] ?? [];
+    return list
+      .filter(session => !archived(session))
+      .filter(session => (query ? (session.title || "").toLowerCase().includes(query) : true))
+      .sort((a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0));
+  };
+  const recents = state.projects
+    .flatMap(folder => sessionsOf(folder))
+    .filter((session, index, all) => all.findIndex(other => other.id === session.id) === index)
+    .sort((a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0))
+    .slice(0, 8);
+  const folded = (key: string) => Boolean(state.collapsed[key]);
+  const toggle = (key: string) => { state.collapsed[key] = !folded(key); render(); };
+
+  const sessionRow = (session: SessionSummary) => {
+    const running = state.session?.id === session.id && state.transcript?.running;
+    const unread = Boolean(session.time?.idle && session.time?.viewed && session.time.idle > session.time.viewed && session.id !== state.session?.id);
+    return (
+      <li
+        key={session.id}
+        className={`${session.id === state.session?.id ? "current" : ""} ${unread ? "unread" : ""}`}
+        onContextMenu={event => {
+          event.preventDefault();
+          setMenu({ id: session.id, x: event.clientX, y: event.clientY });
+        }}
+      >
+        {renaming === session.id ? (
+          <input
+            className="session-rename"
+            defaultValue={session.title || ""}
+            autoFocus
+            aria-label="Rename this session"
+            onFocus={event => event.currentTarget.select()}
+            onKeyDown={event => {
+              if (event.key === "Enter") { event.preventDefault(); void commitRename(session.id, event.currentTarget.value); }
+              if (event.key === "Escape") { event.preventDefault(); setRenaming(null); }
+            }}
+            onBlur={event => { void commitRename(session.id, event.currentTarget.value); }}
+          />
+        ) : (
+          <button className="session" data-id={session.id} onClick={() => { state.settingsOpen = false; void openSession(session.id); }}>
+            <span className="session-title">{session.title || "New Session"}</span>
+            {running || unread ? <span className={`session-state ${running ? "running" : "unread"}`} aria-hidden="true" /> : null}
+          </button>
+        )}
+        <button
+          className="session-delete"
+          title="Put this session away (Settings › Archived sessions brings it back)"
+          onClick={async () => {
+            try {
+              await api(`/api/sessions/${encodeURIComponent(session.id)}/archive`, { method: "POST", body: { archived: true } });
+              if (state.session?.id === session.id) { state.session = null; state.transcript = null; }
+              await loadSessions();
+              await loadProjectSessions();
+            } catch (error) { complain(error); }
+          }}
+        >
+          <Symbol name="tray.and.arrow.down" size={12} />
+        </button>
+        <button className="session-delete" title="Delete this session" aria-label="Delete this session" onClick={() => void deleteSession(session)}>
+          <Symbol name="xmark" size={10} />
+        </button>
+      </li>
+    );
+  };
+
   return (
     <aside>
-      {/* The project, its folder and its name (SidebarView.swift:795-845): the sessions fold
-          under it, and the compose button shows under the pointer. */}
-      {state.project ? (
-        <div className="sidebar-project">
-          <button
-            id="project-row"
-            className="project-row"
-            onClick={() => { setProjectOpen(open => !open); render(); }}
-            aria-expanded={projectOpen}
-          >
-            <FolderIcon open={projectOpen} size={16} className="project-icon" />
-            <span className="project-name">{folderName(state.project)}</span>
-            <span
-              className="project-compose"
-              title="New Session"
-              role="button"
-              tabIndex={0}
-              onClick={event => { event.stopPropagation(); void newSession(); }}
-              onKeyDown={event => { if (event.key === "Enter") { event.stopPropagation(); void newSession(); } }}
-            >
-              <Symbol name="square.and.pencil" size={13} />
-            </span>
-          </button>
-          {projectOpen ? null : <div className="project-closed" />}
-        </div>
-      ) : null}
       <button id="new-session" className="sidebar-new" onClick={() => void newSession()}>
         <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
           <path d="M3 12.5L3.7 9.6 9.9 3.4l2.7 2.7-6.2 6.2z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
@@ -1105,61 +1175,82 @@ function Sidebar() {
         ) : null}
       </label>
       <div className="sidebar-scroll">
-      <ul id="sessions" hidden={!projectOpen}>
-        {visible.map(session => {
-          const running = state.session?.id === session.id && state.transcript?.running;
-          const unread = Boolean(session.time?.idle && session.time?.viewed && session.time.idle > session.time.viewed && session.id !== state.session?.id);
+      {/* The Mac's projects (SidebarView.swift:178-196): every project, each with its own
+          sessions, and the Recents: the most recent sessions across them. */}
+      <SectionHeader
+        title="Projects"
+        folded={folded("projects")}
+        onToggle={() => toggle("projects")}
+        action={
+          <button
+            className="section-action-button"
+            title="New Project…"
+            aria-label="New Project"
+            onClick={() => { state.pickerOpen = true; render(); }}
+          >
+            <Symbol name="plus" size={12} />
+          </button>
+        }
+      />
+      {!folded("projects") ? (
+        state.projects.length === 0 ? (
+          <p className="aside-empty project-empty">Open a folder for the agent to work in.</p>
+        ) : state.projects.map(folder => {
+          const sessions = sessionsOf(folder);
+          const open = !folded(folder);
+          const all = Boolean(showsAll[folder]);
+          const shown = all ? sessions : sessions.slice(0, 5);
           return (
-            <li
-              key={session.id}
-              className={`${session.id === state.session?.id ? "current" : ""} ${unread ? "unread" : ""}`}
-              onContextMenu={event => {
-                event.preventDefault();
-                setMenu({ id: session.id, x: event.clientX, y: event.clientY });
-              }}
-            >
-              {renaming === session.id ? (
-                <input
-                  className="session-rename"
-                  defaultValue={session.title || ""}
-                  autoFocus
-                  aria-label="Rename this session"
-                  onFocus={event => event.currentTarget.select()}
-                  onKeyDown={event => {
-                    if (event.key === "Enter") { event.preventDefault(); void commitRename(session.id, event.currentTarget.value); }
-                    if (event.key === "Escape") { event.preventDefault(); setRenaming(null); }
-                  }}
-                  onBlur={event => { void commitRename(session.id, event.currentTarget.value); }}
-                />
-              ) : (
-              <button className="session" data-id={session.id} onClick={() => { state.settingsOpen = false; void openSession(session.id); }}>
-                <span className="session-title">{session.title || "New Session"}</span>
-                {running || unread ? <span className={`session-state ${running ? "running" : "unread"}`} aria-hidden="true" /> : null}
-              </button>
-              )}
+            <div className="project-group" key={folder}>
               <button
-                className="session-delete"
-                title="Put this session away (Settings › Archived sessions brings it back)"
-                onClick={async () => {
-                  try {
-                    await api(`/api/sessions/${encodeURIComponent(session.id)}/archive`, { method: "POST", body: { archived: true } });
-                    if (state.session?.id === session.id) { state.session = null; state.transcript = null; }
-                    await loadSessions();
-                  } catch (error) { complain(error); }
+                className="project-row"
+                onClick={() => toggle(folder)}
+                onContextMenu={event => {
+                  event.preventDefault();
+                  setProjectMenu({ id: folder, x: event.clientX, y: event.clientY });
                 }}
+                aria-expanded={open}
               >
-                <Symbol name="tray.and.arrow.down" size={12} />
+                <FolderIcon open={open} size={16} className="project-icon" />
+                <span className="project-name">{folderName(folder)}</span>
+                <span
+                  className="project-compose"
+                  title={`New Session in ${folderName(folder)}`}
+                  role="button"
+                  tabIndex={0}
+                  onClick={event => { event.stopPropagation(); void newSession(folder); }}
+                  onKeyDown={event => { if (event.key === "Enter") { event.stopPropagation(); void newSession(folder); } }}
+                >
+                  <Symbol name="square.and.pencil" size={13} />
+                </span>
               </button>
-              <button className="session-delete" title="Delete this session" aria-label="Delete this session" onClick={() => void deleteSession(session)}>
-                <Symbol name="xmark" size={10} />
-              </button>
-            </li>
+              {open ? (
+                <>
+                  <ul className="sessions" id={folder === state.project ? "sessions" : undefined}>
+                    {shown.map(sessionRow)}
+                  </ul>
+                  {sessions.length > 5 ? (
+                    <button
+                      className="show-more"
+                      onClick={() => setShowsAll(current => ({ ...current, [folder]: !current[folder] }))}
+                    >
+                      {all ? "Show Less" : `Show ${sessions.length - 5} More`}
+                    </button>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
           );
-        })}
-      </ul>
+        })
+      ) : null}
+      {recents.length ? (
+        <>
+          <SectionHeader title="Recents" folded={folded("recents")} onToggle={() => toggle("recents")} />
+          {!folded("recents") ? <ul className="sessions recents">{recents.map(sessionRow)}</ul> : null}
+        </>
+      ) : null}
       <MessageSearch query={state.sessionQuery} />
       </div>
-      <div id="sessions-empty" className="aside-empty" hidden={state.sessions.length > 0 || query.length > 0}>No sessions yet.</div>
       {menu ? (
         <ContextMenu
           x={menu.x}
@@ -1167,7 +1258,22 @@ function Sidebar() {
           onClose={() => setMenu(null)}
           items={[
             { label: "Rename…", run: () => setRenaming(menu.id) },
-            { label: "Delete", run: () => { void deleteSession(state.sessions.find(session => session.id === menu.id)!); } },
+            { label: "Delete", run: () => {
+              const found = [...state.sessions, ...Object.values(state.sessionsByProject).flat()].find(session => session.id === menu.id);
+              if (found) void deleteSession(found);
+            } },
+          ]}
+        />
+      ) : null}
+      {projectMenu ? (
+        <ContextMenu
+          x={projectMenu.x}
+          y={projectMenu.y}
+          onClose={() => setProjectMenu(null)}
+          items={[
+            { label: "New Session", run: () => void newSession(projectMenu.id) },
+            { label: "Open Project", run: () => void openProject(projectMenu.id) },
+            { label: "Remove from Sidebar", run: () => void removeProject(projectMenu.id) },
           ]}
         />
       ) : null}

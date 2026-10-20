@@ -124,16 +124,24 @@ function createWindow(url) {
   });
 }
 
+// The recent projects: the harness's own list, so the sidebar and the tray's menu are
+// one list (the Mac keeps one list of folders, too).
+const recentFile = () => path.join(os.homedir(), '.kuvo-code', 'recent-projects.json');
 function recentProjects() {
-  const config = loadConfig();
-  return Array.isArray(config.recentProjects) ? config.recentProjects.slice(0, 6) : [];
+  try {
+    const list = JSON.parse(fs.readFileSync(recentFile(), 'utf8'));
+    return Array.isArray(list) ? list.slice(0, 8) : [];
+  } catch { return []; }
 }
 
 function rememberProject(project) {
+  try {
+    fs.mkdirSync(path.dirname(recentFile()), { recursive: true });
+    const next = [project, ...recentProjects().filter(item => item !== project)].slice(0, 8);
+    fs.writeFileSync(recentFile(), JSON.stringify(next, null, 2));
+  } catch {}
   const config = loadConfig();
-  const list = Array.isArray(config.recentProjects) ? config.recentProjects : [];
-  const next = [project, ...list.filter(item => item !== project)].slice(0, 6);
-  config.recentProjects = next;
+  config.project = project;
   saveConfig(config);
 }
 
@@ -268,6 +276,12 @@ function toggleWindow() {
 
 // The page's double-click on the title bar (Card.swift:186-198 — the system preference
 // decides; on Windows, that is the window maximised).
+// The project the app switched to (SidebarView.swift:194): the shell remembers it, so
+// the app opens there next time.
+ipcMain.on("kuvo:remember-project", (_event, folder) => {
+  if (typeof folder === 'string' && folder) rememberProject(folder);
+});
+
 ipcMain.on("kuvo:maximize", () => {
   if (!mainWindow) return;
   if (mainWindow.isMaximized()) mainWindow.unmaximize();

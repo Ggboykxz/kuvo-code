@@ -26,6 +26,8 @@ export const state: AppState = {
   agent: "",
   split: null,
   projects: [],
+  sessionsByProject: {} as Record<string, SessionSummary[]>,
+  collapsed: {} as Record<string, boolean>,
   contextGauge: null,
   inbox: [],
   vcs: null,
@@ -227,6 +229,7 @@ export async function deleteSession(session: SessionSummary) {
       state.transcript = null;
     }
     await loadSessions();
+    await loadProjectSessions();
   } catch (error) {
     complain(error);
   }
@@ -378,11 +381,62 @@ export async function loadCommands() {
 export async function loadProjects() {
   try {
     const { projects } = await api<{ projects: string[] }>("/api/projects");
-    state.projects = Array.isArray(projects) ? projects : [];
+    // The project that is open is one of them, as it is on the Mac (Workspace.projects).
+    state.projects = Array.from(new Set([...(Array.isArray(projects) ? projects : []), ...(state.project ? [state.project] : [])]));
   } catch {
-    state.projects = [];
+    state.projects = state.project ? [state.project] : [];
   }
   render();
+  await loadProjectSessions();
+}
+
+/// The sessions of every project, by its folder (SidebarView.swift:194-196): the sidebar
+/// shows them all, each under its own project.
+export async function loadProjectSessions() {
+  const folders = [...state.projects];
+  const pairs = await Promise.all(folders.map(async folder => {
+    try {
+      const { sessions } = await api<{ sessions: SessionSummary[] }>(`/api/sessions?directory=${encodeURIComponent(folder)}`);
+      return [folder, sessions] as const;
+    } catch {
+      return [folder, [] as SessionSummary[]] as const;
+    }
+  }));
+  state.sessionsByProject = Object.fromEntries(pairs);
+  render();
+}
+
+/// Another project: the harness serves it from now on, and the app follows (the Mac's
+/// workspace opens the project the session belongs to).
+export async function openProject(folder: string, sessionId?: string) {
+  if (!folder) return;
+  if (folder !== state.project) {
+    try {
+      await api("/api/project", { method: "POST", body: { directory: folder } });
+    } catch (error) {
+      complain(error);
+      return;
+    }
+    state.project = folder;
+    // The shell remembers it too, so the app opens here next time.
+    (window as unknown as { kuvo?: { rememberProject?: (folder: string) => void } }).kuvo?.rememberProject?.(folder);
+    await loadSessions();
+    await loadProjectSessions();
+  }
+  if (sessionId) await openSession(sessionId);
+}
+
+/// A project away from the sidebar (SidebarView.swift:375): the Mac keeps it in the
+/// workspace's own list of folders, and the harness in its list of recent ones.
+export async function removeProject(folder: string) {
+  try {
+    await api("/api/projects", { method: "DELETE", body: { path: folder } });
+    state.projects = state.projects.filter(item => item !== folder);
+    delete state.sessionsByProject[folder];
+    render();
+  } catch (error) {
+    complain(error);
+  }
 }
 
 // ---- The settings file ----
@@ -474,11 +528,20 @@ export async function stopRun() {
   }
 }
 
-/// A new session, in the project that is open.
-export async function newSession() {
+/// A new session, in the project that is open — or in another one, as the Mac does from
+/// a project's row (SidebarView.swift:358-361).
+export async function newSession(directory?: string) {
   try {
-    const { session } = await api<{ session: { id: string } }>("/api/sessions", { method: "POST", body: {} });
+    const { session } = await api<{ session: { id: string } }>("/api/sessions", {
+      method: "POST",
+      body: directory ? { directory } : {},
+    });
+    if (directory && directory !== state.project) {
+      state.project = directory;
+      (window as unknown as { kuvo?: { rememberProject?: (folder: string) => void } }).kuvo?.rememberProject?.(directory);
+    }
     await loadSessions();
+    await loadProjectSessions();
     await openSession(session.id);
   } catch (error) {
     complain(error);
@@ -575,6 +638,9 @@ export async function boot() {
   const info = await api<{ project: string | null; engine: AppState["engine"] }>("/api/state");
   state.project = info.project;
   state.engine = info.engine;
+  // The project that is open is a project of its own from the start: its sessions are
+  // listed under it, before the rest of the projects are known (SidebarView.swift:194).
+  state.projects = info.project ? [info.project] : [];
   render();
   connectEvents();
   if (state.project) {

@@ -68,7 +68,7 @@ shadows, and accent glass.
 | 13 | Accent | macOS system accent by default, 9 presets, any `#RRGGBB` (`Look.swift:12-39`) | Cobalt `#2f6feb`; 9 presets exist, "system" is titled "Default" not "macOS Accent"; no custom hex | 1 |
 | 14 | Icons | 89 SF Symbols, 238 uses, plus 6 Shape/Canvas declarations and the drawn avatar faces (`MAC-UI-INVENTORY.md` §3, §6) | A mix of text glyphs, two drawn SVGs, and SF-symbol names in labels | 4 |
 | 15 | Header | Session **tabs**, project identity, traffic-light inset, Hide Sessions / Hide Panel, split (`TitleBar.swift:218-251,579-599`) | Flat row: Files / Hide sessions / Split / `@` / Appearance / Export, find field always on (`App.tsx`) | 2, 6 |
-| 16 | Sidebar | One search well, project tree, 32 pt rows, 18 pt icons, unread and bot avatars (`SidebarView.swift:675-726`) | Two stacked search fields; flat list (`App.tsx`) | 2, 6 |
+| 16 | Sidebar | One search well, project tree, 32 pt rows, 18 pt icons, unread and bot avatars (`SidebarView.swift:675-726`) | One search well; the projects, each with its own sessions, and the Recents (`App.tsx`, 0.5.62) | 2, 6 |
 
 **After 0.5.40:** rows 1–13 and 15–16 are bound to the Mac's values — the cards and their
 gaps (0.5.38), the materials, the header's tabs and the palette (0.5.39), and the motion
@@ -81,11 +81,13 @@ captures is in `docs/captures/`, written by `windows/harness/captures.mjs`.
 
 **What is left, and why.** The rows still marked ◐ or ⬜ are: the provider logos (the Mac
 takes them from models.dev; the source for the marks themselves is not published), the
-native menus (the Mac's are AppKit's, with values and subtitles; ours are the page's own), the
-date field, the code block's copy mark, the Settings pages the maintainer has not reopened
-(Notifications, Privacy, Panel), the usage of a provider's plan (which needs the account's
-keys), the worktrees, and the double-click on a title (the shell's own title bar does that
-one). Everything else in §1–§9 is now the Mac's, and the checks hold it there.
+date field, the Settings pages the maintainer has not reopened (Notifications, Privacy,
+Panel), the usage of a provider's plan (which needs the account's keys), and the worktrees.
+The native menus became a real menu bar in 0.5.61, the code block's copy mark became the
+Mac's mark that becomes a check, the double-click on a title bar zooms the window as it
+does on the Mac, and in 0.5.62 the sidebar holds every project with its own sessions, and
+the Recents — the last of the behaviour differences this port had. Everything else in
+§1–§9 is now the Mac's, and the checks hold it there.
 
 **The wording is finished with the screens it lives in.** The shell's strings are the Mac's,
 word for word, and a check holds them to the Mac's own source
@@ -212,9 +214,9 @@ most behaviours but not for the values; Phase 1–4 port the values.
 | `AgentPointer.swift` | The pointer the browser agent moves and clicks | arrow path 20 pt tall, glide `(0.3, 0, 0.2, 1)` 0.32 s, click pulse 0.5 s, other 1.2 s, delay 0.28, fade 0.35, linger 2.6 s | ⛔ browser surface | — |
 | `BotAvatar.swift` | A bot's drawn body and face: 10 tints (mint `#5EC7B8`, sky, indigo, violet, pink, coral, orange, amber, lime, graphite), 5 forms, 6 faces | forms round/squircle/pebble/gem/bloom; faces calm/happy/sleepy/wink/curious/bright; `BotAvatar.swift:14-53,269,535,592` | ⛔ bots | — |
 | `BotMotion.swift` | A bot's Core Animation cycle | idle 79.8 s (19 s noticed), working 42 s, waiting 4.8 s, news 46.8 s, watching 134.4 s, sleeping 50.4 s; sparks orbit 1.3 s | ⛔ bots | — |
-| `Card.swift` | The window's building block | §2, §3.4; header double-click = title bar | ◐ | 2 |
+| `Card.swift` | The window's building block | §2, §3.4; header double-click = title bar | ✅ (0.5.61: the double-click zooms the window) | 2 |
 | `Clipboard.swift` | Copy text, replacing the pasteboard | `Clipboard.swift:1-16` | ✅ (navigator.clipboard) | — |
-| `CodeBlockStyle.swift` | One recessed well, line numbers, language, Copy | well + top-corner language/Copy; copy icon swaps to check via `contentTransition` | ◐ | 2, 4 |
+| `CodeBlockStyle.swift` | One recessed well, line numbers, language, Copy | well + top-corner language/Copy; the copy mark, which becomes a check | ✅ (0.5.61) | 2, 4 |
 | `CodeHighlighter.swift` | Prism.js tokenisation off the main thread | Prism bundled in Resources (MIT); tokens, not HTML, so lines keep exact text | ✅ behaviour (highlighting exists) | — |
 | `FileDrop.swift` | Files dropped anywhere, text fields included | only active during a file drag; clicks pass through | ✅ | — |
 | `Flow.swift` | Wrapping rows, leading or trailing | `Flow.swift:5-63` | ✅ (flex-wrap) | — |
@@ -223,7 +225,7 @@ most behaviours but not for the values; Phase 1–4 port the values.
 | `IconOnlyToolbar.swift` | AppKit toolbar without Icon/Text menu | `IconOnlyToolbar.swift:4-38` | — (no AppKit) | — |
 | `InlineTitleField.swift` | Rename where it shows: all selected, Return commits, Escape cancels, click-away keeps | `InlineTitleField.swift:4-55` | ⬜ (a rename prompt exists) | 7 |
 | `Look.swift` | Appearance: accent, window, text size, typeface | §3.2, §3.3 | ✅ (0.5.45) | 1 |
-| `NativeMenu.swift` | Real AppKit menus with values on the right and subtitles | `NativeMenu.swift:5-165` | ◐ (HTML menus; values differ) | 6 |
+| `NativeMenu.swift` | Real AppKit menus with values on the right and subtitles | `NativeMenu.swift:5-165` | ✅ (0.5.61: a real menu bar, the Mac's items and keys) | 6 |
 | `PillPicker.swift` | Glass track, raised pill slides to the choice | `.ui` spring, matched geometry | ✅ (0.5.40) | 3, 6 |
 | `PlainDatePicker.swift` | Date/time without a box, for a well row | `PlainDatePicker.swift:6-30` | ◐ (HTML input) | 6 |
 | `Pressable.swift` | Every small control's hover/pressed language | hover 8 %, pressed 13 %, hover 0.12 s; list selected 16 %, pressed 24 %; disabled 45 %; accent badge hover 1.12 / −0.07, press −0.15 | ◐ (press scale 0.97 is not Mac) | 3 |
@@ -312,7 +314,7 @@ below are grouped by area; the exhaustive list of all 74 files is in `MAC-UI-INV
 | `MainView` | Tabs in the title bar, split view, three panes, focus per card | ✅ / ◐ | 2, 6 |
 | `RootView` | Engine setup until running, then the workspace | ✅ / ◐ | 6 |
 | `TitleBar` | Session tabs, project identity, hide/show, split, tab bar hidden option | ✅ / ◐ | 2, 6 |
-| `SidebarView` | New Session, projects, sessions, search, unread, archived | ✅ / ◐ | 2, 6 |
+| `SidebarView` | New Session, projects, sessions, search, unread, archived | ✅ / ✅ (0.5.62: the projects, each with its own sessions, and the Recents; the bots, the chats and the pinned ones wait for the Stage 3 decisions) | 2, 6 |
 | `SettingsView` | 23 pages in 5 groups, search, page header, in-window card | ◐ / ◐ | 2, 6 |
 | `CommandPalette` | Actions, sessions, files, commands, shortcuts shown | ✅ / ◐ | 2, 6 |
 | `OpenQuickly` | Find a file in any project folder | ✅ / ◐ | 6 |
@@ -632,7 +634,7 @@ interpretation of it.
 | **— The platform** | The window is built by Next.js (a static export the harness serves) and the page is read in a real browser in CI; the look and the behaviour do not move | — | 0.5.41 |
 | **4. Icons** | 89 symbols → drawn SVGs; FolderIcon; PromptMark; provider logos; remove text glyphs and the naked `@` | §7 | 0.5.42 ✅ |
 | **5. Wording** | 1 208 sites compared; menus, tooltips, accessibility labels; punctuation | §8 | 0.5.43 ✅ (the shell's words; the rest with the screens) |
-| **6. Screens** | Sidebar + title bar; transcript; composer + queue + gauge; palette + drawer; settings (14 existing + 3 missing: Notifications, Privacy, Panel; Worktrees maps to Projects); files/changes/terminal | §6.1–6.3 | 0.5.44 ✅ (the transcript, the gauge, the steps row) · 0.5.45 ✅ (the settings' grouped form) · 0.5.46 ✅ (the rest of the groups; the run that would not end) · 0.5.47 ✅ (the panel's files, as a tree) · 0.5.55 ✅ (the project's drawn folder) → 0.5.49 |
+| **6. Screens** | Sidebar + title bar; transcript; composer + queue + gauge; palette + drawer; settings (14 existing + 3 missing: Notifications, Privacy, Panel; Worktrees maps to Projects); files/changes/terminal | §6.1–6.3 | 0.5.44 ✅ (the transcript, the gauge, the steps row) · 0.5.45 ✅ (the settings' grouped form) · 0.5.46 ✅ (the rest of the groups; the run that would not end) · 0.5.47 ✅ (the panel's files, as a tree) · 0.5.55 ✅ (the project's drawn folder) · 0.5.61 ✅ (the real menu bar, the copy mark, the zoomed title bar) · 0.5.62 ✅ (every project, with its own sessions, and the Recents) → 0.5.49 |
 | **7. Gestures & micro-UX** | Rename, double-click, resize grabber, history, popover flip, clear/remove/badge behaviours, find and search field shape | §9 | 0.5.48 ✅ (the rename, the grabber, the history) · 0.5.49 ✅ (the find bar) · 0.5.50 ✅ (the popover that flips, the clear) · 0.5.52 ✅ (the actions under a message) · 0.5.53 ✅ (the disabled and remove states) · 0.5.54 ✅ (the quote card, the message menu) |
 | **8. Verification** | Full capture matrix, computed-value checks, close every ◐; final side-by-side | all in-scope rows | 0.5.51 ✅ (the matrix and the measured values) |
 

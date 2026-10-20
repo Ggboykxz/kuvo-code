@@ -8,4 +8,7 @@ contextBridge.exposeInMainWorld("kuvo", {
   maximize: () => ipcRenderer.send("kuvo:maximize"),
   // The menu bar's items that act on the conversation.
   onMenu: (callback) => ipcRenderer.on("kuvo:menu", (_event, id) => callback(id)),
+  // The project the app switched to: the shell remembers it, so the app opens here next
+  // time (Workspace.projects, and the Mac's own list of folders).
+  rememberProject: (folder) => ipcRenderer.send("kuvo:remember-project", folder),
 });

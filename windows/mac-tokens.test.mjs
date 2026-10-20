@@ -538,13 +538,32 @@ const checks = [
   ["the sidebar names the project, with the Mac's drawn folder", ({ app, css, rule }) => {
     // SidebarView.swift:795-845: the project's folder (open or closed) and its name, with
     // the compose button showing under the pointer.
-    assert.match(app, /<FolderIcon open=\{projectOpen\}/);
+    assert.match(app, /<FolderIcon open=\{open\}/);
     assert.match(app, /className="project-row"/);
     assert.match(app, /className="project-compose"/);
-    assert.match(app, /title="New Session"/);
-    assert.match(rule(".project-row {"), /height: 32px/);
-    assert.match(rule(".project-icon {"), /flex: 0 0 18px/);
-    assert.match(css, /\.project-compose \{[\s\S]*?opacity: 0;/);
+    assert.match(app, /New Session in \$\{folderName\(folder\)\}/);
+    assert.match(rule("aside .project-row {"), /height: 32px/);
+    assert.match(rule("aside .project-icon {"), /flex: 0 0 18px/);
+    assert.match(css, /aside \.project-compose \{[\s\S]*?opacity: 0;/);
+  }],
+
+  ["the sidebar holds every project, with its own sessions, and the Recents", ({ app, css, rule }) => {
+    // SidebarView.swift:178-196 (the projects, under a heading of their own), 353-402
+    // (each project, its sessions, and "Show N More"), 490-493 (the Recents).
+    assert.match(app, /<SectionHeader\s+title="Projects"/);
+    assert.match(app, /<SectionHeader title="Recents"/);
+    assert.match(app, /state\.projects\.map/);
+    assert.match(app, /state\.sessionsByProject/);
+    // Five sessions to a project, then the rest on request (SidebarView.swift:62-63).
+    assert.match(app, /sessions\.slice\(0, 5\)/);
+    assert.match(app, /Show \$\{sessions\.length - 5\} More/);
+    // The eight most recent sessions across the projects.
+    assert.match(app, /\.slice\(0, 8\)/);
+    // The heading folds the section away, and the sessions of a project line their titles
+    // up with the project names above them.
+    assert.match(rule("aside .section-header {"), /height: 22px/);
+    assert.match(rule("aside .sessions .session {"), /padding-left: 38px/);
+    assert.match(rule("aside .recents .session {"), /padding-left: 10px/);
   }],
 
   ["the settings' pages carry the Mac's own symbols, drawn", ({ settings, symbols }) => {

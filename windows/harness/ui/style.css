@@ -1885,6 +1885,84 @@ main.sidebar-hidden aside {
 .search-results .hit { padding: 4px; border-radius: var(--radius-row); }
 .search-results .hit:hover { background: var(--hover); color: var(--ink); }
 
+/* The Mac's projects in the sidebar (SidebarView.swift:178-196, 723-845): a heading per
+   section with a chevron that folds it away, every project with its own sessions, and
+   the Recents: the most recent sessions across the projects. */
+aside .section-header {
+  display: flex; align-items: center;
+  height: 22px;
+  margin: 16px 0 4px;
+  padding: 0 4px 0 10px;
+}
+aside .section-title {
+  display: flex; align-items: center; gap: 5px;
+  padding: 0; border: 0; background: transparent;
+  color: var(--ink-soft);
+  font-size: 13px; font-weight: 500;
+}
+aside .section-chevron {
+  color: var(--ink-faint);
+  opacity: 0;
+  transform: rotate(0deg);
+  transition: opacity var(--motion-quick) var(--ease-standard), transform var(--motion-quick) var(--ease-standard);
+}
+aside .section-chevron.folded { opacity: 1; transform: rotate(-90deg); }
+aside .section-chevron.hover { opacity: 1; }
+aside .section-action { margin-left: auto; display: flex; align-items: center; }
+aside .section-action-button {
+  width: 22px; height: 22px;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0; border: 0; border-radius: var(--radius-sm);
+  background: transparent; color: var(--ink-soft);
+}
+aside .section-action-button:hover { background: var(--hover); color: var(--ink); }
+aside .project-empty { padding: 6px 10px; color: var(--ink-soft); font-size: 13px; }
+aside .project-row {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  gap: 10px;
+  border: 0; border-radius: var(--radius-row);
+  background: transparent; color: var(--ink);
+  text-align: left;
+}
+aside .project-row:hover { background: var(--hover); }
+aside .project-icon { flex: 0 0 18px; color: var(--ink-soft); }
+aside .project-name {
+  flex: 1; min-width: 0;
+  font-size: 14px; font-weight: 400;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+aside .project-compose {
+  flex: 0 0 22px; height: 24px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-sm);
+  color: var(--ink-soft);
+  opacity: 0;
+  transition: opacity var(--motion-quick) var(--ease-standard);
+}
+aside .project-row:hover .project-compose,
+aside .project-compose:focus-visible { opacity: 1; }
+aside .project-compose:hover { background: var(--hover); color: var(--ink); }
+aside .sessions { list-style: none; margin: 0; padding: 2px 0; overflow: visible; }
+aside .sessions li { display: flex; align-items: center; height: 32px; border-radius: var(--radius-row); }
+aside .sessions li:hover { background: var(--hover); }
+aside .sessions li.current { background: var(--accent-soft); }
+/* The sessions of a project line their titles up with the project names above them
+   (SidebarView.swift:748-780); the Recents' do not. */
+aside .sessions .session { padding-left: 38px; }
+aside .recents .session { padding-left: 10px; }
+aside .show-more {
+  display: block;
+  width: 100%;
+  height: 28px;
+  padding: 0 0 0 38px;
+  border: 0; background: transparent;
+  color: var(--ink-soft);
+  font-size: 13px; text-align: left;
+}
+aside .show-more:hover { color: var(--ink); }
+
 /* The conversation is the card: white in light, warm black in dark. */
 #conversation.conversation-card {
   position: relative;
