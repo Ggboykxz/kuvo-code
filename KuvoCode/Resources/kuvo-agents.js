@@ -1221,6 +1221,9 @@ function listFromProgram(tools) {
     write({ jsonrpc: "2.0", id: 2, method: "tools/list" });
   });
 }
+function isKuvoTool(name) {
+  return schemas ? schemas.tools.has(name) : undefined;
+}
 function kuvoToolName(name, args) {
   const known = schemas?.tools.get(name);
   if (!known)
@@ -2576,12 +2579,14 @@ ${others.map((path) => `- ${path}`).join(`
         }
         const kuvo = kuvoTool(call);
         const files = (call.content ?? []).filter((part) => part?.type === "diff" && part.path).map((part) => fileDiff(part.path, part.oldText ?? undefined, part.newText ?? ""));
+        const action = permissionAction(call.kind, kuvo.name);
         const ask = {
           toolCallID: call.toolCallId,
-          action: permissionAction(call.kind, kuvo.name),
+          action,
           resources: resources(call),
           metadata: files.length ? { files } : undefined,
-          message: call.title
+          message: call.title,
+          unclassified: !classified.has(action) && !action.startsWith(toolServerName + "_")
         };
         const automatic = active.hooks.check(ask) === "deny";
         const decision = await active.hooks.permission(ask);
@@ -2693,12 +2698,22 @@ function kuvoTool(call) {
     case "think":
       return { name: "think", input: {} };
   }
-  const named = /^(?:running\s+)?([a-z0-9_.-]+)$/i.exec(String(call.title ?? "").trim())?.[1];
+  const server2 = raw.server ?? raw.server_name ?? raw.serverName;
+  const tool = raw.tool ?? raw.tool_name ?? raw.toolName;
+  if (server2 === toolServerName && typeof tool === "string" && /^[a-z0-9_]+$/i.test(tool) && isKuvoTool(tool) !== false) {
+    const args = raw.arguments ?? raw.args ?? raw.input;
+    return { name: `${toolServerName}_${tool}`, input: typeof args === "object" && args ? args : raw };
+  }
+  const prefixed = new RegExp(`(?:^|[\\s:])(?:mcp__)?${toolServerName}(?:/|__|\\.|:|_)([a-z0-9_]+)\\s*$`, "i").exec(String(call.title ?? "").trim())?.[1];
+  if (prefixed && isKuvoTool(prefixed.toLowerCase()) !== false)
+    return { name: `${toolServerName}_${prefixed.toLowerCase()}`, input: raw };
+  const named = /^(?:running\s+|tool:\s*|calling\s+)?([a-z0-9_.-]+)$/i.exec(String(call.title ?? "").trim())?.[1];
   const own = named && typeof raw === "object" && raw ? kuvoToolName(named, raw) : undefined;
   if (own)
     return { name: own, input: raw };
   return { name: (named ?? call.title ?? "tool").toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_|_$/g, "") || "tool", input: raw };
 }
+var classified = new Set(["shell", "edit", "write", "patch", "webfetch", "websearch", "read", "grep", "glob", "list", "external_directory", "think"]);
 function permissionAction(kind, name) {
   switch (kind) {
     case "execute":
@@ -7681,6 +7696,9 @@ function ruled(rules, action, resources2) {
   }
   return effect;
 }
+function asksFirst(rules) {
+  return (rules ?? []).some((rule) => rule.effect === "ask" && ["edit", "shell", "write", "patch", "*"].includes(rule.action));
+}
 
 // Agents/src/wire.ts
 var noTokens = () => ({ input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } });
@@ -9845,10 +9863,12 @@ ${live.agentPrompt}` : ""
       return "reject";
     if (plan && changes.has(ask.action))
       return "reject";
-    const effect = ask.weighed ? strictest(session.permissions ?? [], ask.action, parts) : strictest([...live.agentRules ?? engineDefaults, ...session.permissions ?? []], ask.action, parts) ?? "allow";
+    const matched = ask.weighed ? strictest(session.permissions ?? [], ask.action, parts) : strictest([...live.agentRules ?? engineDefaults, ...session.permissions ?? []], ask.action, parts);
+    const effect = ask.weighed ? matched : matched ?? "allow";
     if (effect === "deny")
       return "reject";
-    if (!unknown && !hidesFromBlocks(live.blocks, ask) && (effect === "allow" || this.allowedBefore(live, ask)))
+    const unclassified = ask.unclassified && matched === undefined && asksFirst(session.permissions) && !this.allowedBefore(live, ask);
+    if (!unknown && !unclassified && !hidesFromBlocks(live.blocks, ask) && (effect === "allow" || this.allowedBefore(live, ask)))
       return "once";
     if (turn.isEnded || live.abort?.signal.aborted)
       return "reject";

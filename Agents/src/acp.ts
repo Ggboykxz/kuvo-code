@@ -11,7 +11,7 @@ import { resetsIn, type Limit } from "./auto"
 import { fileDiff } from "./diff"
 import { newID } from "./ids"
 import { RPC, RPCError } from "./rpc"
-import { kuvoToolName, kuvoTools, loadKuvoTools } from "./kuvotools"
+import { isKuvoTool, kuvoToolName, kuvoTools, loadKuvoTools, toolServerName } from "./kuvotools"
 import { pictureData, withPictures } from "./pictures"
 import { elicitationField } from "./forms"
 import type { Turn } from "./turn"
@@ -798,12 +798,14 @@ export class AcpThread implements Thread {
         }
         const kuvo = kuvoTool(call)
         const files = (call.content ?? []).filter((part: any) => part?.type === "diff" && part.path).map((part: any) => fileDiff(part.path, part.oldText ?? undefined, part.newText ?? ""))
+        const action = permissionAction(call.kind, kuvo.name)
         const ask = {
           toolCallID: call.toolCallId,
-          action: permissionAction(call.kind, kuvo.name),
+          action,
           resources: resources(call),
           metadata: files.length ? { files } : undefined,
           message: call.title,
+          unclassified: !classified.has(action) && !action.startsWith(toolServerName + "_"),
         }
         // Refused by your settings, not by you: the agent stops for any no, and is told to carry on.
         const automatic = active.hooks.check(ask) === "deny"
@@ -910,13 +912,26 @@ function kuvoTool(call: any): { name: string; input: Record<string, unknown> } {
     case "think":
       return { name: "think", input: {} }
   }
+  // One of Kuvo Code's, named with its server ("kuvo-browser/show_widget", "mcp__kuvo-browser__…",
+  // "Tool: kuvo-browser.show_widget", or server and tool in its input): the app's name for it.
+  const server = raw.server ?? raw.server_name ?? raw.serverName
+  const tool = raw.tool ?? raw.tool_name ?? raw.toolName
+  if (server === toolServerName && typeof tool === "string" && /^[a-z0-9_]+$/i.test(tool) && isKuvoTool(tool) !== false) {
+    const args = raw.arguments ?? raw.args ?? raw.input
+    return { name: `${toolServerName}_${tool}`, input: typeof args === "object" && args ? args : raw }
+  }
+  const prefixed = new RegExp(`(?:^|[\\s:])(?:mcp__)?${toolServerName}(?:/|__|\\.|:|_)([a-z0-9_]+)\\s*$`, "i").exec(String(call.title ?? "").trim())?.[1]
+  if (prefixed && isKuvoTool(prefixed.toLowerCase()) !== false) return { name: `${toolServerName}_${prefixed.toLowerCase()}`, input: raw }
   // Antigravity names a tool only in its title ("Running show_widget"): one of Kuvo Code's goes by
   // the app's name for it, so it shows as it does for the engine's models (a widget, drawn).
-  const named = /^(?:running\s+)?([a-z0-9_.-]+)$/i.exec(String(call.title ?? "").trim())?.[1]
+  const named = /^(?:running\s+|tool:\s*|calling\s+)?([a-z0-9_.-]+)$/i.exec(String(call.title ?? "").trim())?.[1]
   const own = named && typeof raw === "object" && raw ? kuvoToolName(named, raw) : undefined
   if (own) return { name: own, input: raw }
   return { name: (named ?? call.title ?? "tool").toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_|_$/g, "") || "tool", input: raw }
 }
+
+/** The kinds of access Kuvo Code knows an agent's ask by (and Kuvo Code's own tools, by name). */
+const classified = new Set(["shell", "edit", "write", "patch", "webfetch", "websearch", "read", "grep", "glob", "list", "external_directory", "think"])
 
 function permissionAction(kind: string | undefined, name: string): string {
   switch (kind) {

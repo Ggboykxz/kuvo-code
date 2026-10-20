@@ -19,7 +19,7 @@ import { handover, withHandover } from "./handover"
 import { onMachine } from "./machine"
 import { messageID, newID } from "./ids"
 import type { Roster } from "./roster"
-import { matches, ruled } from "./rules"
+import { asksFirst, matches, ruled } from "./rules"
 import type { Record_, Store } from "./store"
 import { Turn, type Outcome } from "./turn"
 import type { AssistantMessage, Attachment, Decision, FormAnswer, FormRequest, Message, ModelRef, PermissionRequest, PermissionRule, Session, ShellMessage, FileDiff, StructuredError } from "./wire"
@@ -2048,11 +2048,15 @@ export class Sessions {
     // The engine's asks were weighed by it already: without a rule of yours, they're yours to
     // answer. Others go by the session's agent's permissions as the engine has them (its own
     // defaults, reading a .env file asks first), with the session's rules over them.
-    const effect = ask.weighed
+    const matched = ask.weighed
       ? strictest(session.permissions ?? [], ask.action, parts)
-      : (strictest([...(live.agentRules ?? engineDefaults), ...(session.permissions ?? [])], ask.action, parts) ?? "allow")
+      : strictest([...(live.agentRules ?? engineDefaults), ...(session.permissions ?? [])], ask.action, parts)
+    const effect = ask.weighed ? matched : (matched ?? "allow")
     if (effect === "deny") return "reject"
-    if (!unknown && !hidesFromBlocks(live.blocks, ask) && (effect === "allow" || this.allowedBefore(live, ask))) return "once"
+    // What the agent asked about, not known by its kind and no rule of yours about it, under Ask
+    // First: you answer it, unless you allowed it in this session before.
+    const unclassified = ask.unclassified && matched === undefined && asksFirst(session.permissions) && !this.allowedBefore(live, ask)
+    if (!unknown && !unclassified && !hidesFromBlocks(live.blocks, ask) && (effect === "allow" || this.allowedBefore(live, ask))) return "once"
     if (turn.isEnded || live.abort?.signal.aborted) return "reject"
     const request: PermissionRequest = {
       id: newID("per"),

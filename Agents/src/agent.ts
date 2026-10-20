@@ -87,6 +87,11 @@ export interface PermissionAsk {
    * with Approve All): only a rule of yours or an earlier "Always" answers it without you.
    */
   weighed?: boolean
+  /**
+   * The agent asked about something Kuvo Code couldn't tell the kind of (an MCP tool it names its
+   * own way): under Ask First, you're asked, whatever your rules say of the name it got.
+   */
+  unclassified?: boolean
 }
 
 export interface QuestionAsk {

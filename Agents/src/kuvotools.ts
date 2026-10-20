@@ -130,6 +130,11 @@ function listFromProgram(tools: Extract<KuvoTools, { kind: "stdio" }>): Promise<
   })
 }
 
+/** Whether Kuvo Code's tools have one by this name (undefined: their list isn't known yet). */
+export function isKuvoTool(name: string): boolean | undefined {
+  return schemas ? schemas.tools.has(name) : undefined
+}
+
 /**
  * The app's name for a call of one of Kuvo Code's tools (`kuvo-browser_show_widget`), for an
  * agent that names it only as itself ("show_widget"): one it has by that name, called with

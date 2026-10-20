@@ -5,6 +5,7 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- With Ask First, Grok and Antigravity ask before using Kuvo Code's tools that should ask, and before anything else they ask about that Kuvo Code can't tell the kind of.
 - In Ask First, an agent's watch asks you first with its check written out, also in older sessions and with the coding agents; a wake-up a coding agent's session set on a machine is no longer lost.
 - When no model in a Custom Auto list can run, the conversation says why: which agents aren't signed in (on your Mac or on the machine), with a button to sign in, or which limits hold and when each resets, in your time zone.
 - The coding agents work on your machines too: Claude Code, Codex, Cursor, Grok, Antigravity and Custom Auto can run sessions, chats, bots and group chat seats in a machine's projects. Sign in to each on the machine in Settings › Machines › Coding Agents; the sign-in finishes in your Mac's browser, and your Custom Auto lists come along.
