@@ -50,7 +50,8 @@ struct BrowserAskCard: View {
 
     private enum Field { case username, password, code }
 
-    private var saved: [Passwords.Login] { Passwords.logins(for: ask.host) }
+    /// The site's saved logins, read once from the keychain rather than on every redraw.
+    @State private var saved: [Passwords.Login] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -73,6 +74,7 @@ struct BrowserAskCard: View {
             let mayFocus = takesKeys && !Self.typingElsewhere
             switch ask.kind {
             case .signIn:
+                saved = Passwords.logins(for: ask.host)
                 if let login = saved.first { use(login) }
                 saves = saved.isEmpty && Passwords.offersToSave && !Passwords.neverSites.contains(ask.host)
                 if mayFocus { focus = username.isEmpty ? .username : .password }
@@ -233,10 +235,10 @@ struct BrowserAskCard: View {
             }
             // A password you typed now is yours to allow; one filled in from Passwords asks you
             // first, as showing it in Settings does.
-            let host = ask.host, id = ask.id, asks = app.browserAsks
+            let host = ask.host, id = ask.id, asks = app.browserAsks, answerUsername = username
             Task {
                 let allowed = typed ? true : await Passwords.authenticate(reason: "let agents sign in to \(host) with its saved password")
-                if allowed { Passwords.setAgentSignIn(host, true) }
+                if allowed { Passwords.setAgentSignIn(host, true, account: answerUsername) }
                 asks.answer(id, answer)
             }
         case .code:

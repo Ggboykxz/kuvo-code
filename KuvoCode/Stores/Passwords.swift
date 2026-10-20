@@ -26,13 +26,34 @@ nonisolated enum Passwords {
 
     /// Sites you let agents sign in to with their saved password, without asking you each time.
     static let agentSitesKey = "passwords.agentSignIn"
+    /// The account each of those is for (by site): the one you allowed, not whichever is newest.
+    static let agentAccountsKey = "passwords.agentSignInAccounts"
 
     static var agentSites: [String] { UserDefaults.standard.stringArray(forKey: agentSitesKey) ?? [] }
 
-    static func setAgentSignIn(_ host: String, _ allowed: Bool) {
+    private static var agentAccounts: [String: String] {
+        UserDefaults.standard.dictionary(forKey: agentAccountsKey) as? [String: String] ?? [:]
+    }
+
+    static func setAgentSignIn(_ host: String, _ allowed: Bool, account: String? = nil) {
         var sites = agentSites.filter { $0 != host }
-        if allowed { sites.append(host) }
+        var accounts = agentAccounts
+        accounts[host] = nil
+        if allowed {
+            sites.append(host)
+            accounts[host] = account
+        }
         UserDefaults.standard.set(sites.sorted(), forKey: agentSitesKey)
+        UserDefaults.standard.set(accounts, forKey: agentAccountsKey)
+    }
+
+    /// The saved login agents sign in to `host` with on their own, if you allowed that: the
+    /// account you allowed it for (one allowed before accounts were kept: the site's newest).
+    static func agentLogin(for host: String) -> Login? {
+        guard agentSites.contains(host) else { return nil }
+        let logins = logins(for: host)
+        guard let account = agentAccounts[host] else { return logins.first }
+        return logins.first { $0.account == account }
     }
 
     static func setNever(_ host: String, _ never: Bool) {
@@ -102,6 +123,11 @@ nonisolated enum Passwords {
         query[kSecAttrServer as String] = login.host
         query[kSecAttrAccount as String] = login.account
         SecItemDelete(query as CFDictionary)
+        // Agents no longer sign in with it on their own: a password saved later for the site isn't
+        // theirs without asking.
+        if agentSites.contains(login.host), agentAccounts[login.host] == login.account || agentLogin(for: login.host) == nil {
+            setAgentSignIn(login.host, false)
+        }
     }
 
     /// Asks for Touch ID or your Mac's password before showing or copying a password.
@@ -202,8 +228,8 @@ final class PasswordCapture: NSObject, WKScriptMessageHandler {
               let webView = message.webView,
               let session = sessions.allObjects.first(where: { $0.webView === webView }) else { return }
         let origin = message.frameInfo.securityOrigin
-        // Secure pages only, and your own development servers.
-        guard origin.protocol == "https" || ["localhost", "127.0.0.1"].contains(origin.host) else { return }
+        // Secure pages only: those are where a saved password is filled in.
+        guard origin.protocol == "https" else { return }
         let host = origin.host
         guard !Passwords.neverSites.contains(host) else { return }
         let account = (body["username"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)

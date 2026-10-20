@@ -19,6 +19,8 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - A machine's browser saves a download with a long name in Japanese, Chinese or another such script under its name, and clears downloads after a week while it keeps running too.
 - On a machine, a link the agent clicks that opens a new window (a sign-in window, say) is where it goes on, as on your Mac, rather than back on the page that opened it.
 - After your Mac wakes, a machine's browser view comes back right away, rather than once its old connection times out.
+- Letting agents sign in to a site on their own is for the account you allowed it with, and ends when you delete that password: one saved later isn't used without asking.
+- The browser offers to save a password on https pages only, where it fills them in; on http://localhost it offered to save one it could never fill.
 - In Settings › Permissions, a rule you were typing in no longer takes the place of a choice you made above it before leaving the field.
 - **Wake Up Now** says so when a one-off wake-up couldn't be taken off the schedule (it would come at its time too), and on a machine it doesn't send a shortened note when the whole one can't be read.
 - Picking another model while the agent has just asked you something no longer stops it and loses the question.

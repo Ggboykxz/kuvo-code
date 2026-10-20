@@ -245,7 +245,8 @@ final class BrowserSession: NSObject {
 
     /// What the toolbar's key offers for the page in view.
     func refreshLogins() {
-        guard let host = webView.url?.host() else {
+        // Filled in over https only, so offered there only.
+        guard let url = webView.url, url.scheme == "https", let host = url.host() else {
             savedLogins = []
             hasLoginField = false
             return
