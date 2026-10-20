@@ -2074,7 +2074,7 @@ process.stdin.on("data", (chunk) => {
     await settled(id, 1)
     const idle = idles(id)[0]
     expect(idle.outcome).toBe("failed")
-    expect(idle.error?.message).toContain("Every model in your Auto list is at a usage limit")
+    expect(idle.error?.message).toContain("Every model in your Custom Auto list is at a usage limit")
     expect(idle.error?.message).toContain("the first resets at")
   })
 
@@ -2176,7 +2176,7 @@ process.stdin.on("data", (chunk) => {
   })
 
   test("an empty list can't be picked", () => {
-    expect(() => create({ providerID: "auto", id: "auto" })).toThrow("Settings › Auto")
+    expect(() => create({ providerID: "auto", id: "auto" })).toThrow("Settings › Custom Auto")
   })
 
   test("limits are kept, and go when their time has", () => {

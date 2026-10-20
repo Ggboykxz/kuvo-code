@@ -186,7 +186,7 @@ final class Catalog {
     var autoModels: [Model] { auto.all.compactMap { autoModel($0.id) } }
 
     private static let autoTemplate: Model = {
-        let json = #"{"id":"auto","providerID":"auto","name":"Auto","capabilities":{"tools":true,"input":["text","image"],"output":["text"]},"variants":[],"time":{"released":0},"cost":[{"input":0,"output":0}],"status":"active","enabled":true,"limit":{"context":200000,"output":32000}}"#
+        let json = #"{"id":"auto","providerID":"auto","name":"Custom Auto","capabilities":{"tools":true,"input":["text","image"],"output":["text"]},"variants":[],"time":{"released":0},"cost":[{"input":0,"output":0}],"status":"active","enabled":true,"limit":{"context":200000,"output":32000}}"#
         return try! JSONDecoder().decode(Model.self, from: Data(json.utf8))
     }()
 
@@ -226,7 +226,7 @@ final class Catalog {
 
     func providerName(_ id: String) -> String {
         if id == "opencode" { return "OpenCode Zen" }
-        if id == OutsideAgents.autoProvider { return "Auto" }
+        if id == OutsideAgents.autoProvider { return "Custom Auto" }
         return integrations.first { $0.id == id }?.name ?? id
     }
 

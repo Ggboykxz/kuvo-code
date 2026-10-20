@@ -247,13 +247,13 @@ struct ModelPicker: View {
     /// Auto: your lists (one for bugfixes, one for features), each with its models in order; on
     /// the one under the pointer, a way to edit it; and a way to make another.
     @ViewBuilder private var autoContent: some View {
-        railTitle("Auto")
+        railTitle("Custom Auto")
         let lists = catalog.auto.all
         if catalog.outsideAgents?.api == nil {
-            note("Auto runs with the coding agents, which are still starting.")
+            note("Custom Auto runs with the coding agents, which are still starting.")
         } else if lists.allSatisfy(\.entries.isEmpty), lists.count == 1 {
             note("Make a list of models, from any agent or provider, to go through in your order: when one reaches its usage limit, the next goes on with the work.")
-            settingsButton("Set Up Auto…", page: .auto)
+            settingsButton("Set Up Custom Auto…", page: .auto)
         } else {
             ForEach(Array(lists.enumerated()), id: \.element.id) { index, list in
                 autoRow(list, number: index)
@@ -342,7 +342,7 @@ struct ModelPicker: View {
         .joined(separator: "\u{00A0}→ ")
     }
 
-    /// Another list (for bugfixes, features…): made now, and named and filled in Settings › Auto.
+    /// Another list (for bugfixes, features…): made now, and named and filled in Settings › Custom Auto.
     private var newListRow: some View {
         let id = "auto-new"
         return Button(action: newAutoList) {
@@ -363,10 +363,10 @@ struct ModelPicker: View {
         .buttonStyle(.plain)
         .clickablePointer()
         .onHover { if $0 { highlight = id } }
-        .help("Make another list of models for Auto to go through")
+        .help("Make another list of models for Custom Auto to go through")
     }
 
-    /// One of your Auto lists, in Settings › Auto.
+    /// One of your Custom Auto lists, in Settings › Custom Auto.
     private func editAuto(_ id: String) {
         catalog.outsideAgents?.autoFocus = id
         close()
@@ -503,7 +503,7 @@ struct ModelPicker: View {
                         .foregroundStyle(.secondary)
                 }
                 if showsAuto {
-                    railButton(Self.autoRail, name: "Auto") {
+                    railButton(Self.autoRail, name: "Custom Auto") {
                         Image(systemName: "list.number")
                             .font(.system(size: 13, weight: .medium))
                             .foregroundStyle(.secondary)

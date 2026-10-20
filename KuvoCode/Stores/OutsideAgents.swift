@@ -248,12 +248,12 @@ final class OutsideAgents {
         if list != auto { auto = list }
     }
 
-    /// A list of Auto's to show in Settings › Auto as it opens (one picked to edit, or just made).
+    /// A Custom Auto list to show in Settings › Custom Auto as it opens (one picked to edit, or just made).
     var autoFocus: String?
 
     /// Your lists as you arranged them.
     func saveAuto(_ lists: [AutoList.Named]) async throws {
-        guard let api else { throw Failure.unavailable("Auto") }
+        guard let api else { throw Failure.unavailable("Custom Auto") }
         let saved = auto
         let arranged = AutoList(entries: lists.first?.entries ?? [], lists: lists, limits: auto.limits)
         auto = arranged
@@ -270,7 +270,7 @@ final class OutsideAgents {
 
     /// Every model at a limit tried again.
     func clearAutoLimits() async throws {
-        guard let api else { throw Failure.unavailable("Auto") }
+        guard let api else { throw Failure.unavailable("Custom Auto") }
         try await api.clearAutoLimits()
         await loadAuto()
     }
@@ -394,7 +394,7 @@ nonisolated struct AutoList: Codable, Hashable, Sendable {
     static let firstID = "auto"
 
     /// Every list, in your order.
-    var all: [Named] { lists ?? [Named(id: Self.firstID, name: "Auto", entries: entries)] }
+    var all: [Named] { lists ?? [Named(id: Self.firstID, name: "Custom Auto", entries: entries)] }
 
     /// The list a session's model names: that one, or the first (for one deleted since).
     func list(_ id: String?) -> Named? {

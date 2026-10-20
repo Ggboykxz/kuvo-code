@@ -631,7 +631,7 @@ final class Workspace {
         // bridge's, here.
         let isAgents = OutsideAgents.runsInBridge(model?.providerID)
         if isAgents, RemoteFolder.isRemote(directory) {
-            throw OutsideAgents.Failure.onlyOnThisMac(model?.providerID == OutsideAgents.autoProvider ? "Auto" : OutsideAgents.name(model?.providerID))
+            throw OutsideAgents.Failure.onlyOnThisMac(model?.providerID == OutsideAgents.autoProvider ? "Custom Auto" : OutsideAgents.name(model?.providerID))
         }
         if isAgents, agents?.api == nil { throw OutsideAgents.Failure.notRunning(agents?.failure) }
         guard let api = isAgents ? agents?.api : api(forFolder: directory) else { throw CancellationError() }
@@ -842,7 +842,7 @@ final class Workspace {
     func carryToAgents(_ id: String, model: ModelRef) async throws -> Session? {
         guard let session = session(id), let engine = api(forSession: id) else { return nil }
         if RemoteFolder.isRemote(session.location.directory) {
-            throw OutsideAgents.Failure.onlyOnThisMac(model.providerID == OutsideAgents.autoProvider ? "Auto" : OutsideAgents.name(model.providerID))
+            throw OutsideAgents.Failure.onlyOnThisMac(model.providerID == OutsideAgents.autoProvider ? "Custom Auto" : OutsideAgents.name(model.providerID))
         }
         guard let bridge = agents?.api else { throw OutsideAgents.Failure.notRunning(agents?.failure) }
         // What waits stays waiting (it comes along), rather than starting as the run ends; if the

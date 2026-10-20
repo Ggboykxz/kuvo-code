@@ -50,14 +50,14 @@ const unknownReset = 30 * 60_000
 const briefReset = 3 * 60_000
 
 export class Auto {
-  private lists: AutoList[] = [{ id: firstList, name: "Auto", entries: [] }]
+  private lists: AutoList[] = [{ id: firstList, name: "Custom Auto", entries: [] }]
   private held: Held[] = []
 
   constructor(private readonly root: string) {
     try {
       const saved = JSON.parse(readFileSync(this.file, "utf8"))
       // (One list, as Auto had before: the first.)
-      const lists = Array.isArray(saved.lists) ? saved.lists : [{ id: firstList, name: "Auto", entries: saved.entries ?? [] }]
+      const lists = Array.isArray(saved.lists) ? saved.lists : [{ id: firstList, name: "Custom Auto", entries: saved.entries ?? [] }]
       const read = Auto.clean(lists)
       if (read.length) this.lists = read
       this.held = (saved.limits ?? []).filter((held: Held) => held?.key && held.until > Date.now())
@@ -71,7 +71,7 @@ export class Auto {
       .filter((list) => list && typeof list.id === "string" && /^[\w-]{1,64}$/.test(list.id) && !seen.has(list.id) && seen.add(list.id))
       .map((list) => ({
         id: list.id,
-        name: typeof list.name === "string" && list.name.trim() ? list.name.trim().slice(0, 60) : "Auto",
+        name: typeof list.name === "string" && list.name.trim() ? list.name.trim().slice(0, 60) : "Custom Auto",
         entries: (Array.isArray(list.entries) ? list.entries : [])
           .filter((entry: AutoEntry) => entry && typeof entry.providerID === "string" && typeof entry.modelID === "string" && entry.providerID !== autoProvider)
           .map((entry: AutoEntry) => ({ providerID: entry.providerID, modelID: entry.modelID, ...(entry.variant ? { variant: entry.variant } : {}) })),

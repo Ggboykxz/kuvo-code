@@ -275,7 +275,7 @@ struct ModelChipLabel: View {
                 Text(name)
                     .lineLimit(1)
                     .foregroundStyle(.secondary)
-                    .help("Auto is on \\(name) now")
+                    .help("Custom Auto is on \(name) now")
             }
             Image(systemName: "chevron.down")
                 .font(.system(size: 9, weight: .semibold))

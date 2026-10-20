@@ -819,7 +819,7 @@ export class Sessions {
   // MARK: Sessions
 
   create(body: { title?: string; agent?: string; model?: ModelRef; location: { directory: string }; permissions?: PermissionRule[] }): Session {
-    if (body.model?.providerID === autoProvider && !this.auto.list(body.model.id).length) throw new BadRequest("That Auto list is empty: add models to it in Settings › Auto.")
+    if (body.model?.providerID === autoProvider && !this.auto.list(body.model.id).length) throw new BadRequest("That Custom Auto list is empty: add models to it in Settings › Custom Auto.")
     if (!body.model?.id || !this.runs(body.model)) throw new BadRequest("Pick a model of an agent you've connected.")
     const now = Date.now()
     const directory = body.location.directory
@@ -1167,7 +1167,7 @@ export class Sessions {
     const session = record.session
     const previous = session.model
     if (!model?.providerID || !model.id) throw new BadRequest("That isn't a model.")
-    if (model.providerID === autoProvider && !this.auto.list(model.id).length) throw new BadRequest("That Auto list is empty: add models to it in Settings › Auto.")
+    if (model.providerID === autoProvider && !this.auto.list(model.id).length) throw new BadRequest("That Custom Auto list is empty: add models to it in Settings › Custom Auto.")
     if (!this.runs(model)) throw new BadRequest("That model's agent isn't connected.")
     if (previous && previous.providerID === model.providerID && previous.id === model.id && previous.variant === model.variant) return
     // What the session's agent kept, moved to its own slot while it's still the session's.
@@ -1690,8 +1690,8 @@ export class Sessions {
       if (signal.aborted) return { outcome: "interrupted" }
       if (!entry) {
         if (note) turn.notice(note)
-        if (last?.limit) return { outcome: "failed", error: { type: "limit", message: `Every model in your Auto list is at a usage limit for now${this.nextReset()}.` } }
-        return last ?? { outcome: "failed", error: { type: "limit", message: `No model in your Auto list can run now: each is at a limit, or its agent isn't signed in${this.nextReset()}. Edit the list in Settings › Auto.` } }
+        if (last?.limit) return { outcome: "failed", error: { type: "limit", message: `Every model in your Custom Auto list is at a usage limit for now${this.nextReset()}.` } }
+        return last ?? { outcome: "failed", error: { type: "limit", message: `No model in your Custom Auto list can run now: each is at a limit, or its agent isn't signed in${this.nextReset()}. Edit the list in Settings › Custom Auto.` } }
       }
       if (!tried.size && heldBefore.has(Auto.modelKey(entry))) turn.notice(`Back on ${this.entryName(entry)}: its limit has reset.`)
       tried.add(Auto.modelKey(entry))

@@ -87,13 +87,13 @@ var briefReset = 3 * 60000;
 
 class Auto {
   root;
-  lists = [{ id: firstList, name: "Auto", entries: [] }];
+  lists = [{ id: firstList, name: "Custom Auto", entries: [] }];
   held = [];
   constructor(root) {
     this.root = root;
     try {
       const saved = JSON.parse(readFileSync2(this.file, "utf8"));
-      const lists = Array.isArray(saved.lists) ? saved.lists : [{ id: firstList, name: "Auto", entries: saved.entries ?? [] }];
+      const lists = Array.isArray(saved.lists) ? saved.lists : [{ id: firstList, name: "Custom Auto", entries: saved.entries ?? [] }];
       const read = Auto.clean(lists);
       if (read.length)
         this.lists = read;
@@ -104,7 +104,7 @@ class Auto {
     const seen = new Set;
     return lists.filter((list) => list && typeof list.id === "string" && /^[\w-]{1,64}$/.test(list.id) && !seen.has(list.id) && seen.add(list.id)).map((list) => ({
       id: list.id,
-      name: typeof list.name === "string" && list.name.trim() ? list.name.trim().slice(0, 60) : "Auto",
+      name: typeof list.name === "string" && list.name.trim() ? list.name.trim().slice(0, 60) : "Custom Auto",
       entries: (Array.isArray(list.entries) ? list.entries : []).filter((entry) => entry && typeof entry.providerID === "string" && typeof entry.modelID === "string" && entry.providerID !== autoProvider).map((entry) => ({ providerID: entry.providerID, modelID: entry.modelID, ...entry.variant ? { variant: entry.variant } : {} }))
     }));
   }
@@ -8270,7 +8270,7 @@ class Sessions {
   }
   create(body) {
     if (body.model?.providerID === autoProvider && !this.auto.list(body.model.id).length)
-      throw new BadRequest("That Auto list is empty: add models to it in Settings \u203A Auto.");
+      throw new BadRequest("That Custom Auto list is empty: add models to it in Settings \u203A Custom Auto.");
     if (!body.model?.id || !this.runs(body.model))
       throw new BadRequest("Pick a model of an agent you've connected.");
     const now = Date.now();
@@ -8588,7 +8588,7 @@ class Sessions {
     if (!model2?.providerID || !model2.id)
       throw new BadRequest("That isn't a model.");
     if (model2.providerID === autoProvider && !this.auto.list(model2.id).length)
-      throw new BadRequest("That Auto list is empty: add models to it in Settings \u203A Auto.");
+      throw new BadRequest("That Custom Auto list is empty: add models to it in Settings \u203A Custom Auto.");
     if (!this.runs(model2))
       throw new BadRequest("That model's agent isn't connected.");
     if (previous && previous.providerID === model2.providerID && previous.id === model2.id && previous.variant === model2.variant)
@@ -9090,8 +9090,8 @@ ${text.slice(0, 4000)}
         if (note)
           turn.notice(note);
         if (last2?.limit)
-          return { outcome: "failed", error: { type: "limit", message: `Every model in your Auto list is at a usage limit for now${this.nextReset()}.` } };
-        return last2 ?? { outcome: "failed", error: { type: "limit", message: `No model in your Auto list can run now: each is at a limit, or its agent isn't signed in${this.nextReset()}. Edit the list in Settings \u203A Auto.` } };
+          return { outcome: "failed", error: { type: "limit", message: `Every model in your Custom Auto list is at a usage limit for now${this.nextReset()}.` } };
+        return last2 ?? { outcome: "failed", error: { type: "limit", message: `No model in your Custom Auto list can run now: each is at a limit, or its agent isn't signed in${this.nextReset()}. Edit the list in Settings \u203A Custom Auto.` } };
       }
       if (!tried.size && heldBefore.has(Auto.modelKey(entry)))
         turn.notice(`Back on ${this.entryName(entry)}: its limit has reset.`);

@@ -22,7 +22,7 @@ struct AutoSettings: View {
             ScrollingSettingsForm {
                 if agents.api == nil {
                     Section {
-                        Text(agents.failure.map { "Auto runs with the coding agents, which couldn't start: \($0)" } ?? "Auto runs with the coding agents, which are still starting.")
+                        Text(agents.failure.map { "Custom Auto runs with the coding agents, which couldn't start: \($0)" } ?? "Custom Auto runs with the coding agents, which are still starting.")
                             .foregroundStyle(.secondary)
                     }
                 } else {
@@ -42,7 +42,7 @@ struct AutoSettings: View {
                             Spacer()
                         }
                     } footer: {
-                        Text("When one reaches a limit on your whole account (a plan's 5-hour window), Auto skips all of that account's models, in every list; when one model reaches its own limit, only that model. Each comes back once its limit resets.")
+                        Text("When one reaches a limit on your whole account (a plan's 5-hour window), Custom Auto skips all of that account's models, in every list; when one model reaches its own limit, only that model. Each comes back once its limit resets.")
                     }
                 }
                 if !agents.auto.limits.isEmpty {
@@ -52,7 +52,7 @@ struct AutoSettings: View {
                                 .disabled(isClearing)
                         } label: {
                             Text("Held back at a limit")
-                            Text("If a limit has reset sooner than its agent said, Auto can try them all again.")
+                            Text("If a limit has reset sooner than its agent said, Custom Auto can try them all again.")
                         }
                     }
                 }
@@ -73,7 +73,7 @@ struct AutoSettings: View {
         .onChange(of: naming) { old, _ in
             if let old { rename(old) }
         }
-        .alert("Couldn't Save Auto", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
+        .alert("Couldn't Save Custom Auto", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(failure ?? "")
@@ -221,7 +221,7 @@ private struct AutoEntryRow: View {
         if catalog.isLoaded, catalog.offeredModel(entry.ref) == nil {
             // Its account signed in but the model gone, or the account signed out.
             let signedIn = catalog.integrations.first { $0.id == entry.providerID }?.isConnected ?? false
-            return OutsideAgents.isAgent(entry.providerID) && !signedIn ? "Not signed in: Auto passes it by" : "Not available now: Auto passes it by"
+            return OutsideAgents.isAgent(entry.providerID) && !signedIn ? "Not signed in: Custom Auto passes it by" : "Not available now: Custom Auto passes it by"
         }
         return nil
     }
