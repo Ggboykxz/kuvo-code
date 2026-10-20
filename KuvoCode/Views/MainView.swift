@@ -365,6 +365,9 @@ struct MainView: View {
         // The agent started browsing: show it.
         .onChange(of: utilities.revealRequest) { withAnimation(.ui) { showPanel() } }
         .safeAreaInset(edge: .top, spacing: 0) { fullScreenTitleRow }
+        // In full screen, the top that the hidden toolbar kept free is the row's (or, with the
+        // tab bar hidden, the cards'), not an empty band.
+        .ignoresSafeArea(.container, edges: window.isFullScreen && !app.showsSettings ? .top : [])
         // Hiding the tab bar takes the whole row away and the cards reach the top. The sidebar
         // button stays, so the window's buttons keep a toolbar's height, centered on the cards'
         // header row, and the sidebar is a click away. The panel is still ⌥⌘0, and sessions ⌘K.
