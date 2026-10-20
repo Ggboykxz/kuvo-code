@@ -1224,7 +1224,10 @@ final class Workspace {
             listSaves[machine]?.cancel()
             listSaves[machine] = nil
             sessions.removeAll { gone.contains($0.id) }
-            for id in gone { models[id] = nil }
+            for id in gone {
+                models[id] = nil
+                Drafts.shared.remove(id)
+            }
             for (id, session) in remoteSessions where session.machine == machine { SessionCopies.remove(id) }
             SessionCopies.removeSessions(of: machine)
             models = models.filter { RemoteFolder.machine(of: $0.value.session.location.directory) != machine }
@@ -1425,6 +1428,7 @@ final class Workspace {
             // Deleted elsewhere (another Mac, the phone): its panel's tabs go too, a terminal's
             // connection with them.
             onDeleted?(id)
+            Drafts.shared.remove(id)
             sessions.removeAll { $0.id == id }
             if let machine { keepList(of: machine) }
             if remoteSessions.removeValue(forKey: id) != nil { Self.saveRemoteSessions(remoteSessions) }

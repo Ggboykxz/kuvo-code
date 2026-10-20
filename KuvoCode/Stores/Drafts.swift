@@ -14,8 +14,10 @@ final class Drafts {
         var quote: String?
         /// What you're replying to, each with your answer to it: sent in order, then the text.
         var quotes: [Quote] = []
+        /// Your comments on lines of the changes, sent with the next message.
+        var comments: [ReviewComment] = []
 
-        var isEmpty: Bool { text.isEmpty && files.isEmpty && quote == nil && quotes.isEmpty }
+        var isEmpty: Bool { text.isEmpty && files.isEmpty && quote == nil && quotes.isEmpty && comments.isEmpty }
 
         init(text: String = "", files: [URL] = [], quote: String? = nil, quotes: [Quote] = []) {
             self.text = text
@@ -31,6 +33,7 @@ final class Drafts {
             files = try c.decodeIfPresent([URL].self, forKey: .files) ?? []
             quote = try c.decodeIfPresent(String.self, forKey: .quote)
             quotes = try c.decodeIfPresent([Quote].self, forKey: .quotes) ?? []
+            comments = try c.decodeIfPresent([ReviewComment].self, forKey: .comments) ?? []
         }
     }
 

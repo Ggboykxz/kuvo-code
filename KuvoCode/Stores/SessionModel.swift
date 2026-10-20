@@ -246,8 +246,12 @@ final class SessionModel {
     /// in a folder outside a git repository, where `changes` stays empty (the engine keeps no
     /// snapshots there).
     private(set) var editedFiles: [FileDiff] = []
-    /// Comments on lines of the changes, sent with the next message.
-    var reviewComments: [ReviewComment] = []
+    /// Comments on lines of the changes, sent with the next message: with the composer's draft,
+    /// so a quit or an update keeps them too.
+    var reviewComments: [ReviewComment] {
+        get { Drafts.shared[id].comments }
+        set { Drafts.shared[id].comments = newValue }
+    }
     /// What's in the composer, kept while you look at other sessions and across launches.
     var draftText: String {
         get { Drafts.shared[id].text }
