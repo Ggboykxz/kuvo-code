@@ -40,6 +40,8 @@ here.
   JSON file; a key an earlier version saved in a file moves there the next time it's read. A key in
   another tool's file (`~/.config/openrouter/key.json`, `~/.config/zai/key.json`) is read but never
   changed or removed: the panel shows it as the user's own, like one from the environment.
+- **The menu bar item is compact by default**: its Icon Style starts as Bars, not Text
+  (`Stores/LayoutPersistence.swift`); a style you picked stays.
 - **A Bars style for the dashboard**, the default (`Views/UsageBarsView.swift`): one compact bar
   per provider in a pastel of its brand color, with thin monospaced labels, showing the limit closest to running out, and today's spend
   as one bar on top. Clicking a bar opens every metric underneath in the same style (`Views/UsageBarDetail.swift`), not the card.
