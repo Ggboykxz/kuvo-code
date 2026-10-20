@@ -703,3 +703,67 @@ struct WindowXReader: NSViewRepresentable {
         }
     }
 }
+
+/// The window's state that the title bar follows: in full screen (no window buttons of its own
+/// in the title bar), and being resized by a drag, as each changes.
+struct WindowStateReader: NSViewRepresentable {
+    struct State: Equatable {
+        var isFullScreen = false
+        var isResizing = false
+    }
+
+    let changed: (State) -> Void
+
+    func makeNSView(context: Context) -> Reader { Reader(changed: changed) }
+
+    func updateNSView(_ view: Reader, context: Context) {
+        view.changed = changed
+    }
+
+    final class Reader: NSView {
+        var changed: (State) -> Void
+        private var observers: [NSObjectProtocol] = []
+        private var state = State()
+
+        init(changed: @escaping (State) -> Void) {
+            self.changed = changed
+            super.init(frame: .zero)
+        }
+
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            observers.forEach(NotificationCenter.default.removeObserver)
+            observers = []
+            guard let window else { return }
+            let names: [NSNotification.Name] = [NSWindow.didEnterFullScreenNotification, NSWindow.willExitFullScreenNotification,
+                                                NSWindow.willStartLiveResizeNotification, NSWindow.didEndLiveResizeNotification]
+            for name in names {
+                observers.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] note in
+                    let name = note.name
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        var next = self.state
+                        switch name {
+                        case NSWindow.didEnterFullScreenNotification: next.isFullScreen = true
+                        case NSWindow.willExitFullScreenNotification: next.isFullScreen = false
+                        case NSWindow.willStartLiveResizeNotification: next.isResizing = true
+                        default: next.isResizing = false
+                        }
+                        self.report(next)
+                    }
+                })
+            }
+            report(State(isFullScreen: window.styleMask.contains(.fullScreen), isResizing: false))
+        }
+
+        private func report(_ next: State) {
+            guard next != state else { return }
+            state = next
+            DispatchQueue.main.async { [changed] in changed(next) }
+        }
+    }
+}

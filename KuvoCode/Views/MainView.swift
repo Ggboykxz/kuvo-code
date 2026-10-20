@@ -20,6 +20,8 @@ struct MainView: View {
     /// The row at the top: the project, its branch and the tabs. Hidden, sessions are switched
     /// from the sidebar or ⌘K.
     @AppStorage(TabBar.showsKey) private var showsTabBar = true
+    /// The window is in full screen (no buttons of its own in the title bar), or being resized.
+    @State private var window = WindowStateReader.State()
     @SceneStorage("showsPanel") private var showsPanel = false
     /// The panel over the conversation, for room.
     /// Goes up for ⌘F in the group chat in view.
@@ -379,6 +381,10 @@ struct MainView: View {
             }
         }
         .toolbar(removing: .title)
+        // In full screen with the tab bar hidden, the row would hold only the sidebar button (no
+        // window buttons to line up with): the cards go to the top, and the sidebar is ⌘0.
+        .toolbar(window.isFullScreen && !showsTabBar && !app.showsSettings ? .hidden : .automatic, for: .windowToolbar)
+        .background(WindowStateReader { window = $0 })
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .iconOnlyToolbar()
         .overlay(alignment: .top) {
@@ -571,7 +577,7 @@ struct MainView: View {
             .background(WindowXReader { titleBarX = $0 })
             // A width from the window (minus the traffic lights and the buttons on the right), so a
             // narrow window squeezes the tabs instead of pushing them into a » menu.
-            .frame(width: max(240, contentWidth - (runCommand(of: activeProject) == nil ? 150 : 190)), alignment: .leading)
+            .frame(width: max(240, contentWidth - (runCommand(of: activeProject) == nil ? 150 : 190) - resizeRoom), alignment: .leading)
             // Its empty parts are the title bar's: they drag the window, and a double-click zooms it.
             .background { WindowDragArea() }
             .modifier(UnderImageViewer())
@@ -993,6 +999,11 @@ struct MainView: View {
 
     /// The panel's and the sidebar's buttons, which show what's on screen.
     private var panelToggle: Binding<Bool> { Binding(get: { panelOnScreen }, set: { showPanel($0) }) }
+    /// Room kept free in the title bar while the window is dragged narrower: its width reaches
+    /// the tabs a pass late, and a strip wider than the room left would be put away in the
+    /// toolbar's overflow and back, again and again.
+    private var resizeRoom: CGFloat { window.isResizing ? 72 : 0 }
+
     private var sidebarToggle: Binding<Bool> { Binding(get: { sidebarOnScreen }, set: { showSidebar($0) }) }
 
     private func keep(_ pane: PaneLayout.Pane) {
@@ -1105,7 +1116,7 @@ struct MainView: View {
         // Its buttons each by their own name, not all by the first one's.
         .accessibilityElement(children: .contain)
         // Room from the window, as the sessions' tabs have, so titles aren't squeezed.
-        .frame(width: max(240, contentWidth - 150), alignment: .leading)
+        .frame(width: max(240, contentWidth - 150 - resizeRoom), alignment: .leading)
         // Its empty parts are the title bar's: they drag the window, and a double-click zooms it.
         .background { WindowDragArea() }
         .animation(.ui, value: app.settingsTabs.tabs.map(\.id))
