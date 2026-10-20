@@ -34,7 +34,10 @@ test("the newest of ours, that is newer, is the one offered", () => {
 });
 
 test("the shell keeps looking, so a version published while it is open is found", () => {
-  const main = require("node:fs").readFileSync(require("node:path").join(require("node:path").dirname(new URL(import.meta.url).pathname), "electron", "main.js"), "utf8");
+  const main = require("node:fs").readFileSync(
+    require("node:path").join(require("node:path").dirname(require("node:url").fileURLToPath(import.meta.url)), "electron", "main.js"),
+    "utf8",
+  );
   assert.match(main, /setInterval\(\(\) => \{/, "the check runs again and again");
   assert.match(main, /6 \* 60 \* 60 \* 1000/, "every few hours");
   assert.match(main, /checkForUpdates\(\{ quiet: true \}\)/, "and quietly, so it is a note and not a question");
