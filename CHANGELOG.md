@@ -5,6 +5,11 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- Kuvo Code no longer crashes when it shows a conversation in which drawing a widget failed; the failed step shows instead.
+- Notifications hide a hex key after a name again (like ENCRYPTION_KEY=…), and show short --key values, like sort --key 2,3.
+- Colored search output highlights patterns with | or ) in them, and skips searches that could slow the conversation down.
+- Chrome DevTools from the MCP catalog runs a fixed version, apart from the project's own package settings, and only on this Mac.
+- Waiting for another agent's answer finds it also on a machine whose clock differs from your Mac's.
 - Blocks in Settings › Permissions catch more of what a command line hides from them in sessions with coding agents (`sudo -n`, `/bin/rm`, `"rm"`, `eval`, `xargs`, `find -exec` and others). When a coding agent carries on by itself twice in a row, both show, and a message you sent meanwhile still goes.
 - A widget or Show in Panel from Antigravity works as it happens, not only after the conversation is opened again.
 - Coding agents: Antigravity's subagents no longer show up again with each turn, and an image it makes is never mixed up with one you attached. Codex's agents in the background keep working after the turn, and what they ask stays yours to answer. Stop reaches a subagent that works in the background. A widget or panel tool an agent calls first thing works. Sessions on Antigravity, Cursor or Grok get a real title, written by another coding agent you're signed in to. Undo keeps a file you already had when ignore rules outside the session's folder changed.
