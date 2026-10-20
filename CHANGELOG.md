@@ -5,6 +5,9 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- Canceling Add a Machine while it connects no longer adds the machine (and copies your accounts to it) a moment later.
+- Notifications hide keys given with flags like --apiKey or --db_password again.
+- A permission card shows each file's changes in full, and deleting a bot can't close an editor you opened meanwhile.
 - A permission card shows everything Allow allows: every file's changes and the whole command, scrolling when long.
 - A bot's conversation found by searching has the bot's menu, so it can't be deleted or archived away from its bot by mistake.
 - Notifications hide a hex key after any key's name again (except a cache key's), and show flags like --password-stdin or --secret-id with their buttons.
