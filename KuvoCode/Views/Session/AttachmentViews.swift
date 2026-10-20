@@ -255,14 +255,52 @@ struct MessageAttachments: View {
     }
 }
 
+/// An image the agent made (generate_image, whichever agent's), in the conversation's flow as
+/// its widgets are: a line while it's being made, then the picture, large, to click for a closer look.
+struct MadePictureRow: View {
+    let call: Message.ToolCall
+
+    static func isMade(_ call: Message.ToolCall) -> Bool {
+        call.name == "generate_image"
+    }
+
+    var body: some View {
+        switch call.state {
+        case .completed(_, let output, _):
+            let items = StepPictures.items(in: output, step: call.id)
+            if items.isEmpty {
+                line("Made an image, but it isn't where it said", symbol: "photo")
+            } else {
+                StepPictures(items: items, height: 420, maxWidth: 560)
+            }
+        case .failed(_, let error, _, _):
+            line("Couldn't make the image: \(error.message)", symbol: "exclamationmark.triangle")
+        default:
+            HStack(spacing: 8) {
+                Spinner(size: 12)
+                Text("Making an image…")
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func line(_ text: String, symbol: String) -> some View {
+        Label(text, systemImage: symbol)
+            .foregroundStyle(.secondary)
+    }
+}
+
 /// Pictures a step brought back (a screenshot of the page the agent browses), under the step.
 struct StepPictures: View {
     let items: [AttachmentItem]
+    /// How tall and wide one may be: a step's are small, an image the agent made is shown large.
+    var height: CGFloat?
+    var maxWidth: CGFloat = 360
 
     var body: some View {
         HStack(alignment: .top, spacing: 6) {
             ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                AttachmentPicture(item: item, height: items.count == 1 ? 220 : 140) {
+                AttachmentPicture(item: item, height: height ?? (items.count == 1 ? 220 : 140), maxWidth: maxWidth) {
                     ImageViewer.shared.show(items, at: index)
                 }
             }
@@ -285,6 +323,7 @@ struct StepPictures: View {
 private struct AttachmentPicture: View {
     let item: AttachmentItem
     let height: CGFloat
+    var maxWidth: CGFloat = 360
     /// Opens it in the viewer.
     let view: () -> Void
     @State private var image: NSImage?
@@ -292,8 +331,6 @@ private struct AttachmentPicture: View {
     @State private var isMissing = false
     @State private var isHovering = false
     @Environment(\.colorScheme) private var scheme
-
-    private static let maxWidth: CGFloat = 360
 
     var body: some View {
         Group {
@@ -341,7 +378,7 @@ private struct AttachmentPicture: View {
     /// The picture's own shape, at most `height` tall and `maxWidth` wide, never enlarged.
     private func fitted(_ size: CGSize) -> CGSize {
         guard size.width > 0, size.height > 0 else { return CGSize(width: height, height: height) }
-        let scale = min(Self.maxWidth / size.width, height / size.height, 1)
+        let scale = min(maxWidth / size.width, height / size.height, 1)
         return CGSize(width: (size.width * scale).rounded(), height: (size.height * scale).rounded())
     }
 }

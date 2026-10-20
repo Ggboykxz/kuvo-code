@@ -336,6 +336,10 @@ struct TranscriptView: View {
                         // Something it made shows on its own, in the conversation's flow.
                         flushSteps(live: false)
                         rows.append(.widget(call))
+                    case .tool(let call) where MadePictureRow.isMade(call):
+                        // So does an image it made.
+                        flushSteps(live: false)
+                        rows.append(.picture(call))
                     case .tool(let call) where call.name == "kuvo-browser_send_message":
                         // So does what it wrote to another agent.
                         flushSteps(live: false)
@@ -526,6 +530,8 @@ enum Row: Identifiable, Hashable {
     case steps(String, [Message.Content], isLive: Bool)
     /// Something the agent made with show_widget, drawn in the conversation.
     case widget(Message.ToolCall)
+    /// An image it made.
+    case picture(Message.ToolCall)
     /// What it wrote to another agent (send_message).
     case sent(Message.ToolCall)
     /// A subagent it handed part of the work to.
@@ -596,6 +602,7 @@ enum Row: Identifiable, Hashable {
         case .assistant(let m, _), .more(let m, _): m.id
         case .steps(let id, _, _): id
         case .widget(let call): call.id
+        case .picture(let call): call.id
         case .sent(let call): call.id
         case .subagent(let call): call.id
         case .turnEnd(let m, _, _): m.id
@@ -691,6 +698,8 @@ private struct RowView: View, Equatable {
             StepsRow(blocks: blocks, isLive: isLive, directory: directory)
         case .widget(let call):
             WidgetCard(call: call, send: answerAgent)
+        case .picture(let call):
+            MadePictureRow(call: call)
         case .sent(let call):
             AgentSentRow(call: call)
         case .subagent(let call):
