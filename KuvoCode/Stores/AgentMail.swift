@@ -353,6 +353,25 @@ final class AgentMail {
     /// next time. One for an agent this Mac doesn't know waits two days, for another Mac connected
     /// to the machine that may, and so does one held back that long.
     func collect(from engine: MachineEngine) async {
+        // One at a time for a machine, or two would deliver the same letters; one asked for
+        // meanwhile runs once after.
+        let machine = engine.machine.id
+        guard collecting.insert(machine).inserted else {
+            collectAgain.insert(machine)
+            return
+        }
+        defer { collecting.remove(machine) }
+        repeat {
+            collectAgain.remove(machine)
+            await collectOnce(from: engine)
+        } while collectAgain.contains(machine)
+    }
+
+    /// Machines whose letters are being collected, and those to collect again after.
+    private var collecting: Set<String> = []
+    private var collectAgain: Set<String> = []
+
+    private func collectOnce(from engine: MachineEngine) async {
         let machine = engine.machine.id
         let folder = "\"$HOME/\(RemoteEngineInstaller.root)/run/outbox\""
         // Each as its file's name, when it was written and its letter (on one line, as it's
