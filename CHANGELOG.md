@@ -5,6 +5,7 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- With a coding agent, a message you send again after undoing one no longer vanishes from the conversation.
 - Find marks every place it finds, also while a reply is being written, and the conversation's first message no longer sits under its bar.
 - Esc stops the agent even when the composer doesn't have the keyboard.
 - In full screen, the title bar's row looks as it does in a window, without a gray band.

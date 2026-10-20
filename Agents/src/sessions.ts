@@ -1487,9 +1487,10 @@ export class Sessions {
     clearTimeout(live.idle)
     const abort = new AbortController()
     live.abort = abort
-    emit("session.inbox.delivered", { sessionID: id, inboxID: input.id }, directory)
-    // A message after an undo makes it final.
+    // A message after an undo makes it final: first, since the app takes away what comes from the
+    // undone message on (this message too, were it there already).
     this.commitRevert(id, record, live)
+    emit("session.inbox.delivered", { sessionID: id, inboxID: input.id }, directory)
     const attachments: Attachment[] = input.files.map((file) => ({ mime: mime(file.uri), name: file.name, source: { type: "uri", uri: file.uri } }))
     if (input.synthetic) record.messages.push({ type: "synthetic", id: input.id, time: { created: Date.now() }, text: input.text, description: input.synthetic.description, metadata: input.synthetic.metadata })
     else record.messages.push({ type: "user", id: input.id, time: { created: Date.now() }, text: input.text, files: attachments.length ? attachments : undefined })

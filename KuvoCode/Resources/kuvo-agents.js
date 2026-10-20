@@ -9726,8 +9726,8 @@ ${text.slice(0, 4000)}
     clearTimeout(live.idle);
     const abort = new AbortController;
     live.abort = abort;
-    emit("session.inbox.delivered", { sessionID: id, inboxID: input.id }, directory);
     this.commitRevert(id, record, live);
+    emit("session.inbox.delivered", { sessionID: id, inboxID: input.id }, directory);
     const attachments = input.files.map((file) => ({ mime: mime(file.uri), name: file.name, source: { type: "uri", uri: file.uri } }));
     if (input.synthetic)
       record.messages.push({ type: "synthetic", id: input.id, time: { created: Date.now() }, text: input.text, description: input.synthetic.description, metadata: input.synthetic.metadata });
