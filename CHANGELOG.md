@@ -5,6 +5,10 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- A permission card shows everything Allow allows: every file's changes and the whole command, scrolling when long.
+- A bot's conversation found by searching has the bot's menu, so it can't be deleted or archived away from its bot by mistake.
+- Notifications hide a hex key after any key's name again (except a cache key's), and show flags like --password-stdin or --secret-id with their buttons.
+- The bar of background commands shows the latest of a progress line that redraws itself, instead of "Nothing printed yet."
 - Auto is now **Custom Auto**, with as many lists of models as you like (one for bugfixes, one for features), each picked by name in the model picker, which shows a list's models in full and lets you edit the one under the pointer. A session on it shows which model is at work, and the context gauge shows that model's window. A reply you stopped has Copy and Reply under it too.
 - When this Mac's engine stops for good, its sessions' pending questions and background commands go too; messages agents send at once count toward their limit together.
 - Notifications hide keys given with flags like --private-key or --client-secret, and Authorization: Token token="…".
