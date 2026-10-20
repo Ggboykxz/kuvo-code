@@ -337,14 +337,19 @@ export class CodexAgent implements Agent {
   }
 
   /** One answer from Codex on your plan, in a thread kept nowhere, that can only read. */
-  async generate(prompt: string, model: ModelRef): Promise<string> {
+  async generate(prompt: string, model?: ModelRef): Promise<string> {
     const rpc = await this.rpc()
-    const started: any = await rpc.request("thread/start", { ephemeral: true, cwd: this.context.temporary, model: model.id, approvalPolicy: "never", sandbox: "read-only" }, 60_000)
+    // (Its own default model, when none is given; thinking little either way.)
+    const started: any = await rpc.request("thread/start", { ephemeral: true, cwd: this.context.temporary, ...(model && model.id !== "default" ? { model: model.id } : {}), approvalPolicy: "never", sandbox: "read-only" }, 60_000)
     const threadId: string = started.thread.id
     let text = ""
+    let turnId: string | undefined
     let timer: ReturnType<typeof setTimeout> | undefined
     const done = new Promise<string>((resolve, reject) => {
-      timer = setTimeout(() => reject(new Error("Codex took too long to answer.")), 120_000)
+      timer = setTimeout(() => {
+        if (turnId) void rpc.request("turn/interrupt", { threadId, turnId }, 10_000).catch(() => {})
+        reject(new Error("Codex took too long to answer."))
+      }, 120_000)
       this.oneOffs.set(threadId, (method, params) => {
         if (method === "item/completed" && params?.item?.type === "agentMessage" && typeof params.item.text === "string") text = params.item.text
         if (method !== "turn/completed") return
@@ -355,11 +360,13 @@ export class CodexAgent implements Agent {
     // (Settled before it's awaited, it isn't an unhandled failure.)
     done.catch(() => {})
     try {
-      await rpc.request("turn/start", { threadId, input: [{ type: "text", text: prompt, text_elements: [] }], ...(model.variant ? { effort: model.variant } : {}) }, 60_000)
+      const turn: any = await rpc.request("turn/start", { threadId, input: [{ type: "text", text: prompt, text_elements: [] }], effort: model?.variant ?? "low" }, 60_000)
+      turnId = turn?.turn?.id
       return await done
     } finally {
       clearTimeout(timer)
       this.oneOffs.delete(threadId)
+      void rpc.request("thread/unsubscribe", { threadId }).catch(() => {})
     }
   }
 

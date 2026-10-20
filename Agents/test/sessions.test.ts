@@ -725,13 +725,13 @@ describe("undo", () => {
 
 describe("titles and one-off answers", () => {
   test("a session is named from your first message: by the model for titles you picked, else the session's", async () => {
-    const titler = new FakeAgent("zen", "Zen") as FakeAgent & { generate: (prompt: string, model: { id: string }) => Promise<string> }
-    titler.generate = async (_prompt, model) => `"Fixing the parser (${model.id})."`
+    const titler = new FakeAgent("zen", "Zen") as FakeAgent & { generate: (prompt: string, model?: { id: string }) => Promise<string> }
+    titler.generate = async (_prompt, model) => `"Fixing the parser (${model?.id})."`
     const agents = new Map([a, b].map((agent) => [agent.providerID, agent]))
     let picked: { providerID: string; id: string } | undefined = { providerID: "zen", id: "small" }
     sessions = new Sessions(
       store,
-      { find: (provider: string | undefined) => (provider ? agents.get(provider) : undefined) } as unknown as Roster,
+      { find: (provider: string | undefined) => (provider ? agents.get(provider) : undefined), all: () => [...agents.values()] } as unknown as Roster,
       auto,
       (provider) => (provider === "zen" ? titler : undefined),
       undefined,
@@ -751,14 +751,27 @@ describe("titles and one-off answers", () => {
     await settled(second, 1)
     await until(() => sessions.get(second).title === "Tidy the README")
     expect(await sessions.generate(second, "a commit message")).toBe("")
-    // One that can't: no title from it (the app names it from your message), and generate says so.
+    // One that can't: another agent you're signed in to writes it, on a quick model of its own.
     delete (a as any).generate
+    let asked: unknown = "none"
+    ;(b as any).generate = async (_prompt: string, model?: unknown) => {
+      asked = model
+      return "Something else entirely"
+    }
     const third = create()
     send(third, "something else")
     await settled(third, 1)
-    await Bun.sleep(30)
-    expect(sessions.get(third).title).toBeFalsy()
+    await until(() => sessions.get(third).title === "Something else entirely")
+    expect(asked).toBeUndefined()
     await expect(sessions.generate(third, "a commit message")).rejects.toThrow()
+    // Not if it's signed out: no title from the bridge (the app names it).
+    b.signedIn = false
+    const fourth = create()
+    send(fourth, "one more")
+    await settled(fourth, 1)
+    await Bun.sleep(30)
+    expect(sessions.get(fourth).title).toBeFalsy()
+    delete (b as any).generate
   })
 })
 

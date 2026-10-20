@@ -247,7 +247,7 @@ export class ClaudeAgent implements Agent {
   }
 
   /** One answer from Claude Code on your plan: no tools, no hooks, nothing saved to its history. */
-  async generate(prompt: string, model: ModelRef): Promise<string> {
+  async generate(prompt: string, model?: ModelRef): Promise<string> {
     const sdk = await this.sdk()
     const abort = new AbortController()
     const timer = setTimeout(() => abort.abort(), 120_000)
@@ -256,7 +256,8 @@ export class ClaudeAgent implements Agent {
       options: {
         pathToClaudeCodeExecutable: this.executable(),
         cwd: this.context.temporary,
-        model: model.id === "default" ? undefined : model.id,
+        // (A quick one of its own, when none is given.)
+        model: !model ? "haiku" : model.id === "default" ? undefined : model.id,
         persistSession: false,
         maxTurns: 1,
         tools: [],

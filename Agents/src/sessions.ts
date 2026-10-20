@@ -1185,15 +1185,21 @@ export class Sessions {
     const directory = this.store.get(id)?.session.location.directory
     if (!directory || !text.trim()) return
     const prompt = `Write a title for a conversation that begins with the message below: a few words (six at most) saying what it's about, in the message's language. Reply with the title alone, without quotes or a period at the end.\n\n<message>\n${text.slice(0, 4_000)}\n</message>`
-    let answer: string
-    try {
-      const picked = this.titleModel ? await this.titleModel(directory).catch(() => undefined) : undefined
-      const engine = picked ? this.engine?.(picked.providerID) : undefined
-      answer = picked && engine?.generate ? await engine.generate(prompt, picked) : await this.generate(id, prompt)
-    } catch {
-      // The app names it from your message instead.
-      return
+    // The model you picked for titles; the session's; or, when its agent can't write one
+    // (Antigravity, Cursor, Grok), another agent you're signed in to, on a quick model of its own.
+    const picked = this.titleModel ? await this.titleModel(directory).catch(() => undefined) : undefined
+    const engine = picked ? this.engine?.(picked.providerID) : undefined
+    const own = this.store.get(id)?.session.model?.providerID
+    let answer = picked && engine?.generate ? await engine.generate(prompt, picked).catch(() => "") : ""
+    if (!answer.trim()) answer = await this.generate(id, prompt).catch(() => "")
+    for (const agent of answer.trim() ? [] : this.roster.all()) {
+      if (!agent.generate || agent.providerID === own) continue
+      if (!(await agent.account().catch(() => undefined))?.signedIn) continue
+      answer = await agent.generate(prompt).catch(() => "")
+      if (answer.trim()) break
     }
+    // None could: the app names it.
+    if (!answer.trim()) return
     const title = answer
       .split("\n")
       .map((line) => line.trim())
@@ -1228,7 +1234,7 @@ export class Sessions {
     session.time.updated = Date.now()
     this.store.save(id, true)
     // Your first message: the session gets a title from it, as the engine's sessions do.
-    if (!input.synthetic && !session.title && !session.parentID && record.messages.filter((message) => message.type === "user").length === 1) void this.nameSession(id, input.text)
+    if (!input.synthetic && !session.title && !session.parentID && record.messages.filter((message) => message.type === "user").length === 1) void this.nameSession(id, input.text).catch(() => {})
     // The project's files as they are before it (yours, not a note from the app), and after its
     // turn: what the turn changed, which Undo puts back.
     let note: SnapshotNote | undefined
