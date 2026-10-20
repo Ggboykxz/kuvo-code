@@ -52,7 +52,9 @@ const TAB_IDLE = Number(process.env.KUVO_BROWSER_TAB_IDLE || 3600) * 1000;
 
 // Goes up with every change to the keeper (host mode): a newer one replaces one that's running
 // (its pages close, its sign-ins stay), and an older one never replaces a newer.
-const KEEPER = 32;
+const KEEPER = 33;
+// Passkeys: none yet, as in the panel's browser on the Mac (Passkeys.swift, the same script).
+const NO_PASSKEYS = "(() => {\n  try {\n    const none = () => Promise.reject(new DOMException(\"Passkeys can't be used in this browser.\", \"NotAllowedError\"));\n    const credentials = navigator.credentials;\n    if (credentials) {\n      const get = credentials.get.bind(credentials), create = credentials.create.bind(credentials);\n      credentials.get = (options) => (options && options.publicKey ? none() : get(options));\n      credentials.create = (options) => (options && options.publicKey ? none() : create(options));\n    }\n    const Credential = window.PublicKeyCredential;\n    if (Credential) {\n      Credential.isUserVerifyingPlatformAuthenticatorAvailable = () => Promise.resolve(false);\n      if (Credential.isConditionalMediationAvailable) Credential.isConditionalMediationAvailable = () => Promise.resolve(false);\n    }\n  } catch {}\n})();";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -642,6 +644,9 @@ async function host() {
       const { sessionId, targetInfo, waitingForDebugger } = message.params;
       own.set(targetInfo.targetId, sessionId);
       toChrome({ id: next++, method: "Network.setUserAgentOverride", params: browserIdentity, sessionId });
+      // No passkeys here yet: a page asking for one hears so at once, instead of Chrome's passkey
+      // dialog, which no one sees in the live view, holding the page still (Passkeys.swift).
+      toChrome({ id: next++, method: "Page.addScriptToEvaluateOnNewDocument", params: { source: NO_PASSKEYS, runImmediately: true }, sessionId });
       if (waitingForDebugger) toChrome({ id: next++, method: "Runtime.runIfWaitingForDebugger", params: {}, sessionId });
       return;
     }

@@ -159,6 +159,7 @@ final class BrowserSession: NSObject {
     init(configuration: WKWebViewConfiguration? = nil) {
         let configuration = configuration ?? Self.makeConfiguration()
         PasswordCapture.install(in: configuration)
+        Passkeys.install(in: configuration)
         // A size of its own, so a page lays out (and the agent can use it) before the panel shows it,
         // as a bot's tab does out of sight; the panel sizes it when it shows it.
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 1024, height: 768), configuration: configuration)
