@@ -25,8 +25,9 @@ struct RemoteEngineTests {
         #expect(script.contains("setsid"))
         #expect(script.contains("--hostname 127.0.0.1"))
         #expect(script.contains("engine/\(OpenCodeEngine.version)/opencode"))
-        // Nothing secret on its command line: those come over the input.
-        #expect(!script.contains("PASSWORD"))
+        // Nothing secret on its command line: those come over the input. (kuvo-wake, in it, only
+        // unsets the engine's password before running a check.)
+        #expect(!script.contains("PASSWORD="))
         // Only its user can read how to find it.
         #expect(script.contains("umask 077"))
     }
