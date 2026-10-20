@@ -472,7 +472,7 @@ const checks = [
     assert.match(app, /event\.key === "Escape"[\s\S]{0,80}setRenaming\(null\)/);
     // The menu it is reached from (SidebarView.swift:586-590).
     assert.match(app, /onContextMenu=\{event => \{/);
-    assert.match(app, />Rename…</);
+    assert.match(app, /label: "Rename…"/);
     // The handle in the gap (WindowGlass.swift:43-81): the gap is the handle, the capsule
     // is 3 pt and shows at half strength, and the cursor says what it does.
     assert.match(app, /function PaneResizer\(/);

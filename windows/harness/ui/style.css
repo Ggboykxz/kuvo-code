@@ -3209,3 +3209,33 @@ button > svg, .small > svg, .session-delete > svg, .keycap-clear > svg { display
 }
 .remove-button:hover { background: var(--danger-soft); color: var(--danger); }
 .remove-button:active { opacity: .7; }
+
+/* The quote you are answering (QuoteViews.swift:5-33): a bar of the accent, what you are
+   replying to, and a way to drop it — in a well, over the composer. */
+.quote-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 7px 9px;
+  border-radius: 10px;
+  background: var(--well);
+  border: 1px solid var(--well-border);
+}
+.quote-bar {
+  flex: 0 0 3px;
+  align-self: stretch;
+  border-radius: 999px;
+  background: var(--accent);
+}
+.quote-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.quote-label { color: var(--ink-soft); font-size: var(--text-xs); font-weight: 500; }
+.quote-text {
+  color: var(--ink-soft);
+  font-size: var(--text-md);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

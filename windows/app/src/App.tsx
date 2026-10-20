@@ -464,13 +464,22 @@ function AttachmentNode({ file }: { file: Attachment }) {
 function EntryNodes({ transcript }: { transcript: Transcript }) {
   // The message that started the turn: what "Try Again" sends again.
   const lastMessage = [...transcript.entries].reverse().find(entry => entry.kind === "user")?.text ?? "";
+  // The menu of a message, where the Mac has one (YourMessage.swift:81-89).
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   return (
     <>
       {transcript.entries.map((entry, index) => {
         const key = entry.id ?? `${entry.kind}-${index}`;
         if (entry.kind === "user") {
           return (
-            <article key={key} className="entry user">
+            <article
+              key={key}
+              className="entry user"
+              onContextMenu={event => {
+                event.preventDefault();
+                setMenu({ id: entry.id ?? key, x: event.clientX, y: event.clientY });
+              }}
+            >
               <div className="text">{entry.text}</div>
               {(entry.files ?? []).map((file, i) => <AttachmentNode key={i} file={file} />)}
               {/* The Mac's actions under your words (YourMessage.swift:41-64): the time it
@@ -552,6 +561,18 @@ function EntryNodes({ transcript }: { transcript: Transcript }) {
           {item.delivery === "queue" ? <div className="entry-meta">queued</div> : null}
         </article>
       ))}
+      {menu ? (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          items={[
+            { label: "Copy", run: () => { const found = transcript.entries.find(item => item.id === menu.id); void navigator.clipboard?.writeText(found ? entryText(found) : "").catch(() => {}); } },
+            { label: "New Session From Here", run: () => { const found = transcript.entries.find(item => item.id === menu.id); if (found) void forkSessionFrom(found); } },
+            { label: "Undo From Here…", run: () => { const found = transcript.entries.find(item => item.id === menu.id); if (found) void undoFromHere(found); } },
+          ]}
+        />
+      ) : null}
     </>
   );
 }
@@ -969,6 +990,23 @@ async function toggleSplit() {
 
 // ---- The sidebar ----
 
+/// A menu, where the Mac has one (RightClickMenu.swift:4-65): the items, and the place
+/// it was asked for.
+function ContextMenu({ x, y, items, onClose }: {
+  x: number;
+  y: number;
+  items: { label: string; run: () => void }[];
+  onClose: () => void;
+}) {
+  return (
+    <div className="context-menu" style={{ left: x, top: y }} role="menu" onMouseLeave={onClose}>
+      {items.map(item => (
+        <button key={item.label} role="menuitem" onClick={() => { onClose(); item.run(); }}>{item.label}</button>
+      ))}
+    </div>
+  );
+}
+
 function Sidebar() {
   const archived = (session: SessionSummary) => Boolean(session.time?.archived) || session.metadata?.["kuvo.archived"] === true;
   const query = state.sessionQuery.trim().toLowerCase();
@@ -1081,15 +1119,15 @@ function Sidebar() {
       </div>
       <div id="sessions-empty" className="aside-empty" hidden={state.sessions.length > 0 || query.length > 0}>No sessions yet.</div>
       {menu ? (
-        <div
-          className="context-menu"
-          style={{ left: menu.x, top: menu.y }}
-          role="menu"
-          onMouseLeave={() => setMenu(null)}
-        >
-          <button role="menuitem" onClick={() => { setRenaming(menu.id); setMenu(null); }}>Rename…</button>
-          <button role="menuitem" onClick={() => { setMenu(null); void deleteSession(state.sessions.find(session => session.id === menu.id)!); }}>Delete</button>
-        </div>
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          items={[
+            { label: "Rename…", run: () => setRenaming(menu.id) },
+            { label: "Delete", run: () => { void deleteSession(state.sessions.find(session => session.id === menu.id)!); } },
+          ]}
+        />
       ) : null}
     </aside>
   );
@@ -1244,10 +1282,12 @@ function Composer() {
     if (draft) { setText(draft); localStorage.removeItem("kuvo-undo-draft"); }
   }, []);
 
-  // A passage quoted from the answer comes to the composer, the Mac app's way.
+  // A passage quoted from the answer comes to the composer, the Mac app's way: it sits
+  // in a card over the composer until it is sent or dropped (Quoting.swift, QuoteViews).
+  const [quote, setQuote] = useState<string | null>(null);
   useEffect(() => {
     if (!state.quote) return;
-    setText(current => (current ? `${current}\n\n> ${state.quote}\n` : `> ${state.quote}\n`));
+    setQuote(state.quote);
     state.quote = undefined;
     promptRef.current?.focus();
   }, [state.quote]);
@@ -1262,11 +1302,17 @@ function Composer() {
     if (!text.trim() && !files.length) return;
     // The notes on the changes go with the message, the way the Mac app sends them.
     const notes = state.lineComments ?? [];
-    const sent = notes.length
+    const withNotes = notes.length
       ? `${text}\n\n${notes.map(note => `On ${note.file} (line ${note.line + 1}): ${note.text}`).join("\n")}`
       : text;
+    // The quote you are answering goes first, as a block, and your words after it
+    // (Quoting.message).
+    const sent = quote
+      ? `${quote.trim().split("\n").map(line => (line ? `> ${line}` : ">")).join("\n")}\n\n${withNotes}`
+      : withNotes;
     setText("");
     setFiles([]);
+    setQuote(null);
     state.lineComments = [];
     const sent_ = await sendPrompt(sent, files, delivery);
     // A message that did not go is back in the box, the Mac's way.
@@ -1336,6 +1382,23 @@ function Composer() {
           <Symbol name={queueOpen ? "arrow.up" : "arrow.down"} size={12} /> {queueItems.length} waiting
         </button>
       </div>
+      {quote ? (
+        <div className="quote-card">
+          <span className="quote-bar" aria-hidden="true" />
+          <div className="quote-body">
+            <span className="quote-label">Replying to</span>
+            <span className="quote-text">{quote}</span>
+          </div>
+          <button
+            className="titlebar-icon"
+            title="Drop the quote"
+            aria-label="Don’t Reply to This"
+            onClick={() => setQuote(null)}
+          >
+            <Symbol name="xmark" size={11} />
+          </button>
+        </div>
+      ) : null}
       <div id="autocomplete" className="autocomplete" hidden={mentions.length === 0}>
         {mentions.map((item, index) => (
           <div
