@@ -6038,6 +6038,7 @@ try {
       rmSync7(join13(home, "antigravity", name), { recursive: true, force: true });
 } catch {}
 delete process.env.BUN_BE_BUN;
+delete process.env.OPENCODE_PASSWORD;
 process.on("unhandledRejection", (reason2) => console.error("unhandled:", reason2));
 var deps = new Deps(join13(home, "runtime"), join13(home, "cache"));
 var context = { home, temporary, deps };

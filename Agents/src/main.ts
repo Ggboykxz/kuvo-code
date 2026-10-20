@@ -36,6 +36,9 @@ try {
 
 // The engine's binary runs this as Bun when told to: the agents it starts aren't told so.
 delete process.env.BUN_BE_BUN
+// Nor do they get its password: every agent, and each command one runs, gets this environment,
+// and an `env` there would print it, for the model to read and any process here to use.
+delete process.env.OPENCODE_PASSWORD
 
 // An SDK's promise nobody waits for, rejected (Cursor's when a shell fails to start), stops nothing.
 process.on("unhandledRejection", (reason) => console.error("unhandled:", reason))
