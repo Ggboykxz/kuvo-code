@@ -62,6 +62,15 @@ const SHELL = [
   "Attach Files… You can also drop files here, or paste them.",
 ];
 
+/// The transcript's own words, the same way.
+const TRANSCRIPT = [
+  "Show More",
+  "Show Less",
+  "Stopped",
+  "Hide the steps",
+  "Show each step",
+];
+
 /// The strings that are ours alone, and why.
 const OURS = {
   "Before you start": "The note about what the app collects: the Windows client's facts are its own, so the Mac's wording would be a lie here.",
@@ -71,7 +80,7 @@ const OURS = {
 };
 
 test("the Mac says the shell's strings, and so does the app", () => {
-  for (const text of SHELL) {
+  for (const text of [...SHELL, ...TRANSCRIPT]) {
     assert.ok(mac.includes(`"${text}"`), `the Mac says "${text}"`);
     // In the app a string is either a quoted one or a word between two tags.
     const said = app.includes(`"${text}"`) || app.includes(`>${text}<`) || app.includes(`> ${text} <`);

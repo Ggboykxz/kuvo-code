@@ -123,13 +123,20 @@ function LongText({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   const long = text.length > 900;
   const files = state.projectFiles;
-  if (!long || open) return <div className="text markdown" dangerouslySetInnerHTML={{ __html: renderMarkdown(text, files) }} />;
+  if (!long) return <div className="text markdown" dangerouslySetInnerHTML={{ __html: renderMarkdown(text, files) }} />;
   const cut = text.slice(0, 700);
   const line = cut.lastIndexOf("\n", 700);
   return (
     <div className="text markdown">
-      <div dangerouslySetInnerHTML={{ __html: renderMarkdown(cut.slice(0, line > 200 ? line : 700), files) }} />
-      <button className="small long-more" onClick={() => setOpen(true)}>Show more</button>
+      <div
+        dangerouslySetInnerHTML={{
+          __html: renderMarkdown(open ? text : cut.slice(0, line > 200 ? line : 700), files),
+        }}
+      />
+      {/* The Mac's own words, and the same way round: it folds and unfolds. */}
+      <button className="small long-more" onClick={() => setOpen(value => !value)}>
+        {open ? "Show Less" : "Show More"}
+      </button>
     </div>
   );
 }
@@ -371,7 +378,7 @@ function EntryNodes({ transcript }: { transcript: Transcript }) {
             </div>
           );
         }
-        if (entry.kind === "idle" && entry.outcome === "interrupted") return <div key={key} className="notice">Stopped.</div>;
+        if (entry.kind === "idle" && entry.outcome === "interrupted") return <div key={key} className="notice">Stopped</div>;
         return null;
       })}
       {transcript.pending.map(item => (
