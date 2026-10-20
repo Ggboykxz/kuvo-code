@@ -29,17 +29,25 @@ struct PermissionCard: View {
                 }
             }
 
-            if let diff = request.diffs.first {
-                DiffView(diff: diff, title: relative(diff.file), maxLines: 14)
+            // All that Allow allows: every file's changes, the whole command, scrolling when long.
+            if !request.diffs.isEmpty {
+                AllowedWell(maxHeight: 360) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(request.diffs) { diff in
+                            DiffView(diff: diff, title: relative(diff.file), maxLines: 14)
+                        }
+                    }
+                }
             } else if !request.resources.isEmpty {
-                Text(command ?? request.resources.map(relative).joined(separator: "\n"))
-                    .transcriptCodeFont()
-                    .textSelection(.enabled)
-                    .lineLimit(6)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    // Sunk in like a code block, as it's paths and commands.
-                    .recessedWell(RoundedRectangle(cornerRadius: 10))
+                AllowedWell(maxHeight: 180) {
+                    Text(command ?? request.resources.map(relative).joined(separator: "\n"))
+                        .transcriptCodeFont()
+                        .textSelection(.enabled)
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                // Sunk in like a code block, as it's paths and commands.
+                .recessedWell(RoundedRectangle(cornerRadius: 10))
             }
 
             HStack(spacing: 8) {
@@ -59,7 +67,9 @@ struct PermissionCard: View {
     }
 
     private var subject: String {
-        request.resources.first.map(relative) ?? "this"
+        guard let first = request.resources.first.map(relative) else { return "this" }
+        let more = request.resources.count - 1
+        return more == 0 ? first : "\(first) and \(more) more"
     }
 
     private var title: String {
@@ -599,5 +609,20 @@ struct WindowReader: NSViewRepresentable {
 
     func updateNSView(_ view: NSView, context: Context) {
         DispatchQueue.main.async { box.window = view.window }
+    }
+}
+
+/// What a permission allows, shown whole: as tall as it is, up to `maxHeight`, then it scrolls.
+private struct AllowedWell<Content: View>: View {
+    var maxHeight: CGFloat
+    @ViewBuilder var content: Content
+    @State private var height: CGFloat = 1
+
+    var body: some View {
+        ScrollView {
+            content.onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { height = $0 }
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .frame(height: min(height, maxHeight))
     }
 }
