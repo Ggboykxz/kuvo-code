@@ -137,8 +137,10 @@ struct MainView: View {
     }
 
     /// The last half you worked in is the one beside: the panel is its, and the commands go to it.
+    /// It stays so while the expanded panel covers it (the panel is still its), not once it gave
+    /// way for want of room.
     private var worksBeside: Bool {
-        lastHalf == .split && besideID != nil
+        lastHalf == .split && splitModel != nil && (besideID != nil || (showsPanel && panelExpanded))
     }
 
     /// The sessions on screen: the tab's, and the one beside it.
@@ -435,7 +437,7 @@ struct MainView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in markViewed() }
         // The panel's browser is that of the place the session in view runs: this Mac's, or its
         // machine's.
-        .onChange(of: activeDirectory, initial: true) { _, directory in
+        .onChange(of: focusedDirectory, initial: true) { _, directory in
             utilities.place = directory.flatMap(RemoteFolder.machine(of:))
         }
         // Its agent's browsing brings pages forward; others' stay where they are.
@@ -445,15 +447,21 @@ struct MainView: View {
         }
         // The one beside it shows you files in the panel too.
         .onChange(of: besideID, initial: true) { _, id in utilities.besideInView = id }
-        // Another tab: you're back in its own conversation, not the one beside the last.
-        .onChange(of: selection) { if focus == .split { focus = .conversation } }
+        // Another tab: you're back in its own conversation, not the one beside the last (whatever
+        // had the keyboard: the panel or the sidebar keep the last half otherwise).
+        .onChange(of: selection) {
+            if focus == .split { focus = .conversation }
+            lastHalf = .conversation
+        }
+        // Another session beside: you work in the tab's until you click into it.
+        .onChange(of: splitModel?.id) { lastHalf = .conversation }
     }
 
     var body: some View {
         followingSessions
         // A tab you pick is the agent's of the half you work in.
         .onChange(of: focus) { _, pane in if pane == .conversation || pane == .split { lastHalf = pane } }
-        .onChange(of: lastHalf == .split && besideID != nil, initial: true) { _, beside in utilities.worksBeside = beside }
+        .onChange(of: worksBeside, initial: true) { _, beside in utilities.worksBeside = beside }
         .onChange(of: groupID) { showBotTabs() }
         .onChange(of: groupID.flatMap { groups.group($0)?.members } ?? []) { showBotTabs() }
         .task(id: activeDirectory) {
