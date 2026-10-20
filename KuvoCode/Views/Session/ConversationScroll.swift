@@ -95,6 +95,8 @@ struct ConversationScroll<Rows: View>: View {
     @Environment(\.isConversationShown) private var isShown
     #endif
 
+    @Environment(\.conversationTopRoom) private var topRoom
+
     var body: some View {
         // Scrolled by AppKit's scroll view (to the end, to a place, keeping what you read in
         // place) or once to a row: SwiftUI keeps no position of its own here, which it would put
@@ -118,8 +120,9 @@ struct ConversationScroll<Rows: View>: View {
             .environment(\.scrollAnchor, anchor)
             .onAppear { anchor.stopFollowing = { [scroller] in scroller.follow(false) } }
             .padding(.horizontal, Metrics.gutter)
-            // Room under the card's header, which the conversation scrolls beneath.
-            .padding(.top, 16)
+            // Room under the card's header, which the conversation scrolls beneath (and under
+            // Find's bar while it's open).
+            .padding(.top, 16 + topRoom)
             .readableColumn()
             .coordinateSpace(.named(ScrollAnchor.space))
             .background {
