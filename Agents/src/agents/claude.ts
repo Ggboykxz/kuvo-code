@@ -329,6 +329,9 @@ class ClaudeThread implements Thread {
     if (this.query && (this.opened?.append !== append || this.opened?.program !== this.agent.program || this.opened?.tools !== tools?.url)) this.close()
     if (!this.query) {
       this.open(sdk, modelID, effort, input.plan, append, hooks)
+      // Kuvo Code's own tools, as the engine's models have them: told over its pipe, not on its
+      // command line (where any process could read their key).
+      if (tools) await this.query?.setMcpServers({ [tools.name]: { type: "http", url: tools.url, headers: tools.headers, timeout: tools.timeout } }).catch(() => {})
     } else {
       // The same Claude Code goes on, told what changed.
       if (this.opened?.model !== modelID) await this.query.setModel(modelID === "default" ? undefined : modelID).catch(() => {})
@@ -367,8 +370,6 @@ class ClaudeThread implements Thread {
         permissionMode: plan ? "plan" : "default",
         canUseTool: (name: string, input: Record<string, unknown>, options: any) => this.canUseTool(name, input, options),
         systemPrompt: { type: "preset", preset: "claude_code", ...(append ? { append } : {}) },
-        // Kuvo Code's own tools, as the engine's models have them.
-        ...(tools ? { mcpServers: { [tools.name]: { type: "http", url: tools.url, headers: tools.headers, timeout: tools.timeout } } } : {}),
         ...(resume ? { resume: id } : { sessionId: id }),
         env: this.agent.env(),
         stderr: () => {},

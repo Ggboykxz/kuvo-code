@@ -2648,6 +2648,8 @@ class ClaudeThread {
       this.close();
     if (!this.query) {
       this.open(sdk, modelID, effort, input.plan, append, hooks);
+      if (tools)
+        await this.query?.setMcpServers({ [tools.name]: { type: "http", url: tools.url, headers: tools.headers, timeout: tools.timeout } }).catch(() => {});
     } else {
       if (this.opened?.model !== modelID)
         await this.query.setModel(modelID === "default" ? undefined : modelID).catch(() => {});
@@ -2688,7 +2690,6 @@ class ClaudeThread {
         permissionMode: plan ? "plan" : "default",
         canUseTool: (name, input, options) => this.canUseTool(name, input, options),
         systemPrompt: { type: "preset", preset: "claude_code", ...append ? { append } : {} },
-        ...tools ? { mcpServers: { [tools.name]: { type: "http", url: tools.url, headers: tools.headers, timeout: tools.timeout } } } : {},
         ...resume ? { resume: id } : { sessionId: id },
         env: this.agent.env(),
         stderr: () => {}
