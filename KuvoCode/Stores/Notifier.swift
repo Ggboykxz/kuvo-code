@@ -115,14 +115,21 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         var at = 0
         for match in long.matches(in: text, range: NSRange(location: 0, length: source.length)) {
             let run = source.substring(with: match.range)
-            let prefixed = run.range(of: #"^(sk-|sk_live_|sk_test_|rk_live_|rk_test_|whsec_|ghp_|gho_|ghs_|github_pat_|xox[abp]-|AKIA|AIza|glpat-)"#, options: .regularExpression) != nil
-                || run.contains("hooks.slack.com/services/")
+            // A key's own start, also as a part of a path (…/keys/sk-…).
+            let prefixed = run.split(separator: "/").contains { part in
+                part.range(of: #"^(sk-|sk_live_|sk_test_|rk_live_|rk_test_|whsec_|ghp_|gho_|ghs_|github_pat_|xox[abp]-|AKIA|AIza|glpat-)"#, options: .regularExpression) != nil
+            }
             let isHash = run.range(of: #"^([0-9a-fA-F]{40}|[0-9a-fA-F]{64}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$"#, options: .regularExpression) != nil
-            // A path or a name of words (a branch, a package, a test): each of its parts is a word
-            // or a number, not a long mix of both as a key's are.
-            let parts = run.split(whereSeparator: { "/-_.".contains($0) })
-            let wordy = parts.count >= 2 && parts.allSatisfy { part in
-                part.count < 12 || part.range(of: #"^([a-z]+|[A-Z][a-z]+|[0-9]+)$"#, options: .regularExpression) != nil
+            // A path or a name made of words (a branch, a package, a test, web3Provider,
+            // parseHTML5Document): each long part reads as words and numbers, a few letters
+            // each on average, where a key's change case or turn to digits every letter or two.
+            // UUIDs and hashes in it (a simulator's folder, a commit) are names too; other long
+            // runs of hex digits aren't words.
+            let plain = run
+                .replacingOccurrences(of: #"(?<![0-9A-Fa-f])[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?![0-9A-Fa-f])"#, with: "u", options: .regularExpression)
+                .replacingOccurrences(of: #"(?<![0-9A-Za-z])([0-9a-f]{40}|[0-9a-f]{64})(?![0-9A-Za-z])"#, with: "h", options: .regularExpression)
+            let wordy = plain.split(whereSeparator: { "/-_.".contains($0) }).allSatisfy { part in
+                part.count < 12 || part.range(of: #"^[0-9a-fA-F]+$"#, options: .regularExpression) == nil && Double(part.count) / Double(max(1, Self.words.numberOfMatches(in: String(part), range: NSRange(location: 0, length: (part as Substring).utf16.count)))) >= 3.5
             }
             let mixed = run.range(of: #"[A-Za-z]"#, options: .regularExpression) != nil && run.range(of: #"\d"#, options: .regularExpression) != nil
             guard prefixed || (mixed && !isHash && !wordy) else { continue }
@@ -132,10 +139,16 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         return result + source.substring(from: at)
     }
 
+    /// The words of a name: "parse", "HTML", "5", "Document".
+    private nonisolated static let words = try! NSRegularExpression(pattern: #"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|[0-9]+"#)
+
+    /// Whether a notification shows all of `text`: one that hides some of it doesn't answer from
+    /// its buttons, as you'd answer what you can't see.
+    nonisolated static func showsAll(_ text: String) -> Bool { masked(text) == text }
+
     /// `text` with the secrets it names as dots: after a name that says it's one (token=…,
     /// "password": …, Authorization: Bearer …, --token …, aws_secret_access_key …), in an address
-    /// (https://user:pass@host), curl -u user:pass and mysql -pPASS. A notification whose text
-    /// this changes doesn't answer from its buttons: you'd answer what you can't see.
+    /// (https://user:pass@host, a Slack webhook's), curl -u user:pass and mysql -pPASS.
     nonisolated static func maskedNamed(_ text: String) -> String {
         var text = text
         let named = #"(?i)((?:token|api[_-]?key|secret(?:[_-]?access[_-]?key)?|password|passwd|authorization)["']?\s*[:=]\s*["']?(?:bearer\s+|basic\s+)?|bearer\s+|--(?:token|password|passwd|secret|api-key|key)[=\s]+)[^\s"'&;]{3,}"#
@@ -143,6 +156,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         text = text.replacingOccurrences(of: #"(://[^\s/:@]+:)[^\s/@]+@"#, with: "$1•••@", options: .regularExpression)
         text = text.replacingOccurrences(of: #"(\s-u\s+[^\s:]+:)\S+"#, with: "$1•••", options: .regularExpression)
         text = text.replacingOccurrences(of: #"(?i)(secret[_-]?access[_-]?key\s+)\S+"#, with: "$1•••", options: .regularExpression)
+        text = text.replacingOccurrences(of: #"(hooks\.slack\.com/services/)[^\s"'<>]+"#, with: "$1•••", options: .regularExpression)
         text = text.replacingOccurrences(of: #"(?i)(\b(?:mysql|mariadb|mysqldump|mysqladmin)\b[^\n]*?\s-p)\S+"#, with: "$1•••", options: .regularExpression)
         return text
     }

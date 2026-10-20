@@ -1696,11 +1696,13 @@ final class Workspace {
                 asking[request] = nil
                 return
             }
+            // Buttons only when the notification hides none of what they'd answer.
+            let shown = Notifier.showsAll(body) && (question?.choices.allSatisfy { Notifier.showsAll($0.label) } ?? true)
             Notifier.shared.notify(session: session?.id ?? id, title: session.flatMap { botName?($0.id) } ?? session?.title ?? AppInfo.name,
                                    subtitle: session.flatMap { botName?($0.id) == nil ? projectName($0.location.directory) : nil }, body: body,
-                                   permission: isPermission && answerable && Notifier.maskedNamed(body) == body ? (session: id, request: request) : nil,
-                                   question: Notifier.maskedNamed(body) == body ? question : nil,
-                                   push: .init(isPermission ? .permission : .question, request: (session: id, id: request), machine: sessionMachines[id], answerable: answerable && Notifier.maskedNamed(body) == body))
+                                   permission: isPermission && answerable && shown ? (session: id, request: request) : nil,
+                                   question: shown ? question : nil,
+                                   push: .init(isPermission ? .permission : .question, request: (session: id, id: request), machine: sessionMachines[id], answerable: answerable && shown))
         }
     }
 
