@@ -477,11 +477,12 @@ private struct WidgetPage: NSViewRepresentable {
         #endif
 
         /// Its own page loads (a draft without its scripts); a link you click goes to your browser
-        /// instead. One the page goes to by itself, without your click, goes nowhere.
+        /// instead, one for each click. One the page goes to by itself, without your click (its
+        /// script clicking a link counts as by itself), goes nowhere.
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, preferences: WKWebpagePreferences, decisionHandler: @escaping (WKNavigationActionPolicy, WKWebpagePreferences) -> Void) {
             if action.navigationType == .linkActivated || (action.targetFrame?.isMainFrame == true && action.request.url?.scheme.map(["http", "https"].contains) == true) {
                 if let url = action.request.url, ["http", "https"].contains(url.scheme ?? ""),
-                   action.navigationType == .linkActivated || (webView as? WidgetWebView)?.wasClicked == true {
+                   (webView as? WidgetWebView)?.takeClick() == true {
                     NSWorkspace.shared.open(url)
                 }
                 decisionHandler(.cancel, preferences)
@@ -494,7 +495,7 @@ private struct WidgetPage: NSViewRepresentable {
         /// A link meant for a new window, too.
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
             if let url = action.request.url, ["http", "https"].contains(url.scheme ?? ""),
-               action.navigationType == .linkActivated || (webView as? WidgetWebView)?.wasClicked == true {
+               (webView as? WidgetWebView)?.takeClick() == true {
                 NSWorkspace.shared.open(url)
             }
             return nil
@@ -509,6 +510,13 @@ final class WidgetWebView: WKWebView {
 
     /// You clicked in it a moment ago: what it opens now is your doing, not the page's own.
     var wasClicked: Bool { clicked.map { Date.now.timeIntervalSince($0) < 1.5 } ?? false }
+
+    /// Whether you clicked a moment ago, using up the click: it opens one link, not many.
+    func takeClick() -> Bool {
+        guard wasClicked else { return false }
+        clicked = nil
+        return true
+    }
 
     override func mouseDown(with event: NSEvent) {
         clicked = .now
