@@ -1756,6 +1756,22 @@ describe("moving between agents", () => {
     expect(store.get(id)!.agent.claudeSession).toBeUndefined()
   })
 
+  test("a turn an agent begins on its own doesn't count as its having seen what it missed", async () => {
+    const id = create()
+    send(id, "for alpha")
+    await settled(id, 1)
+    sessions.selectModel(id, { providerID: "beta", id: "two" })
+    send(id, "for beta")
+    await settled(id, 2)
+    // Alpha carries on by itself (a command of its ended): taken, though it hasn't seen beta's turn.
+    expect(a.threads[0].onOwnTurn!({ text: "Alpha carried on by itself." })).toBe(true)
+    await settled(id, 3)
+    sessions.selectModel(id, { providerID: "alpha", id: "one" })
+    send(id, "back to alpha")
+    await settled(id, 4)
+    expect(a.runs.at(-1)!.text).toContain("for beta")
+  })
+
   test("switching models mid-turn goes on with the new one", async () => {
     a.script = works
     const id = create()

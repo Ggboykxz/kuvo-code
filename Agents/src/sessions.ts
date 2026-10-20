@@ -1026,10 +1026,12 @@ export class Sessions {
 
   /** Files kept or put back: what was to start meanwhile does (not what waited before). */
   private afterBusy(id: string) {
-    const live = this.live.get(id)
-    if (!live || this.isRunning(id)) return
+    if (!this.store.get(id) || this.isRunning(id)) return
+    const live = this.state(id)
     const later = live.wakeLater
     live.wakeLater = false
+    // A turn its agent began on its own goes first; what was to start goes after it.
+    if (later && live.adopting) live.resume = true
     if (later || live.adopting) this.wake(id)
   }
 
@@ -1232,8 +1234,8 @@ export class Sessions {
   private wake(id: string) {
     if (this.removing.has(id)) return
     if (this.isRunning(id)) {
-      const live = this.live.get(id)
-      if (live && !live.turn && this.busy.has(id)) live.wakeLater = true
+      const live = this.state(id)
+      if (!live.turn && this.busy.has(id)) live.wakeLater = true
       return
     }
     const record = this.store.get(id)
@@ -1256,8 +1258,11 @@ export class Sessions {
     live.wakeLater = false
     const record = this.store.get(id)
     if (!record || this.isRunning(id)) return
-    // A turn its agent began on its own goes first, however the last one ended.
-    if (this.startAdopting(id)) return
+    // A turn its agent began on its own goes first, however the last one ended; what was to start goes after it.
+    if (this.startAdopting(id)) {
+      live.resume = resume
+      return
+    }
     const queue = this.queue(record)
     // One being handed to the turn that just ended is settled by that (sent, or back here).
     const free = (input: Input) => !this.steering.has(input.id)
@@ -1392,7 +1397,7 @@ export class Sessions {
       // A message on a model you picked: what Auto held back before isn't news when it's back on.
       if (model.providerID !== autoProvider) delete record.agent.autoHeld
       result = input.adopt
-        ? await this.runOn(id, record, live, input.adopt, { ...run, model: input.adopt, adopt: true }, turn, abort.signal, input.id)
+        ? await this.runOn(id, record, live, input.adopt, { ...run, model: input.adopt, adopt: true, auto: model.providerID === autoProvider || undefined }, turn, abort.signal, input.id)
         : model.providerID === autoProvider
           ? await this.runAuto(id, record, live, { ...run, auto: true }, turn, abort.signal, input.id)
           : await this.runOn(id, record, live, model, run, turn, abort.signal, input.id)
@@ -1458,7 +1463,9 @@ export class Sessions {
     const record = this.store.get(id)
     const live = this.live.get(id)
     const model = live?.models.get(provider)
-    if (!record || !live || !model || this.removing.has(id) || record.session.revert || live.turn || live.adopting) return false
+    // (A turn still running on this same agent is one it has finished: it begins its own only then.)
+    const busy = live?.turn && !live.turn.isEnded && live.running?.provider !== provider
+    if (!record || !live || !model || this.removing.has(id) || record.session.revert || busy || live.adopting) return false
     live.adopting = { id: newID("msg"), text: note.text, files: [], delivery: "steer", synthetic: { description: note.description, metadata: note.metadata }, adopt: model }
     // Now, or once what's kept of the files (after the last turn) is done.
     this.wake(id)
@@ -1532,7 +1539,9 @@ export class Sessions {
       // Commands you ran while it (or another) worked come along, though it was there for them.
       const late = new Set((record.agent.lateShells as string[] | undefined) ?? [])
       const before = hasMessage ? [] : record.messages.slice(0, at < 0 ? undefined : at).filter((message, index) => index > seenAt || late.has(message.id))
-      if (!hasMessage && late.size) delete record.agent.lateShells
+      // (A turn it began on its own is told nothing: what it missed waits for its next message.)
+      const missed = Boolean(input.adopt && (before.length || late.size))
+      if (!hasMessage && late.size && !input.adopt) delete record.agent.lateShells
       const partway = at < 0 ? [] : record.messages.slice(Math.max(at, seenAt) + 1)
       const handed = handover(before, partway, (message) => this.stepName(message))
       const text = withHandover(hasMessage ? carryOn : input.text, handed)
@@ -1542,7 +1551,7 @@ export class Sessions {
       // It has seen all of it now, its own replies too; but one that failed with nothing done
       // couldn't take your message (its model is gone, it was turned away), and doesn't count as
       // having it: the next time, it or another model of its agent gets it.
-      if (result.outcome !== "failed" || result.taken || record.messages.slice(from).some(didWork)) slot.seen = record.messages[record.messages.length - 1]?.id
+      if (!missed && (result.outcome !== "failed" || result.taken || record.messages.slice(from).some(didWork))) slot.seen = record.messages[record.messages.length - 1]?.id
       // A message you sent partway that it never got to: it's handed that, and what came after, next time.
       const missedAt = result.missed?.length ? record.messages.findIndex((message) => result.missed!.includes(message.id)) : -1
       if (missedAt >= 0) slot.seen = record.messages[missedAt - 1]?.id

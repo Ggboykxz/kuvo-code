@@ -222,6 +222,26 @@ describe("Claude Code, on its own", () => {
   })
 })
 
+describe("Claude Code, on its own, twice", () => {
+  test("two turns of its own one after the other are two turns here", async () => {
+    const id = sessions.create({ model: { providerID: provider, id: "default" }, location: { directory: root } }).id
+    sessions.prompt(id, { id: "msg_claude_bg_00004", text: "hello", files: [], delivery: "steer" })
+    await until(() => fake.sent.length === 1)
+    const [mine] = fake.sent.map((message) => message.uuid)
+    fake.say("hi", [mine])
+    fake.result([mine])
+    await until(() => idles(id).length === 1)
+    fake.say("the first command ended", [])
+    fake.result([])
+    fake.say("the second command ended", [])
+    fake.result([])
+    await until(() => idles(id).length === 3)
+    expect(texts(id).join(" ")).toContain("the first command ended")
+    expect(texts(id).join(" ")).toContain("the second command ended")
+    expect(fake.interrupts).toBe(0)
+  })
+})
+
 describe("Claude Code, on its own, not taken", () => {
   test("a turn it begins while an undo is staged is stopped, and the undo stays", async () => {
     const id = sessions.create({ model: { providerID: provider, id: "default" }, location: { directory: root } }).id

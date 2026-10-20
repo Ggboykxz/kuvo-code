@@ -451,10 +451,11 @@ class ClaudeThread implements Thread {
     return new Promise<RunResult>((resolve) => {
       this.lastHooks = hooks
       this.active = this.turnFor(turn, hooks, resolve, input.auto, new Map())
-      for (const frame of own.frames) {
-        if (!this.active) break
-        this.handle(frame)
-      }
+      let at = 0
+      for (; at < own.frames.length && this.active; at++) this.handle(own.frames[at])
+      // What it said after that turn's end: another of its own, asked about once this one is over here.
+      const rest = own.frames.slice(at)
+      if (rest.length) setTimeout(() => rest.forEach((frame) => this.handle(frame)), 0)
     })
   }
 
