@@ -2627,6 +2627,7 @@ class ClaudeThread {
   agent;
   session;
   state;
+  subagentSessions = new Map;
   query;
   input;
   active;
@@ -2687,6 +2688,7 @@ class ClaudeThread {
         model: modelID === "default" ? undefined : modelID,
         effort,
         includePartialMessages: true,
+        forwardSubagentText: true,
         permissionMode: plan ? "plan" : "default",
         canUseTool: (name, input, options) => this.canUseTool(name, input, options),
         systemPrompt: { type: "preset", preset: "claude_code", ...append ? { append } : {} },
@@ -2805,11 +2807,23 @@ class ClaudeThread {
     if (known)
       return known;
     const call = active.calls.get(callID);
-    const input = call?.input ?? active.turn.toolInput(callID) ?? {};
-    if (call && kuvoTool2(call.name, input).name !== "subagent")
+    const before = this.subagentSessions.get(callID);
+    let run2;
+    let background = false;
+    if (call) {
+      const input = call.input;
+      if (kuvoTool2(call.name, input).name !== "subagent")
+        return;
+      run2 = active.hooks.subagent(callID, { title: String(input.description ?? ""), prompt: typeof input.prompt === "string" ? input.prompt : undefined, agent: input.subagent_type });
+      background = input.run_in_background === true;
+      this.subagentSessions.set(callID, { sessionID: run2.sessionID, title: String(input.description ?? "") });
+    } else if (before) {
+      run2 = active.hooks.subagent(callID, { title: before.title, sessionID: before.sessionID });
+      background = true;
+    } else {
       return;
-    const run2 = active.hooks.subagent(callID, { title: String(input.description ?? ""), prompt: typeof input.prompt === "string" ? input.prompt : undefined, agent: input.subagent_type });
-    const lane = { turn: run2.turn, streamed: new Set, blockTools: new Map, calls: new Map, run: run2, background: input.run_in_background === true };
+    }
+    const lane = { turn: run2.turn, streamed: new Set, blockTools: new Map, calls: new Map, run: run2, background };
     active.subagents.set(callID, lane);
     return lane;
   }
@@ -3305,6 +3319,16 @@ class CodexAgent {
         this.rateLimits.set(snapshot.limitId ?? "codex", snapshot);
       return;
     }
+    if (method === "thread/started") {
+      const thread = params?.thread;
+      const parent = thread?.source?.subAgent?.thread_spawn?.parent_thread_id;
+      const owner = parent ? this.threadFor(parent) : undefined;
+      if (owner && thread?.id) {
+        this.spawned.set(thread.id, owner);
+        owner.spawnStarted(thread.id);
+      }
+      return;
+    }
     const threadID = params?.threadId;
     if (threadID)
       this.threadFor(threadID)?.notification(method, params);
@@ -3419,7 +3443,11 @@ class CodexAgent {
     return thread;
   }
   forget(sessionID) {
+    const thread = this.threads.get(sessionID);
     this.threads.delete(sessionID);
+    for (const [spawn, owner] of this.spawned)
+      if (owner === thread)
+        this.spawned.delete(spawn);
   }
 }
 
@@ -3434,6 +3462,7 @@ class CodexThread {
   inTurn = false;
   startedOver = false;
   toolsURL;
+  spawnedSessions = new Map;
   constructor(agent, session, state) {
     this.agent = agent;
     this.session = session;
@@ -3656,13 +3685,21 @@ ${others.map((path) => `- ${path}`).join(`
       }
     }
   }
+  spawnStarted(threadID) {
+    const active = this.active;
+    const call = active?.spawning[0];
+    if (active && call && !active.subagents.has(threadID))
+      this.linkSubagent(active, call, threadID);
+  }
   subagentNotification(active, threadID, method, params) {
     let lane = active.subagents.get(threadID);
     if (!lane) {
-      const call = active.spawning[0];
-      if (!call)
+      const before = this.spawnedSessions.get(threadID);
+      if (!before)
         return;
-      lane = this.linkSubagent(active, call, threadID);
+      const run2 = active.hooks.subagent(before.call, { title: before.title, sessionID: before.sessionID });
+      lane = { turn: run2.turn, streamed: new Set, changes: new Map, output: new Map, toolsSinceText: false, run: run2, call: before.call, title: before.title, ended: false };
+      active.subagents.set(threadID, lane);
     }
     if (lane.ended) {
       if (method !== "turn/started")
@@ -3713,6 +3750,7 @@ ${others.map((path) => `- ${path}`).join(`
     const run2 = active.hooks.subagent(call, { title, prompt: prompt ?? input.prompt });
     const lane = { turn: run2.turn, streamed: new Set, changes: new Map, output: new Map, toolsSinceText: false, run: run2, call, title, ended: false };
     active.subagents.set(threadID, lane);
+    this.spawnedSessions.set(threadID, { call, title, sessionID: run2.sessionID });
     this.agent.adopt(threadID, this);
     return lane;
   }
@@ -5103,9 +5141,10 @@ class Turn {
     const input = tool.call.state.status === "streaming" ? safeJSON(tool.call.state.input) : tool.call.state.input;
     const error = { type, message };
     const content = message ? [{ type: "text", text: message }] : [];
-    tool.call.state = { status: "error", input, error, content, metadata };
+    const kept = metadata ?? (tool.call.state.status === "running" ? tool.call.state.metadata : undefined);
+    tool.call.state = { status: "error", input, error, content, metadata: kept };
     tool.call.time = { ...tool.call.time, completed: Date.now() };
-    this.send("session.tool.failed", { assistantMessageID: tool.step.id, id, error, content, metadata });
+    this.send("session.tool.failed", { assistantMessageID: tool.step.id, id, error, content, metadata: kept });
     this.save();
   }
   notice(text) {
@@ -5281,11 +5320,14 @@ class Sessions {
         if (content.type !== "tool" || content.state.status !== "running" && content.state.status !== "streaming")
           continue;
         const input = content.state.status === "streaming" ? {} : content.state.input;
-        content.state = { status: "error", input, error: { type: "aborted", message: "Stopped." }, content: [] };
+        const metadata = content.state.status === "running" ? content.state.metadata : undefined;
+        content.state = { status: "error", input, error: { type: "aborted", message: "Stopped." }, content: [], metadata };
         changed = true;
       }
     }
-    if (lastUser >= 0 && !record.messages.slice(lastUser).some((message) => message.type === "idle")) {
+    const lastStep = record.messages.findLastIndex((message) => message.type === "assistant");
+    const openStep = record.session.parentID && lastStep > lastUser && !record.messages.slice(lastStep).some((message) => message.type === "idle");
+    if (lastUser >= 0 && !record.messages.slice(lastUser).some((message) => message.type === "idle") || openStep) {
       const last2 = record.messages[record.messages.length - 1];
       const at = last2?.time.completed ?? last2?.time.created ?? Date.now();
       record.messages.push({ type: "idle", id: newID("msg"), time: { created: at }, outcome: "interrupted" });
@@ -5390,7 +5432,8 @@ class Sessions {
     record.agent.inbox = [];
     await this.interrupt(id);
     for (const child of this.list(undefined, id))
-      await this.remove(child.id);
+      if (!this.shownElsewhere(child.id, id))
+        await this.remove(child.id);
     for (const thread of this.live.get(id)?.threads.values() ?? [])
       thread.close();
     this.live.delete(id);
@@ -5400,6 +5443,16 @@ class Sessions {
     this.live.delete(id);
     this.removing.delete(id);
     emit("session.deleted", { sessionID: id }, record.session.location.directory);
+  }
+  shownElsewhere(child, except) {
+    for (const session of this.store.all()) {
+      if (session.id === except || session.id === child)
+        continue;
+      const record = this.store.get(session.id);
+      if (record?.messages.some((message) => message.type === "assistant" && message.content.some((content) => content.type === "tool" && content.state.metadata?.sessionID === child)))
+        return true;
+    }
+    return false;
   }
   view(id, idle) {
     const session = this.record(id).session;
@@ -5699,6 +5752,9 @@ class Sessions {
       const model2 = { providerID: entry.providerID, id: entry.modelID, ...entry.variant ? { variant: entry.variant } : {} };
       if (note) {
         turn.stopTools("Stopped: going on with another model.");
+        for (const child of live.subagents.values())
+          child.finish("interrupted");
+        live.subagents.clear();
         turn.notice(`${note} Going on with ${this.entryName(entry)}.`);
       }
       const from = record.messages.length;
@@ -5957,6 +6013,9 @@ ${live.agentPrompt}` : ""
       live.abort?.abort();
       this.settleAsks(id, live);
       live.turn?.finish("interrupted");
+      for (const child of live.subagents.values())
+        child.finish("interrupted");
+      live.subagents.clear();
       for (const thread of live.threads.values())
         thread.close();
     }
@@ -6096,13 +6155,14 @@ function page(items2, url) {
   const cursor = url.searchParams.get("cursor");
   let start = 0;
   if (cursor) {
-    const [, after] = cursor.split(":", 2);
+    const after = cursor.split(":")[1];
     const index = items2.findIndex((item) => item.id === after);
     start = index >= 0 ? index + 1 : items2.length;
   }
   const data = items2.slice(start, start + limit);
   const order = cursor?.split(":", 1)[0] ?? url.searchParams.get("order") ?? "desc";
-  const next = start + limit < items2.length && data.length ? `${order}:${data[data.length - 1].id}` : undefined;
+  const filter = url.searchParams.get("parentID") ?? cursor?.split(":")[2];
+  const next = start + limit < items2.length && data.length ? `${order}:${data[data.length - 1].id}${filter ? `:${filter}` : ""}` : undefined;
   return { data, cursor: { next } };
 }
 function handler(context) {
@@ -6214,8 +6274,8 @@ function handler(context) {
           if (method === "POST")
             return json({ data: sessions.create(await body()) });
           const directory = url.searchParams.get("directory") ?? undefined;
-          const under = url.searchParams.get("parentID");
-          const roots = sessions.list(directory, under === null ? undefined : under === "null" ? null : under);
+          const under = url.searchParams.get("parentID") ?? url.searchParams.get("cursor")?.split(":")[2] ?? null;
+          const roots = sessions.list(directory, under === null || under === "" ? undefined : under === "null" ? null : under);
           const ordered = url.searchParams.get("cursor")?.startsWith("asc") || url.searchParams.get("order") === "asc" ? [...roots].reverse() : roots;
           return json(page(ordered, url));
         }

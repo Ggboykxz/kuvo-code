@@ -133,13 +133,14 @@ function page<T extends { id: string }>(items: T[], url: URL): { data: T[]; curs
   const cursor = url.searchParams.get("cursor")
   let start = 0
   if (cursor) {
-    const [, after] = cursor.split(":", 2)
+    const after = cursor.split(":")[1]
     const index = items.findIndex((item) => item.id === after)
     start = index >= 0 ? index + 1 : items.length
   }
   const data = items.slice(start, start + limit)
   const order = cursor?.split(":", 1)[0] ?? url.searchParams.get("order") ?? "desc"
-  const next = start + limit < items.length && data.length ? `${order}:${data[data.length - 1].id}` : undefined
+  const filter = url.searchParams.get("parentID") ?? cursor?.split(":")[2]
+  const next = start + limit < items.length && data.length ? `${order}:${data[data.length - 1].id}${filter ? `:${filter}` : ""}` : undefined
   return { data, cursor: { next } }
 }
 
@@ -243,8 +244,9 @@ export function handler(context: Context) {
         if (!a) {
           if (method === "POST") return json({ data: sessions.create(await body()) })
           const directory = url.searchParams.get("directory") ?? undefined
-          const under = url.searchParams.get("parentID")
-          const roots = sessions.list(directory, under === null ? undefined : under === "null" ? null : under)
+          // Later pages carry the first's filter in their cursor ("<order>:<id>:<parentID>").
+          const under = url.searchParams.get("parentID") ?? url.searchParams.get("cursor")?.split(":")[2] ?? null
+          const roots = sessions.list(directory, under === null || under === "" ? undefined : under === "null" ? null : under)
           const ordered = (url.searchParams.get("cursor")?.startsWith("asc") || url.searchParams.get("order") === "asc") ? [...roots].reverse() : roots
           return json(page(ordered, url))
         }

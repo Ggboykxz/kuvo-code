@@ -166,6 +166,17 @@ export class CodexAgent implements Agent {
       if (snapshot) this.rateLimits.set(snapshot.limitId ?? "codex", snapshot)
       return
     }
+    // An agent a session's Codex spawned: its thread says which it came from as it starts.
+    if (method === "thread/started") {
+      const thread = params?.thread
+      const parent = thread?.source?.subAgent?.thread_spawn?.parent_thread_id
+      const owner = parent ? this.threadFor(parent) : undefined
+      if (owner && thread?.id) {
+        this.spawned.set(thread.id, owner)
+        owner.spawnStarted(thread.id)
+      }
+      return
+    }
     const threadID = params?.threadId
     if (threadID) this.threadFor(threadID)?.notification(method, params)
   }
@@ -287,7 +298,10 @@ export class CodexAgent implements Agent {
   }
 
   forget(sessionID: string) {
+    const thread = this.threads.get(sessionID)
     this.threads.delete(sessionID)
+    // The agents it spawned go with it.
+    for (const [spawn, owner] of this.spawned) if (owner === thread) this.spawned.delete(spawn)
   }
 }
 
@@ -350,6 +364,8 @@ class CodexThread implements Thread {
   private startedOver = false
   /** Where Kuvo Code's tools were when it was loaded. */
   private toolsURL?: string
+  /** The agents it spawned, by their thread: their sessions, across turns. */
+  private spawnedSessions = new Map<string, { call: string; title: string; sessionID: string }>()
 
   constructor(
     private readonly agent: CodexAgent,
@@ -574,13 +590,23 @@ class CodexThread implements Thread {
     }
   }
 
-  /** What a spawned agent's thread says, in its session (made as it first speaks, if its spawn hasn't said which it is). */
+  /** A thread this session's Codex spawned started: the oldest spawn call under way is its. */
+  spawnStarted(threadID: string) {
+    const active = this.active
+    const call = active?.spawning[0]
+    if (active && call && !active.subagents.has(threadID)) this.linkSubagent(active, call, threadID)
+  }
+
+  /** What a spawned agent's thread says, in its session. */
   private subagentNotification(active: Active, threadID: string, method: string, params: any) {
     let lane = active.subagents.get(threadID)
     if (!lane) {
-      const call = active.spawning[0]
-      if (!call) return
-      lane = this.linkSubagent(active, call, threadID)
+      // One spawned in an earlier turn, given more to do: its session goes on.
+      const before = this.spawnedSessions.get(threadID)
+      if (!before) return
+      const run = active.hooks.subagent(before.call, { title: before.title, sessionID: before.sessionID })
+      lane = { turn: run.turn, streamed: new Set(), changes: new Map(), output: new Map(), toolsSinceText: false, run, call: before.call, title: before.title, ended: false }
+      active.subagents.set(threadID, lane)
     }
     if (lane.ended) {
       // Given more to do: its session goes on.
@@ -631,6 +657,7 @@ class CodexThread implements Thread {
     const run = active.hooks.subagent(call, { title, prompt: prompt ?? input.prompt })
     const lane: SubagentLane = { turn: run.turn, streamed: new Set(), changes: new Map(), output: new Map(), toolsSinceText: false, run, call, title, ended: false }
     active.subagents.set(threadID, lane)
+    this.spawnedSessions.set(threadID, { call, title, sessionID: run.sessionID })
     // Its approvals come to this session's.
     this.agent.adopt(threadID, this)
     return lane

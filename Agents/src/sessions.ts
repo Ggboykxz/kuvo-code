@@ -184,11 +184,15 @@ export class Sessions {
       for (const content of message.content) {
         if (content.type !== "tool" || (content.state.status !== "running" && content.state.status !== "streaming")) continue
         const input = content.state.status === "streaming" ? {} : content.state.input
-        content.state = { status: "error", input, error: { type: "aborted", message: "Stopped." }, content: [] }
+        const metadata = content.state.status === "running" ? content.state.metadata : undefined
+        content.state = { status: "error", input, error: { type: "aborted", message: "Stopped." }, content: [], metadata }
         changed = true
       }
     }
-    if (lastUser >= 0 && !record.messages.slice(lastUser).some((message) => message.type === "idle")) {
+    // A subagent's session can start without a message of yours (its task given elsewhere).
+    const lastStep = record.messages.findLastIndex((message) => message.type === "assistant")
+    const openStep = record.session.parentID && lastStep > lastUser && !record.messages.slice(lastStep).some((message) => message.type === "idle")
+    if ((lastUser >= 0 && !record.messages.slice(lastUser).some((message) => message.type === "idle")) || openStep) {
       const last = record.messages[record.messages.length - 1]
       const at = last?.time.completed ?? last?.time.created ?? Date.now()
       record.messages.push({ type: "idle", id: newID("msg"), time: { created: at }, outcome: "interrupted" })
@@ -307,8 +311,8 @@ export class Sessions {
     this.removing.add(id)
     record.agent.inbox = []
     await this.interrupt(id)
-    // Its subagents' sessions go with it.
-    for (const child of this.list(undefined, id)) await this.remove(child.id)
+    // Its subagents' sessions go with it, unless a fork of it shows them too.
+    for (const child of this.list(undefined, id)) if (!this.shownElsewhere(child.id, id)) await this.remove(child.id)
     for (const thread of this.live.get(id)?.threads.values() ?? []) thread.close()
     this.live.delete(id)
     for (const [provider, slot] of Object.entries(this.slots(record))) await this.agent(provider)?.forgetConversation?.(slot.state).catch(() => {})
@@ -316,6 +320,16 @@ export class Sessions {
     this.live.delete(id)
     this.removing.delete(id)
     emit("session.deleted", { sessionID: id }, record.session.location.directory)
+  }
+
+  /** Whether a session other than `except` has a step that names `child` (a fork of its conversation). */
+  private shownElsewhere(child: string, except: string): boolean {
+    for (const session of this.store.all()) {
+      if (session.id === except || session.id === child) continue
+      const record = this.store.get(session.id)
+      if (record?.messages.some((message) => message.type === "assistant" && message.content.some((content) => content.type === "tool" && (content.state as any).metadata?.sessionID === child))) return true
+    }
+    return false
   }
 
   view(id: string, idle: number) {
@@ -624,6 +638,8 @@ export class Sessions {
       const model: ModelRef = { providerID: entry.providerID, id: entry.modelID, ...(entry.variant ? { variant: entry.variant } : {}) }
       if (note) {
         turn.stopTools("Stopped: going on with another model.")
+        for (const child of live.subagents.values()) child.finish("interrupted")
+        live.subagents.clear()
         turn.notice(`${note} Going on with ${this.entryName(entry)}.`)
       }
       const from = record.messages.length
@@ -895,6 +911,8 @@ export class Sessions {
       live.abort?.abort()
       this.settleAsks(id, live)
       live.turn?.finish("interrupted")
+      for (const child of live.subagents.values()) child.finish("interrupted")
+      live.subagents.clear()
       for (const thread of live.threads.values()) thread.close()
     }
   }

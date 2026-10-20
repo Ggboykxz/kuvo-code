@@ -273,9 +273,11 @@ export class Turn {
     const input = tool.call.state.status === "streaming" ? safeJSON(tool.call.state.input) : tool.call.state.input
     const error = { type, message }
     const content: ToolOutput[] = message ? [{ type: "text", text: message }] : []
-    tool.call.state = { status: "error", input, error, content, metadata }
+    // What it said while it ran (a subagent's session) stays, unless said anew.
+    const kept = metadata ?? (tool.call.state.status === "running" ? tool.call.state.metadata : undefined)
+    tool.call.state = { status: "error", input, error, content, metadata: kept }
     tool.call.time = { ...tool.call.time, completed: Date.now() }
-    this.send("session.tool.failed", { assistantMessageID: tool.step.id, id, error, content, metadata })
+    this.send("session.tool.failed", { assistantMessageID: tool.step.id, id, error, content, metadata: kept })
     this.save()
   }
 

@@ -305,6 +305,8 @@ interface Active extends Lane {
 }
 
 class ClaudeThread implements Thread {
+  /** Its subagents' sessions, by the call that started each: one at work after its turn goes on there. */
+  private subagentSessions = new Map<string, { sessionID: string; title: string }>()
   private query?: any
   private input?: Queue<any>
   private active?: Active
@@ -367,6 +369,8 @@ class ClaudeThread implements Thread {
         model: modelID === "default" ? undefined : modelID,
         effort,
         includePartialMessages: true,
+        // Its subagents' words and thinking too, for their sessions (by default only their tools).
+        forwardSubagentText: true,
         permissionMode: plan ? "plan" : "default",
         canUseTool: (name: string, input: Record<string, unknown>, options: any) => this.canUseTool(name, input, options),
         systemPrompt: { type: "preset", preset: "claude_code", ...(append ? { append } : {}) },
@@ -477,10 +481,23 @@ class ClaudeThread implements Thread {
     const known = active.subagents.get(callID)
     if (known) return known
     const call = active.calls.get(callID)
-    const input = (call?.input ?? (active.turn.toolInput(callID) as Record<string, any> | undefined) ?? {}) as Record<string, any>
-    if (call && kuvoTool(call.name, input).name !== "subagent") return undefined
-    const run = active.hooks.subagent(callID, { title: String(input.description ?? ""), prompt: typeof input.prompt === "string" ? input.prompt : undefined, agent: input.subagent_type })
-    const lane = { turn: run.turn, streamed: new Set<string>(), blockTools: new Map<number, string>(), calls: new Map<string, { name: string; input: Record<string, any> }>(), run, background: input.run_in_background === true }
+    const before = this.subagentSessions.get(callID)
+    let run: SubagentRun
+    let background = false
+    if (call) {
+      const input = call.input
+      if (kuvoTool(call.name, input).name !== "subagent") return undefined
+      run = active.hooks.subagent(callID, { title: String(input.description ?? ""), prompt: typeof input.prompt === "string" ? input.prompt : undefined, agent: input.subagent_type })
+      background = input.run_in_background === true
+      this.subagentSessions.set(callID, { sessionID: run.sessionID, title: String(input.description ?? "") })
+    } else if (before) {
+      // One sent off in the background in an earlier turn, still at work: its session goes on.
+      run = active.hooks.subagent(callID, { title: before.title, sessionID: before.sessionID })
+      background = true
+    } else {
+      return undefined
+    }
+    const lane = { turn: run.turn, streamed: new Set<string>(), blockTools: new Map<number, string>(), calls: new Map<string, { name: string; input: Record<string, any> }>(), run, background }
     active.subagents.set(callID, lane)
     return lane
   }

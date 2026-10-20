@@ -583,6 +583,28 @@ describe("subagents", () => {
     await settled(id, 1)
     expect(sessions.messages(child).at(-1)).toMatchObject({ type: "idle", outcome: "interrupted" })
     expect(sessions.active()).not.toContain(child)
+    // Its step, stopped, still says which session it is.
+    const step = sessions.messages(id).find((message) => message.type === "assistant") as any
+    const call = step.content.find((content: any) => content.type === "tool")
+    expect(call.state.status).toBe("error")
+    expect(call.state.metadata.sessionID).toBe(child)
+  })
+
+  test("a subagent at work when the bridge stops ends with it", async () => {
+    let child = ""
+    a.script = (_input, turn, hooks) => {
+      turn.startStep()
+      turn.toolStart("call_task", "subagent")
+      turn.toolCalled("call_task", { description: "Wait" })
+      child = hooks.subagent("call_task", { title: "Wait" }).sessionID
+      return new Promise(() => {})
+    }
+    const id = create()
+    send(id, "go")
+    await until(() => child !== "")
+    sessions.closeAll()
+    expect(sessions.messages(child).at(-1)).toMatchObject({ type: "idle", outcome: "interrupted" })
+    expect(sessions.active()).not.toContain(child)
   })
 })
 
