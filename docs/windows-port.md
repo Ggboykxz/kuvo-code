@@ -118,6 +118,12 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     travel with the app, in `windows/THIRD_PARTY_LICENSES.txt`, written by
     `windows/tools/third-party-licenses.mjs` and checked in CI. The app is linted too
     (oxlint) and type-checked before it is built, in CI and before every push.
+  - **2.61 (this change). The provider's marks.** The Mac draws the maker's mark beside
+    each model (`ProviderLogo.swift`), monochrome so it follows the ink, or in the maker's
+    own colour where it has one. The marks themselves are not published as a package, but
+    they are served — the Mac fetches them from models.opencode.ai, and so do we, once
+    each, and the page keeps them. Until a mark arrives, the provider's initial stands in
+    for it, at 55 % of the size, semibold and rounded, exactly as the Mac does.
   - **2.60 (this change). The sidebar holds every project, and the window has a menu bar.**
     The last of the behaviour differences this port had was the sidebar: the Mac keeps
     several projects, each with its own sessions, and the Recents below them; ours kept

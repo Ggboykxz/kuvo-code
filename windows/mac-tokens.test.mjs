@@ -30,6 +30,7 @@ const sources = {
   changes: read("app", "src", "Changes.tsx"),
   styles: read("harness", "ui", "style.css"),
   shimmer: read("app", "src", "components", "ai-elements", "shimmer.tsx"),
+  logo: read("app", "src", "components", "provider-logo.tsx"),
   tailwind: read("app", "app", "globals.css"),
   postcss: read("app", "postcss.config.mjs"),
   next: read("app", "next.config.mjs"),
@@ -564,6 +565,21 @@ const checks = [
     assert.match(rule("aside .section-header {"), /height: 22px/);
     assert.match(rule("aside .sessions .session {"), /padding-left: 38px/);
     assert.match(rule("aside .recents .session {"), /padding-left: 10px/);
+  }],
+
+  ["a provider's mark is the Mac's: fetched, drawn in the ink, with the initial first", ({ app, css, logo }) => {
+    // ProviderLogo.swift:7-46 — the mark from models.dev, monochrome, or in the maker's own
+    // colour; the initial stands in for it at 55 % of the size, semibold and rounded.
+    assert.match(logo, /\/api\/logo\/\$\{encodeURIComponent\(id\)\}/);
+    assert.match(read("harness", "server.mjs"), /models\.opencode\.ai\/logos\/\$\{id\}\.svg/);
+    assert.match(logo, /MAKER_COLORS/);
+    assert.match(logo, /anthropic: 0xd97757/);
+    assert.match(logo, /fontSize: size \* 0\.55/);
+    assert.match(logo, /maskImage/);
+    // And the model's menu shows it beside each model (ModelPicker.swift:218).
+    assert.match(app, /logo: model\.providerID/);
+    assert.match(app, /<ProviderLogo id=\{item\.logo\} size=\{15\}/);
+    assert.match(css, /\.provider-logo\.fallback \{[\s\S]*?font-weight: 600;/);
   }],
 
   ["the settings' pages carry the Mac's own symbols, drawn", ({ settings, symbols }) => {

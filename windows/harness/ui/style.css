@@ -3373,3 +3373,25 @@ button > svg, .small > svg, .session-delete > svg, .keycap-clear > svg { display
 .swatch { transition: transform var(--motion-fast) var(--ease-spring), filter var(--motion-fast) var(--ease-standard); }
 .swatch:hover { transform: scale(1.12); filter: brightness(0.93); }
 .swatch:active { transform: scale(1.12); filter: brightness(0.85); }
+
+/* A provider's mark (ProviderLogo.swift): the mark itself, drawn in the ink — or in the
+   maker's own colour — and the initial that stands in for it until it arrives. */
+.provider-logo {
+  display: inline-block;
+  flex: 0 0 auto;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-position: center;
+  mask-position: center;
+}
+.provider-logo.fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  color: var(--ink-soft);
+  font-weight: 600;
+  font-family: ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+}

@@ -79,10 +79,10 @@ baseline the release is measured against, not a description of the current page.
 the rendered page in a browser and holds it to the numbers in §2 and §3; the matrix of
 captures is in `docs/captures/`, written by `windows/harness/captures.mjs`.
 
-**What is left, and why.** The rows still marked ◐ or ⬜ are: the provider logos (the Mac
-takes them from models.dev; the source for the marks themselves is not published), the
-date field, the Settings pages the maintainer has not reopened (Notifications, Privacy,
-Panel), the usage of a provider's plan (which needs the account's keys), and the worktrees.
+**What is left, and why.** The rows still marked ◐ or ⬜ are: the Settings pages the
+maintainer has not reopened (Notifications, Privacy, Panel), the usage of a provider's plan
+(which needs the account's keys), and the worktrees. The provider's marks, which the Mac
+takes from models.dev, are fetched and drawn in 0.5.63.
 The native menus became a real menu bar in 0.5.61, the code block's copy mark became the
 Mac's mark that becomes a check, the double-click on a title bar zooms the window as it
 does on the Mac, and in 0.5.62 the sidebar holds every project with its own sessions, and
@@ -227,9 +227,9 @@ most behaviours but not for the values; Phase 1–4 port the values.
 | `Look.swift` | Appearance: accent, window, text size, typeface | §3.2, §3.3 | ✅ (0.5.45) | 1 |
 | `NativeMenu.swift` | Real AppKit menus with values on the right and subtitles | `NativeMenu.swift:5-165` | ✅ (0.5.61: a real menu bar, the Mac's items and keys) | 6 |
 | `PillPicker.swift` | Glass track, raised pill slides to the choice | `.ui` spring, matched geometry | ✅ (0.5.40) | 3, 6 |
-| `PlainDatePicker.swift` | Date/time without a box, for a well row | `PlainDatePicker.swift:6-30` | ◐ (HTML input) | 6 |
+| `PlainDatePicker.swift` | Date/time without a box, for a well row | `PlainDatePicker.swift:6-30` | ⛔ (only the bot editor asks for a date, and the bots are an upstream decision) | 6 |
 | `Pressable.swift` | Every small control's hover/pressed language | hover 8 %, pressed 13 %, hover 0.12 s; list selected 16 %, pressed 24 %; disabled 45 %; accent badge hover 1.12 / −0.07, press −0.15 | ◐ (press scale 0.97 is not Mac) | 3 |
-| `ProviderLogo.swift` | models.dev mark, monochrome or maker colour | 20 pt default; fallback initial 55 % size, semibold rounded | ◐ | 4 |
+| `ProviderLogo.swift` | models.dev mark, monochrome or maker colour | 20 pt default; fallback initial 55 % size, semibold rounded | ✅ (0.5.63: the mark is fetched from models.opencode.ai and drawn in the ink; the initial stands in until it arrives) | 4 |
 | `QuoteViews.swift` | "Replying to" card over the composer | 3 pt tint capsule; caption medium; 3 lines; remove button, `.help("Drop the quote")` | ◐ (behaviour ✅) | ✅ (0.5.54) |
 | `RightClickMenu.swift` | One window-level right-click watcher, works in the title bar | `RightClickMenu.swift:4-65` | ✅ (HTML contextmenu) | 7 |
 | `ScreenRoom.swift` | Room above/below for popovers that must stay on one side | `ScreenRoom.swift:4-33` | ✅ (0.5.50) | 7 |
@@ -634,7 +634,7 @@ interpretation of it.
 | **— The platform** | The window is built by Next.js (a static export the harness serves) and the page is read in a real browser in CI; the look and the behaviour do not move | — | 0.5.41 |
 | **4. Icons** | 89 symbols → drawn SVGs; FolderIcon; PromptMark; provider logos; remove text glyphs and the naked `@` | §7 | 0.5.42 ✅ |
 | **5. Wording** | 1 208 sites compared; menus, tooltips, accessibility labels; punctuation | §8 | 0.5.43 ✅ (the shell's words; the rest with the screens) |
-| **6. Screens** | Sidebar + title bar; transcript; composer + queue + gauge; palette + drawer; settings (14 existing + 3 missing: Notifications, Privacy, Panel; Worktrees maps to Projects); files/changes/terminal | §6.1–6.3 | 0.5.44 ✅ (the transcript, the gauge, the steps row) · 0.5.45 ✅ (the settings' grouped form) · 0.5.46 ✅ (the rest of the groups; the run that would not end) · 0.5.47 ✅ (the panel's files, as a tree) · 0.5.55 ✅ (the project's drawn folder) · 0.5.61 ✅ (the real menu bar, the copy mark, the zoomed title bar) · 0.5.62 ✅ (every project, with its own sessions, and the Recents) → 0.5.49 |
+| **6. Screens** | Sidebar + title bar; transcript; composer + queue + gauge; palette + drawer; settings (14 existing + 3 missing: Notifications, Privacy, Panel; Worktrees maps to Projects); files/changes/terminal | §6.1–6.3 | 0.5.44 ✅ (the transcript, the gauge, the steps row) · 0.5.45 ✅ (the settings' grouped form) · 0.5.46 ✅ (the rest of the groups; the run that would not end) · 0.5.47 ✅ (the panel's files, as a tree) · 0.5.55 ✅ (the project's drawn folder) · 0.5.61 ✅ (the real menu bar, the copy mark, the zoomed title bar) · 0.5.62 ✅ (every project, with its own sessions, and the Recents) · 0.5.63 ✅ (the provider's marks) → 0.5.49 |
 | **7. Gestures & micro-UX** | Rename, double-click, resize grabber, history, popover flip, clear/remove/badge behaviours, find and search field shape | §9 | 0.5.48 ✅ (the rename, the grabber, the history) · 0.5.49 ✅ (the find bar) · 0.5.50 ✅ (the popover that flips, the clear) · 0.5.52 ✅ (the actions under a message) · 0.5.53 ✅ (the disabled and remove states) · 0.5.54 ✅ (the quote card, the message menu) |
 | **8. Verification** | Full capture matrix, computed-value checks, close every ◐; final side-by-side | all in-scope rows | 0.5.51 ✅ (the matrix and the measured values) |
 

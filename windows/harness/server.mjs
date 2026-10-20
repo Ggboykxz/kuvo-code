@@ -84,6 +84,23 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
     saveRecentProjects([folder, ...recentProjects().filter(item => item !== folder)]);
   };
 
+  // The providers' marks, fetched once each and kept (the Mac's LogoCache).
+  const logos = new Map();
+  const logoFor = async (id) => {
+    if (!id || !/^[a-z0-9._-]+$/i.test(id)) return null;
+    if (logos.has(id)) return logos.get(id);
+    let mark = null;
+    try {
+      const response = await fetch(`https://models.opencode.ai/logos/${id}.svg`, { signal: AbortSignal.timeout(8000) });
+      if (response.ok) {
+        const text = await response.text();
+        if (text.includes("<svg")) mark = text;
+      }
+    } catch {}
+    logos.set(id, mark);
+    return mark;
+  };
+
   const state = () => ({
     project: currentProject,
     engine: engine === null
@@ -153,6 +170,17 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
     };
 
     if (url.pathname === "/api/state" && request.method === "GET") return json(state());
+
+    // A provider's mark (ProviderLogo.swift): the server fetches it from models.opencode.ai
+    // — the same place the Mac fetches it from — and keeps it. A mark that cannot be had
+    // is an empty answer, not an error: the page draws the provider's initial instead.
+    if (url.pathname.startsWith("/api/logo/") && request.method === "GET") {
+      const id = decodeURIComponent(url.pathname.slice("/api/logo/".length));
+      const mark = await logoFor(id);
+      response.writeHead(200, { "content-type": "image/svg+xml; charset=utf-8", "cache-control": "public, max-age=86400" });
+      response.end(mark ?? "");
+      return;
+    }
 
     if (url.pathname === "/api/project" && request.method === "POST") {
       const body = await readBody(request);

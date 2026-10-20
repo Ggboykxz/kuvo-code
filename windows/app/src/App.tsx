@@ -49,6 +49,7 @@ import { Settings, settingsPageTitle } from "./Settings";
 import { DiffModal, Drawer, Palette, Picker, Toast } from "./Overlays";
 import { Shimmer } from "./components/ai-elements/shimmer";
 import { FolderIcon, PromptMark, Symbol } from "./components/symbols";
+import { ProviderLogo } from "./components/provider-logo";
 import { motion } from "motion/react";
 import { macSpringOrStill } from "./motion";
 
@@ -1680,6 +1681,7 @@ function Composer() {
                 value: `${model.providerID}/${model.id}`,
                 label: model.name ?? model.id,
                 detail: model.limit?.context ? `${Math.round(model.limit.context / 1000)}k` : undefined,
+                logo: model.providerID,
               })),
             })),
           ]}
@@ -1760,7 +1762,7 @@ function AnalyticsNotice() {
 function Choice({ id, title, groups, value, onPick, empty }: {
   id: string;
   title: string;
-  groups: { name: string; items: { value: string; label: string; detail?: string }[] }[];
+  groups: { name: string; items: { value: string; label: string; detail?: string; logo?: string }[] }[];
   value: string;
   onPick: (value: string) => void;
   empty: string;
@@ -1813,6 +1815,7 @@ function Choice({ id, title, groups, value, onPick, empty }: {
                     className={`choice-item ${item.value === value ? "selected" : ""}`}
                     onClick={() => { onPick(item.value); setOpen(false); setQuery(""); }}
                   >
+                    {item.logo ? <ProviderLogo id={item.logo} size={15} /> : null}
                     <span>{item.label}</span>
                     {item.detail ? <span className="where">{item.detail}</span> : null}
                   </button>
