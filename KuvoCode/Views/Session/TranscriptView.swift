@@ -1154,10 +1154,11 @@ private struct TurnEndView: View {
                             .controlSize(.small)
                             .help("Send your last message again")
                     }
-                    // What it changed before failing.
+                    // What it changed and said before failing.
                     if !stats.files.isEmpty {
                         TurnFiles(files: stats.files, directory: directory)
                     }
+                    replyButtons
                 }
             }
         case .interrupted:
@@ -1168,6 +1169,7 @@ private struct TurnEndView: View {
                 if !stats.files.isEmpty {
                     TurnFiles(files: stats.files, directory: directory)
                 }
+                replyButtons
             }
         case .succeeded:
             HStack(spacing: 6) {
@@ -1179,20 +1181,25 @@ private struct TurnEndView: View {
                 if !stats.files.isEmpty {
                     TurnFiles(files: stats.files, directory: directory)
                 }
-                if !stats.text.isEmpty {
-                    CopyButton(text: stats.text.joined(separator: "\n\n"), help: "Copy the Reply")
-                    if let reply {
-                        MessageActionButton(symbol: "arrowshape.turn.up.left", help: "Reply: quotes the part you selected (or the whole reply) in the composer") {
-                            reply(stats.text.joined(separator: "\n\n"))
-                        }
-                    }
-                }
+                replyButtons
                 if let build {
                     Button("Build It", systemImage: "hammer", action: build)
                         .buttonStyle(.glass)
                         .controlSize(.small)
                         .help("Switch to Build mode and have the agent carry out this plan")
                         .padding(.leading, 4)
+                }
+            }
+        }
+    }
+
+    /// Copy and Reply, for what it said, however the turn ended.
+    @ViewBuilder private var replyButtons: some View {
+        if !stats.text.isEmpty {
+            CopyButton(text: stats.text.joined(separator: "\n\n"), help: "Copy the Reply")
+            if let reply {
+                MessageActionButton(symbol: "arrowshape.turn.up.left", help: "Reply: quotes the part you selected (or the whole reply) in the composer") {
+                    reply(stats.text.joined(separator: "\n\n"))
                 }
             }
         }
