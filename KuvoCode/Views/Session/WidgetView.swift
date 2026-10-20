@@ -298,10 +298,12 @@ private struct WidgetPage: NSViewRepresentable {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         let content = configuration.userContentController
-        content.add(WeakHandler(context.coordinator), name: "kuvo")
         content.addUserScript(WKUserScript(source: Self.bridge, injectionTime: .atDocumentStart, forMainFrameOnly: true))
-        // Apart from the page's own scripts, so it measures a draft drawn without them too.
+        // Apart from the page's own scripts, so it measures a draft drawn without them too; and
+        // the only way to the app: the page itself has none, so what it sends goes through
+        // `forward`, which a click of yours lets through.
         content.add(WeakHandler(context.coordinator), contentWorld: .defaultClient, name: "kuvo")
+        content.addUserScript(WKUserScript(source: Self.forward, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .defaultClient))
         content.addUserScript(WKUserScript(source: Self.measure, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
         let view = WidgetWebView(frame: .zero, configuration: configuration)
         view.setValue(false, forKey: "drawsBackground")
@@ -348,14 +350,29 @@ private struct WidgetPage: NSViewRepresentable {
     }
 
     /// `kuvo.send(text)`: the page writes back to the agent as you, only from a click of yours.
+    /// It hands the text to `forward`, apart from the page's scripts, which checks the click: the
+    /// page can't reach the app itself.
     private static let bridge = """
     window.kuvo = {
       send(text) {
         if (navigator.userActivation && !navigator.userActivation.isActive) return false;
-        window.webkit.messageHandlers.kuvo.postMessage({ type: "send", text: String(text) });
+        document.documentElement.setAttribute("data-kuvo-send", String(text));
+        document.dispatchEvent(new Event("kuvo-send"));
         return true;
       },
     };
+    """
+
+    /// What the page sends, on to the app: only while a click of yours is fresh, which the page's
+    /// own scripts can't make up.
+    private static let forward = """
+    document.addEventListener("kuvo-send", () => {
+      const root = document.documentElement;
+      const text = root.getAttribute("data-kuvo-send");
+      root.removeAttribute("data-kuvo-send");
+      if (text === null || !navigator.userActivation || !navigator.userActivation.isActive) return;
+      window.webkit.messageHandlers.kuvo.postMessage({ type: "send", text });
+    });
     """
 
     /// Its height, whenever it changes.
@@ -382,6 +399,8 @@ private struct WidgetPage: NSViewRepresentable {
         /// coming in short would move the conversation under it.
         private var keepsHeightUntil = Date.distantPast
         private var measured: CGFloat?
+        /// When the page last sent a message, for one a click.
+        private var lastSent: Date?
 
         /// Loads `page`: the finished one at once, a draft at most twice a second (the last
         /// one coming once it's had its turn).
@@ -429,6 +448,9 @@ private struct WidgetPage: NSViewRepresentable {
                 if abs(current - new) > 0.5 { height?.wrappedValue = new }
             case "send":
                 guard let text = body["text"] as? String, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                // One message for a click, however many the page tries in the moment it gives.
+                guard lastSent.map({ Date.now.timeIntervalSince($0) > 2 }) ?? true else { return }
+                lastSent = .now
                 send(String(text.prefix(4000)))
             default:
                 break
@@ -451,10 +473,14 @@ private struct WidgetPage: NSViewRepresentable {
         }
         #endif
 
-        /// Its own page loads (a draft without its scripts); a link goes to your browser instead.
+        /// Its own page loads (a draft without its scripts); a link you click goes to your browser
+        /// instead. One the page goes to by itself, without your click, goes nowhere.
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, preferences: WKWebpagePreferences, decisionHandler: @escaping (WKNavigationActionPolicy, WKWebpagePreferences) -> Void) {
             if action.navigationType == .linkActivated || (action.targetFrame?.isMainFrame == true && action.request.url?.scheme.map(["http", "https"].contains) == true) {
-                if let url = action.request.url, ["http", "https"].contains(url.scheme ?? "") { NSWorkspace.shared.open(url) }
+                if let url = action.request.url, ["http", "https"].contains(url.scheme ?? ""),
+                   action.navigationType == .linkActivated || (webView as? WidgetWebView)?.wasClicked == true {
+                    NSWorkspace.shared.open(url)
+                }
                 decisionHandler(.cancel, preferences)
                 return
             }
@@ -464,7 +490,10 @@ private struct WidgetPage: NSViewRepresentable {
 
         /// A link meant for a new window, too.
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-            if let url = action.request.url, ["http", "https"].contains(url.scheme ?? "") { NSWorkspace.shared.open(url) }
+            if let url = action.request.url, ["http", "https"].contains(url.scheme ?? ""),
+               action.navigationType == .linkActivated || (webView as? WidgetWebView)?.wasClicked == true {
+                NSWorkspace.shared.open(url)
+            }
             return nil
         }
     }
@@ -473,6 +502,15 @@ private struct WidgetPage: NSViewRepresentable {
 /// Scrolling over a page that fits goes on to the conversation around it.
 final class WidgetWebView: WKWebView {
     var fits = true
+    private var clicked: Date?
+
+    /// You clicked in it a moment ago: what it opens now is your doing, not the page's own.
+    var wasClicked: Bool { clicked.map { Date.now.timeIntervalSince($0) < 1.5 } ?? false }
+
+    override func mouseDown(with event: NSEvent) {
+        clicked = .now
+        super.mouseDown(with: event)
+    }
 
     override func scrollWheel(with event: NSEvent) {
         if fits { nextResponder?.scrollWheel(with: event) } else { super.scrollWheel(with: event) }
