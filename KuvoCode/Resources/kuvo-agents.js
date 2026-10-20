@@ -3177,6 +3177,12 @@ class ClaudeThread {
     }
     return result;
   }
+  async steer(input) {
+    if (!this.active || !this.input || this.active.stopping)
+      return false;
+    this.input.push({ ...userMessage(input), priority: "next" });
+    return true;
+  }
   async interrupt() {
     const query = this.query;
     const active = this.active;

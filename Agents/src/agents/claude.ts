@@ -7,7 +7,7 @@ import { existsSync, readFileSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { providerID, type AgentAccount } from "../accounts"
-import type { Agent, AgentContext, Account, RunInput, RunResult, SignInAttempt, SubagentRun, Thread, TurnHooks } from "../agent"
+import type { Agent, AgentContext, Account, RunInput, RunResult, SignInAttempt, SubagentRun, Thread, TurnHooks, PromptFile } from "../agent"
 import type { Limit } from "../auto"
 import { accountName, failure, model } from "../agent"
 import { fileDiff, fromPatch } from "../diff"
@@ -682,6 +682,13 @@ class ClaudeThread implements Thread {
     return result
   }
 
+  /** Your message, into the turn under way: Claude Code takes it at its next step (priority "next"). */
+  async steer(input: { text: string; files: PromptFile[] }): Promise<boolean> {
+    if (!this.active || !this.input || this.active.stopping) return false
+    this.input.push({ ...userMessage(input), priority: "next" })
+    return true
+  }
+
   async interrupt() {
     const query = this.query
     const active = this.active
@@ -852,7 +859,7 @@ function reason(result: any): string {
   }
 }
 
-function userMessage(input: RunInput): any {
+function userMessage(input: Pick<RunInput, "text" | "files">): any {
   const content: any[] = []
   const others: string[] = []
   for (const file of input.files) {
