@@ -42,8 +42,8 @@ export interface AcpFlavor {
   authenticatesFirst?: boolean
   /** Prefer `session/resume` over `session/load` (which replays the conversation). */
   resumes?: boolean
-  /** Selects the model the session is to use. */
-  selectModel(rpc: RPC, sessionID: string, modelID: string, setup: any): Promise<void>
+  /** Selects the model the session is to use, and its effort (`variant`) where the agent has one. */
+  selectModel(rpc: RPC, sessionID: string, modelID: string, setup: any, variant?: string): Promise<void>
   /** Sets the mode the turn needs (Antigravity's yolo, default…), if the agent has one. */
   selectMode?(rpc: RPC, sessionID: string, options: { approvesAll: boolean; plan: boolean }, setup: any): Promise<void>
   /** A line the agent writes that isn't ACP (a sign-in link): false to drop it. */
@@ -286,7 +286,7 @@ export class AcpThread implements Thread {
     // Stopped while the agent was starting.
     if (hooks.signal.aborted) return { outcome: "interrupted" }
     const sessionId = this.sessionID!
-    await this.flavor.selectModel(rpc, sessionId, input.model.id, this.setup).catch(() => {})
+    await this.flavor.selectModel(rpc, sessionId, input.model.id, this.setup, input.model.variant).catch(() => {})
     await this.flavor.selectMode?.(rpc, sessionId, { approvesAll: hooks.approvesAll(), plan: input.plan }, this.setup).catch(() => {})
     if (hooks.signal.aborted) return { outcome: "interrupted" }
     const prompt: any[] = []

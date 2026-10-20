@@ -2,7 +2,8 @@
 // xAI key in XAI_API_KEY), each session one `grok agent stdio` speaking ACP.
 
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { dirname, join } from "node:path"
 import { providerID, type AgentAccount } from "../accounts"
 import type { Agent, AgentContext, Account, SignInAttempt, Thread } from "../agent"
 import { accountName, model } from "../agent"
@@ -23,6 +24,34 @@ export class GrokAgent implements Agent {
   install = "npm install -g @xai-official/grok"
   private status?: { at: number; signedIn: boolean; models: { id: string; name: string; isDefault: boolean }[] }
   private promptCount = 0
+
+  /** Each model's reasoning efforts and its default, as its sessions said last (kept in Kuvo Code's folder). */
+  private get effortsFile() {
+    return join(this.context.home, "grok", `efforts-${this.instance.id}.json`)
+  }
+
+  private efforts(): Record<string, { values: string[]; default?: string }> {
+    try {
+      return JSON.parse(readFileSync(this.effortsFile, "utf8"))
+    } catch {
+      return {}
+    }
+  }
+
+  /** Keeps what a session says of its models' efforts, for the model picker. */
+  saveEfforts(setup: any) {
+    const known: Record<string, { values: string[]; default?: string }> = {}
+    for (const info of setup?.models?.availableModels ?? []) {
+      const levels: any[] = info?._meta?.reasoningEfforts ?? []
+      if (!info?.modelId || !levels.length) continue
+      known[info.modelId] = { values: levels.map((level) => String(level.value)), default: levels.find((level) => level.default)?.value ?? info._meta?.reasoningEffort }
+    }
+    if (!Object.keys(known).length || JSON.stringify(known) === JSON.stringify(this.efforts())) return
+    try {
+      mkdirSync(dirname(this.effortsFile), { recursive: true })
+      writeFileSync(this.effortsFile, JSON.stringify(known))
+    } catch {}
+  }
 
   constructor(
     readonly context: AgentContext,
@@ -110,7 +139,9 @@ export class GrokAgent implements Agent {
 
   async models(): Promise<Model[]> {
     const status = await this.read(false)
-    return status.models.map((info, index) => model(this.providerID, info.id, info.name, { released: info.isDefault ? 1000 : 500 - index, context: 256_000 }))
+    const efforts = this.efforts()
+    // (Before a session has said, the efforts every Grok model has.)
+    return status.models.map((info, index) => model(this.providerID, info.id, info.name, { released: info.isDefault ? 1000 : 500 - index, context: 256_000, variants: efforts[info.id]?.values ?? ["low", "medium", "high"] }))
   }
 
   thread(session: Session, state: Record<string, unknown>): Thread {
@@ -132,11 +163,19 @@ export class GrokAgent implements Agent {
               : [executable, "--permission-mode", "default", "agent", "stdio"]
           return { argv, env: agent.env() }
         },
-        async selectModel(rpc, sessionId, modelID, setup) {
-          const current = setup?.models?.currentModelId
-          if (current === modelID) return
-          await rpc.request("session/set_model", { sessionId, modelId: modelID }, 30_000)
-          if (setup?.models) setup.models.currentModelId = modelID
+        async selectModel(rpc, sessionId, modelID, setup, variant) {
+          agent.saveEfforts(setup)
+          if (setup?.models?.currentModelId !== modelID) {
+            await rpc.request("session/set_model", { sessionId, modelId: modelID }, 30_000)
+            if (setup?.models) setup.models.currentModelId = modelID
+          }
+          // Its reasoning effort: the one you picked, or (after one was) the model's own.
+          const option = (setup?.configOptions ?? []).find((option: any) => option.id === "reasoning_effort" || option.category === "thought_level")
+          const wanted = variant ?? (setup?.kuvoEffort ? agent.efforts()[modelID]?.default : undefined)
+          const key = `${modelID}:${variant ?? ""}`
+          if (!option || !wanted || setup.kuvoEffort === key) return
+          await rpc.request("session/set_config_option", { sessionId, configId: option.id, value: wanted }, 30_000)
+          setup.kuvoEffort = variant ? key : undefined
         },
         promptMeta() {
           const id = `kuvo-prompt-${++agent.promptCount}`

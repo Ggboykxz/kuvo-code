@@ -15,6 +15,9 @@ import type { Turn } from "../turn"
 import type { Model, OAuthStatus, Session } from "../wire"
 
 // T3 Code's tested version; newer ones resolve differently under Bun.
+/** What Cursor calls a model's effort setting, by model. */
+const effortParameters = ["effort", "reasoning", "reasoning_effort"]
+
 const SDK = [{ name: "@cursor/sdk", version: "1.0.35" }]
 const outputLimit = 30_000
 
@@ -155,7 +158,9 @@ export class CursorAgent implements Agent {
     const models = list
       .filter((info) => info?.id && !seen.has(info.id) && seen.add(info.id))
       .map((info, index) => {
-        const effort = (info.parameters ?? []).find((parameter: any) => parameter.id === "effort" || parameter.id === "reasoning")
+        // (Named "effort", "reasoning" or "reasoning_effort", by model: a turn sets it by its name.)
+        const effort = (info.parameters ?? []).find((parameter: any) => effortParameters.includes(parameter.id))
+        if (effort) this.efforts.set(info.id, effort.id)
         return model(this.providerID, info.id, info.id === "default" ? "Auto" : info.displayName ?? info.id, {
           variants: effort?.values?.map((value: any) => String(value.value)) ?? [],
           images: true,
@@ -168,6 +173,16 @@ export class CursorAgent implements Agent {
 
   forgetModels() {
     this.modelList = undefined
+  }
+
+  /** Each model's own name for its effort setting. */
+  private efforts = new Map<string, string>()
+
+  /** A model's effort setting, as a turn sets it. */
+  async effort(model: { id: string; variant?: string }): Promise<{ id: string; params?: { id: string; value: string }[] }> {
+    if (!model.variant) return { id: model.id }
+    if (!this.efforts.has(model.id)) await this.models().catch(() => [])
+    return { id: model.id, params: [{ id: this.efforts.get(model.id) ?? "effort", value: model.variant }] }
   }
 
   /** The SDK decides once whether sandboxing works, and the first agent without it would say no. */
@@ -234,15 +249,14 @@ class CursorThread implements Thread {
     const apiKey = await this.owner.apiKey(sdk)
     if (!apiKey || hooks.signal.aborted) return undefined
     if (hooks.approvesAll(false)) await this.owner.prime(sdk, apiKey, this.session.location.directory)
-    await this.ensureAgent(sdk, this.options(sdk, input, hooks, apiKey), hooks)
+    await this.ensureAgent(sdk, this.options(sdk, input, hooks, apiKey, await this.owner.effort(input.model)), hooks)
     const fresh = this.startedOver
     this.startedOver = false
     return { fresh }
   }
 
-  private options(sdk: any, input: RunInput, hooks: TurnHooks, apiKey: string) {
+  private options(sdk: any, input: RunInput, hooks: TurnHooks, apiKey: string, selection: { id: string }) {
     const approvesAll = hooks.approvesAll(false)
-    const selection = { id: input.model.id, ...(input.model.variant ? { params: [{ id: "effort", value: input.model.variant }] } : {}) }
     const mode = input.plan ? "plan" : "agent"
     const cwd = this.session.location.directory
     return {
@@ -295,9 +309,9 @@ class CursorThread implements Thread {
     if (hooks.signal.aborted) return { outcome: "interrupted" }
     const cwd = this.session.location.directory
     const approvesAll = hooks.approvesAll(false)
-    const selection = { id: input.model.id, ...(input.model.variant ? { params: [{ id: "effort", value: input.model.variant }] } : {}) }
+    const selection = await this.owner.effort(input.model)
     const mode = input.plan ? "plan" : "agent"
-    const options = this.options(sdk, input, hooks, apiKey)
+    const options = this.options(sdk, input, hooks, apiKey, selection)
     if (approvesAll) await this.owner.prime(sdk, apiKey, cwd)
     // Cursor's SDK can't stop to ask: said once, so Ask First isn't taken for what it does.
     if (!approvesAll && !input.plan && !this.state.cursorAskNoted) {
