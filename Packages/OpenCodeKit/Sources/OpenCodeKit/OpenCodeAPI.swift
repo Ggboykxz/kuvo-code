@@ -220,15 +220,16 @@ public struct OpenCodeAPI: Sendable {
         try await get("api/credential", as: DataEnvelope<[CredentialEntry]>.self).data
     }
 
-    /// Stores a sign-in made elsewhere (another engine's), for `integration`, as its active one.
-    public func storeCredential(_ entry: CredentialEntry, for integration: String) async throws {
+    /// Stores a sign-in made elsewhere (another engine's), for `integration`: with `activate`, as
+    /// its active one.
+    public func storeCredential(_ entry: CredentialEntry, for integration: String, activate: Bool = true) async throws {
         struct Body: Encodable {
             var integrationID: String
             var label: String
             var value: JSONValue
-            var activate = true
+            var activate: Bool
         }
-        try await send("POST", "api/credential", body: Body(integrationID: integration, label: entry.label, value: entry.value))
+        try await send("POST", "api/credential", body: Body(integrationID: integration, label: entry.label, value: entry.value, activate: activate))
     }
 
     /// Stores a sign-in for `integration`, as its active one, in the engine's own form (a key,

@@ -35,7 +35,7 @@ extension AppModel {
             guard let local = server.integrationID, let match = there.first(where: { $0.name == server.name }), let far = match.integrationID,
                   let mine = ours.first(where: { $0.integrationID == local && $0.active && $0.isOAuth }) else { continue }
             let yours = theirs.first { $0.integrationID == far && $0.active && $0.isOAuth }
-            switch await exchange(mine, yours, here: local, there: far, mac: mac, remote: remote, machine: engine.machine.id) {
+            switch await exchange(mine, yours, here: local, there: far, mac: mac, remote: remote, machine: engine.machine.id, ours: ours) {
             case true?: await reconnect(match.name, api: remote, machine: engine.machine.id)
             case false?: await reconnect(server.name, api: mac, machine: nil)
             case nil: break
@@ -50,7 +50,7 @@ extension AppModel {
             // Two of your accounts with one label here (two GitLab accounts on one host): the label
             // can't say which the machine's copy is of.
             let byLabel = ours.filter { $0.integrationID == mine.integrationID && $0.label == mine.label }.count == 1
-            await exchange(mine, yours, here: mine.integrationID, there: mine.integrationID, mac: mac, remote: remote, machine: engine.machine.id, byLabel: byLabel)
+            await exchange(mine, yours, here: mine.integrationID, there: mine.integrationID, mac: mac, remote: remote, machine: engine.machine.id, ours: ours, byLabel: byLabel)
         }
     }
 
@@ -60,25 +60,43 @@ extension AppModel {
     /// the machine's (one you switched to here), or another key, this Mac's.
     @discardableResult
     private func exchange(_ mine: CredentialEntry, _ yours: CredentialEntry?, here local: String, there far: String,
-                          mac: OpenCodeAPI, remote: OpenCodeAPI, machine: String, byLabel: Bool = true) async -> Bool? {
-        let source = Self.copiedFrom[machine]?[far]
-        if let yours, Self.isSameAccount(mine, yours, copiedFrom: source, byLabel: byLabel) {
+                          mac: OpenCodeAPI, remote: OpenCodeAPI, machine: String, ours: [CredentialEntry], byLabel: Bool = true) async -> Bool? {
+        let copy = Self.copy(on: machine, of: far)
+        if let yours, Self.isSameAccount(mine, yours, copy: copy, byLabel: byLabel) {
             // Each side renews its own sign-in with the same refresh token: only a new one (from a
             // service that hands out a new one each time) has to go to the other.
-            if Self.lasting(mine) == Self.lasting(yours) { return nil }
-            if yours.expires > mine.expires {
+            if Self.lasting(mine) == Self.lasting(yours) {
+                if copy != Copy(mac: mine.id, machine: yours.id) { Self.noteCopy(Copy(mac: mine.id, machine: yours.id), on: machine, of: far) }
+                return nil
+            }
+            // Back to this Mac only when it's known to be this account's (its ID, or the copy made
+            // of it): a label shared by two accounts could bring back the other one.
+            let known = Self.accountID(mine).map { $0 == Self.accountID(yours) } ?? (copy == Copy(mac: mine.id, machine: yours.id))
+            if known, yours.expires > mine.expires {
                 // Back to this Mac, and from it to the other machines.
                 guard (try? await mac.storeCredential(yours, for: local)) != nil else { return nil }
                 try? await mac.removeCredential(mine.id)
-                // Its copy there is of the one stored here now, which is the same, as its copy is.
-                Self.noteCopy(on: machine, of: far, from: nil)
+                let stored = await Self.entry(like: yours, for: local, in: mac)
+                Self.noteCopy(stored.map { Copy(mac: $0.id, machine: yours.id) }, on: machine, of: far)
                 return false
             }
         }
+        // Another account of yours is in use here now: what the machine renewed of the one before
+        // goes back to that one here (not in use), so switching back finds it signed in.
+        if let yours, let copy, copy.machine == yours.id, copy.mac != mine.id, let before = ours.first(where: { $0.id == copy.mac }),
+           Self.lasting(before) != Self.lasting(yours), yours.expires > before.expires {
+            if (try? await mac.storeCredential(yours, for: local, activate: false)) != nil { try? await mac.removeCredential(before.id) }
+        }
         guard (try? await remote.storeCredential(mine, for: far)) != nil else { return nil }
         if let yours { try? await remote.removeCredential(yours.id) }
-        Self.noteCopy(on: machine, of: far, from: mine.id)
+        let stored = await Self.entry(like: mine, for: far, in: remote)
+        Self.noteCopy(stored.map { Copy(mac: mine.id, machine: $0.id) }, on: machine, of: far)
         return true
+    }
+
+    /// The sign-in `api` keeps for `integration` that is `entry` (or a copy of it), as stored.
+    private static func entry(like entry: CredentialEntry, for integration: String, in api: OpenCodeAPI) async -> CredentialEntry? {
+        (try? await api.credentialEntries())?.first { $0.integrationID == integration && lasting($0) == lasting(entry) }
     }
 
     /// What stays the same while a sign-in renews itself: its refresh token, or a key (or the
@@ -87,28 +105,39 @@ extension AppModel {
         entry.value["refresh"] ?? entry.value["key"] ?? entry.value
     }
 
-    /// Copies of one sign-in: the same account, as the service names it; the very same sign-in; a
-    /// copy made of this one; or else the same label (a copy keeps it), when the label names one
-    /// account here and it's not known which account the copy was made of.
-    private static func isSameAccount(_ mine: CredentialEntry, _ yours: CredentialEntry, copiedFrom source: String?, byLabel: Bool) -> Bool {
+    /// Copies of one sign-in: the same account, as the service names it; the very same sign-in;
+    /// the copy made of this one, still there (renewed, maybe); or else the same label (a copy
+    /// keeps it), when the label names one account here and no copy of either is known.
+    private static func isSameAccount(_ mine: CredentialEntry, _ yours: CredentialEntry, copy: Copy?, byLabel: Bool) -> Bool {
         if let a = accountID(mine), let b = accountID(yours) { return a == b }
         if lasting(mine) == lasting(yours) { return true }
-        if let source { return source == mine.id }
+        if let copy { return copy == Copy(mac: mine.id, machine: yours.id) }
         return byLabel && mine.label == yours.label
     }
 
-    /// Which of this Mac's sign-ins each machine's copy was made from, by machine and integration
-    /// (nil: not known, or the same as it).
-    private static var copiedFrom: [String: [String: String]] {
+    /// A machine's copy of one of this Mac's sign-ins: which sign-in here, and which there (an
+    /// engine renews a sign-in in place, so it keeps its ID; a copy another Mac put there doesn't).
+    struct Copy: Equatable {
+        var mac: String
+        var machine: String
+    }
+
+    /// The copy each machine has, by machine and integration, as "<mac>|<machine>".
+    private static var copies: [String: [String: String]] {
         get { UserDefaults.standard.dictionary(forKey: "machineCopies") as? [String: [String: String]] ?? [:] }
         set { UserDefaults.standard.set(newValue.isEmpty ? nil : newValue, forKey: "machineCopies") }
     }
 
-    private static func noteCopy(on machine: String, of integration: String, from source: String?) {
-        var copies = copiedFrom
-        copies[machine, default: [:]][integration] = source
-        if copies[machine]?.isEmpty == true { copies[machine] = nil }
-        copiedFrom = copies
+    private static func copy(on machine: String, of integration: String) -> Copy? {
+        let parts = copies[machine]?[integration]?.split(separator: "|", maxSplits: 1).map(String.init) ?? []
+        return parts.count == 2 ? Copy(mac: parts[0], machine: parts[1]) : nil
+    }
+
+    private static func noteCopy(_ copy: Copy?, on machine: String, of integration: String) {
+        var all = copies
+        all[machine, default: [:]][integration] = copy.map { "\($0.mac)|\($0.machine)" }
+        if all[machine]?.isEmpty == true { all[machine] = nil }
+        copies = all
     }
 
     /// The account a sign-in is for, as its service names it (the engine keeps it in its metadata).
