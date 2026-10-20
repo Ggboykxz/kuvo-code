@@ -282,10 +282,22 @@ class EngineThread implements Thread {
     })
     const id = created?.data?.id as string
     if (!id) throw new Error("The engine didn't start a session.")
+    if (existing) this.startedOver = true
     this.state.engineSession = id
     delete this.state.engineInstructions
     hooks.saveState()
     return id
+  }
+
+  /** The session it had was gone: a new one took its place. */
+  private startedOver = false
+
+  async prepare(input: RunInput, hooks: TurnHooks) {
+    if (!this.link.ready) return undefined
+    await this.engineSession(input, hooks)
+    const fresh = this.startedOver
+    this.startedOver = false
+    return { fresh }
   }
 
   async run(input: RunInput, turn: Turn, hooks: TurnHooks): Promise<RunResult> {
@@ -472,7 +484,7 @@ class EngineThread implements Thread {
           if (delivered) finish({ outcome: "succeeded" })
           return
         case "session.execution.interrupted":
-          if (delivered || limit) finish(limit ? { outcome: "failed", error: { type: "limit", message: "A usage limit was reached." }, limit } : { outcome: "interrupted" })
+          if (delivered || limit) finish(limit ? { outcome: "failed", error: { type: "limit", message: "A usage limit was reached." }, limit, taken: delivered } : { outcome: "interrupted" })
           return
         case "session.execution.failed": {
           const error = (data.error ?? { type: "engine", message: "The engine stopped with an error." }) as StructuredError

@@ -536,23 +536,6 @@ export class Sessions {
       live.threads.set(model.providerID, thread)
     }
     const hooks = this.hooks(id, live, turn, signal, slot, input.plan)
-    // Its conversation, ready: one it had that couldn't be picked up again starts over, and is
-    // handed all that came before.
-    const prepared = await thread.prepare?.({ ...input, model }, hooks).catch(() => undefined)
-    if (prepared?.fresh) slot.seen = undefined
-    if (signal.aborted) return { outcome: "interrupted" }
-    // What it hasn't seen: what came before your message since it last ran here, and what
-    // another agent did on this message before handing it over.
-    const at = record.messages.findIndex((message) => message.id === userMessage)
-    const seenAt = slot.seen ? record.messages.findIndex((message) => message.id === slot.seen) : -1
-    // It has your message already (Auto went on with another of its models): it carries on from
-    // what it hasn't seen since, rather than getting the message again.
-    const hasMessage = at >= 0 && seenAt >= at
-    const before = hasMessage ? [] : record.messages.slice(seenAt + 1, at < 0 ? undefined : at)
-    const partway = at < 0 ? [] : record.messages.slice(Math.max(at, seenAt) + 1)
-    const handed = handover(before, partway, (message) => this.stepName(message))
-    const text = withHandover(hasMessage ? carryOn : input.text, handed)
-    const files = hasMessage ? [] : input.files
     turn.setModel(model)
     // Given up on (it didn't stop when asked): the turn ends without it.
     let abandon!: () => void
@@ -561,6 +544,26 @@ export class Sessions {
     live.running = running
     const from = record.messages.length
     try {
+      // Its conversation, ready (Stop gives up on it as on a run): one it had that couldn't be
+      // picked up again starts over, and is handed all that came before.
+      if (thread.prepare) {
+        const prepared = await Promise.race([thread.prepare({ ...input, model }, hooks), abandoned.then(() => "abandoned" as const)])
+        if (prepared === "abandoned") return { outcome: "interrupted" }
+        if (prepared?.fresh) slot.seen = undefined
+      }
+      if (signal.aborted) return { outcome: "interrupted" }
+      // What it hasn't seen: what came before your message since it last ran here, and what
+      // another agent did on this message before handing it over.
+      const at = record.messages.findIndex((message) => message.id === userMessage)
+      const seenAt = slot.seen ? record.messages.findIndex((message) => message.id === slot.seen) : -1
+      // It has your message already (Auto went on with another of its models): it carries on from
+      // what it hasn't seen since, rather than getting the message again.
+      const hasMessage = at >= 0 && seenAt >= at
+      const before = hasMessage ? [] : record.messages.slice(seenAt + 1, at < 0 ? undefined : at)
+      const partway = at < 0 ? [] : record.messages.slice(Math.max(at, seenAt) + 1)
+      const handed = handover(before, partway, (message) => this.stepName(message))
+      const text = withHandover(hasMessage ? carryOn : input.text, handed)
+      const files = hasMessage ? [] : input.files
       const result = await Promise.race([thread.run({ ...input, model, text, files }, turn, hooks), abandoned])
       // It has seen all of it now, its own replies too; but one that failed with nothing done
       // couldn't take your message (its model is gone, it was turned away), and doesn't count as

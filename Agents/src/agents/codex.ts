@@ -531,9 +531,9 @@ class CodexThread implements Thread {
         // A limit only when the turn didn't go through: one it got past on a retry doesn't count.
         const limit = status === "failed" ? (active.limit ?? this.limitOf(params.turn?.error, active.model)) : status === "interrupted" && active.stoppedForLimit ? active.limit : undefined
         if (limit && !active.stopping && !active.hooks.signal.aborted) {
-          active.resolve({ outcome: "failed", error: { type: "limit", message: active.problem ?? params.turn?.error?.message ?? "You've reached your Codex usage limit for now." }, limit })
+          active.resolve({ outcome: "failed", error: { type: "limit", message: active.problem ?? params.turn?.error?.message ?? "You've reached your Codex usage limit for now." }, limit, taken: true })
         } else if (active.hooks.signal.aborted || status === "interrupted") active.resolve({ outcome: "interrupted" })
-        else if (status === "failed") active.resolve({ outcome: "failed", error: failure(params.turn?.error?.message ?? active.problem ?? "Codex stopped with an error.") })
+        else if (status === "failed") active.resolve({ outcome: "failed", error: failure(params.turn?.error?.message ?? active.problem ?? "Codex stopped with an error."), taken: true })
         else active.resolve({ outcome: "succeeded" })
         return
       }

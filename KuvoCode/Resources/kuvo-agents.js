@@ -519,10 +519,21 @@ class EngineThread {
     const id = created?.data?.id;
     if (!id)
       throw new Error("The engine didn't start a session.");
+    if (existing)
+      this.startedOver = true;
     this.state.engineSession = id;
     delete this.state.engineInstructions;
     hooks.saveState();
     return id;
+  }
+  startedOver = false;
+  async prepare(input, hooks) {
+    if (!this.link.ready)
+      return;
+    await this.engineSession(input, hooks);
+    const fresh = this.startedOver;
+    this.startedOver = false;
+    return { fresh };
   }
   async run(input, turn, hooks) {
     if (!this.link.ready)
@@ -716,7 +727,7 @@ class EngineThread {
           return;
         case "session.execution.interrupted":
           if (delivered || limit)
-            finish(limit ? { outcome: "failed", error: { type: "limit", message: "A usage limit was reached." }, limit } : { outcome: "interrupted" });
+            finish(limit ? { outcome: "failed", error: { type: "limit", message: "A usage limit was reached." }, limit, taken: delivered } : { outcome: "interrupted" });
           return;
         case "session.execution.failed": {
           const error = data.error ?? { type: "engine", message: "The engine stopped with an error." };
@@ -1181,61 +1192,67 @@ class AcpThread {
         rpc.kill();
       }, 500);
     }
-    const init = await rpc.request("initialize", {
-      protocolVersion: 1,
-      clientCapabilities: { fs: { readTextFile: this.flavor.fileSystem, writeTextFile: this.flavor.fileSystem }, terminal: false },
-      clientInfo: { name: "kuvo-code", title: "Kuvo Code", version: "1" },
-      ...this.flavor.initializeMeta ? { _meta: this.flavor.initializeMeta } : {}
-    }, 120000);
-    const advertised = init?.authMethods ?? [];
-    const authenticate = async () => {
-      const methodId = this.flavor.authMethod(advertised);
-      if (!methodId)
-        throw new Error(`${this.name} isn't signed in. Sign in again in Settings \u203A Accounts.`);
-      await rpc.request("authenticate", { methodId }, 300000);
-    };
-    if (this.flavor.authenticatesFirst)
-      await authenticate();
-    const cwd = this.session.location.directory;
-    const previous = this.state.acpSession;
-    const openSession = async () => {
-      if (previous && this.flavor.resumes && init?.agentCapabilities?.sessionCapabilities?.resume) {
-        this.loading = true;
-        try {
-          this.setup = await rpc.request("session/resume", { sessionId: previous, cwd, mcpServers: [] }, 120000);
-          this.sessionID = previous;
-          return;
-        } catch {} finally {
-          this.loading = false;
-        }
-      }
-      if (previous && init?.agentCapabilities?.loadSession) {
-        this.loading = true;
-        try {
-          this.setup = await rpc.request("session/load", { sessionId: previous, cwd, mcpServers: [] }, 120000);
-          this.sessionID = previous;
-          return;
-        } catch {} finally {
-          this.loading = false;
-        }
-      }
-      this.setup = await rpc.request("session/new", { cwd, mcpServers: [] }, 120000);
-      this.sessionID = this.setup?.sessionId;
-      if (previous && previous !== this.sessionID) {
-        this.startedOver = true;
-        delete this.state.acpInstructions;
-        delete this.state.acpInstructed;
-      }
-      this.state.acpSession = this.sessionID;
-      hooks.saveState();
-    };
     try {
-      await openSession();
+      const init = await rpc.request("initialize", {
+        protocolVersion: 1,
+        clientCapabilities: { fs: { readTextFile: this.flavor.fileSystem, writeTextFile: this.flavor.fileSystem }, terminal: false },
+        clientInfo: { name: "kuvo-code", title: "Kuvo Code", version: "1" },
+        ...this.flavor.initializeMeta ? { _meta: this.flavor.initializeMeta } : {}
+      }, 120000);
+      const advertised = init?.authMethods ?? [];
+      const authenticate = async () => {
+        const methodId = this.flavor.authMethod(advertised);
+        if (!methodId)
+          throw new Error(`${this.name} isn't signed in. Sign in again in Settings \u203A Accounts.`);
+        await rpc.request("authenticate", { methodId }, 300000);
+      };
+      if (this.flavor.authenticatesFirst)
+        await authenticate();
+      const cwd = this.session.location.directory;
+      const previous = this.state.acpSession;
+      const openSession = async () => {
+        if (previous && this.flavor.resumes && init?.agentCapabilities?.sessionCapabilities?.resume) {
+          this.loading = true;
+          try {
+            this.setup = await rpc.request("session/resume", { sessionId: previous, cwd, mcpServers: [] }, 120000);
+            this.sessionID = previous;
+            return;
+          } catch {} finally {
+            this.loading = false;
+          }
+        }
+        if (previous && init?.agentCapabilities?.loadSession) {
+          this.loading = true;
+          try {
+            this.setup = await rpc.request("session/load", { sessionId: previous, cwd, mcpServers: [] }, 120000);
+            this.sessionID = previous;
+            return;
+          } catch {} finally {
+            this.loading = false;
+          }
+        }
+        this.setup = await rpc.request("session/new", { cwd, mcpServers: [] }, 120000);
+        this.sessionID = this.setup?.sessionId;
+        if (previous && previous !== this.sessionID) {
+          this.startedOver = true;
+          delete this.state.acpInstructions;
+          delete this.state.acpInstructed;
+        }
+        this.state.acpSession = this.sessionID;
+        hooks.saveState();
+      };
+      try {
+        await openSession();
+      } catch (error) {
+        if (!(error instanceof RPCError && error.code === -32000))
+          throw error;
+        await authenticate();
+        await openSession();
+      }
     } catch (error) {
-      if (!(error instanceof RPCError && error.code === -32000))
-        throw error;
-      await authenticate();
-      await openSession();
+      if (this.rpc === rpc)
+        this.close();
+      throw error;
     }
     return rpc;
   }
@@ -1289,6 +1306,7 @@ ${others.map((path) => `- ${path}`).join(`
       turn.startStep();
       const meta = this.flavor.promptMeta?.();
       rpc.request("session/prompt", { sessionId, prompt, ...meta ? { _meta: meta } : {} }).then((result) => {
+        active.answered = true;
         if (result?.stopReason === "rate_limit")
           this.end(active, "failed", `You've reached your ${this.name} usage limit for now.`, this.limit());
         else
@@ -1319,9 +1337,9 @@ ${others.map((path) => `- ${path}`).join(`
     if (active.hooks.signal.aborted)
       active.resolve({ outcome: "interrupted" });
     else if (limit)
-      active.resolve({ outcome: "failed", error: { type: "limit", message: message ?? `You've reached your ${this.name} usage limit for now.` }, limit });
+      active.resolve({ outcome: "failed", error: { type: "limit", message: message ?? `You've reached your ${this.name} usage limit for now.` }, limit, taken: active.heard || active.answered });
     else
-      active.resolve(outcome === "failed" ? { outcome, error: failure(message ?? `${this.name} stopped with an error.`) } : { outcome });
+      active.resolve(outcome === "failed" ? { outcome, error: failure(message ?? `${this.name} stopped with an error.`), taken: active.heard || active.answered } : { outcome });
   }
   context() {
     const active = this.active;
@@ -2858,7 +2876,7 @@ class ClaudeThread {
       active.problem ??= "You've reached your Claude usage limit for now.";
     }
     if (active.limit && !active.stopping) {
-      active.resolve({ outcome: "failed", error: { type: "limit", message: active.problem ?? "You've reached a Claude usage limit." }, limit: active.limit });
+      active.resolve({ outcome: "failed", error: { type: "limit", message: active.problem ?? "You've reached a Claude usage limit." }, limit: active.limit, taken: true });
       return;
     }
     if (active.stopping || active.hooks.signal.aborted) {
@@ -2867,7 +2885,7 @@ class ClaudeThread {
     }
     const message = active.problem ?? (typeof result.result === "string" && result.result.trim() ? result.result.trim() : undefined) ?? (Array.isArray(result.errors) && result.errors.length ? result.errors.join(`
 `) : undefined) ?? reason(result);
-    active.resolve({ outcome: "failed", error: { type: "agent", message } });
+    active.resolve({ outcome: "failed", error: { type: "agent", message }, taken: true });
   }
   addCost(active, result) {
     const total = typeof result.total_cost_usd === "number" ? result.total_cost_usd : undefined;
@@ -3566,11 +3584,11 @@ ${others.map((path) => `- ${path}`).join(`
         const status = params.turn?.status;
         const limit = status === "failed" ? active.limit ?? this.limitOf(params.turn?.error, active.model) : status === "interrupted" && active.stoppedForLimit ? active.limit : undefined;
         if (limit && !active.stopping && !active.hooks.signal.aborted) {
-          active.resolve({ outcome: "failed", error: { type: "limit", message: active.problem ?? params.turn?.error?.message ?? "You've reached your Codex usage limit for now." }, limit });
+          active.resolve({ outcome: "failed", error: { type: "limit", message: active.problem ?? params.turn?.error?.message ?? "You've reached your Codex usage limit for now." }, limit, taken: true });
         } else if (active.hooks.signal.aborted || status === "interrupted")
           active.resolve({ outcome: "interrupted" });
         else if (status === "failed")
-          active.resolve({ outcome: "failed", error: failure(params.turn?.error?.message ?? active.problem ?? "Codex stopped with an error.") });
+          active.resolve({ outcome: "failed", error: failure(params.turn?.error?.message ?? active.problem ?? "Codex stopped with an error."), taken: true });
         else
           active.resolve({ outcome: "succeeded" });
         return;
@@ -5544,21 +5562,6 @@ class Sessions {
       live.threads.set(model2.providerID, thread);
     }
     const hooks = this.hooks(id, live, turn, signal, slot, input.plan);
-    const prepared = await thread.prepare?.({ ...input, model: model2 }, hooks).catch(() => {
-      return;
-    });
-    if (prepared?.fresh)
-      slot.seen = undefined;
-    if (signal.aborted)
-      return { outcome: "interrupted" };
-    const at = record.messages.findIndex((message) => message.id === userMessage2);
-    const seenAt = slot.seen ? record.messages.findIndex((message) => message.id === slot.seen) : -1;
-    const hasMessage = at >= 0 && seenAt >= at;
-    const before = hasMessage ? [] : record.messages.slice(seenAt + 1, at < 0 ? undefined : at);
-    const partway = at < 0 ? [] : record.messages.slice(Math.max(at, seenAt) + 1);
-    const handed = handover(before, partway, (message) => this.stepName(message));
-    const text = withHandover(hasMessage ? carryOn : input.text, handed);
-    const files = hasMessage ? [] : input.files;
     turn.setModel(model2);
     let abandon;
     const abandoned = new Promise((resolve) => abandon = () => resolve({ outcome: "interrupted" }));
@@ -5566,6 +5569,23 @@ class Sessions {
     live.running = running;
     const from = record.messages.length;
     try {
+      if (thread.prepare) {
+        const prepared = await Promise.race([thread.prepare({ ...input, model: model2 }, hooks), abandoned.then(() => "abandoned")]);
+        if (prepared === "abandoned")
+          return { outcome: "interrupted" };
+        if (prepared?.fresh)
+          slot.seen = undefined;
+      }
+      if (signal.aborted)
+        return { outcome: "interrupted" };
+      const at = record.messages.findIndex((message) => message.id === userMessage2);
+      const seenAt = slot.seen ? record.messages.findIndex((message) => message.id === slot.seen) : -1;
+      const hasMessage = at >= 0 && seenAt >= at;
+      const before = hasMessage ? [] : record.messages.slice(seenAt + 1, at < 0 ? undefined : at);
+      const partway = at < 0 ? [] : record.messages.slice(Math.max(at, seenAt) + 1);
+      const handed = handover(before, partway, (message) => this.stepName(message));
+      const text = withHandover(hasMessage ? carryOn : input.text, handed);
+      const files = hasMessage ? [] : input.files;
       const result = await Promise.race([thread.run({ ...input, model: model2, text, files }, turn, hooks), abandoned]);
       if (result.outcome !== "failed" || result.taken || record.messages.slice(from).some(didWork))
         slot.seen = record.messages[record.messages.length - 1]?.id;

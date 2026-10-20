@@ -572,7 +572,7 @@ class ClaudeThread implements Thread {
       active.problem ??= "You've reached your Claude usage limit for now."
     }
     if (active.limit && !active.stopping) {
-      active.resolve({ outcome: "failed", error: { type: "limit", message: active.problem ?? "You've reached a Claude usage limit." }, limit: active.limit })
+      active.resolve({ outcome: "failed", error: { type: "limit", message: active.problem ?? "You've reached a Claude usage limit." }, limit: active.limit, taken: true })
       return
     }
     if (active.stopping || active.hooks.signal.aborted) {
@@ -584,7 +584,7 @@ class ClaudeThread implements Thread {
       (typeof result.result === "string" && result.result.trim() ? result.result.trim() : undefined) ??
       (Array.isArray(result.errors) && result.errors.length ? result.errors.join("\n") : undefined) ??
       reason(result)
-    active.resolve({ outcome: "failed", error: { type: "agent", message } })
+    active.resolve({ outcome: "failed", error: { type: "agent", message }, taken: true })
   }
 
   /**

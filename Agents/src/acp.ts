@@ -84,6 +84,8 @@ interface Active {
   instructed?: { value: string }
   /** The agent said something about this prompt. */
   heard?: boolean
+  /** The prompt came back answered (not turned away). */
+  answered?: boolean
 }
 
 export class AcpThread implements Thread {
@@ -153,64 +155,70 @@ export class AcpThread implements Thread {
         rpc.kill()
       }, 500)
     }
-    const init: any = await rpc.request(
-      "initialize",
-      {
-        protocolVersion: 1,
-        clientCapabilities: { fs: { readTextFile: this.flavor.fileSystem, writeTextFile: this.flavor.fileSystem }, terminal: false },
-        clientInfo: { name: "kuvo-code", title: "Kuvo Code", version: "1" },
-        ...(this.flavor.initializeMeta ? { _meta: this.flavor.initializeMeta } : {}),
-      },
-      120_000,
-    )
-    const advertised = (init?.authMethods ?? []) as { id: string }[]
-    const authenticate = async () => {
-      const methodId = this.flavor.authMethod(advertised)
-      if (!methodId) throw new Error(`${this.name} isn't signed in. Sign in again in Settings › Accounts.`)
-      await rpc.request("authenticate", { methodId }, 300_000)
-    }
-    if (this.flavor.authenticatesFirst) await authenticate()
-    const cwd = this.session.location.directory
-    const previous = this.state.acpSession as string | undefined
-    const openSession = async () => {
-      if (previous && this.flavor.resumes && init?.agentCapabilities?.sessionCapabilities?.resume) {
-        this.loading = true
-        try {
-          this.setup = await rpc.request("session/resume", { sessionId: previous, cwd, mcpServers: [] }, 120_000)
-          this.sessionID = previous
-          return
-        } catch {} finally {
-          this.loading = false
-        }
-      }
-      if (previous && init?.agentCapabilities?.loadSession) {
-        // What it replays of the conversation is already here.
-        this.loading = true
-        try {
-          this.setup = await rpc.request("session/load", { sessionId: previous, cwd, mcpServers: [] }, 120_000)
-          this.sessionID = previous
-          return
-        } catch {} finally {
-          this.loading = false
-        }
-      }
-      this.setup = await rpc.request("session/new", { cwd, mcpServers: [] }, 120_000)
-      this.sessionID = this.setup?.sessionId
-      if (previous && previous !== this.sessionID) {
-        // In place of one it had: the instructions go again, and what came before is handed over.
-        this.startedOver = true
-        delete this.state.acpInstructions
-        delete this.state.acpInstructed
-      }
-      this.state.acpSession = this.sessionID
-      hooks.saveState()
-    }
     try {
-      await openSession()
+      const init: any = await rpc.request(
+        "initialize",
+        {
+          protocolVersion: 1,
+          clientCapabilities: { fs: { readTextFile: this.flavor.fileSystem, writeTextFile: this.flavor.fileSystem }, terminal: false },
+          clientInfo: { name: "kuvo-code", title: "Kuvo Code", version: "1" },
+          ...(this.flavor.initializeMeta ? { _meta: this.flavor.initializeMeta } : {}),
+        },
+        120_000,
+      )
+      const advertised = (init?.authMethods ?? []) as { id: string }[]
+      const authenticate = async () => {
+        const methodId = this.flavor.authMethod(advertised)
+        if (!methodId) throw new Error(`${this.name} isn't signed in. Sign in again in Settings › Accounts.`)
+        await rpc.request("authenticate", { methodId }, 300_000)
+      }
+      if (this.flavor.authenticatesFirst) await authenticate()
+      const cwd = this.session.location.directory
+      const previous = this.state.acpSession as string | undefined
+      const openSession = async () => {
+        if (previous && this.flavor.resumes && init?.agentCapabilities?.sessionCapabilities?.resume) {
+          this.loading = true
+          try {
+            this.setup = await rpc.request("session/resume", { sessionId: previous, cwd, mcpServers: [] }, 120_000)
+            this.sessionID = previous
+            return
+          } catch {} finally {
+            this.loading = false
+          }
+        }
+        if (previous && init?.agentCapabilities?.loadSession) {
+          // What it replays of the conversation is already here.
+          this.loading = true
+          try {
+            this.setup = await rpc.request("session/load", { sessionId: previous, cwd, mcpServers: [] }, 120_000)
+            this.sessionID = previous
+            return
+          } catch {} finally {
+            this.loading = false
+          }
+        }
+        this.setup = await rpc.request("session/new", { cwd, mcpServers: [] }, 120_000)
+        this.sessionID = this.setup?.sessionId
+        if (previous && previous !== this.sessionID) {
+          // In place of one it had: the instructions go again, and what came before is handed over.
+          this.startedOver = true
+          delete this.state.acpInstructions
+          delete this.state.acpInstructed
+        }
+        this.state.acpSession = this.sessionID
+        hooks.saveState()
+      }
+      try {
+        await openSession()
+      } catch (error) {
+        if (!(error instanceof RPCError && error.code === -32000)) throw error
+        await authenticate()
+        await openSession()
+      }
     } catch (error) {
-      if (!(error instanceof RPCError && error.code === -32000)) throw error
-      await authenticate()
-      await openSession()
+      // It couldn't get its session going: the next message starts it again.
+      if (this.rpc === rpc) this.close()
+      throw error
     }
     return rpc
   }
@@ -256,6 +264,7 @@ export class AcpThread implements Thread {
       const meta = this.flavor.promptMeta?.()
       rpc.request("session/prompt", { sessionId, prompt, ...(meta ? { _meta: meta } : {}) }).then(
         (result: any) => {
+          active.answered = true
           if (result?.stopReason === "rate_limit") this.end(active, "failed", `You've reached your ${this.name} usage limit for now.`, this.limit())
           else this.end(active, result?.stopReason === "cancelled" ? "interrupted" : "succeeded")
         },
@@ -284,8 +293,9 @@ export class AcpThread implements Thread {
     if (active.plan) active.turn.toolSucceeded(active.plan.id, "", { todos: active.plan.todos })
     active.turn.endStep()
     if (active.hooks.signal.aborted) active.resolve({ outcome: "interrupted" })
-    else if (limit) active.resolve({ outcome: "failed", error: { type: "limit", message: message ?? `You've reached your ${this.name} usage limit for now.` }, limit })
-    else active.resolve(outcome === "failed" ? { outcome, error: failure(message ?? `${this.name} stopped with an error.`) } : { outcome })
+    // It had the message when it said something about it, or answered the prompt itself.
+    else if (limit) active.resolve({ outcome: "failed", error: { type: "limit", message: message ?? `You've reached your ${this.name} usage limit for now.` }, limit, taken: active.heard || active.answered })
+    else active.resolve(outcome === "failed" ? { outcome, error: failure(message ?? `${this.name} stopped with an error.`), taken: active.heard || active.answered } : { outcome })
   }
 
   private context(): AcpContext {

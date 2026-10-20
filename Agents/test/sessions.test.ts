@@ -66,8 +66,13 @@ class FakeThread implements Thread {
   onStop?: () => void
   /** Its next prepare says it started over. */
   fresh = false
+  /** Its prepare never ends, or fails. */
+  prepareHangs = false
+  prepareFails = false
 
   async prepare() {
+    if (this.prepareHangs) await new Promise(() => {})
+    if (this.prepareFails) throw new Error("It couldn't start.")
     const fresh = this.fresh
     this.fresh = false
     return { fresh }
@@ -444,6 +449,45 @@ describe("asks and conversations", () => {
     sessions.replyPermission(id, sessions.permissions(id)[0].id, "once")
     await settled(id, 1)
     expect(decided).toEqual(["once", "once"])
+  })
+
+  test("Stop while an agent gets ready stops the turn", async () => {
+    timing.stopGrace = 50
+    const id = create()
+    a.thread = ((session: unknown, state: Record<string, unknown>) => {
+      const thread = new FakeThread(a, state)
+      thread.prepareHangs = true
+      a.threads.push(thread)
+      return thread
+    }) as any
+    send(id, "go")
+    await until(() => sessions.active().includes(id))
+    await Bun.sleep(20)
+    await sessions.interrupt(id)
+    await settled(id, 1, 2_000)
+    expect(idles(id)[0].outcome).toBe("interrupted")
+    expect(a.threads[0].closed).toBe(true)
+  })
+
+  test("an agent that couldn't start fails the message, and the next starts it again", async () => {
+    const id = create()
+    let first = true
+    a.thread = ((session: unknown, state: Record<string, unknown>) => {
+      const thread = new FakeThread(a, state)
+      thread.prepareFails = first
+      first = false
+      a.threads.push(thread)
+      return thread
+    }) as any
+    send(id, "go")
+    await settled(id, 1)
+    expect(idles(id)[0].outcome).toBe("failed")
+    expect(idles(id)[0].error?.message).toContain("couldn't start")
+    expect(a.threads[0].closed).toBe(true)
+    send(id, "again")
+    await settled(id, 2)
+    expect(idles(id)[1].outcome).toBe("succeeded")
+    expect(a.threads).toHaveLength(2)
   })
 
   test("a conversation the agent couldn't pick up again is handed all that came before", async () => {
