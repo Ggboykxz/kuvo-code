@@ -5,6 +5,7 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- Coding agents: Antigravity's subagents no longer show up again with each turn, and an image it makes is never mixed up with one you attached. Codex's agents in the background keep working after the turn, and what they ask stays yours to answer. Stop reaches a subagent that works in the background. A widget or panel tool an agent calls first thing works. Sessions on Antigravity, Cursor or Grok get a real title, written by another coding agent you're signed in to. Undo keeps a file you already had when ignore rules outside the session's folder changed.
 - A session with a coding agent that can't write titles (Antigravity) gets one from your default model, instead of the start of your first message, when that model can write one.
 - A session an agent starts on its own asks first when the agent's session does, and its answer is found reliably also on a machine whose clock differs.
 - Discard leaves a submodule's folder alone again; Merge and Pull Request count the new files the Changes panel lists; and This Session shows a file the agent wrote and then edited once.
