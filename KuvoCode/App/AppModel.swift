@@ -261,6 +261,7 @@ final class AppModel {
             workspace.botSessions = bots.sessionIDs
             // Bots' keys of their own, in their folders' settings as integrations are now.
             Task { await BotKeys.applyAll(on: nil, app: self) }
+            workspace.runsOnAgents(groups.agentSeatIDs)
             workspace.seats = groups.seatIDs
             usage.api = api
             engine = .ready

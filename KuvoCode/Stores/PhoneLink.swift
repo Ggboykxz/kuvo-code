@@ -433,6 +433,8 @@ final class PhoneLink {
                 struct Entry: Encodable {
                     var session: String, name: String, look: BotLook, machine: String?, job: String
                     var paused: Bool, wakes: Double?, watching: Int
+                    /// Its conversation is with the coding agents: read through `kuvo/agents/api/…`.
+                    var agents: Bool
                 }
                 var bots: [Entry]
             }
@@ -441,7 +443,8 @@ final class PhoneLink {
                     session: bot.sessionID, name: bot.name, look: bot.look, machine: bot.machine, job: bot.job,
                     paused: bots?.paused.contains(bot.id) == true,
                     wakes: bots?.wakes[bot.id]?.map(\.due).min()?.timeIntervalSince1970,
-                    watching: bots?.watches[bot.id]?.count ?? 0)
+                    watching: bots?.watches[bot.id]?.count ?? 0,
+                    agents: bot.agents == true)
             }
             return (200, (try? encoder.encode(Listed(bots: entries))) ?? Data())
         case "kuvo/hosts":
@@ -602,10 +605,12 @@ final class PhoneLink {
         var look: BotLook
         var session: String
         var directory: String
+        /// Its own conversation is with the coding agents.
+        var agents: Bool
     }
 
     private func members(of group: BotGroup) -> [GroupMember] {
-        group.members.compactMap { bots?.bot($0) }.map { GroupMember(id: $0.id, name: $0.name, look: $0.look, session: $0.sessionID, directory: $0.directory) }
+        group.members.compactMap { bots?.bot($0) }.map { GroupMember(id: $0.id, name: $0.name, look: $0.look, session: $0.sessionID, directory: $0.directory, agents: $0.agents == true) }
     }
 
     private static var groupEncoder: JSONEncoder {

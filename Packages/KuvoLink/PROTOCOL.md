@@ -220,7 +220,8 @@ itself. A host serves:
   and static keys, so pairing once with the Mac reaches them all.
 - On a Mac, `kuvo/bots`: your bots by their session, wherever they live, with their name,
   look and job, and what only the Mac knows: paused, the next wake-up, how many things each
-  watches.
+  watches, and `agents`: its conversation is with the coding agents, so it's read and written
+  through `kuvo/agents/api/…` (a group chat's members carry the same flag).
 - On a Mac, `kuvo/asks`: what agents ask you for while they browse, on the Mac or a machine: a
   sign-in (the fields the page has, and the accounts Passwords keeps for the site, never
   their passwords), a one-time code, or a step only you can do. `kuvo/asks/events` is the same

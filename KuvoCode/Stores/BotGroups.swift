@@ -17,6 +17,8 @@ struct BotGroup: Codable, Identifiable, Hashable {
     var seats: [String: String] = [:]
     /// The last message each member's seat has been given.
     var heard: [String: String] = [:]
+    /// Seats that run with the coding agents (their bot's model is one of theirs, or Auto).
+    var agentSeats: Set<String>?
     var created: Date
     /// When you last looked at it.
     var viewed: Date?
@@ -247,6 +249,20 @@ final class BotGroups {
 
     /// Every seat, so they stay out of the lists.
     var seatIDs: Set<String> { Set(list.flatMap(\.seats.values)) }
+    /// Those that run with the coding agents.
+    var agentSeatIDs: Set<String> { Set(list.flatMap { $0.agentSeats ?? [] }) }
+
+    /// What a bot's seat in a chat runs on: the coding agents' bridge for one on a model of theirs
+    /// (or Auto), else the bot's engine. One not made yet: where its model puts it.
+    private func seatAPI(of bot: Bot, in group: BotGroup?) -> OpenCodeAPI? {
+        guard let app else { return nil }
+        let onAgents = if let seat = group?.seats[bot.id] {
+            group?.agentSeats?.contains(seat) == true
+        } else {
+            bot.machine == nil && OutsideAgents.runsInBridge((bot.model ?? app.workspace.session(bot.sessionID)?.model)?.providerID)
+        }
+        return onAgents ? app.workspace.agents?.api : app.workspace.api(forFolder: bot.directory)
+    }
 
     /// The chat a seat is in.
     func group(seat: String) -> BotGroup? {
@@ -355,9 +371,21 @@ final class BotGroups {
 
     /// A bot's new default model, for its seats.
     func modelChanged(of bot: Bot) async {
-        guard let model = bot.model, let api = app?.workspace.api(forFolder: bot.directory) else { return }
+        guard let model = bot.model else { return }
+        let onAgents = bot.machine == nil && OutsideAgents.runsInBridge(model.providerID)
         for group in list {
-            if let seat = group.seats[bot.id] { try? await api.selectModel(session: seat, model: model) }
+            guard let seat = group.seats[bot.id] else { continue }
+            // One that runs elsewhere than the new model can (the engine, the agents): a new seat
+            // at its next turn, which hears the whole chat.
+            if group.agentSeats?.contains(seat) == true || !onAgents {
+                if let api = seatAPI(of: bot, in: group) { try? await api.selectModel(session: seat, model: model) }
+            } else {
+                await deleteSeat(seat, of: bot.id, in: group)
+                guard let index = list.firstIndex(where: { $0.id == group.id }) else { continue }
+                list[index].seats[bot.id] = nil
+                list[index].heard[bot.id] = nil
+                save()
+            }
         }
     }
 
@@ -494,7 +522,8 @@ final class BotGroups {
         // The bot talking, or the lead handing out the work.
         for speaker in [speaking.removeValue(forKey: id), splitting.removeValue(forKey: id)].compactMap({ $0 }) {
             guard let bot = app?.bots.bot(speaker), let seat = group(id)?.seats[speaker] else { continue }
-            Task { try? await app?.workspace.api(forFolder: bot.directory)?.interrupt(session: seat) }
+            let api = seatAPI(of: bot, in: group(id))
+            Task { try? await api?.interrupt(session: seat) }
         }
         discussing.remove(id)
     }
@@ -641,8 +670,8 @@ final class BotGroups {
             note("\(bot.name) is on \(machine), which isn’t connected, so it sat this out.", in: id)
             return .absent
         }
-        guard let api = app.workspace.api(forFolder: bot.directory) else {
-            note("\(bot.name) couldn’t answer: the engine isn’t running.", in: id)
+        guard let api = seatAPI(of: bot, in: group(id)) else {
+            note("\(bot.name) couldn’t answer: \(app.workspace.agents?.api == nil && bot.machine == nil && OutsideAgents.runsInBridge(bot.model?.providerID) ? "the coding agents aren’t running" : "the engine isn’t running").", in: id)
             return .absent
         }
         do {
@@ -688,7 +717,7 @@ final class BotGroups {
     private func steer(_ botID: String, in id: String, with message: GroupMessage) async {
         // Only into a run: one that hasn't started yet gets it with the rest at its turn.
         guard let bot = app?.bots.bot(botID), let seat = group(id)?.seats[botID], app?.workspace.running.contains(seat) == true,
-              let api = app?.workspace.api(forFolder: bot.directory) else { return }
+              let api = seatAPI(of: bot, in: group(id)) else { return }
         if (try? await api.prompt(session: seat, id: Identifier.message(), text: "The user, just now: \(message.text)", delivery: .steer)) != nil {
             setHeard(message.id, by: botID, in: id)
         }
@@ -841,8 +870,8 @@ final class BotGroups {
     /// under the wrap-up; if you'd already said to go ahead, each bot starts on its part at once,
     /// in its own conversation, otherwise once you click Start the Work.
     private func splitWork(of wrapUpID: String, in id: String, lead: String) async {
-        guard let app, let bot = app.bots.bot(lead), let api = app.workspace.api(forFolder: bot.directory),
-              let group = group(id), let seat = group.seats[lead] else { return }
+        guard let app, let bot = app.bots.bot(lead), let group = group(id), let seat = group.seats[lead],
+              let api = seatAPI(of: bot, in: group) else { return }
         let members = group.members.compactMap { app.bots.bot($0) }
         // Yours since the wrap-up before this one: the discussion it sums up.
         let all = messages(in: id)
@@ -988,7 +1017,7 @@ final class BotGroups {
         if let machine = bot.machine, app.machines.engine(machine)?.isReady != true {
             return fail(taskID, of: wrapUpID, in: id, "\(bot.name) is on \(machine), which isn’t connected")
         }
-        guard let api = app.workspace.api(forFolder: bot.directory) else { return fail(taskID, of: wrapUpID, in: id, "the engine isn’t running") }
+        guard let api = app.bots.api(for: bot) else { return fail(taskID, of: wrapUpID, in: id, bot.agents == true ? "the coding agents aren’t running" : "the engine isn’t running") }
         // What the parts before it reported.
         let all = messages(in: id)
         let before = (wrapUp.tasks ?? []).filter { (task.after ?? []).contains($0.bot) }.compactMap { first -> (name: String, report: String)? in
@@ -1031,7 +1060,7 @@ final class BotGroups {
                   task.state == .working else { return }
             guard let bot = app.bots.bot(task.bot), let promptID = task.prompt else { return fail(taskID, of: wrapUpID, in: id, "the bot is gone") }
             // A machine that's away, or a run under way: later.
-            guard let api = app.workspace.api(forFolder: bot.directory), !app.workspace.running.contains(bot.sessionID) else { continue }
+            guard let api = app.bots.api(for: bot), !app.workspace.running.contains(bot.sessionID) else { continue }
             // The queue first, then the conversation: a message delivered between the two reads is
             // in the second.
             guard let queued = try? await api.inbox(session: bot.sessionID) else { continue }
@@ -1160,7 +1189,11 @@ final class BotGroups {
         }
         guard let group = group(id), let app else { throw CancellationError() }
         let model = bot.model ?? app.workspace.session(bot.sessionID)?.model
-        let session = try await api.createSession(directory: bot.directory, title: "\(bot.name) in \(group.name)", model: model, permissions: Self.seatRules(for: bot))
+        let onAgents = bot.machine == nil && OutsideAgents.runsInBridge(model?.providerID)
+        // (Cursor can't stop to ask, so its rules can't hold it back: it plans instead of changing anything.)
+        let agent = onAgents && OutsideAgents.base(model?.providerID ?? "") == "cursor" ? "plan" : nil
+        let session = try await api.createSession(directory: bot.directory, title: "\(bot.name) in \(group.name)", agent: agent, model: model, permissions: Self.seatRules(for: bot))
+        if onAgents { app.workspace.runsOnAgents([session.id]) }
         app.workspace.seats.insert(session.id)
         try? await api.setMetadata(session: session.id, .object(["kuvo": .object(["seat": .object(["group": .string(id), "bot": .string(bot.id)])])]))
         try await api.setInstruction(session: session.id, key: Self.seatKey, text: seatInstructions(for: bot, in: group))
@@ -1170,6 +1203,7 @@ final class BotGroups {
             throw CancellationError()
         }
         list[index].seats[bot.id] = session.id
+        if onAgents { list[index].agentSeats = (list[index].agentSeats ?? []).union([session.id]) }
         save()
         return session.id
     }
@@ -1230,15 +1264,20 @@ final class BotGroups {
     /// Tells every seat in the chat who's there now.
     private func refreshSeats(of group: BotGroup) async {
         for (botID, seat) in group.seats {
-            guard let bot = app?.bots.bot(botID), let api = app?.workspace.api(forFolder: bot.directory) else { continue }
+            guard let bot = app?.bots.bot(botID), let api = seatAPI(of: bot, in: group) else { continue }
             try? await api.setInstruction(session: seat, key: Self.seatKey, text: seatInstructions(for: bot, in: group))
         }
     }
 
-    private func deleteSeat(_ seat: String, of botID: String) async {
+    private func deleteSeat(_ seat: String, of botID: String, in group: BotGroup? = nil) async {
         app?.workspace.seats.remove(seat)
         guard let bot = app?.bots.bot(botID) else { return }
-        try? await app?.workspace.api(forFolder: bot.directory)?.deleteSession(seat)
+        let group = group ?? list.first { $0.seats[botID] == seat }
+        try? await seatAPI(of: bot, in: group)?.deleteSession(seat)
+        if let index = list.firstIndex(where: { $0.agentSeats?.contains(seat) == true }) {
+            list[index].agentSeats?.remove(seat)
+            save()
+        }
     }
 
     // MARK: Remembering
@@ -1257,7 +1296,7 @@ final class BotGroups {
                 waitingMemory[botID] = nil
                 continue
             }
-            guard app?.workspace.api(forFolder: bot.directory) != nil else { continue }
+            guard app?.bots.api(for: bot) != nil else { continue }
             waitingMemory[botID] = nil
             let folder = (bot.folder as NSString).appendingPathComponent("groups")
             for chat in Set(gone) { await removeFile((folder as NSString).appendingPathComponent("\(chat).md"), of: bot) }
@@ -1270,7 +1309,7 @@ final class BotGroups {
     /// `changed` is the one chat whose file needs writing again; nil writes them all.
     private func remember(_ botID: String, changed: String? = nil, forgetting gone: String? = nil) async {
         guard !leaving.contains(botID), let app, let bot = app.bots.bot(botID) else { return }
-        guard let api = app.workspace.api(forFolder: bot.directory) else {
+        guard let api = app.bots.api(for: bot) else {
             // Its machine is away: all of it once it's back (`catchUp`), and the file of a chat
             // it left or that was deleted taken away then.
             var waiting = waitingMemory

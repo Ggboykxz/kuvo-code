@@ -154,6 +154,11 @@ final class AgentMail {
 
     /// The tools' calls from this Mac's conversations.
     func call(_ name: String, arguments: [String: Any], caller: String?) async -> (text: String, isError: Bool) {
+        // A bot's seat in a group chat only talks, whatever agent it runs on: the work happens in
+        // each bot's own conversation, handed out after the wrap-up.
+        if let caller, app?.workspace.seats.contains(caller) == true {
+            return ("Not from a group chat: talk it through here; the work is handed out after the wrap-up.", true)
+        }
         switch name {
         case "list_agents":
             return (Self.describe(directory(), caller: caller, here: nil), false)
