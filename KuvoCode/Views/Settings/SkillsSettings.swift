@@ -35,9 +35,11 @@ struct SkillsSettings: View {
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 6) {
                                 Text(skill.name)
-                                Text(source(of: skill))
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
+                                if let source = source(of: skill) {
+                                    Text(source)
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                             if let description = skill.description {
                                 Text(description)
@@ -60,6 +62,8 @@ struct SkillsSettings: View {
                             .toggleStyle(.switch)
                             .controlSize(.small)
                     }
+                    // Where it is, for one found in a folder of its own.
+                    .help(place(of: skill) ?? "")
                 }
                 Button("New Skill…") { writing = SkillDraft(name: nil) }
             } header: {
@@ -152,11 +156,19 @@ struct SkillsSettings: View {
         installed[skill.id] == nil && skill.path?.hasPrefix(folder.path + "/") == true
     }
 
-    private func source(of skill: Skill) -> String {
+    /// Where a skill comes from, when that's short to say: built in, added here, or the GitHub
+    /// repository it came from. One found in a folder (~/.claude/skills) goes without.
+    private func source(of skill: Skill) -> String? {
         if let source = installed[skill.id] { return source.repository }
-        guard let path = skill.path else { return "" }
+        guard let path = skill.path else { return nil }
         if path.hasPrefix("/builtin/") { return "Built in" }
         if path.hasPrefix(folder.path + "/") { return "Added here" }
+        return nil
+    }
+
+    /// The folder a skill found elsewhere is in, for its row's tip.
+    private func place(of skill: Skill) -> String? {
+        guard source(of: skill) == nil, let path = skill.path else { return nil }
         return (path as NSString).abbreviatingWithTildeInPath
             .components(separatedBy: "/").dropLast(2).joined(separator: "/")
     }
