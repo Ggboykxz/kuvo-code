@@ -817,6 +817,19 @@ function Sidebar() {
   const visible = state.sessions
     .filter(session => !archived(session))
     .filter(s => (query ? (s.title || "").toLowerCase().includes(query) : true));
+  // A session being renamed, in its row where Rename was chosen (SidebarView.swift:41-52),
+  // and the row's own menu, which is where the Mac offers it (SidebarView.swift:586).
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const commitRename = async (id: string, title: string) => {
+    setRenaming(null);
+    const name = title.trim();
+    if (!name || name === (state.sessions.find(session => session.id === id)?.title ?? "")) return;
+    try {
+      await api(`/api/sessions/${encodeURIComponent(id)}/rename`, { method: "POST", body: { title: name } });
+      await loadSessions();
+    } catch (error) { complain(error); }
+  };
   return (
     <aside>
       <button id="new-session" className="sidebar-new" onClick={() => void newSession()}>
@@ -846,11 +859,33 @@ function Sidebar() {
           const running = state.session?.id === session.id && state.transcript?.running;
           const unread = Boolean(session.time?.idle && session.time?.viewed && session.time.idle > session.time.viewed && session.id !== state.session?.id);
           return (
-            <li key={session.id} className={`${session.id === state.session?.id ? "current" : ""} ${unread ? "unread" : ""}`}>
+            <li
+              key={session.id}
+              className={`${session.id === state.session?.id ? "current" : ""} ${unread ? "unread" : ""}`}
+              onContextMenu={event => {
+                event.preventDefault();
+                setMenu({ id: session.id, x: event.clientX, y: event.clientY });
+              }}
+            >
+              {renaming === session.id ? (
+                <input
+                  className="session-rename"
+                  defaultValue={session.title || ""}
+                  autoFocus
+                  aria-label="Rename this session"
+                  onFocus={event => event.currentTarget.select()}
+                  onKeyDown={event => {
+                    if (event.key === "Enter") { event.preventDefault(); void commitRename(session.id, event.currentTarget.value); }
+                    if (event.key === "Escape") { event.preventDefault(); setRenaming(null); }
+                  }}
+                  onBlur={event => { void commitRename(session.id, event.currentTarget.value); }}
+                />
+              ) : (
               <button className="session" data-id={session.id} onClick={() => { state.settingsOpen = false; void openSession(session.id); }}>
                 <span className="session-title">{session.title || "New Session"}</span>
                 {running || unread ? <span className={`session-state ${running ? "running" : "unread"}`} aria-hidden="true" /> : null}
               </button>
+              )}
               <button
                 className="session-delete"
                 title="Put this session away (Settings › Archived sessions brings it back)"
@@ -874,7 +909,49 @@ function Sidebar() {
       <MessageSearch query={state.sessionQuery} />
       </div>
       <div id="sessions-empty" className="aside-empty" hidden={state.sessions.length > 0 || query.length > 0}>No sessions yet.</div>
+      {menu ? (
+        <div
+          className="context-menu"
+          style={{ left: menu.x, top: menu.y }}
+          role="menu"
+          onMouseLeave={() => setMenu(null)}
+        >
+          <button role="menuitem" onClick={() => { setRenaming(menu.id); setMenu(null); }}>Rename…</button>
+          <button role="menuitem" onClick={() => { setMenu(null); void deleteSession(state.sessions.find(session => session.id === menu.id)!); }}>Delete</button>
+        </div>
+      ) : null}
     </aside>
+  );
+}
+
+/// The handle in the gap between the sessions and the conversation, the Mac's
+/// (WindowGlass.swift:43-81): the gap is the handle, a faint capsule shows while it is
+/// held, and the cursor says what it does.
+function PaneResizer() {
+  const [dragging, setDragging] = useState(false);
+  const start = useRef({ x: 0, width: 0 });
+  return (
+    <div
+      className={`pane-resizer ${dragging ? "dragging" : ""}`}
+      title="Drag to resize"
+      onPointerDown={event => {
+        event.preventDefault();
+        setDragging(true);
+        const width = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--sessions-width")) || 280;
+        start.current = { x: event.clientX, width };
+        const move = (moveEvent: PointerEvent) => {
+          const next = Math.min(Math.max(start.current.width + (moveEvent.clientX - start.current.x), 220), 440);
+          document.documentElement.style.setProperty("--sessions-width", `${next}px`);
+        };
+        const up = () => {
+          setDragging(false);
+          window.removeEventListener("pointermove", move);
+          window.removeEventListener("pointerup", up);
+        };
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", up);
+      }}
+    />
   );
 }
 
@@ -920,6 +997,8 @@ function Composer() {
   const [files, setFiles] = useState<Attachment[]>([]);
   const [mentions, setMentions] = useState<Mention[]>([]);
   const [queueOpen, setQueueOpen] = useState(false);
+  // Where you are in the messages you have already sent (null: writing a new one).
+  const [historyAt, setHistoryAt] = useState<number | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const allFiles = useRef<{ path: string; name: string; relative: string }[]>([]);
@@ -1117,6 +1196,7 @@ function Composer() {
         onChange={event => {
           const box = event.currentTarget;
           setText(box.value);
+          setHistoryAt(null);
           setMentionIndex(0);
           void complete(box.value, box.selectionStart ?? box.value.length);
         }}
@@ -1125,6 +1205,30 @@ function Composer() {
           void complete(box.value, box.selectionStart ?? box.value.length);
         }}
         onKeyDown={event => {
+          // The composer's history: up and down walk what you have already sent, as in a
+          // shell (Composer.swift:22-24) — with the composer empty, and with no mention
+          // list open.
+          if (!mentions.length && !text && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+            const sent = (state.transcript?.entries ?? [])
+              .filter(entry => entry.kind === "user")
+              .map(entry => entry.text ?? "")
+              .filter(Boolean);
+            if (!sent.length) return;
+            event.preventDefault();
+            const at = historyAt;
+            const next = event.key === "ArrowUp"
+              ? (at === null ? sent.length - 1 : Math.max(0, at - 1))
+              : (at === null ? null : at + 1 >= sent.length ? null : at + 1);
+            setHistoryAt(next);
+            const value = next === null ? "" : sent[next];
+            setText(value);
+            requestAnimationFrame(() => {
+              const box = promptRef.current;
+              if (!box) return;
+              box.setSelectionRange(value.length, value.length);
+            });
+            return;
+          }
           if (mentions.length && ["ArrowDown", "ArrowUp", "Enter", "Escape"].includes(event.key)) {
             // A key the page has already handled (the palette's own Escape) stops here.
       if (event.defaultPrevented) return;
@@ -1475,6 +1579,7 @@ export function App() {
       <Header />
       <main className={state.sidebarOpen === false ? "sidebar-hidden" : ""}>
         <Sidebar />
+        <PaneResizer />
         <section id="conversation" className="card conversation-card">
           <div className="card-fade" aria-hidden="true" />
           <CardHeader />

@@ -1785,6 +1785,7 @@ main {
   gap: var(--pane-gap);
   padding: 0 var(--pane-gap) var(--pane-gap);
   min-height: 0;
+  position: relative;
 }
 main.sidebar-hidden { gap: 0; }
 
@@ -3014,3 +3015,68 @@ button > svg, .small > svg, .session-delete > svg, .keycap-clear > svg { display
 .file-row.dir { color: var(--ink-soft); }
 .file-row svg { flex: 0 0 auto; color: var(--ink-soft); }
 .file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The row's own menu (SidebarView.swift:586-590), and the name being typed in the row
+   where Rename was chosen (InlineTitleField.swift:4-55). */
+.context-menu {
+  position: fixed;
+  z-index: 80;
+  min-width: 160px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow-lifted);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.context-menu button {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--text-sm);
+  text-align: left;
+  padding: 5px 8px;
+}
+.context-menu button:hover { background: var(--hover); }
+.session-rename {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 13px;
+}
+
+/* The handle in the gap between the sessions and the conversation (WindowGlass.swift:43-81):
+   the gap is the handle, a 3 pt capsule shows at half strength while it is held, and the
+   cursor says what it does. */
+/* The window's row holds the handle (WindowGlass.swift:43-81). */
+.pane-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--sessions-width) - 4px);
+  width: 8px;
+  z-index: 5;
+  cursor: col-resize;
+}
+.pane-resizer::after {
+  content: "";
+  position: absolute;
+  left: 2.5px;
+  top: 40px;
+  bottom: 40px;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity var(--motion-hover) var(--ease-hover);
+}
+.pane-resizer:hover::after,
+.pane-resizer.dragging::after { opacity: 0.5; }

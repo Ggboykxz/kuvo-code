@@ -462,6 +462,29 @@ const checks = [
     assert.match(css, /\.file-tree \{ display: flex; flex-direction: column;/);
   }],
 
+  ["the gestures: a name typed in its row, a handle in the gap, a shell's history", ({ app, css, rule }) => {
+    // The inline rename (InlineTitleField.swift:4-55): the name is selected, Return
+    // commits, Escape cancels, and clicking away keeps it.
+    assert.match(app, /className="session-rename"/);
+    assert.match(app, /onFocus=\{event => event\.currentTarget\.select\(\)\}/);
+    assert.match(app, /event\.key === "Enter"[\s\S]{0,120}commitRename/);
+    assert.match(app, /event\.key === "Escape"[\s\S]{0,80}setRenaming\(null\)/);
+    // The menu it is reached from (SidebarView.swift:586-590).
+    assert.match(app, /onContextMenu=\{event => \{/);
+    assert.match(app, />Rename…</);
+    // The handle in the gap (WindowGlass.swift:43-81): the gap is the handle, the capsule
+    // is 3 pt and shows at half strength, and the cursor says what it does.
+    assert.match(app, /function PaneResizer\(/);
+    assert.match(rule(".pane-resizer {"), /cursor: col-resize/);
+    assert.match(rule(".pane-resizer::after {"), /width: 3px/);
+    assert.match(rule(".pane-resizer::after {"), /top: 40px;[\s\S]*bottom: 40px/);
+    assert.match(css, /\.pane-resizer:hover::after,\n\.pane-resizer\.dragging::after \{ opacity: 0\.5; \}/);
+    // And the composer's history: up and down walk what you have sent, as in a shell
+    // (Composer.swift:22-24).
+    assert.match(app, /The composer's history/);
+    assert.match(app, /event\.key === "ArrowUp" \|\| event\.key === "ArrowDown"/);
+  }],
+
   ["the window is built by Next.js, and exported as the static files the harness serves", ({ next, page, build }) => {
     // The app talks to the engine over the harness's API: there is no server to render
     // it, so the export is the whole app.
