@@ -19,6 +19,9 @@ public actor LinkServer {
     /// Opens a socket (PROTOCOL.md, "Sockets"): what the phone sends arrives on the input; what
     /// comes back goes to the phone, `.open` first.
     public typealias Connect = @Sendable (LinkRequest, Phone, AsyncStream<Data>) -> AsyncThrowingStream<LinkSocketEvent, Error>
+    /// A phone's session proved its own: its first message opened with the keys of the handshake,
+    /// which a replayed first handshake message can't do. Where it is now (for its notifications).
+    public typealias Confirmed = @Sendable (Phone) -> Void
 
     let key: LinkKey
     let hello: HostHello
@@ -26,6 +29,7 @@ public actor LinkServer {
     let handle: Handle
     let connect: Connect?
     let pushed: Pushed?
+    let confirmed: Confirmed?
     private var relay: (any RelayTransport)?
     private var sessions: [SessionKey: Session] = [:]
 
@@ -42,6 +46,8 @@ public actor LinkServer {
         var running: [Int: Task<Void, Never>] = [:]
         /// Open sockets' input, by request.
         var sockets: [Int: AsyncStream<Data>.Continuation] = [:]
+        /// Its first message came, opened: it's the phone's own (see `Confirmed`).
+        var isConfirmed = false
 
         init(key: SessionKey, phone: Phone, transport: Transport) {
             self.key = key
@@ -50,13 +56,14 @@ public actor LinkServer {
         }
     }
 
-    public init(key: LinkKey, hello: HostHello, authorize: @escaping Authorize, handle: @escaping Handle, connect: Connect? = nil, pushed: Pushed? = nil) {
+    public init(key: LinkKey, hello: HostHello, authorize: @escaping Authorize, handle: @escaping Handle, connect: Connect? = nil, pushed: Pushed? = nil, confirmed: Confirmed? = nil) {
         self.key = key
         self.hello = hello
         self.authorize = authorize
         self.handle = handle
         self.connect = connect
         self.pushed = pushed
+        self.confirmed = confirmed
     }
 
     /// Serves over `relay` until it closes. Sessions on an earlier connection end.
@@ -112,6 +119,10 @@ public actor LinkServer {
             guard let session = sessions[key] else { return send(.close, key: key) }
             guard let plaintext = try? session.transport.open(frame.body), let message = try? LinkMessage(plaintext) else {
                 return end(session, notify: true)
+            }
+            if !session.isConfirmed {
+                session.isConfirmed = true
+                confirmed?(session.phone)
             }
             receive(message, in: session)
         case .close:

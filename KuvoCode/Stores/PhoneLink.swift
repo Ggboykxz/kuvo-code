@@ -333,21 +333,27 @@ final class PhoneLink {
             case .notAllowed: log.info("A push wasn't from one of the phone's hosts")
             case .refused: log.error("Apple refused a push")
             }
+        } confirmed: { [weak self] phone in
+            Task { @MainActor in self?.confirmed(phone) }
         }
+    }
+
+    /// A phone's session proved its own: its notifications go where it is now, for machines'
+    /// bridges too.
+    private func confirmed(_ phone: LinkServer.Phone) {
+        let encoded = phone.key.base64URL
+        guard let index = phones.firstIndex(where: { $0.key == encoded }), phones[index].address != phone.address.text else { return }
+        phones[index].address = phone.address.text
+        save()
+        syncMachines()
     }
 
     /// Lets in a phone you've paired, or one showing the pairing link's token (once, in time).
     private func authorize(_ key: Data, _ address: LinkAddress, _ hello: PhoneHello) -> Bool {
         let encoded = key.base64URL
-        if let index = phones.firstIndex(where: { $0.key == encoded }) {
-            // Where its notifications go, for machines' bridges too.
-            if phones[index].address != address.text {
-                phones[index].address = address.text
-                save()
-                syncMachines()
-            }
-            return true
-        }
+        // Where a paired one's notifications go changes once its session proves its own (see
+        // `confirmed`): the first handshake message can be replayed from another address.
+        if phones.contains(where: { $0.key == encoded }) { return true }
         guard let pairing, ContinuousClock.now < pairingEnds, let token = hello.pair.flatMap({ Data(base64URL: $0) }),
               token.count == pairing.token.count, zip(token, pairing.token).reduce(0, { $0 | ($1.0 ^ $1.1) }) == 0
         else { return false }
