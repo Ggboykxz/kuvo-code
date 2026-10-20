@@ -55,6 +55,8 @@ struct ConnectView: View {
     @State private var progress: String?
     /// The page was closed: a sign-in still starting then is called off, not opened.
     @State private var left = false
+    /// For one on a machine: the port its page comes back to, forwarded there meanwhile.
+    @State private var forward = SignInForward()
 
     struct Highlight: Hashable {
         let symbol: String
@@ -103,6 +105,7 @@ struct ConnectView: View {
         .onDisappear {
             left = true
             cancelAttempt()
+            forward.stop()
         }
     }
 
@@ -590,6 +593,7 @@ struct ConnectView: View {
     }
 
     private func finish(method: String) {
+        forward.stop()
         Analytics.shared.track("account_connected", ["provider": Analytics.provider(integrationID), "method": method])
         Analytics.shared.accountConnected()
         pollTask?.cancel()
@@ -625,6 +629,8 @@ struct ConnectView: View {
     /// metadata could name a file or another app).
     private func open(_ url: String) {
         guard !url.isEmpty, let url = URL(string: url), ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return }
+        // An agent on a machine: the page comes back to it there.
+        if let machine = catalog.machine { forward.start(for: url, on: machine) }
         NSWorkspace.shared.open(url)
     }
 

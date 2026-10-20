@@ -21,6 +21,9 @@ final class Catalog {
     /// The outside agents' bridge (Claude Code, Codex…), on this Mac's catalog: their accounts and
     /// models join the engine's.
     @ObservationIgnored var outsideAgents: OutsideAgents?
+    /// The machine whose engine this is (nil: this Mac's): sign-ins to its agents finish in this
+    /// Mac's browser.
+    @ObservationIgnored var machine: String?
 
     /// The engine's integrations, and the outside agents' after them.
     private(set) var integrations: [Integration] = []

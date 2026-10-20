@@ -58,6 +58,7 @@ final class MachineEngine {
         browser = MachineBrowser(machine: machine)
         agents = OutsideAgents(machine: machine.id)
         catalog.outsideAgents = agents
+        catalog.machine = machine.id
     }
 
     var isReady: Bool { state == .ready }
@@ -626,6 +627,50 @@ final class Machines {
     private static func load() -> [Machine] {
         guard let data = UserDefaults.standard.data(forKey: key) else { return [] }
         return (try? JSONDecoder().decode([Machine].self, from: data)) ?? []
+    }
+}
+
+/// A sign-in to an agent on a machine whose page sends your browser back to `localhost` there
+/// (Claude Code's, Codex's, Grok's): that port, forwarded from this Mac to the machine over SSH
+/// while the sign-in runs (a quarter of an hour at most), so the page reaches the agent there.
+@MainActor final class SignInForward {
+    private var process: Process?
+    private var timeout: Task<Void, Never>?
+
+    /// Forwards the port that `url`'s `redirect_uri` names on localhost, if it names one.
+    func start(for url: URL, on machine: String) {
+        guard let port = Self.callbackPort(in: url) else { return }
+        stop()
+        let process = Process()
+        process.executableURL = URL(filePath: "/usr/bin/ssh")
+        // (Not the shared connection: this one's forward ends with it.)
+        process.arguments = Machine(destination: machine).connection.arguments(
+            running: "sleep 900", extra: ["-o", "ExitOnForwardFailure=yes", "-L", "\(port):localhost:\(port)"], shared: false)
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return }
+        self.process = process
+        timeout = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(900))
+            if !Task.isCancelled { self?.stop() }
+        }
+    }
+
+    func stop() {
+        timeout?.cancel()
+        timeout = nil
+        if process?.isRunning == true { process?.terminate() }
+        process = nil
+    }
+
+    /// The port a sign-in page sends your browser back to on `localhost`, if it does.
+    nonisolated static func callbackPort(in url: URL) -> Int? {
+        guard let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+              let redirect = items.first(where: { $0.name == "redirect_uri" })?.value,
+              let target = URL(string: redirect), ["localhost", "127.0.0.1"].contains(target.host ?? ""),
+              let port = target.port, port > 1024 else { return nil }
+        return port
     }
 }
 

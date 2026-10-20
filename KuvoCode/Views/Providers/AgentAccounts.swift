@@ -12,8 +12,13 @@ import SwiftUI
 struct SubscriptionsSection: View {
     /// Opens a sign-in, in the page's place.
     let connect: (Integration) -> Void
+    /// The plans the engine signs in to too (this Mac's Accounts), not only the coding agents.
+    var showsPlans = true
     @Environment(Catalog.self) private var catalog
     @Environment(AppModel.self) private var app
+    /// The agents shown: this Mac's, or a machine's (`agentsBridge`).
+    @Environment(\.agentsBridge) private var bridge
+    private var agents: OutsideAgents { bridge ?? app.agents }
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
@@ -23,9 +28,9 @@ struct SubscriptionsSection: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Subscriptions")
+                    Text(showsPlans ? "Subscriptions" : "Coding Agents")
                         .font(.headline)
-                    Text("Sign in with a plan or account you already have.")
+                    Text(showsPlans ? "Sign in with a plan or account you already have." : "Sign in to each on this machine, with a plan or account you already have. It finishes in your browser here.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -43,11 +48,11 @@ struct SubscriptionsSection: View {
                     }
                 }
                 .buttonStyle(IconButtonStyle(width: 28, height: 26))
-                .disabled(catalog.isRefreshingAgents || app.agents.api == nil)
+                .disabled(catalog.isRefreshingAgents || agents.api == nil)
                 .accessibilityLabel("Refresh")
                 .help("Check again which agents are installed and signed in")
             }
-            if let failure = app.agents.failure, catalog.codingAgents.isEmpty {
+            if let failure = agents.failure, catalog.codingAgents.isEmpty {
                 ErrorCard(message: "The coding agents couldn't start. \(failure)")
             } else if catalog.codingAgents.isEmpty {
                 HStack(spacing: 8) {
@@ -78,7 +83,7 @@ struct SubscriptionsSection: View {
                 .padding(.top, used.isEmpty ? 0 : 4)
             }
         }
-        .task(id: app.agents.api != nil) { await catalog.refreshAgents(fresh: true) }
+        .task(id: agents.api != nil) { await catalog.refreshAgents(fresh: true) }
     }
 
     /// In a fixed order: the coding agents, then the plans.
@@ -90,7 +95,7 @@ struct SubscriptionsSection: View {
             let added = accounts.filter { OutsideAgents.account($0.id) != nil }
             all.append(Product(kind: .agent(own: own, added: added)))
         }
-        for id in Catalog.planProviders {
+        for id in Catalog.planProviders where showsPlans {
             guard let plan = catalog.providers.first(where: { $0.id == id }) else { continue }
             all.append(Product(kind: .plan(plan)))
         }
@@ -169,6 +174,9 @@ private struct ProductBlock: View {
     let product: Product
     let connect: (Integration) -> Void
     @Environment(AppModel.self) private var app
+    /// The agents shown: this Mac's, or a machine's (`agentsBridge`).
+    @Environment(\.agentsBridge) private var bridge
+    private var agents: OutsideAgents { bridge ?? app.agents }
     @Environment(Catalog.self) private var catalog
     @State private var copied = false
     /// Naming an account you're adding (an agent's: each gets a folder and a name of its own).
@@ -185,8 +193,8 @@ private struct ProductBlock: View {
     private var latest: String? { main.metadata?["outdated"]?.bool == true ? main.metadata?["latestVersion"]?.string : nil }
     private var updates: Bool { main.metadata?["updates"]?.bool == true }
     private var updateCommand: String? { main.metadata?["updateCommand"]?.string }
-    private var isUpdating: Bool { app.agents.updating.contains(main.id) }
-    private var updateFailure: String? { app.agents.updateFailures[main.id] }
+    private var isUpdating: Bool { agents.updating.contains(main.id) }
+    private var updateFailure: String? { agents.updateFailures[main.id] }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -229,7 +237,7 @@ private struct ProductBlock: View {
         } message: {
             Text(failure ?? "")
         }
-        .alert("Couldn't Update \(title)", isPresented: Binding(get: { updateFailure != nil }, set: { if !$0 { app.agents.updateFailures[main.id] = nil } })) {
+        .alert("Couldn't Update \(title)", isPresented: Binding(get: { updateFailure != nil }, set: { if !$0 { agents.updateFailures[main.id] = nil } })) {
             if let updateCommand {
                 Button("Copy Command") { Clipboard.copy(updateCommand) }
             }
@@ -281,7 +289,7 @@ private struct ProductBlock: View {
                     .font(.callout)
             }
             .buttonStyle(TextButtonStyle())
-            .disabled(isAgent && app.agents.api == nil)
+            .disabled(isAgent && agents.api == nil)
             .help(isAgent ? "Another \(title) account, signed in on its own: each shows in the model picker" : "Another \(title) account: the engine uses one at a time")
         }
     }
@@ -302,7 +310,7 @@ private struct ProductBlock: View {
         let label = name.trimmingCharacters(in: .whitespacesAndNewlines)
         Task {
             do {
-                let providerID = try await app.agents.addAccount(agent: kind, label: label)
+                let providerID = try await agents.addAccount(agent: kind, label: label)
                 await catalog.refreshAgents(fresh: true)
                 if let added = catalog.codingAgents.first(where: { $0.id == providerID }) { connect(added) }
             } catch {
@@ -313,7 +321,7 @@ private struct ProductBlock: View {
 
     private func update() {
         let catalog = catalog
-        app.agents.update(main.id) { await catalog.refreshAgents(fresh: true) }
+        agents.update(main.id) { await catalog.refreshAgents(fresh: true) }
     }
 }
 
@@ -323,6 +331,9 @@ private struct SubscriptionTile: View {
     let product: Product
     let connect: (Integration) -> Void
     @Environment(AppModel.self) private var app
+    /// The agents shown: this Mac's, or a machine's (`agentsBridge`).
+    @Environment(\.agentsBridge) private var bridge
+    private var agents: OutsideAgents { bridge ?? app.agents }
     @Environment(\.colorScheme) private var scheme
     @State private var isHovering = false
     @State private var copied = false
@@ -383,7 +394,7 @@ private struct SubscriptionTile: View {
             }
             return
         }
-        if product.isAgent, app.agents.api == nil { return }
+        if product.isAgent, agents.api == nil { return }
         connect(product.main)
     }
 }
@@ -397,6 +408,9 @@ private struct AgentAccountRow: View {
     let account: Integration
     let connect: () -> Void
     @Environment(AppModel.self) private var app
+    /// The agents shown: this Mac's, or a machine's (`agentsBridge`).
+    @Environment(\.agentsBridge) private var bridge
+    private var agents: OutsideAgents { bridge ?? app.agents }
     @Environment(Catalog.self) private var catalog
     @State private var renaming = false
     @State private var name = ""
@@ -423,7 +437,7 @@ private struct AgentAccountRow: View {
     }
 
     /// Custom Auto holds it back at its usage limit.
-    private var limit: Date? { account.isConnected ? app.agents.auto.limit(for: account.id) : nil }
+    private var limit: Date? { account.isConnected ? agents.auto.limit(for: account.id) : nil }
 
     var body: some View {
         AccountLine(label: label, who: account.isConnected ? (who ?? "Signed in") : nil,
@@ -471,7 +485,7 @@ private struct AgentAccountRow: View {
         let label = name.trimmingCharacters(in: .whitespacesAndNewlines)
         Task {
             do {
-                try await app.agents.renameAccount(account.id, label: label)
+                try await agents.renameAccount(account.id, label: label)
                 await catalog.refreshAgents()
             } catch {
                 failure = error.localizedDescription
@@ -482,7 +496,7 @@ private struct AgentAccountRow: View {
     private func remove() {
         Task {
             do {
-                try await app.agents.removeAccount(account.id)
+                try await agents.removeAccount(account.id)
                 await catalog.refreshAgents()
             } catch {
                 failure = error.localizedDescription
@@ -492,7 +506,7 @@ private struct AgentAccountRow: View {
 
     private func signOut() {
         Task {
-            try? await app.agents.signOut(account.id)
+            try? await agents.signOut(account.id)
             await catalog.refreshAgents()
         }
     }
@@ -506,6 +520,9 @@ private struct PlanAccountRow: View {
     let isOnly: Bool
     let connect: () -> Void
     @Environment(AppModel.self) private var app
+    /// The agents shown: this Mac's, or a machine's (`agentsBridge`).
+    @Environment(\.agentsBridge) private var bridge
+    private var agents: OutsideAgents { bridge ?? app.agents }
 
     private var needsSignIn: Bool { connection.status?.status == "needs_auth" }
 
@@ -515,7 +532,7 @@ private struct PlanAccountRow: View {
     }
 
     /// The one in use, held back by Custom Auto at its usage limit.
-    private var limit: Date? { isInUse && !needsSignIn ? app.agents.auto.limit(for: plan.id) : nil }
+    private var limit: Date? { isInUse && !needsSignIn ? agents.auto.limit(for: plan.id) : nil }
 
     var body: some View {
         AccountLine(label: nil, who: needsSignIn ? nil : who, note: nil,
@@ -623,4 +640,9 @@ private struct AccountLine<Menu: View>: View {
         .contextMenu(menuItems: menu)
         .animation(.easeOut(duration: 0.12), value: isHovering)
     }
+}
+
+extension EnvironmentValues {
+    /// The coding agents Accounts shows and signs in to: this Mac's (nil), or a machine's.
+    @Entry var agentsBridge: OutsideAgents? = nil
 }

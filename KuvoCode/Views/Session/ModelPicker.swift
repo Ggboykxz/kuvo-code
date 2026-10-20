@@ -216,7 +216,7 @@ struct ModelPicker: View {
                     if let why = provider.unavailable {
                         note(why)
                         if provider.isAgent {
-                            settingsButton("Open Accounts", page: .accounts)
+                            settingsButton(catalog.machine == nil ? "Open Accounts" : "Open Machines", page: accountsPage)
                         }
                     } else {
                         let (newest, older) = split(provider.models)
@@ -233,12 +233,12 @@ struct ModelPicker: View {
                         }
                         if let outdated = provider.outdated {
                             note(outdated)
-                            settingsButton("Update in Accounts", page: .accounts)
+                            settingsButton(catalog.machine == nil ? "Update in Accounts" : "Open Machines", page: accountsPage)
                         }
                     }
                 } else {
                     note(scope == .all ? "Sign in to a coding agent or a provider in Settings › Accounts to use its models." : "Sign in to a provider in Settings › Accounts to use its models.")
-                    settingsButton("Open Accounts", page: .accounts)
+                    settingsButton(catalog.machine == nil ? "Open Accounts" : "Open Machines", page: accountsPage)
                 }
             }
         }
@@ -397,6 +397,9 @@ struct ModelPicker: View {
             .fixedSize(horizontal: false, vertical: true)
             .padding(10)
     }
+
+    /// Where its agents sign in: Accounts, or for a machine's, Machines (its Coding Agents).
+    private var accountsPage: SettingsPage { catalog.machine == nil ? .accounts : .machines }
 
     private func settingsButton(_ title: String, page: SettingsPage) -> some View {
         Button(title) {
