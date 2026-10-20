@@ -644,7 +644,7 @@ public enum Wakes {
       # Whether the bot's session still has this text queued as a wake-up.
       waiting() {
         command -v curl >/dev/null 2>&1 || return 1
-        printf 'user = "opencode:%s"\n' "$password" | curl -q -sf -m 5 --noproxy '*' -K - "http://127.0.0.1:$port/api/session/$session/inbox" | grep -qF "$(json "[Wake-up] $1")"
+        printf 'user = "opencode:%s"\n' "$password" | curl -q -sf -m 5 --noproxy '*' -K - "http://127.0.0.1:$port/api/session/$session/inbox" | grep -qF "\"$(json "[Wake-up] $1")\""
       }
       for bot in "$bots"/*/; do
         # Paused by you: its wake-ups wait.

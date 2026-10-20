@@ -163,8 +163,8 @@ final class MachineBrowser {
         link?.fire("Kuvo.hold", ["targetId": page, "on": on])
     }
 
-    /// Closing on purpose (the machine removed, nothing showing it, the app quitting): the pages
-    /// this Mac took over go back to their agents now, rather than when the keeper gives up on it.
+    /// Closing on purpose (the machine removed, the app quitting): the pages this Mac took over go
+    /// back to their agents now, rather than when the keeper gives up on it.
     private func handBackAll() {
         if link == nil { handedBackOffline.formUnion(myHolds) }
         for page in myHolds { link?.fire("Kuvo.hold", ["targetId": page, "on": false]) }
@@ -472,7 +472,12 @@ final class MachineBrowser {
             // A new connection (after a sleep, a dropped one): the pages this Mac took over are
             // taken again, which the keeper kept a while for it, so their agents don't go on in
             // them; those handed back meanwhile go back now.
-            for page in handedBackOffline { link?.fire("Kuvo.hold", ["targetId": page, "on": false]) }
+            // (Taken first, by this connection: the keeper may still count the hold as the old
+            // one's, still open there after a sleep, and lets only its holder hand it back.)
+            for page in handedBackOffline {
+                link?.fire("Kuvo.hold", ["targetId": page, "on": true])
+                link?.fire("Kuvo.hold", ["targetId": page, "on": false])
+            }
             heldPages.subtract(handedBackOffline)
             handedBackOffline = []
             myHolds.formIntersection(heldPages)

@@ -649,14 +649,19 @@ final class Bots {
             try? Data(Self.blankMemory(bot.name).utf8).write(to: URL(filePath: bot.memoryFile))
         }
         waking = Task { [weak self] in
+            var launching = true
             while !Task.isCancelled {
                 // A job changed in a Mac bot's memory (or, at launch, each one's), before its
                 // conversation's instructions are checked.
                 for id in self?.memoryChanged() ?? [] { await self?.syncJob(of: id) }
+                // At launch, the instructions first (an update may have changed them), so the
+                // first wake-ups go with them; after that apart, so machines slow to answer never
+                // hold up this Mac's wake-ups.
+                if launching { await self?.syncInstructions() }
                 self?.watchDue()
                 await self?.wakeDue()
-                // Apart, so machines slow to answer never hold up this Mac's wake-ups.
-                self?.syncInstructionsApart()
+                if !launching { self?.syncInstructionsApart() }
+                launching = false
                 // On time: up to the next one due here, at most 20 seconds (5 at least while the
                 // engine isn't up, as nothing can go).
                 let next = self?.nextLocalWake().map { $0.timeIntervalSinceNow } ?? 20
