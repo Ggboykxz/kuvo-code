@@ -364,10 +364,6 @@ struct MainView: View {
         }
         // The agent started browsing: show it.
         .onChange(of: utilities.revealRequest) { withAnimation(.ui) { showPanel() } }
-        .safeAreaInset(edge: .top, spacing: 0) { fullScreenTitleRow }
-        // In full screen, the top that the hidden toolbar kept free is the row's (or, with the
-        // tab bar hidden, the cards'), not an empty band.
-        .ignoresSafeArea(.container, edges: window.isFullScreen && !app.showsSettings ? .top : [])
         // Hiding the tab bar takes the whole row away and the cards reach the top. The sidebar
         // button stays, so the window's buttons keep a toolbar's height, centered on the cards'
         // header row, and the sidebar is a click away. The panel is still ⌥⌘0, and sessions ⌘K.
@@ -385,9 +381,10 @@ struct MainView: View {
             }
         }
         .toolbar(removing: .title)
-        // In full screen, the window's own row instead (see `fullScreenTitleRow`); with the tab
-        // bar hidden, none: the cards go to the top, and the sidebar is ⌘0.
-        .toolbar(window.isFullScreen && !app.showsSettings ? .hidden : .automatic, for: .windowToolbar)
+        // In full screen with the tab bar hidden, the row would hold only the sidebar button (no
+        // window buttons to line up with): the cards go to the top, and the sidebar is ⌘0. (Its
+        // gray there is taken away: see `WindowStateReader`.)
+        .toolbar(window.isFullScreen && !showsTabBar && !app.showsSettings ? .hidden : .automatic, for: .windowToolbar)
         .background(WindowStateReader { window = $0 })
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .iconOnlyToolbar()
@@ -615,23 +612,6 @@ struct MainView: View {
             .accessibilityLabel("Run")
             .help("Run \(tabsRun)" + (focusedProject == activeProject ? " (⌘R)" : ""))
             .modifier(UnderImageViewer())
-        }
-    }
-
-    /// In full screen, AppKit moves the toolbar into a window of its own over this one, painted
-    /// flat gray: a band unlike the rest of the window. So there the toolbar goes, and the same
-    /// row is the window's own, on its glass as in a window (none with the tab bar hidden).
-    @ViewBuilder private var fullScreenTitleRow: some View {
-        if window.isFullScreen && showsTabBar && !app.showsSettings {
-            HStack(spacing: 8) {
-                titleRow
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                runButton
-                PanelToggle(showsPanel: panelToggle).modifier(UnderImageViewer())
-            }
-            .padding(.leading, 12)
-            .padding(.trailing, 14)
-            .frame(height: 52)
         }
     }
 
