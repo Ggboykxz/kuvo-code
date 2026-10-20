@@ -274,13 +274,26 @@ final class MachineEngine {
 
     /// Signs out of every account the machine's engine has (copied from this Mac), and deletes
     /// what integrations' servers kept there (a sign-in's tokens).
-    func forgetAccounts() async {
-        if let api, let credentials = try? await api.credentials() {
-            for credential in credentials { try? await api.removeCredential(credential.id) }
+    /// In its turn after a copying of sign-ins under way (which could store one after these went),
+    /// and with no more after it. Whether they all went.
+    @discardableResult
+    func forgetAccounts() async -> Bool {
+        signInSync?.cancel()
+        signInSync = nil
+        let previous = signInTurn
+        let turn = Task { [weak self] () -> Bool in
+            await previous?.value
+            guard let self, let api else { return false }
+            guard let credentials = try? await api.credentials() else { return false }
+            var removed = true
+            for credential in credentials where (try? await api.removeCredential(credential.id)) == nil { removed = false }
+            let kept = "\"$HOME/\(RemoteEngineInstaller.root)/integrations\""
+            let machine = machine.id
+            let cleared = await Task.detached { RemoteShell.run("rm -rf \(kept)", on: machine) }.value != nil
+            return removed && cleared
         }
-        let kept = "\"$HOME/\(RemoteEngineInstaller.root)/integrations\""
-        let machine = machine.id
-        _ = await Task.detached { RemoteShell.run("rm -rf \(kept)", on: machine) }.value
+        signInTurn = Task { _ = await turn.value }
+        return await turn.value
     }
 
     /// The machine's engine stops by itself after a day without the app: say it's still here.
@@ -511,9 +524,11 @@ final class Machines {
                 if engine.isAnotherMacsEngine {
                     engine.disconnect()
                 } else {
-                    Task {
-                        await engine.forgetAccounts()
+                    Task { [weak self] in
+                        let forgotten = await engine.forgetAccounts()
                         await engine.stopEngine()
+                        // What didn't go, the next time it answers.
+                        if !forgotten { self?.runLater(Self.removalScript, on: id) }
                     }
                 }
             } else {
