@@ -216,8 +216,10 @@ final class AgentMail {
             return .done("\(target.name)'s machine (\(machine)) is away: the message goes to it as soon as it's back\(waits ? ", and its answer comes to you as a message" : "").")
         }
         let id = Identifier.message()
-        // What it had said already, so its answer is what comes after.
+        // What it had said already, so its answer is what comes after. Unknown (it couldn't be
+        // read), there's no telling its answer from those: it comes as a message instead.
         let known = waits ? await Self.replies(in: target.session, api: api) : []
+        let waits = waits && known != nil
         do {
             try await api.prompt(session: target.session, id: id, text: Self.compose(from: name, session: caller ?? "unknown", text: text, waits: waits), delivery: .steer)
         } catch {
@@ -226,7 +228,7 @@ final class AgentMail {
         sent[key] = lately + [.now]
         Analytics.shared.track("agent_message_sent", ["waits": waits, "bot": target.kind == "bot"])
         guard waits else { return .done("Sent to \(target.name). Its answer, if it writes one, comes to you as a message.") }
-        if let reply = await reply(in: target.session, known: known, api: api) {
+        if let reply = await reply(in: target.session, known: known ?? [], api: api) {
             return .done("\(target.name) answered:\n\n" + reply)
         }
         return .done("\(target.name) hasn't answered yet. It may still write back with send_message.")
@@ -301,10 +303,15 @@ final class AgentMail {
         return ("Started \(name)\(place) (address \(session.id)). It hasn't answered yet; it may still write back with send_message.", false)
     }
 
-    /// The replies `session` has given so far, to tell its answer to a message sent now from them.
-    private static func replies(in session: String, api: OpenCodeAPI) async -> Set<String> {
-        let messages = (try? await api.messages(session: session, limit: 20).data) ?? []
-        return Set(messages.compactMap { if case .assistant(let assistant) = $0 { assistant.id } else { nil } })
+    /// The replies `session` has given so far, to tell its answer to a message sent now from them;
+    /// nil when they can't be read (tried a few times, as the engine may be reconnecting).
+    private static func replies(in session: String, api: OpenCodeAPI) async -> Set<String>? {
+        for attempt in 0..<3 {
+            if attempt > 0 { try? await Task.sleep(for: .seconds(1)) }
+            guard let messages = try? await api.messages(session: session, limit: 20).data else { continue }
+            return Set(messages.compactMap { if case .assistant(let assistant) = $0 { assistant.id } else { nil } })
+        }
+        return nil
     }
 
     /// The answer in `session` to a message sent to it: its words once it's done, ten minutes at
