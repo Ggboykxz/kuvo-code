@@ -37,9 +37,35 @@ enum TerminalColors {
         let isSearch = isSearch(command)
         let search = isSearch ? pattern(in: command) : nil
         var found = 0
+        func line(_ index: Int) -> String { source.substring(with: lines[index]) }
+        /// The number a line under a file starts with ("12:" or "12-").
+        func number(_ index: Int) -> Int? {
+            let text = line(index)
+            guard let match = numbered.firstMatch(in: text, range: NSRange(location: 0, length: lines[index].length)) else { return nil }
+            return Int((text as NSString).substring(with: match.range(at: 1)))
+        }
+        // The files the results name ("path:12:"), for telling "path-12-" from a dash in a name.
+        var files: Set<String> = []
+        if isSearch {
+            for index in lines.indices.prefix(5000) {
+                let text = line(index)
+                if let match = named.firstMatch(in: text, range: NSRange(location: 0, length: lines[index].length)) {
+                    files.insert((text as NSString).substring(with: match.range(at: 1)))
+                }
+            }
+        }
+        // A file over its lines: first, or after a blank line, with a line of its under it
+        // ("12:", not "path:12:"), and not itself one ("10-" then "11:", as grep prints a file's).
+        func isHeading(at index: Int) -> Bool {
+            guard index + 1 < lines.count, index == 0 || lines[index - 1].length == 0 else { return false }
+            let text = line(index)
+            guard !text.isEmpty, !text.hasPrefix(" "), Self.located(text, files: files)?.file == nil,
+                  let under = Self.located(line(index + 1), files: files), under.file == nil,
+                  let next = number(index + 1) else { return false }
+            return number(index).map { $0 + 1 != next } ?? true
+        }
         for (index, range) in lines.enumerated() {
             let line = source.substring(with: range)
-            let whole = NSRange(location: 0, length: range.length)
             if isDiff {
                 if line.hasPrefix("diff --git ") || line.hasPrefix("commit ") { paint(range, "keyword", bold: true); continue }
                 if line.hasPrefix("+++") || line.hasPrefix("---") || line.hasPrefix("index ") { paint(range, "comment"); continue }
@@ -48,18 +74,18 @@ enum TerminalColors {
                 if line.hasPrefix("-") { paint(range, "deleted"); continue }
             }
             if isSearch {
-                // "path:12:text" and "12:text" under a file; the file over its lines (rg's
-                // headings); what it looked for, in what each line says.
-                var textStart = 0
-                if let match = located.firstMatch(in: line, range: whole) {
-                    let file = match.range(at: 1), number = match.range(at: 2)
-                    if file.location != NSNotFound { paint(NSRange(location: range.location + file.location, length: file.length), "keyword") }
-                    paint(NSRange(location: range.location + number.location, length: number.length), "number")
-                    textStart = match.range.length
-                } else if !line.isEmpty, !line.hasPrefix(" "), index + 1 < lines.count,
-                          numbered.firstMatch(in: source.substring(with: lines[index + 1]), range: NSRange(location: 0, length: lines[index + 1].length)) != nil {
+                // The file over its lines (rg's headings); "path:12:text", "path-12-text" for a
+                // line around a match, and "12:text" under a file; what it looked for, in what
+                // each line says.
+                if isHeading(at: index) {
                     paint(range, "keyword", bold: true)
                     continue
+                }
+                var textStart = 0
+                if let spot = located(line, files: files) {
+                    if let file = spot.file { paint(NSRange(location: range.location + file.location, length: file.length), "keyword") }
+                    paint(NSRange(location: range.location + spot.number.location, length: spot.number.length), "number")
+                    textStart = spot.end
                 }
                 if let search, found < 2000 {
                     // The start of a long line is enough to show where it matched.
@@ -80,10 +106,31 @@ enum TerminalColors {
         return result
     }
 
-    /// "path:12:" or "path:12:3:" (and "path-12-" for a line around a match), or "12:" alone.
-    private static let located = try! NSRegularExpression(pattern: #"^(?:([^\s:][^:\n]*?)[:-])?(\d+)[:-](?:\d+:)?"#)
-    /// A line of a search's results under its file: "12:text" or "12-text".
-    private static let numbered = try! NSRegularExpression(pattern: #"^\d+[:-]"#)
+    /// "path:12:" or "path:12:3:": a file's line that matched.
+    private static let named = try! NSRegularExpression(pattern: #"^([^\s:][^:\n]*?):(\d+):(?:\d+:)?"#)
+    /// A line of a search's results under its file: "12:text", "12:3:text" or "12-text".
+    private static let numbered = try! NSRegularExpression(pattern: #"^(\d+)(?::(?:\d+:)?|-)"#)
+
+    /// Where a line of a search's results says its file and line are: "path:12:", "path-12-" for a
+    /// file the results name, or "12:" alone. `end` is where what the line says starts.
+    private static func located(_ line: String, files: Set<String>) -> (file: NSRange?, number: NSRange, end: Int)? {
+        let whole = NSRange(location: 0, length: (line as NSString).length)
+        if let match = named.firstMatch(in: line, range: whole) {
+            return (match.range(at: 1), match.range(at: 2), match.range.length)
+        }
+        // "path-12-": a file named before, as long a name as fits ("2026-10-20.sql-12-").
+        for file in files.sorted(by: { $0.count > $1.count }) where line.hasPrefix(file + "-") {
+            let start = (file as NSString).length + 1
+            let rest = (line as NSString).substring(from: start)
+            let digits = rest.prefix { $0.isASCII && $0.isNumber }
+            guard !digits.isEmpty, rest.dropFirst(digits.count).first == "-" else { continue }
+            return (NSRange(location: 0, length: start - 1), NSRange(location: start, length: digits.utf16.count), start + digits.utf16.count + 1)
+        }
+        if let match = numbered.firstMatch(in: line, range: whole) {
+            return (nil, match.range(at: 1), match.range.length)
+        }
+        return nil
+    }
 
     private static func isSearch(_ command: String) -> Bool {
         command.range(of: #"(^|[\s|;&(])(rg|grep|egrep|fgrep|ag|git\s+grep)\s"#, options: .regularExpression) != nil
@@ -100,17 +147,24 @@ enum TerminalColors {
         var found: String?
         var flags: Set<String> = []
         var index = 0
+        // Its options, before the pattern and after it, up to `--` (after which the pattern is
+        // the next word, even one starting with -).
+        var readsOptions = true
         while index < words.count {
             let word = words[index]
-            if word == "-e" || word == "--regexp", index + 1 < words.count { found = words[index + 1]; break }
-            if word.hasPrefix("-") && word.count > 1 {
+            index += 1
+            if readsOptions, word == "--" { readsOptions = false; continue }
+            if readsOptions, word == "-e" || word == "--regexp" {
+                if index < words.count, found == nil { found = words[index] }
+                index += 1
+            } else if readsOptions, word.hasPrefix("--regexp=") {
+                if found == nil { found = String(word.dropFirst("--regexp=".count)) }
+            } else if readsOptions, word.hasPrefix("-") && word.count > 1 {
                 flags.insert(word)
                 if takesValue.contains(word) { index += 1 }
             } else if found == nil {
                 found = word
-                break
             }
-            index += 1
         }
         guard let found, !found.isEmpty else { return nil }
         if flags.contains(where: { $0 == "--invert-match" || (!$0.hasPrefix("--") && $0.contains("v")) }) { return nil }
