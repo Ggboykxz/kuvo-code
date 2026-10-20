@@ -5,6 +5,7 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- A session with a coding agent that can't write titles (Antigravity) gets one from your default model, instead of the start of your first message, when that model can write one.
 - A session an agent starts on its own asks first when the agent's session does, and its answer is found reliably also on a machine whose clock differs.
 - Discard leaves a submodule's folder alone again; Merge and Pull Request count the new files the Changes panel lists; and This Session shows a file the agent wrote and then edited once.
 - Notifications hide a number after a password or Authorization again, show commit hashes in commands, and stay quick on very long text.
