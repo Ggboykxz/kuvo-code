@@ -1341,7 +1341,7 @@ import { pathToFileURL as pathToFileURL2 } from "url";
 
 // Agents/src/acp.ts
 import { existsSync as existsSync3, mkdirSync as mkdirSync5, readFileSync as readFileSync5, writeFileSync as writeFileSync4 } from "fs";
-import { dirname as dirname2 } from "path";
+import { dirname as dirname2, resolve as resolve2 } from "path";
 
 // Agents/src/rpc.ts
 class RPCError extends Error {
@@ -1764,8 +1764,8 @@ Attached files:
 ${others.map((path) => `- ${path}`).join(`
 `)}`;
     prompt.unshift({ type: "text", text });
-    return new Promise((resolve2) => {
-      const active = { turn, hooks, resolve: resolve2, rpc, tools: new Map, toolsSinceText: false, ended: false, instructed, children: new Map };
+    return new Promise((resolve3) => {
+      const active = { turn, hooks, resolve: resolve3, rpc, tools: new Map, toolsSinceText: false, ended: false, instructed, children: new Map, served: new Map };
       this.active = active;
       turn.startStep();
       active.follower = this.flavor.follow?.(sessionId, turn, hooks);
@@ -1826,7 +1826,9 @@ ${others.map((path) => `- ${path}`).join(`
         if (active?.own)
           this.end(active, "succeeded");
         else if (this.own && !this.own.turnedAway)
-          this.own.turnedAway = true;
+          this.own.ended = true;
+        else if (this.own)
+          this.own = undefined;
       }
     };
   }
@@ -1836,13 +1838,15 @@ ${others.map((path) => `- ${path}`).join(`
     const rpc = this.rpc;
     if (!own || own.turnedAway || !rpc)
       return Promise.resolve({ outcome: "succeeded" });
-    return new Promise((resolve2) => {
-      const active = { turn, hooks, resolve: resolve2, rpc, tools: new Map, toolsSinceText: false, ended: false, children: new Map, own: true };
+    return new Promise((resolve3) => {
+      const active = { turn, hooks, resolve: resolve3, rpc, tools: new Map, toolsSinceText: false, ended: false, children: new Map, served: new Map, own: true };
       this.active = active;
       turn.startStep();
       this.quietly(active);
       for (const update of own.updates)
         this.notification("session/update", update);
+      if (own.ended && this.active === active)
+        this.end(active, "succeeded");
     });
   }
   noticed = new Set;
@@ -2002,6 +2006,8 @@ ${others.map((path) => `- ${path}`).join(`
     if (known) {
       if (!known.turnedAway)
         known.updates.push(params);
+      else
+        this.forget(known);
       return;
     }
     if (!["agent_message_chunk", "agent_thought_chunk", "tool_call"].includes(update.sessionUpdate))
@@ -2009,12 +2015,37 @@ ${others.map((path) => `- ${path}`).join(`
     const own = { updates: [params], turnedAway: false };
     this.own = own;
     if (!(this.onOwnTurn?.({ text: `${this.name} carried on by itself.` }) ?? false))
-      own.turnedAway = true;
+      this.turnAway();
+  }
+  turnAway() {
+    const own = this.own;
+    if (!own || own.turnedAway)
+      return;
+    own.turnedAway = true;
+    if (this.rpc && this.sessionID)
+      this.rpc.notify("session/cancel", { sessionId: this.sessionID });
+    this.forget(own);
+  }
+  forget(own) {
+    clearTimeout(own.quiet);
+    own.quiet = setTimeout(() => {
+      if (this.own === own)
+        this.own = undefined;
+    }, acpTiming.ownQuiet);
+    own.quiet.unref?.();
   }
   words(active) {
     if (!active.toolsSinceText)
       return;
     active.toolsSinceText = false;
+    if (this.flavor.fileSystem) {
+      for (const [id, call] of active.tools) {
+        if (!this.openRead(call) || call.settled)
+          continue;
+        const path = readPath(call);
+        this.settleRead(active, id, path && !existsSync3(path) ? { error: "There's no such file." } : { text: "" });
+      }
+    }
     active.turn.endStep({ tokens: this.stepTokens(active) });
     active.turn.startStep();
   }
@@ -2029,6 +2060,8 @@ ${others.map((path) => `- ${path}`).join(`
     const merged = { ...active.tools.get(id) ?? {}, ...Object.fromEntries(Object.entries(update).filter(([, value]) => value !== undefined && value !== null)) };
     active.tools.set(id, merged);
     if (this.flavor.hides?.(merged))
+      return;
+    if (merged.settled)
       return;
     const kuvo = kuvoTool(merged);
     if (!turn.hasTool(id)) {
@@ -2056,6 +2089,33 @@ ${others.map((path) => `- ${path}`).join(`
       turn.toolFailed(id, output || "The tool failed.", metadata);
     else if (output)
       turn.toolProgress(id, metadata);
+    const path = this.openRead(merged) && clientRead(merged) ? readPath(merged) : undefined;
+    const served = path ? active.served.get(path)?.shift() : undefined;
+    if (served)
+      this.settleRead(active, id, served);
+  }
+  openRead(call) {
+    return call.kind === "read" && call.status !== "completed" && call.status !== "failed";
+  }
+  settleRead(active, id, served) {
+    const call = active.tools.get(id);
+    if (call)
+      call.settled = true;
+    if (served.error !== undefined)
+      active.turn.toolFailed(id, served.error);
+    else
+      active.turn.toolSucceeded(id, served.text ?? "");
+  }
+  served(path, served) {
+    const active = this.active;
+    if (!active)
+      return;
+    const file = resolve2(path);
+    for (const [id, call] of active.tools) {
+      if (this.openRead(call) && !call.settled && clientRead(call) && readPath(call) === file)
+        return this.settleRead(active, id, served);
+    }
+    active.served.set(file, [...active.served.get(file) ?? [], served]);
   }
   async request(method, params) {
     const own = this.flavor.request?.(method, params, this.context());
@@ -2092,7 +2152,13 @@ ${others.map((path) => `- ${path}`).join(`
       case "fs/read_text_file": {
         if (!this.flavor.fileSystem)
           break;
-        let content = readFileSync5(params.path, "utf8");
+        let content;
+        try {
+          content = readFileSync5(params.path, "utf8");
+        } catch (error) {
+          this.served(params.path, { error: error?.code === "ENOENT" ? "There's no such file." : failure(error).message });
+          throw error;
+        }
         if (params.line || params.limit) {
           const lines2 = content.split(`
 `);
@@ -2100,6 +2166,7 @@ ${others.map((path) => `- ${path}`).join(`
           content = lines2.slice(start, params.limit ? start + params.limit : undefined).join(`
 `);
         }
+        this.served(params.path, { text: content });
         return { content };
       }
       case "fs/write_text_file": {
@@ -2213,6 +2280,15 @@ function resources(call) {
   if (paths.length)
     return paths;
   return [raw.path ?? raw.url ?? raw.file_path ?? "*"];
+}
+function clientRead(call) {
+  const title = String(call.title ?? "");
+  return /client/i.test(title) || !/view_file/i.test(title);
+}
+function readPath(call) {
+  const raw = call.rawInput ?? {};
+  const path = call.locations?.[0]?.path ?? raw.absolute_path ?? raw.path ?? raw.file_path ?? raw.filePath;
+  return typeof path === "string" && path ? resolve2(path) : undefined;
 }
 function backticked(title) {
   return typeof title === "string" ? title.match(/`([^`]+)`/)?.[1] : undefined;
@@ -3204,9 +3280,9 @@ class Queue {
     if (this.closed)
       return;
     if (this.waiting) {
-      const resolve2 = this.waiting;
+      const resolve3 = this.waiting;
       this.waiting = undefined;
-      resolve2({ value: item, done: false });
+      resolve3({ value: item, done: false });
     } else {
       this.items.push(item);
     }
@@ -3223,7 +3299,7 @@ class Queue {
           return Promise.resolve({ value: this.items.shift(), done: false });
         if (this.closed)
           return Promise.resolve({ value: undefined, done: true });
-        return new Promise((resolve2) => this.waiting = resolve2);
+        return new Promise((resolve3) => this.waiting = resolve3);
       },
       return: () => {
         this.close();
@@ -3422,7 +3498,7 @@ class ClaudeAgent {
     const sdk = await this.sdk();
     const abort = new AbortController;
     const idle = async function* () {
-      await new Promise((resolve2) => abort.signal.addEventListener("abort", resolve2));
+      await new Promise((resolve3) => abort.signal.addEventListener("abort", resolve3));
     }();
     const q = sdk.query({
       prompt: idle,
@@ -3586,22 +3662,22 @@ class ClaudeThread {
     }
     if (hooks.signal.aborted)
       return { outcome: "interrupted" };
-    return new Promise((resolve2) => {
+    return new Promise((resolve3) => {
       this.lastHooks = hooks;
       const message = userMessage(input);
-      this.active = this.turnFor(turn, hooks, resolve2, input.auto, new Map([[message.uuid, ""]]));
+      this.active = this.turnFor(turn, hooks, resolve3, input.auto, new Map([[message.uuid, ""]]));
       this.input.push(message);
     });
   }
-  turnFor(turn, hooks, resolve2, auto, steered) {
-    const active = { turn, hooks, resolve: resolve2, streamed: new Set, blockTools: new Map, calls: new Map, subagents: new Map, auto, steered };
+  turnFor(turn, hooks, resolve3, auto, steered) {
+    const active = { turn, hooks, resolve: resolve3, streamed: new Set, blockTools: new Map, calls: new Map, subagents: new Map, auto, steered };
     active.resolve = (result) => {
       if (result.outcome === "succeeded") {
         for (const [callID, lane] of active.subagents)
           if (lane.background && !lane.turn.isEnded)
             this.backgroundLanes.set(callID, lane);
       }
-      resolve2(result);
+      resolve3(result);
     };
     return active;
   }
@@ -3611,9 +3687,9 @@ class ClaudeThread {
     own?.take?.();
     if (!this.query || !own || own.turnedAway)
       return Promise.resolve({ outcome: "succeeded" });
-    return new Promise((resolve2) => {
+    return new Promise((resolve3) => {
       this.lastHooks = hooks;
-      this.active = this.turnFor(turn, hooks, resolve2, input.auto, new Map);
+      this.active = this.turnFor(turn, hooks, resolve3, input.auto, new Map);
       for (const frame of own.frames) {
         if (!this.active)
           break;
@@ -3634,19 +3710,19 @@ class ClaudeThread {
     if (!begins)
       return;
     let take;
-    const taken = new Promise((resolve2) => take = resolve2);
+    const taken = new Promise((resolve3) => take = resolve3);
     const own = { frames: [message], turnedAway: false, taken, take };
     this.own = own;
-    if (!(this.onOwnTurn?.(this.ownNote()) ?? false)) {
-      own.turnedAway = true;
-      take();
+    if (!(this.onOwnTurn?.(this.ownNote()) ?? false))
+      this.turnAway();
+  }
+  turnAway() {
+    const own = this.own;
+    if (!own || own.turnedAway)
       return;
-    }
-    setTimeout(() => {
-      if (this.own === own)
-        own.turnedAway = true;
-      take();
-    }, 15000);
+    own.turnedAway = true;
+    own.take?.();
+    this.query?.interrupt().catch(() => {});
   }
   ownNote() {
     const ended = this.lastEnded;
@@ -3797,8 +3873,8 @@ class ClaudeThread {
     this.active = undefined;
     clearTimeout(active.goingOn);
     const missed = this.unseen(active);
-    const resolve2 = active.resolve;
-    active.resolve = (value) => resolve2(missed ? { ...value, missed } : value);
+    const resolve3 = active.resolve;
+    active.resolve = (value) => resolve3(missed ? { ...value, missed } : value);
     if (active.stopping || active.hooks.signal.aborted)
       active.resolve({ outcome: "interrupted" });
     else if (active.limit)
@@ -4184,8 +4260,8 @@ class ClaudeThread {
     clearTimeout(active.goingOn);
     this.active = undefined;
     const missed = says ? this.unseen(active) : undefined;
-    const resolve2 = active.resolve;
-    active.resolve = (value) => resolve2(missed ? { ...value, missed } : value);
+    const resolve3 = active.resolve;
+    active.resolve = (value) => resolve3(missed ? { ...value, missed } : value);
     if (succeeded && goesOn) {
       active.resolve({ outcome: "succeeded" });
       return;
@@ -4357,6 +4433,7 @@ class ClaudeThread {
       lane.run.end("interrupted");
     this.backgroundLanes.clear();
     this.liveTasks.clear();
+    this.own?.take?.();
     this.own = undefined;
   }
 }
@@ -4916,7 +4993,7 @@ class CodexAgent {
     const threadId = started.thread.id;
     let text = "";
     let timer;
-    const done = new Promise((resolve2, reject) => {
+    const done = new Promise((resolve3, reject) => {
       timer = setTimeout(() => reject(new Error("Codex took too long to answer.")), 120000);
       this.oneOffs.set(threadId, (method, params) => {
         if (method === "item/completed" && params?.item?.type === "agentMessage" && typeof params.item.text === "string")
@@ -4924,7 +5001,7 @@ class CodexAgent {
         if (method !== "turn/completed")
           return;
         if (params?.turn?.status === "completed")
-          resolve2(text.trim());
+          resolve3(text.trim());
         else
           reject(new Error(params?.turn?.error?.message ?? "Codex couldn't answer."));
       });
@@ -5103,15 +5180,15 @@ ${others.map((path) => `- ${path}`).join(`
       ...effort ? { effort } : {},
       collaborationMode: { mode: input.plan ? "plan" : "default", settings: { model: input.model.id, reasoning_effort: effort ?? null, developer_instructions: null } }
     };
-    return new Promise((resolve2) => {
-      const active = { turn, hooks, resolve: resolve2, streamed: new Set, changes: new Map, output: new Map, toolsSinceText: false, subagents: new Map, spawning: [], auto: input.auto, model: input.model.id };
+    return new Promise((resolve3) => {
+      const active = { turn, hooks, resolve: resolve3, streamed: new Set, changes: new Map, output: new Map, toolsSinceText: false, subagents: new Map, spawning: [], auto: input.auto, model: input.model.id };
       active.resolve = (result) => {
         if (result.outcome === "succeeded") {
           for (const [threadID, lane] of active.subagents)
             if (!lane.ended)
               this.backgroundLanes.set(threadID, lane);
         }
-        resolve2(result);
+        resolve3(result);
       };
       this.active = active;
       turn.startStep();
@@ -5122,7 +5199,7 @@ ${others.map((path) => `- ${path}`).join(`
         if (this.active !== active)
           return;
         this.active = undefined;
-        resolve2({ outcome: "failed", error: failure(error) });
+        resolve3({ outcome: "failed", error: failure(error) });
       });
     });
   }
@@ -6093,7 +6170,7 @@ class CursorAgent {
     const abort = new AbortController;
     let status = { status: "pending" };
     let resolveURL = () => {};
-    const url = new Promise((resolve2) => resolveURL = resolve2);
+    const url = new Promise((resolve3) => resolveURL = resolve3);
     sdk.Cursor.auth.login({ openBrowser: false, store: pending, signal: abort.signal, apiKeyName: "Kuvo Code", onLoginUrl: (link2) => resolveURL(link2) }).then(async () => {
       const credentials = await pending.load();
       if (!credentials)
@@ -7330,12 +7407,12 @@ function safeJSON(text) {
 // Agents/src/sessions.ts
 var legacyKeys = ["claudeSession", "claudeStarted", "codexThread", "acpSession", "acpInstructed", "cursorAgent", "cursorInstructed"];
 var carryOn = "Carry on with my last message from where you left off: you're on another model now.";
-var timing = { stopGrace: 8000, idleClose: 15 * 60000 };
+var timing = { stopGrace: 8000, idleClose: 15 * 60000, cutShort: 2 * 60000 };
 var changes = new Set(["edit", "write", "patch"]);
 var shellTimeout = 10 * 60000;
 var shellOutputLimit = 50000;
 function runCommand(command, directory) {
-  return new Promise((resolve2) => {
+  return new Promise((resolve3) => {
     let output = "";
     let truncated = false;
     let timedOut = false;
@@ -7353,7 +7430,7 @@ function runCommand(command, directory) {
       done = true;
       clearTimeout(timer);
       const text = plain(output).trimEnd();
-      resolve2({ code, output: text.length > shellOutputLimit ? text.slice(-shellOutputLimit) : text, truncated: truncated || text.length > shellOutputLimit, timedOut });
+      resolve3({ code, output: text.length > shellOutputLimit ? text.slice(-shellOutputLimit) : text, truncated: truncated || text.length > shellOutputLimit, timedOut });
     };
     let child;
     try {
@@ -7764,10 +7841,17 @@ class Sessions {
       record.session.time.idle = at;
       changed = true;
     }
+    const open = Object.values(this.notes(record)).filter((note) => note.before && !note.files && !note.failed);
+    const stopped = this.store.writtenAt(id);
+    if (open.length && this.snapshots && stopped !== undefined && Date.now() - stopped < timing.cutShort)
+      this.finishNotes(id);
+    else if (open.length) {
+      for (const note of open)
+        note.failed = true;
+      changed = true;
+    }
     if (changed)
       this.store.save(id, true);
-    if (this.snapshots && Object.values(this.notes(record)).some((note) => note.before && !note.files && !note.failed))
-      this.finishNotes(id);
   }
   async finishNotes(id) {
     const record = this.store.get(id);
@@ -8479,15 +8563,28 @@ ${text.slice(0, 4000)}
     if (!live || !input)
       return false;
     live.adopting = undefined;
+    if (this.store.get(id)?.session.revert) {
+      live.threads.get(input.adopt.providerID)?.turnAway?.();
+      return false;
+    }
     this.start(id, input);
     return true;
   }
   async runOn(id, record, live, model2, input, turn, signal, userMessage2) {
+    let reached = false;
+    const turnAway = () => {
+      if (input.adopt && !reached)
+        live.threads.get(model2.providerID)?.turnAway?.();
+    };
     const agent = this.agent(model2.providerID);
-    if (!agent)
+    if (!agent) {
+      turnAway();
       return { outcome: "failed", error: { type: "agent", message: "This model's agent isn't available: sign in to it in Settings \u203A Accounts, or pick another model." } };
-    if (signal.aborted)
+    }
+    if (signal.aborted) {
+      turnAway();
       return { outcome: "interrupted" };
+    }
     const slots = this.slots(record);
     const slot = slots[model2.providerID] ??= { state: {} };
     let thread = live.threads.get(model2.providerID);
@@ -8501,7 +8598,7 @@ ${text.slice(0, 4000)}
     const hooks = this.hooks(id, live, turn, signal, slot, input.plan);
     turn.setModel(model2);
     let abandon;
-    const abandoned = new Promise((resolve2) => abandon = () => resolve2({ outcome: "interrupted" }));
+    const abandoned = new Promise((resolve3) => abandon = () => resolve3({ outcome: "interrupted" }));
     const running = { provider: model2.providerID, thread, abandon };
     live.running = running;
     const from = record.messages.length;
@@ -8526,6 +8623,7 @@ ${text.slice(0, 4000)}
       const handed = handover(before, partway, (message) => this.stepName(message));
       const text = withHandover(hasMessage ? carryOn : input.text, handed);
       const files = hasMessage ? [] : input.files;
+      reached = true;
       const result = await Promise.race([thread.run({ ...input, model: model2, text, files }, turn, hooks), abandoned]);
       if (result.outcome !== "failed" || result.taken || record.messages.slice(from).some(didWork))
         slot.seen = record.messages[record.messages.length - 1]?.id;
@@ -8540,6 +8638,7 @@ ${text.slice(0, 4000)}
         live.threads.delete(model2.providerID);
       throw error;
     } finally {
+      turnAway();
       if (live.running === running)
         live.running = undefined;
       this.store.save(id, true);
@@ -8817,21 +8916,21 @@ ${live.agentPrompt}` : ""
     const step = ask.toolCallID ? turn.toolStep(ask.toolCallID) : undefined;
     if (ask.toolCallID && step)
       request.source = { type: "tool", messageID: step, id: ask.toolCallID };
-    return new Promise((resolve2) => {
+    return new Promise((resolve3) => {
       live.permissions.set(request.id, {
         request,
         turn,
         resolve: (decision) => {
           if (decision === "always")
             live.always.push({ action: ask.action, patterns: request.save ?? ask.resources });
-          resolve2(decision);
+          resolve3(decision);
         }
       });
       emit("permission.asked", request, session.location.directory);
       ask.signal?.addEventListener("abort", () => {
         if (!live.permissions.delete(request.id))
           return;
-        resolve2("reject");
+        resolve3("reject");
         emit("permission.replied", { sessionID: id, requestID: request.id }, session.location.directory);
       });
     });
@@ -8868,13 +8967,13 @@ ${live.agentPrompt}` : ""
     if (turn.isEnded || live.abort?.signal.aborted)
       return Promise.resolve(null);
     const form = { id: newID("frm"), sessionID: id, title: ask.title, metadata: { kind: "question" }, fields: ask.fields };
-    return new Promise((resolve2) => {
-      live.forms.set(form.id, { form, resolve: resolve2 });
+    return new Promise((resolve3) => {
+      live.forms.set(form.id, { form, resolve: resolve3 });
       emit("form.created", { form }, session.location.directory);
       ask.signal?.addEventListener("abort", () => {
         if (!live.forms.delete(form.id))
           return;
-        resolve2(null);
+        resolve3(null);
         emit("form.cancelled", { id: form.id, sessionID: id }, session.location.directory);
       });
     });
@@ -9421,7 +9520,7 @@ ${all}`;
 }
 
 // Agents/src/store.ts
-import { mkdirSync as mkdirSync10, readdirSync as readdirSync4, readFileSync as readFileSync11, renameSync as renameSync4, rmSync as rmSync7, writeFileSync as writeFileSync7 } from "fs";
+import { mkdirSync as mkdirSync10, readdirSync as readdirSync4, readFileSync as readFileSync11, renameSync as renameSync4, rmSync as rmSync7, statSync as statSync4, writeFileSync as writeFileSync7 } from "fs";
 import { join as join14 } from "path";
 
 class Store {
@@ -9452,6 +9551,13 @@ class Store {
   }
   get(id) {
     return this.records.get(id);
+  }
+  writtenAt(id) {
+    try {
+      return statSync4(join14(this.root, id, "messages.json")).mtimeMs;
+    } catch {
+      return;
+    }
   }
   add(session) {
     this.records.set(session.id, { session, messages: [], agent: {} });
