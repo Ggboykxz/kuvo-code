@@ -53,6 +53,8 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - **Subscriptions** in Accounts has the coding agents and the plans you sign in to (GitHub Copilot, GitLab Duo, Poe, OpenCode) together: what you're signed in to with your accounts side by side, the rest as tiles to click.
 - The model picker goes by provider: a rail down its side with your starred models, Auto, each coding agent account and each provider, a search across all of them, ⌘1–⌘9 for the rows in view, and older models folded under the newest of each kind. Star a model to keep it at the top.
 - **Auto**: your own order of models, from any agent or provider, each with its effort, in Settings › Auto. A session on Auto works on the first one in your list; when one reaches its usage limit partway, the next goes on with what was done. A limit on a whole account skips all of its models, a limit on one model only that model, until it resets; then Auto goes back to it, and the session says so.
+- Your commands from Settings › Commands work in sessions with a coding agent.
+- A subagent's permission card or question no longer disappears from its conversation when the conversation is read again, or when the subagent was already at work as Kuvo Code started.
 - Undo From Here and Redo work in sessions with a coding agent too: the conversation and the files go back, as with the engine's models.
 - Run a command yourself with ! in a session with a coding agent; the agent gets it and its output with your next message.
 - Claude Code, Codex, Grok and Antigravity can use the side panel's browser, show you files in the panel and message your other agents, as the engine's models do.
