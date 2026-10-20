@@ -8,7 +8,9 @@ import Foundation
 ///
 /// A bot's folder holds `session` (its session's ID), `MEMORY.md`, `wakes` and, for a bot with no
 /// project, `workspace`. A session's is `wakes/<its ID>` beside the bots' folder (`KUVO_WAKES`),
-/// made by its first wake-up or watch, with `session` and `directory` (the folder it works in).
+/// made by its first wake-up or watch, with `session` and `directory` (the folder it works in),
+/// and for a coding agent's session, `via` ("bridge"): on a machine, `fire` sends its wake-ups to
+/// the agents' bridge (`run/bridge.json`, as `run/engine.json`) rather than the engine.
 public enum Wakes {
     /// A wake-up's message starts with this, so the app can show it as one, and the bot knows it.
     public static let marker = "[Wake-up] "
@@ -608,9 +610,19 @@ public enum Wakes {
     if [ "$1" = fire ]; then
       record=$3
       [ -f "$record" ] || exit 0
-      port=$(sed -n 's/.*"port":\([0-9]*\).*/\1/p' "$record")
-      password=$(sed -n 's/.*"password":"\([^"]*\)".*/\1/p' "$record")
-      [ -n "$port" ] && [ -n "$password" ] || exit 0
+      eport=$(sed -n 's/.*"port":\([0-9]*\).*/\1/p' "$record")
+      epassword=$(sed -n 's/.*"password":"\([^"]*\)".*/\1/p' "$record")
+      # The coding agents' bridge beside the engine, which answers the same paths for its sessions.
+      bridge="${record%/*}/bridge.json"
+      bport=$(sed -n 's/.*"port":\([0-9]*\).*/\1/p' "$bridge" 2>/dev/null)
+      bpassword=$(sed -n 's/.*"password":"\([^"]*\)".*/\1/p' "$bridge" 2>/dev/null)
+      [ -n "$eport$bport" ] || exit 0
+      # Where a conversation lives ($bot, its folder): the bridge for one its folder says is a
+      # coding agent's (`via`), whose tools aren't the engine's to wait for; else the engine.
+      reach() {
+        if [ "$(cat "${bot}via" 2>/dev/null)" = bridge ]; then port=$bport password=$bpassword tools=1; else port=$eport password=$epassword; fi
+        [ -n "$port" ] && [ -n "$password" ]
+      }
       # Sends a wake-up's text to the bot's session; true once it's gone.
       deliver() {
         # The bot's folder's tools (its browser, integrations) first: the engine connects them
@@ -667,6 +679,7 @@ public enum Wakes {
         tools=
         session=$(cat "$bot/session" 2>/dev/null) || continue
         [ -n "$session" ] || continue
+        reach || continue
         for wake in "$bot"wakes/*; do
           [ -f "$wake" ] || continue
           file=${wake##*/}; rest=${file#*-}; due=${file%%-*}
@@ -707,6 +720,7 @@ public enum Wakes {
         tools=
         session=$(cat "$bot/session" 2>/dev/null) || continue
         [ -n "$session" ] || continue
+        reach || continue
         tz=$(zone "$bot")
         for letters in $( ( [ -n "$tz" ] && export TZ="$tz"; checks "${bot%/}" ) | sed -n 's/^KUVO-WATCH //p'); do
           w="${bot}watches/$letters"
@@ -741,10 +755,12 @@ public enum Wakes {
       ?*) bot="${KUVO_BOTS:-$HOME/.kuvo-code/bots}/$bot" ;;
     esac
     # A session's folder comes with its first wake-up or watch: its session, and the folder it
-    # works in, where its watches' checks run and whose tools wait for its wake-ups.
+    # works in, where its watches' checks run and whose tools wait for its wake-ups; for a coding
+    # agent's (its bridge says so, in KUVO_WAKE_VIA), that its wake-ups go through the bridge.
     if [ -n "$session" ] && [ ! -d "$bot" ]; then
       case "$command" in
-        add|watch) (umask 077; mkdir -p "$bot") && printf '%s' "$session" >"$bot/session" && printf '%s' "$PWD" >"$bot/directory" ;;
+        add|watch) (umask 077; mkdir -p "$bot") && printf '%s' "$session" >"$bot/session" && printf '%s' "$PWD" >"$bot/directory" \
+          && { [ "$KUVO_WAKE_VIA" != bridge ] || printf bridge >"$bot/via"; } ;;
         list) echo "No wake-ups scheduled."; exit 0 ;;
       esac
     fi
