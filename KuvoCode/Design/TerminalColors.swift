@@ -62,7 +62,9 @@ enum TerminalColors {
                     continue
                 }
                 if let search, found < 2000 {
-                    for hit in search.matches(in: line, range: NSRange(location: textStart, length: range.length - textStart)) where hit.range.length > 0 {
+                    // The start of a long line is enough to show where it matched.
+                    let span = NSRange(location: textStart, length: min(range.length - textStart, 1000))
+                    for hit in search.matches(in: line, range: span) where hit.range.length > 0 {
                         paint(NSRange(location: range.location + hit.range.location, length: hit.range.length), "string", bold: true)
                         found += 1
                     }
@@ -88,10 +90,12 @@ enum TerminalColors {
     }
 
     /// What a search looks for, from its command: `-e PATTERN` or its first word that isn't an
-    /// option (nor an option's value), as a regular expression the way it reads it.
+    /// option (nor an option's value), as a regular expression the way it reads it. None for a
+    /// search that prints what doesn't match (-v), nor for a pattern that could take this Mac long to
+    /// try on every line (a repeated group) or that grep reads its own way (`\(`, `\|`).
     static func pattern(in command: String) -> NSRegularExpression? {
         guard let start = command.range(of: #"(^|[\s|;&(])(rg|grep|egrep|fgrep|ag|git\s+grep)\s"#, options: .regularExpression) else { return nil }
-        let words = shellWords(String(command[start.upperBound...]).prefix(while: { !"|;&)".contains($0) }))
+        let words = shellWords(command[start.upperBound...])
         let takesValue: Set<String> = ["-g", "--glob", "-t", "--type", "-T", "--type-not", "-A", "-B", "-C", "-m", "--max-count", "-f", "--file", "--include", "--exclude", "-d", "--max-depth"]
         var found: String?
         var flags: Set<String> = []
@@ -109,6 +113,11 @@ enum TerminalColors {
             index += 1
         }
         guard let found, !found.isEmpty else { return nil }
+        if flags.contains(where: { $0 == "--invert-match" || (!$0.hasPrefix("--") && $0.contains("v")) }) { return nil }
+        let extended = command.range(of: #"(^|[\s|;&(])(rg|egrep|ag)\s"#, options: .regularExpression) != nil
+            || flags.contains { $0 == "-E" || $0 == "-P" || $0 == "--extended-regexp" || $0 == "--perl-regexp" }
+        if found.range(of: #"\)[*+?{]"#, options: .regularExpression) != nil { return nil }
+        if !extended, found.range(of: #"\\[(|{+?]"#, options: .regularExpression) != nil { return nil }
         let fixed = flags.contains { $0 == "-F" || $0 == "--fixed-strings" || ($0.hasPrefix("-") && !$0.hasPrefix("--") && $0.contains("F")) } || command.contains("fgrep")
         let caseless = flags.contains { $0 == "-i" || $0 == "--ignore-case" || ($0.hasPrefix("-") && !$0.hasPrefix("--") && $0.contains("i")) }
             || (flags.contains { $0 == "-S" || $0 == "--smart-case" } && found == found.lowercased())
@@ -117,7 +126,8 @@ enum TerminalColors {
         return try? NSRegularExpression(pattern: NSRegularExpression.escapedPattern(for: found), options: options)
     }
 
-    /// A command line's words, as a shell splits them: quotes kept together, backslashes taken.
+    /// A command line's words, as a shell splits them (quotes kept together, backslashes taken), up
+    /// to where the command ends: a pipe, `;`, `&` or `)` outside quotes.
     private static func shellWords(_ line: Substring) -> [String] {
         var words: [String] = []
         var word = ""
@@ -132,6 +142,7 @@ enum TerminalColors {
                 continue
             }
             if character == "'" || character == "\"" { quote = character; inWord = true; continue }
+            if "|;&)".contains(character) { break }
             if character.isWhitespace {
                 if inWord { words.append(word); word = ""; inWord = false }
                 continue
