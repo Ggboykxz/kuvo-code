@@ -248,15 +248,17 @@ private struct GroupMessageRow: View, Equatable {
                     .frame(height: 20)
                     // As a session shows them, at the detail you chose for steps; what it made, after
                     // its words.
-                    let steps = (message.steps ?? []).filter { !WidgetCard.isWidget($0) }
+                    let steps = (message.steps ?? []).filter { !WidgetCard.isWidget($0) && !MadePictureRow.isMade($0) }
                     if !steps.isEmpty {
                         StepsRow(blocks: steps.map(Message.Content.tool), isLive: false, directory: author?.directory ?? "")
                             .padding(.bottom, 2)
                     }
                     MarkdownText(text: message.text, mentions: members)
-                    ForEach((message.steps ?? []).filter(WidgetCard.isWidget)) { call in
-                        WidgetCard(call: call, send: answerAgent)
-                            .padding(.top, 6)
+                    ForEach((message.steps ?? []).filter { WidgetCard.isWidget($0) || MadePictureRow.isMade($0) }) { call in
+                        Group {
+                            if MadePictureRow.isMade(call) { MadePictureRow(call: call) } else { WidgetCard(call: call, send: answerAgent) }
+                        }
+                        .padding(.top, 6)
                     }
                     if let tasks = message.tasks, !tasks.isEmpty {
                         WorkList(tasks: tasks, members: members, start: startWork)

@@ -25,6 +25,8 @@ struct ToolCallView: View {
         // Something the agent made: drawn, not described.
         if WidgetCard.isWidget(call) {
             WidgetCard(call: call, send: answerAgent)
+        } else if MadePictureRow.isMade(call) {
+            MadePictureRow(call: call)
         } else {
             step
         }
