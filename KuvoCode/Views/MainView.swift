@@ -1915,8 +1915,8 @@ struct MainView: View {
     }
 
     /// KUVO_DEMO_BOT=<name>|<job>|<instructions>[|<machine>[|<project>]] makes that bot unless one has the
-    /// name, and opens it; KUVO_DEMO_BOT_PROMPT then gives it a task, and KUVO_DEMO_EDIT_BOT
-    /// opens its Edit Bot sheet.
+    /// name (on KUVO_DEMO_BOT_MODEL=<provider>/<model>, if given), and opens it;
+    /// KUVO_DEMO_BOT_PROMPT then gives it a task, and KUVO_DEMO_EDIT_BOT opens its Edit Bot sheet.
     private func runDemoBot(_ environment: [String: String]) async {
         guard let spec = environment["KUVO_DEMO_BOT"] else { return }
         let parts = spec.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
@@ -1930,8 +1930,16 @@ struct MainView: View {
             do {
                 // Its job, as it would have written it in its memory.
                 let job = (line: parts.count > 1 ? parts[1] : "", details: parts.count > 2 ? parts[2] : "")
+                let model = environment["KUVO_DEMO_BOT_MODEL"].flatMap { spec -> ModelRef? in
+                    guard let slash = spec.firstIndex(of: "/") else { return nil }
+                    return ModelRef(id: String(spec[spec.index(after: slash)...]), providerID: String(spec[..<slash]))
+                }
+                // (The coding agents' list first, for a model of theirs.)
+                if OutsideAgents.runsInBridge(model?.providerID) {
+                    while workspace.agents?.api == nil { try? await Task.sleep(for: .seconds(1)) }
+                }
                 bot = try await bots.create(name: name, job: job.line.isEmpty && job.details.isEmpty ? nil : job,
-                                            look: .random(), model: nil, machine: machine, project: parts.count > 4 && !parts[4].isEmpty ? parts[4] : nil)
+                                            look: .random(), model: model, machine: machine, project: parts.count > 4 && !parts[4].isEmpty ? parts[4] : nil)
             } catch {
                 print("KUVO_DEMO_BOT failed: \(error.localizedDescription)")
                 return
