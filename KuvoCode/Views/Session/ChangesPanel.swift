@@ -192,10 +192,13 @@ struct ChangesPanel: View {
                     .font(.system(size: 12, weight: .medium))
                     .help("Commit the changes, and push them if you like")
                     .popover(isPresented: $isCommitting, arrowEdge: .bottom) {
-                        // A coding agent's session can't write one: the engine's default model does.
+                        // A coding agent's session asks its own model (Claude Code, Codex); one whose
+                        // agent can't answer outside the conversation, the engine's default model.
                         let isAgents = model.map { OutsideAgents.isAgentSession($0.session) } ?? false
-                        CommitForm(changes: changes, environment: app.shellEnvironment, api: isAgents ? app.api : model.flatMap { workspace.api(forSession: $0.id) } ?? app.api,
-                                   session: isAgents ? nil : model?.id, model: isAgents ? nil : model?.session.model) { isCommitting = false }
+                        CommitForm(changes: changes, environment: app.shellEnvironment,
+                                   api: isAgents ? app.agents.api ?? app.api : model.flatMap { workspace.api(forSession: $0.id) } ?? app.api,
+                                   session: isAgents && app.agents.api == nil ? nil : model?.id, model: isAgents ? nil : model?.session.model,
+                                   fallback: isAgents ? app.api : nil) { isCommitting = false }
                     }
             }
             Button {
@@ -287,6 +290,9 @@ private struct CommitForm: View {
     /// The session open in the window: its model suggests the message.
     let session: String?
     let model: ModelRef?
+    /// Where to ask when the session's model can't (its coding agent can't answer outside the
+    /// conversation): the engine, with its default model.
+    var fallback: OpenCodeAPI? = nil
     let done: () -> Void
     @State private var isSuggesting = false
     @State private var message = ""
@@ -361,7 +367,16 @@ private struct CommitForm: View {
             """, instructionsKey: GitPreferences.commitInstructionsKey)
             do {
                 // Through the session where there is one: free models only answer there.
-                let text = if let session { try await api.generate(prompt, session: session) } else { try await api.generate(prompt, model: model) }
+                let text: String
+                if let session {
+                    do {
+                        text = try await api.generate(prompt, session: session)
+                    } catch let error where fallback != nil && !(error is CancellationError) {
+                        text = try await fallback!.generate(prompt, model: nil)
+                    }
+                } else {
+                    text = try await api.generate(prompt, model: model)
+                }
                 message = text.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "`\"")))
             } catch {
                 failure = error.localizedDescription
@@ -546,8 +561,10 @@ private struct BranchMenu: View {
 
         \(summary)
         """, instructionsKey: GitPreferences.pullRequestInstructionsKey)
-        // A coding agent's session can't write one: the engine's default model does.
-        let written = isAgents ? try? await app.api?.generate(prompt) : try? await api.generate(prompt, session: session)
+        // A coding agent's session asks its own model; one whose agent can't answer outside the
+        // conversation, the engine's default model.
+        var written = try? await api.generate(prompt, session: session)
+        if written == nil, isAgents { written = try? await app.api?.generate(prompt) }
         guard let text = written, let pull = Git.parsePullRequest(text) else { return page }
         return Git.pullRequestPage(page, title: pull.title, body: pull.body)
     }
