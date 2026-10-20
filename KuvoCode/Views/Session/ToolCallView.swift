@@ -179,7 +179,7 @@ struct ToolCallView: View {
             let files = diffs.map { relative($0.file) ?? $0.file }
             return (isActive ? "Editing " : "Edited ") + (files.count == 1 ? files[0] : files.isEmpty ? "files" : "\(files.count) files")
         case "shell":
-            if let wake = wake { return Self.summary(of: wake, isActive: isActive) + exitSuffix }
+            if let wake = wake { return Self.summary(of: wake, isActive: isActive, failed: !exitSuffix.isEmpty) + exitSuffix }
             return (isActive ? "Running " : "Ran ") + (string("command").map { "`\($0)`" } ?? "a command") + exitSuffix
         case "grep": return "Searched for “\(string("pattern") ?? "")”" + (path.map { " in \($0)" } ?? "")
         case "glob": return "Found files matching \(string("pattern") ?? "")"
@@ -251,8 +251,17 @@ struct ToolCallView: View {
         call.name == "shell" ? string("command").flatMap(Wakes.command(in:)) : nil
     }
 
-    /// "Scheduled a wake-up in 2 hr: check whether CI passed".
-    static func summary(of wake: Wakes.Command, isActive: Bool) -> String {
+    /// "Scheduled a wake-up in 2 hr: check whether CI passed"; `failed`, what it couldn't do
+    /// (the command exited with an error, as one a sandbox stopped from writing does).
+    static func summary(of wake: Wakes.Command, isActive: Bool, failed: Bool = false) -> String {
+        if failed {
+            switch wake.verb {
+            case .list: return "Couldn’t check its wake-ups"
+            case .cancel: return "Couldn’t cancel a wake-up"
+            case .watch: return "Couldn’t start a watch" + (wake.note.map { ": \($0)" } ?? "")
+            case .add: return "Couldn’t schedule a wake-up" + (wake.note.map { ": \($0)" } ?? "")
+            }
+        }
         switch wake.verb {
         case .list: return isActive ? "Checking its wake-ups" : "Checked its wake-ups"
         case .cancel: return isActive ? "Canceling a wake-up" : "Canceled a wake-up"
