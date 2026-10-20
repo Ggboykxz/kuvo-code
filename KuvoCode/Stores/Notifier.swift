@@ -105,7 +105,8 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     /// `text` with what looks like a secret's value as dots: after a name like token, key, secret,
     /// password or Authorization (Bearer), and long runs of letters and digits like a key's.
     nonisolated static func masked(_ text: String) -> String {
-        let text = maskedNamed(text)
+        // No more than a notification shows (and the patterns stay quick on a long reply).
+        let text = maskedNamed(text.count > shownLength ? String(text.prefix(shownLength)) + "…" : text)
         // A long run of letters and digits, as a key is: 24 or more with both, or a key's own
         // start (sk-, ghp_, xoxb-, AKIA…). Not a commit's hash or a UUID, nor a path or a name
         // made of words (a branch, a package, a test), which aren't secret.
@@ -129,7 +130,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
             // word.
             let plain = run
                 .replacingOccurrences(of: #"(?<![0-9A-Fa-f])[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?![0-9A-Fa-f])"#, with: "u", options: .regularExpression)
-                .replacingOccurrences(of: #"(?<![^/])([0-9a-f]{40}|[0-9a-f]{64})(?![^/])"#, with: "h", options: .regularExpression)
+                .replacingOccurrences(of: #"(?<![0-9A-Za-z])([0-9a-f]{40}|[0-9a-f]{64})(?![0-9A-Za-z])"#, with: "h", options: .regularExpression)
                 .replacingOccurrences(of: #"/var/folders/[^/]+/[^/]+"#, with: "/var/folders/t/t", options: .regularExpression)
             let wordy = plain.split(whereSeparator: { "/-_.".contains($0) }).allSatisfy { part in
                 if part.count < 12 { return true }
@@ -149,16 +150,21 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
 
     /// Whether a notification shows all of `text`: one that hides some of it doesn't answer from
     /// its buttons, as you'd answer what you can't see.
-    nonisolated static func showsAll(_ text: String) -> Bool { masked(text) == text }
+    nonisolated static func showsAll(_ text: String) -> Bool { text.count <= shownLength && masked(text) == text }
+
+    private nonisolated static let shownLength = 4000
 
     /// `text` with the secrets it names as dots: after a name that says it's one (token=…,
-    /// "password": …, Authorization: Bearer …, --token …, aws_secret_access_key …; not a number,
-    /// as in max_token=4096), in an address (https://user:pass@host, https://TOKEN@host, a Slack
+    /// "password": …, Authorization: Bearer …, --token …, aws_secret_access_key …; after a token's
+    /// name, not a number, as in max_tokens=4096), in an address (https://user:pass@host, https://TOKEN@host, a Slack
     /// webhook's), curl -u user:pass and mysql -pPASS.
     nonisolated static func maskedNamed(_ text: String) -> String {
         var text = text
-        let named = #"(?i)((?:token|api[_-]?key|secret(?:[_-]?access[_-]?key)?|password|passwd|authorization)["']?\s*[:=]\s*["']?(?:bearer\s+|basic\s+)?|bearer\s+|--(?:token|password|passwd|secret|api-key|key)[=\s]+)(?![0-9]+(?:[\s"'&;,}]|$))[^\s"'&;]{3,}"#
+        let named = #"(?i)((?:api[_-]?key|secret(?:[_-]?access[_-]?key)?|password|passwd|authorization)["']?\s*[:=]\s*["']?(?:bearer\s+|basic\s+)?+|bearer\s+|--(?:token|password|passwd|secret|api-key|key)[=\s]+)[^\s"'&;]{3,}"#
         text = text.replacingOccurrences(of: named, with: "$1•••", options: .regularExpression)
+        // After a token's name, a number is a count (max_tokens=4096), not one.
+        let token = #"(?i)(token["']?\s*[:=]\s*["']?(?:bearer\s+|basic\s+)?+)(?![0-9]+(?:[\s"'&;,}]|$))[^\s"'&;]{3,}"#
+        text = text.replacingOccurrences(of: token, with: "$1•••", options: .regularExpression)
         text = text.replacingOccurrences(of: #"(://[^\s/:@]+:)[^\s/@]+@"#, with: "$1•••@", options: .regularExpression)
         text = text.replacingOccurrences(of: #"(://)[^\s/:@]{20,}@"#, with: "$1•••@", options: .regularExpression)
         text = text.replacingOccurrences(of: #"(\bcurl\b[^\n]*?\s(?:-u|--user)\s+[^\s:]+:)\S+"#, with: "$1•••", options: .regularExpression)
