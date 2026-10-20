@@ -171,10 +171,10 @@ extension MachineForm {
     }
 }
 
-/// The hosts named in `~/.ssh/config` (and the files it includes), without patterns.
+/// The hosts named in `~/.ssh/config` (and the files it includes), without patterns. `home` is
+/// whose (a test's own).
 nonisolated enum SSHConfig {
-    static func hosts() -> [String] {
-        let home = FileManager.default.homeDirectoryForCurrentUser
+    static func hosts(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> [String] {
         var hosts: [String] = []
         var seen = Set<String>()
         func read(_ url: URL, depth: Int) {
