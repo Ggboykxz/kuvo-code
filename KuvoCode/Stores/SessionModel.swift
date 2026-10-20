@@ -377,10 +377,12 @@ final class SessionModel {
     /// stays there while the run it starts gets going.
     var waiting: [Transcript.Pending] {
         let pending = pending.filter { !starters.contains($0.id) }
-        // What Stop held back was meant for the work under way: it stays ahead of the queue.
-        let queued = pending.filter { $0.delivery == .queue }
-        let held = heldBack.compactMap { id in queued.first { $0.id == id } }
-        return (isRunning ? pending.filter { $0.delivery == .steer } : []) + held + queued.filter { !heldBack.contains($0.id) }
+        // What Stop held back was meant for the work under way: it stays ahead of the queue, and
+        // shows while it's still on its way there too.
+        let held = heldBack.compactMap { id in pending.first { $0.id == id } }
+        let heldIDs = Set(held.map(\.id))
+        let queued = pending.filter { $0.delivery == .queue && !heldIDs.contains($0.id) }
+        return (isRunning ? pending.filter { $0.delivery == .steer && !heldIDs.contains($0.id) } : []) + held + queued
     }
 
     /// Messages for the agent's next step that Stop moved to the queue, in their order.
@@ -513,7 +515,6 @@ final class SessionModel {
         let read = UUID()
         cameDuringRead[read] = []
         defer { cameDuringRead[read] = nil }
-        async let messages = api.messages(session: id, limit: Self.pageSize)
         async let inbox = api.inbox(session: id)
         async let permissions = api.permissions(session: id)
         async let forms = api.forms(session: id)
@@ -521,7 +522,10 @@ final class SessionModel {
         async let shared = api.forms(session: FormRequest.anySession, directory: session.location.directory)
         async let active = api.activeSessions()
         do {
-            let page = try await messages
+            // The queue before the conversation: a message delivered between the two reads is in
+            // the second, rather than in neither.
+            let waiting = (try? await inbox) ?? []
+            let page = try await api.messages(session: id, limit: Self.pageSize)
             // Nothing, where its copy has a conversation: an engine just started (a new version
             // setting itself up) can answer that for a moment. The copy stays; read again soon.
             if page.data.isEmpty, isCopy, !transcript.messages.isEmpty, emptyReads < 4 {
@@ -535,7 +539,6 @@ final class SessionModel {
             emptyReads = 0
             // All of the read is in before anything changes: what streams in meanwhile goes to the
             // copy on screen, and must not land between that copy going and the read replacing it.
-            let waiting = (try? await inbox) ?? []
             // What's asked as it was, for a read that failed (over SSH, say): no card goes for
             // one the agent still waits on, which no event would bring back.
             // Its subagents at work ask here too (nothing else shows what they ask): theirs are
@@ -724,8 +727,8 @@ final class SessionModel {
     private func waitForTools() async {
         // The coding agents bring their own tools.
         guard !toolsChecked, !OutsideAgents.isAgentSession(session) else { return }
-        toolsChecked = true
-        await api.waitForTools(in: session.location.directory)
+        // Done once it got an answer: a check the engine didn't answer is tried again next time.
+        toolsChecked = await api.waitForTools(in: session.location.directory)
     }
 
     /// Where a conversation is, for anonymous usage: a bot's own folder (here or on a machine), a
@@ -776,9 +779,10 @@ final class SessionModel {
                 if !held, holdOnArrival.remove(id) != nil { try? await api.setDelivery(session: self.id, item: id, delivery: .queue) }
             } catch {
                 editTranscript { $0.removeLocal(id: id) }
-                // It didn't go: back in the composer as it was, ahead of anything written since.
+                // It didn't go: back in the composer as it was, ahead of anything written since
+                // (after one sent before it that didn't go either, in the order they were sent).
                 let (quotes, text) = Quoting.draft(of: written)
-                restore(text: text, files: files, quotes: quotes, comments: comments)
+                restoreFailed(text: text, files: files, quotes: quotes, comments: comments)
                 fail(error)
             }
         }
@@ -890,7 +894,8 @@ final class SessionModel {
     private func noteCommandMessages() {
         runningCommands.removeAll { Date().timeIntervalSince($0.started) > 600 }
         while let running = runningCommands.first {
-            let since = running.started.timeIntervalSince1970 * 1000 - 2000
+            // By the engine's clock, as the messages' times are (a machine's can differ from this Mac's).
+            let since = running.started.timeIntervalSince1970 * 1000 - storedTranscript.clockOffset - 2000
             let message = transcript.messages.lazy.compactMap { if case .user(let user) = $0 { user } else { nil } }.first {
                 !running.before.contains($0.id) && !sentIDs.contains($0.id) && CommandMessages.shared[$0.id] == nil && $0.time.created >= since
             }
@@ -904,6 +909,16 @@ final class SessionModel {
     func stop() {
         Task {
             await holdWaiting()
+            // A message still on its way, held: in before the stop (ten seconds at most), so it
+            // can't land after it on an idle session and start the agent again.
+            if !holdOnArrival.isEmpty, let sending {
+                await withTaskGroup(of: Void.self) { group in
+                    group.addTask { await sending.value }
+                    group.addTask { try? await Task.sleep(for: .seconds(10)) }
+                    await group.next()
+                    group.cancelAll()
+                }
+            }
             try? await api.interrupt(session: id)
         }
     }
@@ -1002,7 +1017,11 @@ final class SessionModel {
             }
             // The engine says which won: the cancel, or the agent taking it first (a cancel
             // that comes too late changes nothing, and says nothing).
-            for _ in 0..<40 where settledEdits[item.id] == nil { try? await Task.sleep(for: .milliseconds(50)) }
+            // Waited for while it's still waiting (thirty seconds at most): a slow answer isn't a lost
+            // message.
+            for _ in 0..<600 where settledEdits[item.id] == nil && transcript.pending.contains(where: { $0.id == item.id }) {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
             let cancelled = settledEdits[item.id] ?? (!transcript.pending.contains { $0.id == item.id } && !transcript.messages.contains { $0.id == item.id })
             guard cancelled else { return }
             restoreDraft(item.text, files: item.files)
@@ -1017,6 +1036,25 @@ final class SessionModel {
         let (quoted, comments) = ReviewComments.split(withComments)
         let (quotes, text) = Quoting.draft(of: quoted)
         restore(text: text, files: Attachments.restored(picked, noting: paths), quotes: quotes, comments: comments)
+    }
+
+    /// The text of sends that didn't go, put back at the start of the composer one after another.
+    @ObservationIgnored private var restoredFailed = ""
+
+    private func restoreFailed(text: String, files: [URL], quotes: [Drafts.Quote], comments: [ReviewComment]) {
+        guard !restoredFailed.isEmpty, draftText.hasPrefix(restoredFailed) else {
+            restore(text: text, files: files, quotes: quotes, comments: comments)
+            restoredFailed = text
+            return
+        }
+        // After the ones before it.
+        let rest = String(draftText.dropFirst(restoredFailed.count))
+        restoredFailed = [restoredFailed, text].filter { !$0.isEmpty }.joined(separator: "\n\n")
+        draftText = restoredFailed + rest
+        draftFiles += files.filter { file in !draftFiles.contains { $0.path == file.path } }
+        draftQuotes += quotes
+        reviewComments += comments
+        composerFocus += 1
     }
 
     /// Puts these in the composer, ahead of anything already there.
@@ -1087,7 +1125,10 @@ final class SessionModel {
                 }
                 let copy = await stored(message)
                 session.revert = try await api.stageRevert(session: id, messageID: copy.id)
-                let before = composerState
+                // Undone further back before Redo: Redo takes them all back, so it puts back the
+                // composer as it was before the first undo (with each undo's text gone, rather
+                // than left to be sent again).
+                let before = undone?.before ?? composerState
                 restoreDraft(CommandMessages.shared.text(of: copy), files: Self.files(of: message, stored: copy))
                 undone = (before, composerState)
             } catch {
@@ -1231,10 +1272,17 @@ final class SessionModel {
         // A subagent's model changes from its next step: stopping its step, even to resume, ends
         // the wait of the agent that started it, which then gives up on it.
         let switchesNow = !isSubagent && transcript.isRunning && !model.sameModel(as: session.model) && permissions.isEmpty && forms.isEmpty
+        let previous = session.model
         session.model = model
         Task {
             do {
-                try await api.selectModel(session: id, model: model)
+                do {
+                    try await api.selectModel(session: id, model: model)
+                } catch {
+                    // Not switched: the picker shows the model it still has.
+                    if session.model == model { session.model = previous }
+                    throw error
+                }
                 // The note starts a turn of its own: only when there was a run to stop, as there
                 // may not be by now (it ended while the model was being set); and not if it has
                 // asked you something meanwhile.
@@ -1275,12 +1323,19 @@ final class SessionModel {
     func syncFolders() async {
         // As the engine knows them: a machine's folders are plain paths there.
         let folders = projectFolders().map(api.enginePath)
-        let current = session.permissions ?? []
+        var current = session.permissions ?? []
         // Its approval with Settings › Permissions as they are now, too.
-        let rules = ProjectFolders.permissions(ToolApproval.refreshed(current, settings: EngineConfig.current?.permissionRules ?? []), folders: folders)
+        var rules = ProjectFolders.permissions(ToolApproval.refreshed(current, settings: EngineConfig.current?.permissionRules ?? []), folders: folders)
         guard rules != current else { return }
         do {
             try await api.setPermissions(session: id, rules: rules)
+            // An approval picked while that went (its own rules sent too): again, from it, so the
+            // last word is yours with the folders, not these from before it.
+            for _ in 0..<3 where (session.permissions ?? []) != current {
+                current = session.permissions ?? []
+                rules = ProjectFolders.permissions(ToolApproval.refreshed(current, settings: EngineConfig.current?.permissionRules ?? []), folders: folders)
+                try await api.setPermissions(session: id, rules: rules)
+            }
             session.permissions = rules
             if folders.isEmpty {
                 try await api.removeInstruction(session: id, key: ProjectFolders.instructionKey)
@@ -1387,14 +1442,16 @@ extension OpenCodeAPI {
     /// opens a folder; an integration's server can take a while the first time, as it's
     /// fetched), twenty seconds at most, and a moment more if they only just did: a message sent
     /// sooner reaches a model without their tools.
-    func waitForTools(in directory: String) async {
+    /// Whether the engine answered.
+    @discardableResult
+    func waitForTools(in directory: String) async -> Bool {
         let deadline = ContinuousClock.now + .seconds(20)
         // A folder it has only just opened lists no servers at first, for a moment, before they're
         // pending: none for a while more means it has none.
         let listed = ContinuousClock.now + .seconds(3)
         var waited = false
         while ContinuousClock.now < deadline {
-            guard let servers = try? await mcpServers(directory: directory) else { return }
+            guard let servers = try? await mcpServers(directory: directory) else { return false }
             if servers.isEmpty, ContinuousClock.now < listed {
                 waited = true
                 try? await Task.sleep(for: .milliseconds(100))
@@ -1403,11 +1460,12 @@ extension OpenCodeAPI {
             if !servers.contains(where: { $0.status.status == "pending" }) {
                 // Connected only just now: the engine takes a moment more to hand its tools out.
                 if waited, !servers.isEmpty { try? await Task.sleep(for: .milliseconds(1500)) }
-                return
+                return true
             }
             waited = true
             try? await Task.sleep(for: .milliseconds(250))
         }
+        return true
     }
 }
 
