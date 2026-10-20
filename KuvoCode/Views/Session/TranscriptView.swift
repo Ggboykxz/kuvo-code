@@ -1181,12 +1181,29 @@ private struct TurnEndView: View {
     var reply: ((String) -> Void)?
     @Environment(AppModel.self) private var app
 
+    /// What went wrong. A sign-in the engine couldn't renew says only "Request failed: 400": said
+    /// plainly, with the service's words after it.
+    private var message: String {
+        guard let error = idle.error else { return "The run failed." }
+        guard error.type == "provider.auth" else { return error.message }
+        return "This model's sign-in has ended and couldn't be renewed, so the request was refused (\(error.message)). Sign in to its account again."
+    }
+
     var body: some View {
         switch idle.outcome {
         case .failed:
             VStack(alignment: .leading, spacing: 8) {
-                ErrorCard(message: idle.error?.message ?? "The run failed.")
+                ErrorCard(message: message)
                 HStack(spacing: 8) {
+                    // The model's account to sign in to again: in Accounts, where this conversation
+                    // runs (a machine signs in on its own).
+                    if idle.error?.type == "provider.auth" {
+                        let machine = RemoteFolder.machine(of: directory)
+                        Button("Sign In Again", systemImage: "person.crop.circle") { app.openAccounts(on: machine) }
+                            .buttonStyle(.glass)
+                            .controlSize(.small)
+                            .help(machine.map { "Sign in again in Accounts, on \($0)" } ?? "Sign in again in Accounts")
+                    }
                     // A coding agent to sign in to: where this conversation runs (a machine signs in
                     // on its own), Accounts open on it.
                     if idle.error?.type == "signin" {

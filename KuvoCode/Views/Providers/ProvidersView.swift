@@ -16,11 +16,11 @@ struct ProvidersView: View {
     @State private var removal: [String]?
     @State private var search = ""
 
-    /// The machine whose coding agents show (nil: this Mac's), picked in their section.
+    /// The machine whose coding agents and plans show (nil: this Mac's), picked in their section.
     private var machine: MachineEngine? { app.accountsPlace.flatMap { app.machines.engine($0) } }
 
-    /// A sign-in, open in the page's place: a coding agent's on this Mac or on a machine (its own
-    /// there); anything else this Mac's, which your machines get a copy of.
+    /// A sign-in, open in the page's place: a coding agent's or a plan's on this Mac or on a machine
+    /// (its own there); anything else this Mac's, which your machines get a copy of (a key's).
     struct Connecting: Identifiable {
         let integration: Integration
         var machine: String?
@@ -84,7 +84,11 @@ struct ProvidersView: View {
                         .environment(\.agentsBridge, machine?.agents)
                         // Another place's agents: asked anew.
                         .id(machine?.machine.id)
-                    SubscriptionsSection(shows: .plans) { connecting = Connecting(integration: $0) }
+                    // A machine's plans are its own sign-ins, as its coding agents are.
+                    SubscriptionsSection(shows: .plans, machine: machine) { connecting = Connecting(integration: $0, machine: machine?.machine.id) }
+                        .environment(machine?.catalog ?? catalog)
+                        .environment(\.agentsBridge, machine?.agents)
+                        .id("plans" + (machine?.machine.id ?? ""))
                 }
 
                 if search.isEmpty, !connected.isEmpty {
@@ -306,6 +310,7 @@ private struct ConnectedRow: View {
     let provider: Integration
     let addAccount: () -> Void
     @Environment(AppModel.self) private var app
+    @Environment(Catalog.self) private var catalog
 
     var body: some View {
         HStack(spacing: 12) {
@@ -319,7 +324,7 @@ private struct ConnectedRow: View {
                     .foregroundStyle(needsAttention ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
             }
             Spacer()
-            Button("Add Account", action: addAccount)
+            Button(signInEnded ? "Sign In Again" : "Add Account", action: addAccount)
                 .buttonStyle(.glass)
             if provider.connections.contains(where: { $0.type == "credential" }) {
                 Button("Disconnect", role: .destructive, action: disconnect)
@@ -332,10 +337,13 @@ private struct ConnectedRow: View {
 
     private var active: Integration.Connection? { provider.connections.first }
 
-    private var needsAttention: Bool { active?.status?.status == "needs_auth" }
+    /// Its sign-in ended: the engine says so, or a run was refused it.
+    private var signInEnded: Bool { catalog.endedSignIns.contains(provider.id) }
+    private var needsAttention: Bool { active?.status?.status == "needs_auth" || signInEnded }
 
     private var detail: String {
         guard let active else { return "" }
+        if signInEnded { return "Sign-in ended" }
         if let status = active.status { return status.message }
         switch active.type {
         case "env": return "From \(active.name ?? "the environment")"
@@ -346,19 +354,15 @@ private struct ConnectedRow: View {
         }
     }
 
+    /// Its sign-ins and keys here, and the copies on your machines (a key's; a sign-in that renews
+    /// itself, a machine has its own of).
     private func disconnect() {
-        guard let api = app.api else { return }
-        let ids = provider.connections.filter { $0.type == "credential" }.compactMap(\.credentialID)
-        Task {
-            for id in ids { try? await api.removeCredential(id) }
-            // And its copies on your machines (a ChatGPT sign-in).
-            app.forgetSignIn(provider.id)
-        }
+        app.forgetSignIn(provider.id)
     }
 }
 
-/// Whose coding agents Accounts shows, by their section's title: this Mac's, or one of your
-/// machines' (each signs in to them on its own). Only there while you have machines.
+/// Whose coding agents and plans Accounts shows, by the agents' section's title: this Mac's, or one
+/// of your machines' (each signs in to them on its own). Only there while you have machines.
 struct AccountsPlaceMenu: View {
     @Environment(AppModel.self) private var app
 
@@ -366,7 +370,7 @@ struct AccountsPlaceMenu: View {
         if !app.machines.list.isEmpty {
             let current = app.accountsPlace.flatMap { id in app.machines.list.first { $0.id == id } }
             Menu {
-                Picker("Coding Agents On", selection: Binding(get: { current?.id }, set: { id in withAnimation(.ui) { app.accountsPlace = id } })) {
+                Picker("Coding Agents and Plans On", selection: Binding(get: { current?.id }, set: { id in withAnimation(.ui) { app.accountsPlace = id } })) {
                     Label("This Mac", systemImage: "laptopcomputer").tag(String?.none)
                     Section("Machines") {
                         ForEach(app.machines.list) { machine in
@@ -387,7 +391,7 @@ struct AccountsPlaceMenu: View {
             .menuIndicator(.hidden)
             .buttonStyle(TextButtonStyle(cornerRadius: 6, dimsAtRest: false))
             .fixedSize()
-            .help("Each machine signs in to the coding agents on its own. Plans and API keys work on all of them.")
+            .help("Each machine signs in to the coding agents and plans on its own. API keys and GitHub Copilot work on all of them.")
         }
     }
 }

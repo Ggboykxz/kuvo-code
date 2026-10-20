@@ -1453,6 +1453,9 @@ final class Workspace {
     }
     /// An agent (in a session, on a machine or this Mac) is asking you for something in its browser.
     @ObservationIgnored var onBrowserAsk: ((_ session: String, _ machine: String?) -> Void)?
+    /// A run was refused its model's sign-in (it ran out and couldn't be renewed): the provider,
+    /// and the machine whose engine it is (nil: this Mac's).
+    @ObservationIgnored var onSignInEnded: ((_ provider: String, _ machine: String?) -> Void)?
 
     /// An event from this Mac's engine, or from `machine`'s.
     func handle(_ event: ServerEvent, machine: String? = nil) {
@@ -1509,6 +1512,12 @@ final class Workspace {
         }
         noteQuestions(event)
         guard let id = event.sessionID else { return }
+        if event.type == "session.execution.failed" {
+            struct Failed: Decodable { var error: StructuredError? }
+            if (try? event.payload(as: Failed.self))?.error?.type == "provider.auth", let provider = session(id)?.model?.providerID {
+                onSignInEnded?(provider, machine)
+            }
+        }
         // A run's first words, thought or tool: how long the model took to start.
         if runStarted[id] != nil, firstOutput[id] == nil, ["session.text.started", "session.reasoning.started", "session.tool.input.started"].contains(event.type) {
             firstOutput[id] = RunInstant(onMachine: machine != nil)

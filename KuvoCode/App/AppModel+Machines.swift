@@ -84,6 +84,11 @@ extension AppModel {
             guard let session = ask.session else { return nil }
             return self?.groups.group(seat: session).map { BotGroups.tabKey($0.id) } ?? session
         }
+        // A sign-in that couldn't be renewed: marked in Accounts and the sidebar, where it was.
+        workspace.onSignInEnded = { [weak self] provider, machine in
+            guard let self else { return }
+            (machine.flatMap { self.machines.engine($0)?.catalog } ?? catalog).signInEnded(provider)
+        }
         workspace.onBrowserAsk = { [weak self] session, machine in
             guard let self else { return }
             let root = workspace.root(of: session)

@@ -374,7 +374,19 @@ final class Catalog {
         do { projectCommands[directory] = try await api.commands(directory: directory) } catch { log.error("commands: \(String(describing: error), privacy: .public)") }
     }
 
+    /// Accounts whose sign-in ran out and couldn't be renewed (the service refused it): a run on
+    /// one of their models failed asking for it. Until a sign-in changes (signed in again, or
+    /// renewed after all).
+    private(set) var endedSignIns: Set<String> = []
+
+    /// A run on `provider`'s model was refused its sign-in.
+    func signInEnded(_ provider: String) {
+        guard !OutsideAgents.runsInBridge(provider), !endedSignIns.contains(provider) else { return }
+        endedSignIns.insert(provider)
+    }
+
     func handle(_ event: ServerEvent) {
+        if ["credential.updated", "credential.switched"].contains(event.type), !endedSignIns.isEmpty { endedSignIns = [] }
         switch event.type {
         case "integration.updated", "credential.updated", "credential.switched", "provider.updated",
              "model.updated", "agent.updated", "command.updated", "config.updated":
