@@ -5,6 +5,9 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- When this Mac's engine stops for good, its sessions' pending questions and background commands go too; messages agents send at once count toward their limit together.
+- Notifications hide keys given with flags like --private-key or --client-secret, and Authorization: Token token="…".
+- Moving Kuvo Code to Applications keeps the copy there until the new one is in place, and Settings' preview tab stays the same tab after a relaunch.
 - Bots on this Mac can use any model, the coding agents' and Auto included; picking one for an existing bot carries its conversation over, as for a session. Blocks catch more commands hidden in a command line, and ask about a line they can't read through. Undo puts back a file the agent moved or copied, and keeps files your ignore rules left out.
 - Notifications hide a hex key after a key's or secret's name however it's written (quoted, in YAML or JSON), and show checksums and cache keys.
 - When this Mac's engine stops for good, its sessions no longer show as working or keep the Mac awake.
@@ -12,7 +15,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Kuvo Code no longer crashes when it shows a conversation in which drawing a widget failed; the failed step shows instead.
 - Notifications hide a hex key after a name again (like ENCRYPTION_KEY=…), and show short --key values, like sort --key 2,3.
 - Colored search output highlights patterns with | or ) in them, and skips searches that could slow the conversation down.
-- Chrome DevTools from the MCP catalog runs a fixed version, only on this Mac, with a browser profile of its own that goes when it closes (none left in your home folder); files it saves land in the project.
+- Chrome DevTools from the MCP catalog runs a fixed version (a newer one you set stays), only on this Mac, with a browser profile of its own that goes when it closes, no update checks and no usage statistics sent to Google, so it leaves nothing in your home folder; files it saves land in the project.
 - Waiting for another agent's answer finds it also on a machine whose clock differs from your Mac's.
 - Blocks in Settings › Permissions catch more of what a command line hides from them in sessions with coding agents (`sudo -n`, `/bin/rm`, `"rm"`, `eval`, `xargs`, `find -exec` and others). When a coding agent carries on by itself twice in a row, both show, and a message you sent meanwhile still goes.
 - A widget or Show in Panel from Antigravity works as it happens, not only after the conversation is opened again.
