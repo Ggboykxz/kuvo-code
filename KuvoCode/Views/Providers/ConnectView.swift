@@ -621,8 +621,10 @@ struct ConnectView: View {
         }
     }
 
+    /// A sign-in page, in your browser: a web address only (one from a server's own sign-in
+    /// metadata could name a file or another app).
     private func open(_ url: String) {
-        guard !url.isEmpty, let url = URL(string: url) else { return }
+        guard !url.isEmpty, let url = URL(string: url), ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return }
         NSWorkspace.shared.open(url)
     }
 

@@ -42,6 +42,15 @@ struct ProvidersView: View {
     private func removePending() {
         guard let removal else { return }
         app.engineConfig.set(nil, at: removal)
+        // Its key goes with it, here and on your machines: one made again with its name doesn't
+        // quietly reconnect with the old one.
+        if let id = removal.last, let api = app.api, let provider = catalog.integrations.first(where: { $0.id == id }) {
+            let ids = provider.connections.filter { $0.type == "credential" }.compactMap(\.credentialID)
+            Task {
+                for credential in ids { try? await api.removeCredential(credential) }
+                app.forgetSignIn(id)
+            }
+        }
         self.removal = nil
     }
 

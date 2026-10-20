@@ -233,7 +233,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .shortcuts: "Every keyboard shortcut in Kuvo Code."
         case .privacy: "What Kuvo Code shares, and what stays on this Mac."
         case .storage: "What Kuvo Code keeps on this Mac, and room you can get back."
-        case .accounts: "Sign in with a subscription you already have, or add an API key. Credentials stay on this Mac."
+        case .accounts: "Sign in with a subscription you already have, or add an API key. Credentials stay on this Mac and the machines you add."
         case .auto: "Your order of models to go through when one reaches a usage limit."
         case .usage: nil
         case .agents: "The agents you pick in the composer, and the subagents they hand work to."
