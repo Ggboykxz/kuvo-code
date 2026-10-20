@@ -51,7 +51,7 @@ const TAB_IDLE = Number(process.env.KUVO_BROWSER_TAB_IDLE || 12 * 3600) * 1000;
 
 // Goes up with every change to the keeper (host mode): a newer one replaces one that's running
 // (its pages close, its sign-ins stay), and an older one never replaces a newer.
-const KEEPER = 28;
+const KEEPER = 29;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -781,9 +781,10 @@ async function host() {
             orphaned.delete(targetId);
             held.set(targetId, client);
             if (mac) holdMacs.set(targetId, mac); else holdMacs.delete(targetId);
-          } else if (targetId && ([client, null].includes(held.get(targetId)) || (mac && holdMacs.get(targetId) === mac))) {
-            // Only its own hold (this connection's, or this Mac's from before), or one kept for a
-            // Mac that dropped: not another Mac's.
+          } else if (targetId && (held.get(targetId) === client || (mac && holdMacs.get(targetId) === mac) ||
+            (held.get(targetId) === null && !holdMacs.has(targetId)))) {
+            // Only its own hold (this connection's, or this Mac's from before, kept since its
+            // connection dropped), or a kept one no Mac is known for: not another Mac's.
             orphaned.delete(targetId);
             held.delete(targetId);
             holdMacs.delete(targetId);
