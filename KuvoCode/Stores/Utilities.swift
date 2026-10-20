@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import OpenCodeKit
 import WebKit
 
 /// The window's right panel: Changes, files, terminals and browsers, as tabs. Each conversation
@@ -657,6 +658,8 @@ final class Utilities {
     /// `agentTabIdle`; not one that waits for you (a sign-in, a code), one you took over, or the
     /// one in view.
     func tidyAgentTabs(now: Date = .now) {
+        // Settings › Panel can keep them.
+        guard PanelSettings.isOn(PanelSettings.tidiesAgentTabs) else { return }
         for (id, used) in unseen where now.timeIntervalSince(used) > Self.agentTabIdle {
             guard let tab = tabs.first(where: { $0.id == id }), let browser = browsers[id] else {
                 unseen[id] = nil
@@ -665,6 +668,16 @@ final class Utilities {
             guard !browser.isHeld, !browser.waitsForYou, !(isVisible(tab) && selected?.id == id) else { continue }
             close(id, refills: false)
         }
+    }
+
+    /// Tells a machine's browser whether to close agents' pages you never looked at, as Settings ›
+    /// Panel says: a file in its folder, while it's to keep them (`kuvo-browser.js`).
+    static func shareTabTidying(on machine: String) async {
+        let file = "\"$HOME/\(RemoteEngineInstaller.root)/browser/keeps-agent-tabs\""
+        let script = PanelSettings.isOn(PanelSettings.tidiesAgentTabs)
+            ? "rm -f \(file)"
+            : "mkdir -p \"$HOME/\(RemoteEngineInstaller.root)/browser\" && : > \(file)"
+        _ = await Task.detached { RemoteShell.run(script, on: machine) }.value
     }
 
     /// The tabs a conversation's agent has worked in.

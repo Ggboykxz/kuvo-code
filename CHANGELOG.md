@@ -5,7 +5,7 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
-- A browser tab an agent opened that you never looked at closes itself an hour after an agent last used it, on your Mac and on a machine, so sessions and bots browsing out of sight don't pile up pages that stay loaded; one you looked at stays.
+- A browser tab an agent opened that you never looked at closes itself an hour after an agent last used it, on your Mac and on a machine, so sessions and bots browsing out of sight don't pile up pages that stay loaded; one you looked at stays. Settings › Panel can turn this off.
 - The usage item in the menu bar shows the plans of the coding agents you're signed in to (Claude Code, Codex, Grok, Cursor, Antigravity), instead of asking you to connect an account.
 - A long message in the composer, like a big paste, scrolls with the trackpad or mouse wheel.
 - Changes shows a huge or minified new file as too big to show instead of slowing the panel down, and This Session lists every edit an agent made on a machine after writing a file.

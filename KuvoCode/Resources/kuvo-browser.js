@@ -52,7 +52,7 @@ const TAB_IDLE = Number(process.env.KUVO_BROWSER_TAB_IDLE || 3600) * 1000;
 
 // Goes up with every change to the keeper (host mode): a newer one replaces one that's running
 // (its pages close, its sign-ins stay), and an older one never replaces a newer.
-const KEEPER = 30;
+const KEEPER = 31;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -540,7 +540,9 @@ async function host() {
   const seen = new Set();
   // Pages only agents used, left alone for an hour, close: sessions' subagents and bots that wake
   // every hour don't pile up tabs. Never the page in use, one a Mac shows or showed, or the last one.
+  // Unless the Mac's Settings › Panel keeps them (it leaves this file while it does).
   setInterval(() => {
+    if (fs.existsSync(path.join(BROWSER, "keeps-agent-tabs"))) return;
     for (const [targetId, claim] of claims) {
       if (Date.now() - claim.at < TAB_IDLE || targetId === active || shown(targetId) || seen.has(targetId) || targets.size <= 1) continue;
       claims.delete(targetId);

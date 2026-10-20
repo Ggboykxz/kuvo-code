@@ -3,8 +3,10 @@ import WebKit
 
 /// The side panel: what it starts with, and the new tab page.
 struct PanelSettingsView: View {
+    @Environment(AppModel.self) private var app
     @AppStorage(PanelSettings.startsWith) private var startsWith = PanelSettings.Start.changes
     @AppStorage(PanelSettings.revealsForAgent) private var revealsForAgent = true
+    @AppStorage(PanelSettings.tidiesAgentTabs) private var tidiesAgentTabs = true
     @AppStorage(PanelSettings.showsTools) private var showsTools = true
     @AppStorage(PanelSettings.showsSuggestions) private var showsSuggestions = true
     @AppStorage(PanelSettings.suggestionCount) private var suggestionCount = 8
@@ -21,6 +23,15 @@ struct PanelSettingsView: View {
                 Toggle(isOn: $revealsForAgent) {
                     Text("Show the panel when the agent browses")
                     Text("So you can watch it, and step in.")
+                }
+                Toggle(isOn: $tidiesAgentTabs) {
+                    Text("Close agents’ tabs you haven’t looked at")
+                    Text("An hour after an agent last used one, on this Mac and your machines, so tabs don’t pile up.")
+                }
+                .onChange(of: tidiesAgentTabs) {
+                    for machine in app.machines.list.map(\.id) where app.machines.engine(machine)?.isReady == true {
+                        Task { await Utilities.shareTabTidying(on: machine) }
+                    }
                 }
             }
             Section("New Tab Page") {

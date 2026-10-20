@@ -243,6 +243,7 @@ extension AppModel {
             await AgentMail.shared.collect(from: engine)
             await AgentMail.shared.deliverWaiting(to: engine)
             await wakeUps.share(with: engine)
+            await Utilities.shareTabTidying(on: engine.machine.id)
             engine.signInSync = Task { [weak self, weak engine] in
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(600))
