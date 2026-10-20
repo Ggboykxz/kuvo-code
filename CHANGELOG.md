@@ -20,7 +20,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - On a machine, a link the agent clicks that opens a new window (a sign-in window, say) is where it goes on, as on your Mac, rather than back on the page that opened it.
 - After your Mac wakes, a machine's browser view comes back right away, rather than once its old connection times out.
 - Letting agents sign in to a site on their own is for the account you allowed it with, and ends when you delete that password: one saved later isn't used without asking.
-- The browser offers to save a password on https pages only, where it fills them in; on http://localhost it offered to save one it could never fill.
+- The browser offers to save a password on https pages only, where it fills them in, in the toolbar and in the agent's sign-in card; on http://localhost it offered to save one it could never fill.
 - A bot can no longer schedule a wake-up that repeats more than a year apart: one far longer made Kuvo Code quit as it opened, again each time, after sending it.
 - A repeating wake-up isn't queued again while the last one still waits (the bot busy, or waiting on you), so a bot doesn't come back to a pile of them.
 - Weekday wake-ups and meetings are Monday to Friday wherever you are; in a few places they followed the local weekend.

@@ -48,12 +48,21 @@ nonisolated enum Passwords {
     }
 
     /// The saved login agents sign in to `host` with on their own, if you allowed that: the
-    /// account you allowed it for (one allowed before accounts were kept: the site's newest).
+    /// account you allowed it for.
     static func agentLogin(for host: String) -> Login? {
-        guard agentSites.contains(host) else { return nil }
-        let logins = logins(for: host)
-        guard let account = agentAccounts[host] else { return logins.first }
-        return logins.first { $0.account == account }
+        guard agentSites.contains(host), let account = agentAccounts[host] else { return nil }
+        return logins(for: host).first { $0.account == account }
+    }
+
+    /// Sites allowed before the account was kept get the one they'd have used then, the site's
+    /// newest: a login saved after this isn't used without asking. Run once, at launch.
+    static func keepAgentAccounts() {
+        let accounts = agentAccounts
+        let loose = agentSites.filter { accounts[$0] == nil }
+        guard !loose.isEmpty else { return }
+        for host in loose {
+            if let newest = logins(for: host).first { setAgentSignIn(host, true, account: newest.account) } else { setAgentSignIn(host, false) }
+        }
     }
 
     static func setNever(_ host: String, _ never: Bool) {
@@ -125,7 +134,7 @@ nonisolated enum Passwords {
         SecItemDelete(query as CFDictionary)
         // Agents no longer sign in with it on their own: a password saved later for the site isn't
         // theirs without asking.
-        if agentSites.contains(login.host), agentAccounts[login.host] == login.account || agentLogin(for: login.host) == nil {
+        if agentSites.contains(login.host), agentAccounts[login.host] == login.account {
             setAgentSignIn(login.host, false)
         }
     }

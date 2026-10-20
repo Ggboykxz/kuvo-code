@@ -50,6 +50,11 @@ struct BrowserAskCard: View {
 
     private enum Field { case username, password, code }
 
+    /// A site an ask names that's over https: a plain host, not "http://…" nor a file.
+    private static func isSecure(_ host: String) -> Bool {
+        !host.hasPrefix("http://") && !host.hasPrefix("a file")
+    }
+
     /// The site's saved logins, read once from the keychain rather than on every redraw.
     @State private var saved: [Passwords.Login] = []
 
@@ -76,7 +81,7 @@ struct BrowserAskCard: View {
             case .signIn:
                 saved = Passwords.logins(for: ask.host)
                 if let login = saved.first { use(login) }
-                saves = saved.isEmpty && Passwords.offersToSave && !Passwords.neverSites.contains(ask.host)
+                saves = Self.isSecure(ask.host) && saved.isEmpty && Passwords.offersToSave && !Passwords.neverSites.contains(ask.host)
                 if mayFocus { focus = username.isEmpty ? .username : .password }
             case .code: if mayFocus { focus = .code }
             case .action: break
@@ -155,16 +160,19 @@ struct BrowserAskCard: View {
                     .controlSize(.small)
                 }
                 Spacer()
-                VStack(alignment: .leading, spacing: 6) {
-                    Toggle("Save in Passwords", isOn: $saves)
-                        .disabled(!saved.isEmpty && saved.contains { $0.account == username })
-                    if saves || saved.contains(where: { $0.account == username }) {
-                        Toggle("Let agents sign in here on their own", isOn: $allowsAgents)
-                            .help("Next time, with its saved password, without asking you; it still goes straight into the page. Settings › Passwords lists these sites.")
+                // Saved and filled over https only (a page over http, or a file, gets neither).
+                if Self.isSecure(ask.host) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Toggle("Save in Passwords", isOn: $saves)
+                            .disabled(!saved.isEmpty && saved.contains { $0.account == username })
+                        if saves || saved.contains(where: { $0.account == username }) {
+                            Toggle("Let agents sign in here on their own", isOn: $allowsAgents)
+                                .help("Next time, with its saved password, without asking you; it still goes straight into the page. Settings › Passwords lists these sites.")
+                        }
                     }
+                    .toggleStyle(.checkbox)
+                    .controlSize(.small)
                 }
-                .toggleStyle(.checkbox)
-                .controlSize(.small)
             }
         }
     }
@@ -226,10 +234,10 @@ struct BrowserAskCard: View {
         switch ask.kind {
         case .signIn:
             guard !username.isEmpty || !password.isEmpty else { return }
-            let typed = saves && !password.isEmpty
+            let typed = saves && Self.isSecure(ask.host) && !password.isEmpty
             if typed { _ = Passwords.save(host: ask.host, account: username, password: password) }
             let answer = BrowserAsks.Answer.signIn(username: username.isEmpty ? nil : username, password: password.isEmpty ? nil : password)
-            guard allowsAgents, !password.isEmpty else {
+            guard allowsAgents, Self.isSecure(ask.host), !password.isEmpty else {
                 app.browserAsks.answer(ask.id, answer)
                 return
             }
