@@ -142,7 +142,7 @@ export class AcpThread implements Thread {
   private startedOver = false
   onOwnTurn?: (note: OwnTurn) => boolean
   /** Updates of a turn the agent began on its own, until a turn here takes them; or turned away. */
-  private own?: { updates: any[]; turnedAway: boolean; ended?: boolean; quiet?: ReturnType<typeof setTimeout> }
+  private own?: { updates: any[]; turnedAway: boolean; ended?: boolean; quiet?: ReturnType<typeof setTimeout>; started: number }
 
   constructor(
     private readonly flavor: AcpFlavor,
@@ -414,7 +414,7 @@ export class AcpThread implements Thread {
     const rpc = this.rpc
     if (!own || own.turnedAway || !rpc) return Promise.resolve({ outcome: "succeeded" })
     return new Promise<RunResult>((resolve) => {
-      const active: Active = { turn, hooks, resolve, rpc, tools: new Map(), toolsSinceText: false, ended: false, children: new Map(), served: new Map(), started: Date.now(), prompt: 0, own: true }
+      const active: Active = { turn, hooks, resolve, rpc, tools: new Map(), toolsSinceText: false, ended: false, children: new Map(), served: new Map(), started: own.started, prompt: 0, own: true }
       this.active = active
       turn.startStep()
       if (this.sessionID) active.follower = this.flavor.follow?.(this.sessionID, turn, hooks)
@@ -580,7 +580,7 @@ export class AcpThread implements Thread {
       return
     }
     if (!["agent_message_chunk", "agent_thought_chunk", "tool_call"].includes(update.sessionUpdate)) return
-    const own = { updates: [params], turnedAway: false }
+    const own = { updates: [params], turnedAway: false, started: Date.now() }
     this.own = own
     if (!(this.onOwnTurn?.({ text: `${this.name} carried on by itself.` }) ?? false)) this.turnAway()
   }

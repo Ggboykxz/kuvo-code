@@ -1117,9 +1117,13 @@ export class Sessions {
     const live = this.state(id)
     const later = live.wakeLater
     live.wakeLater = false
-    // A turn its agent began on its own goes first; what was to start goes after it.
-    if (later && live.adopting) live.resume = true
-    if (later || live.adopting) this.wake(id)
+    // A turn its agent began on its own goes first, and what was to start after it; one turned
+    // away (an undo came first) doesn't start what waited for you.
+    if (live.adopting && this.startAdopting(id)) {
+      if (later) live.resume = true
+      return
+    }
+    if (later) this.wake(id)
   }
 
   /** An undo made final: what was taken back goes, and the agents start their conversations over, handed what's left. */
@@ -1554,11 +1558,11 @@ export class Sessions {
     const live = this.live.get(id)
     const model = live?.models.get(provider)
     // (A turn still running on this same agent is one it has finished: it begins its own only then.)
-    const busy = live?.turn && !live.turn.isEnded && live.running?.provider !== provider
+    const busy = live?.turn && !live.turn.isEnded && (live.running?.provider !== provider || live.abort?.signal.aborted)
     if (!record || !live || !model || this.removing.has(id) || record.session.revert || busy || live.adopting) return false
     live.adopting = { id: newID("msg"), text: note.text, files: [], delivery: "steer", synthetic: { description: note.description, metadata: note.metadata }, adopt: model }
-    // Now, or once what's kept of the files (after the last turn) is done.
-    this.wake(id)
+    // Now; or once what's kept of the files is done, or the turn ending ends (they take it).
+    if (!this.isRunning(id)) this.wake(id)
     return true
   }
 
@@ -1765,9 +1769,12 @@ export class Sessions {
   async interrupt(id: string, resume = false) {
     const live = this.live.get(id)
     if (!live?.turn || live.turn.isEnded) {
-      const stopped = await this.stopSubagents(id)
-      if (resume) this.wake(id)
-      return stopped
+      // (Asked to start what waits: subagents at work in the background go on.)
+      if (resume) {
+        this.wake(id)
+        return false
+      }
+      return this.stopSubagents(id)
     }
     const turn = live.turn
     live.resume = resume

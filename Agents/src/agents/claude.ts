@@ -453,9 +453,9 @@ class ClaudeThread implements Thread {
       this.active = this.turnFor(turn, hooks, resolve, input.auto, new Map())
       let at = 0
       for (; at < own.frames.length && this.active; at++) this.handle(own.frames[at])
-      // What it said after that turn's end: another of its own, asked about once this one is over here.
-      const rest = own.frames.slice(at)
-      if (rest.length) setTimeout(() => rest.forEach((frame) => this.handle(frame)), 0)
+      // What it said after that turn's end: another of its own, waiting to be taken as this one
+      // ends here (its tools wait for that too).
+      for (const frame of own.frames.slice(at)) this.handle(frame)
     })
   }
 
@@ -1076,7 +1076,8 @@ class ClaudeThread implements Thread {
 
   /** A turn it began on its own, being taken here: its tools wait for that. */
   private async ownTaken() {
-    if (!this.active && this.own && !this.own.turnedAway) await this.own.taken
+    // (Taken, or the next one it began after it is waiting: through to that.)
+    while (!this.active && this.own && !this.own.turnedAway) await this.own.taken
   }
 
   private async canUseTool(name: string, input: Record<string, any>, options: any): Promise<any> {
