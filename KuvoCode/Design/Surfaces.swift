@@ -22,12 +22,13 @@ enum Surface {
     }
 
     /// The tint over the window's behind-window glass, solid enough that other windows behind
-    /// don't show as shapes. Dark mode lets the desktop's color through; light mode is a warm
-    /// ivory with only a hint of it, since a dark wallpaper under thin glass turned the sidebar
-    /// a murky olive gray beside the white cards.
+    /// don't show as shapes. Dark mode lets some of the desktop's color through, but stays dark
+    /// over a white window behind (thinner, the sidebar went mid-gray there and its gray text
+    /// could hardly be read); light mode is a warm ivory with only a hint of it, since a dark
+    /// wallpaper under thin glass turned the sidebar a murky olive gray beside the white cards.
     static func canvasTint(_ scheme: ColorScheme) -> Color {
         scheme == .dark
-            ? Color(white: 0.06, opacity: 0.25)
+            ? Color(white: 0.06, opacity: 0.7)
             : Color(red: 0xF6 / 255, green: 0xF4 / 255, blue: 0xEE / 255).opacity(0.86)
     }
 
