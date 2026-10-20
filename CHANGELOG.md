@@ -61,6 +61,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Replies being written, code especially, cost less to draw with each few words.
 - Window › Fill, Center and Move & Resize work again, and so do their keys: since 0.5.20 they were greyed out.
 - Find marks its matches in replies already on screen, and the marks go when Find closes. A group chat's faces in replies update too.
+- A reply being written comes in smoothly: its words are drawn as each frame of the screen begins, so they no longer cost a dropped frame now and then (about one frame in five before, one in thirty-five now).
 
 ## 0.5.22
 

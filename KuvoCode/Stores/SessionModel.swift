@@ -647,6 +647,8 @@ final class SessionModel {
         let due = lastShown + Self.streamInterval
         showsLive = Task {
             if due > .now { try? await Task.sleep(until: due) }
+            // As a frame begins, so drawing it has the whole frame (see `FrameClock`).
+            await FrameClock.shared.nextFrame()
             guard !Task.isCancelled else { return }
             showLive()
         }
