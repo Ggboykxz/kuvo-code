@@ -20,6 +20,8 @@ struct ConnectView: View {
     /// Leaves without connecting. When set (in a sheet), every step but the last has a Cancel
     /// beside its own buttons.
     var onCancel: (() -> Void)? = nil
+    /// Starts signing in this way at once (the way you signed in on this Mac, now on a machine).
+    var startWith: String? = nil
 
     @Environment(AppModel.self) private var app
     @Environment(Catalog.self) private var catalog
@@ -57,6 +59,8 @@ struct ConnectView: View {
     @State private var left = false
     /// For one on a machine: the port its page comes back to, forwarded there meanwhile.
     @State private var forward = SignInForward()
+    /// The way you signed in, to offer the same on your machines.
+    @State private var usedMethod: String?
 
     struct Highlight: Hashable {
         let symbol: String
@@ -369,6 +373,10 @@ struct ConnectView: View {
                 .padding(16)
                 .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 14))
             }
+            // Signed in here: the same on your machines, a click each.
+            if catalog.machine == nil {
+                MachineSignInOffer(integrationID: integrationID, method: usedMethod)
+            }
             Button("Done", action: onDone)
                 .buttonStyle(.glassProminent)
                 .controlSize(.extraLarge)
@@ -432,10 +440,15 @@ struct ConnectView: View {
             return
         }
         #endif
+        if let startWith, let method = supportedMethods.first(where: { if case .oauth(let id, _, _) = $0 { id == startWith } else { false } }) {
+            start(method)
+            return
+        }
         if supportedMethods.count == 1, let method = supportedMethods.first { start(method) }
     }
 
     private func start(_ method: Integration.Method) {
+        if case .oauth(let id, _, _) = method { usedMethod = id }
         answers = FormFieldsView.defaults(for: method.form)
         switch method {
         case .key:
@@ -706,5 +719,84 @@ struct AnyPrimitiveButtonStyle: PrimitiveButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         make(configuration)
+    }
+}
+
+/// A coding agent you signed in to on this Mac, on your machines too: each machine signs in on
+/// its own (nothing is copied from this Mac), a click each, the way you did here, finishing in
+/// this Mac's browser.
+struct MachineSignInOffer: View {
+    let integrationID: String
+    /// How you signed in here.
+    var method: String?
+    @Environment(AppModel.self) private var app
+    @State private var signingIn: MachineSignIn?
+
+    var body: some View {
+        let machines = app.machinesToSignIn(integrationID)
+        if !machines.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Sign in on your machines too, the same way. Each keeps a sign-in of its own.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                ForEach(machines, id: \.machine.id) { engine in
+                    Button("Sign In on \(engine.machine.name)") {
+                        signingIn = MachineSignIn(machine: engine.machine.id, integrationID: integrationID, method: method)
+                    }
+                    .buttonStyle(.glass)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 12))
+            .machineSignIn($signingIn)
+        }
+    }
+}
+
+/// Signing in to a coding agent on one of your machines, with that machine's own sign-in.
+struct MachineSignIn: Identifiable, Hashable {
+    let machine: String
+    let integrationID: String
+    /// How to start (the way you signed in on this Mac).
+    var method: String?
+    var id: String { machine + "/" + integrationID }
+}
+
+extension View {
+    /// A sign-in on one of your machines, in a sheet over this.
+    func machineSignIn(_ item: Binding<MachineSignIn?>) -> some View {
+        modifier(MachineSignInSheet(item: item))
+    }
+}
+
+private struct MachineSignInSheet: ViewModifier {
+    @Binding var item: MachineSignIn?
+    @Environment(AppModel.self) private var app
+
+    func body(content: Content) -> some View {
+        content.sheet(item: $item) { item in
+            if let engine = app.machines.engine(item.machine) {
+                ConnectView(integrationID: item.integrationID, name: "\(OutsideAgents.name(item.integrationID)) on \(engine.machine.name)",
+                            connectedNote: "Its models are now in the model picker there.",
+                            onDone: { self.item = nil }, onCancel: { self.item = nil }, startWith: item.method)
+                    .environment(engine.catalog)
+                    .environment(\.agentsBridge, engine.agents)
+                    .frame(width: 460)
+            }
+        }
+    }
+}
+
+extension AppModel {
+    /// Your connected machines where the coding agent `integrationID` (its own sign-in, not an
+    /// account you added) isn't signed in, for when you're signed in to it here.
+    func machinesToSignIn(_ integrationID: String) -> [MachineEngine] {
+        guard OutsideAgents.providers.contains(integrationID), catalog.integrations.first(where: { $0.id == integrationID })?.isConnected == true else { return [] }
+        return machines.list.compactMap { machines.engine($0.id) }.filter { engine in
+            engine.isReady && engine.agents.api != nil && !engine.agents.isDown
+                && engine.catalog.codingAgents.first { $0.id == integrationID }.map { !$0.isConnected } == true
+        }
     }
 }

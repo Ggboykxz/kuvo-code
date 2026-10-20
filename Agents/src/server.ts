@@ -396,18 +396,6 @@ export function handler(context: Context) {
         }
         const target = b ? roster.find(b) : undefined
         if (!target) return error(404, "No such account.")
-        // A sign-in that works in two places at once: your Mac's, for your machines.
-        if (c === "shared" && method === "GET") return json({ data: (await target.sharedSignIn?.().catch(() => undefined)) ?? null })
-        if (c === "shared" && method === "PUT") {
-          const { shared } = await body()
-          const changed = (await target.takeSharedSignIn?.(shared && typeof shared === "object" ? shared : null).catch(() => false)) ?? false
-          if (changed) {
-            target.forgetModels?.()
-            emit("integration.updated", { integrationID: target.providerID })
-            emit("model.updated", {})
-          }
-          return json({ data: { changed } })
-        }
         if (target.instance.id === "default") return error(400, "That's the agent's own sign-in: sign out of it where you signed in.")
         if (method === "PATCH") {
           roster.accounts.rename(target.providerID, (await body()).label)

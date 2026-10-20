@@ -3,7 +3,7 @@
 // programs are installed in it, at the versions this bridge was written for, rather than looked
 // for on the machine. Nothing is installed for the machine as a whole, nothing goes in its home.
 
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { brotliDecompressSync } from "node:zlib"
 import type { Deps } from "./deps"
@@ -176,26 +176,28 @@ export async function installGrok(deps: Deps): Promise<string> {
 }
 
 /**
- * A sign-in kept in one file, your Mac's on a machine: written (a file only you can read) with a
- * mark beside it saying it's the Mac's, or, `content` null, taken away with its mark. One signed
- * in on the machine itself (no mark) stays as it is. True when that changed anything.
+ * Sign-ins a Mac carried over to this machine before each machine signed in on its own (each
+ * marked `<file>.from-mac`): gone, with their marks. A sign-in made here stays.
  */
-export function takeSharedFile(file: string, content: string | null): boolean {
-  const mark = file + ".from-mac"
-  const own = existsSync(file) && !existsSync(mark)
-  if (own) return false
-  if (content === null) {
-    if (!existsSync(mark)) return false
-    rmSync(file, { force: true })
-    rmSync(mark, { force: true })
-    return true
+export function dropCarriedSignIns(home: string) {
+  const visit = (folder: string, depth: number) => {
+    let names: string[] = []
+    try {
+      names = readdirSync(folder)
+    } catch {
+      return
+    }
+    for (const name of names) {
+      const path = join(folder, name)
+      if (name.endsWith(".from-mac")) {
+        rmSync(path.slice(0, -".from-mac".length), { force: true })
+        rmSync(path, { force: true })
+      } else if (depth < 5 && name !== "runtime" && name !== "sessions" && name !== "snapshots") {
+        try {
+          if (statSync(path).isDirectory()) visit(path, depth + 1)
+        } catch {}
+      }
+    }
   }
-  try {
-    if (readFileSync(file, "utf8") === content) return false
-  } catch {}
-  mkdirSync(dirname(file), { recursive: true, mode: 0o700 })
-  writeFileSync(file + ".new", content, { mode: 0o600 })
-  renameSync(file + ".new", file)
-  writeFileSync(mark, "", { mode: 0o600 })
-  return true
+  visit(home, 0)
 }

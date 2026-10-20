@@ -11,7 +11,7 @@ import type { Agent, AgentContext, Account, SignInAttempt, SubagentRun, Thread, 
 import { accountName, failure, model } from "../agent"
 import { AcpThread } from "../acp"
 import { emit } from "../events"
-import { takeSharedFile, withOwnFolders } from "../machine"
+import { withOwnFolders } from "../machine"
 import { newID } from "../ids"
 import { run, which } from "../proc"
 import { RPC } from "../rpc"
@@ -583,28 +583,6 @@ export class AntigravityAgent implements Agent {
   async signOut() {
     rmSync(this.tokenFile, { force: true })
     rmSync(this.modelsFile, { force: true })
-  }
-
-  /** Its sign-in is a Google one Google doesn't rotate: it works on your machines too. */
-  async sharedSignIn() {
-    if (this.instance.home || this.endedSignIn !== undefined || !existsSync(this.tokenFile)) return undefined
-    try {
-      const token = JSON.parse(readFileSync(this.tokenFile, "utf8"))
-      return token?.refresh_token ? { token } : undefined
-    } catch {
-      return undefined
-    }
-  }
-
-  async takeSharedSignIn(shared: Record<string, unknown> | null) {
-    if (this.instance.home) return false
-    const token = shared?.token as { refresh_token?: unknown } | undefined
-    const changed = takeSharedFile(this.tokenFile, token && typeof token.refresh_token === "string" ? JSON.stringify(token) : null)
-    if (changed) {
-      this.endedSignIn = undefined
-      if (!shared) rmSync(this.modelsFile, { force: true })
-    }
-    return changed
   }
 
   private saveModels(setup: any) {

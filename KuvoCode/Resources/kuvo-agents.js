@@ -9,7 +9,7 @@ import { mkdirSync as mkdirSync2, readFileSync as readFileSync2, renameSync as r
 import { join as join2 } from "path";
 
 // Agents/src/machine.ts
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { brotliDecompressSync } from "zlib";
 var onMachine = process.env.KUVO_AGENTS_REMOTE === "1";
@@ -141,27 +141,28 @@ async function installGrok(deps) {
   writeFileSync(path + ".version", machineVersions.grok);
   return path;
 }
-function takeSharedFile(file, content) {
-  const mark = file + ".from-mac";
-  const own = existsSync(file) && !existsSync(mark);
-  if (own)
-    return false;
-  if (content === null) {
-    if (!existsSync(mark))
-      return false;
-    rmSync(file, { force: true });
-    rmSync(mark, { force: true });
-    return true;
-  }
-  try {
-    if (readFileSync(file, "utf8") === content)
-      return false;
-  } catch {}
-  mkdirSync(dirname(file), { recursive: true, mode: 448 });
-  writeFileSync(file + ".new", content, { mode: 384 });
-  renameSync(file + ".new", file);
-  writeFileSync(mark, "", { mode: 384 });
-  return true;
+function dropCarriedSignIns(home) {
+  const visit = (folder, depth) => {
+    let names = [];
+    try {
+      names = readdirSync(folder);
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      const path = join(folder, name);
+      if (name.endsWith(".from-mac")) {
+        rmSync(path.slice(0, -".from-mac".length), { force: true });
+        rmSync(path, { force: true });
+      } else if (depth < 5 && name !== "runtime" && name !== "sessions" && name !== "snapshots") {
+        try {
+          if (statSync(path).isDirectory())
+            visit(path, depth + 1);
+        } catch {}
+      }
+    }
+  };
+  visit(home, 0);
 }
 
 // Agents/src/accounts.ts
@@ -1776,7 +1777,7 @@ function ancestors(path) {
 
 // Agents/src/agents/antigravity.ts
 import { createHash as createHash2 } from "crypto";
-import { chmodSync as chmodSync3, existsSync as existsSync6, mkdirSync as mkdirSync8, readdirSync as readdirSync3, readFileSync as readFileSync9, renameSync as renameSync4, rmSync as rmSync6, statSync, writeFileSync as writeFileSync8 } from "fs";
+import { chmodSync as chmodSync3, existsSync as existsSync6, mkdirSync as mkdirSync8, readdirSync as readdirSync3, readFileSync as readFileSync9, renameSync as renameSync4, rmSync as rmSync6, statSync as statSync2, writeFileSync as writeFileSync8 } from "fs";
 import { join as join9 } from "path";
 import { pathToFileURL as pathToFileURL2 } from "url";
 
@@ -3086,7 +3087,7 @@ function generatedImages(folder, input, since) {
   const types2 = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif" };
   const images = names.map((name) => ({ name, type: types2[name.split(".").pop()?.toLowerCase() ?? ""] })).filter((file) => file.type && (!stem || file.name.startsWith(`${stem}_`) || file.name.startsWith(`${stem}.`))).map((file) => ({ ...file, at: (() => {
     try {
-      return statSync(join9(folder, file.name)).mtimeMs;
+      return statSync2(join9(folder, file.name)).mtimeMs;
     } catch {
       return 0;
     }
@@ -3333,7 +3334,7 @@ class AntigravityAgent {
   endedSignIn;
   signInEnded() {
     try {
-      this.endedSignIn = statSync(this.tokenFile).mtimeMs;
+      this.endedSignIn = statSync2(this.tokenFile).mtimeMs;
     } catch {}
     emit("integration.updated", { integrationID: this.providerID });
   }
@@ -3344,7 +3345,7 @@ class AntigravityAgent {
     if (this.endedSignIn !== undefined) {
       let now;
       try {
-        now = statSync(this.tokenFile).mtimeMs;
+        now = statSync2(this.tokenFile).mtimeMs;
       } catch {}
       if (now === this.endedSignIn)
         return { installed: this.isInstalled, signedIn: false, ended: true, message: "Google ended this sign-in. Sign in again." };
@@ -3529,28 +3530,6 @@ class AntigravityAgent {
     rmSync6(this.tokenFile, { force: true });
     rmSync6(this.modelsFile, { force: true });
   }
-  async sharedSignIn() {
-    if (this.instance.home || this.endedSignIn !== undefined || !existsSync6(this.tokenFile))
-      return;
-    try {
-      const token = JSON.parse(readFileSync9(this.tokenFile, "utf8"));
-      return token?.refresh_token ? { token } : undefined;
-    } catch {
-      return;
-    }
-  }
-  async takeSharedSignIn(shared) {
-    if (this.instance.home)
-      return false;
-    const token = shared?.token;
-    const changed = takeSharedFile(this.tokenFile, token && typeof token.refresh_token === "string" ? JSON.stringify(token) : null);
-    if (changed) {
-      this.endedSignIn = undefined;
-      if (!shared)
-        rmSync6(this.modelsFile, { force: true });
-    }
-    return changed;
-  }
   saveModels(setup) {
     const option = (setup?.configOptions ?? []).find((option2) => option2.id === "model" || option2.category === "model");
     const flat = [];
@@ -3645,7 +3624,7 @@ function unzipper() {
 
 // Agents/src/agents/claude.ts
 import { randomUUID } from "crypto";
-import { existsSync as existsSync8, readFileSync as readFileSync10, statSync as statSync2 } from "fs";
+import { existsSync as existsSync8, readFileSync as readFileSync10, statSync as statSync3 } from "fs";
 import { homedir } from "os";
 import { join as join11 } from "path";
 import { pathToFileURL as pathToFileURL3 } from "url";
@@ -4007,7 +3986,7 @@ class ClaudeAgent {
   settingsWritten() {
     const folder = this.instance.home ?? homedir();
     try {
-      return statSync2(join11(folder, ".claude.json")).mtimeMs;
+      return statSync3(join11(folder, ".claude.json")).mtimeMs;
     } catch {
       return 0;
     }
@@ -6851,28 +6830,6 @@ class CursorAgent {
     this.accountCache = undefined;
     this.modelList = undefined;
   }
-  async sharedSignIn() {
-    if (this.instance.home || !existsSync10(this.authFile))
-      return;
-    try {
-      const saved = JSON.parse(readFileSync11(this.authFile, "utf8"));
-      if (!saved?.apiKey || saved.apiKeyExpiresAtMs && saved.apiKeyExpiresAtMs < Date.now())
-        return;
-      return saved;
-    } catch {
-      return;
-    }
-  }
-  async takeSharedSignIn(shared) {
-    if (this.instance.home)
-      return false;
-    const changed = takeSharedFile(this.authFile, shared && typeof shared.apiKey === "string" ? JSON.stringify(shared) : null);
-    if (changed) {
-      this.accountCache = undefined;
-      this.modelList = undefined;
-    }
-    return changed;
-  }
   async models() {
     const sdk = await this.sdk();
     const apiKey = await this.apiKey(sdk);
@@ -7649,7 +7606,7 @@ class Roster {
 // Agents/src/sessions.ts
 import { createHash as createHash3 } from "crypto";
 import { spawn as spawnProcess } from "child_process";
-import { readFileSync as readFileSync13, statSync as statSync3 } from "fs";
+import { readFileSync as readFileSync13, statSync as statSync4 } from "fs";
 import { fileURLToPath } from "url";
 
 // Agents/src/handover.ts
@@ -10111,7 +10068,7 @@ function withTextFiles(text, files) {
     let contents;
     if (!file.mime.startsWith("image/") && file.mime !== "application/pdf") {
       try {
-        const bytes = file.data ? Buffer.from(file.data, "base64") : file.path && statSync3(file.path).isFile() && statSync3(file.path).size <= textFileLimit ? readFileSync13(file.path) : undefined;
+        const bytes = file.data ? Buffer.from(file.data, "base64") : file.path && statSync4(file.path).isFile() && statSync4(file.path).size <= textFileLimit ? readFileSync13(file.path) : undefined;
         if (bytes && !bytes.includes(0))
           contents = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
       } catch {}
@@ -10520,20 +10477,6 @@ function handler(context) {
         const target = b ? roster.find(b) : undefined;
         if (!target)
           return error(404, "No such account.");
-        if (c === "shared" && method === "GET")
-          return json({ data: await target.sharedSignIn?.().catch(() => {
-            return;
-          }) ?? null });
-        if (c === "shared" && method === "PUT") {
-          const { shared } = await body();
-          const changed = await target.takeSharedSignIn?.(shared && typeof shared === "object" ? shared : null).catch(() => false) ?? false;
-          if (changed) {
-            target.forgetModels?.();
-            emit("integration.updated", { integrationID: target.providerID });
-            emit("model.updated", {});
-          }
-          return json({ data: { changed } });
-        }
         if (target.instance.id === "default")
           return error(400, "That's the agent's own sign-in: sign out of it where you signed in.");
         if (method === "PATCH") {
@@ -10628,7 +10571,7 @@ ${all}`;
 }
 
 // Agents/src/store.ts
-import { mkdirSync as mkdirSync12, readdirSync as readdirSync5, readFileSync as readFileSync14, renameSync as renameSync5, rmSync as rmSync9, statSync as statSync4, writeFileSync as writeFileSync10 } from "fs";
+import { mkdirSync as mkdirSync12, readdirSync as readdirSync5, readFileSync as readFileSync14, renameSync as renameSync5, rmSync as rmSync9, statSync as statSync5, writeFileSync as writeFileSync10 } from "fs";
 import { join as join15 } from "path";
 
 class Store {
@@ -10662,7 +10605,7 @@ class Store {
   }
   writtenAt(id) {
     try {
-      return statSync4(join15(this.root, id, "messages.json")).mtimeMs;
+      return statSync5(join15(this.root, id, "messages.json")).mtimeMs;
     } catch {
       return;
     }
@@ -10725,6 +10668,8 @@ var port = onMachine ? Number(process.env.KUVO_AGENTS_PORT) : 0;
 if (onMachine) {
   setToolProgram(process.env.OPENCODE_CONFIG_CONTENT);
   takeOwnFolders();
+  if (home)
+    dropCarriedSignIns(home);
   process.env.KUVO_BIN = join16(machineHome, "bin");
   process.env.KUVO_BOTS ??= join16(machineHome, "bots");
   process.env.KUVO_WAKES ??= join16(machineHome, "wakes");

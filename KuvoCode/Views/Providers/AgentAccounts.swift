@@ -416,6 +416,8 @@ private struct AgentAccountRow: View {
     @State private var name = ""
     @State private var confirmsRemove = false
     @State private var failure: String?
+    /// Signing in to it on one of your machines.
+    @State private var signingIn: MachineSignIn?
 
     private var isAdded: Bool { OutsideAgents.account(account.id) != nil }
     private var label: String? { account.metadata?["accountLabel"]?.string }
@@ -445,6 +447,14 @@ private struct AgentAccountRow: View {
                     problem: ended ? AccountProblem.signInEnded.text : limit.map { AccountProblem.atLimit(until: $0).text },
                     signIn: account.isConnected ? nil : connect) {
             Button("Sign In Again…", action: connect)
+            // On this Mac's page: each of your machines signs in on its own.
+            if bridge == nil, !isAdded {
+                ForEach(app.machinesToSignIn(account.id), id: \.machine.id) { engine in
+                    Button("Sign In on \(engine.machine.name)…") {
+                        signingIn = MachineSignIn(machine: engine.machine.id, integrationID: account.id)
+                    }
+                }
+            }
             if isAdded {
                 Button("Rename…") {
                     name = label ?? ""
@@ -461,6 +471,7 @@ private struct AgentAccountRow: View {
                 Text("Shared with \(tool) in Terminal")
             }
         }
+        .machineSignIn($signingIn)
         .alert("Rename This Account", isPresented: $renaming) {
             TextField("Name, like Work or Personal", text: $name)
             Button("Rename") { rename() }

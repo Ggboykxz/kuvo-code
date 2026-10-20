@@ -20,30 +20,6 @@ extension AppModel {
         await turn.value
     }
 
-    /// The coding agents whose sign-in works in two places at once (Cursor's is an API key, and
-    /// Google doesn't rotate Antigravity's): signed in on this Mac, they're signed in on your
-    /// machines too, and signing out here signs those copies out; one you signed in to on the
-    /// machine itself stays. The others (Claude Code, Codex, Grok) sign in on each machine: two
-    /// copies renewing one sign-in would sign one of them out.
-    static let sharedAgentSignIns = ["cursor", "antigravity"]
-
-    /// This Mac's shareable coding agents' sign-ins, on `engine`'s machine too, in their turn with
-    /// the other copying of sign-ins.
-    func syncAgentSignIns(with engine: MachineEngine) async {
-        let previous = engine.signInTurn
-        let turn = Task { [weak self, weak engine] in
-            await previous?.value
-            guard let self, let engine, live(engine), let mac = agents.api, let there = engine.agents.api else { return }
-            for provider in Self.sharedAgentSignIns {
-                // Not read here (the bridge restarting): left as it is there.
-                guard let shared = try? await mac.sharedSignIn(provider) ?? .null else { continue }
-                try? await there.takeSharedSignIn(provider, shared == .null ? nil : shared)
-            }
-        }
-        engine.signInTurn = turn
-        await turn.value
-    }
-
     private func copySignInFiles(with engine: MachineEngine) async {
         let machine = engine.machine.id
         // Those added in Settings.

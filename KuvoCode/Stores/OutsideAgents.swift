@@ -565,19 +565,6 @@ extension OpenCodeAPI {
         _ = try await client.send(try client.request("DELETE", "api/kuvo/auto/limits"), as: Empty.self)
     }
 
-    /// An agent's sign-in, when it works in two places at once (Cursor's key, Antigravity's Google
-    /// sign-in): nil when there's none, or one that can't be shared.
-    func sharedSignIn(_ provider: String) async throws -> JSONValue? {
-        let shared = try await client.send(try client.request("GET", "api/kuvo/accounts/\(provider.pathComponentEscaped)/shared"), as: DataEnvelope<JSONValue>.self).data
-        return shared == .null ? nil : shared
-    }
-
-    /// On a machine: this Mac's sign-in (`shared`), or nil to take back the one it gave.
-    func takeSharedSignIn(_ provider: String, _ shared: JSONValue?) async throws {
-        struct Body: Encodable { var shared: JSONValue }
-        _ = try await client.send(try client.request("PUT", "api/kuvo/accounts/\(provider.pathComponentEscaped)/shared", body: Body(shared: shared ?? .null)), as: Empty.self)
-    }
-
     /// One account's limits (`provider`), let go.
     func releaseAutoLimit(_ provider: String) async throws {
         _ = try await client.send(try client.request("DELETE", "api/kuvo/auto/limits", query: ["provider": provider]), as: Empty.self)

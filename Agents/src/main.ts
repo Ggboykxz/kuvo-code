@@ -17,7 +17,7 @@ import { Auto } from "./auto"
 import { Deps } from "./deps"
 import { EngineAgent, EngineLink } from "./engine"
 import { setToolProgram } from "./kuvotools"
-import { machineHome, onMachine, takeOwnFolders } from "./machine"
+import { dropCarriedSignIns, machineHome, onMachine, takeOwnFolders } from "./machine"
 import { Snapshots } from "./snapshots"
 import { Roster } from "./roster"
 import { cancelSignIns, handler } from "./server"
@@ -40,6 +40,8 @@ if (onMachine) {
   // The bridge and its agents keep their folders in Kuvo Code's (XDG_… there); the commands the
   // agents run get the machine's own back (machine.ts).
   takeOwnFolders()
+  // Each machine signs its agents in on its own: none a Mac carried over before stays.
+  if (home) dropCarriedSignIns(home)
   // Kuvo Code's commands (kuvo-wake) first, as for the engine, and where bots' and sessions'
   // wake-ups are kept.
   process.env.KUVO_BIN = join(machineHome!, "bin")
