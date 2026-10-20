@@ -42,6 +42,20 @@ final class ConversationFind {
 
     var current: Place? { places.indices.contains(index) ? places[index] : nil }
 
+    /// Every conversation's Find, for Escape, which closes an open one before it stops anything.
+    @ObservationIgnored nonisolated(unsafe) private static var all = NSHashTable<ConversationFind>.weakObjects()
+
+    init() { Self.all.add(self) }
+
+    static var hasOpen: Bool { all.allObjects.contains(where: \.isOn) }
+
+    /// Closes the open Find bars; whether there was one.
+    static func closeOpen() -> Bool {
+        let open = all.allObjects.filter(\.isOn)
+        for find in open { find.isOn = false }
+        return !open.isEmpty
+    }
+
     /// What the rows' marks go by. Read where the rows are made, so they're made again when it
     /// changes: the marks are read later, as each row is laid out (`RowStack`), which SwiftUI
     /// doesn't see, so moving to another place, or finding more, showed in no row.

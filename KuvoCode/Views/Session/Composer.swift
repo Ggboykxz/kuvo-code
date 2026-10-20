@@ -211,6 +211,8 @@ struct Composer: View {
                         dismissedMention = text.distance(from: text.startIndex, to: start)
                         return .handled
                     }
+                    // An open Find bar goes first; the next Escape stops.
+                    if ConversationFind.closeOpen() { return .handled }
                     guard isRunning else { return .ignored }
                     onStop()
                     return .handled
