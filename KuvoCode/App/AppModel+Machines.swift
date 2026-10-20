@@ -39,6 +39,16 @@ extension AppModel {
         // Agents writing to each other, here and on machines.
         AgentMail.shared.app = self
         BrowserTools.mail = { name, arguments, caller in await AgentMail.shared.call(name, arguments: arguments, caller: caller) }
+        // A conversation at work, or waiting for you, keeps its tabs (see `Utilities.tidyAgentTabs`).
+        utilities.isBusy = { [weak self] id in
+            guard let self else { return false }
+            let session = bots.bot(id)?.sessionID ?? id
+            return [session, workspace.root(of: session)].contains { workspace.isWorking($0) || workspace.needsAttention($0) }
+        }
+        // Their wake-ups, set with the tools of Kuvo Code's own.
+        BrowserTools.wake = { [weak self] name, arguments, caller in
+            await self?.wakeUps.call(name, arguments: arguments, caller: caller) ?? ("Kuvo Code isn't ready yet.", true)
+        }
         // The browser sends agents from the sites of integrations you added to their tools.
         BrowserTools.integrationSites = { [weak self] in self.map { Integrations.sites(Integrations.added(in: $0.engineConfig)) } ?? [] }
         // An agent on a machine left a message for one elsewhere: on its way at once.

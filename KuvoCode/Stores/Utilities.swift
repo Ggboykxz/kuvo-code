@@ -649,14 +649,19 @@ final class Utilities {
         return 3600
     }
 
+    /// Whether a conversation (by its session, or a bot by its ID) is at work, or waits for you
+    /// (a permission, a question): its tabs stay however long it was since it browsed. The app
+    /// sets it.
+    @ObservationIgnored var isBusy: (String) -> Bool = { _ in false }
+
     /// An agent takes a step in `browser`'s tab.
     func agentUsed(_ browser: BrowserSession) {
         if let id = id(of: browser), unseen[id] != nil { unseen[id] = .now }
     }
 
     /// Closes the tabs agents opened that you never looked at and none has worked in for
-    /// `agentTabIdle`; not one that waits for you (a sign-in, a code), one you took over, or the
-    /// one in view.
+    /// `agentTabIdle`; not one that waits for you (a sign-in, a code), one you took over, the one
+    /// in view, or one whose conversation is at work or waits for you.
     func tidyAgentTabs(now: Date = .now) {
         // Settings › Panel can keep them.
         guard PanelSettings.isOn(PanelSettings.tidiesAgentTabs) else { return }
@@ -666,6 +671,8 @@ final class Utilities {
                 continue
             }
             guard !browser.isHeld, !browser.waitsForYou, !(isVisible(tab) && selected?.id == id) else { continue }
+            // Not while its conversation works, or waits for you, to go on in it.
+            guard !isBusy(agentClaims[id]?.session ?? tab.owner) else { continue }
             close(id, refills: false)
         }
     }

@@ -252,6 +252,13 @@ public enum Wakes {
         public let when: String?
         public let note: String?
         public var every: Repeat? = nil
+
+        public init(verb: Verb, when: String?, note: String?, every: Repeat? = nil) {
+            self.verb = verb
+            self.when = when
+            self.note = note
+            self.every = every
+        }
     }
 
     /// The command, if `line` runs `kuvo-wake` (by name, or by its full path), for a bot or a
@@ -608,7 +615,7 @@ public enum Wakes {
     json() { printf '%s' "$1" | tr -d '\000-\010\013-\037' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/	/\\t/g' | awk 'BEGIN { ORS = "" } NR > 1 { print "\\n" } { print }'; }
 
     if [ "$1" = fire ]; then
-      record=$3
+      record=$3; botsroot=$2
       [ -f "$record" ] || exit 0
       eport=$(sed -n 's/.*"port":\([0-9]*\).*/\1/p' "$record")
       epassword=$(sed -n 's/.*"password":"\([^"]*\)".*/\1/p' "$record")
@@ -622,6 +629,36 @@ public enum Wakes {
       reach() {
         if [ "$(cat "${bot}via" 2>/dev/null)" = bridge ]; then port=$bport password=$bpassword tools=1; else port=$eport password=$epassword; fi
         [ -n "$port" ] && [ -n "$password" ]
+      }
+      # A session's folder (not a bot's, in $botsroot) as its engine knows the
+      # session now: one that's gone goes to the trash, rather than its wake-ups being tried for
+      # ever; a subagent's goes to the conversation that started it (its bot's folder, if it's a
+      # bot's); and it works where its session does. False when it's gone or moved.
+      settle() {
+        [ "$bots" != "$botsroot" ] && command -v curl >/dev/null 2>&1 || return 0
+        s_out=$(printf 'user = "opencode:%s"\n' "$password" | curl -q -s -m 5 --noproxy '*' -K - -w '\n%{http_code}' "http://127.0.0.1:$port/api/session/$session" 2>/dev/null) || return 0
+        s_code=$(printf '%s' "$s_out" | tail -n 1)
+        case "$s_code" in
+          404) mkdir -p "${botsroot%/*}/trash" && mv "${bot%/}" "${botsroot%/*}/trash/wakes-$session-$now" 2>/dev/null; return 1 ;;
+          200) ;;
+          *) return 0 ;;
+        esac
+        s_body=$(printf '%s' "$s_out" | sed '$d')
+        s_dir=$(printf '%s' "$s_body" | sed -n 's/.*"location" *: *{[^}]*"directory" *: *"\([^"]*\)".*/\1/p' | head -n 1)
+        [ -n "$s_dir" ] && [ "$s_dir" != "$(cat "${bot}directory" 2>/dev/null)" ] && printf '%s' "$s_dir" >"${bot}directory"
+        s_parent=$(printf '%s' "$s_body" | sed -n 's/.*"parentID" *: *"\(ses_[A-Za-z0-9]*\)".*/\1/p' | head -n 1)
+        [ -n "$s_parent" ] || return 0
+        s_to="$bots/$s_parent"
+        for b in "$botsroot"/*/; do [ "$(cat "${b}session" 2>/dev/null)" = "$s_parent" ] && s_to=${b%/} && break; done
+        if [ ! -d "$s_to" ]; then
+          (umask 077; mkdir -p "$s_to") && printf '%s' "$s_parent" >"$s_to/session" || return 1
+          cp "${bot}directory" "$s_to/directory" 2>/dev/null; [ -f "${bot}via" ] && cp "${bot}via" "$s_to/via"
+        fi
+        mkdir -p "$s_to/wakes" "$s_to/watches"
+        for f in "${bot}wakes/"*; do [ -f "$f" ] && mv -f "$f" "$s_to/wakes/"; done
+        for f in "${bot}watches/"*/; do [ -d "$f" ] && mv -f "${f%/}" "$s_to/watches/"; done
+        rm -rf "${bot%/}"
+        return 1
       }
       # Sends a wake-up's text to the bot's session; true once it's gone.
       deliver() {
@@ -680,6 +717,7 @@ public enum Wakes {
         session=$(cat "$bot/session" 2>/dev/null) || continue
         [ -n "$session" ] || continue
         reach || continue
+        settle || continue
         for wake in "$bot"wakes/*; do
           [ -f "$wake" ] || continue
           file=${wake##*/}; rest=${file#*-}; due=${file%%-*}
@@ -745,6 +783,8 @@ public enum Wakes {
         set -- "$me" "$@" ;;
       *) shown="kuvo-wake $1" ;;
     esac
+    # How to cancel or list them, as this was asked: Kuvo Code's tools (KUVO_WAKE_TOOL), or kuvo-wake.
+    if [ -n "$KUVO_WAKE_TOOL" ]; then cancelling="cancel_wake_up"; listing="list_wake_ups"; else cancelling="$shown cancel"; listing="$shown list"; fi
     bot=$1; command=$2; session=
     # A bot's ID is letters, digits, _ and -, and a session's starts with ses_; a folder is named
     # by its path.
@@ -754,18 +794,24 @@ public enum Wakes {
       ses_?*) session=$bot; bot="${KUVO_WAKES:-$HOME/.kuvo-code/wakes}/$bot" ;;
       ?*) bot="${KUVO_BOTS:-$HOME/.kuvo-code/bots}/$bot" ;;
     esac
-    # A session's folder comes with its first wake-up or watch: its session, and the folder it
-    # works in, where its watches' checks run and whose tools wait for its wake-ups; for a coding
-    # agent's (its bridge says so, in KUVO_WAKE_VIA), that its wake-ups go through the bridge.
+    # A session's folder comes with its first wake-up or watch, once what's asked checks out
+    # (`made`): its session, and the folder it works in, where its watches' checks run and whose
+    # tools wait for its wake-ups; for a coding agent's (its bridge says so, in KUVO_WAKE_VIA),
+    # that its wake-ups go through the bridge.
+    fresh=
     if [ -n "$session" ] && [ ! -d "$bot" ]; then
       case "$command" in
-        add|watch) (umask 077; mkdir -p "$bot") && printf '%s' "$session" >"$bot/session" && printf '%s' "$PWD" >"$bot/directory" \
-          && { [ "$KUVO_WAKE_VIA" != bridge ] || printf bridge >"$bot/via"; } ;;
+        add|watch) fresh=1 ;;
         list) echo "No wake-ups scheduled."; exit 0 ;;
       esac
     fi
-    if [ -z "$bot" ] || [ ! -d "$bot" ]; then usage >&2; exit 2; fi
-    bot=$(CDPATH= cd -- "$bot" && pwd) || exit 2
+    if [ -z "$bot" ] || { [ ! -d "$bot" ] && [ -z "$fresh" ]; }; then usage >&2; exit 2; fi
+    [ -n "$fresh" ] || bot=$(CDPATH= cd -- "$bot" && pwd) || exit 2
+    made() {
+      [ -n "$fresh" ] || return 0
+      (umask 077; mkdir -p "$bot") && printf '%s' "$session" >"$bot/session" && printf '%s' "$PWD" >"$bot/directory" \
+        && { [ "$KUVO_WAKE_VIA" != bridge ] || printf bridge >"$bot/via"; } || { echo "Couldn't keep it in $bot." >&2; exit 2; }
+    }
     # The user's time zone, when the bot lives on a machine whose clock may be in another.
     z=$(zone "$bot/"); if [ -n "$z" ]; then TZ=$z; export TZ; fi
     case "$command" in
@@ -785,6 +831,7 @@ public enum Wakes {
         note="$*"
         [ -n "$note" ] || { echo "Add a note for yourself: what to do when you wake up." >&2; exit 2; }
         [ "$due" -gt $((now + 30)) ] || { echo "That's not in the future. Wake-ups are for later; do it now instead." >&2; exit 2; }
+        made
         mkdir -p "$bot/wakes"
         count=$(ls "$bot/wakes" 2>/dev/null | wc -l)
         [ "$count" -lt 50 ] || { echo "You already have 50 wake-ups waiting. Cancel some first." >&2; exit 2; }
@@ -799,9 +846,10 @@ public enum Wakes {
         [ -n "$note" ] || { echo "Add a note for yourself: what to do when it changes." >&2; exit 2; }
         count=$(ls "$bot/watches" 2>/dev/null | wc -l)
         [ "$count" -lt 20 ] || { echo "You already have 20 watches. Cancel some first." >&2; exit 2; }
+        made
         letters=$(random 6); w="$bot/watches/$letters"
         mkdir -p "$w" && printf '%s' "$every" >"$w/every" && printf '%s' "$check" >"$w/check" && printf '%s' "$note" >"$w/note" && printf '%s' "$now" >"$w/next"
-        echo "Watching ($letters): every $every the check runs, without you, and when what it prints changes (not the first time), you wake up with the new output. Cancel with: $shown cancel $letters" ;;
+        echo "Watching ($letters): every $every the check runs, without you, and when what it prints changes (not the first time), you wake up with the new output. Cancel it with: $cancelling $letters" ;;
       check)
         # For the Mac's app: the watches that are due, run now.
         checks "$bot" ;;
@@ -809,7 +857,7 @@ public enum Wakes {
         # For Check Now: a watch's check, by its letters, run as its runs are, without counting.
         # A line with why a run like it wouldn't count (after "KUVO-TRY "), then what it printed.
         case "$3" in ''|*[!A-Za-z0-9]*) w= ;; *) w="$bot/watches/$3/" ;; esac
-        [ -n "$w" ] && [ -f "${w}check" ] || { echo "No watch \"$3\". See $shown list." >&2; exit 2; }
+        [ -n "$w" ] && [ -f "${w}check" ] || { echo "No watch \"$3\". See $listing." >&2; exit 2; }
         run "$w" "$bot" try-
         printf 'KUVO-TRY %s\n%s' "$t_why" "$t_out" ;;
       list)
@@ -837,7 +885,7 @@ public enum Wakes {
           # Or a watch, by its letters alone.
           [ "$letters" = "$3" ] && [ -d "$bot/watches/$letters" ] && rm -rf "$bot/watches/$letters" && found=1
         fi
-        [ -n "$found" ] || { echo "No wake-up \"$3\". See $shown list." >&2; exit 2; }
+        [ -n "$found" ] || { echo "No wake-up \"$3\". See $listing." >&2; exit 2; }
         echo "Canceled $3." ;;
       *) usage ;;
     esac

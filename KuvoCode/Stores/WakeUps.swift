@@ -90,18 +90,62 @@ final class WakeUps {
             if let session = app.workspace.session(id) {
                 owners.append(Self.owner(of: session))
             } else {
-                // Not listed (yet): where its folder says it works.
+                // Not listed (yet): where its folder says it works, and whether it's a coding agent's.
                 let directory = (try? String(contentsOf: folder.appending(path: "directory"), encoding: .utf8)) ?? Workspace.chatsFolder
-                owners.append(Owner(key: id, folder: folder.path, machine: nil, session: id, directory: directory, isBot: false))
+                let via = try? String(contentsOf: folder.appending(path: "via"), encoding: .utf8)
+                owners.append(Owner(key: id, folder: folder.path, machine: nil, session: id, directory: directory, agents: via == "bridge", isBot: false))
             }
         }
         return owners
     }
 
-    /// What a conversation runs on: a bot's as its bot does, a session's as it does.
+    /// What a conversation runs on: a bot's as its bot does, a session's as it does (a coding
+    /// agent's not listed yet, the agents' bridge).
     func api(for owner: Owner) -> OpenCodeAPI? {
         if owner.isBot, let bot = app?.bots.bot(owner.key) { return app?.bots.api(for: bot) }
+        if owner.agents, app?.workspace.session(owner.session) == nil { return app?.workspace.agents?.api }
         return app?.workspace.api(forSession: owner.session)
+    }
+
+    /// Whose wake-ups a session's folder holds when it's a subagent's (its kuvo-wake named it):
+    /// the conversation that started it, a bot's own folder if it's a bot's; nil for one of its own.
+    private func adopter(of id: String) -> Owner? {
+        guard let app else { return nil }
+        let root = app.workspace.root(of: id)
+        guard root != id else { return nil }
+        if let bot = app.bots.bot(forSession: root) { return bot.wakeOwner }
+        return app.workspace.session(root).map(Self.owner(of:))
+    }
+
+    /// Moves a subagent's wake-ups and watches into the folder of the conversation that started
+    /// it, so they wake that one, show in its bar, and go with it.
+    private func adoptStrays() async {
+        let manager = FileManager.default
+        for id in (try? manager.contentsOfDirectory(atPath: Self.root.path)) ?? [] where id.hasPrefix("ses_") {
+            guard let to = adopter(of: id), to.machine == nil else { continue }
+            let from = Self.root.appending(path: id).path
+            try? await makeFolder(of: to)
+            for kind in ["wakes", "watches"] {
+                let source = (from as NSString).appendingPathComponent(kind)
+                let target = Self.path(to, kind)
+                try? manager.createDirectory(atPath: target, withIntermediateDirectories: true)
+                for name in (try? manager.contentsOfDirectory(atPath: source)) ?? [] {
+                    try? manager.moveItem(atPath: (source as NSString).appendingPathComponent(name), toPath: (target as NSString).appendingPathComponent(name))
+                }
+            }
+            try? manager.removeItem(atPath: from)
+            forget(key: id)
+            await read(to)
+        }
+    }
+
+    /// Whether a send failed as the conversation is gone from its engine: its folder goes (a
+    /// session's), rather than its wake-ups being tried for ever.
+    private func gone(_ error: Error, _ owner: Owner) -> Bool {
+        guard (error as? ServerError)?.status == 404, !owner.isBot, owner.machine == nil else { return false }
+        forget(sessionID: owner.session)
+        log.info("\(owner.key, privacy: .public) is gone: its wake-ups went with it")
+        return true
     }
 
     /// A folder in a script for its machine: a session's from `$HOME`, which the shell fills in.
@@ -282,12 +326,20 @@ final class WakeUps {
             + (printed.isEmpty ? "" : "\n\n" + printed)
     }
 
-    /// This Mac's kuvo-wake with `arguments`, in your shell's environment: what it prints. It's
-    /// stopped after `stopAfter` seconds (each check stops itself after a minute).
-    private func run(_ arguments: [String], stopAfter: TimeInterval) async -> String {
-        let environment = app?.shellEnvironment ?? ProcessInfo.processInfo.environment
+    /// This Mac's kuvo-wake with `arguments`, in your shell's environment (with `adding`): what it
+    /// prints. It's stopped after `stopAfter` seconds (each check stops itself after a minute).
+    private func run(_ arguments: [String], stopAfter: TimeInterval, adding: [String: String] = [:]) async -> String {
+        await runWithStatus(arguments, stopAfter: stopAfter, adding: adding, errors: false).output
+    }
+
+    /// As `run`, with what it says went wrong after what it printed, and how it exited.
+    private func runWithStatus(_ arguments: [String], stopAfter: TimeInterval, adding: [String: String] = [:], errors: Bool = true) async -> (output: String, status: Int32) {
+        var environment = app?.shellEnvironment ?? ProcessInfo.processInfo.environment
+        environment["KUVO_BOTS"] = Bots.root.path
+        environment["KUVO_WAKES"] = Self.root.path
+        environment.merge(adding) { _, new in new }
         let arguments = [Self.command.path] + arguments
-        return await Task.detached { () -> String in
+        return await Task.detached { () -> (String, Int32) in
             let process = Process()
             process.executableURL = URL(filePath: "/bin/sh")
             process.arguments = arguments
@@ -295,15 +347,73 @@ final class WakeUps {
             process.standardInput = FileHandle.nullDevice
             let pipe = Pipe()
             process.standardOutput = pipe
-            process.standardError = FileHandle.nullDevice
-            guard (try? process.run()) != nil else { return "" }
+            process.standardError = errors ? pipe : FileHandle.nullDevice
+            guard (try? process.run()) != nil else { return ("", -1) }
             let stop = DispatchWorkItem { if process.isRunning { process.terminate() } }
             DispatchQueue.global().asyncAfter(deadline: .now() + stopAfter, execute: stop)
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
             stop.cancel()
-            return String(decoding: data, as: UTF8.self)
+            return (String(decoding: data, as: UTF8.self), process.terminationStatus)
         }.value
+    }
+
+    // MARK: The agent's tools
+
+    /// The wake-up tools' calls from this Mac's conversations (`BrowserTools.wakeTools`): for the
+    /// conversation `caller` is part of (a subagent's, the one that started it; a bot's, the bot's
+    /// folder), through kuvo-wake, as a machine's run there. Never a group chat's seat: meetings
+    /// are the chat's.
+    func call(_ name: String, arguments: [String: Any], caller: String?) async -> (text: String, isError: Bool) {
+        guard let app, let caller else { return ("This needs a conversation of its own.", true) }
+        let root = app.workspace.root(of: caller)
+        if app.workspace.seats.contains(root) || app.workspace.seats.contains(caller) {
+            return ("Not from a group chat: a chat can meet on a schedule instead (its editor's Meets on a Schedule).", true)
+        }
+        let owner: Owner
+        if let bot = app.bots.bot(forSession: root) {
+            owner = bot.wakeOwner
+        } else if let session = app.workspace.session(root) {
+            owner = Self.owner(of: session)
+        } else {
+            return ("Kuvo Code doesn't know this conversation yet. Try again in a moment.", true)
+        }
+        func given(_ key: String) -> String? {
+            (arguments[key] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        }
+        var verb: [String]
+        switch name {
+        case "schedule_wake_up":
+            guard let when = given("when") else { return ("Say when (when): +20m, +2h, +1d, or a time like 2026-10-21T09:00.", true) }
+            guard let note = given("note") else { return ("Add a note for yourself (note): what to do when you wake up.", true) }
+            verb = ["add", when] + (given("every").map { ["--every", $0] } ?? []) + [note]
+        case "watch_for_change":
+            guard let every = given("every"), let check = given("check"), let note = given("note") else {
+                return ("Give how often (every), the check (a shell command) and a note for when it changes.", true)
+            }
+            verb = ["watch", every, check, note]
+        case "list_wake_ups":
+            verb = ["list"]
+        case "cancel_wake_up":
+            guard let id = given("id") else { return ("Say which one (id), from list_wake_ups.", true) }
+            verb = ["cancel", id]
+        default:
+            return ("Unknown tool \(name).", true)
+        }
+        // A session's folder, made as it works in its own folder, before its first one.
+        if !owner.isBot, name == "schedule_wake_up" || name == "watch_for_change" {
+            do { try await makeFolder(of: owner) } catch { return ("Couldn't keep it: \(error.localizedDescription)", true) }
+        } else if !owner.isBot, !FileManager.default.fileExists(atPath: owner.folder) {
+            return (name == "list_wake_ups" ? "No wake-ups scheduled." : "No wake-up \"\(given("id") ?? "")\". See list_wake_ups.", name != "list_wake_ups")
+        }
+        try? Self.installCommand()
+        let (output, status) = await runWithStatus([owner.folder] + verb, stopAfter: 30, adding: ["KUVO_WAKE_TOOL": "1"])
+        await read(owner)
+        if status == 0, name == "schedule_wake_up" || name == "watch_for_change" {
+            Analytics.shared.track(owner.isBot ? "bot_wake_added" : "session_wake_added", ["repeats": name == "watch_for_change" || given("every") != nil, "by": "agent"])
+        }
+        let text = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (text.isEmpty ? (status == 0 ? "Done." : "That didn't work.") : text, status != 0)
     }
 
     // MARK: Pausing
@@ -425,6 +535,7 @@ final class WakeUps {
     @ObservationIgnored private var retries: [String: (at: Date, failures: Int)] = [:]
 
     private func wakeDue() async {
+        await adoptStrays()
         for owner in localOwners() where !FileManager.default.fileExists(atPath: Self.pauseFile(of: owner)) {
             let pending = Self.localWakes(of: owner)
             let due = pending.filter { $0.due <= .now && retries[owner.key + "/" + $0.id].map { $0.at <= .now } != false }
@@ -461,6 +572,7 @@ final class WakeUps {
                 try? FileManager.default.removeItem(atPath: folder.appendingPathComponent(wake.id))
             }
         } catch {
+            if gone(error, owner) { return }
             // Again in a minute, then 2, 4… up to half an hour.
             let failures = (retries[key]?.failures ?? 0) + 1
             retries[key] = (.now.addingTimeInterval(min(1800, 60 * pow(2, Double(failures - 1)))), failures)
@@ -495,6 +607,7 @@ final class WakeUps {
                         Wakes.watchDelivered(letters, inBot: owner.folder)
                         Analytics.shared.track(owner.isBot ? "bot_wakeup_ran" : "session_wakeup_ran", ["kind": "watch", "repeats": true])
                     } catch {
+                        if gone(error, owner) { break }
                         log.error("A watch's wake-up for \(owner.key, privacy: .public) didn't go: \(error.localizedDescription, privacy: .public)")
                     }
                 }
@@ -531,6 +644,17 @@ final class WakeUps {
             script += " && { printf '%s' \(SSHConnection.quoted(rules.base64EncodedString())) | base64 -d >\(root)/zoneinfo 2>/dev/null || rm -f \(root)/zoneinfo; }"
         }
         if await Task.detached(operation: { RemoteShell.run(script, on: machine) }).value != nil { shared[machine] = zone }
+        await readSessions(on: machine)
+    }
+
+    /// The wake-ups of a machine's sessions that keep some, read as it connects: the sidebar's
+    /// signs, and the phone's Now and Cancel, have them without their conversations being opened.
+    private func readSessions(on machine: String) async {
+        let script = "for f in \(Self.shell(Self.machineRoot))/ses_*/session; do [ -f \"$f\" ] && cat \"$f\" && echo; done; true"
+        guard let output = await Task.detached(operation: { RemoteShell.run(script, on: machine) }).value else { return }
+        for id in String(decoding: output, as: UTF8.self).split(separator: "\n").map(String.init) where id.hasPrefix("ses_") {
+            if let session = app?.workspace.session(id), RemoteFolder.machine(of: session.location.directory) == machine { await read(Self.owner(of: session)) }
+        }
     }
 
     /// A time zone's rules as this Mac has them (a TZif file, which Linux reads too), if small.
@@ -559,4 +683,8 @@ extension Wakes.Repeat {
         case .weekdays: "on weekdays"
         }
     }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }

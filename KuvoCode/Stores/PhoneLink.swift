@@ -766,6 +766,8 @@ final class PhoneLink {
               let found = app.workspace.session(session) else { return (404, Data("{}".utf8)) }
         let owner = WakeUps.owner(of: found)
         let wakeUps = app.wakeUps
+        // As they are now: a machine session's aren't read until something asks.
+        await wakeUps.read(owner)
         if parts.count == 4, parts[3] == "now", request.method.uppercased() == "POST" {
             struct Given: Decodable { var wake: String }
             guard let id = (try? JSONDecoder().decode(Given.self, from: request.body))?.wake,
@@ -792,7 +794,6 @@ final class PhoneLink {
             return (200, Data("{}".utf8))
         }
         guard parts.count == 3 else { return (404, Data("{}".utf8)) }
-        await wakeUps.read(owner)
         struct Listed: Encodable {
             struct Wake: Encodable { var id: String; var due: Double; var note: String; var every: String? }
             struct Watch: Encodable { var letters: String; var every: String; var check: String; var note: String }

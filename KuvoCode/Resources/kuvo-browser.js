@@ -1940,6 +1940,69 @@ function excerpt(markdown, query, limit) {
   return head + "\n\n[… the middle is left out; read it with query, to find a part …]\n\n" + tail.join("\n\n");
 }
 
+// A conversation's wake-ups (WakeUps.call on the Mac): through this machine's kuvo-wake, for the
+// conversation the caller is part of (a subagent's, the one that started it; a bot's, the bot's
+// folder), from the folder it works in, so a session's folder knows where that is.
+const WAKE_TOOLS = new Set(["schedule_wake_up", "watch_for_change", "list_wake_ups", "cancel_wake_up"]);
+
+async function wake(name, args, from) {
+  if (!from) return text("This needs a conversation of its own.", true);
+  let session = from;
+  let info = null;
+  for (let step = 0; step < 5; step++) {
+    const found = (await engine("GET", `api/session/${encodeURIComponent(session)}`).catch(() => null))?.data;
+    if (!found) break;
+    info = found;
+    if (!found.parentID) break;
+    session = found.parentID;
+  }
+  // Not the engine's: a coding agent's session, with the agents' bridge here.
+  const viaBridge = !info && fs.existsSync(path.join(K, "run", "bridge.json"));
+  const bots = process.env.KUVO_BOTS || path.join(K, "bots");
+  let target = session;
+  for (const id of fs.existsSync(bots) ? fs.readdirSync(bots) : []) {
+    let owned = null;
+    try {
+      owned = fs.readFileSync(path.join(bots, id, "session"), "utf8").trim();
+    } catch {}
+    if (owned === session) target = path.join(bots, id);
+  }
+  const given = (key) => (typeof args[key] === "string" && args[key].trim() ? args[key].trim() : null);
+  let verb;
+  if (name === "schedule_wake_up") {
+    if (!given("when")) return text("Say when (when): +20m, +2h, +1d, or a time like 2026-10-21T09:00.", true);
+    if (!given("note")) return text("Add a note for yourself (note): what to do when you wake up.", true);
+    verb = ["add", given("when"), ...(given("every") ? ["--every", given("every")] : []), given("note")];
+  } else if (name === "watch_for_change") {
+    if (!given("every") || !given("check") || !given("note")) return text("Give how often (every), the check (a shell command) and a note for when it changes.", true);
+    verb = ["watch", given("every"), given("check"), given("note")];
+  } else if (name === "list_wake_ups") {
+    verb = ["list"];
+  } else {
+    if (!given("id")) return text("Say which one (id), from list_wake_ups.", true);
+    verb = ["cancel", given("id")];
+  }
+  const directory = info?.location?.directory;
+  const cwd = directory && fs.existsSync(directory) ? directory : path.join(K, "workspace");
+  const env = { ...process.env, KUVO_BOTS: bots, KUVO_WAKES: process.env.KUVO_WAKES || path.join(K, "wakes"), KUVO_WAKE_TOOL: "1", ...(viaBridge ? { KUVO_WAKE_VIA: "bridge" } : {}) };
+  delete env.OPENCODE_SESSION_ID;
+  return await new Promise((resolve) => {
+    const child = spawn(path.join(K, "bin", "kuvo-wake"), [target, ...verb], { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+    let output = "";
+    child.stdout.on("data", (chunk) => (output += chunk));
+    child.stderr.on("data", (chunk) => (output += chunk));
+    const stop = setTimeout(() => child.kill("SIGTERM"), 30_000);
+    child.on("error", (error) => {
+      clearTimeout(stop);
+      resolve(text(`Couldn't run kuvo-wake here: ${error.message}`, true));
+    });
+    child.on("close", (status) => {
+      clearTimeout(stop);
+      resolve(text(output.trim() || (status === 0 ? "Done." : "That didn't work."), status !== 0));
+    });
+  });
+}
+
 const startedSessions = new Map();
 
 /// A new session on this machine, from the conversation `from`: an agent of its own, in the caller's
@@ -2465,6 +2528,10 @@ async function mcp() {
         calls.set(call.id, call);
         // Showing something in Kuvo Code's panel needs no browser, nor a turn in the line.
         // Nor does writing to another agent.
+        if (WAKE_TOOLS.has(params.name)) {
+          wake(params.name, params.arguments || {}, params._meta?.["ai.opencode/sessionID"] ?? null).then(reply, (error) => reply(text(error instanceof ToolError ? error.message : String(error), true)));
+          return;
+        }
         if (params.name === "list_agents" || params.name === "send_message" || params.name === "read_conversation" || params.name === "start_session") {
           mail(params.name, params.arguments || {}, params._meta?.["ai.opencode/sessionID"] ?? null).then(reply, (error) => reply(text(error instanceof ToolError ? error.message : String(error), true)));
           return;

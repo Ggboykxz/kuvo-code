@@ -242,6 +242,16 @@ struct ToolCallView: View {
             return (isActive ? "Reading " : "Read ") + of + "’s conversation" + about
         case "show_in_panel": return (isActive ? "Showing " : "Showed ") + (relative(string("path")) ?? "a file")
         case "start_session": return (isActive ? "Starting a session" : "Started a session") + (string("title").map { ": \($0)" } ?? "")
+        // Kuvo Code's wake-up tools, worded as the kuvo-wake commands they run are.
+        case "schedule_wake_up":
+            let wake = Wakes.Command(verb: .add, when: string("when"), note: string("note"), every: string("every").flatMap(Wakes.Repeat.init))
+            return Self.summary(of: wake, isActive: isActive, failed: call.state.isFailure)
+        case "watch_for_change":
+            return Self.summary(of: Wakes.Command(verb: .watch, when: string("every"), note: string("note")), isActive: isActive, failed: call.state.isFailure)
+        case "list_wake_ups":
+            return Self.summary(of: Wakes.Command(verb: .list, when: nil, note: nil), isActive: isActive, failed: call.state.isFailure)
+        case "cancel_wake_up":
+            return Self.summary(of: Wakes.Command(verb: .cancel, when: nil, note: nil), isActive: isActive, failed: call.state.isFailure)
         default: return "Used the browser"
         }
     }
@@ -336,6 +346,10 @@ struct ToolCallView: View {
         case "list_agents": "person.2"
         case "send_message": "paperplane"
         case "read_conversation": "text.bubble"
+        case "schedule_wake_up": "alarm"
+        case "watch_for_change": "eye"
+        case "list_wake_ups": "list.bullet"
+        case "cancel_wake_up": "xmark.circle"
         case "show_in_panel": "sidebar.right"
         default: "safari"
         }

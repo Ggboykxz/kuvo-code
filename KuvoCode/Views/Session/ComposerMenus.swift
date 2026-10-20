@@ -29,15 +29,14 @@ enum ToolApproval: String, CaseIterable {
     var rules: [PermissionRule] {
         switch self {
         case .approveAll: []
-        // A PDF the browser saves is a file written, and an upload sends one of yours to a site.
-        case .askFirst: ["edit", "write", "patch", "shell", "webfetch", "external_directory", "kuvo-browser_browser_save_pdf", "kuvo-browser_browser_upload"]
-            .map { PermissionRule(action: $0, effect: .ask) } + Self.ownWakeRules
+        // A PDF the browser saves is a file written, and an upload sends one of yours to a site. A
+        // watch runs its check, a command, whenever it's due. (A conversation's wake-ups, Kuvo
+        // Code's tools, never ask.)
+        case .askFirst: ["edit", "write", "patch", "shell", "webfetch", "external_directory", "kuvo-browser_browser_save_pdf", "kuvo-browser_browser_upload", "kuvo-browser_watch_for_change"]
+            .map { PermissionRule(action: $0, effect: .ask) }
         }
     }
 
-    /// A conversation's own wake-ups (`kuvo-wake` without whose, see `WakeUps`) never ask:
-    /// scheduling, listing and canceling them. A watch runs its check, a command, so it asks.
-    static let ownWakeRules = ["add *", "list*", "cancel *"].map { PermissionRule(action: "shell", resource: "kuvo-wake " + $0, effect: .allow) }
 
     /// The session rules that give this behaviour beside Settings › Permissions' rules
     /// (`settings`). A session's rules come after those, and the last one that matches wins, so
@@ -54,12 +53,12 @@ enum ToolApproval: String, CaseIterable {
     }
 
     /// A rule a session has for something of its own, which neither its approval nor Settings
-    /// make: a folder it may work in (the project's others, a bot's), a bot's wake-up commands.
-    /// The rest are made again from its approval and Settings as they are now, so a rule taken
-    /// out of Settings goes from sessions too.
+    /// make: a folder it may work in (the project's others, a bot's). The rest are made again
+    /// from its approval and Settings as they are now, so a rule taken out of Settings goes from
+    /// sessions too, and so do the `kuvo-wake` ones an earlier version allowed (wake-ups are
+    /// tools now; those let a command that also wrote a file through).
     static func isParticular(_ rule: PermissionRule) -> Bool {
-        (rule.action == "external_directory" && rule.effect == .allow && rule.resource != "*")
-            || (rule.action == "shell" && rule.effect == .allow && rule.resource.contains("kuvo-wake") && !ownWakeRules.contains(rule))
+        rule.action == "external_directory" && rule.effect == .allow && rule.resource != "*"
     }
 
     /// A session's rules made again from its approval and Settings › Permissions as they are now,

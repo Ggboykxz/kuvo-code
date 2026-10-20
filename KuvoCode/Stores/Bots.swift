@@ -632,7 +632,6 @@ final class Bots {
     /// What the bot's session knows about being a bot: who it is, its job, its memory and how to
     /// wake itself up.
     static func instructions(for bot: Bot) -> String {
-        let full = bot.machine == nil ? Self.command.path : machineCommand
         let place = bot.machine.map { "the Linux machine \"\($0)\"" } ?? "this Mac"
         let job = bot.instructions.trimmingCharacters(in: .whitespacesAndNewlines)
         return """
@@ -650,33 +649,27 @@ final class Bots {
         things later ("in 2 hours", "tomorrow at 9") or again and again ("every 5 minutes", "every morning"). Never say you can't \
         run in the background, on a timer or on a schedule: schedule a wake-up instead.
 
-        To schedule a wake-up, run:
-          kuvo-wake \(bot.id) add <when> "<note to yourself>"
-        <when> is +5m, +2h, +1d, or a time like 2026-10-16T09:00 \(bot.machine == nil ? "on this Mac's clock" : "in the user's time zone, \(TimeZone.current.identifier)"), at least a minute from now. At that \
-        time this conversation gets your note as a new message starting with "\(Wakes.marker.trimmingCharacters(in: .whitespaces))", \
-        and you carry on. `kuvo-wake \(bot.id) list` shows what's scheduled; `kuvo-wake \(bot.id) cancel <id>` cancels one. \
-        (If kuvo-wake isn't found, it's "\(full)".)
+        To schedule a wake-up, use schedule_wake_up: <when> is +5m, +2h, +1d, or a time like 2026-10-16T09:00 \
+        \(bot.machine == nil ? "on this Mac's clock" : "in the user's time zone, \(TimeZone.current.identifier)"), at least a minute from now. At \
+        that time this conversation gets your note as a new message starting with \
+        "\(Wakes.marker.trimmingCharacters(in: .whitespaces))", and you carry on. For something that repeats, schedule it once \
+        with every (30m, 2h, 1d, 1w, at least 5m, or weekdays; days, weeks and weekdays keep the same time of day), and it \
+        keeps coming back until it's canceled: don't schedule the next run yourself each time. list_wake_ups shows what's \
+        scheduled, cancel_wake_up cancels one. To change a schedule, cancel it and add the new one; check the list first so \
+        you never keep two for the same thing. When it's due now too, also do the first round now.
 
-        To watch for a change (a status page, a build, a price, a file), don't wake up every time just to look: give \
-        kuvo-wake a check, a shell command that prints what matters, and it runs it for you and wakes you only when what it \
-        prints changes, with the new output:
-          kuvo-wake \(bot.id) watch 30m "<check>" "<what to do when it changes>"
-        How often is 5m or more, 2h or 1d. Make the check print just what you watch, like `curl -s <url> | grep -o '<the \
-        part that matters>'` or `gh run list --limit 1 --json conclusion -q '.[0].conclusion'`, so a clock or an ad on the \
-        page doesn't count as a change. It runs in your folder, for at most a minute. Only what it prints counts, not its \
-        errors, and printing nothing counts too (grep finding nothing), so you hear when something appears or goes away. \
-        A run is skipped when a curl, wget or gh in it fails (the network down, say; an error page still counts), or when \
-        it prints nothing and exits 2 or more: make a script of yours do that when it can't tell. To watch whether a site \
-        is up, print its status code: `curl -s -o /dev/null -w '%{http_code}' <url>` prints 000 when it can't connect, \
-        which counts (though your own network being down looks the same). A page that needs a real browser to show its \
-        content can't be watched this way; check it in the browser on a wake-up instead.
-
-        For something that repeats, schedule it once with --every, and it keeps coming back until it's canceled:
-          kuvo-wake \(bot.id) add 2026-10-17T09:00 --every 1d "<what to do each time>"
-        The repeat is 30m, 2h, 1d, 1w (at least 5m), or weekdays; days, weeks and weekdays keep the same time of day. Don't \
-        schedule the next run yourself each time. To change a schedule, cancel it and add the new one; check the list first so \
-        you never keep two for the same thing. When it's due now too, also do the first round now. Keep reports short; the \
-        user reads them later.
+        To watch for a change (a status page, a build, a price, a file), don't wake up every time just to look: \
+        watch_for_change runs a check you give it, a shell command that prints what matters, every 5m or more, 2h or 1d, and \
+        wakes you only when what it prints changes, with the new output. Make the check print just what you watch, like \
+        `curl -s <url> | grep -o '<the part that matters>'` or `gh run list --limit 1 --json conclusion -q '.[0].conclusion'`, \
+        so a clock or an ad on the page doesn't count as a change. It runs in your folder, for at most a minute. Only what it \
+        prints counts, not its errors, and printing nothing counts too (grep finding nothing), so you hear when something \
+        appears or goes away. A run is skipped when a curl, wget or gh in it fails (the network down, say; an error page \
+        still counts), or when it prints nothing and exits 2 or more: make a script of yours do that when it can't tell. To \
+        watch whether a site is up, print its status code: `curl -s -o /dev/null -w '%{http_code}' <url>` prints 000 when it \
+        can't connect, which counts (though your own network being down looks the same). A page that needs a real browser \
+        to show its content can't be watched this way; check it in the browser on a wake-up instead. Keep reports short; \
+        the user reads them later.
 
         Memory: the file "\(bot.memoryFile)" is yours. Read it when you start a piece of work. Keep in it what you'll need next \
         time: lasting preferences, how things are set up, where ongoing work stands, and any schedule you're keeping. Keep it short \
@@ -706,15 +699,13 @@ final class Bots {
 
     /// Gives each bot's session the current wording of its instructions, once a run of the app,
     /// as its engine comes up: bots made by an older version learn what this one can do.
-    /// A bot's own rules: its folder is its to read and write, wherever it works, and scheduling,
-    /// listing and canceling its wake-ups never ask. Anything else it runs, its watches too, goes
-    /// by the conversation's approval.
+    /// A bot's own rules: its folder is its to read and write, wherever it works. Its wake-ups
+    /// never ask (they're Kuvo Code's tools); its watches go by the conversation's approval.
     static func ownRules(for bot: Bot) -> [PermissionRule] {
-        let full = bot.machine == nil ? command.path : machineCommand
-        return [PermissionRule(action: "external_directory", resource: (bot.folder as NSString).appendingPathComponent("*"), effect: .allow)]
-            + ["kuvo-wake \(bot.id)", "\"\(full)\" \(bot.id)"].flatMap { name in
-                ["add *", "list*", "cancel *"].map { PermissionRule(action: "shell", resource: "\(name) \($0)", effect: .allow) }
-            }
+        // Its wake-ups are tools of Kuvo Code's (schedule_wake_up…), which need no rule of their
+        // own; an earlier version allowed its kuvo-wake commands, which let one that also wrote
+        // a file (a redirect) through (see `isOwnRule`).
+        [PermissionRule(action: "external_directory", resource: (bot.folder as NSString).appendingPathComponent("*"), effect: .allow)]
     }
 
     /// Whether a rule is one of a bot's own, as made now or by an earlier version.
