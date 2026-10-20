@@ -719,12 +719,16 @@ final class Bots {
     /// Puts a bot's own rules back as they're made now, after its approval and any others: an
     /// earlier version lost them when its conversation's approval changed, or its folder when the
     /// project's were synced, and allowed every kuvo-wake command.
-    private func repairRules(of bot: Bot, api: OpenCodeAPI) async {
-        guard let rules = app?.workspace.session(bot.sessionID)?.permissions else { return }
+    /// Whether its rules are as made now (false while its session isn't listed yet, or they
+    /// couldn't be set).
+    @discardableResult
+    private func repairRules(of bot: Bot, api: OpenCodeAPI) async -> Bool {
+        guard let session = app?.workspace.session(bot.sessionID) else { return false }
+        let rules = session.permissions ?? []
         // Its approval with Settings › Permissions as they are now, as a conversation that's open gets it.
         let repaired = ToolApproval.refreshed(rules.filter { !Self.isOwnRule($0, of: bot) }, settings: app?.engineConfig.permissionRules ?? []) + Self.ownRules(for: bot)
-        guard repaired != rules else { return }
-        try? await api.setPermissions(session: bot.sessionID, rules: repaired)
+        guard repaired != rules else { return true }
+        return (try? await api.setPermissions(session: bot.sessionID, rules: repaired)) != nil
     }
 
     /// What each bot's conversation was last given as its instructions, by session. The engine
@@ -774,8 +778,10 @@ final class Bots {
                     continue
                 }
             }
+            // Not until its rules are as made now: a machine's sessions are listed a moment after its
+            // engine answers, and an earlier version's kuvo-wake rules mustn't stay meanwhile.
+            guard await repairRules(of: bot, api: api) else { continue }
             synced.insert(bot.id)
-            await repairRules(of: bot, api: api)
             try? await writeSession(of: bot)
             if let machine = bot.machine {
                 // Its kuvo-wake as the instructions describe it, for an engine started before.

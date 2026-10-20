@@ -636,8 +636,15 @@ public enum Wakes {
       # bot's); and it works where its session does. False when it's gone or moved.
       settle() {
         [ "$bots" != "$botsroot" ] && command -v curl >/dev/null 2>&1 || return 0
-        s_out=$(printf 'user = "opencode:%s"\n' "$password" | curl -q -s -m 5 --noproxy '*' -K - -w '\n%{http_code}' "http://127.0.0.1:$port/api/session/$session" 2>/dev/null) || return 0
+        s_ask() { printf 'user = "opencode:%s"\n' "$2" | curl -q -s -m 5 --noproxy '*' -K - -w '\n%{http_code}' "http://127.0.0.1:$1/api/session/$session" 2>/dev/null; }
+        s_out=$(s_ask "$port" "$password") || return 0
         s_code=$(printf '%s' "$s_out" | tail -n 1)
+        # Not the engine's but the agents' bridge's, which its folder didn't say: its from now on.
+        if [ "$s_code" = 404 ] && [ "$port" = "$eport" ] && [ -n "$bport" ] && [ -n "$bpassword" ]; then
+          s_out=$(s_ask "$bport" "$bpassword") || return 0
+          s_code=$(printf '%s' "$s_out" | tail -n 1)
+          [ "$s_code" = 200 ] && printf bridge >"${bot}via" && port=$bport password=$bpassword tools=1
+        fi
         case "$s_code" in
           404) mkdir -p "${botsroot%/*}/trash" && mv "${bot%/}" "${botsroot%/*}/trash/wakes-$session-$now" 2>/dev/null; return 1 ;;
           200) ;;

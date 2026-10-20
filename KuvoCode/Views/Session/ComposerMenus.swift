@@ -67,6 +67,19 @@ enum ToolApproval: String, CaseIterable {
         ToolApproval(rules: current).rules(settings: settings) + current.filter(isParticular)
     }
 
+    /// Whether a conversation with these rules asks first, but nothing has asked you about a
+    /// watch's check before its tool ran: its rules are from before watches asked, or it runs with
+    /// the coding agents (`agents`), whose bridge doesn't check Kuvo Code's tools against them.
+    /// Then the tool mustn't start it (see `WakeUps.call`).
+    static func watchWentUnasked(_ rules: [PermissionRule]?, agents: Bool) -> Bool {
+        guard ToolApproval(rules: rules) == .askFirst else { return false }
+        return agents || !(rules ?? []).contains { $0.action == "kuvo-browser_watch_for_change" && $0.effect == .ask }
+    }
+
+    /// What the agent hears instead: the same watch, as a command, which asks you with the check
+    /// written out.
+    static let watchAsCommand = "This conversation asks before running commands, and a watch runs its check by itself, so the user approves it first: start it with the shell command kuvo-wake watch <every> \"<check>\" \"<what to do when it changes>\" instead, which asks them."
+
     init(rules: [PermissionRule]?) {
         self = (rules ?? []).contains { $0.action == "shell" && $0.effect == .ask } ? .askFirst : .approveAll
     }

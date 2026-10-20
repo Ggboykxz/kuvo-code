@@ -88,7 +88,11 @@ final class WakeUps {
             let folder = Self.root.appending(path: id)
             guard FileManager.default.fileExists(atPath: folder.appending(path: "session").path) else { continue }
             if let session = app.workspace.session(id) {
-                owners.append(Self.owner(of: session))
+                let owner = Self.owner(of: session)
+                // Moved (a chat into a project, a session to a worktree): its watches' checks run there now.
+                let file = folder.appending(path: "directory")
+                if (try? String(contentsOf: file, encoding: .utf8)) != owner.directory { try? Data(owner.directory.utf8).write(to: file) }
+                owners.append(owner)
             } else {
                 // Not listed (yet): where its folder says it works, and whether it's a coding agent's.
                 let directory = (try? String(contentsOf: folder.appending(path: "directory"), encoding: .utf8)) ?? Workspace.chatsFolder
@@ -109,12 +113,33 @@ final class WakeUps {
 
     /// Whose wake-ups a session's folder holds when it's a subagent's (its kuvo-wake named it):
     /// the conversation that started it, a bot's own folder if it's a bot's; nil for one of its own.
-    private func adopter(of id: String) -> Owner? {
+    private func adopter(of id: String) async -> Owner? {
         guard let app else { return nil }
-        let root = app.workspace.root(of: id)
+        let via = try? String(contentsOf: Self.root.appending(path: id).appending(path: "via"), encoding: .utf8)
+        let root = await root(of: id, agents: via == "bridge")
         guard root != id else { return nil }
         if let bot = app.bots.bot(forSession: root) { return bot.wakeOwner }
         return app.workspace.session(root).map(Self.owner(of:))
+    }
+
+    /// Each session's parent as its engine said (nil: one of its own), asked once a run.
+    @ObservationIgnored private var parentsAsked: [String: String?] = [:]
+
+    /// The conversation a session is part of: as this run has heard (`Workspace.root(of:)`), or,
+    /// for one not listed that it hasn't (a subagent's, after a launch), as its engine says.
+    private func root(of id: String, agents: Bool) async -> String {
+        guard let app else { return id }
+        var id = app.workspace.root(of: id)
+        for _ in 0..<5 where app.workspace.session(id) == nil {
+            if parentsAsked[id] == nil {
+                let api = agents ? app.workspace.agents?.api : app.workspace.api
+                guard let session = try? await api?.session(id) else { break }
+                parentsAsked[id] = .some(session.parentID)
+            }
+            guard let parent = parentsAsked[id] ?? nil else { break }
+            id = app.workspace.root(of: parent)
+        }
+        return id
     }
 
     /// Moves a subagent's wake-ups and watches into the folder of the conversation that started
@@ -122,7 +147,7 @@ final class WakeUps {
     private func adoptStrays() async {
         let manager = FileManager.default
         for id in (try? manager.contentsOfDirectory(atPath: Self.root.path)) ?? [] where id.hasPrefix("ses_") {
-            guard let to = adopter(of: id), to.machine == nil else { continue }
+            guard let to = await adopter(of: id), to.machine == nil else { continue }
             let from = Self.root.appending(path: id).path
             try? await makeFolder(of: to)
             for kind in ["wakes", "watches"] {
@@ -140,9 +165,17 @@ final class WakeUps {
     }
 
     /// Whether a send failed as the conversation is gone from its engine: its folder goes (a
-    /// session's), rather than its wake-ups being tried for ever.
-    private func gone(_ error: Error, _ owner: Owner) -> Bool {
+    /// session's), rather than its wake-ups being tried for ever. Not one the agents' bridge has,
+    /// which its folder didn't say: its from now on.
+    private func gone(_ error: Error, _ owner: Owner) async -> Bool {
         guard (error as? ServerError)?.status == 404, !owner.isBot, owner.machine == nil else { return false }
+        if !owner.agents {
+            guard let bridge = app?.workspace.agents?.api else { return false }
+            if (try? await bridge.session(owner.session)) != nil {
+                try? Data("bridge".utf8).write(to: URL(filePath: Self.path(owner, "via")))
+                return false
+            }
+        }
         forget(sessionID: owner.session)
         log.info("\(owner.key, privacy: .public) is gone: its wake-ups went with it")
         return true
@@ -218,13 +251,15 @@ final class WakeUps {
     // MARK: Changing them
 
     /// A session's folder, made as kuvo-wake makes it, for a wake-up you add before its agent made
-    /// one: its session, and where it works. A bot's is made with it.
+    /// one: its session, where it works, and for a coding agent's, that its wake-ups go through the
+    /// agents' bridge (`via`). A bot's is made with it.
     private func makeFolder(of owner: Owner) async throws {
         guard !owner.isBot else { return }
         let directory = RemoteFolder.parse(owner.directory)?.path ?? owner.directory
         if let machine = owner.machine {
             let folder = Self.shell(owner.folder)
-            let script = "[ -f \(folder)/session ] || { (umask 077; mkdir -p \(folder)) && printf '%s' \(SSHConnection.quoted(owner.session)) >\(folder)/session && printf '%s' \(SSHConnection.quoted(directory)) >\(folder)/directory; }"
+            let via = owner.agents ? " && printf bridge >\(folder)/via" : ""
+            let script = "[ -f \(folder)/session ] || { (umask 077; mkdir -p \(folder)) && printf '%s' \(SSHConnection.quoted(owner.session)) >\(folder)/session && printf '%s' \(SSHConnection.quoted(directory)) >\(folder)/directory\(via); }"
             guard await Task.detached(operation: { RemoteShell.run(script, on: machine) }).value != nil else { throw Failure.notConnected(machine) }
             return
         }
@@ -233,6 +268,7 @@ final class WakeUps {
         try manager.createDirectory(atPath: owner.folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try Data(owner.session.utf8).write(to: URL(filePath: Self.path(owner, "session")))
         try Data(directory.utf8).write(to: URL(filePath: Self.path(owner, "directory")))
+        if owner.agents { try Data("bridge".utf8).write(to: URL(filePath: Self.path(owner, "via"))) }
     }
 
     /// A wake-up you add: at `due`, `note` arrives in the conversation, and again at each repeat.
@@ -380,6 +416,16 @@ final class WakeUps {
         }
         func given(_ key: String) -> String? {
             (arguments[key] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        }
+        // A watch runs a command whenever it's due: in Ask First, only once you've been asked (the
+        // engine asks for the tool in a conversation made since it does; not for one from before,
+        // nor through the coding agents' bridge).
+        if name == "watch_for_change" {
+            let calling = app.workspace.session(caller)
+            var rules = calling?.permissions
+            if calling == nil, let api = app.workspace.api(forSession: caller) { rules = (try? await api.session(caller))?.permissions }
+            let agents = calling.map(OutsideAgents.isAgentSession) ?? owner.agents
+            if ToolApproval.watchWentUnasked(rules, agents: agents) { return (ToolApproval.watchAsCommand, true) }
         }
         var verb: [String]
         switch name {
@@ -572,7 +618,7 @@ final class WakeUps {
                 try? FileManager.default.removeItem(atPath: folder.appendingPathComponent(wake.id))
             }
         } catch {
-            if gone(error, owner) { return }
+            if await gone(error, owner) { return }
             // Again in a minute, then 2, 4… up to half an hour.
             let failures = (retries[key]?.failures ?? 0) + 1
             retries[key] = (.now.addingTimeInterval(min(1800, 60 * pow(2, Double(failures - 1)))), failures)
@@ -607,7 +653,7 @@ final class WakeUps {
                         Wakes.watchDelivered(letters, inBot: owner.folder)
                         Analytics.shared.track(owner.isBot ? "bot_wakeup_ran" : "session_wakeup_ran", ["kind": "watch", "repeats": true])
                     } catch {
-                        if gone(error, owner) { break }
+                        if await gone(error, owner) { break }
                         log.error("A watch's wake-up for \(owner.key, privacy: .public) didn't go: \(error.localizedDescription, privacy: .public)")
                     }
                 }
