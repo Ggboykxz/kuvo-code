@@ -364,6 +364,7 @@ struct MainView: View {
         }
         // The agent started browsing: show it.
         .onChange(of: utilities.revealRequest) { withAnimation(.ui) { showPanel() } }
+        .safeAreaInset(edge: .top, spacing: 0) { fullScreenTitleRow }
         // Hiding the tab bar takes the whole row away and the cards reach the top. The sidebar
         // button stays, so the window's buttons keep a toolbar's height, centered on the cards'
         // header row, and the sidebar is a click away. The panel is still ⌥⌘0, and sessions ⌘K.
@@ -381,9 +382,9 @@ struct MainView: View {
             }
         }
         .toolbar(removing: .title)
-        // In full screen with the tab bar hidden, the row would hold only the sidebar button (no
-        // window buttons to line up with): the cards go to the top, and the sidebar is ⌘0.
-        .toolbar(window.isFullScreen && !showsTabBar && !app.showsSettings ? .hidden : .automatic, for: .windowToolbar)
+        // In full screen, the window's own row instead (see `fullScreenTitleRow`); with the tab
+        // bar hidden, none: the cards go to the top, and the sidebar is ⌘0.
+        .toolbar(window.isFullScreen && !app.showsSettings ? .hidden : .automatic, for: .windowToolbar)
         .background(WindowStateReader { window = $0 })
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .iconOnlyToolbar()
@@ -551,57 +552,84 @@ struct MainView: View {
 
     @ToolbarContentBuilder private var titleBar: some ToolbarContent {
         ToolbarItem(placement: .navigation) {
-            HStack(spacing: 0) {
-                ProjectIdentity(
-                    // A bot in a folder of its own has no project to name (its card names it).
-                    name: activeDirectory.flatMap { directory in isBotsOwnFolder(directory) ? nil : workspace.projectName(directory) },
-                    branch: activeDirectory.flatMap { directory in isBotsOwnFolder(directory) ? nil : workspace.branches[directory] },
-                    directory: activeDirectory,
-                    isWorktree: activeDirectory.map { workspace.worktrees[$0] != nil } ?? false,
-                    environment: app.shellEnvironment,
-                    showsSidebar: sidebarToggle
-                ) {
-                    if let activeDirectory { Task { await workspace.loadBranch(for: activeDirectory) } }
-                }
-                // Up to the middle card, so the tabs start where it does; without the sidebar
-                // there's no room for that, and the tabs follow the project.
-                .frame(width: identityWidth, alignment: .leading)
-                .padding(.trailing, identityWidth == nil ? 16 : 0)
-                if !tabItems.isEmpty {
-                    TabStrip(tabs: tabItems, selection: $selection, close: { closeTab($0) }, closeAll: closeTabs(except:), openBeside: besideOpener, closeBeside: closeBeside, closeBesideTab: closeBesideTab, swapBeside: swapBeside) { id in
-                        guard let session = workspace.session(id) else { return }
-                        // Renamed in its card's header: its tab comes forward for it.
-                        selection = id
-                        renaming = session
-                    }
-                }
-            }
-            .background(WindowXReader { titleBarX = $0 })
-            // A width from the window (minus the traffic lights and the buttons on the right), so a
-            // narrow window squeezes the tabs instead of pushing them into a » menu.
-            .frame(width: max(240, contentWidth - (runCommand(of: activeProject) == nil ? 150 : 190) - resizeRoom), alignment: .leading)
-            // Its empty parts are the title bar's: they drag the window, and a double-click zooms it.
-            .background { WindowDragArea() }
-            .modifier(UnderImageViewer())
+            titleRow
+                // A width from the window (minus the traffic lights and the buttons on the right), so a
+                // narrow window squeezes the tabs instead of pushing them into a » menu.
+                .frame(width: max(240, contentWidth - (runCommand(of: activeProject) == nil ? 150 : 190) - resizeRoom), alignment: .leading)
+                // Its empty parts are the title bar's: they drag the window, and a double-click zooms it.
+                .background { WindowDragArea() }
+                .modifier(UnderImageViewer())
         }
         .sharedBackgroundVisibility(.hidden)
 
-        if let tabsRun = runCommand(of: activeProject) {
-            ToolbarItem(placement: .primaryAction) {
-                Button { runProject(activeProject) } label: {
-                    Image(systemName: "play.fill")
-                        .font(.system(size: 13))
-                }
-                .buttonStyle(IconButtonStyle(width: 28, height: 28, cornerRadius: 7))
-                .accessibilityLabel("Run")
-                .help("Run \(tabsRun)" + (focusedProject == activeProject ? " (⌘R)" : ""))
-                .modifier(UnderImageViewer())
-            }
-            .sharedBackgroundVisibility(.hidden)
+        if runCommand(of: activeProject) != nil {
+            ToolbarItem(placement: .primaryAction) { runButton }
+                .sharedBackgroundVisibility(.hidden)
         }
 
         ToolbarItem(placement: .primaryAction) { PanelToggle(showsPanel: panelToggle).modifier(UnderImageViewer()) }
             .sharedBackgroundVisibility(.hidden)
+    }
+
+    /// The title bar's project and tabs: in the toolbar, or in full screen in a row of the
+    /// window's own.
+    private var titleRow: some View {
+        HStack(spacing: 0) {
+            ProjectIdentity(
+                // A bot in a folder of its own has no project to name (its card names it).
+                name: activeDirectory.flatMap { directory in isBotsOwnFolder(directory) ? nil : workspace.projectName(directory) },
+                branch: activeDirectory.flatMap { directory in isBotsOwnFolder(directory) ? nil : workspace.branches[directory] },
+                directory: activeDirectory,
+                isWorktree: activeDirectory.map { workspace.worktrees[$0] != nil } ?? false,
+                environment: app.shellEnvironment,
+                showsSidebar: sidebarToggle
+            ) {
+                if let activeDirectory { Task { await workspace.loadBranch(for: activeDirectory) } }
+            }
+            // Up to the middle card, so the tabs start where it does; without the sidebar
+            // there's no room for that, and the tabs follow the project.
+            .frame(width: identityWidth, alignment: .leading)
+            .padding(.trailing, identityWidth == nil ? 16 : 0)
+            if !tabItems.isEmpty {
+                TabStrip(tabs: tabItems, selection: $selection, close: { closeTab($0) }, closeAll: closeTabs(except:), openBeside: besideOpener, closeBeside: closeBeside, closeBesideTab: closeBesideTab, swapBeside: swapBeside) { id in
+                    guard let session = workspace.session(id) else { return }
+                    // Renamed in its card's header: its tab comes forward for it.
+                    selection = id
+                    renaming = session
+                }
+            }
+        }
+        .background(WindowXReader { titleBarX = $0 })
+    }
+
+    @ViewBuilder private var runButton: some View {
+        if let tabsRun = runCommand(of: activeProject) {
+            Button { runProject(activeProject) } label: {
+                Image(systemName: "play.fill")
+                    .font(.system(size: 13))
+            }
+            .buttonStyle(IconButtonStyle(width: 28, height: 28, cornerRadius: 7))
+            .accessibilityLabel("Run")
+            .help("Run \(tabsRun)" + (focusedProject == activeProject ? " (⌘R)" : ""))
+            .modifier(UnderImageViewer())
+        }
+    }
+
+    /// In full screen, AppKit moves the toolbar into a window of its own over this one, painted
+    /// flat gray: a band unlike the rest of the window. So there the toolbar goes, and the same
+    /// row is the window's own, on its glass as in a window (none with the tab bar hidden).
+    @ViewBuilder private var fullScreenTitleRow: some View {
+        if window.isFullScreen && showsTabBar && !app.showsSettings {
+            HStack(spacing: 8) {
+                titleRow
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                runButton
+                PanelToggle(showsPanel: panelToggle).modifier(UnderImageViewer())
+            }
+            .padding(.leading, 12)
+            .padding(.trailing, 14)
+            .frame(height: 52)
+        }
     }
 
     /// The project's width in the title bar: up to the middle card, when the sidebar leaves
