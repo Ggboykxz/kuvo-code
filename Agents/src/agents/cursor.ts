@@ -60,6 +60,11 @@ export class CursorAgent implements Agent {
     // The SDK finds its sandbox helper (and ripgrep) in a node_modules beside the script that runs
     // it; the bridge's isn't there, so without this it decides Cursor's sandbox isn't supported.
     process.argv[1] = join(folder, "package.json")
+    // What it keeps (notes for each project, sandbox policies), in the bridge's folder rather than
+    // `~/.cursor` and `~/Library`.
+    process.env.CURSOR_DATA_DIR ??= join(this.context.home, "cursor", "data")
+    process.env.CURSOR_SANDBOX_POLICY_DIR ??= join(this.context.home, "cursor", "sandbox-policies")
+    process.env.CUA_APP_SUPPORT_DIR ??= join(this.context.home, "cursor", "computer-use")
     return this.context.deps.load(this.id, SDK[0].name)
   }
 

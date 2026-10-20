@@ -11,7 +11,7 @@ import type { Agent, AgentContext, Account, SignInAttempt, SubagentRun, Thread, 
 import { accountName, failure, model } from "../agent"
 import { AcpThread } from "../acp"
 import { newID } from "../ids"
-import { run } from "../proc"
+import { run, which } from "../proc"
 import { RPC } from "../rpc"
 import { catcher } from "../signin"
 import type { Turn } from "../turn"
@@ -388,7 +388,7 @@ export class AntigravityAgent implements Agent {
       return {
         installed: this.isInstalled,
         signedIn: false,
-        message: this.isInstalled ? "Sign in with your Google account." : "Sign in with your Google account. Kuvo Code downloads Google's Antigravity agent (about 110 MB) first.",
+        message: this.isInstalled ? "Sign in with your Google account." : `Sign in with your Google account. Kuvo Code downloads Google's Antigravity agent (about ${Math.round(release.bytes / 1_000_000)} MB) first.`,
       }
     }
     return { installed: this.isInstalled, signedIn: true, label: "Google account" }
@@ -422,10 +422,11 @@ export class AntigravityAgent implements Agent {
       }
       await writer.end()
       if (bytes !== release.bytes || hash.digest("hex") !== release.sha256) throw new Error("Antigravity's agent didn't download whole. Try again.")
-      const listed = await run("/usr/bin/unzip", ["-Z1", archive])
+      const zip = unzipper()
+      const listed = await run(zip.program, zip.list(archive))
       const entries = listed.stdout.split("\n").filter(Boolean).sort()
       if (entries.join(",") !== [executableName, harnessName].sort().join(",")) throw new Error("Antigravity's agent wasn't what Kuvo Code expected.")
-      const unzipped = await run("/usr/bin/unzip", ["-q", "-o", archive, "-d", staging])
+      const unzipped = await run(zip.program, zip.extract(archive, staging))
       if (unzipped.code !== 0) throw new Error(`Couldn't unpack Antigravity's agent: ${unzipped.stderr.trim()}`)
       rmSync(archive, { force: true })
       for (const name of [executableName, harnessName]) chmodSync(join(staging, name), 0o755)
@@ -638,3 +639,18 @@ export class AntigravityAgent implements Agent {
   }
 }
 
+
+/**
+ * What unpacks a zip here: `unzip` (every Mac has it), or Python's zipfile on a machine without it.
+ */
+function unzipper(): { program: string; list: (archive: string) => string[]; extract: (archive: string, folder: string) => string[] } {
+  const unzip = which("unzip", ["/usr/bin"])
+  if (unzip) return { program: unzip, list: (archive) => ["-Z1", archive], extract: (archive, folder) => ["-q", "-o", archive, "-d", folder] }
+  const python = which("python3", ["/usr/bin"])
+  if (!python) throw new Error("Unpacking Antigravity's agent needs unzip or Python 3 on this machine.")
+  return {
+    program: python,
+    list: (archive) => ["-I", "-c", "import sys, zipfile; print('\\n'.join(zipfile.ZipFile(sys.argv[1]).namelist()))", archive],
+    extract: (archive, folder) => ["-I", "-c", "import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])", archive, folder],
+  }
+}

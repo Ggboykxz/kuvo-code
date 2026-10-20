@@ -56,7 +56,8 @@ let pathRead = 0
  * at most every few seconds.
  */
 export async function refreshLoginPath(): Promise<void> {
-  if (Date.now() - pathRead < 5_000) return
+  // On a machine, the PATH its engine has, as the engine's own commands do.
+  if (process.env.KUVO_AGENTS_REMOTE === "1" || Date.now() - pathRead < 5_000) return
   pathRead = Date.now()
   const shell = process.env.SHELL || "/bin/zsh"
   for (const flags of ["-ilc", "-lc"]) {

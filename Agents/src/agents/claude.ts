@@ -19,6 +19,7 @@ import { Queue } from "../queue"
 import { commandSignIn } from "../signin"
 import { newID } from "../ids"
 import { kuvoTools } from "../kuvotools"
+import { claudeProgram, managedNote, onMachine } from "../machine"
 import { addShell, endShell } from "../shells"
 import { pictureData, pictureFile, withPictures } from "../pictures"
 import type { Turn } from "../turn"
@@ -43,7 +44,8 @@ export class ClaudeAgent implements Agent {
   get name() {
     return accountName("Claude Code", this.instance)
   }
-  install = "curl -fsSL https://claude.ai/install.sh | bash"
+  // (On a machine, Kuvo Code installs it, with the Claude Agent SDK.)
+  install = onMachine ? undefined : "curl -fsSL https://claude.ai/install.sh | bash"
   private status?: { at: number; status: Status }
   /**
    * When Claude last turned its sign-in away in a run ("OAuth access token has been revoked"):
@@ -64,7 +66,13 @@ export class ClaudeAgent implements Agent {
   }
 
   executable(): string | undefined {
-    return which("claude", places)
+    return onMachine ? claudeProgram(this.context.deps.folder(this.id)) : which("claude", places)
+  }
+
+  /** Its program, installed first on a machine (where Kuvo Code keeps its own copy). */
+  async installedProgram(): Promise<string | undefined> {
+    if (onMachine && !this.executable()) await this.sdk()
+    return this.executable()
   }
 
   /** Its own installer puts it in `~/.local/share/claude` (or `~/.claude/local`): `claude update`. */
@@ -81,10 +89,11 @@ export class ClaudeAgent implements Agent {
 
   async maintenance(fresh = false) {
     const definition = this.definition
-    return definition ? maintenance(definition, fresh) : {}
+    return definition && !onMachine ? maintenance(definition, fresh) : {}
   }
 
   async update() {
+    if (onMachine) return { updated: false, message: managedNote }
     const definition = this.definition
     if (!definition) return { updated: false, message: "Claude Code isn't installed." }
     return update(definition, this.context.temporary)
@@ -117,6 +126,8 @@ export class ClaudeAgent implements Agent {
   }
 
   async account(fresh = false): Promise<Account> {
+    // On a machine it comes as you sign in.
+    if (!this.executable() && onMachine) return { installed: true, signedIn: false, message: "Sign in to Claude Code with your Claude plan or an Anthropic Console account. Kuvo Code installs it on this machine first." }
     if (!this.executable()) {
       return { installed: false, signedIn: false, message: "Install Claude Code, then sign in here." }
     }
@@ -148,7 +159,7 @@ export class ClaudeAgent implements Agent {
   }
 
   async signIn(methodID: string): Promise<SignInAttempt> {
-    const executable = this.executable()
+    const executable = await this.installedProgram()
     if (!executable) throw new Error("Install Claude Code first: curl -fsSL https://claude.ai/install.sh | bash")
     return commandSignIn({
       command: executable,
@@ -167,8 +178,8 @@ export class ClaudeAgent implements Agent {
   }
 
   async sdk(): Promise<typeof import("@anthropic-ai/claude-agent-sdk")> {
-    // Without its own copy of Claude Code: it runs yours.
-    await this.context.deps.ensure(this.id, SDK, { optional: false })
+    // Without its own copy of Claude Code: it runs yours; on a machine, with it (it's the one there).
+    await this.context.deps.ensure(this.id, SDK, { optional: onMachine })
     return this.context.deps.load(this.id, SDK[0].name)
   }
 
@@ -406,18 +417,21 @@ class ClaudeThread implements Thread {
     // What the app adds to its instructions changed (a worktree, the project's folders), or Claude
     // Code was updated: it starts again, going on with the same conversation.
     const tools = kuvoTools(this.session.id)
-    if (this.query && (this.opened?.append !== append || this.opened?.program !== this.agent.program || this.opened?.tools !== tools?.url)) this.close()
+    if (this.query && (this.opened?.append !== append || this.opened?.program !== this.agent.program || this.opened?.tools !== tools?.key)) this.close()
     if (!this.query) {
       this.open(sdk, modelID, effort, input.plan, append, hooks)
       // Kuvo Code's own tools, as the engine's models have them: told over its pipe, not on its
       // command line (where any process could read their key).
-      if (tools) await this.query?.setMcpServers({ [tools.name]: { type: "http", url: tools.url, headers: tools.headers, timeout: tools.timeout } }).catch(() => {})
+      if (tools) {
+        const entry = tools.kind === "http" ? { type: "http" as const, url: tools.url, headers: tools.headers, timeout: tools.timeout } : { type: "stdio" as const, command: tools.command, args: tools.args, env: tools.env, timeout: tools.timeout }
+        await this.query?.setMcpServers({ [tools.name]: entry }).catch(() => {})
+      }
     } else {
       // The same Claude Code goes on, told what changed.
       if (this.opened?.model !== modelID) await this.query.setModel(modelID === "default" ? undefined : modelID).catch(() => {})
       if (this.opened?.effort !== effort) await this.query.applyFlagSettings({ effortLevel: effort ?? null }).catch(() => {})
       if (this.opened?.plan !== input.plan) await this.query.setPermissionMode(input.plan ? "plan" : "default").catch(() => {})
-      this.opened = { model: modelID, effort, plan: input.plan, append, program: this.agent.program, tools: tools?.url }
+      this.opened = { model: modelID, effort, plan: input.plan, append, program: this.agent.program, tools: tools?.key }
     }
     if (hooks.signal.aborted) return { outcome: "interrupted" }
     return new Promise<RunResult>((resolve) => {
@@ -602,7 +616,7 @@ class ClaudeThread implements Thread {
     if (!resume) delete this.state.claudeCost
     this.input = new Queue()
     const tools = kuvoTools(this.session.id)
-    this.opened = { model: modelID, effort, plan, append, program: this.agent.program, tools: tools?.url }
+    this.opened = { model: modelID, effort, plan, append, program: this.agent.program, tools: tools?.key }
     this.query = sdk.query({
       prompt: this.input,
       options: {

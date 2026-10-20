@@ -154,7 +154,7 @@ export class AcpThread implements Thread {
   private async open(input: RunInput, hooks: TurnHooks) {
     const mode = { approvesAll: hooks.approvesAll(), plan: input.plan }
     // Kuvo Code's tools moving (the app started again) starts it again too, to reach them.
-    const key = JSON.stringify({ ...mode, program: this.flavor.program?.() ?? 0, tools: kuvoTools(this.session.id)?.url })
+    const key = JSON.stringify({ ...mode, program: this.flavor.program?.() ?? 0, tools: kuvoTools(this.session.id)?.key })
     if (this.rpc && !this.rpc.isClosed && this.spawnedWith === key && this.rpc !== this.stale) return this.rpc
     // Started again for another approval mode (the agent takes it as it starts), or an updated program.
     this.close()
@@ -271,9 +271,10 @@ export class AcpThread implements Thread {
   /** Kuvo Code's own tools, for an agent that takes MCP servers over HTTP. */
   private mcpServers(init: any): unknown[] {
     const tools = kuvoTools(this.session.id)
-    if (!tools || !init?.agentCapabilities?.mcpCapabilities?.http) return []
+    if (!tools || (tools.kind === "http" && !init?.agentCapabilities?.mcpCapabilities?.http)) return []
     // Their names and arguments, to know their calls when they come.
     void loadKuvoTools()
+    if (tools.kind === "stdio") return [{ name: tools.name, command: tools.command, args: tools.args, env: Object.entries(tools.env).map(([name, value]) => ({ name, value })) }]
     return [{ type: "http", name: tools.name, url: tools.url, headers: Object.entries(tools.headers).map(([name, value]) => ({ name, value })) }]
   }
 

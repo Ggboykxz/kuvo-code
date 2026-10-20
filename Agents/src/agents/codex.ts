@@ -15,6 +15,7 @@ import { kuvoTools, toolServerName } from "../kuvotools"
 import { pictureData, pictureFile, withPictures } from "../pictures"
 import { elicitationField } from "../forms"
 import { newID } from "../ids"
+import { installCodex, codexProgram, managedNote, onMachine } from "../machine"
 import { maintenance, update, type MaintenanceDefinition } from "../maintenance"
 import { which } from "../proc"
 import { RPC, RPCError } from "../rpc"
@@ -30,7 +31,8 @@ export class CodexAgent implements Agent {
   get name() {
     return accountName("Codex", this.instance)
   }
-  install = "npm install -g @openai/codex"
+  // (On a machine, Kuvo Code installs it.)
+  install = onMachine ? undefined : "npm install -g @openai/codex"
   private server?: RPC
   private starting?: Promise<RPC>
   private threads = new Map<string, CodexThread>()
@@ -50,7 +52,7 @@ export class CodexAgent implements Agent {
   }
 
   executable(): string | undefined {
-    return which("codex", places)
+    return onMachine ? codexProgram(this.context.deps) : which("codex", places)
   }
 
   /** Its own installer puts it in `~/.codex`: `codex update`. */
@@ -62,10 +64,11 @@ export class CodexAgent implements Agent {
 
   async maintenance(fresh = false) {
     const definition = this.definition
-    return definition ? maintenance(definition, fresh) : {}
+    return definition && !onMachine ? maintenance(definition, fresh) : {}
   }
 
   async update() {
+    if (onMachine) return { updated: false, message: managedNote }
     const definition = this.definition
     if (!definition) return { updated: false, message: "Codex isn't installed." }
     return update(definition, this.context.temporary)
@@ -132,10 +135,12 @@ export class CodexAgent implements Agent {
   }
 
   private async start(): Promise<RPC> {
-    const executable = this.executable()
+    // On a machine, Kuvo Code's own copy, installed the first time it's needed.
+    const executable = onMachine ? await installCodex(this.context.deps) : this.executable()
     if (!executable) throw new Error("Install Codex first: npm install -g @openai/codex")
-    // An added account's own CODEX_HOME, with your Codex settings in it: only its sign-in is its own.
-    if (this.instance.home) shadowHome(this.instance.home)
+    // An added account's own CODEX_HOME, with your Codex settings in it: only its sign-in is its
+    // own. (On a machine, nothing of the machine's own Codex.)
+    if (this.instance.home && !onMachine) shadowHome(this.instance.home)
     const rpc = new RPC([executable, "app-server"], { cwd: this.context.temporary, env: this.instance.home ? { CODEX_HOME: this.instance.home } : undefined })
     rpc.onNotification = (method, params) => this.notification(method, params)
     rpc.onRequest = (method, params, id) => this.request(method, params, id)
@@ -256,6 +261,7 @@ export class CodexAgent implements Agent {
   private early = new Map<string, { at: number; events: [string, any][] }>()
 
   async account(fresh = false): Promise<Account> {
+    if (!this.executable() && onMachine) return { installed: true, signedIn: false, message: "Sign in to Codex with ChatGPT or an OpenAI API key. Kuvo Code installs it on this machine first." }
     if (!this.executable()) return { installed: false, signedIn: false, message: "Install Codex, then sign in here." }
     if (!fresh && this.accountCache && Date.now() - this.accountCache.at < 30_000) return this.accountCache.account
     const rpc = await this.rpc()
@@ -450,7 +456,7 @@ class CodexThread implements Thread {
   /** The thread it had was gone: a new one took its place. */
   private startedOver = false
   /** Where Kuvo Code's tools were when it was loaded. */
-  private toolsURL?: string
+  private toolsKey?: string
   /** The agents it spawned, by their thread: their sessions, across turns. */
   private spawnedSessions = new Map<string, { call: string; title: string; sessionID: string }>()
   /** Agents it spawned still at work after the turn that spawned them ended, by their thread. */
@@ -488,11 +494,13 @@ class CodexThread implements Thread {
     // Loaded again with what the app adds to its instructions, when that changed.
     const tools = kuvoTools(this.session.id)
     // Loaded again when Kuvo Code's tools moved (the app started again), to reach them.
-    if (this.nativeID && this.loaded && instructions === this.instructions && tools?.url === this.toolsURL) return rpc
-    this.toolsURL = tools?.url
+    if (this.nativeID && this.loaded && instructions === this.instructions && tools?.key === this.toolsKey) return rpc
+    this.toolsKey = tools?.key
     this.instructions = instructions
     // Kuvo Code's own tools, as the engine's models have them (a setting for this thread alone).
-    const config = tools ? { [`mcp_servers.${tools.name}`]: { url: tools.url, http_headers: tools.headers, tool_timeout_sec: Math.ceil(tools.timeout / 1000) } } : undefined
+    const timeout = tools ? { tool_timeout_sec: Math.ceil(tools.timeout / 1000) } : {}
+    const server = tools?.kind === "http" ? { url: tools.url, http_headers: tools.headers, ...timeout } : tools?.kind === "stdio" ? { command: tools.command, args: tools.args, env: tools.env, ...timeout } : undefined
+    const config = tools && server ? { [`mcp_servers.${tools.name}`]: server } : undefined
     const common = { cwd: this.session.location.directory, model: input.model.id, developerInstructions: instructions, ...(config ? { config } : {}) }
     if (this.nativeID) {
       try {

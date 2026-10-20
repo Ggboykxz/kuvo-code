@@ -4,6 +4,11 @@
 // Started like the engine: it prints `{"url": …}` once it's listening, answers only with the
 // password in OPENCODE_PASSWORD, and stops when its stdin closes (so it can't outlive the app).
 // It keeps what it has in KUVO_AGENTS_HOME.
+//
+// On one of your machines (KUVO_AGENTS_REMOTE, see machine.ts) the engine's launch starts it beside
+// the engine, with the same settings: it listens on KUVO_AGENTS_PORT with the password in
+// KUVO_AGENTS_PASSWORD, reaches the engine on KUVO_ENGINE_PORT with OPENCODE_PASSWORD, and lives
+// as long as the engine (KUVO_ENGINE_PID) does, the Mac connected or not.
 
 import { mkdirSync, readdirSync, rmSync } from "node:fs"
 import { join } from "node:path"
@@ -11,6 +16,8 @@ import { Accounts, parseProvider } from "./accounts"
 import { Auto } from "./auto"
 import { Deps } from "./deps"
 import { EngineAgent, EngineLink } from "./engine"
+import { setToolProgram } from "./kuvotools"
+import { machineHome, onMachine } from "./machine"
 import { Snapshots } from "./snapshots"
 import { Roster } from "./roster"
 import { cancelSignIns, handler } from "./server"
@@ -19,10 +26,32 @@ import { Store } from "./store"
 
 const version = "1"
 const home = process.env.KUVO_AGENTS_HOME
-const password = process.env.OPENCODE_PASSWORD
-if (!home || !password) {
-  console.error("KUVO_AGENTS_HOME and OPENCODE_PASSWORD are needed.")
+const password = onMachine ? process.env.KUVO_AGENTS_PASSWORD : process.env.OPENCODE_PASSWORD
+const enginePID = Number(process.env.KUVO_ENGINE_PID)
+if (!home || !password || (onMachine && (!machineHome || !Number(process.env.KUVO_AGENTS_PORT) || !Number(process.env.KUVO_ENGINE_PORT) || !enginePID))) {
+  console.error(onMachine ? "KUVO_AGENTS_HOME, KUVO_HOME, KUVO_AGENTS_PORT, KUVO_AGENTS_PASSWORD, KUVO_ENGINE_PORT and KUVO_ENGINE_PID are needed." : "KUVO_AGENTS_HOME and OPENCODE_PASSWORD are needed.")
   process.exit(2)
+}
+// On a machine: its engine, and Kuvo Code's tools as the engine has them.
+const machineEngine = onMachine ? { url: `http://127.0.0.1:${process.env.KUVO_ENGINE_PORT}`, password: process.env.OPENCODE_PASSWORD } : undefined
+const port = onMachine ? Number(process.env.KUVO_AGENTS_PORT) : 0
+if (onMachine) {
+  setToolProgram(process.env.OPENCODE_CONFIG_CONTENT)
+  // The agents, and the commands they run, get the machine's own folders back, as the engine's
+  // commands do (Kuvo Code's plugin there): tools find their sign-ins and settings (`gh`, git's
+  // own). Each agent keeps what it has in this bridge's home all the same (accounts.ts).
+  for (const key of Object.keys(process.env)) {
+    if (!key.startsWith("KUVO_OWN_")) continue
+    const own = process.env[key]
+    delete process.env[key]
+    const name = key.slice("KUVO_OWN_".length)
+    if (own) process.env[name] = own
+    else delete process.env[name]
+  }
+  // Kuvo Code's commands (kuvo-wake) first, as for the engine.
+  process.env.KUVO_BIN = join(machineHome!, "bin")
+  // Nor do they get what the engine starts with: its settings, with keys in them, nor these.
+  for (const name of ["OPENCODE_CONFIG_CONTENT", "OPENCODE_CONFIG", "OPENCODE_CLIENT", "KUVO_AGENTS_PASSWORD", "KUVO_AGENTS_PORT", "KUVO_ENGINE_PORT", "KUVO_ENGINE_PID"]) delete process.env[name]
 }
 // Temporary files of its own and the agents' (Claude Code's task output): the app gives it a
 // folder in its own temporary folder.
@@ -51,6 +80,7 @@ const store = new Store(join(home, "sessions"))
 const auto = new Auto(home)
 // The engine's own models, run in sessions here (the app says where the engine is).
 const link = new EngineLink()
+if (machineEngine) link.configure(machineEngine.url, machineEngine.password)
 const engineAgents = new Map<string, EngineAgent>()
 function engineAgent(providerID: string): EngineAgent | undefined {
   if (!link.ready || parseProvider(providerID)) return undefined
@@ -71,7 +101,7 @@ const sessions = new Sessions(
 
 const server = Bun.serve({
   hostname: "127.0.0.1",
-  port: 0,
+  port,
   idleTimeout: 0,
   fetch: handler({ roster, sessions, auto, link, password, version }),
 })
@@ -87,8 +117,19 @@ function stop() {
   server.stop(true)
   process.exit(0)
 }
-process.stdin.on("end", stop)
-process.stdin.on("close", stop)
-process.stdin.resume()
+if (onMachine) {
+  // Its engine stopped (or another started in its place, which starts its own bridge).
+  setInterval(() => {
+    try {
+      process.kill(enginePID, 0)
+    } catch {
+      stop()
+    }
+  }, 5_000)
+} else {
+  process.stdin.on("end", stop)
+  process.stdin.on("close", stop)
+  process.stdin.resume()
+}
 process.on("SIGTERM", stop)
 process.on("SIGINT", stop)

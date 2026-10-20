@@ -8,6 +8,7 @@ import { providerID, type AgentAccount } from "../accounts"
 import type { Agent, AgentContext, Account, SignInAttempt, Thread } from "../agent"
 import { accountName, model } from "../agent"
 import { AcpThread, questionFields } from "../acp"
+import { grokProgram, installGrok, managedNote, onMachine } from "../machine"
 import { maintenance, update, type MaintenanceDefinition } from "../maintenance"
 import { plain, run, which } from "../proc"
 import { commandSignIn } from "../signin"
@@ -21,7 +22,8 @@ export class GrokAgent implements Agent {
   get name() {
     return accountName("Grok", this.instance)
   }
-  install = "npm install -g @xai-official/grok"
+  // (On a machine, Kuvo Code installs it.)
+  install = onMachine ? undefined : "npm install -g @xai-official/grok"
   private status?: { at: number; signedIn: boolean; models: { id: string; name: string; isDefault: boolean }[] }
   private promptCount = 0
 
@@ -61,7 +63,12 @@ export class GrokAgent implements Agent {
   }
 
   executable(): string | undefined {
-    return which("grok", places)
+    return onMachine ? grokProgram(this.context.deps) : which("grok", places)
+  }
+
+  /** Its program, installed first on a machine (where Kuvo Code keeps its own copy). */
+  async installedProgram(): Promise<string | undefined> {
+    return onMachine ? installGrok(this.context.deps) : this.executable()
   }
 
   /** Its own installer puts it in `~/.grok`: `grok update`. */
@@ -73,10 +80,11 @@ export class GrokAgent implements Agent {
 
   async maintenance(fresh = false) {
     const definition = this.definition
-    return definition ? maintenance(definition, fresh) : {}
+    return definition && !onMachine ? maintenance(definition, fresh) : {}
   }
 
   async update() {
+    if (onMachine) return { updated: false, message: managedNote }
     const definition = this.definition
     if (!definition) return { updated: false, message: "Grok's CLI isn't installed." }
     return update(definition, this.context.temporary)
@@ -117,6 +125,7 @@ export class GrokAgent implements Agent {
   }
 
   async account(fresh = false): Promise<Account> {
+    if (!this.executable() && onMachine) return { installed: true, signedIn: false, message: "Sign in to Grok with your SuperGrok plan. Kuvo Code installs its CLI on this machine first." }
     if (!this.executable()) return { installed: false, signedIn: false, message: "Install Grok's CLI, then sign in here." }
     const status = await this.read(fresh)
     if (!status.signedIn) return { installed: true, signedIn: false, message: "Sign in to Grok with your SuperGrok plan." }
@@ -124,7 +133,7 @@ export class GrokAgent implements Agent {
   }
 
   async signIn(): Promise<SignInAttempt> {
-    const executable = this.executable()
+    const executable = await this.installedProgram()
     if (!executable) throw new Error("Install Grok's CLI first: npm install -g @xai-official/grok")
     return commandSignIn({
       command: executable,
@@ -154,7 +163,7 @@ export class GrokAgent implements Agent {
         restartAfterInterrupt: true,
         program: () => agent.program,
         async command({ approvesAll, plan }) {
-          const executable = agent.executable()
+          const executable = await agent.installedProgram()
           if (!executable) throw new Error("Install Grok's CLI first: npm install -g @xai-official/grok")
           const argv = plan
             ? [executable, "--permission-mode", "plan", "agent", "stdio"]
