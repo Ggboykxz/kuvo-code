@@ -758,13 +758,23 @@ final class PhoneLink {
 
     /// `GET kuvo/wakes/<session>`: its wake-ups, watches and whether they're paused, read now;
     /// `POST kuvo/wakes/<session>/cancel` with `{"wake": "<id>"}` or `{"watch": "<letters>"}`
-    /// cancels one, as the bar over the Mac's composer does. Times are seconds since 1970.
+    /// cancels one, and `…/now` with `{"wake": "<id>"}` sends one now (one that repeats still
+    /// comes back at its time), as the bar over the Mac's composer does. Times are seconds since 1970.
     private func answerWakes(_ request: LinkRequest) async -> (Int, Data) {
         let parts = request.path.split(separator: "?").first?.split(separator: "/").map(String.init) ?? []
         guard parts.count >= 3, let session = parts[2].removingPercentEncoding, let app = AgentMail.shared.app,
               let found = app.workspace.session(session) else { return (404, Data("{}".utf8)) }
         let owner = WakeUps.owner(of: found)
         let wakeUps = app.wakeUps
+        if parts.count == 4, parts[3] == "now", request.method.uppercased() == "POST" {
+            struct Given: Decodable { var wake: String }
+            guard let id = (try? JSONDecoder().decode(Given.self, from: request.body))?.wake,
+                  let wake = wakeUps.wakes[owner.key]?.first(where: { $0.id == id || $0.letters == id }) else { return (404, Data("{}".utf8)) }
+            do { try await wakeUps.wakeNow(wake, of: owner) } catch {
+                return (503, (try? JSONEncoder().encode(["message": error.localizedDescription])) ?? Data())
+            }
+            return (200, Data("{}".utf8))
+        }
         if parts.count == 4, parts[3] == "cancel", request.method.uppercased() == "POST" {
             struct Given: Decodable { var wake: String?; var watch: String? }
             let given = try? JSONDecoder().decode(Given.self, from: request.body)

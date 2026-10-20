@@ -237,7 +237,9 @@ itself. A host serves:
   agent sets with `kuvo-wake`, as the bar over the Mac's composer shows them: `{"wakes": [{id,
   due, note, every}], "watches": [{letters, every, check, note}], "paused"}` (`due` in seconds
   since 1970, `every` like `1d` or null; paused while it's archived). `POST
-  kuvo/wakes/<session>/cancel` with `{"wake": "<id>"}` or `{"watch": "<letters>"}` cancels one.
+  kuvo/wakes/<session>/cancel` with `{"wake": "<id>"}` or `{"watch": "<letters>"}` cancels one;
+  `POST kuvo/wakes/<session>/now` with `{"wake": "<id>"}` sends it now (one that repeats still
+  comes back at its time).
   A bot's are in `kuvo/bots`. A wake-up reaches the conversation as a message starting with
   `[Wake-up] `.
 - On a Mac, `kuvo/asks`: what agents ask you for while they browse, on the Mac or a machine: a
