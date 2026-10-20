@@ -447,6 +447,10 @@ public final class RemoteServer: @unchecked Sendable {
         """
     }
 
+    /// What stops the engine, as part of a longer script (in a shell of its own: it ends early when
+    /// there's nothing to stop).
+    public static var stopCommand: String { "(\n" + stopScript + "\n)" }
+
     /// Stops the engine on the machine, if it's running.
     public static func stop(on connection: SSHConnection) async throws {
         try await connection.run(stopScript)

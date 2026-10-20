@@ -330,17 +330,22 @@ final class Bots {
     /// machine, Kuvo Code's trash folder there), with what it made in it. A project it worked in
     /// stays. A machine's bot goes only once its folder there has, which stops its wake-ups and
     /// watches, so while the machine can't be reached it stays, and this says so. (One whose
-    /// machine you removed from Kuvo Code just leaves the list.)
+    /// machine you removed from Kuvo Code leaves the list, and its folder goes the next time that
+    /// machine answers, so adding it again doesn't bring the bot back.)
     func delete(_ bot: Bot) async throws {
-        if let machine = bot.machine, let engine = app?.machines.engine(machine) {
-            guard engine.isReady else { throw Failure.stillOn(machine) }
+        if let machine = bot.machine {
             let folder = SSHConnection.quoted(bot.folder)
             let script = """
                 T="$HOME/\(RemoteEngineInstaller.root)/trash/$(date +%Y%m%d-%H%M%S)-$$"
                 [ ! -e \(folder) ] || { mkdir -p "$T" && mv -- \(folder) "$T/"; }
                 """
-            guard await Task.detached(operation: { RemoteShell.run(script, on: machine) }).value != nil else {
-                throw Failure.stillOn(machine)
+            if let engine = app?.machines.engine(machine) {
+                guard engine.isReady else { throw Failure.stillOn(machine) }
+                guard await Task.detached(operation: { RemoteShell.run(script, on: machine) }).value != nil else {
+                    throw Failure.stillOn(machine)
+                }
+            } else {
+                app?.machines.runLater(script, on: machine)
             }
         }
         await app?.groups.remove(bot)

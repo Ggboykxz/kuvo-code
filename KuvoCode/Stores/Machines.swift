@@ -380,6 +380,59 @@ final class Machines {
 
     init() {
         for machine in list { engines[machine.id] = MachineEngine(machine: machine) }
+        // What waits for a machine to answer: tried a little after launch, then every 15 minutes.
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(30))
+            while !Task.isCancelled {
+                await self?.runWaiting()
+                try? await Task.sleep(for: .seconds(900))
+            }
+        }
+    }
+
+    // MARK: Clean-ups that wait
+
+    /// Clean-ups for machines that couldn't be reached when they were due (one removed, a bot
+    /// deleted, an integration removed), by machine: scripts run there, in order, the next time it
+    /// answers. One removed's are marked, to drop if it's added again.
+    private static let waitingKey = "machines.waiting"
+    static let removalMark = "# Kuvo Code: removed\n"
+
+    private static var waiting: [String: [String]] {
+        get { UserDefaults.standard.dictionary(forKey: waitingKey) as? [String: [String]] ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: waitingKey) }
+    }
+
+    /// Runs `script` on the machine the next time it answers.
+    func runLater(_ script: String, on machine: String) {
+        Self.waiting[machine, default: []].append(script)
+    }
+
+    private func runWaiting() async {
+        for (machine, scripts) in Self.waiting {
+            var left = scripts
+            while let script = left.first {
+                guard (try? await Machine(destination: machine).connection.run(script)) != nil else { break }
+                left.removeFirst()
+            }
+            Self.waiting[machine] = left.isEmpty ? nil : left
+        }
+    }
+
+    /// What removing a machine does there, without its engine: stops it (its bots stop waking),
+    /// signs out of the accounts it had (in its own database, with its own runtime), and deletes
+    /// what integrations kept there. Its sessions stay.
+    static var removalScript: String {
+        removalMark + """
+        K="$HOME/\(RemoteEngineInstaller.root)"
+        \(RemoteServer.stopCommand)
+        sleep 1
+        E=$(ls -d "$K"/engine/*/opencode 2>/dev/null | tail -n 1)
+        if [ -x "$E" ] && [ -f "$K/data/opencode/opencode.db" ]; then
+          KUVO_DB="$K/data/opencode/opencode.db" BUN_BE_BUN=1 "$E" -e 'const { Database } = require("bun:sqlite"); const db = new Database(process.env.KUVO_DB); db.run("DELETE FROM credential"); db.close()' || exit 1
+        fi
+        rm -rf "$K/integrations" "$K/keys"
+        """
     }
 
     func engine(_ id: String?) -> MachineEngine? {
@@ -390,6 +443,11 @@ final class Machines {
     func add(_ destination: String) -> MachineEngine {
         let machine = Machine(destination: destination.trimmingCharacters(in: .whitespaces))
         if let engine = engines[machine.id] { return engine }
+        // Added again: not to be signed out of and stopped as one removed.
+        if let waiting = Self.waiting[machine.id] {
+            let kept = waiting.filter { !$0.hasPrefix(Self.removalMark) }
+            Self.waiting[machine.id] = kept.isEmpty ? nil : kept
+        }
         list.append(machine)
         Analytics.shared.track("machine_added")
         let engine = MachineEngine(machine: machine)
@@ -401,7 +459,14 @@ final class Machines {
     func remove(_ id: String) {
         // Its sessions stay there, for when it's added again; your accounts and integrations'
         // sign-ins don't.
-        if let engine = engines[id] { Task { await engine.forgetAccounts(); await engine.stopEngine() } }
+        if let engine = engines[id] {
+            Task { [weak self] in
+                // Without its engine there (it couldn't be reached), the next time it answers.
+                guard engine.isReady else { self?.runLater(Self.removalScript, on: id); return }
+                await engine.forgetAccounts()
+                await engine.stopEngine()
+            }
+        }
         engines[id] = nil
         list.removeAll { $0.id == id }
         save()

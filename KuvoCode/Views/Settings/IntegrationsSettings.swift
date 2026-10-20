@@ -311,8 +311,10 @@ struct IntegrationsSettings: View {
         // machines that are connected.
         for name in [service.id, "\(service.id).json"] { try? FileManager.default.removeItem(at: AppInfo.supportDirectory.appending(path: "integrations/\(name)")) }
         let kept = "\"$HOME/\(RemoteEngineInstaller.root)/integrations/\(service.id)\""
-        for engine in app.machines.engines.values where engine.isReady {
+        for engine in app.machines.engines.values {
             let machine = engine.machine.id
+            // One out of reach: the next time it answers.
+            guard engine.isReady else { app.machines.runLater("rm -rf \(kept)", on: machine); continue }
             Task.detached { _ = RemoteShell.run("rm -rf \(kept)", on: machine) }
         }
         if !Integrations.macOnly.contains(service.id) { app.renewEngines(mac: false) }
