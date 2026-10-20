@@ -15,6 +15,9 @@ nonisolated struct ChangedFile: Identifiable, Hashable, Sendable {
     var isBinary = false
     /// Too big to read line by line (a new file of a few megabytes); shown like a binary one.
     var isTooBig = false
+    /// A folder with a repository of its own (a nested repository, a new submodule), listed
+    /// as one new file.
+    var isFolder = false
     var lines: [DiffLine] = []
     /// Where the file is on disk.
     var url: URL
@@ -190,6 +193,19 @@ nonisolated enum Git {
             if scope == .staged, file.status != .deleted { file.newObject = ":" + file.path }
             return file
         }
+        // A file that changed kind (a file now a link, or back) comes as two, gone and new: one
+        // here, changed, so Discard puts it back rather than throwing the new one away.
+        var seen: [String: Int] = [:]
+        var merged: [ChangedFile] = []
+        for file in files {
+            guard let i = seen[file.path] else { seen[file.path] = merged.count; merged.append(file); continue }
+            merged[i].status = .modified
+            merged[i].lines += file.lines
+            merged[i].isBinary = merged[i].isBinary || file.isBinary
+            merged[i].oldObject = merged[i].oldObject ?? file.oldObject
+            merged[i].newObject = merged[i].newObject ?? file.newObject
+        }
+        files = merged
         if scope != .staged {
             let untracked = run(["-c", "core.quotepath=off", "ls-files", "--others", "--exclude-standard", "-z", "--", limit.isEmpty ? "." : limit], in: root) ?? ""
             for path in untracked.split(separator: "\0").map(String.init) where !files.contains(where: { $0.path == path }) {
@@ -204,7 +220,6 @@ nonisolated enum Git {
         // The file's own path, never a pattern: "app/[slug]/page.tsx" would match others, and
         // ":!x" every file but x.
         func on(_ arguments: [String]) -> String? { run(["--literal-pathspecs"] + arguments, in: root) }
-        let tracked = on(["ls-files", "--error-unmatch", "--", file.path]) != nil
         func git(_ arguments: [String]) -> String? {
             on(arguments) == nil ? "git couldn't \(arguments.first ?? "do that") \(file.path)." : nil
         }
@@ -216,20 +231,30 @@ nonisolated enum Git {
         case .unstage:
             return git(["restore", "--staged", "--"] + paths)
         case .discard:
+            // Out of git first, and only once that worked: a file still staged would go with the
+            // next commit. `-f` for one staged and then changed again.
+            func untrack(_ path: String) -> String? {
+                on(["ls-files", "--error-unmatch", "--", path]) == nil ? nil : git(["rm", "--cached", "-f", "-q", "--", path])
+            }
             // New to git (untracked, only staged, or only noted with `git add -N`): it has no
             // committed version to go back to, so the file goes to the Trash. (Restoring one only
             // noted would empty it.)
             if file.status == .added {
-                if tracked { _ = on(["rm", "--cached", "-q", "--", file.path]) }
+                if let failure = untrack(file.path) { return failure }
+                do { try trash(file.url) } catch { return error.localizedDescription }
+                return nil
+            }
+            // Moved: the new path goes as a new file does, and the old one comes back (from the
+            // staged version for unstaged changes, where a move shows only through `add -N`).
+            if file.status == .renamed, let old = file.oldPath {
+                if let failure = untrack(file.path) { return failure }
+                if let failure = git(scope == .unstaged ? ["restore", "--worktree", "--", old] : ["restore", "--source=HEAD", "--staged", "--worktree", "--", old]) {
+                    return failure
+                }
                 do { try trash(file.url) } catch { return error.localizedDescription }
                 return nil
             }
             if scope == .unstaged { return git(["restore", "--worktree", "--"] + paths) }
-            if file.status == .renamed, let old = file.oldPath {
-                _ = on(["rm", "--cached", "-q", "--", file.path])
-                try? trash(file.url)
-                return git(["restore", "--source=HEAD", "--staged", "--worktree", "--", old])
-            }
             return git(["restore", "--source=HEAD", "--staged", "--worktree", "--", file.path])
         }
     }
@@ -296,6 +321,8 @@ nonisolated enum Git {
         let url = RemoteFolder.url(root).appending(path: path)
         var file = ChangedFile(path: path, status: .added, url: url)
         file.root = root
+        // git names a repository inside this one by its folder: "web/".
+        file.isFolder = path.hasSuffix("/")
         let data: Data?
         if url.isFileURL {
             let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
@@ -416,7 +443,7 @@ nonisolated enum DiffParser {
                 continue
             }
             if !sawHunk {
-                if line.hasPrefix("new file mode") { file.status = .added }
+                if line.hasPrefix("new file mode") { file.status = .added; file.isFolder = line.hasSuffix(" 160000") }
                 else if line.hasPrefix("deleted file mode") { file.status = .deleted }
                 else if line.hasPrefix("rename from ") { file.oldPath = String(line.dropFirst("rename from ".count)); file.status = .renamed }
                 else if line.hasPrefix("rename to ") {

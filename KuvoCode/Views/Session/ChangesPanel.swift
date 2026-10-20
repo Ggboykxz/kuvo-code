@@ -660,7 +660,9 @@ private struct FileHeader: View {
             Button("Discard", role: .destructive) { perform(.discard) }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text(file.status == .added
+            Text(file.isFolder
+                 ? "It's a new folder with a repository of its own, so all of it goes to the Trash, with any of its commits you haven't pushed."
+                 : file.status == .added
                  ? "It's a new file, so it goes to the Trash."
                  : scope == .unstaged ? "Its unstaged changes are thrown away; staged ones stay. This can't be undone." : "It goes back to how it was in the last commit. This can't be undone.")
         }
