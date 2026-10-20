@@ -63,15 +63,16 @@ public enum Wakes {
         case minutes(Int), hours(Int), days(Int), weeks(Int)
         case weekdays
 
-        /// 30m, 2h, 1d, 1w or weekdays, as `kuvo-wake` takes it.
+        /// 30m, 2h, 1d, 1w or weekdays, as `kuvo-wake` takes it: at most a year, and no leading
+        /// zero (the script's shell reads 08 as a bad octal number).
         public init?(_ text: String) {
             if text == "weekdays" { self = .weekdays; return }
-            guard let unit = text.last, let count = Int(text.dropLast()), count > 0, text.first?.isNumber == true else { return nil }
+            guard let unit = text.last, text.first?.isNumber == true, text.first != "0", text.count <= 7, let count = Int(text.dropLast()), count > 0 else { return nil }
             switch unit {
-            case "m" where count >= 5: self = .minutes(count)
-            case "h": self = .hours(count)
-            case "d": self = .days(count)
-            case "w": self = .weeks(count)
+            case "m" where (5...525_600).contains(count): self = .minutes(count)
+            case "h" where count <= 8_760: self = .hours(count)
+            case "d" where count <= 366: self = .days(count)
+            case "w" where count <= 52: self = .weeks(count)
             default: return nil
             }
         }
@@ -108,7 +109,7 @@ public enum Wakes {
         public func next(after due: Date, now: Date, at minutes: Int? = nil, weekday: Int? = nil, calendar: Calendar = .current) -> Date {
             switch self {
             case .minutes(let n), .hours(let n):
-                let period = TimeInterval(n * (self == .hours(n) ? 3600 : 60))
+                let period = TimeInterval(n) * (self == .hours(n) ? 3600 : 60)
                 return due.addingTimeInterval(((now.timeIntervalSince(due) / period).rounded(.down) + 1) * period)
             case .days, .weeks, .weekdays:
                 let days = switch self { case .days(let n): n; case .weeks(let n): n * 7; default: 1 }
@@ -129,11 +130,20 @@ public enum Wakes {
                     var time = calendar.dateComponents([.year, .month, .day], from: day)
                     time.hour = minutes / 60
                     time.minute = minutes % 60
-                    if let next = calendar.date(from: time), next > now, self != .weekdays || !calendar.isDateInWeekend(next) { return next }
+                    if let next = calendar.date(from: time), next > now, self != .weekdays || !Wakes.isWeekend(next, calendar: calendar) { return next }
                 }
-                return now.addingTimeInterval(Double(days * 86_400))
+                return now.addingTimeInterval(Double(days) * 86_400)
             }
         }
+    }
+
+    /// Saturday or Sunday, whatever the locale calls the weekend: weekdays are Monday to Friday,
+    /// as `kuvo-wake` has them on a machine.
+    public static func isWeekend(_ date: Date, calendar: Calendar = .current) -> Bool {
+        var gregorian = Calendar(identifier: .gregorian)
+        gregorian.timeZone = calendar.timeZone
+        let weekday = gregorian.component(.weekday, from: date)
+        return weekday == 1 || weekday == 7
     }
 
     /// A wake-up's file name: its time, a few random letters, and its repeat if it has one, with
@@ -333,13 +343,22 @@ public enum Wakes {
       case "$1" in
         +*[mhd])
           n=${1#+}; unit=${n#"${n%?}"}; n=${n%?}
-          case "$n" in ''|*[!0-9]*) return 1;; esac
+          case "$n" in ''|*[!0-9]*|???????*) return 1;; esac
           case "$unit" in m) echo $((now + n * 60));; h) echo $((now + n * 3600));; d) echo $((now + n * 86400));; esac ;;
         *[!0-9]*)
           t=$(echo "$1" | sed 's/T/ /')
+          # A time zone after it (Z, +03:00, -0500), as %z has it.
+          t_z=
+          case "$t" in
+            *Z) t_z=+0000; t=${t%Z} ;;
+            *:*[+-][0-9][0-9]:[0-9][0-9]) t_z=$(printf '%s' "${t#"${t%??????}"}" | tr -d :); t=${t%??????} ;;
+            *:*[+-][0-9][0-9][0-9][0-9]) t_z=${t#"${t%?????}"}; t=${t%?????} ;;
+          esac
           case "$t" in *:*:*) ;; *:*) t="$t:00" ;; esac
-          date -d "$t" +%s 2>/dev/null && return 0
-          date -j -f "%Y-%m-%d %H:%M:%S" "$t" +%s 2>/dev/null && return 0
+          date -d "$t${t_z:+ $t_z}" +%s 2>/dev/null && return 0
+          # The BSD one reads only this, and says nothing of what's after it.
+          case "$t" in [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]\ [0-9][0-9]:[0-9][0-9]:[0-9][0-9]) ;; *) return 1 ;; esac
+          date -j -f "%Y-%m-%d %H:%M:%S${t_z:+ %z}" "$t${t_z:+ $t_z}" +%s 2>/dev/null && return 0
           return 1 ;;
         '') return 1 ;;
         *) echo "$1" ;;
@@ -394,9 +413,14 @@ public enum Wakes {
       fi
       case "$r_e" in
         weekdays) return 0 ;;
-        *[mhdw]) r_n=${r_e%?}; case "$r_n" in ''|*[!0-9]*) return 1;; esac
-          [ "$r_n" -gt 0 ] || return 1
-          case "$r_e" in *m) [ "$r_n" -ge 5 ] || return 1;; esac ;;
+        # At most a year, and no leading zero (08 is a bad octal number here).
+        *[mhdw]) r_n=${r_e%?}; case "$r_n" in ''|0*|*[!0-9]*|???????*) return 1;; esac
+          case "$r_e" in
+            *m) [ "$r_n" -ge 5 ] && [ "$r_n" -le 525600 ] ;;
+            *h) [ "$r_n" -le 8760 ] ;;
+            *d) [ "$r_n" -le 366 ] ;;
+            *) [ "$r_n" -le 52 ] ;;
+          esac ;;
         *) return 1 ;;
       esac
     }
@@ -558,12 +582,26 @@ public enum Wakes {
 
     random() { LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c "$1"; }
 
+    # The time zone a bot's times are in ($1, its folder, ending in /): its timezone file's, from
+    # the computer's own zone files, or from the copy of your Mac's beside it, on a machine that
+    # has none (without one, times would be in UTC).
+    zone() {
+      z_name=$(cat "$1timezone" 2>/dev/null)
+      if [ -n "$z_name" ] && [ ! -e "/usr/share/zoneinfo/$z_name" ] && [ -s "$1zoneinfo" ]; then echo ":$1zoneinfo"; else echo "$z_name"; fi
+    }
+
     # A string as JSON.
     json() { printf '%s' "$1" | tr -d '\000-\010\013-\037' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/	/\\t/g' | awk 'BEGIN { ORS = "" } NR > 1 { print "\\n" } { print }'; }
 
     if [ "$1" = fire ]; then
       bots=$2; record=$3
       [ -f "$record" ] || exit 0
+      # One at a time: two at once (a watchdog left from before the engine started over, say)
+      # would send a wake-up twice. A lock left by one that was killed goes after ten minutes.
+      lock="$bots/.firing"
+      [ -z "$(find "$lock" -maxdepth 0 -mmin +10 2>/dev/null)" ] || rmdir "$lock" 2>/dev/null
+      mkdir "$lock" 2>/dev/null || exit 0
+      trap 'rmdir "$lock" 2>/dev/null' EXIT
       port=$(sed -n 's/.*"port":\([0-9]*\).*/\1/p' "$record")
       password=$(sed -n 's/.*"password":"\([^"]*\)".*/\1/p' "$record")
       [ -n "$port" ] && [ -n "$password" ] || exit 0
@@ -577,7 +615,7 @@ public enum Wakes {
           folder=$(sed -e 's/%/%25/g' -e 's/ /%20/g' "${bot}directory")
           while [ "$tries" -lt 80 ]; do
             tries=$((tries + 1))
-            printf 'user = "opencode:%s"\n' "$password" | curl -sf -m 5 -K - -H "x-opencode-directory: $folder" "http://127.0.0.1:$port/api/mcp" | grep -q '"pending"' || break
+            printf 'user = "opencode:%s"\n' "$password" | curl -q -sf -m 5 --noproxy '*' -K - -H "x-opencode-directory: $folder" "http://127.0.0.1:$port/api/mcp" | grep -q '"pending"' || break
             waited=1; sleep 0.25
           done
           [ -n "$waited" ] && sleep 1.5
@@ -587,20 +625,26 @@ public enum Wakes {
         body="{\"id\":\"$id\",\"text\":\"$(json "[Wake-up] $1")\",\"delivery\":\"queue\"}"
         url="http://127.0.0.1:$port/api/session/$session/prompt"
         # The password from its standard input (curl) or a file only this user can read (wget):
-        # on a command line, any user on the machine could read it while it runs.
+        # on a command line, any user on the machine could read it while it runs. Straight to the
+        # engine, never through a proxy the machine names (and without curl's own settings).
         if command -v curl >/dev/null 2>&1; then
-          printf 'user = "opencode:%s"\n' "$password" | curl -sf -m 20 -K - -H 'Content-Type: application/json' --data-binary "$body" "$url" >/dev/null
+          printf 'user = "opencode:%s"\n' "$password" | curl -q -sf -m 20 --noproxy '*' -K - -H 'Content-Type: application/json' --data-binary "$body" "$url" >/dev/null
         elif command -v wget >/dev/null 2>&1; then
           auth=$(printf 'opencode:%s' "$password" | base64 | tr -d '\n')
           settings="${record%/*}/.wget-$$"
           (umask 077; printf 'header = Authorization: Basic %s\n' "$auth" >"$settings")
-          wget -q --config="$settings" -T 20 -O /dev/null --header='Content-Type: application/json' --post-data="$body" "$url"
+          wget -q --config="$settings" --no-proxy -T 20 -O /dev/null --header='Content-Type: application/json' --post-data="$body" "$url"
           sent=$?
           rm -f "$settings"
           return $sent
         else
           return 1
         fi
+      }
+      # Whether the bot's session still has this text queued as a wake-up.
+      waiting() {
+        command -v curl >/dev/null 2>&1 || return 1
+        printf 'user = "opencode:%s"\n' "$password" | curl -q -sf -m 5 --noproxy '*' -K - "http://127.0.0.1:$port/api/session/$session/inbox" | grep -qF "$(json "[Wake-up] $1")"
       }
       for bot in "$bots"/*/; do
         # Paused by you: its wake-ups wait.
@@ -617,32 +661,43 @@ public enum Wakes {
           # Sent: a repeating one comes back at its next time (in the user's time zone, which the
           # bot's folder names), keeping its letters, time of day and day of the week (one made
           # before it kept those, the ones it was due at); others are done.
-          if deliver "$(cat "$wake")"; then
-            if [ -n "$every" ] && repeats "$every"; then
-              tz=$(cat "${bot}timezone" 2>/dev/null)
-              mv -f "$wake" "${bot}wakes/$( [ -n "$tz" ] && export TZ="$tz"
+          # One that repeats and still waits from last time (the bot busy, or waiting on you) isn't
+          # queued again: it just comes back at its next time.
+          if { [ -n "$every" ] && waiting "$(cat "$wake")"; } || deliver "$(cat "$wake")"; then
+            if [ -n "$every" ] && repeats "${every%@*}"; then
+              tz=$(zone "$bot")
+              again=$( [ -n "$tz" ] && export TZ="$tz"
                 every=$(kept "$due" "$every")
-                echo "$(next "$due" "$every")-${rest%%-*}-$every" )"
+                at=$(next "$due" "$every") && [ -n "$at" ] && echo "$at-${rest%%-*}-$every" )
+              # Without a next time it's done, rather than sent again every minute.
+              case "$again" in [0-9]*-*) mv -f "$wake" "${bot}wakes/$again" ;; *) rm -f "$wake" ;; esac
             else
               rm -f "$wake"
             fi
           fi
         done
       done
-      # Then their watches (a slow check never holds up a wake-up): what changed wakes the bot,
-      # with what its check prints now; one that can't go is tried again at the next check.
+      # Then their watches, apart (a slow check, up to a minute each, never holds up a wake-up, nor
+      # the next round's): what changed wakes the bot, with what its check prints now; one that
+      # can't go is tried again at the next check. One round of them at a time.
+      watching="$bots/.watching"
+      [ -z "$(find "$watching" -maxdepth 0 -mmin +60 2>/dev/null)" ] || rmdir "$watching" 2>/dev/null
+      mkdir "$watching" 2>/dev/null || exit 0
+      (
+      trap 'rmdir "$watching" 2>/dev/null' EXIT
       for bot in "$bots"/*/; do
         [ -e "${bot}paused" ] && continue
         [ -d "${bot}watches" ] || continue
         tools=
         session=$(cat "$bot/session" 2>/dev/null) || continue
         [ -n "$session" ] || continue
-        tz=$(cat "${bot}timezone" 2>/dev/null)
+        tz=$(zone "$bot")
         for letters in $( ( [ -n "$tz" ] && export TZ="$tz"; checks "${bot%/}" ) | sed -n 's/^KUVO-WATCH //p'); do
           w="${bot}watches/$letters"
           [ -f "$w/message" ] && deliver "$(cat "$w/message")" && delivered "$w"
         done
       done
+      ) </dev/null >/dev/null 2>&1 &
       exit 0
     fi
 
@@ -652,7 +707,7 @@ public enum Wakes {
     if [ -z "$bot" ] || [ ! -d "$bot" ]; then usage >&2; exit 2; fi
     bot=$(CDPATH= cd -- "$bot" && pwd) || exit 2
     # The user's time zone, when the bot lives on a machine whose clock may be in another.
-    if [ -s "$bot/timezone" ]; then TZ=$(cat "$bot/timezone"); export TZ; fi
+    if [ -s "$bot/timezone" ]; then TZ=$(zone "$bot/"); export TZ; fi
     case "$command" in
       add)
         due=$(seconds "$3") || { echo "Couldn't read the time \"$3\". Use +30m, +2h, +1d, or a time like 2026-10-16T09:00." >&2; exit 2; }

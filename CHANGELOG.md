@@ -21,6 +21,11 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - After your Mac wakes, a machine's browser view comes back right away, rather than once its old connection times out.
 - Letting agents sign in to a site on their own is for the account you allowed it with, and ends when you delete that password: one saved later isn't used without asking.
 - The browser offers to save a password on https pages only, where it fills them in; on http://localhost it offered to save one it could never fill.
+- A bot can no longer schedule a wake-up that repeats more than a year apart: one far longer made Kuvo Code quit as it opened, again each time, after sending it.
+- A repeating wake-up isn't queued again while the last one still waits (the bot busy, or waiting on you), so a bot doesn't come back to a pile of them.
+- Weekday wake-ups and meetings are Monday to Friday wherever you are; in a few places they followed the local weekend.
+- A wake-up time written with its time zone (06:00Z, 09:00+03:00) is that moment on your Mac too, not that hour in your own time zone.
+- On a machine, a bot's watches no longer hold up its wake-ups, a wake-up isn't sent twice when the engine starts over, wake-ups reach the engine on a machine set up with a web proxy, its times are right on a machine without time zone files, and a repeat like 08m is refused rather than stopping that wake-up for good.
 - In Settings › Permissions, a rule you were typing in no longer takes the place of a choice you made above it before leaving the field.
 - **Wake Up Now** says so when a one-off wake-up couldn't be taken off the schedule (it would come at its time too), and on a machine it doesn't send a shortened note when the whole one can't be read.
 - Picking another model while the agent has just asked you something no longer stops it and loses the question.

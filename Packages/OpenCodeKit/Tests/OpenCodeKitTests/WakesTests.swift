@@ -571,6 +571,14 @@ struct WakesTests {
         #expect(Wakes.Repeat("4m") == nil)
         #expect(Wakes.Repeat("-1d") == nil)
         #expect(Wakes.Repeat("d") == nil)
+        // At most a year, and no leading zero: one past it made the app crash on every launch.
+        #expect(Wakes.Repeat("525600m") == .minutes(525_600))
+        #expect(Wakes.Repeat("8760h") == .hours(8760))
+        #expect(Wakes.Repeat("3000000000000000h") == nil)
+        #expect(Wakes.Repeat("367d") == nil)
+        #expect(Wakes.Repeat("53w") == nil)
+        #expect(Wakes.Repeat("08m") == nil)
+        #expect(Wakes.Pending(id: "1792080986-CkytYD-3000000000000000h", note: "")?.every == nil)
         let wake = Wakes.Pending(id: "1792080986-CkytYD-1d", note: "hi")
         #expect(wake?.every == .days(1))
         #expect(wake?.at == nil)
@@ -593,6 +601,39 @@ struct WakesTests {
         #expect(Wakes.Pending(id: "1792080986-CkytYD", note: "hi")?.nextID() == nil)
         let command = Wakes.command(in: #"kuvo-wake bot_abc add 2026-10-17T09:00 --every weekdays "standup""#)
         #expect(command == Wakes.Command(verb: .add, when: "2026-10-17T09:00", note: "standup", every: .weekdays))
+    }
+
+    /// Weekdays are Monday to Friday whatever the locale calls the weekend, as on a machine.
+    @Test func weekdaysAreMondayToFriday() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Jerusalem")!
+        calendar.locale = Locale(identifier: "he_IL")
+        let friday = Date(timeIntervalSince1970: 4_070_995_200)  // Fri, Jan 2, 2099, 00:00 UTC
+        #expect(!Wakes.isWeekend(friday.addingTimeInterval(12 * 3600), calendar: calendar))
+        #expect(Wakes.isWeekend(friday.addingTimeInterval(36 * 3600), calendar: calendar))
+        #expect(Wakes.isWeekend(friday.addingTimeInterval(60 * 3600), calendar: calendar))
+    }
+
+    /// The script takes a repeat within the same limits, and a time with its zone on any sh.
+    @Test func theScriptKeepsRepeatsAndTimesInBounds() throws {
+        for shell in Self.shells {
+            let k = try folder()
+            defer { try? FileManager.default.removeItem(at: k) }
+            #expect(try sh(Wakes.installScript, in: k).status == 0)
+            let wake = k.appending(path: "bin/kuvo-wake").path
+            let bot = k.appending(path: "bots/bot_test")
+            try FileManager.default.createDirectory(at: bot, withIntermediateDirectories: true)
+            for bad in ["3000000000000000h", "08m", "367d", "53w"] {
+                #expect(try sh("\"\(wake)\" \"\(bot.path)\" add +1h --every \(bad) 'x'", in: k, shell: shell).status != 0, "\(shell) \(bad)")
+            }
+            #expect(try sh("\"\(wake)\" \"\(bot.path)\" add +99999999h 'too far'", in: k, shell: shell).status != 0)
+            // The same moment, written in UTC and in another zone, is one time.
+            try? FileManager.default.removeItem(at: bot.appending(path: "wakes"))
+            #expect(try sh("TZ=America/New_York \"\(wake)\" \"\(bot.path)\" add 2099-01-05T06:00:00Z 'utc'", in: k, shell: shell).status == 0)
+            #expect(try sh("TZ=America/New_York \"\(wake)\" \"\(bot.path)\" add 2099-01-05T09:00:00+03:00 'offset'", in: k, shell: shell).status == 0)
+            let times = Set(try FileManager.default.contentsOfDirectory(atPath: bot.appending(path: "wakes").path).compactMap { Wakes.Pending(id: $0, note: "")?.due })
+            #expect(times == [Date(timeIntervalSince1970: 4_071_276_000)], "\(shell): \(times)")
+        }
     }
 
     @Test func aWakeUpsTimeComesFromItsName() {

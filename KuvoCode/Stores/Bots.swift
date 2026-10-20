@@ -427,7 +427,7 @@ final class Bots {
         }
         var due = due
         let calendar = Calendar.current
-        while every == .weekdays, calendar.isDateInWeekend(due), let next = calendar.date(byAdding: .day, value: 1, to: due) { due = next }
+        while every == .weekdays, Wakes.isWeekend(due, calendar: calendar), let next = calendar.date(byAdding: .day, value: 1, to: due) { due = next }
         try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
         let file = (folder as NSString).appendingPathComponent(Wakes.name(due: due, every: every))
         guard FileManager.default.createFile(atPath: file, contents: Data(note.utf8)) else { throw Failure.noWake }
@@ -648,15 +648,28 @@ final class Bots {
                 // A job changed in a Mac bot's memory (or, at launch, each one's), before its
                 // conversation's instructions are checked.
                 for id in self?.memoryChanged() ?? [] { await self?.syncJob(of: id) }
-                await self?.syncInstructions()
                 self?.watchDue()
                 await self?.wakeDue()
+                // Apart, so machines slow to answer never hold up this Mac's wake-ups.
+                self?.syncInstructionsApart()
                 // On time: up to the next one due here, at most 20 seconds (5 at least while the
                 // engine isn't up, as nothing can go).
                 let next = self?.nextLocalWake().map { $0.timeIntervalSinceNow } ?? 20
                 let least = self?.app?.api == nil ? 5.0 : 0.5
                 try? await Task.sleep(for: .seconds(min(20, max(least, next))))
             }
+        }
+    }
+
+    /// Whether bots' instructions are being checked, so one check runs at a time.
+    @ObservationIgnored private var syncingInstructions = false
+
+    private func syncInstructionsApart() {
+        guard !syncingInstructions else { return }
+        syncingInstructions = true
+        Task { [weak self] in
+            await self?.syncInstructions()
+            self?.syncingInstructions = false
         }
     }
 
@@ -673,9 +686,16 @@ final class Bots {
             for wake in due {
                 let key = bot.id + "/" + wake.id
                 do {
-                    try await api.prompt(session: bot.sessionID, id: Identifier.message(), text: Wakes.marker + wake.note, delivery: .queue)
+                    // One that repeats and still waits from last time (the bot busy, or waiting on
+                    // you) isn't queued again: it just comes back at its next time.
+                    let text = Wakes.marker + wake.note
+                    var waiting = false
+                    if wake.every != nil, let queued = try? await api.inbox(session: bot.sessionID) { waiting = queued.contains { $0.text == text } }
+                    if !waiting {
+                        try await api.prompt(session: bot.sessionID, id: Identifier.message(), text: text, delivery: .queue)
+                        Analytics.shared.track("bot_wakeup_ran", ["kind": "wake", "repeats": wake.every != nil])
+                    }
                     retries[key] = nil
-                    Analytics.shared.track("bot_wakeup_ran", ["kind": "wake", "repeats": wake.every != nil])
                     // Sent: one that repeats comes back at its next time; others are done.
                     let folder = (bot.folder as NSString).appendingPathComponent("wakes") as NSString
                     if let next = wake.nextID() {
@@ -725,6 +745,13 @@ final class Bots {
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: command.path)
     }
 
+    /// A time zone's rules as this Mac has them (a TZif file, which Linux reads too), if small.
+    nonisolated static func zoneRules(_ identifier: String) -> Data? {
+        guard !identifier.contains(".."), let data = FileManager.default.contents(atPath: "/usr/share/zoneinfo/" + identifier),
+              data.count < 16_384, data.starts(with: Data("TZif".utf8)) else { return nil }
+        return data
+    }
+
     /// Writes the bot's session in its folder, and the folder it works in, where `kuvo-wake fire`
     /// reads them on a machine (it waits for the folder's tools before it wakes the bot).
     private func writeSession(of bot: Bot) async throws {
@@ -733,8 +760,13 @@ final class Bots {
             let directory = (bot.folder as NSString).appendingPathComponent("directory")
             let timezone = (bot.folder as NSString).appendingPathComponent("timezone")
             let path = RemoteFolder.parse(bot.directory)?.path ?? bot.directory
-            // Your time zone, which its wake-ups' times are in.
-            let script = "printf '%s' \(SSHConnection.quoted(bot.sessionID)) >\(SSHConnection.quoted(file)) && printf '%s' \(SSHConnection.quoted(path)) >\(SSHConnection.quoted(directory)) && printf '%s' \(SSHConnection.quoted(TimeZone.current.identifier)) >\(SSHConnection.quoted(timezone))"
+            // Your time zone, which its wake-ups' times are in, and its rules from this Mac, for a
+            // machine without zone files of its own.
+            var script = "printf '%s' \(SSHConnection.quoted(bot.sessionID)) >\(SSHConnection.quoted(file)) && printf '%s' \(SSHConnection.quoted(path)) >\(SSHConnection.quoted(directory)) && printf '%s' \(SSHConnection.quoted(TimeZone.current.identifier)) >\(SSHConnection.quoted(timezone))"
+            if let rules = Self.zoneRules(TimeZone.current.identifier) {
+                let zoneFile = (bot.folder as NSString).appendingPathComponent("zoneinfo")
+                script += " && { printf '%s' \(SSHConnection.quoted(rules.base64EncodedString())) | base64 -d >\(SSHConnection.quoted(zoneFile)) 2>/dev/null || rm -f \(SSHConnection.quoted(zoneFile)); }"
+            }
             guard await Task.detached(operation: { RemoteShell.run(script, on: machine) }).value != nil else { throw Failure.noFolder }
         } else {
             try Data(bot.sessionID.utf8).write(to: URL(filePath: file))
