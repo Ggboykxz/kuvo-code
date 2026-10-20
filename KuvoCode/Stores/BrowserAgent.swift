@@ -318,7 +318,7 @@ final class BrowserAgent {
         // Backgrounds and colors as on screen; printing leaves them out otherwise.
         _ = try? await browser.webView.callAsyncJavaScript(Self.keepColorsScript, contentWorld: .page)
         // What you filled in stays out of it, as out of a screenshot.
-        _ = await run(Self.maskScript, [:], in: browser)
+        _ = await run(Self.printMaskScript, [:], in: browser)
         let saved = await PagePrinter.save(browser.webView, to: printed)
         _ = await run(Self.unmaskScript, [:], in: browser)
         switch saved {
@@ -977,18 +977,26 @@ final class BrowserAgent {
     """
 
     /// Hides what the user filled in, for a screenshot, and shows it again.
-    static let maskScript = """
-    \(secretRootsScript)
-    for (const root of roots) {
-      if (!root.querySelector('[data-kuvo-secret]') || root.getElementById('kuvo-secret-mask')) continue;
-      const doc = root.ownerDocument || root;
-      const style = doc.createElement('style');
-      style.id = 'kuvo-secret-mask';
-      style.textContent = '[data-kuvo-secret]{color:transparent!important;-webkit-text-fill-color:transparent!important;text-shadow:none!important}';
-      (root.head || root.documentElement || root).appendChild(style);
+    static let maskScript = mask("color:transparent!important;-webkit-text-fill-color:transparent!important;text-shadow:none!important")
+
+    /// The same for a PDF: there, text drawn clear is still in it, to copy or search, so the
+    /// fields are left out (their place stays empty).
+    static let printMaskScript = mask("visibility:hidden!important")
+
+    private static func mask(_ rule: String) -> String {
+        """
+        \(secretRootsScript)
+        for (const root of roots) {
+          if (!root.querySelector('[data-kuvo-secret]') || root.getElementById('kuvo-secret-mask')) continue;
+          const doc = root.ownerDocument || root;
+          const style = doc.createElement('style');
+          style.id = 'kuvo-secret-mask';
+          style.textContent = '[data-kuvo-secret]{\(rule)}';
+          (root.head || root.documentElement || root).appendChild(style);
+        }
+        return 'ok';
+        """
     }
-    return 'ok';
-    """
 
     static let unmaskScript = """
     \(secretRootsScript)
