@@ -361,20 +361,20 @@ enum BrowserTools {
         defer { agent.finished() }
         // You have the page: the step waits until you hand it back.
         if let handedBack = await agent.waitForControl() {
+            // Handed back on a file the conversation may not read: not read.
+            if let note = await agent.leaveForbiddenFile() { return ["content": [["type": "text", "text": note]], "isError": true] }
             return ["content": [["type": "text", "text": handedBack]], "isError": false]
         }
-        // A page that went to a file the conversation may not read since the last step isn't read
-        // first (going elsewhere is fine); one a step took there keeps its result back.
-        let browses = name.hasPrefix("browser_") && name != "browser_new_tab"
-        if browses, name != "browser_navigate", let note = await agent.leaveForbiddenFile() {
-            return ["content": [["type": "text", "text": note]], "isError": true]
-        }
+        // The tab in use on a file the conversation may not read (one you opened, say): the step
+        // goes on in a new tab. One a step took there keeps its result back.
+        let browses = name.hasPrefix("browser_")
+        let moved = browses && name != "browser_new_tab" ? await agent.moveOffForbiddenFile() : nil
         var result = await perform(name, arguments: arguments, agent: agent, caller: caller)
-        if browses || name == "browser_new_tab", let note = await agent.leaveForbiddenFile() {
+        if browses, let note = await agent.leaveForbiddenFile() {
             return ["content": [["type": "text", "text": note]], "isError": true]
         }
         // Downloads that started or finished meanwhile, ahead of the tool's own result.
-        let notes = agent.takeNotes()
+        let notes = (moved ?? "") + agent.takeNotes()
         if !notes.isEmpty, var content = result["content"] as? [[String: Any]], content.first?["type"] as? String == "text" {
             content[0]["text"] = notes + (content[0]["text"] as? String ?? "")
             result["content"] = content

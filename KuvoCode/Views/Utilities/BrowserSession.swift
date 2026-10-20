@@ -202,7 +202,7 @@ final class BrowserSession: NSObject {
         if url.isFileURL {
             var isFolder: ObjCBool = false
             let folder = FileManager.default.fileExists(atPath: url.path, isDirectory: &isFolder) && isFolder.boolValue
-            webView.loadFileURL(url, allowingReadAccessTo: folder ? url : url.deletingLastPathComponent())
+            webView.loadFileURL(url, allowingReadAccessTo: folder ? URL(filePath: url.path, directoryHint: .isDirectory) : url.deletingLastPathComponent())
         } else {
             webView.load(URLRequest(url: url))
         }
@@ -329,18 +329,16 @@ extension BrowserSession: WKUIDelegate {
         answer?(accept, text)
     }
 
-    /// The page's file picker: the Mac's open panel, over the window.
+    /// The page's file picker: the Mac's open panel, over the window. A page in no window (a bot's
+    /// out of view, say) gets none: you'd pick a file not knowing which page it goes to.
     func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor ([URL]?) -> Void) {
+        guard let window = webView.window else { return completionHandler(nil) }
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = parameters.allowsMultipleSelection
         panel.canChooseDirectories = parameters.allowsDirectories
         panel.canChooseFiles = true
         panel.prompt = "Choose"
-        if let window = webView.window {
-            panel.beginSheetModal(for: window) { response in completionHandler(response == .OK ? panel.urls : nil) }
-        } else {
-            completionHandler(panel.runModal() == .OK ? panel.urls : nil)
-        }
+        panel.beginSheetModal(for: window) { response in completionHandler(response == .OK ? panel.urls : nil) }
     }
 
     /// A window the page opens, a link or a script's, becomes a real window in a tab of its own, as

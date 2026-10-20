@@ -177,6 +177,10 @@ final class BrowserAgent {
         return "Tabs:\n" + tabs.enumerated().map { index, tab in
             let title = tab.browser.title.isEmpty ? "(untitled)" : tab.browser.title
             let note = tab.browser === inUse ? " (in use)" : owner == nil && caller.map { !utilities.isFree(tab.id, for: $0) } == true ? " (another conversation's)" : ""
+            // One on a file the conversation may not read shows as one, without its name.
+            if let url = tab.browser.url, url.isFileURL, BrowserTools.fileNote(for: url.absoluteString, caller: caller) != nil {
+                return "[\(index + 1)] A file outside this conversation's folder" + note
+            }
             return "[\(index + 1)] \(title) — \(tab.browser.url?.absoluteString ?? "empty")" + note
         }.joined(separator: "\n")
     }
@@ -527,30 +531,51 @@ final class BrowserAgent {
     /// The tab a bot works in during this call.
     private var use: BrowserSession?
 
-    /// Where the page this call works in is now, if it's a file the conversation may not read
-    /// without asking (see `BrowserTools.fileNote`): it got there by a link, a redirect or going
-    /// back, which its address wasn't checked for. The page goes blank, and this says why.
-    func leaveForbiddenFile() async -> String? {
-        let page: BrowserSession?
-        if let owner {
-            page = use ?? utilities.botBrowser(owner)
-        } else if let caller {
-            page = utilities.agentBrowser(for: caller)
-        } else {
-            page = utilities.activeBrowser
-        }
-        guard let page else { return nil }
-        // The address it shows, and its document's own, apart from the page's scripts: going
-        // back, the page can be there before the address says so.
+    /// The page this call works in, without opening one.
+    private var currentPage: BrowserSession? {
+        if let owner { return use ?? utilities.botBrowser(owner) }
+        if let caller { return utilities.agentBrowser(for: caller) }
+        return utilities.activeBrowser
+    }
+
+    /// What the browser says of `page` being on a file the conversation may not read without
+    /// asking (see `BrowserTools.fileNote`); nil if it isn't. It reached it by a link, a redirect
+    /// or going back, or you opened it: its address was never checked.
+    private func forbiddenFile(in page: BrowserSession) async -> String? {
+        if let caller, BrowserTools.readsAnywhere(caller) { return nil }
         var addresses = [page.webView.url?.absoluteString].compactMap { $0 }
-        if let own = try? await page.webView.evaluateJavaScript("location.href", in: nil, contentWorld: .defaultClient) as? String {
+        // Its document's own address too, read apart from the page's scripts: going back, the
+        // page can be there before the address says so. Not while it shows a dialog, which holds
+        // scripts until it's answered.
+        if page.dialog == nil, let own = try? await page.webView.evaluateJavaScript("location.href", in: nil, contentWorld: .defaultClient) as? String {
             addresses.append(own)
         }
-        guard let note = addresses.lazy.compactMap({ BrowserTools.fileNote(for: $0, caller: self.caller) }).first else { return nil }
+        return addresses.lazy.compactMap { BrowserTools.fileNote(for: $0, caller: self.caller) }.first
+    }
+
+    /// Before a step: the tab in use on such a file (one you opened, say) stays as it is, and the
+    /// step goes on in a new tab. Says so, or nil.
+    func moveOffForbiddenFile() async -> String? {
+        guard let page = currentPage, await forbiddenFile(in: page) != nil else { return nil }
+        if let owner {
+            use = utilities.newBrowser(byAgent: true, owner: owner)
+        } else if let caller {
+            utilities.agentWorks(caller, in: utilities.newBrowser(byAgent: true, owner: panel, shown: utilities.bringsForward(caller)))
+        } else {
+            utilities.reveal(utilities.newBrowser(byAgent: true))
+        }
+        return "The tab in use shows a file outside this conversation's folder, so this goes on in a new tab.\n\n"
+    }
+
+    /// After a step, or once you hand a page back: the page on such a file goes blank, unless you
+    /// have it, and what the step read is held back. Says why, or nil.
+    func leaveForbiddenFile() async -> String? {
+        guard let page = currentPage, let note = await forbiddenFile(in: page) else { return nil }
+        if page.isHeld { return note + " The page is on it, so this step's result was held back." }
         page.webView.stopLoading()
         page.load("about:blank")
         await settle(page, expectNavigation: true)
-        return note + " The page got there by a link or by itself, so it's blank now."
+        return note + " The page was on it, so it's blank now and this step's result was held back."
     }
 
     /// The tab in use, for the tab list.
