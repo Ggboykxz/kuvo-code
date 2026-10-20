@@ -1675,6 +1675,9 @@ function Choice({ id, title, groups, value, onPick, empty }: {
     <span className="choice">
       <button id={id} className="choice-button" title={title} onClick={() => { setOpen(value => !value); setQuery(""); }}>
         {current?.label ?? empty}
+        {/* The Mac's menu chevron: 8 pt, bold, in the secondary ink, after the label
+            (Pressable.swift:192-198). */}
+        <Symbol name="chevron.down" size={8} className="choice-chevron" />
       </button>
       {open ? (
         <span className="choice-panel">

@@ -564,6 +564,13 @@ const checks = [
     assert.match(symbols, /"paintpalette": \["M/);
   }],
 
+  ["the menus carry the Mac's chevron", ({ app, css, rule }) => {
+    // Pressable.swift:192-198 — 8 pt, bold, in the secondary ink, after the label.
+    assert.match(app, /<Symbol name="chevron\.down" size=\{8\} className="choice-chevron" \/>/);
+    assert.match(rule(".choice-chevron {"), /flex: 0 0 8px/);
+    assert.match(css, /\.choice-chevron \{[^}]*stroke-width: 2;/s);
+  }],
+
   ["the window is built by Next.js, and exported as the static files the harness serves", ({ next, page, build }) => {
     // The app talks to the engine over the harness's API: there is no server to render
     // it, so the export is the whole app.

@@ -3275,3 +3275,8 @@ button > svg, .small > svg, .session-delete > svg, .keycap-clear > svg { display
 .project-row:hover .project-compose,
 .project-row:focus-within .project-compose { opacity: 1; }
 .project-compose:hover { background: var(--hover); color: var(--ink); }
+
+/* The Mac's menu chevron: 8 pt, bold, in the secondary ink, after the label
+   (Pressable.swift:192-198). */
+.choice-chevron { flex: 0 0 8px; color: var(--ink-faint); stroke-width: 2; }
+.choice-button { display: inline-flex; align-items: center; gap: 5px; }

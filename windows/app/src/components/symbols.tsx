@@ -15,6 +15,7 @@ export type SymbolName =
   | "xmark"
   | "chevron.right"
   | "chevron.down"
+  
   | "chevron.up"
   | "arrow.down"
   | "arrow.up"

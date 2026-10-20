@@ -556,7 +556,7 @@ Behaviour that is not a colour or a curve, and that a screenshot cannot prove.
 | Popover side | A menu/popover that outgrows its side flips to the other | `ScreenRoom.swift:4-33` | ✅ (0.5.50) | 7 |
 | Reduce Motion | Spinner holds still, shimmer stops, bots hold, transitions reduce | `Spinner.swift:19`, `Theme.swift:45-53`, `BotAvatar.swift:80` | ✅ | 3 |
 | Window controls | The first card leaves 26 pt for close/minimise/zoom when tabs are hidden | `Theme.swift:12-14`, `Card.swift:118` | ◐ (frameless shell) | 2 |
-| Menu chevron | 8 pt bold, secondary, after the label | `Pressable.swift:192-198` | ◐ (Phase 4) | 4 |
+| Menu chevron | 8 pt bold, secondary, after the label | `Pressable.swift:192-198` | ✅ (0.5.58) | 4 |
 
 ---
 
