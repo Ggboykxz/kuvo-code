@@ -66,6 +66,7 @@ const sessions = new Sessions(
   (directory) => link.policies(directory),
   (name, directory) => link.agent(name, directory),
   new Snapshots(join(home, "snapshots")),
+  (directory) => link.titleModel(directory),
 )
 
 const server = Bun.serve({

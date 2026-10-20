@@ -697,6 +697,45 @@ describe("undo", () => {
   })
 })
 
+describe("titles and one-off answers", () => {
+  test("a session is named from your first message: by the model for titles you picked, else the session's", async () => {
+    const titler = new FakeAgent("zen", "Zen") as FakeAgent & { generate: (prompt: string, model: { id: string }) => Promise<string> }
+    titler.generate = async (_prompt, model) => `"Fixing the parser (${model.id})."`
+    const agents = new Map([a, b].map((agent) => [agent.providerID, agent]))
+    let picked: { providerID: string; id: string } | undefined = { providerID: "zen", id: "small" }
+    sessions = new Sessions(
+      store,
+      { find: (provider: string | undefined) => (provider ? agents.get(provider) : undefined) } as unknown as Roster,
+      auto,
+      (provider) => (provider === "zen" ? titler : undefined),
+      undefined,
+      undefined,
+      undefined,
+      async () => picked,
+    )
+    const first = create()
+    send(first, "the parser drops the last line, fix it")
+    await settled(first, 1)
+    await until(() => sessions.get(first).title === "Fixing the parser (small)")
+    // None picked: the session's own model, when its agent can answer one so.
+    picked = undefined
+    ;(a as any).generate = async (prompt: string) => (prompt.includes("<message>") ? "Tidy the README" : "")
+    const second = create()
+    send(second, "tidy the readme")
+    await settled(second, 1)
+    await until(() => sessions.get(second).title === "Tidy the README")
+    expect(await sessions.generate(second, "a commit message")).toBe("")
+    // One that can't: no title from it (the app names it from your message), and generate says so.
+    delete (a as any).generate
+    const third = create()
+    send(third, "something else")
+    await settled(third, 1)
+    await Bun.sleep(30)
+    expect(sessions.get(third).title).toBeFalsy()
+    await expect(sessions.generate(third, "a commit message")).rejects.toThrow()
+  })
+})
+
 describe("steering", () => {
   test("a message for an agent that takes one partway goes into its turn at once", async () => {
     a.script = works

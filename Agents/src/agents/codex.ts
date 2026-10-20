@@ -17,7 +17,7 @@ import { maintenance, update, type MaintenanceDefinition } from "../maintenance"
 import { which } from "../proc"
 import { RPC, RPCError } from "../rpc"
 import type { Turn } from "../turn"
-import type { FileDiff, FormField, Model, OAuthStatus, Session, TokenUsage } from "../wire"
+import type { FileDiff, FormField, Model, ModelRef, OAuthStatus, Session, TokenUsage } from "../wire"
 
 const places = ["/opt/homebrew/bin", "/usr/local/bin", join(homedir(), ".local/bin"), join(homedir(), ".codex/bin")]
 const outputLimit = 30_000
@@ -32,6 +32,8 @@ export class CodexAgent implements Agent {
   private server?: RPC
   private starting?: Promise<RPC>
   private threads = new Map<string, CodexThread>()
+  /** One-off answers under way (`generate`), by their thread: what each is told. */
+  private oneOffs = new Map<string, (method: string, params: any) => void>()
   private logins = new Map<string, (status: OAuthStatus) => void>()
   private accountCache?: { at: number; account: Account }
   private modelList?: { at: number; models: Model[] }
@@ -178,6 +180,8 @@ export class CodexAgent implements Agent {
       return
     }
     const threadID = params?.threadId
+    const oneOff = threadID ? this.oneOffs.get(threadID) : undefined
+    if (oneOff) return oneOff(method, params)
     if (threadID) this.threadFor(threadID)?.notification(method, params)
   }
 
@@ -289,6 +293,33 @@ export class CodexAgent implements Agent {
     this.server = undefined
     server.kill()
     for (const thread of this.threads.values()) thread.serverStopped()
+  }
+
+  /** One answer from Codex on your plan, in a thread kept nowhere, that can only read. */
+  async generate(prompt: string, model: ModelRef): Promise<string> {
+    const rpc = await this.rpc()
+    const started: any = await rpc.request("thread/start", { ephemeral: true, cwd: this.context.temporary, model: model.id, approvalPolicy: "never", sandbox: "read-only" }, 60_000)
+    const threadId: string = started.thread.id
+    let text = ""
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const done = new Promise<string>((resolve, reject) => {
+      timer = setTimeout(() => reject(new Error("Codex took too long to answer.")), 120_000)
+      this.oneOffs.set(threadId, (method, params) => {
+        if (method === "item/completed" && params?.item?.type === "agentMessage" && typeof params.item.text === "string") text = params.item.text
+        if (method !== "turn/completed") return
+        if (params?.turn?.status === "completed") resolve(text.trim())
+        else reject(new Error(params?.turn?.error?.message ?? "Codex couldn't answer."))
+      })
+    })
+    // (Settled before it's awaited, it isn't an unhandled failure.)
+    done.catch(() => {})
+    try {
+      await rpc.request("turn/start", { threadId, input: [{ type: "text", text: prompt, text_elements: [] }], ...(model.variant ? { effort: model.variant } : {}) }, 60_000)
+      return await done
+    } finally {
+      clearTimeout(timer)
+      this.oneOffs.delete(threadId)
+    }
   }
 
   thread(session: Session, state: Record<string, unknown>): Thread {

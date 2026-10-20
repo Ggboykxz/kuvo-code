@@ -402,6 +402,18 @@ ${directory}`;
     }
     return rules;
   }
+  async titleModel(directory) {
+    let picked;
+    for (const source of await this.settingsFiles(directory) ?? []) {
+      const own = source?.info?.agents?.title?.model ?? source?.info?.agent?.title?.model;
+      if (typeof own === "string" && own.includes("/"))
+        picked = own;
+    }
+    if (!picked)
+      return;
+    const at = picked.indexOf("/");
+    return { providerID: picked.slice(0, at), id: picked.slice(at + 1) };
+  }
   async commandTemplate(name, directory) {
     let template;
     for (const source of await this.settingsFiles(directory) ?? []) {
@@ -551,6 +563,10 @@ class EngineAgent {
   }
   thread(session, state) {
     return new EngineThread(this.link, session, state);
+  }
+  async generate(prompt, model2) {
+    const answer = await this.link.request("POST", "/api/experimental/generate", { prompt, model: { providerID: model2.providerID, id: model2.id } }, 120000);
+    return answer?.data?.text ?? "";
   }
   async forgetConversation(state) {
     const id = state.engineSession;
@@ -2897,6 +2913,44 @@ class ClaudeAgent {
   thread(session, state) {
     return new ClaudeThread(this, session, state);
   }
+  async generate(prompt, model2) {
+    const sdk = await this.sdk();
+    const abort = new AbortController;
+    const timer = setTimeout(() => abort.abort(), 120000);
+    const q = sdk.query({
+      prompt,
+      options: {
+        pathToClaudeCodeExecutable: this.executable(),
+        cwd: this.context.temporary,
+        model: model2.id === "default" ? undefined : model2.id,
+        persistSession: false,
+        maxTurns: 1,
+        tools: [],
+        allowedTools: [],
+        mcpServers: {},
+        strictMcpConfig: true,
+        settings: { disableAllHooks: true },
+        abortController: abort,
+        env: this.env(),
+        stderr: () => {}
+      }
+    });
+    try {
+      for await (const message of q) {
+        if (message.type !== "result")
+          continue;
+        if (message.subtype === "success" && !message.is_error && typeof message.result === "string")
+          return message.result.trim();
+        throw new Error(typeof message.result === "string" && message.result.trim() ? message.result.trim() : "Claude Code couldn't answer.");
+      }
+      throw new Error("Claude Code stopped before it answered.");
+    } finally {
+      clearTimeout(timer);
+      try {
+        q.close?.();
+      } catch {}
+    }
+  }
 }
 function modelName(info) {
   const what = info.description?.split(" \xB7 ")[0]?.trim();
@@ -3569,6 +3623,7 @@ class CodexAgent {
   server;
   starting;
   threads = new Map;
+  oneOffs = new Map;
   logins = new Map;
   accountCache;
   modelList;
@@ -3697,6 +3752,9 @@ class CodexAgent {
       return;
     }
     const threadID = params?.threadId;
+    const oneOff = threadID ? this.oneOffs.get(threadID) : undefined;
+    if (oneOff)
+      return oneOff(method, params);
     if (threadID)
       this.threadFor(threadID)?.notification(method, params);
   }
@@ -3803,6 +3861,34 @@ class CodexAgent {
     server2.kill();
     for (const thread of this.threads.values())
       thread.serverStopped();
+  }
+  async generate(prompt, model2) {
+    const rpc = await this.rpc();
+    const started = await rpc.request("thread/start", { ephemeral: true, cwd: this.context.temporary, model: model2.id, approvalPolicy: "never", sandbox: "read-only" }, 60000);
+    const threadId = started.thread.id;
+    let text = "";
+    let timer;
+    const done = new Promise((resolve2, reject) => {
+      timer = setTimeout(() => reject(new Error("Codex took too long to answer.")), 120000);
+      this.oneOffs.set(threadId, (method, params) => {
+        if (method === "item/completed" && params?.item?.type === "agentMessage" && typeof params.item.text === "string")
+          text = params.item.text;
+        if (method !== "turn/completed")
+          return;
+        if (params?.turn?.status === "completed")
+          resolve2(text.trim());
+        else
+          reject(new Error(params?.turn?.error?.message ?? "Codex couldn't answer."));
+      });
+    });
+    done.catch(() => {});
+    try {
+      await rpc.request("turn/start", { threadId, input: [{ type: "text", text: prompt, text_elements: [] }], ...model2.variant ? { effort: model2.variant } : {} }, 60000);
+      return await done;
+    } finally {
+      clearTimeout(timer);
+      this.oneOffs.delete(threadId);
+    }
   }
   thread(session, state) {
     const thread = new CodexThread(this, session, state);
@@ -5861,11 +5947,12 @@ class Sessions {
   policies;
   agentInfo;
   snapshots;
+  titleModel;
   live = new Map;
   removing = new Set;
   steering = new Set;
   cancelSoon = new Set;
-  constructor(store, roster, auto, engine, policies, agentInfo, snapshots) {
+  constructor(store, roster, auto, engine, policies, agentInfo, snapshots, titleModel) {
     this.store = store;
     this.roster = roster;
     this.auto = auto;
@@ -5873,6 +5960,7 @@ class Sessions {
     this.policies = policies;
     this.agentInfo = agentInfo;
     this.snapshots = snapshots;
+    this.titleModel = titleModel;
     for (const session of store.all())
       this.repair(session.id);
   }
@@ -6437,6 +6525,53 @@ class Sessions {
     const [input] = queue.splice(index, 1);
     this.start(id, input);
   }
+  async generate(id, prompt) {
+    const model2 = this.record(id).session.model;
+    if (!model2)
+      throw new BadRequest("This session has no model yet.");
+    const candidates = [];
+    if (model2.providerID !== autoProvider)
+      candidates.push(model2);
+    else {
+      const tried = new Set;
+      for (let entry = await this.nextEntry(tried);entry; entry = await this.nextEntry(tried)) {
+        tried.add(Auto.modelKey(entry));
+        candidates.push({ providerID: entry.providerID, id: entry.modelID, ...entry.variant ? { variant: entry.variant } : {} });
+      }
+    }
+    for (const candidate of candidates) {
+      const agent = this.agent(candidate.providerID);
+      if (agent?.generate)
+        return agent.generate(prompt, candidate);
+    }
+    throw new BadRequest(`${this.agent(candidates[0]?.providerID)?.name ?? "This session's agent"} can't write this outside the conversation.`);
+  }
+  async nameSession(id, text) {
+    const directory = this.store.get(id)?.session.location.directory;
+    if (!directory || !text.trim())
+      return;
+    const prompt = `Write a title for a conversation that begins with the message below: a few words (six at most) saying what it's about, in the message's language. Reply with the title alone, without quotes or a period at the end.
+
+<message>
+${text.slice(0, 4000)}
+</message>`;
+    let answer;
+    try {
+      const picked = this.titleModel ? await this.titleModel(directory).catch(() => {
+        return;
+      }) : undefined;
+      const engine = picked ? this.engine?.(picked.providerID) : undefined;
+      answer = picked && engine?.generate ? await engine.generate(prompt, picked) : await this.generate(id, prompt);
+    } catch {
+      return;
+    }
+    const title = answer.split(`
+`).map((line) => line.trim()).find(Boolean)?.replace(/^["'\u201C\u201D\u2018\u2019`*#\s]+|["'\u201C\u201D\u2018\u2019`*\s.]+$/g, "").slice(0, 80);
+    const record = this.store.get(id);
+    if (!title || !record || record.session.title || this.removing.has(id))
+      return;
+    this.update(id, { title });
+  }
   async start(id, input) {
     const live = this.state(id);
     const record = this.store.get(id);
@@ -6459,6 +6594,8 @@ class Sessions {
       record.messages.push({ type: "user", id: input.id, time: { created: Date.now() }, text: input.text, files: attachments.length ? attachments : undefined });
     session.time.updated = Date.now();
     this.store.save(id, true);
+    if (!input.synthetic && !session.title && !session.parentID && record.messages.filter((message) => message.type === "user").length === 1)
+      this.nameSession(id, input.text);
     let note;
     if (!input.synthetic && this.snapshots) {
       try {
@@ -7295,6 +7432,12 @@ function handler(context) {
             sessions.synthetic(id, String(input.text ?? ""), typeof input.description === "string" ? input.description : undefined);
             return json({});
           }
+          case "generate": {
+            const prompt = String((await body()).prompt ?? "");
+            if (!prompt.trim())
+              throw new BadRequest("Say what to write.");
+            return json({ data: { text: await sessions.generate(id, prompt) } });
+          }
           case "command": {
             const input = await body();
             const name = String(input.name ?? "");
@@ -7549,7 +7692,7 @@ function engineAgent(providerID2) {
     engineAgents.set(providerID2, agent = new EngineAgent(link, providerID2));
   return agent;
 }
-var sessions = new Sessions(store, roster, auto, engineAgent, (directory) => link.policies(directory), (name, directory) => link.agent(name, directory), new Snapshots(join15(home, "snapshots")));
+var sessions = new Sessions(store, roster, auto, engineAgent, (directory) => link.policies(directory), (name, directory) => link.agent(name, directory), new Snapshots(join15(home, "snapshots")), (directory) => link.titleModel(directory));
 var server2 = Bun.serve({
   hostname: "127.0.0.1",
   port: 0,

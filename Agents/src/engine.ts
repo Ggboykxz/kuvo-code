@@ -12,7 +12,7 @@ import { failure } from "./agent"
 import type { Limit } from "./auto"
 import { newID } from "./ids"
 import type { Turn } from "./turn"
-import type { Decision, FormField, Model, Session, StructuredError, TokenUsage, ToolOutput, PermissionRule } from "./wire"
+import type { Decision, FormField, Model, ModelRef, Session, StructuredError, TokenUsage, ToolOutput, PermissionRule } from "./wire"
 
 interface EngineEvent {
   id: string
@@ -168,6 +168,18 @@ export class EngineLink {
     return rules
   }
 
+  /** The model for sessions' titles (Settings › Agents), when you picked one. */
+  async titleModel(directory: string): Promise<ModelRef | undefined> {
+    let picked: string | undefined
+    for (const source of (await this.settingsFiles(directory)) ?? []) {
+      const own = source?.info?.agents?.title?.model ?? source?.info?.agent?.title?.model
+      if (typeof own === "string" && own.includes("/")) picked = own
+    }
+    if (!picked) return undefined
+    const at = picked.indexOf("/")
+    return { providerID: picked.slice(0, at), id: picked.slice(at + 1) }
+  }
+
   /** A command of yours (Settings › Commands): what it says, from the last file that has it. */
   async commandTemplate(name: string, directory: string): Promise<string | undefined> {
     let template: string | undefined
@@ -319,6 +331,11 @@ export class EngineAgent implements Agent {
 
   thread(session: Session, state: Record<string, unknown>): Thread {
     return new EngineThread(this.link, session, state)
+  }
+
+  async generate(prompt: string, model: ModelRef): Promise<string> {
+    const answer = await this.link.request<{ data?: { text?: string } }>("POST", "/api/experimental/generate", { prompt, model: { providerID: model.providerID, id: model.id } }, 120_000)
+    return answer?.data?.text ?? ""
   }
 
   /** The engine's session for a session here, gone with it. */

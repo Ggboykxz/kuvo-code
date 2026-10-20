@@ -20,9 +20,19 @@ class FakeClaude {
   closed = false
   onInterrupt?: () => void
 
-  query = (options: { prompt: AsyncIterable<any> }) => {
+  /** One-off prompts it answered (a title). */
+  oneOffs: string[] = []
+
+  query = (options: { prompt: AsyncIterable<any> | string }) => {
+    if (typeof options.prompt === "string") {
+      this.oneOffs.push(options.prompt)
+      return (async function* () {
+        yield { type: "result", subtype: "success", is_error: false, result: "A Fake Title." }
+      })()
+    }
+    const prompt = options.prompt
     void (async () => {
-      for await (const message of options.prompt) this.sent.push(message)
+      for await (const message of prompt) this.sent.push(message)
     })()
     const out = this.out
     return {
@@ -114,6 +124,9 @@ describe("Claude Code, messages sent partway", () => {
     await until(() => idles(id).length === 1)
     expect(idles(id)[0].outcome).toBe("succeeded")
     expect(texts(id).join(" ")).toContain("on the second")
+    // Named from your first message, by the session's model, as the engine's sessions are.
+    await until(() => sessions.get(id).title === "A Fake Title")
+    expect(fake.oneOffs[0]).toContain("first")
   })
 
   test("one taken partway ends with the turn's one result", async () => {

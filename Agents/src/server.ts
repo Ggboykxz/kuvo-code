@@ -309,6 +309,11 @@ export function handler(context: Context) {
             sessions.synthetic(id, String(input.text ?? ""), typeof input.description === "string" ? input.description : undefined)
             return json({})
           }
+          case "generate": {
+            const prompt = String((await body()).prompt ?? "")
+            if (!prompt.trim()) throw new BadRequest("Say what to write.")
+            return json({ data: { text: await sessions.generate(id, prompt) } })
+          }
           case "command": {
             // One of yours (Settings › Commands): what it says, with what you wrote after it. Any
             // other: the agent's own, as it takes them, typed.

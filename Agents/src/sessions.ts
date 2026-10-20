@@ -361,6 +361,8 @@ export class Sessions {
     private readonly agentInfo?: (name: string, directory: string) => Promise<{ system?: string; permissions?: PermissionRule[] } | undefined>,
     /** What the project's files were before each of your messages, for undo. */
     private readonly snapshots?: Snapshots,
+    /** The model you picked for sessions' titles (Settings › Agents), an engine's. */
+    private readonly titleModel?: (directory: string) => Promise<ModelRef | undefined>,
   ) {
     // Turns a quit or crash cut short: ended, as Stop ends one.
     for (const session of store.all()) this.repair(session.id)
@@ -969,6 +971,54 @@ export class Sessions {
     void this.start(id, input)
   }
 
+  /**
+   * One answer to a prompt from the session's model (Auto's first that can run), outside the
+   * conversation: a commit message, say. Coding agents that can't answer one so say why.
+   */
+  async generate(id: string, prompt: string): Promise<string> {
+    const model = this.record(id).session.model
+    if (!model) throw new BadRequest("This session has no model yet.")
+    const candidates: ModelRef[] = []
+    if (model.providerID !== autoProvider) candidates.push(model)
+    else {
+      const tried = new Set<string>()
+      for (let entry = await this.nextEntry(tried); entry; entry = await this.nextEntry(tried)) {
+        tried.add(Auto.modelKey(entry))
+        candidates.push({ providerID: entry.providerID, id: entry.modelID, ...(entry.variant ? { variant: entry.variant } : {}) })
+      }
+    }
+    for (const candidate of candidates) {
+      const agent = this.agent(candidate.providerID)
+      if (agent?.generate) return agent.generate(prompt, candidate)
+    }
+    throw new BadRequest(`${this.agent(candidates[0]?.providerID)?.name ?? "This session's agent"} can't write this outside the conversation.`)
+  }
+
+  /** A title from your first message: from the model you picked for titles, or the session's. */
+  private async nameSession(id: string, text: string) {
+    const directory = this.store.get(id)?.session.location.directory
+    if (!directory || !text.trim()) return
+    const prompt = `Write a title for a conversation that begins with the message below: a few words (six at most) saying what it's about, in the message's language. Reply with the title alone, without quotes or a period at the end.\n\n<message>\n${text.slice(0, 4_000)}\n</message>`
+    let answer: string
+    try {
+      const picked = this.titleModel ? await this.titleModel(directory).catch(() => undefined) : undefined
+      const engine = picked ? this.engine?.(picked.providerID) : undefined
+      answer = picked && engine?.generate ? await engine.generate(prompt, picked) : await this.generate(id, prompt)
+    } catch {
+      // The app names it from your message instead.
+      return
+    }
+    const title = answer
+      .split("\n")
+      .map((line) => line.trim())
+      .find(Boolean)
+      ?.replace(/^["'“”‘’`*#\s]+|["'“”‘’`*\s.]+$/g, "")
+      .slice(0, 80)
+    const record = this.store.get(id)
+    if (!title || !record || record.session.title || this.removing.has(id)) return
+    this.update(id, { title })
+  }
+
   /** Runs one message: on its model, or down your Auto list. */
   private async start(id: string, input: Input): Promise<void> {
     const live = this.state(id)
@@ -991,6 +1041,8 @@ export class Sessions {
     else record.messages.push({ type: "user", id: input.id, time: { created: Date.now() }, text: input.text, files: attachments.length ? attachments : undefined })
     session.time.updated = Date.now()
     this.store.save(id, true)
+    // Your first message: the session gets a title from it, as the engine's sessions do.
+    if (!input.synthetic && !session.title && !session.parentID && record.messages.filter((message) => message.type === "user").length === 1) void this.nameSession(id, input.text)
     // The project's files as they are before it (yours, not a note from the app), and after its
     // turn: what the turn changed, which Undo puts back.
     let note: SnapshotNote | undefined

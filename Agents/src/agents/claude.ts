@@ -18,7 +18,7 @@ import { Queue } from "../queue"
 import { commandSignIn } from "../signin"
 import { kuvoTools } from "../kuvotools"
 import type { Turn } from "../turn"
-import type { FileDiff, FormField, Model, Session, TokenUsage } from "../wire"
+import type { FileDiff, FormField, Model, ModelRef, Session, TokenUsage } from "../wire"
 
 const SDK = [{ name: "@anthropic-ai/claude-agent-sdk", version: "0.3.303" }]
 const places = [join(homedir(), ".local/bin"), join(homedir(), ".claude/local"), "/opt/homebrew/bin", "/usr/local/bin"]
@@ -240,6 +240,44 @@ export class ClaudeAgent implements Agent {
 
   thread(session: Session, state: Record<string, unknown>): Thread {
     return new ClaudeThread(this, session, state)
+  }
+
+  /** One answer from Claude Code on your plan: no tools, no hooks, nothing saved to its history. */
+  async generate(prompt: string, model: ModelRef): Promise<string> {
+    const sdk = await this.sdk()
+    const abort = new AbortController()
+    const timer = setTimeout(() => abort.abort(), 120_000)
+    const q = sdk.query({
+      prompt,
+      options: {
+        pathToClaudeCodeExecutable: this.executable(),
+        cwd: this.context.temporary,
+        model: model.id === "default" ? undefined : model.id,
+        persistSession: false,
+        maxTurns: 1,
+        tools: [],
+        allowedTools: [],
+        mcpServers: {},
+        strictMcpConfig: true,
+        settings: { disableAllHooks: true } as any,
+        abortController: abort,
+        env: this.env(),
+        stderr: () => {},
+      },
+    })
+    try {
+      for await (const message of q as AsyncIterable<any>) {
+        if (message.type !== "result") continue
+        if (message.subtype === "success" && !message.is_error && typeof message.result === "string") return message.result.trim()
+        throw new Error(typeof message.result === "string" && message.result.trim() ? message.result.trim() : "Claude Code couldn't answer.")
+      }
+      throw new Error("Claude Code stopped before it answered.")
+    } finally {
+      clearTimeout(timer)
+      try {
+        ;(q as any).close?.()
+      } catch {}
+    }
   }
 }
 

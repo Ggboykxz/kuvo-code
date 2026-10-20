@@ -193,6 +193,11 @@ export interface Agent {
    */
   programUpdated?(): void
   thread(session: Session, state: Record<string, unknown>): Thread
+  /**
+   * One answer to a prompt outside any conversation (a session's title, a commit message), on a
+   * model of its own: no tools, and kept nowhere. None for an agent that can't answer one so.
+   */
+  generate?(prompt: string, model: ModelRef): Promise<string>
   /** A session here was deleted: its conversation where the agent keeps it goes too. */
   forgetConversation?(state: Record<string, unknown>): Promise<void>
 }
