@@ -559,9 +559,12 @@ final class Machines {
                 if engine.isAnotherMacsEngine {
                     engine.disconnect()
                 } else {
+                    // A removal under way: added again meanwhile, it waits (see `waitForRemoval`).
+                    removing.insert(id)
                     Task { [weak self] in
                         let forgotten = await engine.forgetAccounts()
                         await engine.stopEngine()
+                        self?.removing.remove(id)
                         // What didn't go, the next time it answers.
                         if !forgotten { self?.runLater(Self.removalScript, on: id) }
                     }

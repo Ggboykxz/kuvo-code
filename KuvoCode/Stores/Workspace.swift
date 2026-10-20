@@ -1034,22 +1034,22 @@ final class Workspace {
     /// False when the machine couldn't list its sessions (to try again).
     @discardableResult
     func refresh(_ engine: MachineEngine) async -> Bool {
-        // One at a time for a machine (a reconnect's and its start's), the second after the first:
+        // One at a time for a machine (a reconnect's and its start's), each after the one before:
         // two at once each applied what it read before the other's awaits, bringing back an ask
-        // just answered.
+        // just answered. Each with its own engine, saying how its own went.
         let machine = engine.machine.id
-        guard refreshing.insert(machine).inserted else {
-            refreshAgain.insert(machine)
-            return true
+        let previous = refreshes[machine]
+        let turn = Task { [weak self] () -> Bool in
+            _ = await previous?.value
+            return await self?.refreshOnce(engine) ?? true
         }
-        let listed = await refreshOnce(engine)
-        refreshing.remove(machine)
-        if refreshAgain.remove(machine) != nil { return await refresh(engine) }
+        refreshes[machine] = turn
+        let listed = await turn.value
+        if refreshes[machine] == turn { refreshes[machine] = nil }
         return listed
     }
 
-    @ObservationIgnored private var refreshing: Set<String> = []
-    @ObservationIgnored private var refreshAgain: Set<String> = []
+    @ObservationIgnored private var refreshes: [String: Task<Bool, Never>] = [:]
 
     private func refreshOnce(_ engine: MachineEngine) async -> Bool {
         guard let api = engine.api else { return true }
@@ -1081,8 +1081,12 @@ final class Workspace {
                 Task { try? await api.markViewed(id, idle: idle) }
             }
             // Commands its agents left running, as it lists them now (they were forgotten while it
-            // was away, and a restart ended some): in the folders its sessions work in.
-            let folders = Set(theirs.map(\.location.directory)).prefix(40)
+            // was away, and a restart ended some): in the folders its sessions work in, open and
+            // working ones first, then the latest, forty at most.
+            let first = theirs.filter { models[$0.id] != nil || running.contains($0.id) }
+            let rest = theirs.filter { models[$0.id] == nil && !running.contains($0.id) }.sorted { $0.time.updated > $1.time.updated }
+            var folders: [String] = []
+            for session in first + rest where !folders.contains(session.location.directory) && folders.count < 40 { folders.append(session.location.directory) }
             Task { [weak self] in for folder in folders { await self?.readShellJobs(in: folder) } }
             if let active = try? await api.activeSessions(), isCurrent() {
                 // A subagent's session has no row: its machine is the one its events came from.
@@ -1153,8 +1157,8 @@ final class Workspace {
         let gone = Set(sessions.filter { RemoteFolder.machine(of: $0.location.directory) == machine }.map(\.id))
         if !forGood, connectedMachines.contains(machine) { saveList(of: machine) }
         running.subtract(gone)
-        // Its commands left running: unknown until it's back (and read again then).
-        for id in gone where shellJobs[id] != nil { shellJobs[id] = nil }
+        // Its commands left running (its subagents' too): unknown until it's back (and read again then).
+        for id in shellJobs.keys where gone.contains(id) || sessionMachines[id] == machine { shellJobs[id] = nil }
         lastingShellJobs.formIntersection(Set(shellJobs.values.joined().map(\.id)))
         // And its subagents', which have no row.
         running = running.filter { sessionMachines[$0] != machine || session($0) != nil }
