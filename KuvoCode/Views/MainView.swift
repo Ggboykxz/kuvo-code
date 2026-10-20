@@ -129,10 +129,16 @@ struct MainView: View {
         sessionID.flatMap(workspace.model(for:))
     }
 
-    /// The session you're working in: the one beside, once you've clicked into it. The menus'
-    /// commands (Stop, Find, the modes) go to it.
+    /// The session you're working in: the one beside, once you've clicked into it (and while you
+    /// use the panel or the sidebar after, as the panel stays its). The menus' commands (Stop,
+    /// Find, the modes) go to it.
     private var focusedModel: SessionModel? {
-        focus == .split && besideID != nil ? splitModel : activeModel
+        worksBeside ? splitModel : activeModel
+    }
+
+    /// The last half you worked in is the one beside: the panel is its, and the commands go to it.
+    private var worksBeside: Bool {
+        lastHalf == .split && besideID != nil
     }
 
     /// The sessions on screen: the tab's, and the one beside it.
@@ -170,7 +176,7 @@ struct MainView: View {
     /// The folder of the session you're working in: the one beside, once you've clicked into it.
     /// Run, a new terminal and Open Quickly go there, as Stop goes to its session.
     private var focusedDirectory: String? {
-        focus == .split && besideID != nil ? splitModel?.session.location.directory ?? activeDirectory : activeDirectory
+        worksBeside ? splitModel?.session.location.directory ?? activeDirectory : activeDirectory
     }
 
     /// The focused session's folder when it's a project's.
@@ -525,22 +531,22 @@ struct MainView: View {
             .background(WindowXReader { titleBarX = $0 })
             // A width from the window (minus the traffic lights and the buttons on the right), so a
             // narrow window squeezes the tabs instead of pushing them into a » menu.
-            .frame(width: max(240, contentWidth - (runCommand == nil ? 150 : 190)), alignment: .leading)
+            .frame(width: max(240, contentWidth - (runCommand(of: activeProject) == nil ? 150 : 190)), alignment: .leading)
             // Its empty parts are the title bar's: they drag the window, and a double-click zooms it.
             .background { WindowDragArea() }
             .modifier(UnderImageViewer())
         }
         .sharedBackgroundVisibility(.hidden)
 
-        if let runCommand {
+        if let tabsRun = runCommand(of: activeProject) {
             ToolbarItem(placement: .primaryAction) {
-                Button(action: runProject) {
+                Button { runProject(activeProject) } label: {
                     Image(systemName: "play.fill")
                         .font(.system(size: 13))
                 }
                 .buttonStyle(IconButtonStyle(width: 28, height: 28, cornerRadius: 7))
                 .accessibilityLabel("Run")
-                .help("Run \(runCommand) (⌘R)")
+                .help("Run \(tabsRun)" + (focusedProject == activeProject ? " (⌘R)" : ""))
                 .modifier(UnderImageViewer())
             }
             .sharedBackgroundVisibility(.hidden)
@@ -976,16 +982,18 @@ struct MainView: View {
     }
 
     private var utilitiesPane: some View {
+        // The panel of the session you work in (the one beside, as its panel is then): its changes,
+        // files and terminals.
         UtilitiesPane(
             utilities: utilities,
-            directory: activeDirectory,
-            folders: activeDirectory.map { [$0] + workspace.extraFolders($0) } ?? [],
-            model: activeModel,
+            directory: focusedDirectory,
+            folders: focusedDirectory.map { [$0] + workspace.extraFolders($0) } ?? [],
+            model: focusedModel,
             environment: app.shellEnvironment,
             isExpanded: $panelExpanded,
             isFocused: focus == .changes
         )
-        .environment(catalog(for: activeDirectory))
+        .environment(catalog(for: focusedDirectory))
         .simultaneousGesture(TapGesture().onEnded { focus = .changes })
     }
 
@@ -1405,16 +1413,21 @@ struct MainView: View {
         return items
     }
 
-    /// The active project's run command, if it has one.
-    private var runCommand: String? {
-        focusedProject.flatMap { workspace.settings[workspace.projectDirectory($0)]?.run }
+    /// The run command of the project of the session you work in, if it has one.
+    private var runCommand: String? { runCommand(of: focusedProject) }
+
+    private func runCommand(of project: String?) -> String? {
+        project.flatMap { workspace.settings[workspace.projectDirectory($0)]?.run }
     }
 
     /// Runs the project's run command in a terminal, in the session's folder (its worktree, if it
-    /// has one). Without a command yet, Edit Project opens to set one.
-    private func runProject() {
-        guard let directory = focusedProject else { return }
-        guard let command = runCommand else {
+    /// has one): the session you work in, or the tab's for the title bar's button, beside its name.
+    /// Without a command yet, Edit Project opens to set one.
+    private func runProject() { runProject(focusedProject) }
+
+    private func runProject(_ project: String?) {
+        guard let directory = project else { return }
+        guard let command = runCommand(of: directory) else {
             let primary = workspace.projectDirectory(directory)
             let project = workspace.projects.first { $0.directory == primary } ?? Workspace.Project(directory: primary, sessions: [], settings: workspace.settings[primary] ?? .init())
             openProjectEditor(ProjectEditorRequest(project: project, focusesRun: true))
