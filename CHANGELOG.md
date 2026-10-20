@@ -5,11 +5,13 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- Notifications hide a hex key after a key's or secret's name however it's written (quoted, in YAML or JSON), and show checksums and cache keys.
+- When this Mac's engine stops for good, its sessions no longer show as working or keep the Mac awake.
 - Cursor sessions work when they don't approve everything, instead of failing with "sandboxing is not supported in this environment". You can pick thinking effort for every Cursor and Grok model that has it. When your settings (a mode, the session's agent, Permissions) don't allow a tool, Grok and Antigravity carry on without it instead of stopping the turn.
 - Kuvo Code no longer crashes when it shows a conversation in which drawing a widget failed; the failed step shows instead.
 - Notifications hide a hex key after a name again (like ENCRYPTION_KEY=…), and show short --key values, like sort --key 2,3.
 - Colored search output highlights patterns with | or ) in them, and skips searches that could slow the conversation down.
-- Chrome DevTools from the MCP catalog runs a fixed version, apart from the project's own package settings, and only on this Mac.
+- Chrome DevTools from the MCP catalog runs a fixed version, only on this Mac, with a browser profile of its own that goes when it closes (none left in your home folder); files it saves land in the project.
 - Waiting for another agent's answer finds it also on a machine whose clock differs from your Mac's.
 - Blocks in Settings › Permissions catch more of what a command line hides from them in sessions with coding agents (`sudo -n`, `/bin/rm`, `"rm"`, `eval`, `xargs`, `find -exec` and others). When a coding agent carries on by itself twice in a row, both show, and a message you sent meanwhile still goes.
 - A widget or Show in Panel from Antigravity works as it happens, not only after the conversation is opened again.
