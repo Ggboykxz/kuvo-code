@@ -201,27 +201,32 @@ nonisolated enum Git {
 
     static func perform(_ action: ProjectChanges.Action, on file: ChangedFile, root: String, scope: ProjectChanges.Scope) -> String? {
         let paths = [file.path] + (file.oldPath.map { [$0] } ?? [])
-        let tracked = run(["ls-files", "--error-unmatch", "--", file.path], in: root) != nil
+        // The file's own path, never a pattern: "app/[slug]/page.tsx" would match others, and
+        // ":!x" every file but x.
+        func on(_ arguments: [String]) -> String? { run(["--literal-pathspecs"] + arguments, in: root) }
+        let tracked = on(["ls-files", "--error-unmatch", "--", file.path]) != nil
         func git(_ arguments: [String]) -> String? {
-            run(arguments, in: root) == nil ? "git couldn't \(arguments.first ?? "do that") \(file.path)." : nil
+            on(arguments) == nil ? "git couldn't \(arguments.first ?? "do that") \(file.path)." : nil
         }
         switch action {
         case .stage:
             // A rename's old path only while git still has it: once staged as moved, naming it fails.
-            let old = file.oldPath.flatMap { run(["ls-files", "--error-unmatch", "--", $0], in: root) != nil ? $0 : nil }
+            let old = file.oldPath.flatMap { on(["ls-files", "--error-unmatch", "--", $0]) != nil ? $0 : nil }
             return git(["add", "-A", "--", file.path] + (old.map { [$0] } ?? []))
         case .unstage:
             return git(["restore", "--staged", "--"] + paths)
         case .discard:
-            // New to git (or only staged): it has no committed version to go back to.
-            if file.status == .added, scope != .unstaged || !tracked {
-                if tracked { _ = run(["rm", "--cached", "-q", "--", file.path], in: root) }
+            // New to git (untracked, only staged, or only noted with `git add -N`): it has no
+            // committed version to go back to, so the file goes to the Trash. (Restoring one only
+            // noted would empty it.)
+            if file.status == .added {
+                if tracked { _ = on(["rm", "--cached", "-q", "--", file.path]) }
                 do { try trash(file.url) } catch { return error.localizedDescription }
                 return nil
             }
             if scope == .unstaged { return git(["restore", "--worktree", "--"] + paths) }
             if file.status == .renamed, let old = file.oldPath {
-                _ = run(["rm", "--cached", "-q", "--", file.path], in: root)
+                _ = on(["rm", "--cached", "-q", "--", file.path])
                 try? trash(file.url)
                 return git(["restore", "--source=HEAD", "--staged", "--worktree", "--", old])
             }
