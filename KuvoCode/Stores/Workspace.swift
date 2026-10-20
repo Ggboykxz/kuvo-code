@@ -876,14 +876,26 @@ final class Workspace {
             // those it still asks stay.
             for (request, id) in asking where sharedForms[request] == nil && (session(id).map(OutsideAgents.isAgentSession) ?? false) {
                 // Not read: as it was.
-                guard let permissions = try? await api.permissions(session: id), let forms = try? await api.forms(session: id) else { continue }
-                if !permissions.contains(where: { $0.id == request }) && !forms.contains(where: { $0.id == request }) {
-                    asking[request] = nil
-                    Notifier.shared.clear(request: request)
-                }
+                guard let asked = await Self.stillAsked(in: id, api: api), !asked.contains(request) else { continue }
+                asking[request] = nil
+                Notifier.shared.clear(request: request)
             }
         } catch {
             log.error("agents' sessions: \(String(describing: error), privacy: .public)")
+        }
+    }
+
+    /// What a session asks now: nil when that couldn't be read (its engine out of reach), none
+    /// for a session that's gone (deleted elsewhere meanwhile).
+    private static func stillAsked(in session: String, api: OpenCodeAPI) async -> Set<String>? {
+        do {
+            async let permissions = api.permissions(session: session)
+            async let forms = api.forms(session: session)
+            return Set(try await permissions.map(\.id) + forms.map(\.id))
+        } catch let error as ServerError where error.status == 404 {
+            return []
+        } catch {
+            return nil
         }
     }
 
@@ -1083,8 +1095,7 @@ final class Workspace {
             guard sessionMachines[session].map(connectedMachines.contains) ?? true else { continue }
             // A closed session's: still asked (or not known), it stays; its notification goes otherwise.
             if sharedForms[request] == nil, let api = api(forSession: session) {
-                guard let permissions = try? await api.permissions(session: session), let forms = try? await api.forms(session: session),
-                      !permissions.contains(where: { $0.id == request }), !forms.contains(where: { $0.id == request }) else {
+                guard let asked = await Self.stillAsked(in: session, api: api), !asked.contains(request) else {
                     asking[request] = session
                     continue
                 }
