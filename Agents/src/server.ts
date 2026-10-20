@@ -471,11 +471,11 @@ export function handler(context: Context) {
 export function expandCommand(template: string, written: string): string {
   const all = written.trim()
   const words = all ? all.split(/\s+/) : []
-  const named = /\$ARGUMENTS|\$\d+/.test(template)
+  const named = /\$ARGUMENTS|\$[1-9]/.test(template)
   // In one pass, so what you wrote is never filled in again: $1, $2… a word each, the highest
   // taking the rest; $ARGUMENTS all of it, as written.
-  const highest = Math.max(0, ...[...template.matchAll(/\$(\d+)/g)].map((match) => Number(match[1])))
-  const filled = template.replace(/\$ARGUMENTS|\$(\d+)/g, (_, index?: string) => {
+  const highest = Math.max(0, ...[...template.matchAll(/\$([1-9]\d*)/g)].map((match) => Number(match[1])))
+  const filled = template.replace(/\$ARGUMENTS|\$([1-9]\d*)/g, (_, index?: string) => {
     if (index === undefined) return all
     return Number(index) === highest ? words.slice(highest - 1).join(" ") : (words[Number(index) - 1] ?? "")
   })

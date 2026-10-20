@@ -953,6 +953,162 @@ describe("undo, carefully", () => {
     expect(readFileSync(join(folder, "b.txt"), "utf8")).toBe("after it\n")
   })
 
+  test("a repository inside the project (a submodule, a clone) is never touched", async () => {
+    const folder = repository({ "a.txt": "one\n" })
+    const inner = join(folder, "vendor", "lib")
+    mkdirSync(inner, { recursive: true })
+    const git = (...args: string[]) => Bun.spawnSync(["git", "-C", inner, ...args], { env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } })
+    git("init", "-q")
+    writeFileSync(join(inner, "lib.js"), "v1\n")
+    git("add", ".")
+    git("commit", "-q", "-m", "v1")
+    withSnapshots()
+    a.script = async (input, turn, hooks, thread) => {
+      writeFileSync(join(folder, "a.txt"), "two\n")
+      writeFileSync(join(inner, "lib.js"), "v2\n")
+      git("commit", "-q", "-am", "v2")
+      writeFileSync(join(inner, "work.txt"), "mine, not committed\n")
+      return replies(input, turn, hooks, thread)
+    }
+    const id = sessions.create({ model: { providerID: "alpha", id: "one" }, location: { directory: folder } }).id
+    const first = send(id, "update the library")
+    await settled(id, 1)
+    await sessions.stageRevert(id, first)
+    expect(readFileSync(join(folder, "a.txt"), "utf8")).toBe("one\n")
+    expect(readFileSync(join(inner, "lib.js"), "utf8")).toBe("v2\n")
+    expect(readFileSync(join(inner, "work.txt"), "utf8")).toBe("mine, not committed\n")
+    expect(existsSync(join(inner, ".git"))).toBe(true)
+  })
+
+  test("files the ignore rules left out stay when the turn changed those rules", async () => {
+    const folder = repository({ ".gitignore": ".env\nnode_modules/\n", "a.txt": "one\n" }, (folder) => {
+      writeFileSync(join(folder, ".env"), "SECRET=1\n")
+      mkdirSync(join(folder, "node_modules", "x"), { recursive: true })
+      writeFileSync(join(folder, "node_modules", "x", "index.js"), "module\n")
+    })
+    withSnapshots()
+    a.script = async (input, turn, hooks, thread) => {
+      writeFileSync(join(folder, ".gitignore"), "dist/\n")
+      writeFileSync(join(folder, "new.txt"), "made by it\n")
+      return replies(input, turn, hooks, thread)
+    }
+    const id = sessions.create({ model: { providerID: "alpha", id: "one" }, location: { directory: folder } }).id
+    const first = send(id, "tidy the ignore file")
+    await settled(id, 1)
+    await sessions.stageRevert(id, first)
+    expect(readFileSync(join(folder, ".gitignore"), "utf8")).toBe(".env\nnode_modules/\n")
+    expect(readFileSync(join(folder, ".env"), "utf8")).toBe("SECRET=1\n")
+    expect(existsSync(join(folder, "node_modules", "x", "index.js"))).toBe(true)
+    expect(existsSync(join(folder, "new.txt"))).toBe(false)
+  })
+
+  test("a turn cut short (a quit) can still be undone, and the messages before it", async () => {
+    const folder = repository({ "a.txt": "one\n" })
+    withSnapshots()
+    a.script = async (input, turn, hooks, thread) => {
+      writeFileSync(join(folder, "a.txt"), "two\n")
+      return replies(input, turn, hooks, thread)
+    }
+    const id = sessions.create({ model: { providerID: "alpha", id: "one" }, location: { directory: folder } }).id
+    const first = send(id, "change it")
+    await settled(id, 1)
+    // The next turn is cut short: its note has no files, as after a crash.
+    a.script = async (_input, turn) => {
+      writeFileSync(join(folder, "a.txt"), "three\n")
+      turn.startStep()
+      return new Promise(() => {})
+    }
+    send(id, "change it again")
+    await until(() => readFileSync(join(folder, "a.txt"), "utf8") === "three\n")
+    await Bun.sleep(50)
+    sessions.closeAll()
+    const agents = new Map([a, b].map((agent) => [agent.providerID, agent]))
+    sessions = new Sessions(new Store(join(root, "sessions")), { find: (provider: string | undefined) => (provider ? agents.get(provider) : undefined) } as unknown as Roster, auto, undefined, undefined, undefined, new Snapshots(join(root, "snapshots")))
+    await until(() => !sessions.active().includes(id))
+    await Bun.sleep(300)
+    await sessions.stageRevert(id, first)
+    expect(readFileSync(join(folder, "a.txt"), "utf8")).toBe("one\n")
+  })
+
+  test("Undo doesn't start what was waiting, so it isn't made final at once", async () => {
+    const folder = repository({ "a.txt": "one\n" })
+    withSnapshots()
+    a.script = async (input, turn, hooks, thread) => {
+      writeFileSync(join(folder, "a.txt"), "two\n")
+      return replies(input, turn, hooks, thread)
+    }
+    const id = sessions.create({ model: { providerID: "alpha", id: "one" }, location: { directory: folder } }).id
+    const first = send(id, "change it")
+    await settled(id, 1)
+    send(id, "waits", "queue")
+    await sessions.stageRevert(id, first)
+    await Bun.sleep(50)
+    expect(a.runs).toHaveLength(1)
+    expect(sessions.get(id).revert?.messageID).toBe(first)
+    expect(sessions.inbox(id)).toHaveLength(1)
+  })
+
+  test("a message sent while the stopped turn's files are being kept goes once that's done", async () => {
+    const folder = repository({ "a.txt": "one\n" })
+    class Slow extends Snapshots {
+      slow = false
+      override async take(directory: string) {
+        if (this.slow) await Bun.sleep(300)
+        return super.take(directory)
+      }
+    }
+    const snapshots = new Slow(join(root, "snapshots"))
+    const agents = new Map([a, b].map((agent) => [agent.providerID, agent]))
+    sessions = new Sessions(store, { find: (provider: string | undefined) => (provider ? agents.get(provider) : undefined) } as unknown as Roster, auto, undefined, undefined, undefined, snapshots)
+    a.script = works
+    const id = sessions.create({ model: { providerID: "alpha", id: "one" }, location: { directory: folder } }).id
+    send(id, "work")
+    await until(() => a.runs.length === 1)
+    snapshots.slow = true
+    a.script = replies
+    await sessions.interrupt(id)
+    await Bun.sleep(100)
+    send(id, "now this")
+    await until(() => a.runs.length === 2, 5_000)
+    await settled(id, 2)
+    expect(sessions.inbox(id)).toHaveLength(0)
+  })
+
+  test("an Undo that fails partway puts the files back as they were, and stages nothing", async () => {
+    const folder = repository({ "a.txt": "one\n", "b.txt": "one\n" })
+    class Failing extends Snapshots {
+      failNext = false
+      override async restore(directory: string, tree: string, paths: string[]) {
+        if (this.failNext) {
+          this.failNext = false
+          writeFileSync(join(folder, "a.txt"), "half\n")
+          throw new Error("disk full")
+        }
+        return super.restore(directory, tree, paths)
+      }
+    }
+    const snapshots = new Failing(join(root, "snapshots"))
+    const agents = new Map([a, b].map((agent) => [agent.providerID, agent]))
+    sessions = new Sessions(store, { find: (provider: string | undefined) => (provider ? agents.get(provider) : undefined) } as unknown as Roster, auto, undefined, undefined, undefined, snapshots)
+    a.script = async (input, turn, hooks, thread) => {
+      writeFileSync(join(folder, "a.txt"), "two\n")
+      writeFileSync(join(folder, "b.txt"), "two\n")
+      return replies(input, turn, hooks, thread)
+    }
+    const id = sessions.create({ model: { providerID: "alpha", id: "one" }, location: { directory: folder } }).id
+    const first = send(id, "change both")
+    await settled(id, 1)
+    snapshots.failNext = true
+    await expect(sessions.stageRevert(id, first)).rejects.toThrow()
+    expect(readFileSync(join(folder, "a.txt"), "utf8")).toBe("two\n")
+    expect(sessions.get(id).revert).toBeUndefined()
+    // A later Undo and Redo work from the files as they are.
+    await sessions.stageRevert(id, first)
+    expect(readFileSync(join(folder, "a.txt"), "utf8")).toBe("one\n")
+    await sessions.clearRevert(id)
+    expect(readFileSync(join(folder, "a.txt"), "utf8")).toBe("two\n")
+  })
+
   test("never deletes through a link the agent replaced", async () => {
     const outside = mkdtempSync(join(root, "outside-"))
     writeFileSync(join(outside, "lib.js"), "keep me\n")

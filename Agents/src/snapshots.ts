@@ -53,13 +53,16 @@ export class Snapshots {
     return join(this.root, createHash("sha1").update(repository.top).digest("hex").slice(0, 20))
   }
 
-  private git(repository: Repository, args: string[], options: { input?: string; timeout?: number } = {}) {
-    const settings = ["-c", "core.autocrlf=false", "-c", "core.fsmonitor=false", "-c", "core.quotepath=false", "-c", "core.symlinks=true", "-c", "core.longpaths=true", "-c", "gc.auto=0"]
+  private git(repository: Repository, args: string[], options: { input?: string; timeout?: number; packs?: boolean; patterns?: boolean } = {}) {
+    // Packed now and then, never pruned (what's kept is referenced by nothing git knows of).
+    const settings = ["-c", "core.autocrlf=false", "-c", "core.fsmonitor=false", "-c", "core.quotepath=false", "-c", "core.symlinks=true", "-c", "core.longpaths=true", "-c", "gc.pruneExpire=never", "-c", "gc.worktreePruneExpire=never"]
+    if (!options.packs) settings.push("-c", "gc.auto=0")
     if (repository.exclude) settings.push("-c", `core.excludesFile=${repository.exclude}`)
     return run("git", ["--git-dir", this.storeOf(repository), "--work-tree", repository.top, ...settings, ...args], {
       cwd: repository.top,
       timeout: options.timeout ?? 120_000,
-      env: quiet,
+      // (check-ignore takes no literal paths: its paths aren't patterns anyway.)
+      env: options.patterns ? { ...quiet, GIT_LITERAL_PATHSPECS: "0" } : quiet,
       input: options.input,
     })
   }
@@ -92,19 +95,31 @@ export class Snapshots {
       const tree = await this.git(repository, ["write-tree"])
       if (tree.code !== 0 || !tree.stdout.trim()) throw new Error("Kuvo Code couldn't keep this project's files.")
       // Kept small now and then.
-      if (++this.taken % 50 === 0) void this.git(repository, ["gc", "--auto", "--quiet"], { timeout: 600_000 }).catch(() => {})
+      if (++this.taken % 50 === 0) void this.git(repository, ["gc", "--auto", "--quiet"], { timeout: 600_000, packs: true }).catch(() => {})
       return tree.stdout.trim()
     })
   }
 
-  /** The files (the repository's paths) that differ between two snapshots, in the session's folder. */
+  /**
+   * The files (the repository's paths) that differ between two snapshots, in the session's folder.
+   * A repository inside it (a submodule, or one cloned there) isn't one of them: Undo never
+   * touches it.
+   */
   async changed(directory: string, from: string, to: string): Promise<string[]> {
     const repository = await this.repository(directory)
     if (!repository || from === to) return []
     return this.exclusive(repository, async () => {
-      const ran = await this.git(repository, ["diff", "--name-only", "-z", "--no-renames", "--no-ext-diff", from, to, "--", repository.prefix || "."])
+      const ran = await this.git(repository, ["diff", "--raw", "-z", "--no-renames", "--no-ext-diff", "--no-abbrev", from, to, "--", repository.prefix || "."])
       if (ran.code !== 0) throw new Error("Kuvo Code couldn't tell which files changed.")
-      return ran.stdout.split("\0").filter(Boolean)
+      // ":<mode> <mode> <id> <id> <status>\0<path>\0" for each.
+      const fields = ran.stdout.split("\0")
+      const paths: string[] = []
+      for (let i = 0; i + 1 < fields.length; i += 2) {
+        const [oldMode, newMode] = fields[i].replace(/^:/, "").split(" ")
+        if (oldMode === "160000" || newMode === "160000" || !fields[i + 1]) continue
+        paths.push(fields[i + 1])
+      }
+      return paths
     })
   }
 
@@ -134,24 +149,50 @@ export class Snapshots {
     const repository = await this.repository(directory)
     if (!repository || !paths.length) return
     await this.exclusive(repository, async () => {
-      const listed = await this.git(repository, ["ls-tree", "-r", "-z", "--name-only", "--full-tree", tree])
+      const listed = await this.git(repository, ["ls-tree", "-r", "-z", "--full-tree", tree])
       if (listed.code !== 0) throw new Error("Kuvo Code couldn't read what the files were.")
       const wanted = new Set(paths)
-      const there = new Set(listed.stdout.split("\0").filter((path) => path && wanted.has(path)))
-      // Gone first, deepest first (a folder that was a file, a file that was a folder).
-      const gone = paths.filter((path) => !there.has(path)).sort((a, b) => b.length - a.length)
-      for (const path of gone) this.remove(repository.top, path)
-      const back = paths.filter((path) => there.has(path))
-      if (back.length) {
-        // A folder where a file goes back (it became one): it goes first.
-        for (const path of back) {
-          const full = join(repository.top, path)
-          if (this.isInside(repository.top, full) && existsSync(full) && lstatSync(full).isDirectory()) rmSync(full, { recursive: true, force: true })
-        }
-        const checked = await this.git(repository, ["checkout", tree, "--pathspec-from-file=-", "--pathspec-file-nul"], { input: back.join("\0") })
-        if (checked.code !== 0) throw new Error(`Kuvo Code couldn't put the files back: ${checked.stderr.trim().split("\n").pop() ?? "git failed"}`)
+      // "<mode> <type> <id>\t<path>" for each; a repository inside it (a gitlink) is left alone.
+      const there = new Set<string>()
+      const repositories = new Set<string>()
+      for (const entry of listed.stdout.split("\0")) {
+        const tab = entry.indexOf("\t")
+        if (tab < 0) continue
+        const path = entry.slice(tab + 1)
+        if (!wanted.has(path)) continue
+        if (entry.startsWith("160000 ")) repositories.add(path)
+        else there.add(path)
       }
+      const isRules = (path: string) => /(^|\/)\.gitignore$/.test(path)
+      // Its ignore rules first, as they were: what they left out then wasn't kept, so it isn't
+      // known to be new, and stays.
+      const goneRules = paths.filter((path) => isRules(path) && !there.has(path) && !repositories.has(path))
+      for (const path of goneRules) this.remove(repository.top, path)
+      await this.checkout(repository, tree, paths.filter((path) => isRules(path) && there.has(path)))
+      let gone = paths.filter((path) => !isRules(path) && !there.has(path) && !repositories.has(path))
+      if (gone.length && paths.some(isRules)) {
+        const ignored = await this.git(repository, ["check-ignore", "--no-index", "-z", "--stdin"], { input: gone.join("\0"), patterns: true })
+        // Not known (it failed): none deleted.
+        if (ignored.code !== 0 && ignored.code !== 1) throw new Error("Kuvo Code couldn't tell which files the ignore rules left out.")
+        const left = new Set(ignored.stdout.split("\0").filter(Boolean))
+        gone = gone.filter((path) => !left.has(path))
+      }
+      // Gone first, deepest first (a folder that was a file, a file that was a folder).
+      for (const path of gone.sort((a, b) => b.length - a.length)) this.remove(repository.top, path)
+      const back = paths.filter((path) => !isRules(path) && there.has(path))
+      // A folder where a file goes back (it became one): it goes first, unless it's a repository.
+      for (const path of back) {
+        const full = join(repository.top, path)
+        if (this.isInside(repository.top, full) && existsSync(full) && lstatSync(full).isDirectory() && !existsSync(join(full, ".git"))) rmSync(full, { recursive: true, force: true })
+      }
+      await this.checkout(repository, tree, back)
     })
+  }
+
+  private async checkout(repository: Repository, tree: string, paths: string[]) {
+    if (!paths.length) return
+    const checked = await this.git(repository, ["checkout", tree, "--pathspec-from-file=-", "--pathspec-file-nul"], { input: paths.join("\0") })
+    if (checked.code !== 0) throw new Error(`Kuvo Code couldn't put the files back: ${checked.stderr.trim().split("\n").pop() ?? "git failed"}`)
   }
 
   /** Whether a path's folders are inside the repository, none of them a link (deleting through one would reach elsewhere). */
@@ -170,12 +211,13 @@ export class Snapshots {
     return true
   }
 
-  /** A file (or link, or folder) made since, gone again; the folders it leaves empty too. */
+  /** A file (or link, or folder) made since, gone again; the folders it leaves empty too. A repository is never removed. */
   private remove(top: string, path: string) {
     const full = join(top, path)
     if (!this.isInside(top, full)) return
     try {
       const stat = lstatSync(full)
+      if (stat.isDirectory() && !stat.isSymbolicLink() && existsSync(join(full, ".git"))) return
       // A link goes itself, never what it points at.
       rmSync(full, { recursive: stat.isDirectory() && !stat.isSymbolicLink(), force: true })
     } catch {

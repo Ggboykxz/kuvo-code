@@ -72,6 +72,8 @@ interface Live {
   models: Map<string, ModelRef>
   /** A turn an agent began on its own, to start as soon as nothing else runs. */
   adopting?: Input
+  /** Something was to start while its files were being kept or put back: it does once that's done. */
+  wakeLater?: boolean
 }
 
 /** What the bridge keeps of each agent's conversation in a session. */
@@ -574,6 +576,28 @@ export class Sessions {
       changed = true
     }
     if (changed) this.store.save(id, true)
+    // A turn cut short kept the files before it but not what it changed: read now, so Undo
+    // still works for it and the messages before it.
+    if (this.snapshots && Object.values(this.notes(record)).some((note) => note.before && !note.files && !note.failed)) void this.finishNotes(id)
+  }
+
+  private async finishNotes(id: string) {
+    const record = this.store.get(id)
+    if (!record || !this.snapshots) return
+    const open = Object.values(this.notes(record)).filter((note) => note.before && !note.files && !note.failed)
+    const directory = record.session.location.directory
+    this.busy.add(id)
+    try {
+      const now = await this.snapshots.take(directory)
+      if (!now) throw new Error("not kept")
+      for (const note of open) note.files = await this.snapshots.changed(directory, note.before!, now)
+    } catch {
+      for (const note of open) if (!note.files) note.failed = true
+    } finally {
+      this.busy.delete(id)
+      if (this.store.get(id)) this.store.save(id)
+      this.afterBusy(id)
+    }
   }
 
   // MARK: Sessions
@@ -786,7 +810,7 @@ export class Sessions {
     const files = new Set<string>()
     let kept = false
     for (const message of record.messages.slice(at)) {
-      const note = message.type === "user" ? notes[message.id] : undefined
+      const note = notes[message.id]
       if (!note) continue
       kept = true
       if (note.failed || !note.before || !note.files) throw new BadRequest("Kuvo Code couldn't keep what the files were around one of these messages, so Undo can't put them back.")
@@ -798,8 +822,14 @@ export class Sessions {
     let diffs: FileDiff[] = []
     if (first?.before && files.size && this.snapshots) {
       this.busy.add(id)
+      // What Redo would bring back from an undo that didn't happen isn't kept.
+      if (!record.session.revert) {
+        delete record.agent.revertNow
+        delete record.agent.revertFiles
+      }
+      let now: string | undefined
       try {
-        const now = await this.snapshots.take(directory)
+        now = await this.snapshots.take(directory)
         if (!now) throw new Error("Kuvo Code couldn't keep the files as they are now.")
         // As they were before any undo, and which: what Redo brings back (kept before a file is touched).
         record.agent.revertNow ??= now
@@ -807,15 +837,26 @@ export class Sessions {
         this.store.save(id)
         diffs = await this.snapshots.changes(directory, first.before, now, [...files])
         await this.snapshots.restore(directory, first.before, [...files])
-      } finally {
+      } catch (error) {
+        // Partway: the files go back to how they were just now, and nothing is staged.
+        if (now) await this.snapshots.restore(directory, now, [...files]).catch(() => {})
+        if (!record.session.revert) {
+          delete record.agent.revertNow
+          delete record.agent.revertFiles
+        }
+        this.store.save(id)
         this.busy.delete(id)
+        this.afterBusy(id)
+        throw error
       }
+      this.busy.delete(id)
     }
     const revert = { messageID, files: diffs }
     record.session.revert = revert
     this.store.save(id, true)
     emit("session.revert.staged", { sessionID: id, revert }, directory)
-    this.next(id, "succeeded")
+    // What you sent meanwhile goes now (and makes the undo final, as any message does).
+    this.afterBusy(id)
     return revert
   }
 
@@ -832,16 +873,28 @@ export class Sessions {
       try {
         // Kept until it has worked: a Redo that failed can be tried again.
         await this.snapshots.restore(directory, now, files)
-      } finally {
+      } catch (error) {
         this.busy.delete(id)
+        this.afterBusy(id)
+        throw error
       }
+      this.busy.delete(id)
     }
     delete record.session.revert
     delete record.agent.revertNow
     delete record.agent.revertFiles
     this.store.save(id, true)
     emit("session.revert.cleared", { sessionID: id }, directory)
-    this.next(id, "succeeded")
+    this.afterBusy(id)
+  }
+
+  /** Files kept or put back: what was to start meanwhile does (not what waited before). */
+  private afterBusy(id: string) {
+    const live = this.live.get(id)
+    if (!live || this.isRunning(id)) return
+    const later = live.wakeLater
+    live.wakeLater = false
+    if (later || live.adopting) this.wake(id)
   }
 
   /** An undo made final: what was taken back goes, and the agents start their conversations over, handed what's left. */
@@ -940,7 +993,9 @@ export class Sessions {
     // While a turn runs, it waits for it, unless the agent at work takes it partway (Codex does).
     const running = this.live.get(id)?.running
     const steers = this.isRunning(id) && input.delivery !== "queue" && Boolean(running?.thread.steer)
-    const delivery: Delivery = steers || (!this.isRunning(id) && input.delivery !== "queue") ? "steer" : "queue"
+    // Only files being kept or put back (no turn): it goes next, once that's done.
+    const onlyBusy = this.busy.has(id) && !this.live.get(id)?.turn
+    const delivery: Delivery = steers || ((!this.isRunning(id) || onlyBusy) && input.delivery !== "queue") ? "steer" : "queue"
     queue.push({ ...input, delivery })
     this.store.save(id, true)
     emit("session.inbox.enqueued", { sessionID: id, inboxID: input.id, item: { type: "user", payload: { text: input.text, files: input.files }, delivery } }, record.session.location.directory)
@@ -997,7 +1052,8 @@ export class Sessions {
     record.messages.push({ type: "user", id: input.id, time: { created: Date.now() }, text: input.text, files: attachments.length ? attachments : undefined })
     record.session.time.updated = Date.now()
     // Its own undo, while its turn is under way (what the turn changes from here on).
-    if (note && turn && live.turn === turn) {
+    // (One that couldn't be kept isn't noted: Undo from the message before covers it.)
+    if (note?.before && turn && live.turn === turn) {
       this.notes(record)[input.id] = note
       live.steeredNotes.push(note)
     }
@@ -1036,7 +1092,12 @@ export class Sessions {
 
   /** Starts the first message you steered, if nothing runs. */
   private wake(id: string) {
-    if (this.isRunning(id) || this.removing.has(id)) return
+    if (this.removing.has(id)) return
+    if (this.isRunning(id)) {
+      const live = this.live.get(id)
+      if (live && !live.turn && this.busy.has(id)) live.wakeLater = true
+      return
+    }
     const record = this.store.get(id)
     if (!record) return
     if (this.startAdopting(id)) return
@@ -1051,8 +1112,10 @@ export class Sessions {
   private next(id: string, outcome: Outcome) {
     if (this.removing.has(id) || !this.store.get(id)) return
     const live = this.state(id)
-    const resume = live.resume
+    // Asked to go while the last turn's files were being kept: as if you had resumed.
+    const resume = live.resume || live.wakeLater
     live.resume = false
+    live.wakeLater = false
     const record = this.store.get(id)
     if (!record || this.isRunning(id)) return
     // A turn its agent began on its own goes first, however the last one ended.
