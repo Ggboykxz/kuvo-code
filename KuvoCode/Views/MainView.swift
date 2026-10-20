@@ -36,8 +36,7 @@ struct MainView: View {
     @AppStorage("sessionsWidth") private var sessionsWidth = 280.0
     @AppStorage("changesWidth") private var changesWidth = 420.0
     @AppStorage(Notifier.badgeKey) private var showsBadge = true
-    /// The New Project or Edit Project sheet, while it's open.
-    /// New Project or Edit Project, in the main card.
+    /// New Project or Edit Project, in a popup while it's open.
     @State private var projectEditor: ProjectEditorRequest?
     /// Making or changing a bot, in the main card while it's open.
     @State private var botEditor: BotEditorRequest?
@@ -460,6 +459,25 @@ struct MainView: View {
         }
         // Another session beside: you work in the tab's until you click into it.
         .onChange(of: splitModel?.id) { lastHalf = .conversation }
+        // New Project and Edit Project: a popup over whatever's in the window.
+        .sheet(item: $projectEditor) { projectSheet($0) }
+    }
+
+    private func projectSheet(_ request: ProjectEditorRequest) -> some View {
+        ProjectEditor(project: request.project, folders: request.folders, focusesRun: request.focusesRun) { primary, settings in
+            var settings = settings
+            // A new project on a folder that's one already adds to what it has.
+            if request.project == nil, let existing = workspace.settings[workspace.folderPath(primary)] {
+                func given(_ text: String?) -> String? { text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? text : nil }
+                settings.name = given(settings.name) ?? existing.name
+                settings.folders = existing.folders + settings.folders.filter { !existing.folders.contains($0) }
+                settings.run = given(settings.run) ?? existing.run
+            }
+            let primary = workspace.saveProject(primary, settings: settings)
+            if request.project == nil { newSession(in: primary) }
+        } close: {
+            projectEditor = nil
+        }
     }
 
     var body: some View {
@@ -806,29 +824,6 @@ struct MainView: View {
                     }
                 }
                 .id(request.id)
-            } else if let request = projectEditor {
-                Card(title: request.project.map { "Edit \($0.name)" } ?? "New Project", isFocused: focus == .conversation) {
-                    Image(systemName: "folder")
-                } actions: {
-                    Button("Close", systemImage: "xmark") { withAnimation(.ui) { projectEditor = nil } }
-                        .help("Close")
-                } content: {
-                    ProjectEditor(project: request.project, folders: request.folders, focusesRun: request.focusesRun) { primary, settings in
-                        var settings = settings
-                        // A new project on a folder that's one already adds to what it has.
-                        if request.project == nil, let existing = workspace.settings[workspace.folderPath(primary)] {
-                            func given(_ text: String?) -> String? { text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? text : nil }
-                            settings.name = given(settings.name) ?? existing.name
-                            settings.folders = existing.folders + settings.folders.filter { !existing.folders.contains($0) }
-                            settings.run = given(settings.run) ?? existing.run
-                        }
-                        let primary = workspace.saveProject(primary, settings: settings)
-                        if request.project == nil { newSession(in: primary) }
-                    } close: {
-                        withAnimation(.ui) { projectEditor = nil }
-                    }
-                }
-                .id(request.id)
             } else if let request = botEditor {
                 Card(title: request.bot.map { "Edit \($0.name)" } ?? "New Bot", isFocused: focus == .conversation) {
                     if let bot = request.bot { BotAvatar(look: bot.look, size: 18, animates: false) } else { Image(systemName: "face.smiling") }
@@ -1040,16 +1035,9 @@ struct MainView: View {
         focus = .conversation
     }
 
-    /// Makes a project, or changes one, in the main card.
+    /// Makes a project, or changes one, in a popup over what's in the window.
     private func openProjectEditor(_ request: ProjectEditorRequest) {
-        withAnimation(.ui) {
-            panelExpanded = false
-            app.showsSettings = false
-            botEditor = nil
-            groupEditor = nil
-            projectEditor = request
-        }
-        focus = .conversation
+        projectEditor = request
     }
 
     /// Makes a group chat, or changes `group`, in the main card.

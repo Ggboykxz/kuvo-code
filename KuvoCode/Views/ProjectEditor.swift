@@ -3,7 +3,7 @@ import OpenCodeKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Creating a project, or changing one, in the window's main card: its name and its folders.
+/// Creating a project, or changing one, in a popup over the window: its name and its folders.
 /// Sessions run in the primary folder, and the agent can work in the others too. An existing
 /// project keeps its primary folder, since its sessions live there.
 struct ProjectEditor: View {
@@ -39,6 +39,8 @@ struct ProjectEditor: View {
     @State private var isCheckingFolder = false
     @State private var folderFailure: String?
     @FocusState private var isFolderFocused: Bool
+    /// How tall the form is: the popup grows with it, up to a point, then it scrolls.
+    @State private var formHeight: CGFloat = 320
 
     init(project: Workspace.Project?, folders: [String] = [], focusesRun: Bool = false, save: @escaping (String, Workspace.ProjectSettings) -> Void, close: @escaping () -> Void) {
         self.project = project
@@ -64,31 +66,43 @@ struct ProjectEditor: View {
                     }
                 }, cancel: { withAnimation(.ui) { showsAddMachine = false } })
             }
+            .frame(width: Self.width, height: 480)
             .transition(.opacity)
         } else {
             editor
         }
     }
 
+    static let width: CGFloat = 560
+
     private var editor: some View {
-        VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text(isNew ? "New Project" : "Edit Project")
+                    .font(.title2.weight(.bold))
+                Spacer(minLength: 12)
+                Button("Close", systemImage: "xmark", action: close)
+                    .buttonStyle(CardActionStyle())
+                    .help("Close")
+            }
+            .padding(.horizontal, 28)
+            .padding(.top, 24)
+            .padding(.bottom, 18)
             ScrollView {
                 form
-                    .frame(maxWidth: 600)
-                    .padding(.horizontal, Metrics.gutter + 8)
-                    .padding(.top, 24)
-                    .padding(.bottom, 8)
-                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 28)
+                    .padding(.bottom, 4)
+                    .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { formHeight = $0 }
             }
             .scrollBounceBehavior(.basedOnSize)
             .scrollEdgeEffectStyle(.soft, for: .bottom)
+            .frame(height: min(formHeight, 520))
             EditorFooter(primary: isNew ? "Create Project" : "Save", canDoPrimary: !folders.isEmpty, onPrimary: saveProject, onCancel: close, cancelsOnEscape: true)
-                .frame(maxWidth: 600)
-                .padding(.horizontal, Metrics.gutter + 8)
-                .padding(.top, 12)
-                .padding(.bottom, 20)
-                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 28)
+                .padding(.top, 20)
+                .padding(.bottom, 24)
         }
+        .frame(width: Self.width)
         .onAppear { if focusesRun { isRunFocused = true } else { isNameFocused = true } }
         .task(id: folders.first) { await loadSetup() }
         #if DEBUG
