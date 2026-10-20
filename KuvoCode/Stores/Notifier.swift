@@ -131,7 +131,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
             // word.
             let plain = run
                 .replacingOccurrences(of: #"(?<![0-9A-Fa-f])[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?![0-9A-Fa-f])"#, with: "u", options: .regularExpression)
-                .replacingOccurrences(of: #"(?:(?<![^/+-])(?<!(?i:secret|token|key|password)-)|(?<=(?i:commit|sha|sha1|sha256|sha512|rev|revision|hash|ref|head|onto|checksum|digest)[=:_-]))([0-9a-f]{40}|[0-9a-f]{64})(?![0-9A-Za-z])"#, with: "h", options: .regularExpression)
+                .replacingOccurrences(of: #"(?:(?<![^/+-])(?<!(?i:secret|token|key|password)-)|(?<=(?i:commit|sha|sha1|sha256|sha512|rev|revision|hash|ref|head|onto|checksum|digest|cache[_-]?key)[=:_-]))([0-9a-f]{40}|[0-9a-f]{64})(?![0-9A-Za-z])"#, with: "h", options: .regularExpression)
                 .replacingOccurrences(of: #"/var/folders/[^/]+/[^/]+"#, with: "/var/folders/t/t", options: .regularExpression)
             let wordy = plain.split(whereSeparator: { "/-_.".contains($0) }).allSatisfy { part in
                 if part.count < 12 { return true }
@@ -169,16 +169,16 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     /// webhook's), curl -u user:pass and mysql -pPASS.
     nonisolated static func maskedNamed(_ text: String) -> String {
         var text = text
-        let named = #"(?i)((?:api[_-]?key|secret(?:[_-]?access[_-]?key)?|password|passwd|authorization)["']?\s*[:=]\s*["']?(?:bearer\s+|basic\s+|token\s+(?:token=)?["']?)?+|bearer\s+|--[\w-]*(?:password|passwd|secret)[\w-]*[=\s]+)[^\s"'&;]{3,}"#
+        let named = #"(?i)((?:api[_-]?key|secret(?:[_-]?access[_-]?key)?|password|passwd|authorization)["']?\s*[:=]\s*["']?(?:bearer\s+|basic\s+|token\s+(?:token=)?["']?)?+|bearer\s+|--(?:[\w-]*-)?(?:password|passwd|secret)[=\s]+(?!-))[^\s"'&;]{3,}"#
         text = text.replacingOccurrences(of: named, with: "$1•••", options: .regularExpression)
         // --key, --private-key, --access-token…: the short ones take other things too, a field
         // (sort --key 2,3), a count.
-        let flag = #"(?i)(--[\w-]*(?:token|key)[=\s]+)(?![0-9][^\s"'&;]{0,7}(?:[\s"'&;]|$))[^\s"'&;]{3,}"#
+        let flag = #"(?i)(--(?!(?:sort|primary|foreign|partition|group|cache|order|index|range|lookup|hash)-key\b)(?:[\w-]*-)?(?:token|key)[=\s]+(?!-))(?![0-9][^\s"'&;]{0,7}(?:[\s"'&;]|$))[^\s"'&;]{3,}"#
         text = text.replacingOccurrences(of: flag, with: "$1•••", options: .regularExpression)
-        // A run of hex digits after a name for a secret key (ENCRYPTION_KEY="…", "signingKey": …),
-        // however it's quoted: as a commit's hash would look, but it's one. (Not any key: a cache
-        // key's hash is a name.)
-        let hexSecret = #"(?i)((?:(?:private|signing|encryption|master|secret|api|access|app|auth|client|deploy|license|session)[_-]?key|secret|token|password|passwd|pwd)["']?\s*[:=]\s*["']?)[0-9a-f]{32,}"#
+        // A run of hex digits after a key's or secret's name (ENCRYPTION_KEY="…", "webhookKey": …),
+        // however it's quoted: as a commit's hash would look, but it's one. (Not a cache key's:
+        // that hash is a name.)
+        let hexSecret = #"(?i)((?<!cache[_\s-])(?<!cache)(?:key|secret|token|password|passwd|pwd)["']?\s*[:=]\s*["']?)[0-9a-f]{32,}"#
         text = text.replacingOccurrences(of: hexSecret, with: "$1•••", options: .regularExpression)
         // After a token's name, a number is a count (max_tokens=4096), not one.
         let token = #"(?i)(token["']?\s*[:=]\s*["']?(?:bearer\s+|basic\s+)?+)(?![0-9]+(?:[\s"'&;,}]|$))[^\s"'&;]{3,}"#
