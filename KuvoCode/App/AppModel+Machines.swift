@@ -201,6 +201,13 @@ extension AppModel {
         // It takes this Mac's accounts and settings, so this Mac's engine comes first.
         for _ in 0..<240 where api == nil { try? await Task.sleep(for: .milliseconds(250)) }
         await engine.start(machineLaunch(), cache: AppInfo.supportDirectory.appending(path: "engine-linux"))
+        // Removed while it started: nothing of yours goes there (its removal waits in the queue).
+        guard machines.engine(engine.machine.id) === engine else {
+            if engine.isReady { await engine.stopEngine() }
+            return
+        }
+        // What waits for it (a bot deleted, an integration removed while it was away), now.
+        if engine.isReady { await machines.runWaiting(only: engine.machine.id) }
         // Its sessions, once it's up: tried again a few times, as they're what makes them live.
         for wait in [0, 2, 5, 10, 20] where engine.isReady {
             try? await Task.sleep(for: .seconds(wait))

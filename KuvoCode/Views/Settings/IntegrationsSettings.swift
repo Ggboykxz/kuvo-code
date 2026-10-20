@@ -283,6 +283,8 @@ struct IntegrationsSettings: View {
         let existing = config.value(at: path)
         guard let settings = existing ?? Integrations.settings(for: service) else { return }
         config.set(settings, at: path)
+        // Back again: what its removal left to do on a machine out of reach isn't done.
+        app.machines.dropWaiting(marked: Machines.integrationMark(service.id))
         if existing == nil { Analytics.shared.track("integration_added", ["integration": service.id]) }
         // One that needs a key waits for it (saving it renews them).
         // Machines' engines take their settings when they start (this Mac's reads the file).
@@ -314,7 +316,7 @@ struct IntegrationsSettings: View {
         for engine in app.machines.engines.values {
             let machine = engine.machine.id
             // One out of reach: the next time it answers.
-            guard engine.isReady else { app.machines.runLater("rm -rf \(kept)", on: machine); continue }
+            guard engine.isReady else { app.machines.runLater(Machines.integrationMark(service.id) + "rm -rf \(kept)", on: machine); continue }
             Task.detached { _ = RemoteShell.run("rm -rf \(kept)", on: machine) }
         }
         if !Integrations.macOnly.contains(service.id) { app.renewEngines(mac: false) }

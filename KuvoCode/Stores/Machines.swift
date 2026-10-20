@@ -146,6 +146,9 @@ final class MachineEngine {
 
     /// Whether another Mac started this engine (engines from before Macs were noted count as
     /// this one's).
+    /// The engine there is another Mac's, which uses it too: it keeps it, and the accounts in it.
+    var isAnotherMacsEngine: Bool { server.map { isAnotherMacs($0.engine) } ?? false }
+
     private func isAnotherMacs(_ engine: RemoteServer.Engine) -> Bool {
         engine.notes["mac"].map { $0 != Self.macID } ?? false
     }
@@ -403,19 +406,60 @@ final class Machines {
         set { UserDefaults.standard.set(newValue, forKey: waitingKey) }
     }
 
+    /// When each machine's first waiting clean-up was queued: one that hasn't answered in 30 days
+    /// is given up on.
+    private static let waitingSinceKey = "machines.waitingSince"
+
+    private static var waitingSince: [String: Date] {
+        get { UserDefaults.standard.dictionary(forKey: waitingSinceKey) as? [String: Date] ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: waitingSinceKey) }
+    }
+
+    /// The mark on an integration's clean-up, to drop if it's added again.
+    static func integrationMark(_ id: String) -> String { "# Kuvo Code: integration \(id)\n" }
+
     /// Runs `script` on the machine the next time it answers.
     func runLater(_ script: String, on machine: String) {
         Self.waiting[machine, default: []].append(script)
+        if Self.waitingSince[machine] == nil { Self.waitingSince[machine] = .now }
     }
 
-    private func runWaiting() async {
+    /// Drops the clean-ups marked `mark` (whatever they were for came back), on every machine.
+    func dropWaiting(marked mark: String) {
         for (machine, scripts) in Self.waiting {
-            var left = scripts
-            while let script = left.first {
-                guard (try? await Machine(destination: machine).connection.run(script)) != nil else { break }
-                left.removeFirst()
+            let kept = scripts.filter { !$0.hasPrefix(mark) }
+            if kept.count != scripts.count { setWaiting(kept, on: machine) }
+        }
+    }
+
+    private func setWaiting(_ scripts: [String], on machine: String) {
+        Self.waiting[machine] = scripts.isEmpty ? nil : scripts
+        if scripts.isEmpty { Self.waitingSince[machine] = nil }
+    }
+
+    @ObservationIgnored private var runningWaiting = false
+
+    /// Runs what waits, each machine's in order, for the machines that answer (`only` one, when
+    /// it just connected). The queue is read afresh for each, as it can change meanwhile, and only
+    /// the one that ran leaves it. A removal for a machine added again is dropped, never run.
+    func runWaiting(only: String? = nil) async {
+        guard !runningWaiting else { return }
+        runningWaiting = true
+        defer { runningWaiting = false }
+        for machine in Self.waiting.keys where only == nil || only == machine {
+            if let since = Self.waitingSince[machine], since.timeIntervalSinceNow < -30 * 86_400 {
+                setWaiting([], on: machine)
+                continue
             }
-            Self.waiting[machine] = left.isEmpty ? nil : left
+            while let script = Self.waiting[machine]?.first {
+                let listed = list.contains { $0.id == machine }
+                if !(script.hasPrefix(Self.removalMark) && listed) {
+                    guard (try? await Machine(destination: machine).connection.run(script)) != nil else { break }
+                }
+                var left = Self.waiting[machine] ?? []
+                if let index = left.firstIndex(of: script) { left.remove(at: index) }
+                setWaiting(left, on: machine)
+            }
         }
     }
 
@@ -425,6 +469,8 @@ final class Machines {
     static var removalScript: String {
         removalMark + """
         K="$HOME/\(RemoteEngineInstaller.root)"
+        # Another Mac's engine there now: left to it, with what's in it.
+        case "$(cat "$K/run/engine.json" 2>/dev/null)" in *'"mac":"\(MachineEngine.macID)"'*) ;; *'"mac":"'*) exit 0 ;; esac
         \(RemoteServer.stopCommand)
         sleep 1
         E=$(ls -d "$K"/engine/*/opencode 2>/dev/null | tail -n 1)
@@ -445,8 +491,7 @@ final class Machines {
         if let engine = engines[machine.id] { return engine }
         // Added again: not to be signed out of and stopped as one removed.
         if let waiting = Self.waiting[machine.id] {
-            let kept = waiting.filter { !$0.hasPrefix(Self.removalMark) }
-            Self.waiting[machine.id] = kept.isEmpty ? nil : kept
+            setWaiting(waiting.filter { !$0.hasPrefix(Self.removalMark) }, on: machine.id)
         }
         list.append(machine)
         Analytics.shared.track("machine_added")
@@ -460,11 +505,22 @@ final class Machines {
         // Its sessions stay there, for when it's added again; your accounts and integrations'
         // sign-ins don't.
         if let engine = engines[id] {
-            Task { [weak self] in
-                // Without its engine there (it couldn't be reached), the next time it answers.
-                guard engine.isReady else { self?.runLater(Self.removalScript, on: id); return }
-                await engine.forgetAccounts()
-                await engine.stopEngine()
+            if engine.isReady {
+                // Another Mac's engine: it goes on for that Mac, with what's in it (whose accounts
+                // are whose can't be told there).
+                if engine.isAnotherMacsEngine {
+                    engine.disconnect()
+                } else {
+                    Task {
+                        await engine.forgetAccounts()
+                        await engine.stopEngine()
+                    }
+                }
+            } else {
+                // A start under way ends here; what it got to, and an engine there from before,
+                // go the next time the machine answers.
+                engine.disconnect()
+                runLater(Self.removalScript, on: id)
             }
         }
         engines[id] = nil
