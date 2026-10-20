@@ -716,10 +716,16 @@ final class PhoneLink {
     }
 
     /// A response that doesn't end: `current()` now, as a line of JSON, and again each time it
-    /// changes, until the phone stops reading.
+    /// changes, until the phone stops reading. 404 when there's nothing to follow (no usage panel,
+    /// no such chat), as reading it once answers.
     nonisolated private static func following(_ current: @escaping @MainActor () -> Data?) -> AsyncThrowingStream<LinkResponsePart, Error> {
         AsyncThrowingStream { continuation in
             let task = Task { @MainActor in
+                guard current() != nil else {
+                    continuation.yield(.head(status: 404, headers: [:]))
+                    continuation.finish()
+                    return
+                }
                 continuation.yield(.head(status: 200, headers: ["content-type": "application/x-ndjson"]))
                 var last: Data?
                 while !Task.isCancelled {
