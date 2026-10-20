@@ -5,6 +5,7 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- In dark mode, the sidebar stays dark and easy to read when a bright window is behind Kuvo Code.
 - Settings › Skills no longer shows the folder each skill is in; hover over one to see it.
 - Settings › Accounts splits Coding Agents from Plans. A menu next to Coding Agents picks This Mac or one of your machines, to see that machine's agents and sign in to each there (each machine signs in on its own); plans and API keys stay as they are, since your machines get them too. A conversation on a machine that needs a sign-in says which machine, with Sign In on it. Signing in on a machine says it's installing the agent there first.
 - With Ask First, Grok and Antigravity ask before using Kuvo Code's tools that should ask, and before anything else they ask about that Kuvo Code can't tell the kind of.
