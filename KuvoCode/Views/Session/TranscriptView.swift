@@ -900,11 +900,12 @@ private struct AssistantStepView: View {
             ForEach(Array(message.content.enumerated()), id: \.offset) { index, block in
                 Group {
                     switch block {
-                    case .text(let text) where message.time.completed == nil && index == message.content.count - 1:
-                        // The last of a step under way: its words as they stream in.
-                        WritingText(row: message.id, part: index, text: text.text, folders: folders)
                     case .text(let text):
-                        MarkdownText(text: text.text, folders: folders)
+                        // The last of a step under way: its words as they stream in. The same view
+                        // once it's done, so finishing doesn't make the reply's views again (a
+                        // frame of a tenth of a second at the end of each reply).
+                        WritingText(row: message.id, part: index, text: text.text, folders: folders,
+                                    isWriting: message.time.completed == nil && index == message.content.count - 1)
                     case .reasoning(let reasoning):
                         ReasoningView(block: reasoning)
                     case .tool(let call):
@@ -938,11 +939,13 @@ struct WritingText: View {
     /// Its words when the conversation was last drawn.
     let text: String
     var folders: () -> [String] = { [] }
+    /// Still being written; once it's done, just its words.
+    var isWriting = true
     @Environment(WritingBlock.self) private var writing: WritingBlock?
 
     var body: some View {
         // Still being written: a code block it ends in is colored once it's done.
-        MarkdownText(text: writing?.text(row: row, part: part) ?? text, folders: folders, isWriting: true)
+        MarkdownText(text: isWriting ? writing?.text(row: row, part: part) ?? text : text, folders: folders, isWriting: isWriting)
     }
 }
 

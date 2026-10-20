@@ -455,10 +455,10 @@ struct SubagentSteps: View {
                     case .assistant(let assistant):
                         ForEach(Array(assistant.content.enumerated()), id: \.offset) { index, block in
                             switch block {
-                            case .text(let text) where assistant.time.completed == nil && index == assistant.content.count - 1:
-                                WritingText(row: assistant.id, part: index, text: text.text, folders: { [directory] })
                             case .text(let text):
-                                MarkdownText(text: text.text, folders: { [directory] })
+                                // One view, written or done (see `WritingText`).
+                                WritingText(row: assistant.id, part: index, text: text.text, folders: { [directory] },
+                                            isWriting: assistant.time.completed == nil && index == assistant.content.count - 1)
                             case .tool(let call):
                                 ToolCallView(call: call, directory: directory)
                             default:
