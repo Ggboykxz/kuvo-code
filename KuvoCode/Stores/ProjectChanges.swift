@@ -203,6 +203,8 @@ nonisolated enum Git {
             merged[i].lines += file.lines
             merged[i].isBinary = merged[i].isBinary || file.isBinary
             merged[i].isFolder = merged[i].isFolder || file.isFolder
+            merged[i].isTooBig = merged[i].isTooBig || file.isTooBig
+            if merged[i].isTooBig { merged[i].lines = [] }
             merged[i].oldObject = merged[i].oldObject ?? file.oldObject
             merged[i].newObject = merged[i].newObject ?? file.newObject
         }
@@ -362,6 +364,11 @@ nonisolated enum Git {
         }
         var lines = DiffParser.lines(of: text).map(String.init)
         if lines.last == "" { lines.removeLast() }
+        // Too big to read through, as a changed one is.
+        if lines.count > DiffParser.maxLines || lines.contains(where: { $0.utf8.count > DiffParser.maxLineLength }) {
+            file.isTooBig = true
+            return file
+        }
         file.lines = lines.enumerated().map { DiffLine(kind: .added, newNumber: $0 + 1, text: $1) }
         return file
     }
@@ -505,8 +512,8 @@ nonisolated enum DiffParser {
         return files
     }
 
-    private static let maxLines = 20_000
-    private static let maxLineLength = 20_000
+    static let maxLines = 20_000
+    static let maxLineLength = 20_000
 
     /// Text's lines, ending at "\n" or "\r\n" (which Swift counts as one character, so a split
     /// at "\n" alone left a file with Windows line endings in one piece).

@@ -33,9 +33,10 @@ nonisolated enum SessionEdits {
         return order.compactMap { name in
             guard let all = changes[name] else { return nil }
             if all.contains(where: \.isWrite) {
-                // Whole, from the last write on: as it is now on this Mac, or as written.
+                // Whole, from the last write on: as it is now on this Mac, or as written and
+                // edited after.
                 let now = RemoteFolder.isRemote(directory) ? nil : try? String(contentsOfFile: absolute(name, in: directory), encoding: .utf8)
-                guard let text = now ?? all.reversed().lazy.compactMap(\.written).first else { return nil }
+                guard let text = now ?? afterLastWrite(all) else { return nil }
                 let hunks = unifiedHunks(from: [], to: lines(of: text))
                 return FileDiff(file: name, patch: "--- a/\(name)\n+++ b/\(name)\n" + hunks.text, additions: hunks.additions, deletions: 0)
             }
@@ -60,9 +61,26 @@ nonisolated enum SessionEdits {
 
     private enum Combined { case changed(FileDiff), unchanged }
 
+    /// What the last write wrote, with the edits after it made to it (as written, when one of
+    /// them doesn't fit).
+    private static func afterLastWrite(_ all: [Change]) -> String? {
+        guard let last = all.lastIndex(where: \.isWrite), let written = all[last].written else { return nil }
+        var result = lines(of: written)
+        for edit in all[(last + 1)...].compactMap(\.edit) {
+            guard let applied = apply(edit.patch, to: result) else { return written }
+            result = applied
+        }
+        return result.map { $0 + "\n" }.joined()
+    }
+
+    /// `path` from `directory`, also when one of them goes through a link (/tmp is /private/tmp).
     private static func relative(_ path: String, in directory: String) -> String {
         let base = (RemoteFolder.parse(directory)?.path ?? directory).appending("/")
-        return path.hasPrefix(base) ? String(path.dropFirst(base.count)) : path
+        if path.hasPrefix(base) { return String(path.dropFirst(base.count)) }
+        guard path.hasPrefix("/"), !RemoteFolder.isRemote(directory) else { return path }
+        let resolved = URL(filePath: path).resolvingSymlinksInPath().path
+        let resolvedBase = URL(filePath: directory).resolvingSymlinksInPath().path.appending("/")
+        return resolved.hasPrefix(resolvedBase) ? String(resolved.dropFirst(resolvedBase.count)) : path
     }
 
     private static func absolute(_ name: String, in directory: String) -> String {
@@ -103,6 +121,19 @@ nonisolated enum SessionEdits {
             let fits = { (at: Int) in at >= 0 && at + hunk.new.count <= result.count && Array(result[at..<at + hunk.new.count]) == hunk.new }
             guard let at = ([start] + (1...50).flatMap { [start - $0, start + $0] }).first(where: fits) else { return nil }
             result.replaceSubrange(at..<at + hunk.new.count, with: hunk.old)
+        }
+        return result
+    }
+
+    /// `lines` with `patch` made to it, its hunks in order, each where it says or a little above
+    /// or below; nil when one doesn't fit.
+    static func apply(_ patch: String, to lines: [String]) -> [String]? {
+        var result = lines
+        for hunk in hunks(of: patch) {
+            let start = hunk.newCount == 0 ? hunk.newStart : hunk.newStart - 1
+            let fits = { (at: Int) in at >= 0 && at + hunk.old.count <= result.count && Array(result[at..<at + hunk.old.count]) == hunk.old }
+            guard let at = ([start] + (1...50).flatMap { [start - $0, start + $0] }).first(where: fits) else { return nil }
+            result.replaceSubrange(at..<at + hunk.old.count, with: hunk.new)
         }
         return result
     }
