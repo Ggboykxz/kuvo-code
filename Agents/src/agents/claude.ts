@@ -302,7 +302,14 @@ interface Active extends Lane {
   auto?: boolean
   /** You pressed Stop. */
   stopping?: boolean
+  /** Messages you sent partway, not taken yet: Claude Code's id for each, and the session's. */
+  steered: Map<string, string>
+  /** Claude Code ended its turn before taking one of those: it goes on with them, and this waits. */
+  goingOn?: ReturnType<typeof setTimeout>
 }
+
+/** How long a turn kept open for a message sent after its result waits for Claude Code to take it. */
+const goingOnLimit = 60_000
 
 class ClaudeThread implements Thread {
   /** Its subagents' sessions, by the call that started each: one at work after its turn goes on there. */
@@ -346,7 +353,7 @@ class ClaudeThread implements Thread {
     if (hooks.signal.aborted) return { outcome: "interrupted" }
     return new Promise<RunResult>((resolve) => {
       this.lastHooks = hooks
-      this.active = { turn, hooks, resolve, streamed: new Set(), blockTools: new Map(), calls: new Map(), subagents: new Map(), auto: input.auto }
+      this.active = { turn, hooks, resolve, streamed: new Set(), blockTools: new Map(), calls: new Map(), subagents: new Map(), auto: input.auto, steered: new Map() }
       this.input!.push(userMessage(input))
     })
   }
@@ -402,6 +409,10 @@ class ClaudeThread implements Thread {
     const active = this.active
     if (!active || this.query) return
     this.active = undefined
+    clearTimeout(active.goingOn)
+    const missed = active.steered.size ? [...active.steered.values()] : undefined
+    const resolve = active.resolve
+    active.resolve = (value) => resolve(missed ? { ...value, missed } : value)
     if (active.stopping || active.hooks.signal.aborted) active.resolve({ outcome: "interrupted" })
     else if (active.limit) active.resolve({ outcome: "failed", error: { type: "limit", message: active.problem ?? "You've reached a Claude usage limit." }, limit: active.limit })
     else active.resolve({ outcome: "failed", error: failure(active.problem ?? ended ?? "Claude Code stopped.") })
@@ -418,6 +429,13 @@ class ClaudeThread implements Thread {
     }
     const active = this.active
     if (!active) return
+    if (!message.parent_tool_use_id && Array.isArray(message.user_message_uuids)) for (const uuid of message.user_message_uuids) active.steered.delete(uuid)
+    // Waiting for it to take a message it was sent after its result: it's still there while it
+    // says something, and once it has taken them all, its next result ends the turn.
+    if (active.goingOn) {
+      clearTimeout(active.goingOn)
+      active.goingOn = active.steered.size ? setTimeout(() => this.wentQuiet(active), goingOnLimit) : undefined
+    }
     // A subagent's own work is told in its session, as the engine's subagents' is.
     const lane: Lane | undefined = message.parent_tool_use_id ? this.subagentLane(active, message.parent_tool_use_id) : active
     if (!lane) return
@@ -583,11 +601,29 @@ class ClaudeThread implements Thread {
   }
 
   private finish(active: Active, result: any) {
-    this.active = undefined
     this.addCost(active, result)
+    // Which messages it took this turn (Claude Code says, from 2.1.2xx on).
+    const says = Array.isArray(result.user_message_uuids)
+    for (const uuid of says ? result.user_message_uuids : []) active.steered.delete(uuid)
     const succeeded = result.subtype === "success" && !result.is_error
+    const goesOn = !active.stopping && !active.hooks.signal.aborted
+    // One you sent partway came after its last step: Claude Code takes it next, as a turn of its
+    // own, so this one goes on with it (and ends with its result).
+    if (succeeded && goesOn && says && active.steered.size) {
+      clearTimeout(active.goingOn)
+      active.goingOn = setTimeout(() => this.wentQuiet(active), goingOnLimit)
+      return
+    }
+    clearTimeout(active.goingOn)
+    this.active = undefined
+    // Ending with one it never took (you stopped it, it failed): it would run that unseen, so
+    // this Claude Code goes (the next message opens it again) and the message is handed over then.
+    const missed = says && active.steered.size ? [...active.steered.values()] : undefined
+    if (missed) this.close()
+    const resolve = active.resolve
+    active.resolve = (value) => resolve(missed ? { ...value, missed } : value)
     // A turn that went through went through, whatever was said of limits on the way.
-    if (succeeded && !active.stopping && !active.hooks.signal.aborted) {
+    if (succeeded && goesOn) {
       active.resolve({ outcome: "succeeded" })
       return
     }
@@ -692,11 +728,27 @@ class ClaudeThread implements Thread {
     return result
   }
 
-  /** Your message, into the turn under way: Claude Code takes it at its next step (priority "next"). */
-  async steer(input: { text: string; files: PromptFile[] }): Promise<boolean> {
-    if (!this.active || !this.input || this.active.stopping) return false
-    this.input.push({ ...userMessage(input), priority: "next" })
+  /**
+   * Your message, into the turn under way: Claude Code takes it at its next step (priority
+   * "next"), or after its last one, and the turn goes on until it has.
+   */
+  async steer(input: { id: string; text: string; files: PromptFile[] }): Promise<boolean> {
+    const active = this.active
+    if (!active || !this.input || active.stopping) return false
+    const message = { ...userMessage(input), priority: "next" }
+    active.steered.set(message.uuid, input.id)
+    this.input.push(message)
     return true
+  }
+
+  /** A turn kept open for a message it took late, with nothing more from Claude Code: it ends. */
+  private wentQuiet(active: Active) {
+    if (this.active !== active) return
+    clearTimeout(active.goingOn)
+    this.active = undefined
+    const missed = active.steered.size ? [...active.steered.values()] : undefined
+    if (missed) this.close()
+    active.resolve({ outcome: "succeeded", missed })
   }
 
   async interrupt() {
@@ -711,7 +763,8 @@ class ClaudeThread implements Thread {
     if (this.active === active && this.query === query) {
       this.close()
       this.active = undefined
-      active.resolve({ outcome: "interrupted" })
+      clearTimeout(active.goingOn)
+      active.resolve({ outcome: "interrupted", missed: active.steered.size ? [...active.steered.values()] : undefined })
     }
   }
 

@@ -289,6 +289,12 @@ describe("handovers", () => {
     )!
     expect(text.indexOf("I'll fix the parser.")).toBeLessThan(text.indexOf("src/parser.ts"))
   })
+
+  test("what you sent while another agent worked is still asked, not done", () => {
+    const text = handover([], [{ type: "user", id: "msg_3", time: { created: 3 }, text: "use tabs too" }], () => "Alpha, one")!
+    expect(text).toContain("[You, while it worked]\nuse tabs too")
+    expect(text).toContain("part of what they ask")
+  })
 })
 
 describe("a command line's commands", () => {

@@ -66,7 +66,7 @@ class FakeThread implements Thread {
   interrupted = 0
   closed = false
   onStop?: () => void
-  steer?: (input: { text: string; files: unknown[] }) => Promise<boolean>
+  steer?: (input: { id: string; text: string; files: unknown[] }) => Promise<boolean>
   /** Its next prepare says it started over. */
   fresh = false
   /** Its prepare never ends, or fails. */
@@ -718,6 +718,97 @@ describe("steering", () => {
     expect(a.runs).toHaveLength(1)
   })
 
+  test("a text file sent partway goes in the message, as for one that starts a turn", async () => {
+    a.script = works
+    const id = create()
+    send(id, "first")
+    await until(() => a.runs.length === 1)
+    const notes = join(root, "notes.md")
+    writeFileSync(notes, "remember the milk\n")
+    let steered: { text: string; files: unknown[] } | undefined
+    a.threads[0].steer = async (input) => {
+      steered = input
+      return true
+    }
+    sessions.prompt(id, { id: "msg_test_steerfile", text: "and this", files: [{ uri: `file://${notes}`, name: "notes.md" }], delivery: "steer" })
+    await until(() => steered !== undefined)
+    expect(steered!.text).toContain("remember the milk")
+    expect(steered!.files).toHaveLength(0)
+    a.threads[0].onStop!()
+    await settled(id, 1)
+  })
+
+  test("one cancelled while the agent takes it is sent all the same; one it turns away is cancelled", async () => {
+    a.script = works
+    const id = create()
+    send(id, "first")
+    await until(() => a.runs.length === 1)
+    const answers: ((taken: boolean) => void)[] = []
+    a.threads[0].steer = () => new Promise((resolve) => answers.push(resolve))
+    const kept = send(id, "too late to cancel")
+    await until(() => answers.length === 1)
+    sessions.cancelInput(id, kept)
+    expect(sessions.inbox(id)).toHaveLength(1)
+    answers[0](true)
+    await until(() => sessions.inbox(id).length === 0)
+    expect(sessions.messages(id).some((message) => message.id === kept)).toBe(true)
+    const dropped = send(id, "cancel me")
+    await until(() => answers.length === 2)
+    sessions.cancelInput(id, dropped)
+    answers[1](false)
+    await until(() => sessions.inbox(id).length === 0)
+    expect(sessions.messages(id).some((message) => message.id === dropped)).toBe(false)
+    expect(events.some((event) => event.type === "session.inbox.cancelled" && (event.data as any).inboxID === dropped)).toBe(true)
+    a.threads[0].onStop!()
+    await settled(id, 1)
+    expect(a.runs).toHaveLength(1)
+  })
+
+  test("one taken just as its turn ends goes once, not again as a turn of its own", async () => {
+    let finish!: () => void
+    a.script = (input, turn) => {
+      if (input.text !== "first") return replies(input, turn, {} as TurnHooks, {} as FakeThread)
+      turn.startStep()
+      return new Promise((resolve) => (finish = () => resolve({ outcome: "succeeded" })))
+    }
+    const id = create()
+    send(id, "first")
+    await until(() => a.runs.length === 1)
+    let answer!: (taken: boolean) => void
+    a.threads[0].steer = () => new Promise((resolve) => (answer = resolve))
+    const late = send(id, "one more thing")
+    await until(() => answer !== undefined)
+    finish()
+    await settled(id, 1)
+    answer(true)
+    await until(() => sessions.inbox(id).length === 0)
+    await Bun.sleep(50)
+    expect(sessions.messages(id).filter((message) => message.id === late)).toHaveLength(1)
+    expect(a.runs).toHaveLength(1)
+  })
+
+  test("a message the agent never got to is handed to it with the next one", async () => {
+    let steeredID = ""
+    a.script = async (input, turn) => {
+      if (a.runs.length > 1) return replies(input, turn, {} as TurnHooks, {} as FakeThread)
+      turn.startStep()
+      await until(() => steeredID !== "" && sessions.inbox(id).length === 0)
+      turn.text("did the first")
+      turn.endStep()
+      return { outcome: "interrupted", missed: [steeredID] }
+    }
+    const id = create()
+    send(id, "first")
+    await until(() => a.runs.length === 1)
+    a.threads[0].steer = async () => true
+    steeredID = send(id, "and the second")
+    await settled(id, 1)
+    send(id, "go on")
+    await settled(id, 2)
+    expect(a.runs[1].text).toContain("and the second")
+    expect(a.runs[1].text).toContain("go on")
+  })
+
   test("one it turns away waits for the turn to end", async () => {
     a.script = works
     const id = create()
@@ -773,6 +864,33 @@ describe("undo, carefully", () => {
     expect(readFileSync(join(folder, "notes.txt"), "utf8")).toBe("new of mine\n")
     await sessions.clearRevert(id)
     expect(readFileSync(join(folder, "a.txt"), "utf8")).toBe("agent\n")
+  })
+
+  test("undo from a message sent partway puts back what its turn changed after it", async () => {
+    const folder = repository({ "a.txt": "one\n", "b.txt": "two\n" })
+    withSnapshots()
+    let steered = false
+    a.script = async (input, turn, hooks, thread) => {
+      writeFileSync(join(folder, "a.txt"), "before it\n")
+      await until(() => steered)
+      await Bun.sleep(20)
+      writeFileSync(join(folder, "b.txt"), "after it\n")
+      return replies(input, turn, hooks, thread)
+    }
+    const id = sessions.create({ model: { providerID: "alpha", id: "one" }, location: { directory: folder } }).id
+    send(id, "change a")
+    await until(() => a.runs.length === 1)
+    a.threads[0].steer = async () => {
+      steered = true
+      return true
+    }
+    const partway = send(id, "now b")
+    await settled(id, 1)
+    await sessions.stageRevert(id, partway)
+    expect(readFileSync(join(folder, "a.txt"), "utf8")).toBe("before it\n")
+    expect(readFileSync(join(folder, "b.txt"), "utf8")).toBe("two\n")
+    await sessions.clearRevert(id)
+    expect(readFileSync(join(folder, "b.txt"), "utf8")).toBe("after it\n")
   })
 
   test("never deletes through a link the agent replaced", async () => {

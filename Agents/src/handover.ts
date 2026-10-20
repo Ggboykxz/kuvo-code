@@ -11,17 +11,18 @@ const budget = 16_000
 const outputLimit = 2_000
 
 interface Item {
-  role: "You" | "Agent" | "Command" | "File change" | "Stopped" | "You ran"
+  role: "You" | "You, while it worked" | "Agent" | "Command" | "File change" | "Stopped" | "You ran"
   text: string
 }
 
-function items(messages: Message[], names: (message: AssistantMessage) => string): Item[] {
+function items(messages: Message[], names: (message: AssistantMessage) => string, partway = false): Item[] {
   const out: Item[] = []
   for (const message of messages) {
     switch (message.type) {
       case "user": {
         const files = (message.files ?? []).map((file) => file.name ?? (file.source?.type === "uri" ? file.source.uri : "a file"))
-        out.push({ role: "You", text: message.text + (files.length ? `\n(Attached: ${files.join(", ")})` : "") })
+        // Sent while another agent worked on the message: still asked of whoever goes on.
+        out.push({ role: partway ? "You, while it worked" : "You", text: message.text + (files.length ? `\n(Attached: ${files.join(", ")})` : "") })
         break
       }
       case "assistant": {
@@ -88,7 +89,7 @@ function select(all: Item[]): { kept: Item[]; left: number } {
  */
 export function handover(before: Message[], partway: Message[], names: (message: AssistantMessage) => string): string | undefined {
   const history = items(before, names)
-  const started = items(partway, names)
+  const started = items(partway, names, true)
   if (!history.length && !started.length) return undefined
   const parts: string[] = []
   if (history.length) {
@@ -104,7 +105,11 @@ export function handover(before: Message[], partway: Message[], names: (message:
     parts.push(...kept.map(render))
   }
   if (started.length) {
-    parts.push("Another agent started on the message below before it stopped. What it did, which is already done:")
+    parts.push(
+      started.some((item) => item.role === "You, while it worked")
+        ? "Another agent started on the message below before it stopped. What it did is already done; what the user added while it worked is part of what they ask:"
+        : "Another agent started on the message below before it stopped. What it did, which is already done:",
+    )
     parts.push(...select(started).kept.map(render))
   }
   return parts.join("\n\n")

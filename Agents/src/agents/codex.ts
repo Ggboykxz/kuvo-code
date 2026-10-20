@@ -432,7 +432,7 @@ class CodexThread implements Thread {
   }
 
   /** Your message, into the turn under way (Codex's turn/steer). */
-  async steer(input: { text: string; files: PromptFile[] }): Promise<boolean> {
+  async steer(input: { id: string; text: string; files: PromptFile[] }): Promise<boolean> {
     const active = this.active
     if (!active?.turnID || !this.nativeID) return false
     const items: any[] = [{ type: "text", text: input.text, text_elements: [] }]

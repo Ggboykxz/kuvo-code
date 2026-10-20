@@ -137,6 +137,8 @@ export interface RunResult {
   outcome: Outcome
   /** A failed run's agent had your message all the same (it took it, then failed). */
   taken?: boolean
+  /** Messages you sent partway that it never got to: it's handed them with the next one. */
+  missed?: string[]
   error?: StructuredError
   /** It stopped at a usage or rate limit (Auto goes on with the next model in your list). */
   limit?: Limit
@@ -149,8 +151,11 @@ export interface Thread {
    */
   prepare?(input: RunInput, hooks: TurnHooks): Promise<{ fresh: boolean } | undefined>
   run(input: RunInput, turn: Turn, hooks: TurnHooks): Promise<RunResult>
-  /** Adds a message of yours to the turn under way, at its next step; false when it can't. */
-  steer?(input: { text: string; files: PromptFile[] }): Promise<boolean>
+  /**
+   * Adds a message of yours (`id`, the session's) to the turn under way, at its next step; false
+   * when it can't. One it takes, the turn answers before it ends (or names it in `missed`).
+   */
+  steer?(input: { id: string; text: string; files: PromptFile[] }): Promise<boolean>
   /** Stops the turn under way; `run` then ends with `interrupted`. */
   interrupt(): Promise<void>
   close(): void

@@ -64,6 +64,8 @@ interface Live {
   agentRules?: PermissionRule[]
   /** Which agent those are. */
   rulesFor?: string
+  /** What the files were before each message you sent partway through this turn, for Undo. */
+  steeredNotes: SnapshotNote[]
 }
 
 /** What the bridge keeps of each agent's conversation in a session. */
@@ -343,6 +345,9 @@ export class Sessions {
   private live = new Map<string, Live>()
   /** Sessions being deleted: nothing is taken or started for them any more. */
   private removing = new Set<string>()
+  /** Messages being handed to the turn under way: not started meanwhile, and cancelled only once it's known it didn't take them. */
+  private steering = new Set<string>()
+  private cancelSoon = new Set<string>()
 
   constructor(
     private readonly store: Store,
@@ -376,7 +381,7 @@ export class Sessions {
     let live = this.live.get(id)
     if (!live) {
       // Blocks aren't known until the engine says (none, without an engine to ask).
-      live = { threads: new Map(), permissions: new Map(), forms: new Map(), always: [], subagents: new Map(), blocks: this.policies ? undefined : [] }
+      live = { threads: new Map(), permissions: new Map(), forms: new Map(), always: [], subagents: new Map(), blocks: this.policies ? undefined : [], steeredNotes: [] }
       this.live.set(id, live)
     }
     return live
@@ -688,7 +693,7 @@ export class Sessions {
       for (const path of note.files) files.add(path)
     }
     const first = notes[messageID]
-    // A message taken partway through a turn (steered) has no files of its own.
+    // A message taken partway through a turn (steered) before they were kept has no files of its own.
     if (kept && !first?.before) throw new BadRequest("This message went into the turn before it: undo from that one.")
     let diffs: FileDiff[] = []
     if (first?.before && files.size && this.snapshots) {
@@ -843,27 +848,59 @@ export class Sessions {
     else if (delivery === "steer") this.wake(id)
   }
 
-  /** A message of yours into the turn under way, at its next step; it waits for the turn when it can't go. */
+  /**
+   * A message of yours into the turn under way, at its next step; it waits for the turn when it
+   * can't go. One the agent takes is sent, even if its turn ends just then or you cancel it
+   * meanwhile (it can't be taken back).
+   */
   private async steerNow(id: string, input: Input) {
-    const running = this.live.get(id)?.running
-    const taken = running?.thread.steer ? await running.thread.steer({ text: input.text, files: input.files.map(promptFile) }).catch(() => false) : false
+    const live = this.live.get(id)
+    const running = live?.running
+    const turn = live?.turn
+    const directory = this.store.get(id)?.session.location.directory
+    if (!live || !running?.thread.steer || !directory) return this.wake(id)
+    this.steering.add(input.id)
+    let taken = false
+    let note: SnapshotNote | undefined
+    try {
+      // The files as they are before it, for Undo.
+      if (this.snapshots) {
+        try {
+          const before = await this.snapshots.take(directory)
+          if (before) note = { before }
+        } catch {
+          note = { failed: true }
+        }
+      }
+      // A text file you attached goes in the message, as for the message that started the turn.
+      const attached = withTextFiles(input.text, input.files.map(promptFile))
+      if (live.running === running && !this.cancelSoon.has(input.id)) taken = await running.thread.steer({ id: input.id, text: attached.text, files: attached.files }).catch(() => false)
+    } finally {
+      this.steering.delete(input.id)
+    }
+    const cancelled = this.cancelSoon.delete(input.id)
     const record = this.store.get(id)
     if (!record) return
     const queue = this.queue(record)
     const at = queue.findIndex((waiting) => waiting.id === input.id)
-    // Cancelled, or sent, meanwhile.
     if (at < 0) return
-    if (!taken || !this.isRunning(id)) {
-      if (this.isRunning(id)) this.setDelivery(id, input.id, "queue")
-      else this.wake(id)
+    if (!taken) {
+      if (cancelled) this.cancelInput(id, input.id)
+      else if (this.isRunning(id)) this.setDelivery(id, input.id, "queue")
+      // Its turn ended meanwhile: it goes next, as after any turn (one you stopped holds it).
+      else if (record.session.outcome === "succeeded") this.wake(id)
       return
     }
     queue.splice(at, 1)
-    const directory = record.session.location.directory
     emit("session.inbox.delivered", { sessionID: id, inboxID: input.id }, directory)
     const attachments: Attachment[] = input.files.map((file) => ({ mime: mime(file.uri), name: file.name, source: { type: "uri", uri: file.uri } }))
     record.messages.push({ type: "user", id: input.id, time: { created: Date.now() }, text: input.text, files: attachments.length ? attachments : undefined })
     record.session.time.updated = Date.now()
+    // Its own undo, while its turn is under way (what the turn changes from here on).
+    if (note && turn && live.turn === turn) {
+      this.notes(record)[input.id] = note
+      live.steeredNotes.push(note)
+    }
     this.store.save(id, true)
   }
 
@@ -882,6 +919,11 @@ export class Sessions {
   }
 
   cancelInput(id: string, inputID: string) {
+    // Being handed to the agent: cancelled if it doesn't take it.
+    if (this.steering.has(inputID)) {
+      this.cancelSoon.add(inputID)
+      return
+    }
     const record = this.store.get(id)
     if (!record) return
     const queue = this.queue(record)
@@ -898,7 +940,7 @@ export class Sessions {
     const record = this.store.get(id)
     if (!record) return
     const queue = this.queue(record)
-    const index = queue.findIndex((input) => input.delivery === "steer")
+    const index = queue.findIndex((input) => input.delivery === "steer" && !this.steering.has(input.id))
     if (index < 0) return
     const [input] = queue.splice(index, 1)
     void this.start(id, input)
@@ -913,12 +955,14 @@ export class Sessions {
     const record = this.store.get(id)
     if (!record || this.isRunning(id)) return
     const queue = this.queue(record)
+    // One being handed to the turn that just ended is settled by that (sent, or back here).
+    const free = (input: Input) => !this.steering.has(input.id)
     let index = -1
     if (outcome === "succeeded") {
-      index = queue.findIndex((input) => input.delivery === "steer")
-      if (index < 0) index = queue.length ? 0 : -1
+      index = queue.findIndex((input) => input.delivery === "steer" && free(input))
+      if (index < 0) index = queue.findIndex(free)
     } else if (resume) {
-      index = queue.findIndex((input) => input.delivery === "steer")
+      index = queue.findIndex((input) => input.delivery === "steer" && free(input))
     }
     if (index < 0) return
     const [input] = queue.splice(index, 1)
@@ -1005,14 +1049,18 @@ export class Sessions {
     this.settleAsks(id, live)
     live.running = undefined
     if (live.turn === turn) live.turn = undefined
-    // What the turn changed (the session waits for it, as for its turn).
-    if (note?.before && this.snapshots) {
+    // What the turn changed (the session waits for it, as for its turn), from your message and
+    // from each you sent partway.
+    const steered = live.steeredNotes.splice(0)
+    const turnNotes = [note, ...steered].filter((kept): kept is SnapshotNote => Boolean(kept?.before))
+    if (turnNotes.length && this.snapshots) {
       this.busy.add(id)
       try {
         const after = await this.snapshots.take(directory)
-        if (after) note.files = await this.snapshots.changed(directory, note.before, after)
+        if (!after) throw new Error("not kept")
+        for (const kept of turnNotes) kept.files = await this.snapshots.changed(directory, kept.before!, after)
       } catch {
-        note.failed = true
+        for (const kept of turnNotes) if (!kept.files) kept.failed = true
       } finally {
         this.busy.delete(id)
       }
@@ -1081,6 +1129,9 @@ export class Sessions {
       // couldn't take your message (its model is gone, it was turned away), and doesn't count as
       // having it: the next time, it or another model of its agent gets it.
       if (result.outcome !== "failed" || result.taken || record.messages.slice(from).some(didWork)) slot.seen = record.messages[record.messages.length - 1]?.id
+      // A message you sent partway that it never got to: it's handed that, and what came after, next time.
+      const missedAt = result.missed?.length ? record.messages.findIndex((message) => result.missed!.includes(message.id)) : -1
+      if (missedAt >= 0) slot.seen = record.messages[missedAt - 1]?.id
       live.last = slot
       return result
     } catch (error) {
