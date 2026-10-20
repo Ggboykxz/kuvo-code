@@ -22,6 +22,15 @@ public enum Launcher {
         #!/bin/sh
         # Kuvo Code: runs an npm package's command for an MCP server.
         for v in $(env | sed 's/=.*//' | grep '^KUVO_KEY_'); do unset "$v" 2>/dev/null; done
+        # Nor the engine's password or settings, which it has no use for.
+        unset OPENCODE_PASSWORD OPENCODE_SERVER_PASSWORD OPENCODE_CONFIG_CONTENT 2>/dev/null
+        # An integration's server runs apart from the project (KUVO_NPX_APART): its .env, .npmrc
+        # and bunfig.toml aren't its.
+        if [ -n "$KUVO_NPX_APART" ]; then
+          apart="${XDG_CACHE_HOME:-${TMPDIR:-/tmp}}/kuvo-npx"
+          mkdir -p "$apart" 2>/dev/null && cd "$apart" 2>/dev/null
+          unset KUVO_NPX_APART
+        fi
         if [ -n "$XDG_CACHE_HOME" ] && command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
           spec=$1; shift
           case ${spec#?} in *@*) name=${spec%@*} ;; *) name=$spec ;; esac

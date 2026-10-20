@@ -27,6 +27,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - A wake-up time written with its time zone (06:00Z, 09:00+03:00) is that moment on your Mac too, not that hour in your own time zone.
 - On a machine, a bot's watches no longer hold up its wake-ups, a wake-up isn't sent twice when the engine starts over, wake-ups reach the engine on a machine set up with a web proxy, its times are right on a machine without time zone files, and a repeat like 08m is refused rather than stopping that wake-up for good.
 - Removing a machine that can't be reached signs out of your accounts there, stops its engine and deletes integrations' sign-ins the next time it can be, as do deleting one of its bots and removing an integration: before, its bots kept waking on your accounts.
+- Outlook's sign-in now carries between your Mac and machines (its key went missing, so a copied one couldn't be opened), and integrations' servers run apart from your project, without its .env, npm or Bun settings, and without the engine's password.
 - In Settings › Permissions, a rule you were typing in no longer takes the place of a choice you made above it before leaving the field.
 - **Wake Up Now** says so when a one-off wake-up couldn't be taken off the schedule (it would come at its time too), and on a machine it doesn't send a shortened note when the whole one can't be read.
 - Picking another model while the agent has just asked you something no longer stops it and loses the question.

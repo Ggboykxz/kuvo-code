@@ -290,8 +290,10 @@ public final class RemoteServer: @unchecked Sendable {
                 .filter { !$0.value.contains("\n") }
                 .map { "\($0.key)=\($0.value)\n" }
                 .joined() + "\n"
+            _ = clearedLeftovers
             let input = FileManager.default.temporaryDirectory.appending(path: "kuvo-engine-\(UUID().uuidString)")
-            // Only this user can read it, and it's gone as soon as ssh has sent it.
+            // Only this user can read it, and it's gone as soon as ssh has sent it (or, if the app
+            // stopped first, the next time it starts one).
             FileManager.default.createFile(atPath: input.path, contents: Data(lines.utf8), attributes: [.posixPermissions: 0o600])
             defer { try? FileManager.default.removeItem(at: input) }
             do {
@@ -531,3 +533,15 @@ final class ExitSignal: @unchecked Sendable {
 }
 
 #endif
+
+/// Launch files an earlier run of the app left when it stopped mid-launch: they hold every key
+/// and the engine's password. Cleared once, before the first launch.
+private let clearedLeftovers: Void = {
+    let folder = FileManager.default.temporaryDirectory
+    let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+    for name in names where name.hasPrefix("kuvo-engine-") {
+        let file = folder.appending(path: name)
+        let changed = (try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+        if changed.timeIntervalSinceNow < -600 { try? FileManager.default.removeItem(at: file) }
+    }
+}()

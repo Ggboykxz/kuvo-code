@@ -96,6 +96,11 @@ nonisolated enum Integrations {
                case .array(let old)? = server["command"], old.first?.string == Launcher.name,
                let oldPackage = old.dropFirst().first?.string, Self.packageName(oldPackage) == Self.packageName(package) {
                 server["command"] = .array(([Launcher.name] + command).map(JSONValue.string))
+                // Run apart from the project, as one added now is.
+                if case .object(var environment) = server["environment"] ?? .object([:]), environment[Self.apart] == nil {
+                    environment[Self.apart] = .string("1")
+                    server["environment"] = .object(environment)
+                }
             }
             let updated = Self.keyFiles(in: .object(server))
             if updated != original { config.set(updated, at: MCPSettings.path + [id]) }
@@ -169,6 +174,8 @@ nonisolated enum Integrations {
         case .package(let command, let keys, _, _, let fixed, _):
             var environment = fixed.mapValues(JSONValue.string)
             for key in keys { environment[key.name] = env(key.name) }
+            // Apart from the project it's used in (see `Launcher`).
+            environment[Self.apart] = .string("1")
             return .object([
                 "type": .string("local"),
                 "command": .array(([Launcher.name] + command).map(JSONValue.string)),
@@ -263,10 +270,14 @@ nonisolated enum Integrations {
         }
     }
 
+    /// What tells `kuvo-npx` to run an integration's server apart from the project.
+    static let apart = "KUVO_NPX_APART"
+
     /// Integrations whose servers keep their sign-in in files of their own, in their folder (see
-    /// `AppModel.syncSignInFiles`), by the files' names.
+    /// `AppModel.syncSignInFiles`), by the files' names, the sign-in itself first. They go together:
+    /// Outlook's is encrypted with the key in `.cache-key`, which each side makes for itself.
     static let signInFiles: [String: [String]] = [
-        "microsoft-365": ["token-cache.json", "selected-account.json"],
+        "microsoft-365": ["token-cache.json", "selected-account.json", ".cache-key"],
     ]
 
     // Checked 2026-10-16: the official servers with their makers' docs; the open-source ones on
