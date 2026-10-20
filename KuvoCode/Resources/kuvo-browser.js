@@ -46,12 +46,13 @@ const SCRIPT = process.argv[1];
 const IDLE = Number(process.env.KUVO_BROWSER_IDLE || 10 * 60) * 1000;
 // The languages to ask sites for: those of the Mac that started it ("en-GB,en,tr-TR,tr").
 const LANGUAGES = String(process.env.KUVO_LANG || "").split(",").filter((tag) => /^[A-Za-z0-9-]+$/.test(tag));
-// How long a page only agents used stays open once they've left it.
-const TAB_IDLE = Number(process.env.KUVO_BROWSER_TAB_IDLE || 12 * 3600) * 1000;
+// How long a page only agents used, and no Mac has shown, stays open once they've left it, as the
+// Mac's panel keeps an agent's tab you haven't looked at (Utilities.agentTabIdle).
+const TAB_IDLE = Number(process.env.KUVO_BROWSER_TAB_IDLE || 3600) * 1000;
 
 // Goes up with every change to the keeper (host mode): a newer one replaces one that's running
 // (its pages close, its sign-ins stay), and an older one never replaces a newer.
-const KEEPER = 29;
+const KEEPER = 30;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -535,15 +536,17 @@ async function host() {
   // The page each client's session is attached to, to know which pages a Mac shows.
   const attachedTo = new Map();
   const shown = (targetId) => [...attachedTo].some(([sessionId, target]) => target === targetId && owners.get(sessionId)?.viewer);
-  // Pages only agents used, left alone for half a day, close: bots that wake every hour don't
-  // pile up tabs. Never the page in use, one a Mac shows, or the last one.
+  // Pages a Mac has shown: yours, kept however long agents leave them alone.
+  const seen = new Set();
+  // Pages only agents used, left alone for an hour, close: sessions' subagents and bots that wake
+  // every hour don't pile up tabs. Never the page in use, one a Mac shows or showed, or the last one.
   setInterval(() => {
     for (const [targetId, claim] of claims) {
-      if (Date.now() - claim.at < TAB_IDLE || targetId === active || shown(targetId) || targets.size <= 1) continue;
+      if (Date.now() - claim.at < TAB_IDLE || targetId === active || shown(targetId) || seen.has(targetId) || targets.size <= 1) continue;
       claims.delete(targetId);
       internal("Target.closeTarget", { targetId });
     }
-  }, Math.min(30 * 60_000, TAB_IDLE / 2)).unref();
+  }, Math.min(5 * 60_000, TAB_IDLE / 2)).unref();
   // A build an update put in `current` takes over once nobody uses this one (no agent at work or
   // between its steps lately, no page taken over or shown, nothing asked): what's open is kept,
   // and opens again when the next client starts the browser from there. Otherwise one started
@@ -612,6 +615,7 @@ async function host() {
         owners.set(message.result.sessionId, request.client);
         request.client.sessions.add(message.result.sessionId);
         attachedTo.set(message.result.sessionId, request.targetId);
+        if (request.client.viewer) seen.add(request.targetId);
       }
       message.id = request.id;
       send(request.client, message);
@@ -656,6 +660,7 @@ async function host() {
       addresses.delete(message.params.targetId);
       own.delete(message.params.targetId);
       claims.delete(message.params.targetId);
+      seen.delete(message.params.targetId);
       orphaned.delete(message.params.targetId);
       holdMacs.delete(message.params.targetId);
       if (held.delete(message.params.targetId)) announceHeld();

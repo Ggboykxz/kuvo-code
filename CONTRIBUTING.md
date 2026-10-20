@@ -147,6 +147,7 @@ without clicking, for trying a change or taking screenshots:
 | `KUVO_DEMO_WAITING` | With `KUVO_DEMO_SESSION`: these messages shown waiting in its queue, separated by `\|`, without sending them; `<words>@<picture path>` attaches a picture |
 | `KUVO_DEMO_NEW_PROJECT` | Open the New Project sheet with these comma-separated folders |
 | `KUVO_DEMO_BACKGROUND` | Don't bring the window forward, so it doesn't take the keyboard while you work elsewhere |
+| `KUVO_DEMO_TAB_IDLE` | Seconds an agent's tab you haven't looked at stays once no agent works in it (an hour otherwise) |
 | `KUVO_DEMO_FILES` | Comma-separated paths to attach to that prompt |
 | `KUVO_DEMO_COMPOSER_FILES` | Comma-separated paths to show as attached in the composer |
 | `KUVO_DEMO_PROVIDERS` | Open Accounts (on a provider's sign-in if it names one) |

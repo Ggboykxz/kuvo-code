@@ -74,6 +74,7 @@ final class BrowserAgent {
         touched?.agentStepEnded(accepting: acceptsDialogs)
         touched = browser
         browser.agentStepBegan(caller, accepting: acceptsDialogs)
+        utilities.agentUsed(browser)
         if let owner { utilities.botWorks(owner, in: browser) }
     }
 

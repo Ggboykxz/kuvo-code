@@ -39,7 +39,10 @@ final class Utilities {
     static let unclaimed = "*"
 
     private(set) var tabs: [Tab] = []
-    var selection: UUID?
+    var selection: UUID? {
+        // A tab of an agent's shown to you is yours now: it stays (see `tidyAgentTabs`).
+        didSet { if let selection, unseen[selection] != nil, tabs.first(where: { $0.id == selection }).map(isVisible) == true { unseen[selection] = nil } }
+    }
 
     /// You picked a tab in the strip. A page you took over and moved on from goes back to its
     /// agent, which would otherwise wait for it (a tab chosen any other way, like a popup the page
@@ -171,6 +174,12 @@ final class Utilities {
 
     init() {
         startOver()
+        tidying = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(min(300, max(5, Self.agentTabIdle / 2))))
+                self?.tidyAgentTabs()
+            }
+        }
     }
 
     /// A conversation's panel as it opens: on Changes, or on a new tab if Settings › Panel says so.
@@ -276,6 +285,8 @@ final class Utilities {
         }
         browsers[tab.id] = browser
         if let address { browser.load(address) }
+        // An agent's, or a window its page opened: it tidies itself away unless you look at it.
+        if byAgent || opener.map({ unseen[$0] != nil }) == true { unseen[tab.id] = .now }
         // A window a conversation's page opens is that conversation's too, and the agent goes on
         // in it (a sign-in window); it comes forward if its page is in view, or its agent's
         // browsing would bring it.
@@ -620,6 +631,42 @@ final class Utilities {
         agentClaims[id] = (session, .now)
     }
 
+    // MARK: Tidying agents' tabs
+
+    /// The tabs an agent opened that you haven't looked at, and when an agent last worked in each.
+    @ObservationIgnored private var unseen: [UUID: Date] = [:]
+    @ObservationIgnored private var tidying: Task<Void, Never>?
+    /// How long one of those stays once no agent works in it: then it closes itself, so
+    /// conversations that browse out of sight (a session's subagents, a bot that wakes every hour)
+    /// don't pile up pages that stay loaded. A machine's browser does the same with its pages
+    /// (kuvo-browser.js, TAB_IDLE).
+    static var agentTabIdle: TimeInterval {
+        #if DEBUG
+        // KUVO_DEMO_TAB_IDLE=<seconds>: sooner, to try it.
+        if let seconds = ProcessInfo.processInfo.environment["KUVO_DEMO_TAB_IDLE"].flatMap(TimeInterval.init) { return seconds }
+        #endif
+        return 3600
+    }
+
+    /// An agent takes a step in `browser`'s tab.
+    func agentUsed(_ browser: BrowserSession) {
+        if let id = id(of: browser), unseen[id] != nil { unseen[id] = .now }
+    }
+
+    /// Closes the tabs agents opened that you never looked at and none has worked in for
+    /// `agentTabIdle`; not one that waits for you (a sign-in, a code), one you took over, or the
+    /// one in view.
+    func tidyAgentTabs(now: Date = .now) {
+        for (id, used) in unseen where now.timeIntervalSince(used) > Self.agentTabIdle {
+            guard let tab = tabs.first(where: { $0.id == id }), let browser = browsers[id] else {
+                unseen[id] = nil
+                continue
+            }
+            guard !browser.isHeld, !browser.waitsForYou, !(isVisible(tab) && selected?.id == id) else { continue }
+            close(id, refills: false)
+        }
+    }
+
     /// The tabs a conversation's agent has worked in.
     func agentTabs(of session: String) -> [BrowserSession] {
         agentClaims.filter { $0.value.session == session }.compactMap { browsers[$0.key] }
@@ -700,6 +747,7 @@ final class Utilities {
         terminals.removeValue(forKey: id)?.terminate()
         browsers.removeValue(forKey: id)?.close()
         agentClaims[id] = nil
+        unseen[id] = nil
         if wasSelected {
             let rest = visibleTabs
             selection = at.flatMap { rest.indices.contains($0) ? rest[$0].id : nil } ?? rest.last?.id
@@ -717,6 +765,7 @@ final class Utilities {
         terminals = [:]
         browsers = [:]
         agentClaims = [:]
+        unseen = [:]
         runs = [:]
         // Every conversation's panel starts over when it's next in view.
         tabs.removeAll { tab in
