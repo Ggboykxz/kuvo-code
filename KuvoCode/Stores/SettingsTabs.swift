@@ -73,7 +73,8 @@ final class SettingsTabs {
     private(set) var previewTab: String?
 
     private static let tabsKey = "settings.tabs"
-    /// Which of the pages' tabs is the preview tab, for the next time.
+    /// Which of the pages' tabs is the preview tab, for the next time: its page, and which of that
+    /// page's tabs it is ("general#1", the second General tab).
     private static let previewKey = "settings.previewTab"
 
     init() {
@@ -89,8 +90,11 @@ final class SettingsTabs {
         // The first time, the page Settings opens on is one you've only looked at.
         if pages.isEmpty {
             previewTab = selected.id
-        } else if let preview = defaults.string(forKey: Self.previewKey).flatMap(SettingsPage.init), let tab = tabs.first(where: { $0.page == preview }) {
-            previewTab = tab.id
+        } else if let saved = defaults.string(forKey: Self.previewKey) {
+            let parts = saved.split(separator: "#", maxSplits: 1)
+            let same = tabs.filter { $0.page == SettingsPage(rawValue: String(parts[0])) }
+            let index = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
+            if index < same.count { previewTab = same[index].id }
         }
     }
 
@@ -213,6 +217,9 @@ final class SettingsTabs {
         let defaults = UserDefaults.standard
         defaults.set(tabs.compactMap(\.page?.rawValue).joined(separator: ","), forKey: Self.tabsKey)
         defaults.set(page.rawValue, forKey: SettingsPage.storageKey)
-        defaults.set(tabs.first { $0.id == previewTab }?.page?.rawValue, forKey: Self.previewKey)
+        let preview = tabs.first { $0.id == previewTab }?.page.map { page in
+            "\(page.rawValue)#\(tabs.prefix { $0.id != previewTab }.count { $0.page == page })"
+        }
+        defaults.set(preview, forKey: Self.previewKey)
     }
 }

@@ -72,20 +72,31 @@ enum AppLocation {
 
     /// Into Applications, in place of a copy that's there already (to the Trash, quit first if
     /// it's open), and opened from there without macOS asking again whether to open a download.
+    /// The new copy is made beside it first: if that fails (a full disk), the one there stays.
     private static func move(_ source: URL, to destination: URL) throws {
         let files = FileManager.default
-        if files.fileExists(atPath: destination.path) {
-            guard Bundle(url: destination)?.bundleIdentifier == Bundle.main.bundleIdentifier else {
-                throw MoveError("Your Applications folder has another app named \(destination.lastPathComponent).")
-            }
-            try quitCopy(at: destination)
-            try files.trashItem(at: destination, resultingItemURL: nil)
+        let replaces = files.fileExists(atPath: destination.path)
+        if replaces, Bundle(url: destination)?.bundleIdentifier != Bundle.main.bundleIdentifier {
+            throw MoveError("Your Applications folder has another app named \(destination.lastPathComponent).")
         }
         // A read-only disk image keeps its copy; a download's copy moves.
-        if isReadOnly(source) {
-            try files.copyItem(at: source, to: destination)
+        let readOnly = isReadOnly(source)
+        let staged = destination.deletingLastPathComponent().appending(path: ".\(destination.lastPathComponent).new-\(UUID().uuidString.prefix(8))")
+        if readOnly {
+            try files.copyItem(at: source, to: staged)
         } else {
-            try files.moveItem(at: source, to: destination)
+            try files.moveItem(at: source, to: staged)
+        }
+        do {
+            if replaces {
+                try quitCopy(at: destination)
+                try files.trashItem(at: destination, resultingItemURL: nil)
+            }
+            try files.moveItem(at: staged, to: destination)
+        } catch {
+            // As it was: the download back where it was, the copy from the disk image gone.
+            if readOnly { try? files.removeItem(at: staged) } else { try? files.moveItem(at: staged, to: source) }
+            throw error
         }
         clearDownloadMark(destination)
     }
