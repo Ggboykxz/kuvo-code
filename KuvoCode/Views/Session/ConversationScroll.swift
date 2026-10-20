@@ -253,6 +253,24 @@ struct ConversationScroll<Rows: View>: View {
             case .row(let id):
                 go(to: id, anchor: .center, proxy) {}
             case .place(let id, let fraction):
+                // Rows laid out by a stack of their own: straight to the place in the middle, in
+                // one move (moved again only if measuring the rows on the way shifted it), so
+                // going through Find's places doesn't jump about.
+                if let stack = anchor.stack {
+                    let half = spot.geometry.height / 2
+                    let target = { () -> CGFloat? in
+                        guard let frame = stack.frameInDocument(of: id) else { return nil }
+                        return max(0, frame.minY + frame.height * fraction - half)
+                    }
+                    guard let first = target() else { return }
+                    anchor.scroll(to: first)
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(60))
+                        guard scroller.request == .place(id, fraction), let settled = target(), abs(settled - first) > 1 else { return }
+                        anchor.scroll(to: settled)
+                    }
+                    return
+                }
                 // Lined up so the place is as far down the view as it is down its row (in view,
                 // however tall the row), then moved to the middle.
                 go(to: id, anchor: UnitPoint(x: 0.5, y: fraction), proxy) {
