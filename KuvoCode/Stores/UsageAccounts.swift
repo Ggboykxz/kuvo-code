@@ -6,13 +6,20 @@ import os
 private let log = Logger(subsystem: "run.kuvo.code", category: "usage")
 
 /// Connects the usage panel in the menu bar (UsageKit, our fork of OpenUsage) to this app: accounts
-/// connected here (ChatGPT, SuperGrok, Copilot, OpenRouter, Z.ai, OpenCode Go) count there, and so
-/// do the engine's own agent runs, which UsageKit reads from the engine's database like any
-/// OpenCode install.
+/// connected here (ChatGPT, SuperGrok, Copilot, OpenRouter, Z.ai, OpenCode Go, and the coding
+/// agents you're signed in to) count there, and so do the engine's own agent runs, which UsageKit
+/// reads from the engine's database like any OpenCode install.
 @Observable
 final class UsageAccounts {
     var api: OpenCodeAPI?
     private var pending: Task<Void, Never>?
+    /// The panel's providers for the engine's accounts, once they've been read.
+    @ObservationIgnored private var engineProviders: Set<String>?
+    /// The panel's providers for the coding agents you're signed in to (Claude Code's is
+    /// `claude`), as the bridge last listed them. Kept between launches: while the bridge starts
+    /// they'd drop out of the panel, and come back turned on even if you'd hidden them.
+    @ObservationIgnored private var agentProviders = Set(UserDefaults.standard.stringArray(forKey: UsageAccounts.agentsKey) ?? [])
+    private static let agentsKey = "usage.agentProviders"
 
     /// Puts the usage item in the menu bar. `engineData` is the engine's opencode data folder.
     func start(engineData: URL, openApp: @escaping @MainActor () -> Void) {
@@ -35,11 +42,52 @@ final class UsageAccounts {
                                       signedIn: Self.isSignIn(credential),
                                       accountID: credential.value.metadata?["accountID"]?.string)
             })
-            HostAccounts.setConnectedProviders(Set(credentials.filter(\.active).compactMap {
+            engineProviders = Set(credentials.filter(\.active).compactMap {
                 Self.usageProvider(for: $0.integrationID, signedIn: Self.isSignIn($0))
-            }))
+            })
+            publish()
         } catch {
             log.error("credentials: \(String(describing: error), privacy: .public)")
+        }
+    }
+
+    /// Follows the coding agents' accounts in `catalog`: one signed in counts in the panel, which
+    /// reads the agent's own sign-in on this Mac (Claude Code's, the Codex CLI's) as it does for
+    /// anyone using it.
+    func follow(_ catalog: Catalog) {
+        let accounts = withObservationTracking {
+            catalog.codingAgents
+        } onChange: { [weak self, weak catalog] in
+            Task { @MainActor in
+                guard let self, let catalog else { return }
+                self.follow(catalog)
+            }
+        }
+        // None listed: the bridge isn't up (starting, or stopped), not signed out of every agent.
+        guard !accounts.isEmpty else { return }
+        let providers = Set(accounts.filter(\.isConnected).compactMap { Self.usageProvider(forAgent: $0.id) })
+        guard providers != agentProviders else { return }
+        agentProviders = providers
+        UserDefaults.standard.set(providers.sorted(), forKey: Self.agentsKey)
+        publish()
+    }
+
+    /// Tells the panel which providers it follows, once the engine's accounts are in: before, it
+    /// would drop theirs and turn them back on after.
+    private func publish() {
+        guard let engineProviders else { return }
+        HostAccounts.setConnectedProviders(engineProviders.union(agentProviders))
+    }
+
+    /// The usage panel's provider for a coding agent's account (any of yours with it).
+    static func usageProvider(forAgent providerID: String) -> String? {
+        switch OutsideAgents.base(providerID) {
+        case "claude-code": "claude"
+        case "codex-cli": "codex"
+        case "grok-cli": "grok"
+        case "cursor": "cursor"
+        case "antigravity": "antigravity"
+        default: nil
         }
     }
 

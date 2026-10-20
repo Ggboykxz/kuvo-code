@@ -329,6 +329,7 @@ final class AppModel {
     private func startAgents(engine binary: URL) {
         workspace.agents = agents
         catalog.outsideAgents = agents
+        usage.follow(catalog)
         agents.onEvent = { [weak self] event in
             self?.catalog.handle(event)
             self?.workspace.handleAgents(event)
