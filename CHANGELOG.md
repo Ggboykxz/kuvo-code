@@ -5,6 +5,13 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- The usage item in the menu bar shows the plans of the coding agents you're signed in to (Claude Code, Codex, Grok, Cursor, Antigravity), instead of asking you to connect an account.
+- A long message in the composer, like a big paste, scrolls with the trackpad or mouse wheel.
+- Changes shows a huge or minified new file as too big to show instead of slowing the panel down, and This Session lists every edit an agent made on a machine after writing a file.
+- A subagent's messages to other agents, and sessions it starts, go as its conversation's, with its approval: Ask First holds for them too. Waiting for an agent's answer stops when you stop the session, and the answer is what it said to the message.
+- A bot's open tab stays open when its conversation moves to a coding agent, and models from your coding agents no longer show as unavailable for a moment after launch.
+- Dragging a selection past the top or bottom of a conversation selects as it scrolls, instead of jumping to the first or last message.
+- In group chats, a bot named in another bot's reply keeps its color.
 - Sessions and chats can wake themselves up, as bots do: ask the agent to check back in 20 minutes or to tell you when a build finishes, and it comes back in the same conversation, even while you're away (on a machine, with your Mac off). A bar over the composer shows when, with Now and Cancel.
 - Removing an integration also takes back the keys bots had of their own for it.
 - Notifications keep their buttons for commit hashes in image tags, release names and checksums, and hide keys written as ENV['…'] =, := or =>, and names like SECRET_KEY_BASE.
