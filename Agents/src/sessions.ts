@@ -52,6 +52,8 @@ interface Live {
   last?: Slot
   /** Its subagents at work, each a session of its own: their turns, by session. */
   subagents: Map<string, Turn>
+  /** Settings › Permissions' Blocks as the turn began: what nothing allows. */
+  blocks: PermissionRule[]
 }
 
 /** What the bridge keeps of each agent's conversation in a session. */
@@ -74,6 +76,15 @@ export const timing = { stopGrace: 8_000, idleClose: 15 * 60_000 }
 /** In plan mode, what changes files: refused, whatever your rules say. */
 const changes = new Set(["edit", "write", "patch"])
 
+/** Reading a .env file (not an example of one), which the engine asks first about. */
+function readsSecrets(ask: PermissionAsk): boolean {
+  if (ask.action !== "read") return false
+  return ask.resources.some((resource) => {
+    const name = resource.split("/").pop() ?? ""
+    return /^\.env(\..+)?$/.test(name) && !/\.example$/.test(name)
+  })
+}
+
 /** A step of the agent's that did something: wrote to you, or used a tool. */
 function didWork(message: Message): boolean {
   return message.type === "assistant" && message.content.some((content) => content.type === "tool" || (content.type === "text" && content.text.trim() !== ""))
@@ -90,6 +101,8 @@ export class Sessions {
     readonly auto: Auto,
     /** Runs a model of the engine's own providers in a session here (Auto's, or one you picked). */
     private readonly engine?: (providerID: string) => Agent | undefined,
+    /** Settings › Permissions' Blocks for a folder, from the engine. */
+    private readonly policies?: (directory: string) => Promise<PermissionRule[]>,
   ) {
     // Turns a quit or crash cut short: ended, as Stop ends one.
     for (const session of store.all()) this.repair(session.id)
@@ -109,7 +122,7 @@ export class Sessions {
   private state(id: string): Live {
     let live = this.live.get(id)
     if (!live) {
-      live = { threads: new Map(), permissions: new Map(), forms: new Map(), always: [], subagents: new Map() }
+      live = { threads: new Map(), permissions: new Map(), forms: new Map(), always: [], subagents: new Map(), blocks: [] }
       this.live.set(id, live)
     }
     return live
@@ -469,6 +482,8 @@ export class Sessions {
     else record.messages.push({ type: "user", id: input.id, time: { created: Date.now() }, text: input.text, files: attachments.length ? attachments : undefined })
     session.time.updated = Date.now()
     this.store.save(id, true)
+    // Blocks as they are now (once the message is in: one sent again meanwhile is known).
+    live.blocks = (await this.policies?.(directory).catch(() => undefined)) ?? live.blocks
 
     let result: RunResult
     try {
@@ -712,8 +727,9 @@ export class Sessions {
       saveState: () => this.store.save(id, true),
       instructions: () => Object.values((record.agent.kuvoInstructions as Record<string, string> | undefined) ?? {}).join("\n\n"),
       // Nothing to ask, and nothing refused: an agent may run its tools on its own. With a
-      // rule that refuses something, or in plan mode, it asks here, and the rules answer.
-      approvesAll: () => !plan && !(record.session.permissions ?? []).some((rule) => rule.effect === "ask" || rule.effect === "deny"),
+      // rule or a block that refuses something, or in plan mode, it asks here, and they answer.
+      approvesAll: () =>
+        !plan && !(record.session.permissions ?? []).some((rule) => rule.effect === "ask" || rule.effect === "deny") && !live.blocks.some((rule) => rule.effect === "deny"),
       permission: (ask) => this.askPermission(id, live, turn, ask, plan),
       question: (ask) => this.askQuestion(id, live, turn, ask),
       subagent: (toolCallID, task) => this.startSubagent(id, live, turn, toolCallID, task),
@@ -773,9 +789,12 @@ export class Sessions {
 
   private askPermission(id: string, live: Live, turn: Turn, ask: PermissionAsk, plan: boolean): Promise<Decision> {
     const session = this.record(id).session
+    // Blocks win over everything, approvals included.
+    if (ruled(live.blocks, ask.action, ask.resources) === "deny") return Promise.resolve("reject")
     if (plan && changes.has(ask.action)) return Promise.resolve("reject")
-    // The engine's asks were weighed by it already: without a rule of yours, they're yours to answer.
-    const effect = ask.weighed ? ruled(session.permissions, ask.action, ask.resources) : evaluate(session.permissions, ask.action, ask.resources)
+    // The engine's asks were weighed by it already: without a rule of yours, they're yours to
+    // answer. So is reading a .env file, as the engine asks first about it.
+    const effect = ask.weighed || readsSecrets(ask) ? ruled(session.permissions, ask.action, ask.resources) : evaluate(session.permissions, ask.action, ask.resources)
     if (effect === "deny") return Promise.resolve("reject")
     const allowedBefore = live.always.some((rule) => rule.action === ask.action && ask.resources.every((resource) => rule.patterns.some((pattern) => matches(pattern, resource))))
     if (effect === "allow" || allowedBefore) return Promise.resolve("once")

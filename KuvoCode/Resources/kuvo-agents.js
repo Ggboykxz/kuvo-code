@@ -333,6 +333,30 @@ class EngineLink {
     }
     return this.names.get(providerID2);
   }
+  blocks = new Map;
+  async policies(directory) {
+    const kept = this.blocks.get(directory);
+    if (!this.url || kept && Date.now() - kept.at < 30000)
+      return kept?.rules ?? [];
+    try {
+      const answer = await this.request("GET", "/api/config", undefined, 1e4, directory);
+      const sources = Array.isArray(answer) ? answer : Array.isArray(answer?.data) ? answer.data : [{ info: answer?.data ?? answer }];
+      const policies = sources.flatMap((source) => Array.isArray(source?.info?.policies) ? source.info.policies : []);
+      const rules = [];
+      for (const policy of policies) {
+        if (policy?.action !== "tool.use" || typeof policy.resource !== "string")
+          continue;
+        if (policy.effect !== "deny" && policy.effect !== "allow")
+          continue;
+        const at = policy.resource.indexOf(":");
+        rules.push({ action: at < 0 ? policy.resource : policy.resource.slice(0, at), resource: at < 0 ? "*" : policy.resource.slice(at + 1) || "*", effect: policy.effect });
+      }
+      this.blocks.set(directory, { at: Date.now(), rules });
+      return rules;
+    } catch {
+      return kept?.rules ?? [];
+    }
+  }
   async offered(providerID2) {
     if (!this.url)
       return;
@@ -5081,6 +5105,14 @@ var legacyKeys = ["claudeSession", "claudeStarted", "codexThread", "acpSession",
 var carryOn = "Carry on with my last message from where you left off: you're on another model now.";
 var timing = { stopGrace: 8000, idleClose: 15 * 60000 };
 var changes = new Set(["edit", "write", "patch"]);
+function readsSecrets(ask) {
+  if (ask.action !== "read")
+    return false;
+  return ask.resources.some((resource) => {
+    const name = resource.split("/").pop() ?? "";
+    return /^\.env(\..+)?$/.test(name) && !/\.example$/.test(name);
+  });
+}
 function didWork(message) {
   return message.type === "assistant" && message.content.some((content) => content.type === "tool" || content.type === "text" && content.text.trim() !== "");
 }
@@ -5090,13 +5122,15 @@ class Sessions {
   roster;
   auto;
   engine;
+  policies;
   live = new Map;
   removing = new Set;
-  constructor(store, roster, auto, engine) {
+  constructor(store, roster, auto, engine, policies) {
     this.store = store;
     this.roster = roster;
     this.auto = auto;
     this.engine = engine;
+    this.policies = policies;
     for (const session of store.all())
       this.repair(session.id);
   }
@@ -5113,7 +5147,7 @@ class Sessions {
   state(id) {
     let live = this.live.get(id);
     if (!live) {
-      live = { threads: new Map, permissions: new Map, forms: new Map, always: [], subagents: new Map };
+      live = { threads: new Map, permissions: new Map, forms: new Map, always: [], subagents: new Map, blocks: [] };
       this.live.set(id, live);
     }
     return live;
@@ -5457,6 +5491,9 @@ class Sessions {
       record.messages.push({ type: "user", id: input.id, time: { created: Date.now() }, text: input.text, files: attachments.length ? attachments : undefined });
     session.time.updated = Date.now();
     this.store.save(id, true);
+    live.blocks = await this.policies?.(directory).catch(() => {
+      return;
+    }) ?? live.blocks;
     let result;
     try {
       const run2 = { text: input.text, files: input.files.map(promptFile), model: model2, plan: session.agent === "plan" };
@@ -5681,7 +5718,7 @@ class Sessions {
       instructions: () => Object.values(record.agent.kuvoInstructions ?? {}).join(`
 
 `),
-      approvesAll: () => !plan && !(record.session.permissions ?? []).some((rule) => rule.effect === "ask" || rule.effect === "deny"),
+      approvesAll: () => !plan && !(record.session.permissions ?? []).some((rule) => rule.effect === "ask" || rule.effect === "deny") && !live.blocks.some((rule) => rule.effect === "deny"),
       permission: (ask) => this.askPermission(id, live, turn, ask, plan),
       question: (ask) => this.askQuestion(id, live, turn, ask),
       subagent: (toolCallID, task) => this.startSubagent(id, live, turn, toolCallID, task)
@@ -5738,9 +5775,11 @@ class Sessions {
   }
   askPermission(id, live, turn, ask, plan) {
     const session = this.record(id).session;
+    if (ruled(live.blocks, ask.action, ask.resources) === "deny")
+      return Promise.resolve("reject");
     if (plan && changes.has(ask.action))
       return Promise.resolve("reject");
-    const effect = ask.weighed ? ruled(session.permissions, ask.action, ask.resources) : evaluate(session.permissions, ask.action, ask.resources);
+    const effect = ask.weighed || readsSecrets(ask) ? ruled(session.permissions, ask.action, ask.resources) : evaluate(session.permissions, ask.action, ask.resources);
     if (effect === "deny")
       return Promise.resolve("reject");
     const allowedBefore = live.always.some((rule) => rule.action === ask.action && ask.resources.every((resource) => rule.patterns.some((pattern) => matches(pattern, resource))));
@@ -6369,7 +6408,7 @@ function engineAgent(providerID2) {
     engineAgents.set(providerID2, agent = new EngineAgent(link, providerID2));
   return agent;
 }
-var sessions = new Sessions(store, roster, auto, engineAgent);
+var sessions = new Sessions(store, roster, auto, engineAgent, (directory) => link.policies(directory));
 var server = Bun.serve({
   hostname: "127.0.0.1",
   port: 0,

@@ -404,6 +404,48 @@ describe("asks and conversations", () => {
     expect(decided).toBe("reject")
   })
 
+  test("Settings' Blocks refuse what they block, even with Approve All, and keep the agent asking", async () => {
+    const agents = new Map([a, b].map((agent) => [agent.providerID, agent]))
+    sessions = new Sessions(store, { find: (provider: string | undefined) => (provider ? agents.get(provider) : undefined) } as unknown as Roster, auto, undefined, async () => [
+      { action: "shell", resource: "git push *", effect: "deny" },
+    ])
+    let approvesAll: boolean | undefined
+    const decided: string[] = []
+    a.script = async (_input, turn, hooks) => {
+      approvesAll = hooks.approvesAll()
+      decided.push(await hooks.permission({ action: "shell", resources: ["git push origin main"] }))
+      decided.push(await hooks.permission({ action: "shell", resources: ["git status"] }))
+      turn.startStep()
+      turn.text("done")
+      turn.endStep()
+      return { outcome: "succeeded" }
+    }
+    const id = create()
+    send(id, "push it")
+    await settled(id, 1)
+    expect(approvesAll).toBe(false)
+    expect(decided).toEqual(["reject", "once"])
+    expect(sessions.permissions(id)).toHaveLength(0)
+  })
+
+  test("reading a .env file asks first, as on the engine; an example of one doesn't", async () => {
+    const decided: string[] = []
+    a.script = async (_input, turn, hooks) => {
+      decided.push(await hooks.permission({ action: "read", resources: ["/tmp/project/.env.example"] }))
+      decided.push(await hooks.permission({ action: "read", resources: ["/tmp/project/.env"] }))
+      turn.startStep()
+      turn.endStep()
+      return { outcome: "succeeded" }
+    }
+    const id = create()
+    send(id, "read the settings")
+    await until(() => sessions.permissions(id).length === 1)
+    expect(sessions.permissions(id)[0].resources).toEqual(["/tmp/project/.env"])
+    sessions.replyPermission(id, sessions.permissions(id)[0].id, "once")
+    await settled(id, 1)
+    expect(decided).toEqual(["once", "once"])
+  })
+
   test("a conversation the agent couldn't pick up again is handed all that came before", async () => {
     const id = create()
     send(id, "first thing")

@@ -10,7 +10,7 @@ import { failure } from "./agent"
 import type { Limit } from "./auto"
 import { newID } from "./ids"
 import type { Turn } from "./turn"
-import type { Decision, FormField, Model, Session, StructuredError, TokenUsage, ToolOutput } from "./wire"
+import type { Decision, FormField, Model, Session, StructuredError, TokenUsage, ToolOutput, PermissionRule } from "./wire"
 
 interface EngineEvent {
   id: string
@@ -90,6 +90,34 @@ export class EngineLink {
         .catch(() => this.names.clear())
     }
     return this.names.get(providerID)
+  }
+
+  private blocks = new Map<string, { at: number; rules: PermissionRule[] }>()
+
+  /**
+   * Settings › Permissions' Blocks for tools and commands (the engine's `policies`, "shell:git push
+   * *"), as rules: what nothing allows. As last known when the engine doesn't answer.
+   */
+  async policies(directory: string): Promise<PermissionRule[]> {
+    const kept = this.blocks.get(directory)
+    if (!this.url || (kept && Date.now() - kept.at < 30_000)) return kept?.rules ?? []
+    try {
+      const answer = await this.request("GET", "/api/config", undefined, 10_000, directory)
+      // Its settings files (yours, the project's), each as written: the blocks of all of them.
+      const sources: any[] = Array.isArray(answer) ? answer : Array.isArray(answer?.data) ? answer.data : [{ info: answer?.data ?? answer }]
+      const policies = sources.flatMap((source) => (Array.isArray(source?.info?.policies) ? source.info.policies : []))
+      const rules: PermissionRule[] = []
+      for (const policy of policies as { action?: string; resource?: string; effect?: string }[]) {
+        if (policy?.action !== "tool.use" || typeof policy.resource !== "string") continue
+        if (policy.effect !== "deny" && policy.effect !== "allow") continue
+        const at = policy.resource.indexOf(":")
+        rules.push({ action: at < 0 ? policy.resource : policy.resource.slice(0, at), resource: at < 0 ? "*" : policy.resource.slice(at + 1) || "*", effect: policy.effect })
+      }
+      this.blocks.set(directory, { at: Date.now(), rules })
+      return rules
+    } catch {
+      return kept?.rules ?? []
+    }
   }
 
   /** Whether a provider is ready to use now, and its models; nothing known when the engine isn't. */
