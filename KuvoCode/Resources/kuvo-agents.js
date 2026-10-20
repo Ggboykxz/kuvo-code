@@ -1236,7 +1236,7 @@ class Snapshots {
       return files;
     });
   }
-  async restore(directory, tree, paths) {
+  async restore(directory, tree, paths, since) {
     const repository = await this.repository(directory);
     if (!repository || !paths.length)
       return;
@@ -1265,13 +1265,15 @@ class Snapshots {
         this.remove(repository.top, path);
       await this.checkout(repository, tree, paths.filter((path) => isRules(path) && there.has(path)));
       let gone = paths.filter((path) => !isRules(path) && !there.has(path) && !repositories.has(path));
-      if (gone.length && paths.some(isRules)) {
+      if (gone.length) {
         const ignored = await this.git(repository, ["check-ignore", "--no-index", "-z", "--stdin"], { input: gone.join("\x00"), patterns: true });
         if (ignored.code !== 0 && ignored.code !== 1)
           throw new Error("Kuvo Code couldn't tell which files the ignore rules left out.");
         const left = new Set(ignored.stdout.split("\x00").filter(Boolean));
         gone = gone.filter((path) => !left.has(path));
       }
+      if (since !== undefined)
+        gone = gone.filter((path) => !this.madeBefore(join6(repository.top, path), since));
       for (const path of gone.sort((a, b) => b.length - a.length))
         this.remove(repository.top, path);
       const back = paths.filter((path) => !isRules(path) && there.has(path));
@@ -1290,6 +1292,14 @@ class Snapshots {
     if (checked.code !== 0)
       throw new Error(`Kuvo Code couldn't put the files back: ${checked.stderr.trim().split(`
 `).pop() ?? "git failed"}`);
+  }
+  madeBefore(full, time) {
+    try {
+      const born = lstatSync(full).birthtimeMs;
+      return born > 0 && born < time;
+    } catch {
+      return false;
+    }
   }
   isInside(top, full) {
     const target = resolve(full);
@@ -1728,6 +1738,7 @@ class AcpThread {
       return this.adopt(turn, hooks);
     this.own = undefined;
     const rpc = await this.open(input, hooks);
+    await loadKuvoTools();
     if (hooks.signal.aborted)
       return { outcome: "interrupted" };
     const sessionId = this.sessionID;
@@ -1765,7 +1776,7 @@ ${others.map((path) => `- ${path}`).join(`
 `)}`;
     prompt.unshift({ type: "text", text });
     return new Promise((resolve3) => {
-      const active = { turn, hooks, resolve: resolve3, rpc, tools: new Map, toolsSinceText: false, ended: false, instructed, children: new Map, served: new Map };
+      const active = { turn, hooks, resolve: resolve3, rpc, tools: new Map, toolsSinceText: false, ended: false, instructed, children: new Map, served: new Map, started: Date.now() };
       this.active = active;
       turn.startStep();
       active.follower = this.flavor.follow?.(sessionId, turn, hooks);
@@ -1839,9 +1850,11 @@ ${others.map((path) => `- ${path}`).join(`
     if (!own || own.turnedAway || !rpc)
       return Promise.resolve({ outcome: "succeeded" });
     return new Promise((resolve3) => {
-      const active = { turn, hooks, resolve: resolve3, rpc, tools: new Map, toolsSinceText: false, ended: false, children: new Map, served: new Map, own: true };
+      const active = { turn, hooks, resolve: resolve3, rpc, tools: new Map, toolsSinceText: false, ended: false, children: new Map, served: new Map, started: Date.now(), own: true };
       this.active = active;
       turn.startStep();
+      if (this.sessionID)
+        active.follower = this.flavor.follow?.(this.sessionID, turn, hooks);
       this.quietly(active);
       for (const update of own.updates)
         this.notification("session/update", update);
@@ -2082,7 +2095,7 @@ ${others.map((path) => `- ${path}`).join(`
       metadata.exit = exit;
     if (output)
       metadata.output = output;
-    const made = merged.status === "completed" && this.sessionID ? this.flavor.madeFiles?.(merged, this.sessionID) ?? [] : [];
+    const made = merged.status === "completed" && this.sessionID ? this.flavor.madeFiles?.(merged, this.sessionID, active.started) ?? [] : [];
     if (merged.status === "completed")
       turn.toolSucceeded(id, withPictures(output, [...pictures, ...made]), metadata);
     else if (merged.status === "failed")
@@ -2557,8 +2570,10 @@ function antigravitySubagents(args) {
     agent: typeof subagent?.TypeName === "string" && subagent.TypeName !== "self" ? subagent.TypeName : undefined
   }));
 }
-function generatedImages(folder, input) {
+function generatedImages(folder, input, since) {
   const stem = String(decoded(input.image_name ?? input.ImageName ?? "") ?? "");
+  if (!stem && since === undefined)
+    return [];
   let names;
   try {
     names = readdirSync2(folder);
@@ -2572,7 +2587,7 @@ function generatedImages(folder, input) {
     } catch {
       return 0;
     }
-  })() })).sort((a, b) => b.at - a.at);
+  })() })).filter((file) => stem || file.at >= since).sort((a, b) => b.at - a.at);
   const newest = images[0];
   return newest ? [{ type: "file", uri: pathToFileURL2(join8(folder, newest.name)).href, mime: newest.type, name: newest.name }] : [];
 }
@@ -2580,21 +2595,33 @@ function generatedImages(folder, input) {
 class AntigravityFollower {
   brain;
   sessionId;
-  turn;
-  hooks;
+  every;
   seen = new Set;
   pending = [];
   children = new Map;
   timer;
-  constructor(brain, sessionId, turn, hooks, every = 1000) {
+  turn;
+  hooks;
+  constructor(brain, sessionId, every = 1000) {
     this.brain = brain;
     this.sessionId = sessionId;
+    this.every = every;
+    for (const step of this.steps(sessionId))
+      this.seen.add(step.step_index);
+  }
+  follow(turn, hooks) {
+    clearInterval(this.timer);
     this.turn = turn;
     this.hooks = hooks;
-    this.timer = setInterval(() => this.read(), every);
+    for (const child of this.children.values())
+      if (!child.ended && child.run.turn.isEnded)
+        child.ended = true;
+    this.timer = setInterval(() => this.read(), this.every);
+    return this;
   }
   stop() {
     clearInterval(this.timer);
+    this.timer = undefined;
     this.read();
     for (const child of this.children.values())
       if (!child.ended && this.isDone(child))
@@ -2616,7 +2643,7 @@ class AntigravityFollower {
     }
   }
   read() {
-    if (this.turn.isEnded)
+    if (!this.turn || this.turn.isEnded)
       return;
     for (const step of this.steps(this.sessionId)) {
       if (this.seen.has(step.step_index) || step.status === "RUNNING")
@@ -3014,14 +3041,20 @@ class AntigravityAgent {
   }
   thread(session, state) {
     const agent = this;
+    const followers = new Map;
     return new AcpThread({
       fileSystem: true,
       authenticatesFirst: true,
       resumes: true,
       limitScope: "model",
-      follow: (sessionId, turn, hooks) => new AntigravityFollower(join8(agent.profile, "antigravity-acp", "brain"), sessionId, turn, hooks),
+      follow: (sessionId, turn, hooks) => {
+        let follower = followers.get(sessionId);
+        if (!follower)
+          followers.set(sessionId, follower = new AntigravityFollower(join8(agent.profile, "antigravity-acp", "brain"), sessionId));
+        return follower.follow(turn, hooks);
+      },
       hides: (call) => /\b(start_subagent|invoke_subagent)\b/.test(`${call?.title ?? ""} ${call?.rawInput?.name ?? ""}`),
-      madeFiles: (call, sessionId) => /\bgenerate_image\b/.test(String(call?.title ?? "")) ? generatedImages(join8(agent.profile, "antigravity-acp", "brain", sessionId), call?.rawInput ?? {}) : [],
+      madeFiles: (call, sessionId, since) => /\bgenerate_image\b/.test(String(call?.title ?? "")) ? generatedImages(join8(agent.profile, "antigravity-acp", "brain", sessionId), call?.rawInput ?? {}, since) : [],
       authMethod: () => "oauth-personal",
       async command() {
         if (!agent.isInstalled)
@@ -3552,7 +3585,7 @@ class ClaudeAgent {
       options: {
         pathToClaudeCodeExecutable: this.executable(),
         cwd: this.context.temporary,
-        model: model2.id === "default" ? undefined : model2.id,
+        model: !model2 ? "haiku" : model2.id === "default" ? undefined : model2.id,
         persistSession: false,
         maxTurns: 1,
         tools: [],
@@ -4141,9 +4174,11 @@ class ClaudeThread {
         return;
       background = input.run_in_background === true;
       run2 = active.hooks.subagent(callID, { title: String(input.description ?? ""), prompt: typeof input.prompt === "string" ? input.prompt : undefined, agent: input.subagent_type, background });
+      run2.stop = () => this.stopSubagent(callID);
       this.subagentSessions.set(callID, { sessionID: run2.sessionID, title: String(input.description ?? "") });
     } else if (before) {
       run2 = active.hooks.subagent(callID, { title: before.title, sessionID: before.sessionID, background: true });
+      run2.stop = () => this.stopSubagent(callID);
       background = true;
     } else {
       return;
@@ -4361,6 +4396,11 @@ class ClaudeThread {
       };
     }
     return this.decide(name, input, options, background ? (ask) => background.run.permission(ask) : hooks.permission);
+  }
+  async stopSubagent(callID) {
+    for (const [taskID, task] of this.tasks)
+      if (task.toolUseID === callID)
+        await this.query?.stopTask?.(taskID).catch(() => {});
   }
   backgroundLane(agentID) {
     const callID = typeof agentID === "string" ? this.tasks.get(agentID)?.toolUseID : undefined;
@@ -4760,7 +4800,7 @@ class CodexAgent {
       this.outdated = undefined;
       return;
     }
-    if (this.logins.size || [...this.threads.values()].some((thread) => thread !== starting && thread.isRunning))
+    if (this.logins.size || [...this.threads.values()].some((thread) => thread !== starting && (thread.isRunning || thread.keepsWorking)))
       return;
     this.outdated = undefined;
     this.shutdown();
@@ -4989,12 +5029,17 @@ class CodexAgent {
   }
   async generate(prompt, model2) {
     const rpc = await this.rpc();
-    const started = await rpc.request("thread/start", { ephemeral: true, cwd: this.context.temporary, model: model2.id, approvalPolicy: "never", sandbox: "read-only" }, 60000);
+    const started = await rpc.request("thread/start", { ephemeral: true, cwd: this.context.temporary, ...model2 && model2.id !== "default" ? { model: model2.id } : {}, approvalPolicy: "never", sandbox: "read-only" }, 60000);
     const threadId = started.thread.id;
     let text = "";
+    let turnId;
     let timer;
     const done = new Promise((resolve3, reject) => {
-      timer = setTimeout(() => reject(new Error("Codex took too long to answer.")), 120000);
+      timer = setTimeout(() => {
+        if (turnId)
+          rpc.request("turn/interrupt", { threadId, turnId }, 1e4).catch(() => {});
+        reject(new Error("Codex took too long to answer."));
+      }, 120000);
       this.oneOffs.set(threadId, (method, params) => {
         if (method === "item/completed" && params?.item?.type === "agentMessage" && typeof params.item.text === "string")
           text = params.item.text;
@@ -5008,11 +5053,13 @@ class CodexAgent {
     });
     done.catch(() => {});
     try {
-      await rpc.request("turn/start", { threadId, input: [{ type: "text", text: prompt, text_elements: [] }], ...model2.variant ? { effort: model2.variant } : {} }, 60000);
+      const turn = await rpc.request("turn/start", { threadId, input: [{ type: "text", text: prompt, text_elements: [] }], effort: model2?.variant ?? "low" }, 60000);
+      turnId = turn?.turn?.id;
       return await done;
     } finally {
       clearTimeout(timer);
       this.oneOffs.delete(threadId);
+      rpc.request("thread/unsubscribe", { threadId }).catch(() => {});
     }
   }
   thread(session, state) {
@@ -5050,6 +5097,9 @@ class CodexThread {
   }
   serverStopped() {
     this.loaded = false;
+    for (const lane of this.backgroundLanes.values())
+      this.endSubagent(lane, "interrupted");
+    this.backgroundLanes.clear();
     const active = this.active;
     if (!active)
       return;
@@ -5098,6 +5148,9 @@ class CodexThread {
   }
   get isRunning() {
     return this.inTurn;
+  }
+  get keepsWorking() {
+    return this.backgroundLanes.size > 0;
   }
   async steer(input) {
     const active = this.active;
@@ -5430,7 +5483,8 @@ ${others.map((path) => `- ${path}`).join(`
       if (!before)
         return;
       const run2 = active.hooks.subagent(before.call, { title: before.title, sessionID: before.sessionID, background: true });
-      lane = { turn: run2.turn, streamed: new Set, changes: new Map, output: new Map, toolsSinceText: false, run: run2, call: before.call, title: before.title, ended: false };
+      run2.stop = () => this.stopSubagent(threadID);
+      lane = { turn: run2.turn, streamed: new Set, changes: new Map, output: new Map, toolsSinceText: false, run: run2, threadID, call: before.call, title: before.title, ended: false };
       active.subagents.set(threadID, lane);
     }
     if (lane.ended) {
@@ -5438,6 +5492,9 @@ ${others.map((path) => `- ${path}`).join(`
         return;
       lane = this.continueSubagent(active, threadID, lane);
     }
+    const turnID = params?.turn?.id ?? params?.turnId;
+    if (typeof turnID === "string" && method !== "turn/completed")
+      lane.turnID = turnID;
     switch (method) {
       case "error":
         if (!params.willRetry && params.error?.message)
@@ -5474,7 +5531,8 @@ ${others.map((path) => `- ${path}`).join(`
     const input = active.turn.toolInput(call) ?? {};
     const title = String(input.description ?? "") || "A spawned agent's task";
     const run2 = active.hooks.subagent(call, { title, prompt: prompt ?? input.prompt, background: true });
-    const lane = { turn: run2.turn, streamed: new Set, changes: new Map, output: new Map, toolsSinceText: false, run: run2, call, title, ended: false };
+    run2.stop = () => this.stopSubagent(threadID);
+    const lane = { turn: run2.turn, streamed: new Set, changes: new Map, output: new Map, toolsSinceText: false, run: run2, threadID, call, title, ended: false };
     active.subagents.set(threadID, lane);
     this.spawnedSessions.set(threadID, { call, title, sessionID: run2.sessionID });
     this.agent.adopt(threadID, this);
@@ -5482,9 +5540,19 @@ ${others.map((path) => `- ${path}`).join(`
   }
   continueSubagent(active, threadID, lane) {
     const run2 = active.hooks.subagent(lane.call, { title: lane.title, sessionID: lane.run.sessionID, background: true });
-    const next = { turn: run2.turn, streamed: new Set, changes: new Map, output: new Map, toolsSinceText: false, run: run2, call: lane.call, title: lane.title, ended: false };
+    run2.stop = () => this.stopSubagent(threadID);
+    const next = { turn: run2.turn, streamed: new Set, changes: new Map, output: new Map, toolsSinceText: false, run: run2, threadID, call: lane.call, title: lane.title, ended: false };
     active.subagents.set(threadID, next);
     return next;
+  }
+  async stopSubagent(threadID) {
+    const lane = this.active?.subagents.get(threadID) ?? this.backgroundLanes.get(threadID);
+    if (!lane || lane.ended || !lane.turnID)
+      return;
+    const rpc = await this.agent.rpc().catch(() => {
+      return;
+    });
+    await rpc?.request("turn/interrupt", { threadId: threadID, turnId: lane.turnID }, 1e4).catch(() => {});
   }
   endSubagent(lane, outcome, message) {
     if (lane.ended)
@@ -5774,8 +5842,8 @@ From memory: ${cited.join("; ")}`);
   }
   async request(method, params, signal) {
     const active = this.active;
-    const background = !active && params?.threadId ? this.backgroundLanes.get(params.threadId) : undefined;
-    if (!active && !background) {
+    const lane = params?.threadId && params.threadId !== this.nativeID ? active?.subagents.get(params.threadId) ?? this.backgroundLanes.get(params.threadId) : undefined;
+    if (!active && !lane) {
       if (method === "item/tool/requestUserInput")
         return { answers: {} };
       if (method === "mcpServer/elicitation/request")
@@ -5783,7 +5851,7 @@ From memory: ${cited.join("; ")}`);
       return method.endsWith("Approval") || method.endsWith("/requestApproval") ? method.startsWith("item/") ? { decision: "decline" } : { decision: "denied" } : {};
     }
     const hooks = {
-      permission: (ask) => active ? active.hooks.permission({ ...ask, signal }) : background.run.permission({ ...ask, signal }),
+      permission: (ask) => lane ? lane.run.permission({ ...ask, signal }) : active.hooks.permission({ ...ask, signal }),
       question: (ask) => active ? active.hooks.question({ ...ask, signal }) : Promise.resolve(null)
     };
     switch (method) {
@@ -5794,8 +5862,7 @@ From memory: ${cited.join("; ")}`);
         return { decision: decision === "always" ? "acceptForSession" : decision === "once" ? "accept" : "decline" };
       }
       case "item/fileChange/requestApproval": {
-        const lane = (params.threadId && params.threadId !== this.nativeID ? active?.subagents.get(params.threadId) ?? background : undefined) ?? active ?? background;
-        const changes = lane.changes.get(params.itemId) ?? [];
+        const changes = (lane ?? active).changes.get(params.itemId) ?? [];
         const files = changes.map((change) => fromPatch(change.path, change.diff, change.kind === "add" ? "added" : change.kind === "delete" ? "deleted" : "modified"));
         const decision = await hooks.permission({
           toolCallID: params.itemId,
@@ -7269,8 +7336,13 @@ class Turn {
   }
   toolRename(id, name) {
     const tool = this.tools.get(id);
-    if (tool)
-      tool.call.name = name;
+    if (!tool || tool.call.name === name)
+      return;
+    tool.call.name = name;
+    if (this.ended)
+      return;
+    this.send("session.tool.input.started", { assistantMessageID: tool.step.id, id, name });
+    this.save();
   }
   toolInputDelta(id, delta) {
     const tool = this.tools.get(id);
@@ -7759,7 +7831,7 @@ class Sessions {
   state(id) {
     let live = this.live.get(id);
     if (!live) {
-      live = { threads: new Map, permissions: new Map, forms: new Map, always: [], subagents: new Map, blocks: this.policies ? undefined : [], steeredNotes: [], models: new Map, background: new Set };
+      live = { threads: new Map, permissions: new Map, forms: new Map, always: [], subagents: new Map, runs: new Map, blocks: this.policies ? undefined : [], steeredNotes: [], models: new Map, background: new Set };
       this.live.set(id, live);
     }
     return live;
@@ -8075,23 +8147,29 @@ class Sessions {
       this.busy.add(id);
       if (!record.session.revert) {
         delete record.agent.revertNow;
+        delete record.agent.revertAt;
         delete record.agent.revertFiles;
       }
       let now;
+      const nowAt = Date.now();
       try {
         now = await this.snapshots.take(directory);
         if (!now)
           throw new Error("Kuvo Code couldn't keep the files as they are now.");
-        record.agent.revertNow ??= now;
+        if (!record.agent.revertNow) {
+          record.agent.revertNow = now;
+          record.agent.revertAt = nowAt;
+        }
         record.agent.revertFiles = [...new Set([...record.agent.revertFiles ?? [], ...files])];
         this.store.save(id);
         diffs2 = await this.snapshots.changes(directory, first.before, now, [...files]);
-        await this.snapshots.restore(directory, first.before, [...files]);
+        await this.snapshots.restore(directory, first.before, [...files], first.at);
       } catch (error) {
         if (now)
-          await this.snapshots.restore(directory, now, [...files]).catch(() => {});
+          await this.snapshots.restore(directory, now, [...files], nowAt).catch(() => {});
         if (!record.session.revert) {
           delete record.agent.revertNow;
+          delete record.agent.revertAt;
           delete record.agent.revertFiles;
         }
         this.store.save(id);
@@ -8120,7 +8198,7 @@ class Sessions {
     if (now && files.length && this.snapshots) {
       this.busy.add(id);
       try {
-        await this.snapshots.restore(directory, now, files);
+        await this.snapshots.restore(directory, now, files, record.agent.revertAt);
       } catch (error) {
         this.busy.delete(id);
         this.afterBusy(id);
@@ -8130,6 +8208,7 @@ class Sessions {
     }
     delete record.session.revert;
     delete record.agent.revertNow;
+    delete record.agent.revertAt;
     delete record.agent.revertFiles;
     this.store.save(id, true);
     emit("session.revert.cleared", { sessionID: id }, directory);
@@ -8157,6 +8236,7 @@ class Sessions {
     }
     delete record.session.revert;
     delete record.agent.revertNow;
+    delete record.agent.revertAt;
     delete record.agent.revertFiles;
     for (const thread of live.threads.values())
       thread.close();
@@ -8259,9 +8339,10 @@ class Sessions {
     try {
       if (this.snapshots) {
         try {
+          const at2 = Date.now();
           const before = await this.snapshots.take(directory);
           if (before)
-            note = { before };
+            note = { before, at: at2 };
         } catch {
           note = { failed: true };
         }
@@ -8409,16 +8490,27 @@ class Sessions {
 <message>
 ${text.slice(0, 4000)}
 </message>`;
-    let answer;
-    try {
-      const picked = this.titleModel ? await this.titleModel(directory).catch(() => {
-        return;
-      }) : undefined;
-      const engine = picked ? this.engine?.(picked.providerID) : undefined;
-      answer = picked && engine?.generate ? await engine.generate(prompt, picked) : await this.generate(id, prompt);
-    } catch {
+    const picked = this.titleModel ? await this.titleModel(directory).catch(() => {
       return;
+    }) : undefined;
+    const engine = picked ? this.engine?.(picked.providerID) : undefined;
+    const own = this.store.get(id)?.session.model?.providerID;
+    let answer = picked && engine?.generate ? await engine.generate(prompt, picked).catch(() => "") : "";
+    if (!answer.trim())
+      answer = await this.generate(id, prompt).catch(() => "");
+    for (const agent of answer.trim() ? [] : this.roster.all()) {
+      if (!agent.generate || agent.providerID === own)
+        continue;
+      if (!(await agent.account().catch(() => {
+        return;
+      }))?.signedIn)
+        continue;
+      answer = await agent.generate(prompt).catch(() => "");
+      if (answer.trim())
+        break;
     }
+    if (!answer.trim())
+      return;
     const title = answer.split(`
 `).map((line) => line.trim()).find(Boolean)?.replace(/^["'\u201C\u201D\u2018\u2019`*#\s]+|["'\u201C\u201D\u2018\u2019`*\s.]+$/g, "").slice(0, 80);
     const record = this.store.get(id);
@@ -8449,13 +8541,14 @@ ${text.slice(0, 4000)}
     session.time.updated = Date.now();
     this.store.save(id, true);
     if (!input.synthetic && !session.title && !session.parentID && record.messages.filter((message) => message.type === "user").length === 1)
-      this.nameSession(id, input.text);
+      this.nameSession(id, input.text).catch(() => {});
     let note;
     if ((!input.synthetic || input.adopt) && this.snapshots) {
       try {
+        const at = Date.now();
         const before2 = await this.snapshots.take(directory);
         if (before2)
-          note = { before: before2 };
+          note = { before: before2, at };
       } catch {
         note = { failed: true };
       }
@@ -8741,9 +8834,10 @@ ${text.slice(0, 4000)}
   async interrupt(id, resume = false) {
     const live = this.live.get(id);
     if (!live?.turn || live.turn.isEnded) {
+      const stopped = await this.stopSubagents(id);
       if (resume)
         this.wake(id);
-      return false;
+      return stopped;
     }
     const turn = live.turn;
     live.resume = resume;
@@ -8853,7 +8947,7 @@ ${live.agentPrompt}` : ""
     else
       live.background.delete(session.id);
     parentTurn.toolProgress(toolCallID, { sessionID: session.id });
-    return {
+    const run2 = {
       sessionID: session.id,
       turn,
       end: (outcome, error) => {
@@ -8862,9 +8956,38 @@ ${live.agentPrompt}` : ""
           live.subagents.delete(session.id);
           live.background.delete(session.id);
         }
+        if (live.runs.get(session.id) === run2)
+          live.runs.delete(session.id);
+        const directory = this.store.get(id)?.session.location.directory;
+        for (const [requestID, pending] of [...live.permissions]) {
+          if (pending.turn !== turn)
+            continue;
+          live.permissions.delete(requestID);
+          pending.resolve("reject");
+          emit("permission.replied", { sessionID: id, requestID }, directory);
+        }
       },
       permission: (ask) => this.askPermission(id, live, turn, ask, plan)
     };
+    live.runs.set(session.id, run2);
+    return run2;
+  }
+  async stopSubagents(id) {
+    const parent = this.store.get(id)?.session.parentID;
+    const runs = parent ? [this.live.get(parent)?.runs.get(id)] : [...this.live.get(id)?.runs.values() ?? []];
+    const going = runs.filter((run2) => Boolean(run2 && !run2.turn.isEnded));
+    for (const run2 of going) {
+      if (!run2.stop) {
+        run2.end("interrupted");
+        continue;
+      }
+      setTimeout(() => {
+        if (!run2.turn.isEnded)
+          run2.end("interrupted");
+      }, timing.stopGrace);
+      await run2.stop().catch(() => {});
+    }
+    return going.length > 0;
   }
   checkPermission(live, session, ask, plan) {
     const parts = partsOf(ask);
