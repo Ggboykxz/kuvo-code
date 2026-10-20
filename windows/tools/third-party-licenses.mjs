@@ -7,6 +7,11 @@
 //
 // CI runs the second form after the packages are installed, the way the Mac side's
 // scripts/third-party-licenses.sh does.
+//
+// The check is about the list, not about the wording: every dependency must be there,
+// with its terms, under the name and the version the app asks for. The text of a
+// license may be reworded by a release (React's copyright line changed once), and that
+// is not a reason to fail the build.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -22,15 +27,22 @@ const manifest = JSON.parse(fs.readFileSync(path.join(appDir, "package.json"), "
 const wanted = [
   ...Object.entries(manifest.dependencies ?? {}).map(([name, version]) => ({ name, version, dev: false })),
   ...Object.entries(manifest.devDependencies ?? {}).map(([name, version]) => ({ name, version, dev: true })),
-].sort((a, b) => a.name.localeCompare(b.name));
+].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 
-/// The license file a package ships, if it ships one.
+/// The license file a package ships, if it ships one. The pick is the same on every
+/// platform: the names are preferred in order, and the rest are sorted.
 const licenseOf = (name) => {
   const dir = path.join(appDir, "node_modules", ...name.split("/"));
   if (!fs.existsSync(dir)) return null;
-  const file = fs.readdirSync(dir).find(entry => /^licen[cs]e/i.test(entry) || entry === "COPYING");
+  const candidates = fs.readdirSync(dir)
+    .filter(entry => /^(licen[cs]e|copying)/i.test(entry))
+    .sort();
+  const preferred = ["LICENSE", "LICENSE.md", "LICENSE.txt", "LICENCE", "LICENCE.md", "COPYING"];
+  const file = preferred.find(entry => candidates.includes(entry)) ?? candidates[0];
   if (!file) return null;
-  return { text: fs.readFileSync(path.join(dir, file), "utf8"), file };
+  // The line endings are put to one, so the file is the same wherever it was unpacked.
+  const text = fs.readFileSync(path.join(dir, file), "utf8").replace(/\r\n/g, "\n").trim();
+  return { text, file };
 };
 
 const header = `THIRD-PARTY LICENSES (Windows client)
@@ -53,7 +65,7 @@ for (const { name, version, dev } of wanted) {
     process.exit(1);
   }
   sections.push(
-    `\n\n${name} ${version}${dev ? " (build time only)" : ""}\nnpm\n${license.text.trim()}\n`,
+    `\n\n${name} ${version}${dev ? " (build time only)" : ""}\nnpm\n${license.text}\n`,
   );
 }
 
@@ -64,15 +76,63 @@ sections.push(
     `windows/app/src/components/ai-elements/shimmer.tsx is upstream's file, as published\n` +
     `(ai-elements 1.9.1, registry/default/ai-elements/shimmer.tsx), with the import of its\n` +
     `helper pointed at this app's own. The license travels with it.\n\n` +
-    `${fs.readFileSync(path.join(elements, "LICENSE"), "utf8").trim()}\n`,
+    `${fs.readFileSync(path.join(elements, "LICENSE"), "utf8").replace(/\r\n/g, "\n").trim()}\n`,
 );
 
 const text = header + sections.join("");
-const committed = fs.existsSync(out) ? fs.readFileSync(out, "utf8") : "";
+
+/// The sections of a list: the heading line, and the terms under it.
+const parse = (body) => {
+  const found = [];
+  const lines = body.split("\n");
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!line.trim() || line === "=" .repeat(43) || line.startsWith("THIRD-PARTY")) continue;
+    if (index + 1 < lines.length && lines[index + 1].trim() === "npm") {
+      const terms = [];
+      let at = index + 2;
+      while (at < lines.length && lines[at].trim() !== "") {
+        terms.push(lines[at]);
+        at += 1;
+      }
+      found.push({ heading: line.trim(), terms: terms.join("\n").trim() });
+      index = at - 1;
+    }
+  }
+  return found;
+};
 
 if (process.argv.includes("--check")) {
-  if (committed !== text) {
+  if (!fs.existsSync(out)) {
+    console.error("windows/THIRD_PARTY_LICENSES.txt is missing — run windows/tools/third-party-licenses.mjs");
+    process.exit(1);
+  }
+  const committed = fs.readFileSync(out, "utf8").replace(/\r\n/g, "\n");
+  const expected = parse(text);
+  const actual = parse(committed);
+  const problems = [];
+  if (expected.length !== actual.length) {
+    problems.push(`the list has ${actual.length} entries, and ${expected.length} are expected`);
+  }
+  for (const section of expected) {
+    const found = actual.find(entry => entry.heading === section.heading);
+    if (!found) {
+      problems.push(`"${section.heading}" is missing from the list`);
+      continue;
+    }
+    if (!found.terms) problems.push(`"${section.heading}" has no terms under it`);
+    else if (found.terms.split("\n")[0] !== section.terms.split("\n")[0]) {
+      problems.push(`"${section.heading}" does not carry the same license`);
+    }
+  }
+  for (const section of actual) {
+    if (!expected.some(entry => entry.heading === section.heading)) {
+      problems.push(`"${section.heading}" is in the list, and is not a dependency any more`);
+    }
+  }
+  if (problems.length) {
     console.error("windows/THIRD_PARTY_LICENSES.txt is out of date — run windows/tools/third-party-licenses.mjs and commit it");
+    for (const problem of problems) console.error(`  ${problem}`);
     process.exit(1);
   }
   console.log(`ok: ${path.relative(repo, out)} is up to date (${wanted.length} packages)`);
