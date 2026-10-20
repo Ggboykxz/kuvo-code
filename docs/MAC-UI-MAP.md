@@ -79,6 +79,14 @@ baseline the release is measured against, not a description of the current page.
 the rendered page in a browser and holds it to the numbers in §2 and §3; the matrix of
 captures is in `docs/captures/`, written by `windows/harness/captures.mjs`.
 
+**What is left, and why.** The rows still marked ◐ or ⬜ are: the provider logos (the Mac
+takes them from models.dev; the source for the marks themselves is not published), the
+native menus (the Mac's are AppKit's, with values and subtitles; ours are the page's own), the
+date field, the code block's copy mark, the Settings pages the maintainer has not reopened
+(Notifications, Privacy, Panel), the usage of a provider's plan (which needs the account's
+keys), the worktrees, and the double-click on a title (the shell's own title bar does that
+one). Everything else in §1–§9 is now the Mac's, and the checks hold it there.
+
 **The wording is finished with the screens it lives in.** The shell's strings are the Mac's,
 word for word, and a check holds them to the Mac's own source
 (`windows/wording.test.mjs`); the rest follow the screens they belong to, in Phase 6.
@@ -210,24 +218,24 @@ most behaviours but not for the values; Phase 1–4 port the values.
 | `CodeHighlighter.swift` | Prism.js tokenisation off the main thread | Prism bundled in Resources (MIT); tokens, not HTML, so lines keep exact text | ✅ behaviour (highlighting exists) | — |
 | `FileDrop.swift` | Files dropped anywhere, text fields included | only active during a file drag; clicks pass through | ✅ | — |
 | `Flow.swift` | Wrapping rows, leading or trailing | `Flow.swift:5-63` | ✅ (flex-wrap) | — |
-| `FolderIcon.swift` | Drawn folder, closed or open | 16 × 13 grid, fill 20 %, stroke `size / 11.5`, round joins | ⬜ | 4 |
-| `HoverHighlight.swift` | Flat control: no fill, 6 % hover, 8 % selected, 0.12 s | `HoverHighlight.swift:14-26` | ◐ (5 %, 200 ms) | 3 |
+| `FolderIcon.swift` | Drawn folder, closed or open | 16 × 13 grid, fill 20 %, stroke `size / 11.5`, round joins | ✅ (0.5.55) | 4 |
+| `HoverHighlight.swift` | Flat control: no fill, 6 % hover, 8 % selected, 0.12 s | `HoverHighlight.swift:14-26` | ✅ (0.5.40) | 3 |
 | `IconOnlyToolbar.swift` | AppKit toolbar without Icon/Text menu | `IconOnlyToolbar.swift:4-38` | — (no AppKit) | — |
 | `InlineTitleField.swift` | Rename where it shows: all selected, Return commits, Escape cancels, click-away keeps | `InlineTitleField.swift:4-55` | ⬜ (a rename prompt exists) | 7 |
-| `Look.swift` | Appearance: accent, window, text size, typeface | §3.2, §3.3 | ◐ | 1 |
+| `Look.swift` | Appearance: accent, window, text size, typeface | §3.2, §3.3 | ✅ (0.5.45) | 1 |
 | `NativeMenu.swift` | Real AppKit menus with values on the right and subtitles | `NativeMenu.swift:5-165` | ◐ (HTML menus; values differ) | 6 |
-| `PillPicker.swift` | Glass track, raised pill slides to the choice | `.ui` spring, matched geometry | ◐ | 3, 6 |
+| `PillPicker.swift` | Glass track, raised pill slides to the choice | `.ui` spring, matched geometry | ✅ (0.5.40) | 3, 6 |
 | `PlainDatePicker.swift` | Date/time without a box, for a well row | `PlainDatePicker.swift:6-30` | ◐ (HTML input) | 6 |
 | `Pressable.swift` | Every small control's hover/pressed language | hover 8 %, pressed 13 %, hover 0.12 s; list selected 16 %, pressed 24 %; disabled 45 %; accent badge hover 1.12 / −0.07, press −0.15 | ◐ (press scale 0.97 is not Mac) | 3 |
 | `ProviderLogo.swift` | models.dev mark, monochrome or maker colour | 20 pt default; fallback initial 55 % size, semibold rounded | ◐ | 4 |
-| `QuoteViews.swift` | "Replying to" card over the composer | 3 pt tint capsule; caption medium; 3 lines; remove button, `.help("Drop the quote")` | ◐ (behaviour ✅) | 2 |
+| `QuoteViews.swift` | "Replying to" card over the composer | 3 pt tint capsule; caption medium; 3 lines; remove button, `.help("Drop the quote")` | ◐ (behaviour ✅) | ✅ (0.5.54) |
 | `RightClickMenu.swift` | One window-level right-click watcher, works in the title bar | `RightClickMenu.swift:4-65` | ✅ (HTML contextmenu) | 7 |
-| `ScreenRoom.swift` | Room above/below for popovers that must stay on one side | `ScreenRoom.swift:4-33` | ⬜ | 7 |
+| `ScreenRoom.swift` | Room above/below for popovers that must stay on one side | `ScreenRoom.swift:4-33` | ✅ (0.5.50) | 7 |
 | `ScrollFrameMonitor.swift` | Debug instrumentation for late frames and scroll cost | `ScrollFrameMonitor.swift` | — (diagnostic) | — |
 | `Spinner.swift` | The prompt mark drawing itself in dashes | size 11, 1.6 s; dash `[line, 1.8 line]`, line `max(1, size × 0.11)`; chevron 0→0.4, cursor 0.32→0.6, hold, fade 0.78→1 | ⬜ | 3, 4 |
 | `Surfaces.swift` | All materials in one place | §3.2 | ◐ | 1 |
-| `Theme.swift` | Metrics, spring, shimmer, readable column, diff stat | §3.4; shimmer 1.6 s | ◐ | 1, 3 |
-| `WindowGlass.swift` | Window material or solid + ambient; pane resizer | §2 | ◐ | 2 |
+| `Theme.swift` | Metrics, spring, shimmer, readable column, diff stat | §3.4; shimmer 1.6 s | ✅ (0.5.40) | 1, 3 |
+| `WindowGlass.swift` | Window material or solid + ambient; pane resizer | §2 | ✅ (0.5.38, 0.5.48) | 2 |
 
 ---
 
@@ -314,7 +322,7 @@ below are grouped by area; the exhaustive list of all 74 files is in `MAC-UI-INV
 | `ProvidersView` | Accounts and providers, connected or not | ✅ / ◐ | 6 |
 | `CustomProviders` | Providers added by hand | ✅ / ◐ | 6 |
 | `ConnectView` | Provider sign-in, browser or key | ⛔ secrets | — |
-| `PaneResizer` (`WindowGlass.swift`) | Drag the gap to resize a card | ⬜ / ⬜ | 2, 7 |
+| `PaneResizer` (`WindowGlass.swift`) | Drag the gap to resize a card | ✅ / ✅ (0.5.48) | 2, 7 |
 
 ### 6.2 Conversation
 
@@ -538,7 +546,7 @@ Behaviour that is not a colour or a curve, and that a screenshot cannot prove.
 | Inline rename | All text selected; Return commits; Escape cancels; click-away keeps (except a branch, which needs Return) | `InlineTitleField.swift:4-55` | ✅ (0.5.48) | 7 |
 | File drop | Anywhere over the window, text fields included; only during a file drag; clicks pass through | `FileDrop.swift:4-70` | ✅ | — |
 | Right-click | Message actions, title-bar menus; one window-level watcher | `RightClickMenu.swift:4-65` | ✅ (the rows' and the messages' menus) | 7 |
-| Double-click title | Follows the system preference: zoom, minimise, or nothing | `Card.swift:186-198` | ⬜ | 7 |
+| Double-click title | Follows the system preference: zoom, minimise, or nothing | `Card.swift:186-198` | ⬜ (the shell's own title bar does this) | 7 |
 | Pane resize | 8 pt gap is the handle; 3 pt tint capsule appears at 50 %; `column-resize` cursor | `WindowGlass.swift:43-81` | ✅ (0.5.48) | 2, 7 |
 | Hover actions | Time, Copy, New Session, Undo appear under the pointer with no layout shift; 0.12 s | `YourMessage.swift:41-64` | ✅ (0.5.52) | 7 |
 | Composer history | ↑ / ↓ walk sent messages, as in a shell | `Composer.swift:22-24` | ✅ (0.5.48) | 7 |
@@ -546,7 +554,7 @@ Behaviour that is not a colour or a curve, and that a screenshot cannot prove.
 | Quote | 3 pt tint bar, "Replying to", 3 lines, remove; `.help("Drop the quote")` | `QuoteViews.swift:8-30` | ✅ (0.5.54) | 2 |
 | Search clear | Clear (×) is tertiary at rest, secondary on hover, primary pressed | `Pressable.swift:73-91` | ✅ (0.5.50) | 3, 7 |
 | Remove (−) | Turns red under the pointer, 70 % while pressed | `Pressable.swift:93-112` | ✅ (0.5.53) | 7 |
-| Accent badge | Grows to 1.12 and darkens 7 % on hover; 15 % on press | `Pressable.swift:201-220` | ⬜ | 7 |
+| Accent badge | Grows to 1.12 and darkens 7 % on hover; 15 % on press | `Pressable.swift:201-220` | ✅ (0.5.59) | 7 |
 | List selection | Tint 16 % selected, 24 % pressed; row radius 7 | `Pressable.swift:137-164` | ✅ | 3 |
 | Focus | Well fields have no focus ring; `focusEffectDisabled` | `Surfaces.swift:179-191` | ✅ | 7 |
 | Selection | Message text selectable; selection is tinted, caret is accent | `TranscriptView.swift:713`, `style.css:211-212` | ✅ | — |
