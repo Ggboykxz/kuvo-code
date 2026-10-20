@@ -874,4 +874,18 @@ test("a session is running while its last words are unfinished, not while a flag
     { id: "msg_1", type: "assistant", time: { created: 3, completed: 4 }, content: [{ type: "text", text: "done", time: { created: 3, completed: 4 } }] },
   ], [], false);
   assert.equal(earlier.running, false, "the last words are finished, so nothing is running");
+
+  // The engine's own answer counts too (SessionModel.swift:573-587): it says whether the
+  // session is among the active ones, and its stored words can lag behind it. A page that
+  // loads just after a turn ended must not keep showing that the agent is at work.
+  const stored = fromHistory("ses_1", [
+    { id: "msg_1", type: "assistant", time: { created: 1 }, content: [{ type: "text", text: "words the engine has not stamped yet", time: { created: 1 } }] },
+  ], [], false);
+  assert.equal(stored.running, false, "the engine says the session is not active, so the run is over");
+
+  // And a run that has begun but has not written a word yet is the engine's answer alone.
+  const beginning = fromHistory("ses_1", [
+    { id: "msg_1", type: "assistant", time: { created: 1 }, content: [] },
+  ], [], true);
+  assert.equal(beginning.running, true, "the engine says the session is active, and no word has ended it");
 });

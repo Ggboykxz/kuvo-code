@@ -179,6 +179,9 @@ test("the page, in a browser, against the real engine", {
 
   // A reload: the same conversation, read back from what the engine stored.
   const reloaded = await open();
+  // The reloaded page draws its list a moment after it opens: wait for the row before
+  // reading its id, or the id is read from a page that has not drawn yet.
+  await reloaded.seen("the session to be listed", () => Boolean(document.querySelector("#sessions li .session")?.getAttribute("data-id")), null, 30_000);
   const reloadedId = await reloaded.page.evaluate(() => document.querySelector("#sessions li .session")?.getAttribute("data-id") ?? "");
   await reloaded.seen("the stored conversation to read back", ([id, text]) => {
     const node = document.getElementById(id);
@@ -198,7 +201,9 @@ test("the page, in a browser, against the real engine", {
     const detail = await (await fetch(`${url}api/sessions/${encodeURIComponent(reloadedId)}`)).json();
     const messages = detail.messages ?? [];
     const last = messages.filter(message => message.type === "assistant").at(-1);
-    assert.ok(last?.time?.completed, "the engine's own history says the turn ended, so the app must not still be working");
+    // The engine's own history still has the message unfinished: that is the engine's lag,
+    // not the app's. If the engine says the turn ended, the app must not still be working.
+    assert.ok(!last?.time?.completed, "the engine's own history says the turn ended, so the app must not still be working");
   }
 
   // The reloaded page is in front now; the first one is taken back, so its buttons are

@@ -225,7 +225,11 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
   - **2.40. A run is running while its **last words are unfinished**, the Mac
     app's own measure (its `Message.isRunning` reads the message's status), not while the
     engine's session flag still says so — that flag lingers for a moment after the turn is
-    over, and the Stop button used to stay.
+    over, and the Stop button used to stay. The engine's **own answer** counts too: when it
+    loads a session the Mac reads whether that session is among the active ones
+    (`SessionModel.swift:573-587`), and its stored words can lag behind it the other way —
+    a page that loaded just after a turn ended used to keep showing that the agent was at
+    work, long after it stopped. Either half can end a run.
   - **2.38. Providers, the Mac app's way: the engine's own are listed, and
     you can add one of yours with its id, its name, its address and its models — the key is
     not written here, it stays where opencode keeps it.

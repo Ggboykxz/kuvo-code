@@ -70,10 +70,16 @@ export function fromHistory(sessionID, messages, permissions = [], running = fal
     if (part.type === "text" || part.type === "reasoning") return part.done === false;
     return part.status === "running" || part.status === "pending";
   });
-  // The Mac's own measure (Message.isRunning): the message's own state. The engine's
-  // session flag can still say "running" for a moment after the turn is over, and the
-  // window would keep showing that the agent is at work.
-  transcript.running = unfinished;
+  // The Mac's own measure, both halves of it: the conversation's last words are
+  // unfinished (Message.isRunning reads the message's status), and the engine still has
+  // the session among the active ones (SessionModel.swift:573-587 reads the engine's own
+  // answer when it loads a session). Either can end a run — the engine's flag can still
+  // say "running" for a moment after the turn is over, and its stored words can lag the
+  // other way, so a page that loaded just then would keep showing that the agent is at
+  // work long after it stopped. A run that has begun but has not written a word yet is
+  // the engine's own answer alone.
+  const written = Boolean(last) && (last.parts ?? []).length > 0;
+  transcript.running = Boolean(running) && (unfinished || !written);
   return transcript;
 }
 
