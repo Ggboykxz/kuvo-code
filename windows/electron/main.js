@@ -226,8 +226,13 @@ async function checkForUpdates({ quiet = false } = {}) {
       return null;
     }
     if (quiet) {
-      // On startup, a note in the corner — not a question that waits for an answer.
-      try { new Notification({ title: 'Kuvo Code', body: `Version ${update.version} is available.` }).show(); } catch {}
+      // On startup, a note in the corner — not a question that waits for an answer. Clicking
+      // it asks the question.
+      try {
+        const note = new Notification({ title: 'Kuvo Code', body: `Version ${update.version} is available.` });
+        note.on('click', () => { void checkForUpdates(); });
+        note.show();
+      } catch {}
       return update;
     }
     const question = {
@@ -262,6 +267,11 @@ app.whenReady().then(async () => {
     // Auto-update on startup, unless the user turned it off: a note, not a question.
     if (cfg.autoUpdate !== false) {
       void checkForUpdates({ quiet: true });
+      // And again a few times a day, so a version published while the app is open is
+      // still found — the Mac app's updater checks in the background too.
+      setInterval(() => {
+        if (loadConfig().autoUpdate !== false) void checkForUpdates({ quiet: true });
+      }, 6 * 60 * 60 * 1000);
     }
     if (process.argv.includes('--smoke')) {
       const url = await startHarness();
