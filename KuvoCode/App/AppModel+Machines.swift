@@ -15,9 +15,15 @@ extension AppModel {
         // shows its own browser for an agent here.
         workspace.onMachineBrowsing = { [weak self] machine, session in self?.utilities.revealMachineBrowser(machine, for: session) }
         workspace.onDeleted = { [weak self] session in self?.utilities.closeTabs(of: session) }
-        BrowserTools.sessionFolder = { [weak self] session in self?.workspace.session(session)?.location.directory }
+        // A subagent's calls go by the conversation that started it: its folder, its permissions.
+        BrowserTools.sessionFolder = { [weak self] session in
+            guard let self else { return nil }
+            return workspace.session(workspace.root(of: session))?.location.directory
+        }
         BrowserTools.readsAnywhere = { [weak self] session in
-            guard let self, let found = workspace.session(session), !workspace.seats.contains(session) else { return false }
+            guard let self else { return false }
+            let root = workspace.root(of: session)
+            guard let found = workspace.session(root), !workspace.seats.contains(root) else { return false }
             return ToolApproval(rules: found.permissions) == .approveAll
         }
         BrowserTools.isInView = { [weak self] session in self?.utilities.isInView(session) ?? false }

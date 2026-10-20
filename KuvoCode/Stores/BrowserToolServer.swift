@@ -258,7 +258,8 @@ enum BrowserTools {
     /// before reading those: opened, the browser read it without asking, where a command would
     /// have asked. Links are followed to where they lead.
     static func fileNote(for address: String, caller: String?) -> String? {
-        guard let url = URL(string: address), url.isFileURL else { return nil }
+        // The address the browser opens, read the way it reads it (trimmed, say).
+        guard let url = BrowserSession.url(from: address), url.isFileURL else { return nil }
         if let caller, readsAnywhere(caller) { return nil }
         func real(_ path: String) -> String { URL(filePath: path).resolvingSymlinksInPath().path }
         let path = real(url.path)
