@@ -10,6 +10,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - In full screen with the tab bar hidden, there's no empty row at the top; ⌘0 shows the sidebar. Tabs in the title bar no longer flicker while you make the window narrower.
 - Find in a conversation goes straight to each place, in the middle of the view, instead of jumping back and forth.
 - Expanding a big search's output with context lines no longer freezes the window for a few seconds.
+- The coding agents (Claude Code, Codex, Cursor, Grok, Antigravity) can use the skills in Settings › Skills, including ones you add there or from other folders and catalogs, except the ones you switch off. On a machine, they get that machine's skills.
 - In dark mode, the sidebar stays dark and easy to read when a bright window is behind Kuvo Code.
 - Settings › Skills no longer shows the folder each skill is in; hover over one to see it.
 - Settings › Accounts splits Coding Agents from Plans. A menu next to Coding Agents picks This Mac or one of your machines, to see that machine's agents and sign in to each there (each machine signs in on its own); plans and API keys stay as they are, since your machines get them too. A conversation on a machine that needs a sign-in says which machine, with Sign In on it. Signing in on a machine says it's installing the agent there first.

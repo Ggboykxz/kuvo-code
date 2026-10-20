@@ -16,6 +16,7 @@ import { newID } from "../ids"
 import { run, which } from "../proc"
 import { RPC } from "../rpc"
 import { catcher } from "../signin"
+import { copySkillsInto, skillsFor, turnedOff } from "../skills"
 import type { Turn } from "../turn"
 import type { Model, OAuthStatus, Session } from "../wire"
 
@@ -465,6 +466,11 @@ export class AntigravityAgent implements Agent {
     }
   }
 
+  /** Where it reads skills itself: its home's (the CLI's) and a project's `.agents/skills` and `.gemini/skills`. */
+  ownSkillFolders(directory: string): string[] {
+    return [join(this.profile, "antigravity-cli", "skills"), join(directory, ".agents", "skills"), join(directory, ".gemini", "skills")]
+  }
+
   /** How it's started: its own home, its own temporary folder (it unpacks itself there, about 1 GB), and nothing of your other Google keys. */
   private launch(): { argv: string[]; env: Record<string, string | undefined>; cleanEnv: boolean; onExit: () => void; signInFile: string } {
     mkdirSync(join(this.profile, "antigravity-acp", "tmp"), { recursive: true, mode: 0o700 })
@@ -638,6 +644,11 @@ export class AntigravityAgent implements Agent {
         async command() {
           if (!agent.isInstalled) throw new Error("Sign in to Antigravity in Settings › Accounts first.")
           return agent.launch()
+        },
+        // Settings › Skills' skills, in the skills folder of its home (Kuvo Code's): it reads
+        // them from there as it starts. Its home is the account's, for all its sessions.
+        async skills(directory, hooks) {
+          return copySkillsInto(join(agent.profile, "config", "skills"), await skillsFor(directory, agent.ownSkillFolders(directory), turnedOff(hooks)))
         },
         // Its access lasts an hour, renewed from the sign-in it keeps: one that asks for a new
         // sign-in partway is started again, which renews it.

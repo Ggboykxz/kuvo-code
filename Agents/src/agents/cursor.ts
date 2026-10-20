@@ -4,6 +4,7 @@
 // in the bridge's folder.
 
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs"
+import { homedir } from "node:os"
 import { join } from "node:path"
 import { providerID, type AgentAccount } from "../accounts"
 import type { Agent, AgentContext, Account, RunInput, RunResult, SignInAttempt, SubagentRun, Thread, TurnHooks } from "../agent"
@@ -11,6 +12,7 @@ import { accountName, failure, model } from "../agent"
 import type { Limit } from "../auto"
 import { fileDiff, fromPatch } from "../diff"
 import { pictureData, pictureFile, withPictures } from "../pictures"
+import { skillsFolder, skillsFor, turnedOff, upward } from "../skills"
 import type { Turn } from "../turn"
 import type { Model, OAuthStatus, Session } from "../wire"
 
@@ -36,6 +38,11 @@ export class CursorAgent implements Agent {
     readonly instance: AgentAccount = { id: "default" },
   ) {
     this.providerID = providerID("cursor", instance.id)
+  }
+
+  /** Where Cursor reads skills itself: its own, Claude Code's, Codex's, Grok's and `.agents`, yours and a project's. */
+  ownSkillFolders(directory: string): string[] {
+    return [homedir(), ...upward(directory)].flatMap((folder) => [".cursor", ".claude", ".codex", ".grok", ".agents"].map((name) => join(folder, name, "skills")))
   }
 
   /** This account's folder: its sign-in and its agents' conversations. */
@@ -238,6 +245,7 @@ class CursorThread implements Thread {
   private agent?: any
   /** Whether it was started to run its tools without asking. */
   private startedApproving?: boolean
+  private startedSkills?: string
   private active?: Active
 
   constructor(
@@ -254,16 +262,19 @@ class CursorThread implements Thread {
     const apiKey = await this.owner.apiKey(sdk)
     if (!apiKey || hooks.signal.aborted) return undefined
     if (hooks.approvesAll(false)) await this.owner.prime(sdk, apiKey, this.session.location.directory)
-    await this.ensureAgent(sdk, this.options(sdk, input, hooks, apiKey, await this.owner.effort(input.model)), hooks)
+    await this.ensureAgent(sdk, await this.options(sdk, input, hooks, apiKey, await this.owner.effort(input.model)), hooks)
     const fresh = this.startedOver
     this.startedOver = false
     return { fresh }
   }
 
-  private options(sdk: any, input: RunInput, hooks: TurnHooks, apiKey: string, selection: { id: string }) {
+  private async options(sdk: any, input: RunInput, hooks: TurnHooks, apiKey: string, selection: { id: string }) {
     const approvesAll = hooks.approvesAll(false)
     const mode = input.plan ? "plan" : "agent"
     const cwd = this.session.location.directory
+    // Settings › Skills' skills, in a folder of the workspace's (`.cursor/skills` in it), but those
+    // it reads itself.
+    const skills = skillsFolder(await skillsFor(cwd, this.owner.ownSkillFolders(cwd), turnedOff(hooks)))
     return {
       model: selection,
       name: `Kuvo Code: ${this.session.title ?? "session"}`,
@@ -271,6 +282,7 @@ class CursorThread implements Thread {
       apiKey,
       local: {
         cwd,
+        ...(skills ? { dirs: [skills] } : {}),
         autoReview: !approvesAll,
         settingSources: ["project", "user", "team", "mdm", "plugins"],
         sandboxOptions: { enabled: !approvesAll },
@@ -283,8 +295,10 @@ class CursorThread implements Thread {
   /** Cursor's agent for this session: the one it had, or a new one (said by `startedOver`). */
   private async ensureAgent(sdk: any, options: any, hooks: TurnHooks) {
     const approvesAll = hooks.approvesAll(false)
-    // Its sandbox and review are set as it starts: another approval mode starts it again.
-    if (this.agent && this.startedApproving !== approvesAll) {
+    // Its sandbox, review and folders are set as it starts: another approval mode, or other
+    // skills, start it again.
+    const skills = options.local?.dirs?.[0] as string | undefined
+    if (this.agent && (this.startedApproving !== approvesAll || this.startedSkills !== skills)) {
       try {
         this.agent.close?.()
       } catch {}
@@ -292,6 +306,7 @@ class CursorThread implements Thread {
     }
     if (this.agent) return
     this.startedApproving = approvesAll
+    this.startedSkills = skills
     const id = this.state.cursorAgent as string | undefined
     this.agent = id ? await sdk.Agent.resume(id, options).catch(() => undefined) : undefined
     if (!this.agent && id) {
@@ -316,7 +331,7 @@ class CursorThread implements Thread {
     const approvesAll = hooks.approvesAll(false)
     const selection = await this.owner.effort(input.model)
     const mode = input.plan ? "plan" : "agent"
-    const options = this.options(sdk, input, hooks, apiKey, selection)
+    const options = await this.options(sdk, input, hooks, apiKey, selection)
     if (approvesAll) await this.owner.prime(sdk, apiKey, cwd)
     // Cursor's SDK can't stop to ask: said once, so Ask First isn't taken for what it does.
     if (!approvesAll && !input.plan && !this.state.cursorAskNoted) {

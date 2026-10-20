@@ -2,7 +2,7 @@
 // `codex login` keeps), driven through its app-server (JSON-RPC over stdio). One app-server
 // serves every Codex session; each session is one of its threads.
 
-import { existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, rmSync, symlinkSync } from "node:fs"
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, symlinkSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { providerID, type AgentAccount } from "../accounts"
@@ -19,6 +19,7 @@ import { installCodex, codexProgram, managedNote, onMachine, ownFoldersConfig } 
 import { maintenance, update, type MaintenanceDefinition } from "../maintenance"
 import { which } from "../proc"
 import { RPC, RPCError } from "../rpc"
+import { engineSkills, skillsFolder, skillsFor, turnedOff, upward, within } from "../skills"
 import { afterInstall } from "../signin"
 import type { Turn } from "../turn"
 import type { FileDiff, FormField, Model, ModelRef, OAuthStatus, Session, TokenUsage } from "../wire"
@@ -47,6 +48,12 @@ export class CodexAgent implements Agent {
   private logins = new Map<string, (status: OAuthStatus) => void>()
   private accountCache?: { at: number; account: Account }
   private modelList?: { at: number; models: Model[] }
+  /**
+   * Each session's folder of Settings › Skills' skills. Codex takes extra skills for its whole
+   * app-server, not a thread, so it has all of them (they differ only by a project's own).
+   */
+  private skillRoots = new Map<string, string>()
+  private rootsSet?: { rpc: RPC; key: string }
   /** Your plan's usage windows as Codex last said, by limit ("codex" is the plan's; others, a model's). */
   rateLimits = new Map<string, any>()
 
@@ -399,9 +406,43 @@ export class CodexAgent implements Agent {
     return thread
   }
 
+  /** Where Codex reads skills itself: its home's, `~/.agents/skills`, and a project's `.agents/skills`. */
+  ownSkillFolders(directory: string): string[] {
+    return [join(this.home, "skills"), join(homedir(), ".agents", "skills"), ...upward(directory).map((folder) => join(folder, ".agents", "skills"))]
+  }
+
+  /** Its home (CODEX_HOME): an added account's own, or yours. */
+  get home(): string {
+    return this.instance.home ?? process.env.CODEX_HOME ?? join(homedir(), ".codex")
+  }
+
+  /** A session's skills folder, for its app-server (told again when that started again). */
+  async useSkills(sessionID: string, folder: string | undefined, rpc: RPC) {
+    if (folder) this.skillRoots.set(sessionID, join(folder, "skills"))
+    else this.skillRoots.delete(sessionID)
+    const roots = [...new Set(this.skillRoots.values())].sort()
+    const key = JSON.stringify(roots)
+    if (this.rootsSet?.rpc === rpc && this.rootsSet.key === key) return
+    await rpc.request("skills/extraRoots/set", { extraRoots: roots }, 30_000).then(
+      () => (this.rootsSet = { rpc, key }),
+      () => {},
+    )
+  }
+
+  /** Your own settings' list of skills turned on or off (`[[skills.config]]`), which a thread's own replaces. */
+  ownSkillSettings(): unknown[] {
+    try {
+      const settings: any = Bun.TOML.parse(readFileSync(join(this.home, "config.toml"), "utf8"))
+      return Array.isArray(settings?.skills?.config) ? settings.skills.config : []
+    } catch {
+      return []
+    }
+  }
+
   forget(sessionID: string) {
     const thread = this.threads.get(sessionID)
     this.threads.delete(sessionID)
+    this.skillRoots.delete(sessionID)
     // The agents it spawned go with it.
     for (const [spawn, owner] of this.spawned) if (owner === thread) this.spawned.delete(spawn)
   }
@@ -474,6 +515,7 @@ class CodexThread implements Thread {
   private startedOver = false
   /** Where Kuvo Code's tools were when it was loaded. */
   private toolsKey?: string
+  private skillsKey?: string
   /** The agents it spawned, by their thread: their sessions, across turns. */
   private spawnedSessions = new Map<string, { call: string; title: string; sessionID: string }>()
   /** Agents it spawned still at work after the turn that spawned them ended, by their thread. */
@@ -514,16 +556,32 @@ class CodexThread implements Thread {
     const instructions = hooks.instructions() || null
     // Loaded again with what the app adds to its instructions, when that changed.
     const tools = kuvoTools(this.session.id)
-    // Loaded again when Kuvo Code's tools moved (the app started again), to reach them.
-    if (this.nativeID && this.loaded && instructions === this.instructions && tools?.key === this.toolsKey) return rpc
+    // Settings › Skills' skills, as extra ones (but those it reads itself), and those of its own
+    // you turned off, off for this thread.
+    const directory = this.session.location.directory
+    const own = this.agent.ownSkillFolders(directory)
+    const off = turnedOff(hooks)
+    const skills = skillsFolder(await skillsFor(directory, own, off))
+    await this.agent.useSkills(this.session.id, skills, rpc)
+    const turnedOffHere = (await engineSkills(directory)).filter((skill) => within(skill.folder, own) && off(skill.name)).map((skill) => ({ path: join(skill.folder, "SKILL.md"), enabled: false }))
+    const skillsKey = JSON.stringify([skills, turnedOffHere])
+    // Loaded again when Kuvo Code's tools moved (the app started again), to reach them, or the
+    // skills changed.
+    if (this.nativeID && this.loaded && instructions === this.instructions && tools?.key === this.toolsKey && skillsKey === this.skillsKey) return rpc
     this.toolsKey = tools?.key
+    this.skillsKey = skillsKey
     this.instructions = instructions
     // Kuvo Code's own tools, as the engine's models have them (a setting for this thread alone).
     const timeout = tools ? { tool_timeout_sec: Math.ceil(tools.timeout / 1000) } : {}
     const server = tools?.kind === "http" ? { url: tools.url, http_headers: tools.headers, ...timeout } : tools?.kind === "stdio" ? { command: tools.command, args: tools.args, env: tools.env, ...timeout } : undefined
     // Its commands know their conversation, as the engine's do (kuvo-wake schedules for it).
     // (On a machine, the machine's own folders too: Codex keeps its own in Kuvo Code's folder.)
-    const config = { "shell_environment_policy.set.OPENCODE_SESSION_ID": this.session.id, ...(onMachine ? ownFoldersConfig() : {}), ...(tools && server ? { [`mcp_servers.${tools.name}`]: server } : {}) }
+    const config = {
+      "shell_environment_policy.set.OPENCODE_SESSION_ID": this.session.id,
+      ...(onMachine ? ownFoldersConfig() : {}),
+      ...(tools && server ? { [`mcp_servers.${tools.name}`]: server } : {}),
+      ...(turnedOffHere.length ? { "skills.config": [...this.agent.ownSkillSettings(), ...turnedOffHere] } : {}),
+    }
     const common = { cwd: this.session.location.directory, model: input.model.id, developerInstructions: instructions, config }
     if (this.nativeID) {
       try {

@@ -22,8 +22,8 @@ const outputLimit = 30_000
 const limitWords = /RESOURCE_EXHAUSTED|usage limit (?:reached|exceeded)|quota exceeded|exceeded your (?:current )?quota|rate limit exceeded|too many requests/i
 
 export interface AcpFlavor {
-  /** The command that starts the agent, for this session's approval mode. */
-  command(options: { approvesAll: boolean; plan: boolean }): Promise<{
+  /** The command that starts the agent, for this session's approval mode (and its skills folder, from `skills`). */
+  command(options: { approvesAll: boolean; plan: boolean; skills?: string }): Promise<{
     argv: string[]
     env?: Record<string, string | undefined>
     cleanEnv?: boolean
@@ -32,6 +32,11 @@ export interface AcpFlavor {
     /** A file the agent writes when it wants you to sign in (its "browser" writes the page down): it can't go on. */
     signInFile?: string
   }>
+  /**
+   * Settings › Skills' skills for a session, made ready for the agent as it starts: a folder of
+   * them (see skills.ts), or what stands for them (a different one starts it again).
+   */
+  skills?(directory: string, hooks: TurnHooks): Promise<string | undefined>
   /** Whether the agent may read and write files through the bridge (it asks first itself). */
   fileSystem: boolean
   /** `_meta` sent with `initialize`. */
@@ -171,8 +176,10 @@ export class AcpThread implements Thread {
   ) {}
 
   private async open(input: RunInput, hooks: TurnHooks) {
-    const mode = { approvesAll: hooks.approvesAll(), plan: input.plan }
-    // Kuvo Code's tools moving (the app started again) starts it again too, to reach them.
+    const skills = await this.flavor.skills?.(this.session.location.directory, hooks)
+    const mode = { approvesAll: hooks.approvesAll(), plan: input.plan, skills }
+    // Kuvo Code's tools moving (the app started again) starts it again too, to reach them; so do
+    // other skills.
     const key = JSON.stringify({ ...mode, program: this.flavor.program?.() ?? 0, tools: kuvoTools(this.session.id)?.key })
     if (this.rpc && !this.rpc.isClosed && this.spawnedWith === key && this.rpc !== this.stale) return this.rpc
     // Started again for another approval mode (the agent takes it as it starts), or an updated program.

@@ -22,6 +22,7 @@ import { Snapshots } from "./snapshots"
 import { Roster } from "./roster"
 import { cancelSignIns, handler } from "./server"
 import { Sessions } from "./sessions"
+import { setSkillSource } from "./skills"
 import { Store } from "./store"
 
 const version = "1"
@@ -85,6 +86,8 @@ const auto = new Auto(home)
 // The engine's own models, run in sessions here (the app says where the engine is).
 const link = new EngineLink()
 if (machineEngine) link.configure(machineEngine.url, machineEngine.password)
+// The skills Settings › Skills lists, for the agents too (the engine lists them).
+setSkillSource(link, home)
 const engineAgents = new Map<string, EngineAgent>()
 function engineAgent(providerID: string): EngineAgent | undefined {
   if (!link.ready || parseProvider(providerID)) return undefined

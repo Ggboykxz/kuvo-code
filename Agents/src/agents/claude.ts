@@ -19,6 +19,7 @@ import { Queue } from "../queue"
 import { afterInstall, commandSignIn } from "../signin"
 import { newID } from "../ids"
 import { kuvoTools } from "../kuvotools"
+import { skillsFolder, skillsFor, turnedOff, upward } from "../skills"
 import { claudeProgram, managedNote, onMachine, ownFoldersScript } from "../machine"
 import { addShell, endShell } from "../shells"
 import { pictureData, pictureFile, withPictures } from "../pictures"
@@ -193,6 +194,12 @@ export class ClaudeAgent implements Agent {
     // Without its own copy of Claude Code: it runs yours; on a machine, with it (it's the one there).
     await this.context.deps.ensure(this.id, SDK, { optional: onMachine })
     return this.context.deps.load(this.id, SDK[0].name)
+  }
+
+  /** Where Claude Code reads skills itself: its settings folder's, and a project's `.claude/skills`. */
+  ownSkillFolders(directory: string): string[] {
+    const settings = this.instance.home ?? process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude")
+    return [join(settings, "skills"), ...upward(directory).map((folder) => join(folder, ".claude", "skills"))]
   }
 
   /** Claude Code's environment: an added account's own folder (Claude Code keeps its sign-in in the Keychain, named after it). */
@@ -410,7 +417,7 @@ class ClaudeThread implements Thread {
   private commands = new Map<string, string>()
   /** The last of its tasks to end: what began a turn it starts on its own. */
   private lastEnded?: { type: string; description: string; command?: string; status: string; summary?: string }
-  private opened?: { model: string; effort?: string; plan: boolean; append: string; program: number; tools?: string }
+  private opened?: { model: string; effort?: string; plan: boolean; append: string; program: number; tools?: string; skills?: string }
 
   constructor(
     private readonly agent: ClaudeAgent,
@@ -433,9 +440,11 @@ class ClaudeThread implements Thread {
     // What the app adds to its instructions changed (a worktree, the project's folders), or Claude
     // Code was updated: it starts again, going on with the same conversation.
     const tools = kuvoTools(this.session.id)
-    if (this.query && (this.opened?.append !== append || this.opened?.program !== this.agent.program || this.opened?.tools !== tools?.key)) this.close()
+    // Settings › Skills' skills, as a plugin of its own (but those it reads itself).
+    const skills = skillsFolder(await skillsFor(this.session.location.directory, this.agent.ownSkillFolders(this.session.location.directory), turnedOff(hooks)))
+    if (this.query && (this.opened?.append !== append || this.opened?.program !== this.agent.program || this.opened?.tools !== tools?.key || this.opened?.skills !== skills)) this.close()
     if (!this.query) {
-      this.open(sdk, modelID, effort, input.plan, append, hooks)
+      this.open(sdk, modelID, effort, input.plan, append, hooks, skills)
       // Kuvo Code's own tools, as the engine's models have them: told over its pipe, not on its
       // command line (where any process could read their key).
       if (tools) {
@@ -447,7 +456,7 @@ class ClaudeThread implements Thread {
       if (this.opened?.model !== modelID) await this.query.setModel(modelID === "default" ? undefined : modelID).catch(() => {})
       if (this.opened?.effort !== effort) await this.query.applyFlagSettings({ effortLevel: effort ?? null }).catch(() => {})
       if (this.opened?.plan !== input.plan) await this.query.setPermissionMode(input.plan ? "plan" : "default").catch(() => {})
-      this.opened = { model: modelID, effort, plan: input.plan, append, program: this.agent.program, tools: tools?.key }
+      this.opened = { model: modelID, effort, plan: input.plan, append, program: this.agent.program, tools: tools?.key, skills }
     }
     if (hooks.signal.aborted) return { outcome: "interrupted" }
     return new Promise<RunResult>((resolve) => {
@@ -631,7 +640,7 @@ class ClaudeThread implements Thread {
     return Boolean(this.query) && this.liveTasks.size > 0
   }
 
-  private open(sdk: any, modelID: string, effort: string | undefined, plan: boolean, append: string, hooks: TurnHooks) {
+  private open(sdk: any, modelID: string, effort: string | undefined, plan: boolean, append: string, hooks: TurnHooks, skills?: string) {
     let id = this.state.claudeSession as string | undefined
     const resume = Boolean(id && this.state.claudeStarted)
     if (!id) {
@@ -643,7 +652,7 @@ class ClaudeThread implements Thread {
     if (!resume) delete this.state.claudeCost
     this.input = new Queue()
     const tools = kuvoTools(this.session.id)
-    this.opened = { model: modelID, effort, plan, append, program: this.agent.program, tools: tools?.key }
+    this.opened = { model: modelID, effort, plan, append, program: this.agent.program, tools: tools?.key, skills }
     this.query = sdk.query({
       prompt: this.input,
       options: {
@@ -659,6 +668,7 @@ class ClaudeThread implements Thread {
         // Before any tool runs, even one Claude Code's own settings allow (yours, or a project's).
         hooks: { PreToolUse: [{ hooks: [async (hookInput: any) => this.preToolUse(hookInput)] }] },
         systemPrompt: { type: "preset", preset: "claude_code", ...(append ? { append } : {}) },
+        ...(skills ? { plugins: [{ type: "local" as const, path: skills, skipMcpDiscovery: true }] } : {}),
         ...(resume ? { resume: id } : { sessionId: id }),
         // Its commands know their conversation, as the engine's do (kuvo-wake schedules for it).
         env: { ...this.agent.env(), OPENCODE_SESSION_ID: this.session.id },

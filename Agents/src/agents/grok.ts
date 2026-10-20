@@ -12,6 +12,7 @@ import { grokProgram, installGrok, managedNote, onMachine, withOwnFolders } from
 import { maintenance, update, type MaintenanceDefinition } from "../maintenance"
 import { plain, run, which } from "../proc"
 import { afterInstall, commandSignIn } from "../signin"
+import { skillsFolder, skillsFor, turnedOff, upward } from "../skills"
 import type { Model, Session } from "../wire"
 
 const places = [join(homedir(), ".grok/bin"), join(homedir(), ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin"]
@@ -104,6 +105,16 @@ export class GrokAgent implements Agent {
     return [{ type: "oauth" as const, id: "grok", label: "Sign in with Grok" }]
   }
 
+  /**
+   * Where Grok reads skills itself: its home's, and Claude Code's and Cursor's (`~/.claude/skills`,
+   * `~/.cursor/skills`), and a project's `.grok`, `.claude`, `.cursor` and `.agents` skills.
+   */
+  ownSkillFolders(directory: string): string[] {
+    const home = this.instance.home ?? process.env.GROK_HOME ?? join(homedir(), ".grok")
+    const projects = upward(directory).flatMap((folder) => [".grok", ".claude", ".cursor", ".agents"].map((name) => join(folder, name, "skills")))
+    return [join(home, "skills"), join(homedir(), ".claude", "skills"), join(homedir(), ".cursor", "skills"), ...projects]
+  }
+
   env(): Record<string, string | undefined> {
     // An added account's own GROK_HOME: its sign-in and sessions there.
     return withOwnFolders({ ...process.env, GROK_DISABLE_AUTOUPDATER: "1", ...(this.instance.home ? { GROK_HOME: this.instance.home } : {}) })
@@ -168,15 +179,20 @@ export class GrokAgent implements Agent {
         authMethod: () => (process.env.XAI_API_KEY ? "xai.api_key" : "cached_token"),
         restartAfterInterrupt: true,
         program: () => agent.program,
-        async command({ approvesAll, plan }) {
+        async command({ approvesAll, plan, skills }) {
           const executable = await agent.installedProgram()
           if (!executable) throw new Error("Install Grok's CLI first: npm install -g @xai-official/grok")
+          // Settings › Skills' skills, as a plugin for this process alone.
+          const plugin = skills ? ["--plugin-dir", skills] : []
           const argv = plan
-            ? [executable, "--permission-mode", "plan", "agent", "stdio"]
+            ? [executable, "--permission-mode", "plan", "agent", ...plugin, "stdio"]
             : approvesAll
-              ? [executable, "agent", "--always-approve", "stdio"]
-              : [executable, "--permission-mode", "default", "agent", "stdio"]
+              ? [executable, "agent", ...plugin, "--always-approve", "stdio"]
+              : [executable, "--permission-mode", "default", "agent", ...plugin, "stdio"]
           return { argv, env: agent.env() }
+        },
+        async skills(directory, hooks) {
+          return skillsFolder(await skillsFor(directory, agent.ownSkillFolders(directory), turnedOff(hooks)))
         },
         async selectModel(rpc, sessionId, modelID, setup, variant) {
           agent.saveEfforts(setup)
