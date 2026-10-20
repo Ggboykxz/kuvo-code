@@ -5,6 +5,7 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- Picking another model just as the agent finishes no longer starts it working again on a task that was done: the run is handed to the new model only if it was still going.
 - A conversation no longer opens with "Something went wrong: cancelled" over the composer: when Kuvo Code started its engine over while reading a conversation (or a request was called off for another reason), that showed as an error.
 - After **Build It** leaves Plan mode, the conversation no longer shows "Plan mode: it explores and plans" under the "Build mode" line.
 - The bar over the composer for commands left running in the background no longer flashes for every command the agent runs, nor adds and drops quick ones from its list while a long one runs: a command shows there once it has run for a couple of seconds.

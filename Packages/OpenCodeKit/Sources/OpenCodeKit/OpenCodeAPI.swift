@@ -454,10 +454,12 @@ public struct OpenCodeAPI: Sendable {
     }
 
     /// Stops the current run. With `resume`, the agent goes straight on with the input waiting
-    /// to steer it, so that input goes in now instead of at the next step.
-    public func interrupt(session: String, resume: Bool = false) async throws {
+    /// to steer it, so that input goes in now instead of at the next step. Whether there was a run
+    /// to stop.
+    @discardableResult
+    public func interrupt(session: String, resume: Bool = false) async throws -> Bool {
         struct Response: Decodable { var interrupted: Bool }
-        try await send("POST", "api/session/\(session.pathEscaped)/interrupt", query: ["resume": resume ? "true" : nil], as: Response.self)
+        return try await send("POST", "api/session/\(session.pathEscaped)/interrupt", query: ["resume": resume ? "true" : nil], as: Response.self).interrupted
     }
 
     /// Removes waiting input before the agent gets it. Input already delivered is left alone.

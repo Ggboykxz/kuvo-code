@@ -1219,9 +1219,10 @@ final class SessionModel {
         Task {
             do {
                 try await api.selectModel(session: id, model: model)
-                if switchesNow {
+                // The note starts a turn of its own: only when there was a run to stop, as there
+                // may not be by now (it ended while the model was being set).
+                if switchesNow, try await api.interrupt(session: id) {
                     try await api.addSynthetic(session: id, text: Self.switchedModelNote)
-                    try await api.interrupt(session: id, resume: true)
                 }
             } catch {
                 fail(error)
