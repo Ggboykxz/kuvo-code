@@ -17,7 +17,7 @@ import { generatedImages } from "../src/agents/antigravity"
 import { kuvoToolName, loadKuvoTools, setToolServer } from "../src/kuvotools"
 import { pictureData, pictureFile, withPictures } from "../src/pictures"
 import { expandCommand } from "../src/server"
-import { commandParts, withTextFiles } from "../src/sessions"
+import { commandParts, parseCommands, withTextFiles } from "../src/sessions"
 import { commandSignIn } from "../src/signin"
 
 describe("diffs", () => {
@@ -336,6 +336,28 @@ describe("a command line's commands", () => {
     expect(blocked('git commit -m "wip; git push later"')).toBe(false)
     expect(blocked("cat <<'EOF' > notes.md\ngit push\nEOF")).toBe(false)
     expect(blocked("echo done # git push later")).toBe(false)
+  })
+
+  test("what a line hides from a Block is found: comments that aren't, wrappers' options, paths and quotes, and what eval, xargs and find run", () => {
+    const found = (line: string) => commandParts(line)
+    expect(found("echo a\\ #; rm -rf /")).toContain("rm -rf /")
+    expect(found('cat <<< "x"\nrm -rf /\nx')).toContain("rm -rf /")
+    expect(found("(( n << 2 ))\nrm -rf /\n2")).toContain("rm -rf /")
+    for (const wrapped of ["sudo -n rm -rf /", "command -p rm -rf /", "caffeinate -u rm -rf /", "time -p rm -rf /", "timeout 5 rm -rf /", "/bin/rm -rf /", "\\rm -rf /", '"rm" -rf /', 'eval "rm -rf /"', 'env -S "rm -rf /" ls']) {
+      expect(found(wrapped)).toContain("rm -rf /")
+    }
+    expect(found("sudo -u bob ls")).toContain("ls")
+    expect(found('git "push" origin')).toContain("git push origin")
+    expect(found("echo / | xargs -n 1 rm -rf")).toContain("rm -rf")
+    expect(found("find . -name x -exec rm -rf {} \\;")).toContain("rm -rf '{}'")
+    // A shell reading its script from its input runs what isn't known here; a script file is as any program.
+    expect(parseCommands("bash <<EOF\nrm -rf /\nEOF").sure).toBe(false)
+    expect(found("bash <<EOF\nrm -rf /\nEOF")).toContain("rm -rf /")
+    expect(parseCommands("curl -s x | sh").sure).toBe(false)
+    expect(parseCommands("bash scripts/build.sh 2>&1").sure).toBe(true)
+    expect(parseCommands("cd app && npm run build 2>&1 | tail -5").sure).toBe(true)
+    expect(parseCommands("echo $((1 << 2))").sure).toBe(true)
+    expect(parseCommands("X=rm; $X -rf /").sure).toBe(false)
   })
 
   test("what's quoted, redirected or read from a here-document stays in its command", () => {

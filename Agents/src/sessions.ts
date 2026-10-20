@@ -204,7 +204,7 @@ export function parseCommands(line: string): { commands: string[]; sure: boolean
 }
 
 /** Words that open or close a block around commands, not commands themselves. */
-const shellKeywords = new Set(["if", "then", "else", "elif", "do", "while", "until", "!", "time", "{", "}", "fi", "done", "esac"])
+const shellKeywords = new Set(["if", "then", "else", "elif", "do", "while", "until", "!", "{", "}", "fi", "done", "esac"])
 
 /**
  * Reads commands from `start` until `close` (the `)` of a `$(`, the closing backtick, or the end),
@@ -213,9 +213,11 @@ const shellKeywords = new Set(["if", "then", "else", "elif", "do", "while", "unt
 function scanCommands(text: string, start: number, close: string, out: string[], state: { sure: boolean }): number {
   let current = ""
   let depth = 0
+  // The last thing taken was escaped (`a\ #` isn't a comment).
+  let escaped = false
   const heredocs: { word: string; tabs: boolean }[] = []
   const push = () => {
-    addCommand(current, out)
+    addCommand(current, out, state)
     current = ""
   }
   let i = start
@@ -225,9 +227,24 @@ function scanCommands(text: string, start: number, close: string, out: string[],
       push()
       return i
     }
+    const wasEscaped = escaped
+    escaped = false
     if (ch === "\\") {
       current += text.slice(i, i + 2)
       i += 2
+      escaped = true
+    } else if (text.startsWith("$((", i) || (text.startsWith("((", i) && !current.trim())) {
+      // Arithmetic (`$((1 << 2))`, `(( n++ ))`): numbers, not commands; one with a command inside isn't read.
+      let level = 0
+      let j = text[i] === "$" ? i + 1 : i
+      for (; j < text.length; j++) {
+        if (text[j] === "(") level++
+        else if (text[j] === ")" && --level === 0) break
+      }
+      const inner = text.slice(i, j + 1)
+      if (j >= text.length || /\$\(|`/.test(inner.slice(3))) state.sure = false
+      current += inner
+      i = j + 1
     } else if (ch === "'") {
       const end = text.indexOf("'", i + 1)
       if (end < 0) state.sure = false
@@ -252,11 +269,15 @@ function scanCommands(text: string, start: number, close: string, out: string[],
       if (end >= text.length) state.sure = false
       current += text.slice(i, end + 1)
       i = end + 1
-    } else if (ch === "#" && (current === "" || /\s$/.test(current))) {
+    } else if (ch === "#" && !wasEscaped && (current === "" || /\s$/.test(current))) {
       // A comment, to the end of its line.
       const lineEnd = text.indexOf("\n", i)
       i = lineEnd < 0 ? text.length : lineEnd
-    } else if (ch === "<" && text.startsWith("<<", i) && text[i + 2] !== "<") {
+    } else if (text.startsWith("<<<", i)) {
+      // A here-string: a word it reads, on this line.
+      current += "<<<"
+      i += 3
+    } else if (ch === "<" && text.startsWith("<<", i)) {
       // A here-document: its lines (from the next one on) are what it reads, not commands; the
       // rest of this line goes on as usual.
       const match = /^<<(-?)\s*(['"]?)([^\s'"<>;&|()]+)\2/.exec(text.slice(i))
@@ -312,46 +333,117 @@ function scanCommands(text: string, start: number, close: string, out: string[],
  * before the subcommand (`git -C dir push`); a shell given a command line (`bash -c '…'`), that
  * line's commands too.
  */
-function addCommand(raw: string, out: string[]) {
+function addCommand(raw: string, out: string[], state: { sure: boolean }) {
   const words = shellWords(raw.trim())
   while (words.length && shellKeywords.has(words[0])) words.shift()
   // A loop's or a case's own line: what runs is inside it.
   if (!words.length || /^(for|case|select|function)$/.test(words[0])) return
   out.push(words.join(" "))
-  const bare = withoutPrefix(words)
+  const bare = withoutPrefix(words, (line) => addLine(line, out, state))
   if (!bare.length) return
   out.push(bare.join(" "))
-  if (bare[0] === "git") {
-    const rest = bare.slice(1)
+  // As it runs: the words the program gets, and the program by its name (`"git" push`, `\git`,
+  // `/usr/bin/git`); written as before where taking the quotes off would join words.
+  const plain = bare.map(dequote)
+  plain[0] = plain[0].split("/").pop() ?? plain[0]
+  const shown = plain.map((word, index) => (/^[\w@%+=:,./-]*$/.test(word) ? word : bare[index]))
+  out.push(shown.join(" "))
+  // A program named by a variable or a substitution, or quoting this can't read (`$'\x72m'`): not known.
+  if (/[$`]/.test(bare[0]) || bare.some((word) => /\$['"]/.test(word))) state.sure = false
+  const program = plain[0]
+  if (program === "git") {
+    const rest = shown.slice(1)
     while (rest.length) {
       if (rest[0] === "-C" || rest[0] === "-c" || rest[0] === "--git-dir" || rest[0] === "--work-tree" || rest[0] === "--namespace") rest.splice(0, 2)
       else if (rest[0].startsWith("-")) rest.shift()
       else break
     }
     out.push(["git", ...rest].join(" "))
-  }
-  const program = bare[0].split("/").pop() ?? ""
-  if (/^(ba|z|da|k|fi)?sh$/.test(program)) {
-    const at = bare.findIndex((word, index) => index > 0 && /^-[a-z]*c[a-z]*$/.test(word))
-    if (at > 0 && bare[at + 1]) out.push(...parseCommands(unquote(bare[at + 1])).commands)
+  } else if (/^(ba|z|da|k|fi)?sh$/.test(program)) {
+    // A shell given a command line runs its commands; one reading its script from its input (a
+    // here-document, what's piped to it) runs what isn't known here (a script file is as any program).
+    const at = plain.findIndex((word, index) => index > 0 && /^-[a-z]*c[a-z]*$/.test(word))
+    if (at > 0 && plain[at + 1] !== undefined) addLine(plain[at + 1], out, state)
+    else if (plain.includes("-s") || !operands(plain.slice(1)).some((word) => !word.startsWith("-") && !word.startsWith("+"))) state.sure = false
+  } else if (program === "eval") {
+    addLine(plain.slice(1).join(" "), out, state)
+  } else if (program === "xargs") {
+    // The command it runs, with arguments from its input (not known here).
+    state.sure = false
+    let i = 1
+    while (i < plain.length && plain[i].startsWith("-")) i += /^-[IinPLsdEa]$/.test(plain[i]) ? 2 : 1
+    if (i < plain.length) addCommand(plain.slice(i).map(quoted).join(" "), out, state)
+  } else if (program === "find") {
+    // What its -exec runs, up to its `;` or `+`.
+    for (let i = 1; i < plain.length; i++) {
+      if (!/^-(exec|execdir|ok|okdir)$/.test(plain[i])) continue
+      const end = plain.findIndex((word, index) => index > i && (word === ";" || word === "+"))
+      addCommand(plain.slice(i + 1, end < 0 ? undefined : end).map(quoted).join(" "), out, state)
+      if (end < 0) state.sure = false
+    }
   }
 }
 
-const wrappers = new Set(["env", "command", "exec", "nohup", "builtin", "sudo", "doas", "time", "nice", "caffeinate"])
+/** A command's words without its redirections (`<<EOF`, `< file`, `2>&1`). */
+function operands(words: string[]): string[] {
+  const kept: string[] = []
+  for (let i = 0; i < words.length; i++) {
+    if (/^\d*(<<<|<<-?|>>|<>|<&|>&|&>>|&>|<|>)$/.test(words[i])) i++
+    else if (!/^\d*(<<<|<<-?|>>|<>|<&|>&|&>>|&>|<|>)/.test(words[i])) kept.push(words[i])
+  }
+  return kept
+}
 
-function withoutPrefix(words: string[]): string[] {
+/** A command line inside a command (`bash -c '…'`, `eval …`, `env -S '…'`): its commands too. */
+function addLine(line: string, out: string[], state: { sure: boolean }) {
+  const inner = parseCommands(line)
+  out.push(...inner.commands)
+  if (!inner.sure) state.sure = false
+}
+
+/** A word as the program gets it, quoted again for a shell to read (it has a space, or quotes). */
+function quoted(word: string): string {
+  return /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`
+}
+
+/** Programs that run the command after them, and which of their options take a value (`sudo -u bob`, `nice -n 10`; `sudo -n` takes none). */
+const wrappers: Record<string, RegExp | undefined> = {
+  env: /^-[uCSP]$/,
+  command: undefined,
+  exec: /^-a$/,
+  nohup: undefined,
+  builtin: undefined,
+  sudo: /^-[ugCDhprtUT]$/,
+  doas: /^-[uC]$/,
+  time: /^-[of]$/,
+  nice: /^-n$/,
+  caffeinate: /^-[tw]$/,
+  timeout: /^-[sk]$/,
+}
+
+/** A command without what comes before what runs; `line` is told a command line an option holds (`env -S '…'`). */
+function withoutPrefix(words: string[], line?: (text: string) => void): string[] {
   let i = 0
   while (i < words.length) {
     const word = words[i]
+    const program = dequote(word).split("/").pop() ?? ""
     if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) i++
     else if (/^\d*(>>?|<|&>|>&|<&|&>>)$/.test(word)) i += 2
     else if (/^\d*(>>?|<|&>|>&|<&|&>>)\S/.test(word)) i++
-    else if (wrappers.has(word.split("/").pop() ?? "")) {
+    else if (Object.hasOwn(wrappers, program)) {
+      const takesValue = wrappers[program]
       i++
       while (i < words.length && words[i].startsWith("-")) {
-        // sudo -u bob, nice -n 10: the flag's value too.
-        i += /^-[ugCDhprtUn]$/.test(words[i]) ? 2 : 1
+        if (words[i] === "--") {
+          i++
+          break
+        }
+        const split = program === "env" && /^(-S|--split-string)(=|$)/.exec(words[i])
+        if (split) line?.(dequote(split[2] ? words[i].slice(split[0].length) : (words[i + 1] ?? "")))
+        i += takesValue?.test(words[i]) ? 2 : 1
       }
+      // timeout's duration comes before the command.
+      if (program === "timeout" && i < words.length) i++
     } else break
   }
   return words.slice(i)
@@ -394,10 +486,34 @@ function shellWords(text: string): string[] {
   return words
 }
 
-/** A word as the program gets it: quotes taken off. */
-function unquote(word: string): string {
-  if (word.length >= 2 && (word[0] === "'" || word[0] === '"') && word.at(-1) === word[0]) return word.slice(1, -1)
-  return word
+/** A word as the program gets it: its quotes and escapes taken off (substitutions stay as written). */
+function dequote(word: string): string {
+  let out = ""
+  let i = 0
+  while (i < word.length) {
+    const ch = word[i]
+    if (ch === "\\") {
+      out += word[i + 1] ?? ""
+      i += 2
+    } else if (ch === "'") {
+      const end = word.indexOf("'", i + 1)
+      out += word.slice(i + 1, end < 0 ? word.length : end)
+      i = end < 0 ? word.length : end + 1
+    } else if (ch === '"') {
+      let j = i + 1
+      while (j < word.length && word[j] !== '"') {
+        if (word[j] === "\\" && /["\\$`]/.test(word[j + 1] ?? "")) {
+          out += word[j + 1]
+          j += 2
+        } else out += word[j++]
+      }
+      i = j + 1
+    } else {
+      out += ch
+      i++
+    }
+  }
+  return out
 }
 
 /** What an ask is about, a command line's commands one by one. */
