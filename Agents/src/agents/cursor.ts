@@ -6,10 +6,11 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs"
 import { join } from "node:path"
 import { providerID, type AgentAccount } from "../accounts"
-import type { Agent, AgentContext, Account, RunInput, RunResult, SignInAttempt, Thread, TurnHooks } from "../agent"
+import type { Agent, AgentContext, Account, RunInput, RunResult, SignInAttempt, SubagentRun, Thread, TurnHooks } from "../agent"
 import { accountName, failure, model } from "../agent"
 import type { Limit } from "../auto"
-import { fromPatch } from "../diff"
+import { fileDiff, fromPatch } from "../diff"
+import { pictureData, pictureFile, withPictures } from "../pictures"
 import type { Turn } from "../turn"
 import type { Model, OAuthStatus, Session } from "../wire"
 
@@ -190,14 +191,24 @@ export class CursorAgent implements Agent {
 
 // MARK: A session
 
-interface Active {
+/** Where Cursor's updates are told: the turn's own, or a subagent's session (a task it started). */
+interface Lane {
   turn: Turn
-  hooks: TurnHooks
-  run?: any
   toolsSinceText: boolean
   sawText: boolean
   lastShell?: string
   output: Map<string, string>
+}
+
+interface Active extends Lane {
+  hooks: TurnHooks
+  run?: any
+  /** Its subagents (task calls), each told in a session of its own, by their call. */
+  subagents: Map<string, Lane & { run: SubagentRun }>
+  /** Tool calls it said it would make, and those it told: one its SDK leaves out is said. */
+  listed: number
+  told: number
+  reasoningTokens?: number
 }
 
 class CursorThread implements Thread {
@@ -316,13 +327,15 @@ class CursorThread implements Thread {
       instructed = undefined
     }
     if (hooks.signal.aborted) return { outcome: "interrupted" }
-    const active: Active = { turn, hooks, toolsSinceText: false, sawText: false, output: new Map() }
+    const active: Active = { turn, hooks, toolsSinceText: false, sawText: false, output: new Map(), subagents: new Map(), listed: 0, told: 0 }
     this.active = active
     turn.startStep()
     // Updates are handled one after another, in the order they came.
     let chain = Promise.resolve()
     const onDelta = async ({ update }: { update: any }) => {
-      chain = chain.then(() => this.update(active, update)).catch(() => {})
+      chain = chain
+        .then(() => this.update(active, active, update))
+        .catch((error) => console.error(`Cursor sent an update Kuvo Code couldn't show: ${errorWords(error)}`))
     }
     try {
       const run = await this.agent.send(images.length ? { text, images } : text, { model: selection, mode, onDelta })
@@ -334,14 +347,17 @@ class CursorThread implements Thread {
       if (result?.status !== "error" || active.sawText || active.output.size) instructionsTaken()
       if (!active.sawText && typeof result?.result === "string" && result.result.trim()) turn.text(result.result)
       const usage = result?.usage
+      // Tools its SDK didn't tell (it reports only the kinds it knows): said, so they aren't a mystery.
+      if (active.listed > active.told) turn.notice(`Cursor used ${active.listed - active.told} more ${active.listed - active.told === 1 ? "tool" : "tools"} than it reports to Kuvo Code.`)
+      for (const lane of active.subagents.values()) lane.run.end(result?.status === "error" ? "interrupted" : "succeeded")
       turn.endStep({
         tokens: usage
-          ? { input: usage.inputTokens ?? 0, output: usage.outputTokens ?? 0, reasoning: 0, cache: { read: usage.cacheReadTokens ?? 0, write: usage.cacheWriteTokens ?? 0 } }
+          ? { input: usage.inputTokens ?? 0, output: usage.outputTokens ?? 0, reasoning: active.reasoningTokens ?? 0, cache: { read: usage.cacheReadTokens ?? 0, write: usage.cacheWriteTokens ?? 0 } }
           : undefined,
       })
       if (hooks.signal.aborted || result?.status === "cancelled") return { outcome: "interrupted" }
       if (result?.status === "error") {
-        const message = String(result.error?.message ?? "Cursor stopped with an error.")
+        const message = errorWords(result.error) ?? "Cursor stopped with an error."
         const limit = limitOf(message, result.error)
         return limit ? { outcome: "failed", error: { type: "limit", message }, limit } : { outcome: "failed", error: failure(message) }
       }
@@ -349,7 +365,7 @@ class CursorThread implements Thread {
     } catch (error: any) {
       if (active.sawText || active.output.size) instructionsTaken()
       if (hooks.signal.aborted) return { outcome: "interrupted" }
-      const message = String(error?.message ?? error)
+      const message = errorWords(error) ?? "Cursor stopped with an error."
       const limit = limitOf(message, error)
       if (limit) return { outcome: "failed", error: { type: "limit", message }, limit }
       if (/Cannot use this model/i.test(message)) return { outcome: "failed", error: failure(`Cursor can't run ${input.model.id} with your account. Pick another of its models.`) }
@@ -360,23 +376,24 @@ class CursorThread implements Thread {
   }
 
   /** Words after a tool begin a new step. */
-  private words(active: Active) {
-    active.sawText = true
-    if (!active.toolsSinceText) return
-    active.toolsSinceText = false
-    active.turn.endStep()
-    active.turn.startStep()
+  private words(lane: Lane) {
+    lane.sawText = true
+    if (!lane.toolsSinceText) return
+    lane.toolsSinceText = false
+    lane.turn.endStep()
+    lane.turn.startStep()
   }
 
-  private async update(active: Active, update: any) {
-    const turn = active.turn
+  /** One of Cursor's updates, in its lane: the turn's own, or a subagent's (`tool-call-delta`). */
+  private async update(active: Active, lane: Lane, update: any) {
+    const turn = lane.turn
     switch (update?.type) {
       case "text-delta":
-        this.words(active)
+        this.words(lane)
         turn.text(update.text ?? "")
         return
       case "thinking-delta":
-        this.words(active)
+        this.words(lane)
         turn.reasoning(update.text ?? "")
         return
       case "thinking-completed":
@@ -391,9 +408,12 @@ class CursorThread implements Thread {
         if (!id) return
         const kuvo = kuvoTool(call)
         if (!turn.hasTool(id)) {
-          active.toolsSinceText = true
+          lane.toolsSinceText = true
+          if (lane === active) active.told++
           turn.toolStart(id, kuvo.name, kuvo.input)
-          if (call.type === "shell") active.lastShell = id
+          if (call.type === "shell") lane.lastShell = id
+          // A subagent: a session of its own, which its updates are told in.
+          if (call.type === "task" && lane === active) this.subagentLane(active, id, call)
         } else {
           turn.toolCalled(id, kuvo.input)
         }
@@ -401,22 +421,55 @@ class CursorThread implements Thread {
         const result = call.result ?? {}
         const value = result.value ?? {}
         const failed = result.status === "error" || (call.type === "mcp" && value.isError)
-        const { output, metadata } = toolResult(call, value, active.output.get(id))
-        if (failed) turn.toolFailed(id, output || String(result.error?.message ?? result.error ?? "The tool failed."), metadata)
-        else turn.toolSucceeded(id, output, metadata)
+        const { output, metadata } = toolResult(call, value, lane.output.get(id))
+        const subagent = lane === active ? active.subagents.get(id) : undefined
+        if (subagent) {
+          subagent.run.end(failed ? "failed" : "succeeded", failed ? { type: "agent", message: errorWords(result.error) ?? "The subagent failed." } : undefined)
+          active.subagents.delete(id)
+        }
+        if (failed) turn.toolFailed(id, (typeof output === "string" ? output : "") || errorWords(result.error) || "The tool failed.", metadata)
+        else turn.toolSucceeded(id, output, subagent ? { ...metadata, sessionID: subagent.run.sessionID } : metadata)
+        return
+      }
+      case "tool-call-delta": {
+        // What a subagent does: in its session.
+        const subagent = active.subagents.get(update.callId) ?? (update.callId ? this.subagentLane(active, update.callId, {}) : undefined)
+        if (subagent && update.taskUpdate) await this.update(active, subagent, update.taskUpdate)
         return
       }
       case "shell-output-delta": {
-        const id = active.lastShell
+        const id = lane.lastShell
         if (!id) return
-        const event = update.event ?? {}
-        const chunk = [event.text, event.output, event.data, event.stdout, event.stderr, event.chunk].find((part) => typeof part === "string") ?? ""
-        const output = ((active.output.get(id) ?? "") + chunk).slice(-outputLimit)
-        active.output.set(id, output)
+        const chunk = shellChunk(update.event)
+        if (!chunk) return
+        const output = ((lane.output.get(id) ?? "") + chunk).slice(-outputLimit)
+        lane.output.set(id, output)
         turn.toolProgress(id, { output })
         return
       }
+      case "summary-completed":
+        turn.notice("Cursor summarized the conversation to make room.")
+        return
+      case "turn-ended":
+        if (lane === active && typeof update.usage?.reasoningTokens === "number") active.reasoningTokens = update.usage.reasoningTokens
+        return
+      case "tool-requests-listed":
+        if (lane === active && typeof update.callCount === "number") active.listed += update.callCount
+        return
+      default:
+        if (!cursorUpdates.has(update?.type)) console.error(`Cursor sent ${update?.type}, which Kuvo Code doesn't know.`)
     }
+  }
+
+  /** A subagent's session, for its task call: made the first time. */
+  private subagentLane(active: Active, id: string, call: any): Lane & { run: SubagentRun } {
+    const known = active.subagents.get(id)
+    if (known) return known
+    const args = call.args ?? {}
+    const run = active.hooks.subagent(id, { title: String(args.description ?? "A subagent's task"), prompt: typeof args.prompt === "string" ? args.prompt : undefined, agent: args.subagentType?.kind })
+    const lane = { turn: run.turn, toolsSinceText: false, sawText: false, output: new Map<string, string>(), run }
+    active.subagents.set(id, lane)
+    return lane
   }
 
   async interrupt() {
@@ -466,18 +519,47 @@ function kuvoTool(call: any): { name: string; input: Record<string, unknown> } {
     case "mcp":
       return { name: `${args.providerIdentifier}_${args.toolName}`, input: args.args ?? {} }
     case "updateTodos":
-      return { name: "todowrite", input: { todos: args.todos } }
+      // Its statuses as the app's ("inProgress" is "in_progress").
+      return { name: "todowrite", input: { todos: (args.todos ?? []).map((todo: any) => ({ ...todo, status: todo?.status === "inProgress" ? "in_progress" : todo?.status })) } }
+    case "generateImage":
+      return { name: "generate_image", input: { prompt: args.prompt ?? args.description } }
+    case "readLints":
+      return { name: "lints", input: { paths: args.paths } }
+    case "recordScreen":
+      return { name: "record_screen", input: args }
     case "task":
       return { name: "subagent", input: { description: args.description, prompt: args.prompt, agent: args.subagentType?.kind } }
     case "createPlan":
       return { name: "plan", input: { plan: args.plan } }
   }
-  return { name: String(call.type ?? "tool"), input: args }
+  // One its SDK passes through as it came (`{case, value}`).
+  return { name: String(call.type ?? call.case ?? "tool"), input: call.args ?? call.value?.args ?? {} }
 }
 
-function toolResult(call: any, value: any, streamed?: string): { output: string; metadata?: Record<string, unknown> } {
+function toolResult(call: any, value: any, streamed?: string): { output: string | ReturnType<typeof withPictures>; metadata?: Record<string, unknown> } {
   const args = call.args ?? {}
   switch (call.type) {
+    case "grep":
+      return { output: grepText(value).slice(0, outputLimit) }
+    case "semSearch":
+      return { output: String(value.results ?? "").slice(0, outputLimit) }
+    case "ls":
+      return { output: treeText(value.directoryTreeRoot).slice(0, outputLimit) }
+    case "readLints":
+      return {
+        output: ((value.fileDiagnostics ?? []) as any[])
+          .flatMap((file) => ((file.diagnostics ?? []) as any[]).map((diagnostic) => `${file.path}${diagnostic.range?.start?.line !== undefined ? `:${diagnostic.range.start.line + 1}` : ""}: ${diagnostic.severity ? `${diagnostic.severity}: ` : ""}${diagnostic.message ?? ""}`))
+          .join("\n")
+          .slice(0, outputLimit) || "No problems.",
+      }
+    case "task":
+      return { output: String(value.resultSuffix ?? lastWords(value.conversationSteps) ?? "").slice(0, outputLimit) }
+    case "generateImage":
+      return { output: withPictures("", [pictureFile(value.filePath) ?? pictureData(value.imageData, "image/png")]) }
+    case "recordScreen":
+      return { output: value.path ? `Recorded the screen: ${value.path}` : "Recorded the screen." }
+    case "delete":
+      return { output: `Deleted ${args.path ?? "the file"}.`, metadata: args.path ? { files: [fileDiff(args.path, "", "")] } : undefined }
     case "shell": {
       const output = [value.stdout, value.stderr].filter((part: unknown) => typeof part === "string" && part).join("\n") || streamed || ""
       return { output: output.slice(-outputLimit), metadata: { output: output.slice(-outputLimit), exit: value.exitCode ?? 0 } }
@@ -489,13 +571,87 @@ function toolResult(call: any, value: any, streamed?: string): { output: string;
     case "glob":
       return { output: (value.files ?? []).join("\n").slice(0, outputLimit) }
     case "mcp":
-      return { output: (value.content ?? []).map((part: any) => part?.text?.text ?? "").filter(Boolean).join("\n").slice(0, outputLimit) }
+      return {
+        output: withPictures(
+          (value.content ?? []).map((part: any) => part?.text?.text ?? "").filter(Boolean).join("\n").slice(0, outputLimit),
+          (value.content ?? []).map((part: any) => (part?.image ? pictureData(part.image.data, part.image.mimeType ?? "image/png") : undefined)),
+        ),
+      }
     case "createPlan":
       return { output: String(args.plan ?? "") }
   }
   if (typeof value === "string") return { output: value.slice(0, outputLimit) }
   return { output: "" }
 }
+
+/** What a running command printed, from Cursor's `{case: "stdout" | "stderr" | "exit" | "start", value: {data}}`. */
+export function shellChunk(event: any): string {
+  if (!event) return ""
+  const data = event.case === "stdout" || event.case === "stderr" ? event.value?.data : undefined
+  return [data, event.text, event.output, event.data, event.stdout, event.stderr, event.chunk].find((part) => typeof part === "string") ?? ""
+}
+
+export { toolResult as cursorToolResult }
+
+/** A grep's matches, as lines (a file and line each, or files, or counts). */
+function grepText(value: any): string {
+  const results = [...Object.values((value?.workspaceResults ?? {}) as Record<string, any>), value?.activeEditorResult].filter(Boolean)
+  const lines: string[] = []
+  for (const result of results) {
+    const output = result.output ?? {}
+    if (result.type === "files") lines.push(...(output.files ?? []).map(String))
+    else if (result.type === "count") lines.push(...(output.counts ?? []).map((count: any) => `${count.file ?? count.path ?? ""}: ${count.count ?? count.matches ?? ""}`))
+    else for (const match of output.matches ?? []) lines.push(typeof match === "string" ? match : [match.file ?? match.path, match.lineNumber ?? match.line, match.content ?? match.text].filter((part) => part !== undefined && part !== "").join(": "))
+  }
+  return lines.join("\n")
+}
+
+/** A folder listing, as an indented tree. */
+function treeText(node: any, depth = 0): string {
+  if (!node) return ""
+  const indent = "  ".repeat(depth)
+  const name = depth === 0 ? (node.absPath ?? "") : String(node.absPath ?? "").split("/").pop()
+  const lines = [`${indent}${name}${depth ? "/" : ""}`]
+  for (const child of node.childrenDirs ?? []) lines.push(treeText(child, depth + 1))
+  for (const file of node.childrenFiles ?? []) lines.push(`${indent}  ${file.name ?? file.path ?? file}`)
+  return lines.filter(Boolean).join("\n")
+}
+
+/** A subagent's last words, from its steps. */
+function lastWords(steps: unknown): string | undefined {
+  for (const step of [...((Array.isArray(steps) ? steps : []) as any[])].reverse()) {
+    const text = step?.assistantMessage?.text ?? step?.text ?? (step?.type === "assistant" ? step?.content : undefined)
+    if (typeof text === "string" && text.trim()) return text
+  }
+  return undefined
+}
+
+/** An error, in words (never "[object Object]"). */
+function errorWords(error: any): string | undefined {
+  if (!error) return undefined
+  if (typeof error === "string") return error
+  if (typeof error.message === "string" && error.message) return error.message
+  if (typeof error.error === "string" && error.error) return error.error
+  try {
+    return JSON.stringify(error)
+  } catch {
+    return String(error)
+  }
+}
+
+/**
+ * Cursor's updates: shown or used (words, thinking, tools, a subagent's, command output,
+ * summaries, its tool list) or left out on purpose (token counts, step starts, your own message
+ * echoed). A test checks its SDK's list against this.
+ */
+export const cursorUpdates = new Set([
+  "text-delta", "thinking-delta", "thinking-completed", "step-completed", "tool-call-started", "partial-tool-call", "tool-call-completed",
+  "tool-call-delta", "shell-output-delta", "summary", "summary-started", "summary-completed", "turn-ended", "tool-requests-listed",
+  "token-delta", "step-started", "user-message-appended",
+])
+
+/** Cursor's tools its SDK tells, each shown with what it did. */
+export const cursorTools = new Set(["shell", "write", "delete", "glob", "grep", "read", "edit", "ls", "readLints", "mcp", "generateImage", "recordScreen", "semSearch", "createPlan", "updateTodos", "task"])
 
 function withTimeout<T>(promise: Promise<T>, milliseconds: number): Promise<T> {
   return Promise.race([promise, Bun.sleep(milliseconds).then(() => Promise.reject(new Error("Cursor didn't answer in time.")))])

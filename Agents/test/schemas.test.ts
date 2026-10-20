@@ -50,3 +50,25 @@ describe("Claude Code", () => {
     expect(missing).toEqual([])
   })
 })
+
+/** Cursor's SDK, where a Kuvo Code on this Mac installed it (its runtime folder), if any. */
+function cursorSDK(): string | undefined {
+  const support = join(process.env.HOME ?? "", "Library", "Application Support")
+  for (const app of ["run.kuvo.code", "run.kuvo.code.agents", "run.kuvo.code.agents2"]) {
+    const path = join(support, app, "agents", "runtime", "cursor", "node_modules", "@cursor", "sdk", "dist", "esm", "index.js")
+    if (Bun.file(path).size > 0) return path
+  }
+  return process.env.KUVO_CURSOR_SDK
+}
+
+describe("Cursor", () => {
+  const sdk = cursorSDK()
+  test.skipIf(!sdk)("every update and tool its SDK tells is known", async () => {
+    const { cursorTools, cursorUpdates } = await import("../src/agents/cursor")
+    const module: any = await import(sdk!)
+    const updates: string[] = module.InteractionUpdateSchema.options.map((option: any) => option.shape.type.value)
+    const tools: string[] = module.ToolCallStartedUpdateSchema.shape.toolCall.options.map((option: any) => option.shape.type.value)
+    expect(updates.filter((type) => !cursorUpdates.has(type))).toEqual([])
+    expect(tools.filter((type) => !cursorTools.has(type))).toEqual([])
+  })
+})

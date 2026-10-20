@@ -467,3 +467,15 @@ describe("pictures", () => {
     }
   })
 })
+
+describe("Cursor's results", () => {
+  test("a running command's output, as its SDK sends it, and results it used to drop", async () => {
+    const { cursorToolResult, shellChunk } = await import("../src/agents/cursor")
+    expect(shellChunk({ case: "stdout", value: { data: "building…\n" } })).toBe("building…\n")
+    expect(shellChunk({ case: "exit", value: { code: 0 } })).toBe("")
+    expect(cursorToolResult({ type: "grep", args: {} }, { workspaceResults: { "/p": { type: "content", output: { matches: [{ file: "a.ts", lineNumber: 3, content: "let x" }] } } } }).output).toBe("a.ts: 3: let x")
+    expect(cursorToolResult({ type: "ls", args: {} }, { directoryTreeRoot: { absPath: "/p", childrenDirs: [{ absPath: "/p/src", childrenDirs: [], childrenFiles: [{ name: "a.ts" }] }], childrenFiles: [{ name: "README.md" }] } }).output).toBe("/p\n  src/\n    a.ts\n  README.md")
+    expect(cursorToolResult({ type: "generateImage", args: {} }, { filePath: "/tmp/cat.png", imageData: "" }).output).toEqual([{ type: "text", text: "" }, { type: "file", uri: "file:///tmp/cat.png", mime: "image/png", name: "cat.png" }])
+    expect(cursorToolResult({ type: "task", args: {} }, { resultSuffix: "Found it.", isBackground: false }).output).toBe("Found it.")
+  })
+})
