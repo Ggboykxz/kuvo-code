@@ -619,8 +619,10 @@ final class SessionModel {
             scheduleDrain()
             keepCopy()
         case "session.execution.failed":
-            // Don't run the rest of the queue into the same error.
+            // Don't run the rest of the queue into the same error; a message for its next step,
+            // which won't come, waits in the queue with them (it would wait unseen otherwise).
             if hasQueue { isQueuePaused = true }
+            if transcript.pending.contains(where: { $0.delivery == .steer }) { Task { await holdWaiting() } }
             keepCopy()
         case "session.inbox.enqueued":
             // Queued while nothing runs: the engine waits for a run to end, so nudge it.
@@ -761,8 +763,12 @@ final class SessionModel {
                 let message = Attachments.text(text, for: prepared)
                 await waitForTools()
                 guard !wasCancelled(id) else { return }
-                try await api.prompt(session: self.id, id: id, text: message, files: prepared.files, delivery: delivery)
+                // Held while it was on its way: to the queue, not the next step.
+                let held = holdOnArrival.remove(id) != nil
+                try await api.prompt(session: self.id, id: id, text: message, files: prepared.files, delivery: held ? .queue : delivery)
                 if wasCancelled(id) { try? await api.cancelInbox(session: self.id, item: id) }
+                // Or held as it went.
+                if !held, holdOnArrival.remove(id) != nil { try? await api.setDelivery(session: self.id, item: id, delivery: .queue) }
             } catch {
                 editTranscript { $0.removeLocal(id: id) }
                 // It didn't go: back in the composer as it was, ahead of anything written since.
@@ -902,10 +908,17 @@ final class SessionModel {
     private func holdWaiting() async {
         drainTask?.cancel()
         let steering = transcript.pending.filter { $0.delivery == .steer && !$0.isLocal }
-        if hasQueue || !steering.isEmpty { isQueuePaused = true }
-        heldBack = steering.map(\.id) + heldBack.filter { id in transcript.pending.contains { $0.id == id } }
+        // Ones still on their way go to the queue as they arrive (see `send`).
+        let arriving = transcript.pending.filter { $0.delivery == .steer && $0.isLocal && !starters.contains($0.id) }
+        holdOnArrival.formUnion(arriving.map(\.id))
+        if hasQueue || !steering.isEmpty || !arriving.isEmpty { isQueuePaused = true }
+        heldBack = (steering + arriving).map(\.id) + heldBack.filter { id in transcript.pending.contains { $0.id == id } }
         for item in steering { try? await api.setDelivery(session: id, item: item.id, delivery: .queue) }
     }
+
+    /// Messages for the agent's next step still on their way when Stop (or Undo) held the others:
+    /// they go to the queue too, rather than starting it again.
+    @ObservationIgnored private var holdOnArrival: Set<String> = []
 
     /// Whether a message on its way was cancelled meanwhile (and forgets it).
     private func wasCancelled(_ id: String) -> Bool {
