@@ -5,6 +5,10 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- The coding agents work on your machines too: Claude Code, Codex, Cursor, Grok, Antigravity and Custom Auto can run sessions, chats, bots and group chat seats in a machine's projects. Sign in to each on the machine in Settings › Machines › Coding Agents; the sign-in finishes in your Mac's browser, and your Custom Auto lists come along.
+- Custom Auto goes on with the next model when one stops with an error, not only at a usage limit, and skips an account whose sign-in ended until you sign in again. Antigravity's "usage limit reached" answer counts as its limit, with the reset time it gives.
+- An account at its usage limit or whose sign-in ended is marked in Settings › Accounts and on the accounts row at the bottom of the sidebar.
+- Antigravity renews its own sign-in when its access runs out partway through a task and carries on, instead of asking you to sign in again.
 - Wake-ups are set with Kuvo Code's own tools now, for sessions and bots alike: in Ask First, a command that only looked like a wake-up can no longer write a file without asking; a subagent's wake-up wakes the conversation that started it; one for a conversation that's gone is put away rather than tried for ever; and an agent's tab stays while its conversation works or waits for you.
 - A browser tab an agent opened that you never looked at closes itself an hour after an agent last used it, on your Mac and on a machine, so sessions and bots browsing out of sight don't pile up pages that stay loaded; one you looked at stays. Settings › Panel can turn this off.
 - The usage item in the menu bar shows the plans of the coding agents you're signed in to (Claude Code, Codex, Grok, Cursor, Antigravity), instead of asking you to connect an account.

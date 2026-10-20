@@ -94,9 +94,11 @@ side panel and the usage menu.
   app-server, Cursor's SDK, and the Agent Client Protocol for Grok and
   Antigravity, and answers the app in the engine's own API. A session there can
   move between agents (the next one gets the conversation as a handover) and
-  run the engine's models, and Auto runs down your own list of models as each
-  reaches its limit. What it keeps is in
-  `~/Library/Application Support/run.kuvo.code/agents`.
+  run the engine's models, and Custom Auto runs down your own lists of models as
+  each reaches its limit or fails. What it keeps is in
+  `~/Library/Application Support/run.kuvo.code/agents`. Each machine runs the
+  same bridge beside its engine, with the agents installed and signed in there
+  (in `~/.kuvo-code/agents`).
 - **On a machine you add**, Kuvo Code reaches it with `ssh` and your keys. It
   sends the same engine version's Linux build, downloaded and checked on the
   Mac, to `~/.kuvo-code` there, runs it on the machine's localhost only, and
