@@ -160,14 +160,14 @@ final class MachineBrowser {
             myHolds.remove(page)
             if link == nil { handedBackOffline.insert(page) }
         }
-        link?.fire("Kuvo.hold", ["targetId": page, "on": on])
+        link?.fire("Kuvo.hold", ["targetId": page, "on": on, "mac": MachineEngine.macID])
     }
 
     /// Closing on purpose (the machine removed, the app quitting): the pages this Mac took over go
     /// back to their agents now, rather than when the keeper gives up on it.
     private func handBackAll() {
         if link == nil { handedBackOffline.formUnion(myHolds) }
-        for page in myHolds { link?.fire("Kuvo.hold", ["targetId": page, "on": false]) }
+        for page in myHolds { link?.fire("Kuvo.hold", ["targetId": page, "on": false, "mac": MachineEngine.macID]) }
         heldPages.subtract(myHolds)
         myHolds = []
     }
@@ -472,16 +472,15 @@ final class MachineBrowser {
             // A new connection (after a sleep, a dropped one): the pages this Mac took over are
             // taken again, which the keeper kept a while for it, so their agents don't go on in
             // them; those handed back meanwhile go back now.
-            // (Taken first, by this connection: the keeper may still count the hold as the old
-            // one's, still open there after a sleep, and lets only its holder hand it back.)
-            for page in handedBackOffline {
-                link?.fire("Kuvo.hold", ["targetId": page, "on": true])
-                link?.fire("Kuvo.hold", ["targetId": page, "on": false])
-            }
+            // (The keeper knows this Mac's holds by its ID, so this connection can hand back one
+            // the old connection still has there, but not another Mac's.)
+            for page in handedBackOffline { link?.fire("Kuvo.hold", ["targetId": page, "on": false, "mac": MachineEngine.macID]) }
             heldPages.subtract(handedBackOffline)
             handedBackOffline = []
-            myHolds.formIntersection(heldPages)
-            for page in myHolds { link?.fire("Kuvo.hold", ["targetId": page, "on": true]) }
+            // Its own still (by this Mac's ID), not one another Mac took over meanwhile.
+            let holders = params["holdMacs"] as? [String: String] ?? [:]
+            myHolds = myHolds.filter { heldPages.contains($0) && (holders[$0] ?? MachineEngine.macID) == MachineEngine.macID }
+            for page in myHolds { link?.fire("Kuvo.hold", ["targetId": page, "on": true, "mac": MachineEngine.macID]) }
             for ask in params["asks"] as? [[String: Any]] ?? [] { asked(ask) }
             Task { await begin() }
         case "Kuvo.asked":

@@ -51,7 +51,7 @@ const TAB_IDLE = Number(process.env.KUVO_BROWSER_TAB_IDLE || 12 * 3600) * 1000;
 
 // Goes up with every change to the keeper (host mode): a newer one replaces one that's running
 // (its pages close, its sign-ins stay), and an older one never replaces a newer.
-const KEEPER = 27;
+const KEEPER = 28;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -523,6 +523,9 @@ async function host() {
   // Pages a Mac took over from the agents, and which client it is: their tools wait until it
   // hands them back, or goes.
   const held = new Map();
+  // Which Mac took each page over, by the ID it gives: it can hand the page back from a new
+  // connection while the old one is still open here (after a sleep).
+  const holdMacs = new Map();
   // Pages held for a Mac whose connection dropped, with the drop they're kept from.
   const orphaned = new Map();
   const announceHeld = () => broadcast({ method: "Kuvo.held", params: { pages: [...held.keys()] } });
@@ -654,6 +657,7 @@ async function host() {
       own.delete(message.params.targetId);
       claims.delete(message.params.targetId);
       orphaned.delete(message.params.targetId);
+      holdMacs.delete(message.params.targetId);
       if (held.delete(message.params.targetId)) announceHeld();
       if (message.params.targetId === active) setActive(null, "browser");
     }
@@ -687,6 +691,7 @@ async function host() {
           if (orphaned.get(targetId) !== token) return;
           orphaned.delete(targetId);
           held.delete(targetId);
+          holdMacs.delete(targetId);
           announceHeld();
         }, 600_000).unref?.();
       }
@@ -694,7 +699,7 @@ async function host() {
       if (client.viewer) broadcast({ method: "Kuvo.viewers", params: { count: viewers() } });
       if (!clients.size) idleSoon();
     });
-    send(client, { method: "Kuvo.hello", params: { targetId: active, status, version: CONFIG.version, keeper: KEEPER, asks: [...asks.values()].map((ask) => ask.params), viewers: viewers(), held: [...held.keys()] } });
+    send(client, { method: "Kuvo.hello", params: { targetId: active, status, version: CONFIG.version, keeper: KEEPER, asks: [...asks.values()].map((ask) => ask.params), viewers: viewers(), held: [...held.keys()], holdMacs: Object.fromEntries(holdMacs) } });
     lines(socket, (text) => {
       let message;
       try {
@@ -771,14 +776,17 @@ async function host() {
           return broadcast({ method: "Kuvo.pointer", params: message.params ?? {} });
         case "Kuvo.hold": {
           // You took a page over from the agent, or handed it back.
-          const { targetId, on } = message.params ?? {};
+          const { targetId, on, mac } = message.params ?? {};
           if (targetId && on && targets.has(targetId)) {
             orphaned.delete(targetId);
             held.set(targetId, client);
-          } else if (targetId && [client, null].includes(held.get(targetId))) {
-            // Only its own hold, or one kept for a Mac that dropped: not another Mac's.
+            if (mac) holdMacs.set(targetId, mac); else holdMacs.delete(targetId);
+          } else if (targetId && ([client, null].includes(held.get(targetId)) || (mac && holdMacs.get(targetId) === mac))) {
+            // Only its own hold (this connection's, or this Mac's from before), or one kept for a
+            // Mac that dropped: not another Mac's.
             orphaned.delete(targetId);
             held.delete(targetId);
+            holdMacs.delete(targetId);
           }
           announceHeld();
           return message.id !== undefined && send(client, { id: message.id, result: {} });
