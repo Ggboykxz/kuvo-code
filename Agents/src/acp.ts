@@ -77,7 +77,7 @@ export interface AcpContext {
   turn?: Turn
   hooks?: TurnHooks
   /** Ends the prompt under way, as its response would. */
-  endPrompt(stopReason: string, error?: string): void
+  endPrompt(stopReason: string, error?: string, promptID?: string): void
   /** Ends a turn the agent began on its own (Grok's prompt after a task of its own completed). */
   endOwn(): void
 }
@@ -115,6 +115,13 @@ interface Active {
   served: Map<string, { text?: string; error?: string }[]>
   /** When it began (ms). */
   started: number
+  /** What Kuvo Code last refused it on its own (your settings, not you), since it was last told. */
+  refused?: string
+  /** The prompt under way (each "carry on" is a new one): what an older one says isn't its end. */
+  prompt: number
+  promptID?: string
+  /** How many times it was told to carry on after a refusal this turn. */
+  carriedOn?: number
   /** Sessions of its subagents (updates for another session of the agent's), by that session. */
   children: Map<string, { run: SubagentRun; row: string; toolsSinceText: boolean; tools: Map<string, any> } | { prompt: string }>
 }
@@ -309,23 +316,46 @@ export class AcpThread implements Thread {
     if (others.length) text += `\n\nAttached files:\n${others.map((path) => `- ${path}`).join("\n")}`
     prompt.unshift({ type: "text", text })
     return new Promise<RunResult>((resolve) => {
-      const active: Active = { turn, hooks, resolve, rpc, tools: new Map(), toolsSinceText: false, ended: false, instructed, children: new Map(), served: new Map(), started: Date.now() }
+      const active: Active = { turn, hooks, resolve, rpc, tools: new Map(), toolsSinceText: false, ended: false, instructed, children: new Map(), served: new Map(), started: Date.now(), prompt: 0 }
       this.active = active
       turn.startStep()
       active.follower = this.flavor.follow?.(sessionId, turn, hooks)
-      const meta = this.flavor.promptMeta?.()
-      rpc.request("session/prompt", { sessionId, prompt, ...(meta ? { _meta: meta } : {}) }).then(
-        (result: any) => {
-          active.answered = true
-          if (result?.stopReason === "rate_limit") this.end(active, "failed", `You've reached your ${this.name} usage limit for now.`, this.limit())
-          else this.end(active, result?.stopReason === "cancelled" ? "interrupted" : "succeeded")
-        },
-        (error) => {
-          const limited = (error instanceof RPCError && error.code === -32003) || limitWords.test(errorText(error))
-          this.end(active, "failed", limited ? `You've reached your ${this.name} usage limit for now.` : errorText(error), limited ? this.limit(errorText(error)) : undefined)
-        },
-      )
+      this.prompt(active, sessionId, prompt)
     })
+  }
+
+  /** Sends a prompt of the turn's; its answer ends the turn, unless a newer one went meanwhile. */
+  private prompt(active: Active, sessionId: string, prompt: any[]) {
+    const number = ++active.prompt
+    const meta = this.flavor.promptMeta?.()
+    active.promptID = typeof meta?.promptId === "string" ? meta.promptId : undefined
+    active.rpc.request("session/prompt", { sessionId, prompt, ...(meta ? { _meta: meta } : {}) }).then(
+      (result: any) => {
+        if (number !== active.prompt) return
+        active.answered = true
+        if (result?.stopReason === "rate_limit") this.end(active, "failed", `You've reached your ${this.name} usage limit for now.`, this.limit())
+        else this.end(active, result?.stopReason === "cancelled" ? "interrupted" : "succeeded")
+      },
+      (error) => {
+        if (number !== active.prompt) return
+        const limited = (error instanceof RPCError && error.code === -32003) || limitWords.test(errorText(error))
+        this.end(active, "failed", limited ? `You've reached your ${this.name} usage limit for now.` : errorText(error), limited ? this.limit(errorText(error)) : undefined)
+      },
+    )
+  }
+
+  /**
+   * It stopped because Kuvo Code refused a tool by your settings (it takes any no as yours, and
+   * stops for you): it's told why, and carries on, as the engine's models do. False when it
+   * wasn't that (a no of yours, Stop), or it was told a few times already this turn.
+   */
+  private carryOn(active: Active): boolean {
+    const refused = active.refused
+    if (!refused || active.own || active.hooks.signal.aborted || !this.sessionID || (active.carriedOn ?? 0) >= 3) return false
+    active.refused = undefined
+    active.carriedOn = (active.carriedOn ?? 0) + 1
+    this.prompt(active, this.sessionID, [{ type: "text", text: `<system-reminder>Kuvo Code didn't allow ${refused}: the user's settings (Settings › Permissions, the session's agent, or Plan mode) don't allow it here. The user didn't stop you. Carry on with the task without it, or say what you'd need.</system-reminder>` }])
+    return true
   }
 
   private limit(message?: string): Limit {
@@ -334,6 +364,7 @@ export class AcpThread implements Thread {
 
   private end(active: Active, outcome: RunResult["outcome"], message?: string, limit?: Limit) {
     if (active.ended) return
+    if (outcome === "interrupted" && this.carryOn(active)) return
     active.ended = true
     // The instructions went with a message it took (not one turned away before it said anything).
     if (active.instructed && (outcome !== "failed" || active.heard)) {
@@ -362,7 +393,9 @@ export class AcpThread implements Thread {
     return {
       turn: active?.turn,
       hooks: active?.hooks,
-      endPrompt: (stopReason, error) => {
+      endPrompt: (stopReason, error, promptID) => {
+        // (One an earlier prompt of the turn's said: not this one's end.)
+        if (active && promptID && active.promptID && promptID !== active.promptID) return
         if (active && !active.own) this.end(active, error ? "failed" : stopReason === "cancelled" ? "interrupted" : "succeeded", error, stopReason === "rate_limit" ? this.limit(error) : undefined)
       },
       endOwn: () => {
@@ -381,7 +414,7 @@ export class AcpThread implements Thread {
     const rpc = this.rpc
     if (!own || own.turnedAway || !rpc) return Promise.resolve({ outcome: "succeeded" })
     return new Promise<RunResult>((resolve) => {
-      const active: Active = { turn, hooks, resolve, rpc, tools: new Map(), toolsSinceText: false, ended: false, children: new Map(), served: new Map(), started: Date.now(), own: true }
+      const active: Active = { turn, hooks, resolve, rpc, tools: new Map(), toolsSinceText: false, ended: false, children: new Map(), served: new Map(), started: Date.now(), prompt: 0, own: true }
       this.active = active
       turn.startStep()
       if (this.sessionID) active.follower = this.flavor.follow?.(this.sessionID, turn, hooks)
@@ -671,13 +704,17 @@ export class AcpThread implements Thread {
         }
         const kuvo = kuvoTool(call)
         const files = (call.content ?? []).filter((part: any) => part?.type === "diff" && part.path).map((part: any) => fileDiff(part.path, part.oldText ?? undefined, part.newText ?? ""))
-        const decision: Decision = await active.hooks.permission({
+        const ask = {
           toolCallID: call.toolCallId,
           action: permissionAction(call.kind, kuvo.name),
           resources: resources(call),
           metadata: files.length ? { files } : undefined,
           message: call.title,
-        })
+        }
+        // Refused by your settings, not by you: the agent stops for any no, and is told to carry on.
+        const automatic = active.hooks.check(ask) === "deny"
+        const decision: Decision = await active.hooks.permission(ask)
+        if (decision === "reject" && automatic) active.refused = refusedWhat(ask.action, ask.resources)
         const pick = (kinds: string[]) => kinds.map((kind) => options.find((option) => option.kind === kind)).find(Boolean)
         const option = decision === "reject" ? pick(["reject_once", "reject_always"]) : decision === "always" ? pick(["allow_always", "allow_once"]) : pick(["allow_once", "allow_always"])
         return option ? { outcome: { outcome: "selected", optionId: option.optionId } } : { outcome: { outcome: "cancelled" } }
@@ -814,6 +851,16 @@ function resources(call: any): string[] {
 function clientRead(call: any): boolean {
   const title = String(call.title ?? "")
   return /client/i.test(title) || !/view_file/i.test(title)
+}
+
+/** What was refused, in a few words for the agent. */
+function refusedWhat(action: string, resources: string[]): string {
+  const what = resources.filter((resource) => resource !== "*").join(", ")
+  if (action === "shell") return what ? `running \`${what}\`` : "running that command"
+  if (action === "edit") return what ? `editing ${what}` : "editing files"
+  if (action === "webfetch") return what ? `opening ${what}` : "opening that page"
+  if (action === "read") return what ? `reading ${what}` : "reading that"
+  return what ? `${action} on ${what}` : `that (${action})`
 }
 
 /** The file a read is of, as a full path. */

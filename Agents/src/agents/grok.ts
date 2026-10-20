@@ -187,7 +187,7 @@ export class GrokAgent implements Agent {
           // One it ran on its own after a task of its own completed: that turn's end.
           if (name === "x.ai/session/prompt_complete" && String(params?.promptId ?? "").startsWith("task-completed-")) context.endOwn()
           if (name === "x.ai/session/prompt_complete" && !String(params?.promptId ?? "").startsWith("task-completed-")) {
-            context.endPrompt(params?.stopReason ?? "end_turn", params?.stopReason === "rate_limit" ? "You've reached your Grok usage limit for now." : params?.stopReason === "error" ? String(params?.agentResult ?? "Grok stopped with an error.") : undefined)
+            context.endPrompt(params?.stopReason ?? "end_turn", params?.stopReason === "rate_limit" ? "You've reached your Grok usage limit for now." : params?.stopReason === "error" ? String(params?.agentResult ?? "Grok stopped with an error.") : undefined, params?.promptId)
           }
         },
         request(method, params, context) {
