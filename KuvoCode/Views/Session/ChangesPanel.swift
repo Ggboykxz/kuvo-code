@@ -660,7 +660,9 @@ private struct FileHeader: View {
             Button("Discard", role: .destructive) { perform(.discard) }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text(file.isFolder
+            Text(file.isFolder && file.status != .added
+                 ? "The folder in its place has a repository of its own: all of it goes to the Trash, with any of its commits you haven't pushed, and the file comes back."
+                 : file.isFolder
                  ? "It's a new folder with a repository of its own, so all of it goes to the Trash, with any of its commits you haven't pushed."
                  : file.status == .added
                  ? "It's a new file, so it goes to the Trash."

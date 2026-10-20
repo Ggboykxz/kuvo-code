@@ -202,6 +202,7 @@ nonisolated enum Git {
             merged[i].status = .modified
             merged[i].lines += file.lines
             merged[i].isBinary = merged[i].isBinary || file.isBinary
+            merged[i].isFolder = merged[i].isFolder || file.isFolder
             merged[i].oldObject = merged[i].oldObject ?? file.oldObject
             merged[i].newObject = merged[i].newObject ?? file.newObject
         }
@@ -236,6 +237,16 @@ nonisolated enum Git {
             func untrack(_ path: String) -> String? {
                 on(["ls-files", "--error-unmatch", "--", path]) == nil ? nil : git(["rm", "--cached", "-f", "-q", "--", path])
             }
+            // A folder where a file goes back (put in its place, a repository cloned there): git
+            // would delete it, and all in it, for good. It goes to the Trash first.
+            func clear(_ paths: [String]) -> String? {
+                for path in paths {
+                    let url = RemoteFolder.url(root).appending(path: path)
+                    guard isFolder(url) else { continue }
+                    do { try trash(url) } catch { return error.localizedDescription }
+                }
+                return nil
+            }
             // New to git (untracked, only staged, or only noted with `git add -N`): it has no
             // committed version to go back to, so the file goes to the Trash. (Restoring one only
             // noted would empty it.)
@@ -247,16 +258,24 @@ nonisolated enum Git {
             // Moved: the new path goes as a new file does, and the old one comes back (from the
             // staged version for unstaged changes, where a move shows only through `add -N`).
             if file.status == .renamed, let old = file.oldPath {
-                if let failure = untrack(file.path) { return failure }
+                if let failure = untrack(file.path) ?? clear([old]) { return failure }
                 if let failure = git(scope == .unstaged ? ["restore", "--worktree", "--", old] : ["restore", "--source=HEAD", "--staged", "--worktree", "--", old]) {
                     return failure
                 }
                 do { try trash(file.url) } catch { return error.localizedDescription }
                 return nil
             }
+            if let failure = clear(scope == .unstaged ? paths : [file.path]) { return failure }
             if scope == .unstaged { return git(["restore", "--worktree", "--"] + paths) }
             return git(["restore", "--source=HEAD", "--staged", "--worktree", "--", file.path])
         }
+    }
+
+    /// A folder (not a link to one) is at `url`; on a machine that can't be asked, as if one were,
+    /// so nothing is deleted on a guess.
+    private static func isFolder(_ url: URL) -> Bool {
+        if url.isFileURL { return (try? FileManager.default.attributesOfItem(atPath: url.path))?[.type] as? FileAttributeType == .typeDirectory }
+        return RemoteShell.isFolder(url) ?? true
     }
 
     /// To the Trash on this Mac; on a machine, which has none, to `~/.kuvo-code/trash` there.
