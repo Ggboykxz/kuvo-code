@@ -831,6 +831,13 @@ final class Workspace {
             let theAgents = sessions.filter(OutsideAgents.isAgentSession)
             sessions = local + theAgents + sessions.filter { RemoteFolder.isRemote($0.location.directory) }
             SessionCopies.saveLocalSessions(local + theAgents)
+            // Read before the engine was up: so here, and told it now.
+            let localIDs = Set(local.map(\.id))
+            for (id, idle) in unsentViews where localIDs.contains(id) {
+                unsentViews[id] = nil
+                if let index = sessions.firstIndex(where: { $0.id == id }), (sessions[index].time.viewed ?? 0) < idle { sessions[index].time.viewed = idle }
+                Task { try? await api.markViewed(id, idle: idle) }
+            }
             // Conversations shown as last seen while the engine started take it now, and are read
             // in place (the same messages, so nothing on screen moves); one deleted meanwhile goes.
             for id in beforeEngine {
@@ -986,6 +993,24 @@ final class Workspace {
     /// False when the machine couldn't list its sessions (to try again).
     @discardableResult
     func refresh(_ engine: MachineEngine) async -> Bool {
+        // One at a time for a machine (a reconnect's and its start's), the second after the first:
+        // two at once each applied what it read before the other's awaits, bringing back an ask
+        // just answered.
+        let machine = engine.machine.id
+        guard refreshing.insert(machine).inserted else {
+            refreshAgain.insert(machine)
+            return true
+        }
+        let listed = await refreshOnce(engine)
+        refreshing.remove(machine)
+        if refreshAgain.remove(machine) != nil { return await refresh(engine) }
+        return listed
+    }
+
+    @ObservationIgnored private var refreshing: Set<String> = []
+    @ObservationIgnored private var refreshAgain: Set<String> = []
+
+    private func refreshOnce(_ engine: MachineEngine) async -> Bool {
         guard let api = engine.api else { return true }
         let machine = engine.machine.id
         // Still the connection it started with: a newer one (or none) takes over from here.
@@ -1014,8 +1039,9 @@ final class Workspace {
                 if let index = sessions.firstIndex(where: { $0.id == id }), (sessions[index].time.viewed ?? 0) < idle { sessions[index].time.viewed = idle }
                 Task { try? await api.markViewed(id, idle: idle) }
             }
-            // Commands its agents left running, as it lists them now (a restart ended some).
-            let folders = Set(models.values.map(\.session.location.directory).filter { RemoteFolder.machine(of: $0) == machine })
+            // Commands its agents left running, as it lists them now (they were forgotten while it
+            // was away, and a restart ended some): in the folders its sessions work in.
+            let folders = Set(theirs.map(\.location.directory)).prefix(40)
             Task { [weak self] in for folder in folders { await self?.readShellJobs(in: folder) } }
             if let active = try? await api.activeSessions(), isCurrent() {
                 // A subagent's session has no row: its machine is the one its events came from.
@@ -1086,6 +1112,9 @@ final class Workspace {
         let gone = Set(sessions.filter { RemoteFolder.machine(of: $0.location.directory) == machine }.map(\.id))
         if !forGood, connectedMachines.contains(machine) { saveList(of: machine) }
         running.subtract(gone)
+        // Its commands left running: unknown until it's back (and read again then).
+        for id in gone where shellJobs[id] != nil { shellJobs[id] = nil }
+        lastingShellJobs.formIntersection(Set(shellJobs.values.joined().map(\.id)))
         // And its subagents', which have no row.
         running = running.filter { sessionMachines[$0] != machine || session($0) != nil }
         connectedMachines.remove(machine)

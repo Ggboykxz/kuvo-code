@@ -425,8 +425,10 @@ final class Utilities {
     /// Closes a machine's tabs: the machine was removed or disconnected.
     func closeMachineBrowser(_ machine: String) {
         for tab in tabs {
-            if case .machinePage(machine, _) = tab.kind { remove(tab.id) }
+            if case .machinePage(machine, _) = tab.kind { remove(tab.id, refills: false) }
         }
+        // Not with a new page on the machine that's going: the Changes tab, which needs none.
+        if visibleTabs.isEmpty { add(Tab(kind: .changes, owner: panelKey)) }
     }
 
     // MARK: Files
