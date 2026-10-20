@@ -56,7 +56,8 @@ final class FakeEngine: URLProtocol, @unchecked Sendable {
         #expect(!EngineRoutes.allowsAgents("api/kuvo/%65ngine"))
         // Nor with parts the bridge drops: empty ones and "." ones.
         for path in ["api/integration/claude-code//update", "api/integration/claude-code/./update", "api/integration/claude-code/%2e/update",
-                     "api/integration//claude-code/update", "api/integration/claude-code/update/", "api/kuvo//engine"] {
+                     "api/integration//claude-code/update", "api/integration/claude-code/update/", "api/kuvo//engine",
+                     "api/integration/claude-code/update#x", "api/kuvo/engine#"] {
             #expect(!EngineRoutes.allowsAgents(path, method: "POST"), "\(path)")
         }
         #expect(EngineRoutes.routed("api//integration/x/./%75pdate?y=1") == "api/integration/x/update?y=1")

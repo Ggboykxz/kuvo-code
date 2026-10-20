@@ -52,10 +52,11 @@ public enum EngineRoutes {
     }
 
     /// No way out of the project, written plainly or percent-encoded ("%2E%2E"): the engine
-    /// decodes it, and lists a folder above the project if asked.
+    /// decodes it, and lists a folder above the project if asked. Nor a fragment ("#…"), which
+    /// isn't sent: ".../update#x" would be checked as itself and reach ".../update".
     static func staysInProject(_ path: String) -> Bool {
         guard let decoded = path.removingPercentEncoding else { return false }
-        return !decoded.contains("..") && !decoded.contains("\\") && !path.contains("..")
+        return !decoded.contains("..") && !decoded.contains("\\") && !path.contains("..") && !path.contains("#")
     }
 
     static let requestHeaders = ["content-type", "accept", "x-opencode-directory", "last-event-id"]
