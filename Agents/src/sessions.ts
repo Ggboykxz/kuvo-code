@@ -158,6 +158,8 @@ function runCommand(command: string, directory: string): Promise<{ code: number;
 interface SnapshotNote {
   /** Before its turn. */
   before?: string
+  /** When that was kept (ms): a file made before it isn't one its turn made, whatever git says. */
+  at?: number
   /** The files its turn changed (the repository's paths), once it ended. */
   files?: string[]
   /** They couldn't be kept: Undo can't put them back. */
@@ -834,23 +836,29 @@ export class Sessions {
       // What Redo would bring back from an undo that didn't happen isn't kept.
       if (!record.session.revert) {
         delete record.agent.revertNow
+        delete record.agent.revertAt
         delete record.agent.revertFiles
       }
       let now: string | undefined
+      const nowAt = Date.now()
       try {
         now = await this.snapshots.take(directory)
         if (!now) throw new Error("Kuvo Code couldn't keep the files as they are now.")
         // As they were before any undo, and which: what Redo brings back (kept before a file is touched).
-        record.agent.revertNow ??= now
+        if (!record.agent.revertNow) {
+          record.agent.revertNow = now
+          record.agent.revertAt = nowAt
+        }
         record.agent.revertFiles = [...new Set([...((record.agent.revertFiles as string[] | undefined) ?? []), ...files])]
         this.store.save(id)
         diffs = await this.snapshots.changes(directory, first.before, now, [...files])
-        await this.snapshots.restore(directory, first.before, [...files])
+        await this.snapshots.restore(directory, first.before, [...files], first.at)
       } catch (error) {
         // Partway: the files go back to how they were just now, and nothing is staged.
-        if (now) await this.snapshots.restore(directory, now, [...files]).catch(() => {})
+        if (now) await this.snapshots.restore(directory, now, [...files], nowAt).catch(() => {})
         if (!record.session.revert) {
           delete record.agent.revertNow
+          delete record.agent.revertAt
           delete record.agent.revertFiles
         }
         this.store.save(id)
@@ -881,7 +889,7 @@ export class Sessions {
       this.busy.add(id)
       try {
         // Kept until it has worked: a Redo that failed can be tried again.
-        await this.snapshots.restore(directory, now, files)
+        await this.snapshots.restore(directory, now, files, record.agent.revertAt as number | undefined)
       } catch (error) {
         this.busy.delete(id)
         this.afterBusy(id)
@@ -891,6 +899,7 @@ export class Sessions {
     }
     delete record.session.revert
     delete record.agent.revertNow
+    delete record.agent.revertAt
     delete record.agent.revertFiles
     this.store.save(id, true)
     emit("session.revert.cleared", { sessionID: id }, directory)
@@ -918,6 +927,7 @@ export class Sessions {
     }
     delete record.session.revert
     delete record.agent.revertNow
+    delete record.agent.revertAt
     delete record.agent.revertFiles
     // Their own conversations still hold what was undone: let go of (an engine model's hidden
     // session too), and started over.
@@ -1030,8 +1040,9 @@ export class Sessions {
       // The files as they are before it, for Undo.
       if (this.snapshots) {
         try {
+          const at = Date.now()
           const before = await this.snapshots.take(directory)
-          if (before) note = { before }
+          if (before) note = { before, at }
         } catch {
           note = { failed: true }
         }
@@ -1221,8 +1232,9 @@ export class Sessions {
     let note: SnapshotNote | undefined
     if ((!input.synthetic || input.adopt) && this.snapshots) {
       try {
+        const at = Date.now()
         const before = await this.snapshots.take(directory)
-        if (before) note = { before }
+        if (before) note = { before, at }
       } catch {
         note = { failed: true }
       }

@@ -143,9 +143,10 @@ export class Snapshots {
   /**
    * Puts `paths` (the repository's) back as they were in `tree`: those that weren't there go,
    * the rest are as they were. Never through a link, never outside the repository. Throws when
-   * it couldn't.
+   * it couldn't. A file that wasn't in `tree` but was made before it was kept (`since`, ms) stays:
+   * ignore rules left it out then (rules outside the session's folder, or git's own list).
    */
-  async restore(directory: string, tree: string, paths: string[]): Promise<void> {
+  async restore(directory: string, tree: string, paths: string[], since?: number): Promise<void> {
     const repository = await this.repository(directory)
     if (!repository || !paths.length) return
     await this.exclusive(repository, async () => {
@@ -170,13 +171,17 @@ export class Snapshots {
       for (const path of goneRules) this.remove(repository.top, path)
       await this.checkout(repository, tree, paths.filter((path) => isRules(path) && there.has(path)))
       let gone = paths.filter((path) => !isRules(path) && !there.has(path) && !repositories.has(path))
-      if (gone.length && paths.some(isRules)) {
+      // One the rules leave out now (their files may have changed outside the session's folder,
+      // or in git's own list) stays.
+      if (gone.length) {
         const ignored = await this.git(repository, ["check-ignore", "--no-index", "-z", "--stdin"], { input: gone.join("\0"), patterns: true })
         // Not known (it failed): none deleted.
         if (ignored.code !== 0 && ignored.code !== 1) throw new Error("Kuvo Code couldn't tell which files the ignore rules left out.")
         const left = new Set(ignored.stdout.split("\0").filter(Boolean))
         gone = gone.filter((path) => !left.has(path))
       }
+      // And one that's older than what was kept: it was there, left out then.
+      if (since !== undefined) gone = gone.filter((path) => !this.madeBefore(join(repository.top, path), since))
       // Gone first, deepest first (a folder that was a file, a file that was a folder).
       for (const path of gone.sort((a, b) => b.length - a.length)) this.remove(repository.top, path)
       const back = paths.filter((path) => !isRules(path) && there.has(path))
@@ -193,6 +198,16 @@ export class Snapshots {
     if (!paths.length) return
     const checked = await this.git(repository, ["checkout", tree, "--pathspec-from-file=-", "--pathspec-file-nul"], { input: paths.join("\0") })
     if (checked.code !== 0) throw new Error(`Kuvo Code couldn't put the files back: ${checked.stderr.trim().split("\n").pop() ?? "git failed"}`)
+  }
+
+  /** Whether a file was made before a time (as far as its file system says when it was made). */
+  private madeBefore(full: string, time: number): boolean {
+    try {
+      const born = lstatSync(full).birthtimeMs
+      return born > 0 && born < time
+    } catch {
+      return false
+    }
   }
 
   /** Whether a path's folders are inside the repository, none of them a link (deleting through one would reach elsewhere). */
