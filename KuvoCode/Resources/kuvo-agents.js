@@ -880,7 +880,7 @@ function limitOf(error) {
 
 // Agents/src/snapshots.ts
 import { createHash } from "crypto";
-import { existsSync as existsSync2, lstatSync, mkdirSync as mkdirSync4, readdirSync, realpathSync, rmdirSync, rmSync as rmSync2 } from "fs";
+import { existsSync as existsSync2, lstatSync, mkdirSync as mkdirSync4, readdirSync, readFileSync as readFileSync5, realpathSync, rmdirSync, rmSync as rmSync2, writeFileSync as writeFileSync4 } from "fs";
 import { dirname, join as join6, relative, resolve, sep } from "path";
 
 // Agents/src/diff.ts
@@ -1104,7 +1104,7 @@ async function refreshLoginPath() {
       const ran = await run(shell, [flags, 'printf "__KUVO_PATH__%s__KUVO_END__" "$PATH"'], { timeout: 8000, env: { DISABLE_AUTO_UPDATE: "true" } });
       const found = ran.stdout.match(/__KUVO_PATH__([\s\S]*?)__KUVO_END__/)?.[1];
       if (found?.trim()) {
-        process.env.PATH = found.trim();
+        process.env.PATH = [process.env.KUVO_BIN, found.trim()].filter(Boolean).join(":");
         return;
       }
     } catch {}
@@ -1193,6 +1193,9 @@ class Snapshots {
       const tree = await this.git(repository, ["write-tree"]);
       if (tree.code !== 0 || !tree.stdout.trim())
         throw new Error("Kuvo Code couldn't keep this project's files.");
+      const ignored = await this.git(repository, ["ls-files", "-z", "-o", "-i", "--exclude-standard", "--directory", "--", repository.prefix || "."]);
+      if (ignored.code === 0)
+        this.keepIgnored(store, tree.stdout.trim(), ignored.stdout.split("\x00").filter(Boolean));
       if (++this.taken % 50 === 0)
         this.git(repository, ["gc", "--auto", "--quiet"], { timeout: 600000, packs: true }).catch(() => {});
       return tree.stdout.trim();
@@ -1264,7 +1267,7 @@ class Snapshots {
       for (const path of goneRules)
         this.remove(repository.top, path);
       await this.checkout(repository, tree, paths.filter((path) => isRules(path) && there.has(path)));
-      let gone = paths.filter((path) => !isRules(path) && !there.has(path) && !repositories.has(path));
+      let gone = paths.filter((path) => !isRules(path) && !there.has(path) && !repositories.has(path) && this.isInside(repository.top, join6(repository.top, path)));
       if (gone.length) {
         const ignored = await this.git(repository, ["check-ignore", "--no-index", "-z", "--stdin"], { input: gone.map((path) => `./${path}`).join("\x00"), patterns: true });
         if (ignored.code !== 0 && ignored.code !== 1)
@@ -1272,7 +1275,10 @@ class Snapshots {
         const left = new Set(ignored.stdout.split("\x00").filter(Boolean).map((path) => path.replace(/^\.\//, "")));
         gone = gone.filter((path) => !left.has(path));
       }
-      if (since !== undefined)
+      const leftOut = this.ignoredWith(this.storeOf(repository), tree);
+      if (leftOut)
+        gone = gone.filter((path) => !leftOut.has(path) && !ancestors(path).some((folder) => leftOut.has(`${folder}/`)));
+      else if (since !== undefined)
         gone = gone.filter((path) => !this.madeBefore(join6(repository.top, path), since));
       for (const path of gone.sort((a, b) => b.length - a.length))
         this.remove(repository.top, path);
@@ -1292,6 +1298,22 @@ class Snapshots {
     if (checked.code !== 0)
       throw new Error(`Kuvo Code couldn't put the files back: ${checked.stderr.trim().split(`
 `).pop() ?? "git failed"}`);
+  }
+  keepIgnored(store, tree, paths) {
+    try {
+      const folder = join6(store, "kuvo-ignored");
+      mkdirSync4(folder, { recursive: true });
+      const file = join6(folder, tree);
+      const known = existsSync2(file) ? readFileSync5(file, "utf8").split("\x00").filter(Boolean) : [];
+      writeFileSync4(file, [...new Set([...known, ...paths])].join("\x00"));
+    } catch {}
+  }
+  ignoredWith(store, tree) {
+    try {
+      return new Set(readFileSync5(join6(store, "kuvo-ignored", tree), "utf8").split("\x00").filter(Boolean));
+    } catch {
+      return;
+    }
   }
   madeBefore(full, time) {
     try {
@@ -1342,15 +1364,19 @@ class Snapshots {
     }
   }
 }
+function ancestors(path) {
+  const parts = path.split("/").slice(0, -1);
+  return parts.map((_, index) => parts.slice(0, index + 1).join("/"));
+}
 
 // Agents/src/agents/antigravity.ts
 import { createHash as createHash2 } from "crypto";
-import { chmodSync as chmodSync2, existsSync as existsSync5, mkdirSync as mkdirSync7, readdirSync as readdirSync2, readFileSync as readFileSync7, renameSync as renameSync3, rmSync as rmSync4, statSync, writeFileSync as writeFileSync6 } from "fs";
+import { chmodSync as chmodSync2, existsSync as existsSync5, mkdirSync as mkdirSync7, readdirSync as readdirSync2, readFileSync as readFileSync8, renameSync as renameSync3, rmSync as rmSync4, statSync, writeFileSync as writeFileSync7 } from "fs";
 import { join as join8 } from "path";
 import { pathToFileURL as pathToFileURL2 } from "url";
 
 // Agents/src/acp.ts
-import { existsSync as existsSync3, mkdirSync as mkdirSync5, readFileSync as readFileSync5, writeFileSync as writeFileSync4 } from "fs";
+import { existsSync as existsSync3, mkdirSync as mkdirSync5, readFileSync as readFileSync6, writeFileSync as writeFileSync5 } from "fs";
 import { dirname as dirname2, resolve as resolve2 } from "path";
 
 // Agents/src/rpc.ts
@@ -1872,7 +1898,7 @@ ${others.map((path) => `- ${path}`).join(`
     if (!own || own.turnedAway || !rpc)
       return Promise.resolve({ outcome: "succeeded" });
     return new Promise((resolve3) => {
-      const active = { turn, hooks, resolve: resolve3, rpc, tools: new Map, toolsSinceText: false, ended: false, children: new Map, served: new Map, started: Date.now(), prompt: 0, own: true };
+      const active = { turn, hooks, resolve: resolve3, rpc, tools: new Map, toolsSinceText: false, ended: false, children: new Map, served: new Map, started: own.started, prompt: 0, own: true };
       this.active = active;
       turn.startStep();
       if (this.sessionID)
@@ -2047,7 +2073,7 @@ ${others.map((path) => `- ${path}`).join(`
     }
     if (!["agent_message_chunk", "agent_thought_chunk", "tool_call"].includes(update.sessionUpdate))
       return;
-    const own = { updates: [params], turnedAway: false };
+    const own = { updates: [params], turnedAway: false, started: Date.now() };
     this.own = own;
     if (!(this.onOwnTurn?.({ text: `${this.name} carried on by itself.` }) ?? false))
       this.turnAway();
@@ -2193,7 +2219,7 @@ ${others.map((path) => `- ${path}`).join(`
           break;
         let content;
         try {
-          content = readFileSync5(params.path, "utf8");
+          content = readFileSync6(params.path, "utf8");
         } catch (error) {
           this.served(params.path, { error: error?.code === "ENOENT" ? "There's no such file." : failure(error).message });
           throw error;
@@ -2212,7 +2238,7 @@ ${others.map((path) => `- ${path}`).join(`
         if (!this.flavor.fileSystem)
           break;
         mkdirSync5(dirname2(params.path), { recursive: true });
-        writeFileSync4(params.path, params.content ?? "");
+        writeFileSync5(params.path, params.content ?? "");
         return {};
       }
       case "elicitation/create": {
@@ -2411,7 +2437,7 @@ function errorText(error) {
 }
 function safeBase64(path) {
   try {
-    return readFileSync5(path).toString("base64");
+    return readFileSync6(path).toString("base64");
   } catch {
     return;
   }
@@ -2429,13 +2455,13 @@ function questionFields(questions) {
 }
 
 // Agents/src/signin.ts
-import { chmodSync, existsSync as existsSync4, mkdirSync as mkdirSync6, readFileSync as readFileSync6, rmSync as rmSync3, writeFileSync as writeFileSync5 } from "fs";
+import { chmodSync, existsSync as existsSync4, mkdirSync as mkdirSync6, readFileSync as readFileSync7, rmSync as rmSync3, writeFileSync as writeFileSync6 } from "fs";
 import { join as join7 } from "path";
 function catcher(temporary) {
   const path = join7(temporary, "bin", "kuvo-catch-url");
   if (!existsSync4(path)) {
     mkdirSync6(join7(temporary, "bin"), { recursive: true });
-    writeFileSync5(path, `#!/bin/sh
+    writeFileSync6(path, `#!/bin/sh
 printf '%s\\n' "$1" >> "$KUVO_URL_FILE"
 `);
     chmodSync(path, 493);
@@ -2498,7 +2524,7 @@ async function commandSignIn(options) {
   let printedAt;
   for (let waited = 0;waited < 15000 && !url; waited += 200) {
     if (existsSync4(urlFile))
-      url = readFileSync6(urlFile, "utf8").split(`
+      url = readFileSync7(urlFile, "utf8").split(`
 `)[0].trim();
     const printed = firstURL(output);
     if (printed)
@@ -2667,7 +2693,7 @@ class AntigravityFollower {
   }
   steps(conversation) {
     try {
-      return readFileSync7(join8(this.brain, conversation, ".system_generated", "logs", "transcript.jsonl"), "utf8").split(`
+      return readFileSync8(join8(this.brain, conversation, ".system_generated", "logs", "transcript.jsonl"), "utf8").split(`
 `).flatMap((line) => {
         try {
           const step = JSON.parse(line);
@@ -2919,7 +2945,7 @@ class AntigravityAgent {
       rmSync4(archive, { force: true });
       for (const name of [executableName, harnessName])
         chmodSync2(join8(staging, name), 493);
-      writeFileSync6(join8(staging, ".complete"), JSON.stringify({ version, sha256: release.sha256 }));
+      writeFileSync7(join8(staging, ".complete"), JSON.stringify({ version, sha256: release.sha256 }));
       rmSync4(this.folder, { recursive: true, force: true });
       renameSync3(staging, this.folder);
       for (const name of readdirSync2(this.root)) {
@@ -2935,7 +2961,7 @@ class AntigravityAgent {
     mkdirSync7(join8(this.profile, "antigravity-acp", "tmp"), { recursive: true, mode: 448 });
     const settings = join8(this.profile, "antigravity-acp", "settings.json");
     if (!existsSync5(settings))
-      writeFileSync6(settings, JSON.stringify({ auth: { type: "oauth-personal" } }));
+      writeFileSync7(settings, JSON.stringify({ auth: { type: "oauth-personal" } }));
     const temporary = join8(this.context.temporary, "antigravity", newID("att"));
     mkdirSync7(temporary, { recursive: true });
     const env = {};
@@ -2991,7 +3017,7 @@ class AntigravityAgent {
       };
       const watch = setInterval(() => {
         try {
-          found(readFileSync7(launch.env.KUVO_URL_FILE, "utf8").split(`
+          found(readFileSync8(launch.env.KUVO_URL_FILE, "utf8").split(`
 `)[0].trim());
         } catch {}
       }, 300);
@@ -3061,7 +3087,7 @@ class AntigravityAgent {
         flat.push({ value: info.modelId, name: info.name ?? info.modelId });
     }
     if (flat.length)
-      writeFileSync6(this.modelsFile, JSON.stringify({ current: option?.currentValue, models: flat }));
+      writeFileSync7(this.modelsFile, JSON.stringify({ current: option?.currentValue, models: flat }));
   }
   removeSessionFiles(sessionID) {
     const folder = join8(this.profile, "antigravity-acp");
@@ -3071,7 +3097,7 @@ class AntigravityAgent {
   }
   async models() {
     try {
-      const saved = JSON.parse(readFileSync7(this.modelsFile, "utf8"));
+      const saved = JSON.parse(readFileSync8(this.modelsFile, "utf8"));
       return saved.models.map((info, index) => model(this.providerID, info.value, info.name, { images: true, released: info.value === saved.current ? 2000 : 1000 - index, context: 1e6 }));
     } catch {
       return [];
@@ -3124,7 +3150,7 @@ class AntigravityAgent {
 
 // Agents/src/agents/claude.ts
 import { randomUUID } from "crypto";
-import { existsSync as existsSync7, readFileSync as readFileSync8, statSync as statSync2 } from "fs";
+import { existsSync as existsSync7, readFileSync as readFileSync9, statSync as statSync2 } from "fs";
 import { homedir } from "os";
 import { join as join10 } from "path";
 import { pathToFileURL as pathToFileURL3 } from "url";
@@ -3665,7 +3691,7 @@ function family(name) {
 function updateChannel() {
   try {
     const folder = process.env.CLAUDE_CONFIG_DIR ?? join10(homedir(), ".claude");
-    const settings = JSON.parse(readFileSync8(join10(folder, "settings.json"), "utf8"));
+    const settings = JSON.parse(readFileSync9(join10(folder, "settings.json"), "utf8"));
     return settings?.autoUpdatesChannel === "stable" ? "stable" : "latest";
   } catch {
     return "latest";
@@ -3764,9 +3790,8 @@ class ClaudeThread {
       let at = 0;
       for (;at < own.frames.length && this.active; at++)
         this.handle(own.frames[at]);
-      const rest = own.frames.slice(at);
-      if (rest.length)
-        setTimeout(() => rest.forEach((frame) => this.handle(frame)), 0);
+      for (const frame of own.frames.slice(at))
+        this.handle(frame);
     });
   }
   ownFrame(message) {
@@ -3885,7 +3910,7 @@ class ClaudeThread {
     } catch {}
     if (task?.outputFile) {
       try {
-        const bytes = readFileSync8(task.outputFile);
+        const bytes = readFileSync9(task.outputFile);
         return { output: bytes.subarray(Math.max(0, bytes.length - 64000)).toString("utf8"), total: bytes.length };
       } catch {}
     }
@@ -4390,7 +4415,7 @@ class ClaudeThread {
     return {};
   }
   async ownTaken() {
-    if (!this.active && this.own && !this.own.turnedAway)
+    while (!this.active && this.own && !this.own.turnedAway)
       await this.own.taken;
   }
   async canUseTool(name, input, options) {
@@ -4661,7 +4686,7 @@ function diffs(name, input, structured) {
 }
 function safeRead(path) {
   try {
-    return readFileSync8(path, "utf8");
+    return readFileSync9(path, "utf8");
   } catch {
     return;
   }
@@ -4766,7 +4791,7 @@ ${others.map((path) => `- ${path}`).join(`
 }
 function safeBase642(path) {
   try {
-    return readFileSync8(path).toString("base64");
+    return readFileSync9(path).toString("base64");
   } catch {
     return;
   }
@@ -6191,7 +6216,7 @@ function firstLine2(text) {
 }
 
 // Agents/src/agents/cursor.ts
-import { existsSync as existsSync9, mkdirSync as mkdirSync9, readFileSync as readFileSync9, rmSync as rmSync6 } from "fs";
+import { existsSync as existsSync9, mkdirSync as mkdirSync9, readFileSync as readFileSync10, rmSync as rmSync6 } from "fs";
 import { join as join12 } from "path";
 var effortParameters = ["effort", "reasoning", "reasoning_effort"];
 var SDK2 = [{ name: "@cursor/sdk", version: "1.0.35" }];
@@ -6455,7 +6480,7 @@ class CursorThread {
       hooks.saveState();
     }
     await this.ensureAgent(sdk, options, hooks);
-    const images = input.files.filter((file) => file.mime.startsWith("image/")).map((file) => ({ data: file.data ?? (file.path ? readFileSync9(file.path).toString("base64") : ""), mimeType: file.mime })).filter((image) => image.data);
+    const images = input.files.filter((file) => file.mime.startsWith("image/")).map((file) => ({ data: file.data ?? (file.path ? readFileSync10(file.path).toString("base64") : ""), mimeType: file.mime })).filter((image) => image.data);
     let text = input.text;
     const others = input.files.filter((file) => !file.mime.startsWith("image/") && file.path).map((file) => file.path);
     if (others.length)
@@ -6830,7 +6855,7 @@ function withTimeout(promise, milliseconds) {
 
 // Agents/src/agents/grok.ts
 import { homedir as homedir3 } from "os";
-import { mkdirSync as mkdirSync10, readFileSync as readFileSync10, writeFileSync as writeFileSync7 } from "fs";
+import { mkdirSync as mkdirSync10, readFileSync as readFileSync11, writeFileSync as writeFileSync8 } from "fs";
 import { dirname as dirname3, join as join13 } from "path";
 var places3 = [join13(homedir3(), ".grok/bin"), join13(homedir3(), ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin"];
 
@@ -6850,7 +6875,7 @@ class GrokAgent {
   }
   efforts() {
     try {
-      return JSON.parse(readFileSync10(this.effortsFile, "utf8"));
+      return JSON.parse(readFileSync11(this.effortsFile, "utf8"));
     } catch {
       return {};
     }
@@ -6867,7 +6892,7 @@ class GrokAgent {
       return;
     try {
       mkdirSync10(dirname3(this.effortsFile), { recursive: true });
-      writeFileSync7(this.effortsFile, JSON.stringify(known));
+      writeFileSync8(this.effortsFile, JSON.stringify(known));
     } catch {}
   }
   constructor(context, instance = { id: "default" }) {
@@ -7078,7 +7103,7 @@ class Roster {
 // Agents/src/sessions.ts
 import { createHash as createHash3 } from "crypto";
 import { spawn as spawnProcess } from "child_process";
-import { readFileSync as readFileSync11, statSync as statSync3 } from "fs";
+import { readFileSync as readFileSync12, statSync as statSync3 } from "fs";
 import { fileURLToPath } from "url";
 
 // Agents/src/handover.ts
@@ -7661,20 +7686,13 @@ function scanCommands(text, start, close, out, state) {
       current += text.slice(i, i + 2);
       i += 2;
       escaped = true;
-    } else if (text.startsWith("$((", i) || text.startsWith("((", i) && !current.trim()) {
-      let level = 0;
-      let j = text[i] === "$" ? i + 1 : i;
-      for (;j < text.length; j++) {
-        if (text[j] === "(")
-          level++;
-        else if (text[j] === ")" && --level === 0)
-          break;
-      }
-      const inner = text.slice(i, j + 1);
-      if (j >= text.length || /\$\(|`/.test(inner.slice(3)))
+    } else if ((text.startsWith("$((", i) || text.startsWith("((", i) && !current.trim()) && arithmeticEnd(text, text[i] === "$" ? i + 1 : i) !== undefined) {
+      const end = arithmeticEnd(text, text[i] === "$" ? i + 1 : i);
+      const inner = text.slice(i, end + 1);
+      if (/\$\(|`/.test(inner.slice(3)))
         state.sure = false;
       current += inner;
-      i = j + 1;
+      i = end + 1;
     } else if (ch === "'") {
       const end = text.indexOf("'", i + 1);
       if (end < 0)
@@ -7687,7 +7705,12 @@ function scanCommands(text, start, close, out, state) {
       while (j < text.length && text[j] !== '"') {
         if (text[j] === "\\")
           j += 2;
-        else if (text.startsWith("$(", j))
+        else if (text.startsWith("$((", j) && arithmeticEnd(text, j + 1) !== undefined) {
+          const end = arithmeticEnd(text, j + 1);
+          if (/\$\(|`/.test(text.slice(j + 3, end)))
+            state.sure = false;
+          j = end + 1;
+        } else if (text.startsWith("$(", j))
           j = scanCommands(text, j + 2, ")", out, state) + 1;
         else if (text[j] === "`")
           j = scanCommands(text, j + 1, "`", out, state) + 1;
@@ -7765,14 +7788,35 @@ function scanCommands(text, start, close, out, state) {
     state.sure = false;
   return text.length;
 }
+function arithmeticEnd(text, open) {
+  let level = 0;
+  let inner = -1;
+  for (let j = open;j < text.length; j++) {
+    if (text[j] === "(")
+      level++;
+    else if (text[j] === ")") {
+      level--;
+      if (level === 1 && inner < 0)
+        inner = j;
+      if (level === 0)
+        return inner === j - 1 ? j : undefined;
+    }
+  }
+  return;
+}
 function addCommand(raw, out, state) {
   const words = shellWords(raw.trim());
   while (words.length && shellKeywords.has(words[0]))
     words.shift();
-  if (!words.length || /^(for|case|select|function)$/.test(words[0]))
+  if (words[0] === "function") {
+    words.splice(0, 2);
+    while (words.length && (shellKeywords.has(words[0]) || words[0].startsWith("()")))
+      words.shift();
+  }
+  if (!words.length || /^(for|case|select)$/.test(words[0]))
     return;
   out.push(words.join(" "));
-  const bare = withoutPrefix(words, (line) => addLine(line, out, state));
+  const bare = withoutPrefix(words, state, (line) => addLine(line, out, state));
   if (!bare.length)
     return;
   out.push(bare.join(" "));
@@ -7780,7 +7824,7 @@ function addCommand(raw, out, state) {
   plain2[0] = plain2[0].split("/").pop() ?? plain2[0];
   const shown = plain2.map((word, index) => /^[\w@%+=:,./-]*$/.test(word) ? word : bare[index]);
   out.push(shown.join(" "));
-  if (/[$`]/.test(bare[0]) || bare.some((word) => /\$['"]/.test(word)))
+  if (/[$`]/.test(bare[0]) || bare.some(ansiQuoted))
     state.sure = false;
   const program = plain2[0];
   if (program === "git") {
@@ -7794,7 +7838,7 @@ function addCommand(raw, out, state) {
         break;
     }
     out.push(["git", ...rest].join(" "));
-  } else if (/^(ba|z|da|k|fi)?sh$/.test(program)) {
+  } else if (/^(ba|z|da|k|fi|tc|c|a)?sh$/.test(program) || program === "su") {
     const at = plain2.findIndex((word, index) => index > 0 && /^-[a-z]*c[a-z]*$/.test(word));
     if (at > 0 && plain2[at + 1] !== undefined)
       addLine(plain2[at + 1], out, state);
@@ -7806,7 +7850,7 @@ function addCommand(raw, out, state) {
     state.sure = false;
     let i = 1;
     while (i < plain2.length && plain2[i].startsWith("-"))
-      i += /^-[IinPLsdEa]$/.test(plain2[i]) ? 2 : 1;
+      i += /^-[IinPLsdEaJRS]$/.test(plain2[i]) ? 2 : 1;
     if (i < plain2.length)
       addCommand(plain2.slice(i).map(quoted).join(" "), out, state);
   } else if (program === "find") {
@@ -7819,6 +7863,22 @@ function addCommand(raw, out, state) {
         state.sure = false;
     }
   }
+}
+function ansiQuoted(word) {
+  let quote = "";
+  for (let i = 0;i < word.length; i++) {
+    const ch = word[i];
+    if (ch === "\\" && quote !== "'")
+      i++;
+    else if (quote) {
+      if (ch === quote)
+        quote = "";
+    } else if (ch === "'" || ch === '"')
+      quote = ch;
+    else if (ch === "$" && (word[i + 1] === "'" || word[i + 1] === '"'))
+      return true;
+  }
+  return false;
 }
 function operands(words) {
   const kept2 = [];
@@ -7840,19 +7900,28 @@ function quoted(word) {
   return /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`;
 }
 var wrappers = {
-  env: /^-[uCSP]$/,
-  command: undefined,
-  exec: /^-a$/,
-  nohup: undefined,
-  builtin: undefined,
-  sudo: /^-[ugCDhprtUT]$/,
-  doas: /^-[uC]$/,
-  time: /^-[of]$/,
-  nice: /^-n$/,
-  caffeinate: /^-[tw]$/,
-  timeout: /^-[sk]$/
+  env: { short: "uCSP", long: ["--unset", "--chdir", "--split-string"], flags: ["--ignore-environment", "--null", "--debug"] },
+  command: { short: "" },
+  exec: { short: "a" },
+  nohup: { short: "" },
+  builtin: { short: "" },
+  sudo: {
+    short: "ugCDhprtUT",
+    long: ["--user", "--group", "--close-from", "--chdir", "--host", "--prompt", "--role", "--type", "--other-user", "--command-timeout"],
+    flags: ["--non-interactive", "--login", "--shell", "--preserve-env", "--background", "--stdin", "--reset-timestamp", "--remove-timestamp", "--set-home", "--bell"]
+  },
+  doas: { short: "uC" },
+  time: { short: "of", long: ["--output", "--format"], flags: ["--portability", "--verbose", "--append"] },
+  nice: { short: "n", long: ["--adjustment"] },
+  caffeinate: { short: "tw" },
+  timeout: { short: "sk", long: ["--signal", "--kill-after"], flags: ["--foreground", "--preserve-status", "--verbose"] },
+  setsid: { short: "", flags: ["--ctty", "--fork", "--wait"] },
+  stdbuf: { short: "ioe", long: ["--input", "--output", "--error"] },
+  watch: { short: "nq", long: ["--interval", "--equexit"], flags: ["--differences", "--no-title", "--beep", "--errexit", "--chgexit", "--exec", "--precise", "--color"] },
+  ionice: { short: "cnp", long: ["--class", "--classdata", "--pid"] },
+  chronic: { short: "" }
 };
-function withoutPrefix(words, line) {
+function withoutPrefix(words, state, line) {
   let i = 0;
   while (i < words.length) {
     const word = words[i];
@@ -7863,18 +7932,43 @@ function withoutPrefix(words, line) {
       i += 2;
     else if (/^\d*(>>?|<|&>|>&|<&|&>>)\S/.test(word))
       i++;
-    else if (Object.hasOwn(wrappers, program)) {
-      const takesValue = wrappers[program];
+    else if (program === "coproc") {
+      if (state)
+        state.sure = false;
       i++;
-      while (i < words.length && words[i].startsWith("-")) {
-        if (words[i] === "--") {
+    } else if (Object.hasOwn(wrappers, program)) {
+      const spec = wrappers[program];
+      i++;
+      while (i < words.length && words[i].startsWith("-") && words[i] !== "-") {
+        const option = dequote(words[i]);
+        if (option === "--") {
           i++;
           break;
         }
-        const split = program === "env" && /^(-S|--split-string)(=|$)/.exec(words[i]);
-        if (split)
-          line?.(dequote(split[2] ? words[i].slice(split[0].length) : words[i + 1] ?? ""));
-        i += takesValue?.test(words[i]) ? 2 : 1;
+        if (option.startsWith("--")) {
+          const at = option.indexOf("=");
+          const name = at < 0 ? option : option.slice(0, at);
+          const takes = spec.long?.includes(name) ?? false;
+          const value = at >= 0 ? option.slice(at + 1) : takes ? dequote(words[i + 1] ?? "") : undefined;
+          if (program === "env" && name === "--split-string" && value !== undefined)
+            line?.(value);
+          if (at < 0 && !takes && !spec.flags?.includes(name) && state)
+            state.sure = false;
+          i += at < 0 && takes ? 2 : 1;
+          continue;
+        }
+        let taken = 1;
+        for (let k = 1;k < option.length; k++) {
+          if (!spec.short.includes(option[k]))
+            continue;
+          const rest = option.slice(k + 1);
+          if (program === "env" && option[k] === "S")
+            line?.(rest || dequote(words[i + 1] ?? ""));
+          if (!rest)
+            taken = 2;
+          break;
+        }
+        i += taken;
       }
       if (program === "timeout" && i < words.length)
         i++;
@@ -7951,6 +8045,11 @@ function dequote(word) {
     }
   }
   return out;
+}
+function hidesFromBlocks(blocks, ask) {
+  if (!isShell(ask.action) || !blocks?.some((rule) => rule.effect === "deny" && isShell(rule.action)))
+    return false;
+  return ask.resources.some((line) => !parseCommands(line.trim()).sure);
 }
 function partsOf(ask) {
   return isShell(ask.action) ? ask.resources.flatMap(commandParts) : ask.resources;
@@ -8416,9 +8515,12 @@ class Sessions {
     const live = this.state(id);
     const later = live.wakeLater;
     live.wakeLater = false;
-    if (later && live.adopting)
-      live.resume = true;
-    if (later || live.adopting)
+    if (live.adopting && this.startAdopting(id)) {
+      if (later)
+        live.resume = true;
+      return;
+    }
+    if (later)
       this.wake(id);
   }
   commitRevert(id, record, live) {
@@ -8515,7 +8617,8 @@ class Sessions {
     const running = this.live.get(id)?.running;
     const steers = this.isRunning(id) && input.delivery !== "queue" && Boolean(running?.thread.steer);
     const onlyBusy = this.busy.has(id) && !this.live.get(id)?.turn;
-    const delivery = steers || (!this.isRunning(id) || onlyBusy) && input.delivery !== "queue" ? "steer" : "queue";
+    const idle = !this.isRunning(id) || onlyBusy;
+    const delivery = steers || idle && (input.delivery !== "queue" || !queue.length) ? "steer" : "queue";
     queue.push({ ...input, delivery });
     this.store.save(id, true);
     emit("session.inbox.enqueued", { sessionID: id, inboxID: input.id, item: { type: "user", payload: { text: input.text, files: input.files }, delivery } }, record.session.location.directory);
@@ -8844,11 +8947,12 @@ ${text.slice(0, 4000)}
     const record = this.store.get(id);
     const live = this.live.get(id);
     const model2 = live?.models.get(provider);
-    const busy = live?.turn && !live.turn.isEnded && live.running?.provider !== provider;
+    const busy = live?.turn && !live.turn.isEnded && (live.running?.provider !== provider || live.abort?.signal.aborted);
     if (!record || !live || !model2 || this.removing.has(id) || record.session.revert || busy || live.adopting)
       return false;
     live.adopting = { id: newID("msg"), text: note.text, files: [], delivery: "steer", synthetic: { description: note.description, metadata: note.metadata }, adopt: model2 };
-    this.wake(id);
+    if (!this.isRunning(id))
+      this.wake(id);
     return true;
   }
   startAdopting(id) {
@@ -9036,10 +9140,11 @@ ${text.slice(0, 4000)}
   async interrupt(id, resume = false) {
     const live = this.live.get(id);
     if (!live?.turn || live.turn.isEnded) {
-      const stopped = await this.stopSubagents(id);
-      if (resume)
+      if (resume) {
         this.wake(id);
-      return stopped;
+        return false;
+      }
+      return this.stopSubagents(id);
     }
     const turn = live.turn;
     live.resume = resume;
@@ -9202,6 +9307,8 @@ ${live.agentPrompt}` : ""
       return "deny";
     if (live.blocks === undefined && !looks.has(ask.action))
       return "ask";
+    if (hidesFromBlocks(live.blocks, ask))
+      return "ask";
     return effect === "ask" && !this.allowedBefore(live, ask) ? "ask" : undefined;
   }
   allowedBefore(live, ask) {
@@ -9225,7 +9332,7 @@ ${live.agentPrompt}` : ""
     const effect = ask.weighed ? strictest(session.permissions ?? [], ask.action, parts) : strictest([...live.agentRules ?? engineDefaults, ...session.permissions ?? []], ask.action, parts) ?? "allow";
     if (effect === "deny")
       return "reject";
-    if (!unknown && (effect === "allow" || this.allowedBefore(live, ask)))
+    if (!unknown && !hidesFromBlocks(live.blocks, ask) && (effect === "allow" || this.allowedBefore(live, ask)))
       return "once";
     if (turn.isEnded || live.abort?.signal.aborted)
       return "reject";
@@ -9370,7 +9477,7 @@ function withTextFiles(text, files) {
     let contents;
     if (!file.mime.startsWith("image/") && file.mime !== "application/pdf") {
       try {
-        const bytes = file.data ? Buffer.from(file.data, "base64") : file.path && statSync3(file.path).isFile() && statSync3(file.path).size <= textFileLimit ? readFileSync11(file.path) : undefined;
+        const bytes = file.data ? Buffer.from(file.data, "base64") : file.path && statSync3(file.path).isFile() && statSync3(file.path).size <= textFileLimit ? readFileSync12(file.path) : undefined;
         if (bytes && !bytes.includes(0))
           contents = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
       } catch {}
@@ -9845,7 +9952,7 @@ ${all}`;
 }
 
 // Agents/src/store.ts
-import { mkdirSync as mkdirSync11, readdirSync as readdirSync4, readFileSync as readFileSync12, renameSync as renameSync4, rmSync as rmSync7, statSync as statSync4, writeFileSync as writeFileSync8 } from "fs";
+import { mkdirSync as mkdirSync11, readdirSync as readdirSync4, readFileSync as readFileSync13, renameSync as renameSync4, rmSync as rmSync7, statSync as statSync4, writeFileSync as writeFileSync9 } from "fs";
 import { join as join14 } from "path";
 
 class Store {
@@ -9858,14 +9965,14 @@ class Store {
     for (const id of readdirSync4(root)) {
       try {
         const folder = join14(root, id);
-        const session = JSON.parse(readFileSync12(join14(folder, "session.json"), "utf8"));
+        const session = JSON.parse(readFileSync13(join14(folder, "session.json"), "utf8"));
         let messages = [];
         try {
-          messages = JSON.parse(readFileSync12(join14(folder, "messages.json"), "utf8"));
+          messages = JSON.parse(readFileSync13(join14(folder, "messages.json"), "utf8"));
         } catch {}
         let agent = {};
         try {
-          agent = JSON.parse(readFileSync12(join14(folder, "agent.json"), "utf8"));
+          agent = JSON.parse(readFileSync13(join14(folder, "agent.json"), "utf8"));
         } catch {}
         this.records.set(session.id, { session, messages, agent });
       } catch {}
@@ -9922,7 +10029,7 @@ class Store {
       ["agent.json", record.agent]
     ]) {
       const file = join14(folder, name);
-      writeFileSync8(file + ".new", JSON.stringify(value));
+      writeFileSync9(file + ".new", JSON.stringify(value));
       renameSync4(file + ".new", file);
     }
   }
