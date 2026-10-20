@@ -59,6 +59,8 @@ final class SessionModel {
     private(set) var inlineShells: Set<String> = []
     /// The background commands' bar shows only its line, which still says they run.
     var hidesBackgroundJobs = false
+    /// The bar of its wake-ups and watches shows only its line.
+    var hidesWakes = false
     /// The subagents' bar shows only its line, which still says they work.
     var hidesSubagents = false
     private(set) var forms: [FormRequest] = []

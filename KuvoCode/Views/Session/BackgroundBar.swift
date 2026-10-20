@@ -33,6 +33,10 @@ struct WorkBar<Item: Identifiable, Row: View>: View {
     let title: String
     /// What the only one is, beside the title while the rows are hidden.
     var detail: Text?
+    /// The mark before the title, for what waits rather than works (a wake-up); else a spinner.
+    var symbol: String?
+    /// A button of its own at the end of the line.
+    var accessory: AnyView?
     let showHelp: String
     let hideHelp: String
     @Binding var isHidden: Bool
@@ -66,12 +70,29 @@ struct WorkBar<Item: Identifiable, Row: View>: View {
     }
 
     private var header: some View {
+        HStack(spacing: 0) {
+            toggle
+            if let accessory {
+                accessory
+                    .padding(.trailing, 12)
+            }
+        }
+    }
+
+    private var toggle: some View {
         Button {
             withAnimation(.ui) { isHidden.toggle() }
         } label: {
             HStack(spacing: 10) {
-                Spinner(size: 14)
-                    .frame(width: 18)
+                if let symbol {
+                    Image(systemName: symbol)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.tint)
+                        .frame(width: 18)
+                } else {
+                    Spinner(size: 14)
+                        .frame(width: 18)
+                }
                 Text(title)
                     .font(.system(size: 13, weight: .medium))
                 if isHidden, let detail {

@@ -308,6 +308,17 @@ final class PhoneLink {
             if request.path == "kuvo/groups/events" { return Self.following { self?.groupsJSON() } }
             if let id = Self.groupID(in: request.path, then: "events") { return Self.following { self?.groupJSON(id) } }
             if request.path == "kuvo/usage/events" { return Self.following { self?.usageJSON() } }
+            // A session's wake-ups and watches: read, or one canceled.
+            if request.path.hasPrefix("kuvo/wakes/") {
+                return AsyncThrowingStream { continuation in
+                    Task { @MainActor in
+                        let (status, body) = await self?.answerWakes(request) ?? (503, Data())
+                        continuation.yield(.head(status: status, headers: ["content-type": "application/json"]))
+                        continuation.yield(.body(body))
+                        continuation.finish()
+                    }
+                }
+            }
             if let id = Self.shellID(in: request.path), request.method.uppercased() == "POST" {
                 return AsyncThrowingStream { continuation in
                     Task { @MainActor in
@@ -743,6 +754,44 @@ final class PhoneLink {
         let parts = path.split(separator: "/")
         guard parts.count == 4, parts[0] == "kuvo", parts[1] == "shell", parts[3] == "stop" else { return nil }
         return String(parts[2]).removingPercentEncoding
+    }
+
+    /// `GET kuvo/wakes/<session>`: its wake-ups, watches and whether they're paused, read now;
+    /// `POST kuvo/wakes/<session>/cancel` with `{"wake": "<id>"}` or `{"watch": "<letters>"}`
+    /// cancels one, as the bar over the Mac's composer does. Times are seconds since 1970.
+    private func answerWakes(_ request: LinkRequest) async -> (Int, Data) {
+        let parts = request.path.split(separator: "?").first?.split(separator: "/").map(String.init) ?? []
+        guard parts.count >= 3, let session = parts[2].removingPercentEncoding, let app = AgentMail.shared.app,
+              let found = app.workspace.session(session) else { return (404, Data("{}".utf8)) }
+        let owner = WakeUps.owner(of: found)
+        let wakeUps = app.wakeUps
+        if parts.count == 4, parts[3] == "cancel", request.method.uppercased() == "POST" {
+            struct Given: Decodable { var wake: String?; var watch: String? }
+            let given = try? JSONDecoder().decode(Given.self, from: request.body)
+            do {
+                if let id = given?.wake, let wake = wakeUps.wakes[owner.key]?.first(where: { $0.id == id || $0.letters == id }) {
+                    try await wakeUps.cancel(wake, of: owner)
+                } else if let letters = given?.watch, let watch = wakeUps.watches[owner.key]?.first(where: { $0.letters == letters }) {
+                    try await wakeUps.cancel(watch, of: owner)
+                } else {
+                    return (404, Data("{}".utf8))
+                }
+            } catch {
+                return (503, (try? JSONEncoder().encode(["message": error.localizedDescription])) ?? Data())
+            }
+            return (200, Data("{}".utf8))
+        }
+        guard parts.count == 3 else { return (404, Data("{}".utf8)) }
+        await wakeUps.read(owner)
+        struct Listed: Encodable {
+            struct Wake: Encodable { var id: String; var due: Double; var note: String; var every: String? }
+            struct Watch: Encodable { var letters: String; var every: String; var check: String; var note: String }
+            var wakes: [Wake]; var watches: [Watch]; var paused: Bool
+        }
+        let listed = Listed(wakes: (wakeUps.wakes[owner.key] ?? []).map { .init(id: $0.id, due: $0.due.timeIntervalSince1970, note: $0.note, every: $0.every?.text) },
+                            watches: (wakeUps.watches[owner.key] ?? []).map { .init(letters: $0.letters, every: $0.every, check: $0.check, note: $0.note) },
+                            paused: wakeUps.paused.contains(owner.key))
+        return (200, (try? JSONEncoder().encode(listed)) ?? Data())
     }
 
     /// Stops a command an agent left running, as Stop in the bar over the composer does: found

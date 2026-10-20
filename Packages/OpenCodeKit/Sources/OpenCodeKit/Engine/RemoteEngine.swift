@@ -339,8 +339,8 @@ public final class RemoteServer: @unchecked Sendable {
     /// commands (`env`, say) would print them. They're gone once the engine is: its watchdog takes
     /// them away, unless an engine started since has put its own there.
     ///
-    /// Every minute the watchdog sends bots' wake-ups that are due ([Wakes]). Every ten, it stops
-    /// the engine if the app hasn't been around for a day and no wake-up is waiting.
+    /// Every minute the watchdog sends bots' and sessions' wake-ups that are due ([Wakes]). Every
+    /// ten, it stops the engine if the app hasn't been around for a day and no wake-up is waiting.
     static var launchScript: String {
         """
         while IFS= read -r line && [ -n "$line" ]; do export "$line"; done
@@ -364,8 +364,8 @@ public final class RemoteServer: @unchecked Sendable {
         \(Launcher.installScript)
         \(CommandEnvironment.installScript)
         export PATH="$K/bin:$PATH"
-        # Bots' folders under this root, for `kuvo-wake` (its default is the app's own root).
-        export KUVO_BOTS="$K/bots"
+        # Bots' and sessions' folders under this root, for `kuvo-wake` (its default is the app's own root).
+        export KUVO_BOTS="$K/bots" KUVO_WAKES="$K/wakes"
         cd "$K/workspace"
         touch "$R/attached"
         setsid "$K/engine/\(OpenCodeEngine.version)/opencode" serve --port "$port" --hostname 127.0.0.1 >"$R/engine.log" 2>&1 </dev/null &
@@ -380,7 +380,7 @@ public final class RemoteServer: @unchecked Sendable {
         if [ -f "$R/link.json" ] && [ -f "$K/bin/kuvo-link.js" ]; then
           KUVO_HOME="$K" BUN_BE_BUN=1 BUN_RUNTIME_TRANSPILER_CACHE_PATH=0 setsid "$K/engine/\(OpenCodeEngine.version)/opencode" "$K/bin/kuvo-link.js" run >"$R/link.log" 2>&1 </dev/null &
         fi
-        setsid sh -c 'i=0; while kill -0 "$1" 2>/dev/null; do sleep 60; grep -q "\\"pid\\":$1," "$2/engine.json" 2>/dev/null || break; "$3/bin/kuvo-wake" fire "$3/bots" "$2/engine.json" 2>/dev/null; i=$((i + 1)); [ $((i % 10)) -eq 0 ] || continue; { ls "$3"/bots/*/wakes/* || ls -d "$3"/bots/*/watches/*/; } >/dev/null 2>&1 && continue; [ -n "$(find "$2/attached" -mmin +1440 2>/dev/null)" ] && kill "$1"; done; [ "$(cat "$3/keys/.launch" 2>/dev/null)" = "$4" ] && rm -rf "$3/keys"' watchdog "$pid" "$R" "$K" "$launch" >/dev/null 2>&1 </dev/null &
+        setsid sh -c 'i=0; while kill -0 "$1" 2>/dev/null; do sleep 60; grep -q "\\"pid\\":$1," "$2/engine.json" 2>/dev/null || break; "$3/bin/kuvo-wake" fire "$3/bots" "$2/engine.json" 2>/dev/null; i=$((i + 1)); [ $((i % 10)) -eq 0 ] || continue; { ls "$3"/bots/*/wakes/* || ls -d "$3"/bots/*/watches/*/ || ls "$3"/wakes/*/wakes/* || ls -d "$3"/wakes/*/watches/*/; } >/dev/null 2>&1 && continue; [ -n "$(find "$2/attached" -mmin +1440 2>/dev/null)" ] && kill "$1"; done; [ "$(cat "$3/keys/.launch" 2>/dev/null)" = "$4" ] && rm -rf "$3/keys"' watchdog "$pid" "$R" "$K" "$launch" >/dev/null 2>&1 </dev/null &
         echo "$pid"
         """
     }
@@ -468,10 +468,11 @@ public final class RemoteServer: @unchecked Sendable {
     }
 
     /// Stops the engine on the machine without waiting more than `timeout`, for when the app quits.
-    /// With `unlessWaking`, an engine with bots' wake-ups waiting keeps running, to send them.
-    /// `first` runs before, either way.
+    /// With `unlessWaking`, an engine with bots' or sessions' wake-ups waiting keeps running, to
+    /// send them. `first` runs before, either way.
     public static func stopNow(on connection: SSHConnection, timeout: TimeInterval = 3, unlessWaking: Bool = false, first: String = "") {
-        let waiting = "{ ls \"$HOME/\(RemoteEngineInstaller.root)\"/bots/*/wakes/* || ls -d \"$HOME/\(RemoteEngineInstaller.root)\"/bots/*/watches/*/; } >/dev/null 2>&1 && exit 0\n"
+        let root = "\"$HOME/\(RemoteEngineInstaller.root)\""
+        let waiting = "{ ls \(root)/bots/*/wakes/* || ls -d \(root)/bots/*/watches/*/ || ls \(root)/wakes/*/wakes/* || ls -d \(root)/wakes/*/watches/*/; } >/dev/null 2>&1 && exit 0\n"
         runNow(first + (unlessWaking ? waiting : "") + stopScript, on: connection, timeout: timeout)
     }
 

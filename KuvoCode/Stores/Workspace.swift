@@ -339,7 +339,11 @@ final class Workspace {
     /// Archives a session, or brings it back.
     func setArchived(_ id: String, _ archived: Bool) async {
         await setFlag(Self.archivedKey, archived, of: id)
+        onArchived?(id, archived)
     }
+
+    /// A session was archived, or brought back. The app sets it.
+    @ObservationIgnored var onArchived: ((_ session: String, _ isArchived: Bool) -> Void)?
 
     /// Pins a session to the top of the sidebar, or takes it off.
     func setPinned(_ id: String, _ pinned: Bool) async {

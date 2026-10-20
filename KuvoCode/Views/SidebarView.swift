@@ -1001,7 +1001,7 @@ private struct BotRow: View {
         .onHover { isHovering = $0 }
         // Read again whenever it's done some work: it may have scheduled a wake-up.
         .task(id: session?.time.updated) {
-            await bots.readWakes(bot)
+            await app.wakeUps.read(bot.wakeOwner)
             if hasNews { await workspace.loadReplyPreview(bot.sessionID) }
         }
     }
@@ -1149,6 +1149,7 @@ private struct MoveToProjectMenu: View {
 /// How a session is doing, at the end of its row.
 private struct SessionStatus: View {
     @Environment(Workspace.self) private var workspace
+    @Environment(AppModel.self) private var app
     let session: Session
 
     var body: some View {
@@ -1168,6 +1169,17 @@ private struct SessionStatus: View {
         } else if session.isUnread {
             Circle().fill(.tint).frame(width: 7, height: 7)
                 .help("Finished")
+        } else if let next = app.wakeUps.wakes[session.id]?.first {
+            // It wakes itself up later (a bot's row says so in words).
+            Image(systemName: "alarm")
+                .font(.system(size: 11))
+                .foregroundStyle(.tint)
+                .help("Wakes up " + next.due.formatted(Date.RelativeFormatStyle(presentation: .named, unitsStyle: .wide)))
+        } else if app.wakeUps.watches[session.id]?.isEmpty == false {
+            Image(systemName: "eye")
+                .font(.system(size: 11))
+                .foregroundStyle(.tint)
+                .help("Watching for a change")
         }
     }
 }

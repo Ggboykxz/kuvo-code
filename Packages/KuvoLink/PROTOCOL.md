@@ -233,6 +233,13 @@ itself. A host serves:
   `- &<name> (<session>): <what it is>` lines) to a line `</named-agents>`, before the
   `<review-comments>` and `<attached-files>` blocks. Show each `&<name>` it lists in bold
   (a bot's in its color), opening that session.
+- On a Mac, `kuvo/wakes/<session>`: a session's (or chat's) wake-ups and watches, which its
+  agent sets with `kuvo-wake`, as the bar over the Mac's composer shows them: `{"wakes": [{id,
+  due, note, every}], "watches": [{letters, every, check, note}], "paused"}` (`due` in seconds
+  since 1970, `every` like `1d` or null; paused while it's archived). `POST
+  kuvo/wakes/<session>/cancel` with `{"wake": "<id>"}` or `{"watch": "<letters>"}` cancels one.
+  A bot's are in `kuvo/bots`. A wake-up reaches the conversation as a message starting with
+  `[Wake-up] `.
 - On a Mac, `kuvo/asks`: what agents ask you for while they browse, on the Mac or a machine: a
   sign-in (the fields the page has, and the accounts Passwords keeps for the site, never
   their passwords), a one-time code, or a step only you can do. `kuvo/asks/events` is the same

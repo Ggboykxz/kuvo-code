@@ -34,6 +34,8 @@ final class AppModel {
     let usage = UsageAccounts()
     /// Bots: named agents with one job each, on this Mac or a machine.
     let bots = Bots()
+    /// Bots' and sessions' wake-ups and watches.
+    let wakeUps = WakeUps()
     let groups = BotGroups()
     /// Kuvo Code for iPhone's way in (off until it's switched on; see PhoneLink).
     let phoneLink = PhoneLink()
@@ -187,6 +189,7 @@ final class AppModel {
             try? Launcher.install(in: Bots.command.deletingLastPathComponent(), engine: binary)
             shell["PATH"] = Bots.command.deletingLastPathComponent().path + ":" + (shell["PATH"] ?? "/usr/bin:/bin")
             shell["KUVO_BOTS"] = Bots.root.path
+            shell["KUVO_WAKES"] = WakeUps.root.path
             // Keys you brought for integrations, in the files their settings name with {file:…}
             // (not the engine's environment, where the agent's commands would see them), and a
             // folder for what their servers keep (a sign-in).
@@ -256,6 +259,7 @@ final class AppModel {
             workspace.api = api
             workspace.machineAPI = { [weak self] machine in self?.machines.engine(machine)?.api }
             bots.app = self
+            wakeUps.app = self
             groups.app = self
             workspace.onMovedToAgents = { [weak bots] from, to in await bots?.movedToAgents(from: from, to: to) ?? false }
             workspace.runsOnAgents(bots.agentSessionIDs)
@@ -345,6 +349,7 @@ final class AppModel {
         let bin = Bots.command.deletingLastPathComponent().path
         environment["PATH"] = bin + ":" + (environment["PATH"] ?? "/usr/bin:/bin")
         environment["KUVO_BOTS"] = Bots.root.path
+        environment["KUVO_WAKES"] = WakeUps.root.path
         environment["KUVO_BIN"] = bin
         Task { await agents.start(engine: binary, environment: environment) }
         // Back in the app, you may have installed an agent or signed in to one in Terminal.

@@ -51,18 +51,17 @@ struct Bot: Codable, Identifiable, Hashable {
     }
 }
 
-/// Your bots, kept in `bots.json`, and the wake-ups of the ones on this Mac.
+/// Your bots, kept in `bots.json`. Their wake-ups are `WakeUps`', as sessions' are.
 @Observable
 final class Bots {
     private(set) var list: [Bot] = []
-    /// Each bot's waiting wake-ups, as last read.
-    private(set) var wakes: [String: [Wakes.Pending]] = [:]
+    /// Each bot's waiting wake-ups, as last read, by its ID.
+    var wakes: [String: [Wakes.Pending]] { app?.wakeUps.wakes ?? [:] }
     /// Each bot's watches, as last read.
-    private(set) var watches: [String: [Wakes.Watch]] = [:]
+    var watches: [String: [Wakes.Watch]] { app?.wakeUps.watches ?? [:] }
     /// Bots whose wake-ups you paused: they wait until you resume them.
-    private(set) var paused: Set<String> = []
+    var paused: Set<String> { app?.wakeUps.paused ?? [] }
     @ObservationIgnored weak var app: AppModel?
-    @ObservationIgnored private var waking: Task<Void, Never>?
     /// Bots whose session has this version's instructions.
     @ObservationIgnored private var synced: Set<String> = []
     /// Machines given this copy's kuvo-wake since launch.
@@ -81,9 +80,9 @@ final class Bots {
     /// This Mac's bots' folders.
     static var root: URL { AppInfo.supportDirectory.appending(path: "bots") }
     /// The wake-up command on this Mac.
-    static var command: URL { AppInfo.supportDirectory.appending(path: "bin/kuvo-wake") }
+    static var command: URL { WakeUps.command }
     /// The wake-up command on a machine.
-    static var machineCommand: String { "$HOME/\(RemoteEngineInstaller.root)/bin/kuvo-wake" }
+    static var machineCommand: String { WakeUps.machineCommand }
 
     init() {
         list = Self.load()
@@ -153,24 +152,12 @@ final class Bots {
     enum Failure: LocalizedError {
         case notConnected(String)
         case noFolder
-        case tooSoon
-        case tooMany
-        case noWake
         case stillOn(String)
-        /// Wake Up Now couldn't read a machine's wake-up whole, to send it as its time would.
-        case unreadWake(String)
-        /// Wake Up Now sent it, but couldn't take it off the schedule: it comes at its time too.
-        case wakeStays(String)
         var errorDescription: String? {
             switch self {
             case .notConnected(let machine): "\(machine) isn’t connected. Connect to it, then try again."
             case .stillOn(let machine): "\(machine) isn’t connected, and the bot would keep running there. Connect to it, then delete the bot."
             case .noFolder: "Couldn’t make the bot’s folder."
-            case .tooSoon: "Pick a time at least a minute from now."
-            case .tooMany: "This bot has \(Wakes.limit) wake-ups waiting. Cancel some first."
-            case .noWake: "Couldn’t add the wake-up. Check that the machine is connected, then try again."
-            case .unreadWake(let machine): "Couldn’t read the wake-up on \(machine). Check that it’s connected, then try again."
-            case .wakeStays(let reason): "It woke up, but the wake-up couldn’t be cancelled, so it comes at its time too. \(reason)"
             }
         }
     }
@@ -214,7 +201,7 @@ final class Bots {
             let url = Self.root.appending(path: id)
             try FileManager.default.createDirectory(at: url.appending(path: "workspace"), withIntermediateDirectories: true)
             try FileManager.default.createDirectory(at: url.appending(path: "wakes"), withIntermediateDirectories: true)
-            try Self.installCommand()
+            try WakeUps.installCommand()
             try Data(memory.utf8).write(to: url.appending(path: "MEMORY.md"))
             folder = url.path
         }
@@ -413,8 +400,7 @@ final class Bots {
         await app?.groups.remove(bot)
         list.removeAll { $0.id == bot.id }
         save()
-        wakes[bot.id] = nil
-        watches[bot.id] = nil
+        app?.wakeUps.forget(key: bot.id)
         app?.utilities.closeTabs(of: bot.id)
         noteSessions()
         await app?.workspace.delete(bot.sessionID)
@@ -443,298 +429,23 @@ final class Bots {
 
     // MARK: Wake-ups
 
-    /// Reads a bot's waiting wake-ups.
-    func readWakes(_ bot: Bot) async {
-        if bot.machine == nil {
-            wakes[bot.id] = Self.localWakes(of: bot)
-            let found = Self.localWatches(of: bot)
-            if watches[bot.id] != found { watches[bot.id] = found }
-            notePaused(bot, FileManager.default.fileExists(atPath: Self.pauseFile(of: bot)))
-            return
-        }
-        guard let machine = bot.machine else { return }
-        let folder = (bot.folder as NSString).appendingPathComponent("wakes")
-        let watching = (bot.folder as NSString).appendingPathComponent("watches")
-        // One line each: the file's name, a tab, the note on one line; "paused" first if it is;
-        // then each watch, after "watch" and a tab: its letters, how often, its check and note.
-        let one = "tr '\\t\\n' '  '"
-        let script = "[ -e \(SSHConnection.quoted(Self.pauseFile(of: bot))) ] && echo paused; for f in \(SSHConnection.quoted(folder))/*; do [ -f \"$f\" ] && printf '%s\\t%s\\n' \"${f##*/}\" \"$(tr '\\n' ' ' <\"$f\" | head -c 400)\"; done; for w in \(SSHConnection.quoted(watching))/*/; do [ -f \"${w}check\" ] && l=${w%/} && printf 'watch\\t%s\\t%s\\t%s\\t%s\\n' \"${l##*/}\" \"$(cat \"${w}every\")\" \"$(\(one) <\"${w}check\" | head -c 300)\" \"$(\(one) <\"${w}note\" | head -c 400)\"; done; true"
-        let output = await Task.detached { RemoteShell.run(script, on: machine) }.value
-        var lines = output.map { String(decoding: $0, as: UTF8.self) }?.split(separator: "\n") ?? []
-        guard output != nil else { return }
-        notePaused(bot, lines.first == "paused")
-        if lines.first == "paused" { lines.removeFirst() }
-        let found = lines.filter { $0.hasPrefix("watch\t") }.compactMap { line -> Wakes.Watch? in
-            let parts = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
-            return parts.count >= 5 ? Wakes.Watch(letters: parts[1], every: parts[2], check: parts[3], note: parts[4]) : nil
-        }
-        if watches[bot.id] != found { watches[bot.id] = found }
-        lines.removeAll { $0.hasPrefix("watch\t") }
-        wakes[bot.id] = lines.compactMap { line in
-            let parts = line.split(separator: "\t", maxSplits: 1).map(String.init)
-            return parts.first.flatMap { Wakes.Pending(id: $0, note: parts.count > 1 ? parts[1] : "") }
-        }
-        .sorted { $0.due < $1.due }
-    }
-
-    /// A wake-up you add: at `due`, `note` arrives in the bot's conversation, and again at each
-    /// repeat. One on weekdays starts on a weekday.
-    func addWake(to bot: Bot, at due: Date, every: Wakes.Repeat?, note: String) async throws {
-        let note = note.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard due > .now.addingTimeInterval(60) else { throw Failure.tooSoon }
-        guard (wakes[bot.id]?.count ?? 0) < Wakes.limit else { throw Failure.tooMany }
-        let folder = (bot.folder as NSString).appendingPathComponent("wakes")
-        if let machine = bot.machine {
-            // Its own kuvo-wake, which knows the machine's clock and its weekends.
-            let repeating = every.map { "--every \($0.text) " } ?? ""
-            let script = "\"\(Self.machineCommand)\" \(SSHConnection.quoted(bot.folder)) add \(Int(due.timeIntervalSince1970)) \(repeating)\(SSHConnection.quoted(note))"
-            guard await Task.detached(operation: { RemoteShell.run(script, on: machine) }).value != nil else { throw Failure.noWake }
-            await readWakes(bot)
-            return
-        }
-        var due = due
-        let calendar = Calendar.current
-        while every == .weekdays, Wakes.isWeekend(due, calendar: calendar), let next = calendar.date(byAdding: .day, value: 1, to: due) { due = next }
-        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
-        let file = (folder as NSString).appendingPathComponent(Wakes.name(due: due, every: every))
-        guard FileManager.default.createFile(atPath: file, contents: Data(note.utf8)) else { throw Failure.noWake }
-        wakes[bot.id] = Self.localWakes(of: bot)
-        Analytics.shared.track("bot_wake_added", ["repeats": every != nil])
-    }
-
-    /// Cancels a wake-up by its letters, which a repeating one keeps as its time moves on (it may
-    /// have come back since it was listed). On a machine that can't be reached, it stays, and
-    /// this says so.
-    func cancelWake(_ wake: Wakes.Pending, of bot: Bot) async throws {
-        let folder = (bot.folder as NSString).appendingPathComponent("wakes")
-        let letters = wake.letters
-        // As kuvo-wake names them; anything else isn't one of its wake-ups (or safe in a command).
-        guard !letters.isEmpty, letters.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else { return }
-        if let machine = bot.machine {
-            let base = SSHConnection.quoted(folder)
-            guard await Task.detached(operation: { RemoteShell.run("rm -f \(base)/*-\(letters) \(base)/*-\(letters)-*", on: machine) }).value != nil else {
-                throw Failure.notConnected(machine)
-            }
-        } else {
-            for name in (try? FileManager.default.contentsOfDirectory(atPath: folder)) ?? [] where Wakes.Pending(id: name, note: "")?.letters == letters {
-                try? FileManager.default.removeItem(atPath: (folder as NSString).appendingPathComponent(name))
-            }
-        }
-        wakes[bot.id]?.removeAll { $0.letters == letters }
-    }
-
-    /// Stops a watch. On a machine that can't be reached, it stays, and this says so.
-    func cancelWatch(_ watch: Wakes.Watch, of bot: Bot) async throws {
-        let letters = watch.letters
-        guard !letters.isEmpty, letters.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else { return }
-        let folder = ((bot.folder as NSString).appendingPathComponent("watches") as NSString).appendingPathComponent(letters)
-        if let machine = bot.machine {
-            guard await Task.detached(operation: { RemoteShell.run("rm -rf \(SSHConnection.quoted(folder))", on: machine) }).value != nil else {
-                throw Failure.notConnected(machine)
-            }
-        } else {
-            try? FileManager.default.removeItem(atPath: folder)
-        }
-        watches[bot.id]?.removeAll { $0.letters == letters }
-    }
-
-    /// Runs a watch's check now, as its own runs do (kuvo-wake's `try`: in the bot's folder, for
-    /// at most a minute, only what it prints), without counting it as a run: what it prints, or
-    /// why a run like this one wouldn't count.
-    func tryCheck(_ watch: Wakes.Watch, of bot: Bot) async -> String {
-        let letters = watch.letters
-        guard !letters.isEmpty, letters.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else { return "" }
-        let output: String
-        if let machine = bot.machine {
-            let script = "\"\(Self.machineCommand)\" \(SSHConnection.quoted(bot.folder)) try \(letters)"
-            var data = await Task.detached { RemoteShell.run(script, on: machine) }.value
-            // A kuvo-wake there from before `try`: this copy's, then again.
-            if let old = data, Wakes.tried(String(decoding: old, as: UTF8.self)) == nil, let engine = app?.machines.engine(machine) {
-                try? await Wakes.install(on: engine.machine.connection)
-                data = await Task.detached { RemoteShell.run(script, on: machine) }.value
-            }
-            guard let data else { return "Couldn’t reach \(machine)." }
-            output = String(decoding: data, as: UTF8.self)
-        } else {
-            try? Self.installCommand()
-            let environment = app?.shellEnvironment ?? ProcessInfo.processInfo.environment
-            let arguments = [Self.command.path, bot.folder, "try", letters]
-            output = await Task.detached { () -> String in
-                let process = Process()
-                process.executableURL = URL(filePath: "/bin/sh")
-                process.arguments = arguments
-                process.environment = environment
-                process.standardInput = FileHandle.nullDevice
-                let pipe = Pipe()
-                process.standardOutput = pipe
-                process.standardError = FileHandle.nullDevice
-                guard (try? process.run()) != nil else { return "" }
-                // The check stops after a minute; this, a little later.
-                let stop = DispatchWorkItem { if process.isRunning { process.terminate() } }
-                DispatchQueue.global().asyncAfter(deadline: .now() + 75, execute: stop)
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                process.waitUntilExit()
-                stop.cancel()
-                return String(decoding: data, as: UTF8.self)
-            }.value
-        }
-        guard let tried = Wakes.tried(output) else { return "Couldn’t run the check. Is the watch still there?" }
-        guard let skipped = tried.skipped else { return tried.output }
-        let printed = tried.output.trimmingCharacters(in: .whitespacesAndNewlines)
-        return "This run wouldn’t count: \(skipped). The watch skips runs like this, so they never wake the bot."
-            + (printed.isEmpty ? "" : "\n\n" + printed)
-    }
-
-    private static func localWatches(of bot: Bot) -> [Wakes.Watch] {
-        let folder = (bot.folder as NSString).appendingPathComponent("watches")
-        let read = { (watch: String, file: String) in
-            (try? String(contentsOfFile: ((folder as NSString).appendingPathComponent(watch) as NSString).appendingPathComponent(file), encoding: .utf8)) ?? ""
-        }
-        return ((try? FileManager.default.contentsOfDirectory(atPath: folder)) ?? []).sorted().compactMap { letters in
-            let check = read(letters, "check")
-            return check.isEmpty ? nil : Wakes.Watch(letters: letters, every: read(letters, "every"), check: check, note: read(letters, "note"))
-        }
-    }
-
-    /// This Mac's bots' watches, run while the app does, beside their wake-ups (so a slow check
-    /// never holds one up): what changed wakes the bot, and one that can't go is tried again at its
-    /// next check.
-    @ObservationIgnored private var watching: Task<Void, Never>?
-
-    private func watchDue() {
-        guard watching == nil, app != nil else { return }
-        watching = Task { [weak self] in
-            guard let self else { return }
-            for bot in list where bot.machine == nil && !FileManager.default.fileExists(atPath: Self.pauseFile(of: bot)) {
-                guard let api = api(for: bot) else { continue }
-                for letters in await dueWatches(of: bot) {
-                    guard let message = Wakes.watchMessage(letters, inBot: bot.folder) else { continue }
-                    if bot.agents != true { await api.waitForTools(in: bot.directory) }
-                    do {
-                        try await api.prompt(session: bot.sessionID, id: Identifier.message(), text: Wakes.marker + message, delivery: .queue)
-                        Wakes.watchDelivered(letters, inBot: bot.folder)
-                        Analytics.shared.track("bot_wakeup_ran", ["kind": "watch", "repeats": true])
-                    } catch {
-                        log.error("A watch's wake-up for \(bot.id, privacy: .public) didn't go: \(error.localizedDescription, privacy: .public)")
-                    }
-                }
-            }
-            watching = nil
-        }
-    }
-
-    /// Runs this Mac's bot's watches that are due (kuvo-wake does), in your shell's environment:
-    /// the letters of those that saw a change.
-    private func dueWatches(of bot: Bot) async -> [String] {
-        guard FileManager.default.fileExists(atPath: (bot.folder as NSString).appendingPathComponent("watches")) else { return [] }
-        let environment = app?.shellEnvironment ?? ProcessInfo.processInfo.environment
-        let command = Self.command.path
-        let folder = bot.folder
-        let output = await Task.detached { () -> String in
-            let process = Process()
-            process.executableURL = URL(filePath: "/bin/sh")
-            process.arguments = [command, folder, "check"]
-            process.environment = environment
-            process.standardInput = FileHandle.nullDevice
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            process.standardError = FileHandle.nullDevice
-            guard (try? process.run()) != nil else { return "" }
-            // Each check stops after a minute; the lot, after a few.
-            let stop = DispatchWorkItem { if process.isRunning { process.terminate() } }
-            DispatchQueue.global().asyncAfter(deadline: .now() + 300, execute: stop)
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            stop.cancel()
-            return String(decoding: data, as: UTF8.self)
-        }.value
-        return Wakes.changedWatches(in: output)
-    }
-
-    // MARK: Pausing
-
-    /// A file in the bot's folder that, while it's there, holds its wake-ups: on this Mac, and on
-    /// a machine, where the watchdog skips it.
-    static func pauseFile(of bot: Bot) -> String {
-        (bot.folder as NSString).appendingPathComponent("paused")
-    }
-
-    /// Holds a bot's wake-ups until you resume it; then those that came due meanwhile go. On a
-    /// machine that can't be reached, nothing changes, and this says so.
-    func setPaused(_ pause: Bool, _ bot: Bot) async throws {
-        let file = Self.pauseFile(of: bot)
-        if let machine = bot.machine {
-            // A machine's kuvo-wake from before pausing would send them anyway.
-            if pause, let engine = app?.machines.engine(machine) { try? await Wakes.install(on: engine.machine.connection) }
-            let script = pause ? ": > \(SSHConnection.quoted(file))" : "rm -f \(SSHConnection.quoted(file))"
-            guard await Task.detached(operation: { RemoteShell.run(script, on: machine) }).value != nil else { throw Failure.notConnected(machine) }
-        } else if pause {
-            FileManager.default.createFile(atPath: file, contents: nil)
-        } else {
-            try? FileManager.default.removeItem(atPath: file)
-        }
-        notePaused(bot, pause)
-    }
-
-    private func notePaused(_ bot: Bot, _ isPaused: Bool) {
-        if isPaused, !paused.contains(bot.id) { paused.insert(bot.id) }
-        if !isPaused, paused.contains(bot.id) { paused.remove(bot.id) }
-    }
-
-    /// Sends a waiting wake-up now rather than at its time (to see the bot's job run), on this Mac
-    /// or its machine, and takes it off the list.
-    func wakeNow(_ wake: Wakes.Pending, of bot: Bot) async throws {
-        guard let api = api(for: bot) else {
-            if bot.agents == true { throw OutsideAgents.Failure.notRunning(app?.workspace.agents?.failure) }
-            throw Failure.notConnected(bot.machine ?? "This Mac's engine")
-        }
-        if bot.agents != true { await api.waitForTools(in: bot.directory) }
-        var note = wake.note
-        // A machine's are listed cut short, on one line: the whole note, as its time would send it.
-        if let machine = bot.machine {
-            let file = ((bot.folder as NSString).appendingPathComponent("wakes") as NSString).appendingPathComponent(wake.id)
-            let output = await Task.detached { RemoteShell.run("cat \(SSHConnection.quoted(file))", on: machine) }.value
-            // Not the shortened line in its place: the bot would act on half its note.
-            guard let output, case let whole = String(decoding: output, as: UTF8.self), !whole.isEmpty else { throw Failure.unreadWake(machine) }
-            note = whole
-        }
-        try await api.prompt(session: bot.sessionID, id: Identifier.message(), text: Wakes.marker + note, delivery: .queue)
-        // One that repeats keeps its time; one that doesn't is done, or it would come again.
-        if wake.every == nil {
-            do { try await cancelWake(wake, of: bot) } catch { throw Failure.wakeStays(error.localizedDescription) }
-        }
-    }
-
-    /// Sends this Mac's bots' wake-ups as they come due, while the app runs; ones missed while it
-    /// wasn't running go as soon as it is. (A machine's engine sends its bots' own.)
+    /// Sends this Mac's wake-ups (its bots' and sessions', see `WakeUps`) as they come due, while
+    /// the app runs, each round after checking the bots' jobs and instructions.
     func startWaking() {
-        guard waking == nil else { return }
-        try? Self.installCommand()
         // Bots made before their memory file was made with them.
         for bot in list where bot.machine == nil && !FileManager.default.fileExists(atPath: bot.memoryFile) {
             try? Data(Self.blankMemory(bot.name).utf8).write(to: URL(filePath: bot.memoryFile))
         }
-        waking = Task { [weak self] in
-            var launching = true
-            while !Task.isCancelled {
-                // A job changed in a Mac bot's memory (or, at launch, each one's), before its
-                // conversation's instructions are checked.
-                for id in self?.memoryChanged() ?? [] { await self?.syncJob(of: id) }
-                // At launch, the instructions first (an update may have changed them), so the
-                // first wake-ups go with them; after that apart, so machines slow to answer never
-                // hold up this Mac's wake-ups.
-                if launching { await self?.syncInstructions() }
-                self?.watchDue()
-                await self?.wakeDue()
-                if !launching { self?.syncInstructionsApart() }
-                launching = false
-                // On time: up to the next one due here, at most 20 seconds (5 at least while the
-                // engine isn't up, as nothing can go).
-                let next = self?.nextLocalWake().map { $0.timeIntervalSinceNow } ?? 20
-                let least = self?.app?.api == nil ? 5.0 : 0.5
-                try? await Task.sleep(for: .seconds(min(20, max(least, next))))
-            }
+        app?.wakeUps.beforeRound = { [weak self] launching in
+            // A job changed in a Mac bot's memory (or, at launch, each one's), before its
+            // conversation's instructions are checked.
+            for id in self?.memoryChanged() ?? [] { await self?.syncJob(of: id) }
+            // At launch, the instructions first (an update may have changed them), so the first
+            // wake-ups go with them; after that apart, so machines slow to answer never hold up
+            // this Mac's wake-ups.
+            if launching { await self?.syncInstructions() } else { self?.syncInstructionsApart() }
         }
+        app?.wakeUps.start()
     }
 
     /// Whether bots' instructions are being checked, so one check runs at a time.
@@ -749,85 +460,6 @@ final class Bots {
         }
     }
 
-    /// Wake-ups on this Mac that didn't go, by bot and file: when to try again, and how many times
-    /// in a row they failed, so one that keeps failing is tried less and less often.
-    @ObservationIgnored private var retries: [String: (at: Date, failures: Int)] = [:]
-
-    private func wakeDue() async {
-        for bot in list where bot.machine == nil && !FileManager.default.fileExists(atPath: Self.pauseFile(of: bot)) {
-            guard let api = api(for: bot) else { continue }
-            let pending = Self.localWakes(of: bot)
-            let due = pending.filter { $0.due <= .now && retries[bot.id + "/" + $0.id].map { $0.at <= .now } != false }
-            if !due.isEmpty, bot.agents != true { await api.waitForTools(in: bot.directory) }
-            for wake in due {
-                let key = bot.id + "/" + wake.id
-                do {
-                    // One that repeats and still waits from last time (the bot busy, or waiting on
-                    // you) isn't queued again: it just comes back at its next time.
-                    let text = Wakes.marker + wake.note
-                    var waiting = false
-                    if wake.every != nil, let queued = try? await api.inbox(session: bot.sessionID) { waiting = queued.contains { $0.text == text } }
-                    if !waiting {
-                        try await api.prompt(session: bot.sessionID, id: Identifier.message(), text: text, delivery: .queue)
-                        Analytics.shared.track("bot_wakeup_ran", ["kind": "wake", "repeats": wake.every != nil])
-                    }
-                    retries[key] = nil
-                    // Sent: one that repeats comes back at its next time; others are done.
-                    let folder = (bot.folder as NSString).appendingPathComponent("wakes") as NSString
-                    if let next = wake.nextID() {
-                        try? FileManager.default.moveItem(atPath: folder.appendingPathComponent(wake.id), toPath: folder.appendingPathComponent(next))
-                    } else {
-                        try? FileManager.default.removeItem(atPath: folder.appendingPathComponent(wake.id))
-                    }
-                } catch {
-                    // Again in a minute, then 2, 4… up to half an hour.
-                    let failures = (retries[key]?.failures ?? 0) + 1
-                    retries[key] = (.now.addingTimeInterval(min(1800, 60 * pow(2, Double(failures - 1)))), failures)
-                    log.error("A wake-up for \(bot.id, privacy: .public) didn't go: \(error.localizedDescription, privacy: .public)")
-                }
-            }
-            let left = Self.localWakes(of: bot)
-            if wakes[bot.id] != left { wakes[bot.id] = left }
-            for key in retries.keys where key.hasPrefix(bot.id + "/") && !left.contains(where: { bot.id + "/" + $0.id == key }) {
-                retries[key] = nil
-            }
-        }
-    }
-
-    /// When the next wake-up on this Mac can go: not a paused bot's, and one that didn't go at
-    /// its next try.
-    private func nextLocalWake() -> Date? {
-        list.filter { $0.machine == nil && !FileManager.default.fileExists(atPath: Self.pauseFile(of: $0)) }
-            .flatMap { bot in (wakes[bot.id] ?? []).map { wake in max(wake.due, retries[bot.id + "/" + wake.id]?.at ?? wake.due) } }
-            .min()
-    }
-
-    private static func localWakes(of bot: Bot) -> [Wakes.Pending] {
-        let folder = (bot.folder as NSString).appendingPathComponent("wakes")
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: folder)) ?? []
-        return names.compactMap { name in
-            let note = (try? String(contentsOfFile: (folder as NSString).appendingPathComponent(name), encoding: .utf8)) ?? ""
-            return Wakes.Pending(id: name, note: note)
-        }
-        .sorted { $0.due < $1.due }
-    }
-
-    /// Puts `kuvo-wake` in the app's folder, as the engine on a machine has it.
-    private static func installCommand() throws {
-        let data = Data(Wakes.script.utf8)
-        if (try? Data(contentsOf: command)) == data { return }
-        try FileManager.default.createDirectory(at: command.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try data.write(to: command, options: .atomic)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: command.path)
-    }
-
-    /// A time zone's rules as this Mac has them (a TZif file, which Linux reads too), if small.
-    nonisolated static func zoneRules(_ identifier: String) -> Data? {
-        guard !identifier.contains(".."), let data = FileManager.default.contents(atPath: "/usr/share/zoneinfo/" + identifier),
-              data.count < 16_384, data.starts(with: Data("TZif".utf8)) else { return nil }
-        return data
-    }
-
     /// Writes the bot's session in its folder, and the folder it works in, where `kuvo-wake fire`
     /// reads them on a machine (it waits for the folder's tools before it wakes the bot).
     private func writeSession(of bot: Bot) async throws {
@@ -839,7 +471,7 @@ final class Bots {
             // Your time zone, which its wake-ups' times are in, and its rules from this Mac, for a
             // machine without zone files of its own.
             var script = "printf '%s' \(SSHConnection.quoted(bot.sessionID)) >\(SSHConnection.quoted(file)) && printf '%s' \(SSHConnection.quoted(path)) >\(SSHConnection.quoted(directory)) && printf '%s' \(SSHConnection.quoted(TimeZone.current.identifier)) >\(SSHConnection.quoted(timezone))"
-            if let rules = Self.zoneRules(TimeZone.current.identifier) {
+            if let rules = WakeUps.zoneRules(TimeZone.current.identifier) {
                 let zoneFile = (bot.folder as NSString).appendingPathComponent("zoneinfo")
                 script += " && { printf '%s' \(SSHConnection.quoted(rules.base64EncodedString())) | base64 -d >\(SSHConnection.quoted(zoneFile)) 2>/dev/null || rm -f \(SSHConnection.quoted(zoneFile)); }"
             }
@@ -1170,18 +802,5 @@ final class Bots {
 
     private func save() {
         JSONFile.write(list, to: Self.file, isoDates: true, readable: true)
-    }
-}
-
-extension Wakes.Repeat {
-    /// "every day", "every 2 hours", "on weekdays".
-    var words: String {
-        switch self {
-        case .minutes(let n): "every \(n) min"
-        case .hours(let n): n == 1 ? "every hour" : "every \(n) hours"
-        case .days(let n): n == 1 ? "every day" : "every \(n) days"
-        case .weeks(let n): n == 1 ? "every week" : "every \(n) weeks"
-        case .weekdays: "on weekdays"
-        }
     }
 }

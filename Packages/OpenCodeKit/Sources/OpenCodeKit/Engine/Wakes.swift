@@ -1,12 +1,14 @@
 import Foundation
 
-/// Wake-ups for bots. A bot schedules one with the `kuvo-wake` command: a file in its folder's
-/// `wakes`, named by the time it's due, holding a note. When it's due, the note goes to the bot's
-/// session as a message. On a machine the engine's watchdog sends it (`kuvo-wake fire`), so it
-/// arrives while the Mac is off; on the Mac, the app does.
+/// Wake-ups for bots and sessions. A conversation's agent schedules one with the `kuvo-wake`
+/// command: a file in its folder's `wakes`, named by the time it's due, holding a note. When it's
+/// due, the note goes to the conversation's session as a message. On a machine the engine's
+/// watchdog sends it (`kuvo-wake fire`), so it arrives while the Mac is off; on the Mac, the app
+/// does.
 ///
 /// A bot's folder holds `session` (its session's ID), `MEMORY.md`, `wakes` and, for a bot with no
-/// project, `workspace`.
+/// project, `workspace`. A session's is `wakes/<its ID>` beside the bots' folder (`KUVO_WAKES`),
+/// made by its first wake-up or watch, with `session` and `directory` (the folder it works in).
 public enum Wakes {
     /// A wake-up's message starts with this, so the app can show it as one, and the bot knows it.
     public static let marker = "[Wake-up] "
@@ -250,9 +252,10 @@ public enum Wakes {
         public var every: Repeat? = nil
     }
 
-    /// The command, if `line` runs `kuvo-wake` for a bot (by name, or by its full path).
+    /// The command, if `line` runs `kuvo-wake` (by name, or by its full path), for a bot or a
+    /// session named before its verb, or for the conversation running it.
     public static func command(in line: String) -> Command? {
-        let pattern = #/kuvo-wake"?\s+(?:"[^"]*"|'[^']*'|\S+)\s+(add|list|cancel|watch)\b\s*(.*)$/#
+        let pattern = #/kuvo-wake"?\s+(?:(?:"[^"]*"|'[^']*'|\S+)\s+)??(add|list|cancel|watch)\b\s*(.*)$/#
         guard let match = line.firstMatch(of: pattern), let verb = Command.Verb(rawValue: String(match.1)) else { return nil }
         if verb == .watch {
             // watch <every> <check> <note>: the check is quoted, or one word.
@@ -302,17 +305,22 @@ public enum Wakes {
     #endif
 
     /// The command, in POSIX sh, for macOS and Linux. A bot is named by its ID, its folder being
-    /// in `$KUVO_BOTS` (`~/.kuvo-code/bots` by default), or by its folder's path:
+    /// in `$KUVO_BOTS` (`~/.kuvo-code/bots` by default); a session by its ID (ses_…), its folder
+    /// being in `$KUVO_WAKES` (`~/.kuvo-code/wakes`); either by its folder's path. Left out, it's
+    /// the conversation running the command, which the engine names in `OPENCODE_SESSION_ID`:
+    /// its bot's, if it's a bot's conversation, or its session's.
     ///
-    ///     kuvo-wake <bot> add <when> [--every <repeat>] <note>
+    ///     kuvo-wake [<bot or session>] add <when> [--every <repeat>] <note>
     ///                          when: +30m, +2h, +1d, or 2026-10-16T09:00
     ///                          repeat: 30m, 2h, 1d, 1w (at least 5m) or weekdays, until canceled
-    ///     kuvo-wake <bot> list
-    ///     kuvo-wake <bot> cancel <id>
-    ///     kuvo-wake fire <bots folder> <engine.json>   sends what's due (the watchdog, on a machine)
+    ///     kuvo-wake [<bot or session>] list
+    ///     kuvo-wake [<bot or session>] cancel <id>
+    ///     kuvo-wake fire <bots folder> <engine.json>   sends what's due, for the bots there and the
+    ///                                                  sessions in the wakes folder beside it
+    ///                                                  (the watchdog, on a machine)
     public static let script = #"""
     #!/bin/sh
-    # Kuvo Code's wake-ups for bots. See `kuvo-wake <bot> help`.
+    # Kuvo Code's wake-ups for bots and sessions. See `kuvo-wake help`.
     now=$(date +%s)
 
     # What it runs (watches' checks) gets the computer's own folders back, as the agent's commands
@@ -328,14 +336,15 @@ public enum Wakes {
 
     usage() {
       echo "Usage:"
-      echo "  kuvo-wake <bot> add <when> [--every <repeat>] <note>"
+      echo "  kuvo-wake add <when> [--every <repeat>] <note>"
       echo "      when: +30m, +2h, +1d, or a time like 2026-10-16T09:00 on this computer's clock"
       echo "      repeat: 30m, 2h, 1d, 1w (at least 5m), or weekdays; it keeps coming back until canceled"
-      echo "  kuvo-wake <bot> list"
-      echo "  kuvo-wake <bot> watch <every> <check> <note>"
+      echo "  kuvo-wake list"
+      echo "  kuvo-wake watch <every> <check> <note>"
       echo "      every 5m or more, 2h, 1d: runs the check, a shell command, and wakes you when what it prints changes"
-      echo "  kuvo-wake <bot> cancel <id>"
-      echo "Times are on this computer's clock, or in the time zone in the bot's folder's timezone file."
+      echo "  kuvo-wake cancel <id>"
+      echo "Each is for the conversation that runs it; before the verb, a bot's ID or a session's (ses_...) names another."
+      echo "Times are on this computer's clock, or in the time zone in the folder's timezone file."
     }
 
     # A time as seconds since 1970, from +30m, +2h, +1d, an ISO date and time, or seconds.
@@ -584,24 +593,21 @@ public enum Wakes {
 
     # The time zone a bot's times are in ($1, its folder, ending in /): its timezone file's, from
     # the computer's own zone files, or from the copy of your Mac's beside it, on a machine that
-    # has none (without one, times would be in UTC).
+    # has none (without one, times would be in UTC). A session's folder has none of its own: the
+    # one in the folder above, which the Mac keeps current, is its.
     zone() {
-      z_name=$(cat "$1timezone" 2>/dev/null)
-      if [ -n "$z_name" ] && [ ! -e "/usr/share/zoneinfo/$z_name" ] && [ -s "$1zoneinfo" ]; then echo ":$1zoneinfo"; else echo "$z_name"; fi
+      z_at=$1
+      if [ ! -s "${z_at}timezone" ]; then z_up=${1%/}; z_up=${z_up%/*}/; [ -s "${z_up}timezone" ] && z_at=$z_up; fi
+      z_name=$(cat "${z_at}timezone" 2>/dev/null)
+      if [ -n "$z_name" ] && [ ! -e "/usr/share/zoneinfo/$z_name" ] && [ -s "${z_at}zoneinfo" ]; then echo ":${z_at}zoneinfo"; else echo "$z_name"; fi
     }
 
     # A string as JSON.
     json() { printf '%s' "$1" | tr -d '\000-\010\013-\037' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/	/\\t/g' | awk 'BEGIN { ORS = "" } NR > 1 { print "\\n" } { print }'; }
 
     if [ "$1" = fire ]; then
-      bots=$2; record=$3
+      record=$3
       [ -f "$record" ] || exit 0
-      # One at a time: two at once (a watchdog left from before the engine started over, say)
-      # would send a wake-up twice. A lock left by one that was killed goes after ten minutes.
-      lock="$bots/.firing"
-      [ -z "$(find "$lock" -maxdepth 0 -mmin +10 2>/dev/null)" ] || rmdir "$lock" 2>/dev/null
-      mkdir "$lock" 2>/dev/null || exit 0
-      trap 'rmdir "$lock" 2>/dev/null' EXIT
       port=$(sed -n 's/.*"port":\([0-9]*\).*/\1/p' "$record")
       password=$(sed -n 's/.*"password":"\([^"]*\)".*/\1/p' "$record")
       [ -n "$port" ] && [ -n "$password" ] || exit 0
@@ -646,8 +652,17 @@ public enum Wakes {
         command -v curl >/dev/null 2>&1 || return 1
         printf 'user = "opencode:%s"\n' "$password" | curl -q -sf -m 5 --noproxy '*' -K - "http://127.0.0.1:$port/api/session/$session/inbox" | grep -qF "\"$(json "[Wake-up] $1")\""
       }
+      # The bots' folders, then the sessions' beside them, each on its own.
+      for bots in "$2" "${2%/*}/wakes"; do
+      [ -d "$bots" ] || continue
+      # One at a time: two at once (a watchdog left from before the engine started over, say)
+      # would send a wake-up twice. A lock left by one that was killed goes after ten minutes.
+      lock="$bots/.firing"
+      [ -z "$(find "$lock" -maxdepth 0 -mmin +10 2>/dev/null)" ] || rmdir "$lock" 2>/dev/null
+      mkdir "$lock" 2>/dev/null || continue
+      trap 'rmdir "$lock" 2>/dev/null' EXIT
       for bot in "$bots"/*/; do
-        # Paused by you: its wake-ups wait.
+        # Paused by you (a session's, while it's archived): its wake-ups wait.
         [ -e "${bot}paused" ] && continue
         tools=
         session=$(cat "$bot/session" 2>/dev/null) || continue
@@ -677,12 +692,13 @@ public enum Wakes {
           fi
         done
       done
+      rmdir "$lock" 2>/dev/null; trap - EXIT
       # Then their watches, apart (a slow check, up to a minute each, never holds up a wake-up, nor
       # the next round's): what changed wakes the bot, with what its check prints now; one that
       # can't go is tried again at the next check. One round of them at a time.
       watching="$bots/.watching"
       [ -z "$(find "$watching" -maxdepth 0 -mmin +60 2>/dev/null)" ] || rmdir "$watching" 2>/dev/null
-      mkdir "$watching" 2>/dev/null || exit 0
+      mkdir "$watching" 2>/dev/null || continue
       (
       trap 'rmdir "$watching" 2>/dev/null' EXIT
       for bot in "$bots"/*/; do
@@ -698,16 +714,44 @@ public enum Wakes {
         done
       done
       ) </dev/null >/dev/null 2>&1 &
+      done
       exit 0
     fi
 
-    bot=$1; command=$2
-    # A bot's ID is letters, digits, _ and -; a folder is named by its path.
-    case "$bot" in */*) ;; -*|*[!A-Za-z0-9_-]*) bot= ;; ?*) bot="${KUVO_BOTS:-$HOME/.kuvo-code/bots}/$bot" ;; esac
+    # Whose: left out, the conversation running this (as the engine names it), its bot's if it's
+    # a bot's; then how to name it again in what this says (as it was written).
+    shown=kuvo-wake
+    case "$1" in
+      add|list|cancel|watch)
+        me=$OPENCODE_SESSION_ID
+        case "$me" in ses_?*) ;; *) echo "Name whose wake-ups these are: kuvo-wake <bot or session> $1 ..., as this doesn't run in a conversation of its own." >&2; exit 2 ;; esac
+        for b in "${KUVO_BOTS:-$HOME/.kuvo-code/bots}"/*/; do
+          [ "$(cat "${b}session" 2>/dev/null)" = "$me" ] && me=${b%/} && break
+        done
+        set -- "$me" "$@" ;;
+      *) shown="kuvo-wake $1" ;;
+    esac
+    bot=$1; command=$2; session=
+    # A bot's ID is letters, digits, _ and -, and a session's starts with ses_; a folder is named
+    # by its path.
+    case "$bot" in
+      */*) ;;
+      -*|*[!A-Za-z0-9_-]*) bot= ;;
+      ses_?*) session=$bot; bot="${KUVO_WAKES:-$HOME/.kuvo-code/wakes}/$bot" ;;
+      ?*) bot="${KUVO_BOTS:-$HOME/.kuvo-code/bots}/$bot" ;;
+    esac
+    # A session's folder comes with its first wake-up or watch: its session, and the folder it
+    # works in, where its watches' checks run and whose tools wait for its wake-ups.
+    if [ -n "$session" ] && [ ! -d "$bot" ]; then
+      case "$command" in
+        add|watch) (umask 077; mkdir -p "$bot") && printf '%s' "$session" >"$bot/session" && printf '%s' "$PWD" >"$bot/directory" ;;
+        list) echo "No wake-ups scheduled."; exit 0 ;;
+      esac
+    fi
     if [ -z "$bot" ] || [ ! -d "$bot" ]; then usage >&2; exit 2; fi
     bot=$(CDPATH= cd -- "$bot" && pwd) || exit 2
     # The user's time zone, when the bot lives on a machine whose clock may be in another.
-    if [ -s "$bot/timezone" ]; then TZ=$(zone "$bot/"); export TZ; fi
+    z=$(zone "$bot/"); if [ -n "$z" ]; then TZ=$z; export TZ; fi
     case "$command" in
       add)
         due=$(seconds "$3") || { echo "Couldn't read the time \"$3\". Use +30m, +2h, +1d, or a time like 2026-10-16T09:00." >&2; exit 2; }
@@ -732,7 +776,7 @@ public enum Wakes {
         printf '%s' "$note" >"$bot/wakes/$id"
         echo "Scheduled $id for $(readable "$due")${every:+, then every $every until canceled}." ;;
       watch)
-        who=$1; every=$3; check=$4
+        every=$3; check=$4
         period "$every" >/dev/null || { echo "Couldn't read how often, \"$3\". Use 5m or more, 2h or 1d." >&2; exit 2; }
         [ -n "$check" ] || { echo "Give the check: a shell command that prints what you watch, and prints something else when it changes." >&2; exit 2; }
         shift 4; note="$*"
@@ -741,7 +785,7 @@ public enum Wakes {
         [ "$count" -lt 20 ] || { echo "You already have 20 watches. Cancel some first." >&2; exit 2; }
         letters=$(random 6); w="$bot/watches/$letters"
         mkdir -p "$w" && printf '%s' "$every" >"$w/every" && printf '%s' "$check" >"$w/check" && printf '%s' "$note" >"$w/note" && printf '%s' "$now" >"$w/next"
-        echo "Watching ($letters): every $every the check runs, without you, and when what it prints changes (not the first time), you wake up with the new output. Cancel with: kuvo-wake $who cancel $letters" ;;
+        echo "Watching ($letters): every $every the check runs, without you, and when what it prints changes (not the first time), you wake up with the new output. Cancel with: $shown cancel $letters" ;;
       check)
         # For the Mac's app: the watches that are due, run now.
         checks "$bot" ;;
@@ -749,7 +793,7 @@ public enum Wakes {
         # For Check Now: a watch's check, by its letters, run as its runs are, without counting.
         # A line with why a run like it wouldn't count (after "KUVO-TRY "), then what it printed.
         case "$3" in ''|*[!A-Za-z0-9]*) w= ;; *) w="$bot/watches/$3/" ;; esac
-        [ -n "$w" ] && [ -f "${w}check" ] || { echo "No watch \"$3\". See kuvo-wake $1 list." >&2; exit 2; }
+        [ -n "$w" ] && [ -f "${w}check" ] || { echo "No watch \"$3\". See $shown list." >&2; exit 2; }
         run "$w" "$bot" try-
         printf 'KUVO-TRY %s\n%s' "$t_why" "$t_out" ;;
       list)
@@ -777,7 +821,7 @@ public enum Wakes {
           # Or a watch, by its letters alone.
           [ "$letters" = "$3" ] && [ -d "$bot/watches/$letters" ] && rm -rf "$bot/watches/$letters" && found=1
         fi
-        [ -n "$found" ] || { echo "No wake-up \"$3\". See kuvo-wake $1 list." >&2; exit 2; }
+        [ -n "$found" ] || { echo "No wake-up \"$3\". See $shown list." >&2; exit 2; }
         echo "Canceled $3." ;;
       *) usage ;;
     esac

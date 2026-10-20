@@ -31,9 +31,13 @@ enum ToolApproval: String, CaseIterable {
         case .approveAll: []
         // A PDF the browser saves is a file written, and an upload sends one of yours to a site.
         case .askFirst: ["edit", "write", "patch", "shell", "webfetch", "external_directory", "kuvo-browser_browser_save_pdf", "kuvo-browser_browser_upload"]
-            .map { PermissionRule(action: $0, effect: .ask) }
+            .map { PermissionRule(action: $0, effect: .ask) } + Self.ownWakeRules
         }
     }
+
+    /// A conversation's own wake-ups (`kuvo-wake` without whose, see `WakeUps`) never ask:
+    /// scheduling, listing and canceling them. A watch runs its check, a command, so it asks.
+    static let ownWakeRules = ["add *", "list*", "cancel *"].map { PermissionRule(action: "shell", resource: "kuvo-wake " + $0, effect: .allow) }
 
     /// The session rules that give this behaviour beside Settings › Permissions' rules
     /// (`settings`). A session's rules come after those, and the last one that matches wins, so
@@ -55,7 +59,7 @@ enum ToolApproval: String, CaseIterable {
     /// out of Settings goes from sessions too.
     static func isParticular(_ rule: PermissionRule) -> Bool {
         (rule.action == "external_directory" && rule.effect == .allow && rule.resource != "*")
-            || (rule.action == "shell" && rule.effect == .allow && rule.resource.contains("kuvo-wake"))
+            || (rule.action == "shell" && rule.effect == .allow && rule.resource.contains("kuvo-wake") && !ownWakeRules.contains(rule))
     }
 
     /// A session's rules made again from its approval and Settings › Permissions as they are now,

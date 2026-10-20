@@ -14,7 +14,16 @@ extension AppModel {
         // An agent on a machine browses with the machine's browser: the panel shows it, as it
         // shows its own browser for an agent here.
         workspace.onMachineBrowsing = { [weak self] machine, session in self?.utilities.revealMachineBrowser(machine, for: session) }
-        workspace.onDeleted = { [weak self] session in self?.utilities.closeTabs(of: session) }
+        workspace.onDeleted = { [weak self] session in
+            self?.utilities.closeTabs(of: session)
+            // Its wake-ups and watches go with it.
+            if let found = self?.workspace.session(session) { self?.wakeUps.forget(found) } else { self?.wakeUps.forget(sessionID: session) }
+        }
+        // An archived session's wake-ups wait, and come back with it.
+        workspace.onArchived = { [weak self] session, isArchived in
+            guard let found = self?.workspace.session(session) else { return }
+            Task { await self?.wakeUps.archived(found, isArchived) }
+        }
         // A subagent's calls go by the conversation that started it: its folder, its permissions.
         BrowserTools.sessionFolder = { [weak self] session in
             guard let self else { return nil }
@@ -229,6 +238,7 @@ extension AppModel {
             await AgentMail.shared.share(with: engine)
             await AgentMail.shared.collect(from: engine)
             await AgentMail.shared.deliverWaiting(to: engine)
+            await wakeUps.share(with: engine)
             engine.signInSync = Task { [weak self, weak engine] in
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(600))
@@ -244,6 +254,7 @@ extension AppModel {
                     guard let engine, self?.live(engine) == true, !Task.isCancelled else { return }
                     await AgentMail.shared.share(with: engine)
                     await AgentMail.shared.collect(from: engine)
+                    await self?.wakeUps.share(with: engine)
                 }
             }
             // Settings changed here while it connected, after it took the ones it has.

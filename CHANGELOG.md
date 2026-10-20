@@ -5,6 +5,7 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- Sessions and chats can wake themselves up, as bots do: ask the agent to check back in 20 minutes or to tell you when a build finishes, and it comes back in the same conversation, even while you're away (on a machine, with your Mac off). A bar over the composer shows when, with Now and Cancel.
 - Removing an integration also takes back the keys bots had of their own for it.
 - Notifications keep their buttons for commit hashes in image tags, release names and checksums, and hide keys written as ENV['…'] =, := or =>, and names like SECRET_KEY_BASE.
 - Settings › MCP Servers no longer lists integrations, which have their own page; Permissions keeps a pattern you typed when you change its rule's kind or effect.

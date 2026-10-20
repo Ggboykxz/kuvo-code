@@ -60,6 +60,12 @@ struct SessionView: View {
         // machine is read once the machine is back.
         .task(id: model.id) { if !model.isLoaded, !model.waitsForEngine { await model.load() } }
         .task(id: model.session.location.directory) { await catalog.loadCommands(in: model.session.location.directory) }
+        // Its wake-ups and watches, read again as each run ends (its agent may have set one,
+        // or one went); a bot's are its row's to read.
+        .task(id: "\(model.id) \(model.isRunning)") {
+            guard !model.isRunning, app.bots.bot(forSession: model.id) == nil else { return }
+            await app.wakeUps.read(WakeUps.owner(of: model.session))
+        }
     }
 
     #if DEBUG
@@ -134,6 +140,14 @@ private struct BottomStack: View {
         (workspace.shellJobs[model.id] ?? []).filter { workspace.lastingShellJobs.contains($0.id) && !model.inlineShells.contains($0.id) }
     }
 
+    /// Its wake-ups and watches, when it keeps any: not a bot's, which Edit Bot and its row show.
+    private var wakeOwner: WakeUps.Owner? {
+        guard app.bots.bot(forSession: model.id) == nil else { return nil }
+        let owner = WakeUps.owner(of: model.session)
+        let waiting = !(app.wakeUps.wakes[owner.key] ?? []).isEmpty || !(app.wakeUps.watches[owner.key] ?? []).isEmpty
+        return waiting ? owner : nil
+    }
+
     /// Subagents its agent handed work to that are at it now.
     private var subagentsAtWork: [SessionModel.Subagent] {
         model.subagents.filter { workspace.isWorking($0, for: model.id) }
@@ -192,6 +206,12 @@ private struct BottomStack: View {
                     .glassEffect(.regular, in: .rect(cornerRadius: Metrics.composerRadius))
                     .glassEffectID("background", in: glass)
                     .transition(.opacity)
+                }
+                if let owner = wakeOwner {
+                    WakeBar(owner: owner, isHidden: $model.hidesWakes)
+                        .glassEffect(.regular, in: .rect(cornerRadius: Metrics.composerRadius))
+                        .glassEffectID("wakes", in: glass)
+                        .transition(.opacity)
                 }
                 // What's waiting, tucked behind the composer's top edge.
                 VStack(spacing: -QueueDock.overlap) {
