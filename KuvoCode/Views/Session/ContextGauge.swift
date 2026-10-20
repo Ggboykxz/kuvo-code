@@ -53,9 +53,9 @@ struct ContextGauge: View {
     private var used: Int? { model.contextUsed }
 
     private var limit: Int? {
-        // On Auto, each model in your list has a window of its own: no one number to show.
-        guard model.session.model?.providerID != OutsideAgents.autoProvider else { return nil }
-        return catalog.model(model.session.model)?.limit.context
+        // On Auto, the window of the model in your list at work now.
+        let current = model.session.model?.providerID == OutsideAgents.autoProvider ? model.modelInUse : model.session.model
+        return catalog.model(current)?.limit.context
     }
 
     /// The limits of the account the session runs on, from the usage tracker in the menu bar.

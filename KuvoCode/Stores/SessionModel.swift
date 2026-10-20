@@ -64,6 +64,8 @@ final class SessionModel {
     private(set) var forms: [FormRequest] = []
     /// How much of the context window the last step used.
     private(set) var contextUsed: Int?
+    /// The model its latest reply came from: on Auto, the one in your list at work now.
+    private(set) var modelInUse: ModelRef?
     /// The subagents its agent handed work to, in the order it did, once each has a session.
     private(set) var subagents: [Subagent] = []
 
@@ -96,6 +98,8 @@ final class SessionModel {
         if inlineShells != inline { inlineShells = inline }
         let used = Self.contextUsed(in: transcript.messages)
         if contextUsed != used { contextUsed = used }
+        let inUse = Self.modelInUse(in: transcript.messages)
+        if modelInUse != inUse { modelInUse = inUse }
         let helpers = subagentsNow(in: transcript.messages)
         if subagents != helpers { subagents = helpers }
         findUnnamedSubagents()
@@ -218,6 +222,13 @@ final class SessionModel {
     }
 
     /// What the last step sent and got back is what's in the window now.
+    private static func modelInUse(in messages: [Message]) -> ModelRef? {
+        for message in messages.reversed() {
+            if case .assistant(let assistant) = message { return assistant.model }
+        }
+        return nil
+    }
+
     private static func contextUsed(in messages: [Message]) -> Int? {
         for message in messages.reversed() {
             if case .assistant(let assistant) = message, let tokens = assistant.tokens {

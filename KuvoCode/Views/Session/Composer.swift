@@ -20,6 +20,8 @@ struct Composer: View {
     let agent: String
     let approval: ToolApproval
     let model: ModelRef?
+    /// On Auto, the model of your list at work now (its latest reply's).
+    var modelInUse: ModelRef?
     let isRunning: Bool
     /// Messages are waiting their turn, so ⌘Return adds to the queue even while idle.
     var hasQueue = false
@@ -271,7 +273,7 @@ struct Composer: View {
                             ModeChip(agent: agent, approval: approval, onSelectAgent: onSelectAgent, onSelectApproval: onSelectApproval)
                                 .disabled(isOffline)
                         }
-                        ModelChip(selection: model, onSelect: onSelectModel, scope: modelScope)
+                        ModelChip(selection: model, onSelect: onSelectModel, scope: modelScope, inUse: modelInUse)
                             .disabled(isOffline)
                         if let worktree {
                             WorkplaceChip(worktree: worktree, attempts: attempts, onSelect: onSelectWorktree, onSelectAttempts: onSelectAttempts)

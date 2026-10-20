@@ -241,15 +241,21 @@ struct ModelChip<Label: View>: View {
 }
 
 extension ModelChip where Label == ModelChipLabel {
-    init(selection: ModelRef?, onSelect: @escaping (ModelRef) -> Void, scope: ModelScope = .engine, offersAuto: Bool = true) {
-        self.init(selection: selection, onSelect: onSelect, scope: scope, offersAuto: offersAuto) { ModelChipLabel(model: $0, variant: $1) }
+    /// `inUse`: on Auto, the model of your list at work now, shown beside it.
+    init(selection: ModelRef?, onSelect: @escaping (ModelRef) -> Void, scope: ModelScope = .engine, offersAuto: Bool = true, inUse: ModelRef? = nil) {
+        self.init(selection: selection, onSelect: onSelect, scope: scope, offersAuto: offersAuto) { model, variant in
+            ModelChipLabel(model: model, variant: variant, inUse: model?.providerID == OutsideAgents.autoProvider ? inUse : nil)
+        }
     }
 }
 
 /// The composer's chip: the model's name, its effort, and that it opens the picker.
 struct ModelChipLabel: View {
+    @Environment(Catalog.self) private var catalog
     let model: Model?
     let variant: String?
+    /// On Auto, the model of your list at work now.
+    var inUse: ModelRef?
 
     var body: some View {
         HStack(spacing: 5) {
@@ -258,6 +264,12 @@ struct ModelChipLabel: View {
             if let variant {
                 Text(EffortLevel.title(variant))
                     .foregroundStyle(.secondary)
+            }
+            if let inUse, let name = catalog.model(inUse)?.name ?? Optional(inUse.id) {
+                Text(name)
+                    .lineLimit(1)
+                    .foregroundStyle(.secondary)
+                    .help("Auto is on \\(name) now")
             }
             Image(systemName: "chevron.down")
                 .font(.system(size: 9, weight: .semibold))

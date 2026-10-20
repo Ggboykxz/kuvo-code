@@ -208,6 +208,7 @@ private struct BottomStack: View {
                     agent: model.agent,
                     approval: model.approval,
                     model: model.session.model ?? catalog.startingModel(lastModel),
+                    modelInUse: model.modelInUse,
                     isRunning: model.isRunning,
                     hasQueue: !model.waiting.isEmpty,
                     history: { model.sentMessages },
