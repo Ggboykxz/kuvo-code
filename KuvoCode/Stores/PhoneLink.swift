@@ -424,7 +424,7 @@ final class PhoneLink {
                 var named = request
                 if var body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any], let text = body["text"] as? String {
                     let directory = link?.workspace?.session(session)?.location.directory
-                    body["text"] = AgentReferences.text(text, excluding: session, here: directory.flatMap(RemoteFolder.machine(of:)))
+                    body["text"] = AgentReferences.naming(in: text, excluding: session, here: directory.flatMap(RemoteFolder.machine(of:)))
                     if let data = try? JSONSerialization.data(withJSONObject: body) { named.body = data }
                 }
                 do {

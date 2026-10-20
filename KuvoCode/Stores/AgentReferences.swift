@@ -131,6 +131,18 @@ nonisolated enum AgentReferences {
         return (text.isEmpty ? "" : text + "\n\n") + note
     }
 
+    /// A message as it came (from the phone), with the block naming its agents among the others
+    /// at its end, where `SentMessage.split` reads it: after its words, before its comments on the
+    /// changes and its note of attached files.
+    @MainActor static func naming(in message: String, excluding session: String?, here machine: String?) -> String {
+        let (withComments, _) = Attachments.split(message)
+        let (words, _) = ReviewComments.split(withComments)
+        guard words.contains(trigger) else { return message }
+        let named = text(words, excluding: session, here: machine)
+        guard named != words, let range = message.range(of: words) else { return message }
+        return message.replacingCharacters(in: range, with: named)
+    }
+
     /// The block for `agents`, nil for none: each with "&" and its name, its address, and what it is.
     @MainActor static func note(naming agents: [AgentMail.Agent], here machine: String?) -> String? {
         guard !agents.isEmpty else { return nil }

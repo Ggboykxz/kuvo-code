@@ -7,8 +7,8 @@ import SwiftUI
 @MainActor @Observable final class AgentPicker {
     var selected = 0
     /// Where the "&" whose list was closed (with Escape, or by picking from it) is, so it stays
-    /// closed as the message goes on.
-    @ObservationIgnored fileprivate var dismissed: Int?
+    /// closed as the message goes on. Watched: Escape changes only this, and the list must go.
+    fileprivate var dismissed: Int?
     /// What was typed after the "&" last: the list's first one is chosen again when it changes.
     @ObservationIgnored fileprivate var typed: String?
 
