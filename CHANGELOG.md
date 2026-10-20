@@ -5,6 +5,9 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- A message you send just as you press Stop waits in the queue rather than starting the agent again, and one sent for the next step of a run that then fails waits there too, where you see it.
+- A conversation on a machine you read while it was away stays read when the machine is back, and a session deleted from another Mac or your phone closes its tabs in the panel.
+- In a group chat, a bot's report on its part is what it did for that part, all of it, even when another agent wrote to it meanwhile.
 - In a group chat: a message you send while the lead hands out the work keeps the parts from starting on their own, and Stop stops the lead too; a part's report is only what the bot did for it; a part whose message you took back ends rather than working forever; @Sam no longer calls Samantha; a meeting missed while Kuvo Code was closed isn't followed by the next minutes later, and one due at launch waits a moment for bots on machines; and a bot taken out of a chat forgets it.
 - Anonymous usage no longer includes a short hash tied to your Codex or Claude account when the menu bar follows one: only which tool.
 - On a machine, only you can open Kuvo Code's folder (`~/.kuvo-code`): where home folders are open to others there, other users could read your conversations, bots' memory and settings in it.
