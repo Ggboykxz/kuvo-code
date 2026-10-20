@@ -227,7 +227,14 @@ private struct BottomStack: View {
                         // A coding agent's model (or Auto) in a session on the engine: it carries on with them.
                         if !OutsideAgents.isAgentSession(model.session), OutsideAgents.runsInBridge(ref.providerID) {
                             Task {
-                                do { try await workspace.moveToAgents(model.id, model: ref) } catch { model.failure = error.localizedDescription }
+                                do {
+                                    // A bot's conversation stays its own as it moves.
+                                    if let bot = app.bots.bot(forSession: model.id) {
+                                        try await app.bots.moveToAgents(bot, model: ref)
+                                    } else {
+                                        try await workspace.moveToAgents(model.id, model: ref)
+                                    }
+                                } catch { model.failure = error.localizedDescription }
                             }
                         } else {
                             model.selectModel(ref)

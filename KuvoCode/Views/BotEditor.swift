@@ -71,6 +71,12 @@ struct BotEditor: View {
     private let recipe: BotRecipe?
 
     /// The models of the engine where it lives.
+    /// The models it can use: on this Mac every one, the coding agents' and Auto too; on a
+    /// machine, its engine's.
+    private var modelScope: ModelScope {
+        machine == nil ? .all : .engine
+    }
+
     private var placeCatalog: Catalog {
         machine.flatMap { app.machines.engine($0)?.catalog } ?? catalog
     }
@@ -148,7 +154,7 @@ struct BotEditor: View {
                 }
             }
             // A bot made before bots had a model: the one its conversation uses.
-            if model == nil { model = bot.flatMap { workspace.session($0.sessionID)?.model } ?? placeCatalog.startingModel(lastModel, scope: .engine) }
+            if model == nil { model = bot.flatMap { workspace.session($0.sessionID)?.model } ?? placeCatalog.startingModel(lastModel, scope: modelScope) }
         }
         .alert("Delete \(bot?.name ?? "This Bot")?", isPresented: $confirmsDelete) {
             Button("Delete", role: .destructive) {
@@ -203,7 +209,7 @@ struct BotEditor: View {
 
                 section("Model", note: "It uses this in group chats, and in its own conversation unless you pick another there.") {
                     WellGroup {
-                        ModelChip(selection: model, onSelect: { model = $0 }, opensBelow: true) { current, variant in
+                        ModelChip(selection: model, onSelect: { model = $0 }, opensBelow: true, scope: modelScope) { current, variant in
                             WellRow {
                                 if let current { ProviderLogo(id: current.makerLogoID, size: 16) } else { Image(systemName: "cpu") }
                             } content: {
@@ -409,6 +415,8 @@ struct BotEditor: View {
             for engine in app.machines.list.compactMap({ app.machines.engine($0.id) }) {
                 menu.addItem(ActionItem(engine.machine.name, subtitle: engine.statusText, image: NSImage(systemSymbolName: "server.rack", accessibilityDescription: nil), checked: machine == engine.machine.id) {
                     machine = engine.machine.id
+                    // A coding agent's model works on this Mac only: there, its engine's.
+                    if OutsideAgents.runsInBridge(model?.providerID) { model = placeCatalog.startingModel(lastModel, scope: .engine) }
                     project = nil
                     if case .failed = engine.state { app.connect(engine) }
                 })

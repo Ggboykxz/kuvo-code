@@ -34,6 +34,9 @@ struct Bot: Codable, Identifiable, Hashable {
     var model: ModelRef?
     /// How it talks (a `Personality`'s ID); nil for the model's own way.
     var personality: String?
+    /// Its conversation runs with the coding agents (on this Mac): a model of theirs, or Auto, and
+    /// the engine's models through them. Nil for the engine's.
+    var agents: Bool?
 
     /// Where its session runs, the app's way of writing it.
     var directory: String {
@@ -95,6 +98,19 @@ final class Bots {
     }
 
     var sessionIDs: Set<String> { Set(list.map(\.sessionID)) }
+    /// Those that run with the coding agents.
+    var agentSessionIDs: Set<String> { Set(list.filter { $0.agents == true }.map(\.sessionID)) }
+
+    /// What a bot's conversation runs on: the coding agents' bridge, or its folder's engine.
+    func api(for bot: Bot) -> OpenCodeAPI? {
+        bot.agents == true ? app?.workspace.agents?.api : app?.workspace.api(forFolder: bot.directory)
+    }
+
+    /// Tells the workspace which sessions are bots' (and which of those run with the agents).
+    private func noteSessions() {
+        app?.workspace.runsOnAgents(agentSessionIDs)
+        app?.workspace.botSessions = sessionIDs
+    }
 
     /// The bot a session acts for: its own conversation, or its seat in a group chat.
     func bot(actingAs id: String?) -> Bot? {
@@ -207,17 +223,23 @@ final class Bots {
         var bot = Bot(id: id, name: name, job: kept?.line ?? "", instructions: kept?.section ?? "", look: look, machine: machine, project: project, folder: folder, sessionID: "", created: .now)
         bot.jobInMemory = true
         bot.personality = personality
-        guard let api = app.workspace.api(forFolder: bot.directory) else { throw Failure.notConnected(machine ?? AppInfo.name) }
         let approval = UserDefaults.standard.string(forKey: ToolApproval.key).flatMap(ToolApproval.init) ?? .approveAll
         let rules = approval.rules(settings: EngineConfig.current?.permissionRules ?? []) + Self.ownRules(for: bot)
         let catalog = machine.flatMap { app.machines.engine($0)?.catalog } ?? app.catalog
-        // The one picked, if you can use it where it lives; otherwise the last one used, or that
-        // engine's default. Before its models are known (just after launch), the one picked or
-        // last used, as it is.
-        bot.model = catalog.startingModel(model, LastModel.current, scope: .engine)
+        // The one picked, if you can use it where it lives (on this Mac, a coding agent's too);
+        // otherwise the last one used, or that engine's default. Before its models are known (just
+        // after launch), the one picked or last used, as it is.
+        bot.model = catalog.startingModel(model, LastModel.current, scope: machine == nil ? .all : .engine)
+        // A coding agent's model (or Auto): its conversation runs with the agents.
+        if machine == nil, OutsideAgents.runsInBridge(bot.model?.providerID) { bot.agents = true }
+        guard let api = api(for: bot) else {
+            if bot.agents == true { throw OutsideAgents.Failure.notRunning(app.workspace.agents?.failure) }
+            throw Failure.notConnected(machine ?? AppInfo.name)
+        }
         let session = try await api.createSession(directory: bot.directory, title: name, model: bot.model, permissions: rules)
         made(session.id, api)
         // The bot's from the start: not a project's session for the moment it takes to set up.
+        if bot.agents == true { app.workspace.runsOnAgents([session.id]) }
         app.workspace.botSessions.insert(session.id)
         bot.sessionID = session.id
         try? await api.setMetadata(session: session.id, .object(["kuvo": .object(["bot": .string(id)])]))
@@ -227,7 +249,7 @@ final class Bots {
         list.append(bot)
         save()
         app.workspace.add(session)
-        app.workspace.botSessions = sessionIDs
+        noteSessions()
         Analytics.shared.track("bot_created", ["machine": machine != nil, "project": project != nil])
         return bot
     }
@@ -251,7 +273,7 @@ final class Bots {
     /// know to start, or, for a name that doesn't say, what you'd like it to do. Asked in a note
     /// the conversation doesn't show, so its first message is the bot's own.
     func greet(_ bot: Bot) async {
-        guard let api = app?.workspace.api(forFolder: bot.directory) else { return }
+        guard let api = api(for: bot) else { return }
         try? await api.addSynthetic(session: bot.sessionID, text: Self.greeting, description: "A new bot's first message")
     }
 
@@ -285,6 +307,35 @@ final class Bots {
         await tell(bot.id, edits)
     }
 
+    /// A bot's conversation carried on with the coding agents on `model` (a model of theirs, or
+    /// Auto), as a session's does: a session of theirs takes its place, set up as its own, and the
+    /// engine's goes. Its default model stays as it was.
+    @discardableResult
+    func moveToAgents(_ bot: Bot, model: ModelRef) async throws -> Bot {
+        guard let app, bot.machine == nil, bot.agents != true else { return bot }
+        let old = bot.sessionID
+        let kept = app.workspace.session(old)?.metadata?["kuvo"]
+        guard let moved = try await app.workspace.carryToAgents(old, model: model) else { throw Failure.notConnected(AppInfo.name) }
+        var bot = bot
+        bot.sessionID = moved.id
+        bot.agents = true
+        if let index = list.firstIndex(where: { $0.id == bot.id }) {
+            list[index].sessionID = moved.id
+            list[index].agents = true
+        }
+        save()
+        noteSessions()
+        if let api = app.workspace.agents?.api {
+            // What marked it as the bot's (and its group chats'), and its instructions.
+            try? await api.setMetadata(session: moved.id, .object(["kuvo": kept ?? .object(["bot": .string(bot.id)])]))
+            try? await sendInstructions(of: bot, api: api)
+        }
+        try? await writeSession(of: bot)
+        await app.workspace.delete(old)
+        Analytics.shared.track("bot_moved_to_agents", Analytics.model(provider: model.providerID, model: model.id))
+        return bot
+    }
+
     /// Whether `work` got to its engine: one it turned down counts, as asking again wouldn't change
     /// its answer; one that didn't get there (the connection dropped) is tried again.
     private static func reached(_ work: () async throws -> Void) async -> Bool {
@@ -305,7 +356,17 @@ final class Bots {
         guard !all.isEmpty else { return }
         waiting[id] = Array(all)
         waitingEdits = waiting
-        guard let bot = bot(id), let api = app?.workspace.api(forFolder: bot.directory) else { return }
+        guard var bot = bot(id) else { return }
+        // A coding agent's model for a bot on the engine: its conversation carries on with them first.
+        if all.contains("model"), bot.machine == nil, bot.agents != true, let model = bot.model, OutsideAgents.runsInBridge(model.providerID) {
+            do {
+                bot = try await moveToAgents(bot, model: model)
+            } catch {
+                log.error("A bot's conversation didn't move to the coding agents: \(error.localizedDescription, privacy: .public)")
+                return
+            }
+        }
+        guard let api = api(for: bot) else { return }
         var left = all
         if all.contains("instructions"), await Self.reached({ try await self.sendInstructions(of: bot, api: api) }) { left.remove("instructions") }
         if all.contains("name"), await Self.reached({ try await api.renameSession(bot.sessionID, title: bot.name) }) { left.remove("name") }
@@ -354,7 +415,7 @@ final class Bots {
         wakes[bot.id] = nil
         watches[bot.id] = nil
         app?.utilities.closeTabs(of: bot.id)
-        app?.workspace.botSessions = sessionIDs
+        noteSessions()
         await app?.workspace.delete(bot.sessionID)
         if bot.machine == nil, FileManager.default.fileExists(atPath: bot.folder) {
             do {
@@ -540,13 +601,14 @@ final class Bots {
     @ObservationIgnored private var watching: Task<Void, Never>?
 
     private func watchDue() {
-        guard watching == nil, let api = app?.api else { return }
+        guard watching == nil, app != nil else { return }
         watching = Task { [weak self] in
             guard let self else { return }
             for bot in list where bot.machine == nil && !FileManager.default.fileExists(atPath: Self.pauseFile(of: bot)) {
+                guard let api = api(for: bot) else { continue }
                 for letters in await dueWatches(of: bot) {
                     guard let message = Wakes.watchMessage(letters, inBot: bot.folder) else { continue }
-                    await api.waitForTools(in: bot.directory)
+                    if bot.agents != true { await api.waitForTools(in: bot.directory) }
                     do {
                         try await api.prompt(session: bot.sessionID, id: Identifier.message(), text: Wakes.marker + message, delivery: .queue)
                         Wakes.watchDelivered(letters, inBot: bot.folder)
@@ -621,8 +683,11 @@ final class Bots {
     /// Sends a waiting wake-up now rather than at its time (to see the bot's job run), on this Mac
     /// or its machine, and takes it off the list.
     func wakeNow(_ wake: Wakes.Pending, of bot: Bot) async throws {
-        guard let api = app?.workspace.api(forFolder: bot.directory) else { throw Failure.notConnected(bot.machine ?? "This Mac's engine") }
-        await api.waitForTools(in: bot.directory)
+        guard let api = api(for: bot) else {
+            if bot.agents == true { throw OutsideAgents.Failure.notRunning(app?.workspace.agents?.failure) }
+            throw Failure.notConnected(bot.machine ?? "This Mac's engine")
+        }
+        if bot.agents != true { await api.waitForTools(in: bot.directory) }
         var note = wake.note
         // A machine's are listed cut short, on one line: the whole note, as its time would send it.
         if let machine = bot.machine {
@@ -688,11 +753,11 @@ final class Bots {
     @ObservationIgnored private var retries: [String: (at: Date, failures: Int)] = [:]
 
     private func wakeDue() async {
-        guard let api = app?.api else { return }
         for bot in list where bot.machine == nil && !FileManager.default.fileExists(atPath: Self.pauseFile(of: bot)) {
+            guard let api = api(for: bot) else { continue }
             let pending = Self.localWakes(of: bot)
             let due = pending.filter { $0.due <= .now && retries[bot.id + "/" + $0.id].map { $0.at <= .now } != false }
-            if !due.isEmpty { await api.waitForTools(in: bot.directory) }
+            if !due.isEmpty, bot.agents != true { await api.waitForTools(in: bot.directory) }
             for wake in due {
                 let key = bot.id + "/" + wake.id
                 do {
@@ -1063,12 +1128,12 @@ final class Bots {
                 waitingEdits[id] = nil
                 continue
             }
-            if app?.workspace.api(forFolder: bot.directory) != nil { await tell(id) }
+            if api(for: bot) != nil { await tell(id) }
         }
         await app?.groups.catchUp()
         let sent = UserDefaults.standard.dictionary(forKey: Self.sentKey) as? [String: String] ?? [:]
         for listed in list where !synced.contains(listed.id) {
-            guard let api = app?.workspace.api(forFolder: listed.directory) else { continue }
+            guard let api = api(for: listed) else { continue }
             // A machine's bot: its job as its memory there has it now.
             if listed.machine != nil { await syncJob(of: listed.id) }
             guard let bot = bot(listed.id) else { continue }

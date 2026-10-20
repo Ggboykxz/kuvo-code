@@ -816,7 +816,31 @@ final class Workspace {
     /// agents, in a session of theirs with its conversation (their first agent is handed all of
     /// it), opened in its place; the engine's goes to Archived, its draft comes along.
     func moveToAgents(_ id: String, model: ModelRef) async throws {
-        guard let session = session(id), let engine = api(forSession: id) else { return }
+        guard let moved = try await carryToAgents(id, model: model) else { return }
+        Analytics.shared.track("session_moved_to_agents", Analytics.model(provider: model.providerID, model: model.id))
+        await setArchived(id, true)
+        let swap = TabSwap(from: id, to: moved.id)
+        swappedTab = swap
+        // The window with its tab takes its place; with none, it opens as any session does.
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(400))
+            if swappedTab == swap {
+                swappedTab = nil
+                requestedTab = swap.to
+            }
+        }
+    }
+
+    /// Sessions known to be the agents bridge's before it has told of them (a bot's conversation,
+    /// a seat in a group chat): asked there from the start.
+    func runsOnAgents(_ ids: some Sequence<String>) {
+        bridgeSessions.formUnion(ids)
+    }
+
+    /// An engine session's conversation carried on with the agents (see `moveToAgents`), in a
+    /// new session of theirs, with what was waiting and its draft; nothing archived or opened.
+    func carryToAgents(_ id: String, model: ModelRef) async throws -> Session? {
+        guard let session = session(id), let engine = api(forSession: id) else { return nil }
         if RemoteFolder.isRemote(session.location.directory) {
             throw OutsideAgents.Failure.onlyOnThisMac(model.providerID == OutsideAgents.autoProvider ? "Auto" : OutsideAgents.name(model.providerID))
         }
@@ -868,18 +892,7 @@ final class Workspace {
         }
         upsert(moved)
         Drafts.shared[moved.id] = Drafts.shared[id]
-        Analytics.shared.track("session_moved_to_agents", Analytics.model(provider: model.providerID, model: model.id))
-        await setArchived(id, true)
-        let swap = TabSwap(from: id, to: moved.id)
-        swappedTab = swap
-        // The window with its tab takes its place; with none, it opens as any session does.
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(400))
-            if swappedTab == swap {
-                swappedTab = nil
-                requestedTab = swap.to
-            }
-        }
+        return moved
     }
 
     /// A waiting message's files as they were sent: on this Mac, or with it (`data:`).
