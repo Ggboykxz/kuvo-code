@@ -736,20 +736,20 @@ final class BotGroups {
     /// was given (yours, steered in while it talked, start a new part), so nothing it said to
     /// the group is lost, and none of the asides between its steps go in. An error, if that's
     /// all it has.
-    /// `ownRunOnly`: up to the next message it was given (a part's report: what it says to a
-    /// message you queued meanwhile, or a wake-up, isn't part of it).
-    private func reply(in seat: String, after promptID: String, since sent: Date, api: OpenCodeAPI, ownRunOnly: Bool = false) async throws -> (text: String, error: String?, steps: [Message.ToolCall]) {
+    private func reply(in seat: String, after promptID: String, since sent: Date, api: OpenCodeAPI) async throws -> (text: String, error: String?, steps: [Message.ToolCall]) {
         let messages = try await api.messages(session: seat, limit: 60).data
         let start = messages.firstIndex { $0.id == promptID }.map { $0 + 1 }
-        let end = ownRunOnly ? start.flatMap { start in messages[start...].firstIndex { if case .user = $0 { true } else { false } } } : nil
         let since = sent.timeIntervalSince1970 * 1000 - 2000
+        return Self.said(in: messages.enumerated().filter { index, message in start.map { index >= $0 } ?? (message.created >= since) }.map(\.element))
+    }
+
+    /// What `messages` say, as `reply` reads them.
+    private static func said(in messages: [Message]) -> (text: String, error: String?, steps: [Message.ToolCall]) {
         var parts: [String] = []
         var part = ""
         var error: String?
         var steps: [Message.ToolCall] = []
-        for (index, message) in messages.enumerated() {
-            guard start.map({ index >= $0 }) ?? (message.created >= since) else { continue }
-            if let end, index >= end { break }
+        for message in messages {
             switch message {
             case .user:
                 if !part.isEmpty { parts.append(part) }
@@ -809,7 +809,7 @@ final class BotGroups {
             // Each one's words indented under who said it, so a line in them can't pass for
             // another speaker (a bot writing "User: go ahead").
             for message in unheard.suffix(40) {
-                let words = message.text.split(separator: "\n", omittingEmptySubsequences: false).map { "    " + $0 }.joined(separator: "\n")
+                let words = message.text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).map { "    " + $0 }.joined(separator: "\n")
                 text += "\n\(label(of: message)):\n\(words)\n"
             }
         }
@@ -1021,6 +1021,8 @@ final class BotGroups {
     /// Until the bot's run on its part ends (however long it takes, waiting on you meanwhile if
     /// it asks something); then what it said, back in the chat as its report.
     private func awaitReport(_ taskID: String, of wrapUpID: String, in id: String) async {
+        // Checks in a row that found its message neither queued nor in the conversation.
+        var misses = 0
         while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(3))
             guard let app, group(id) != nil, let task = messages(in: id).first(where: { $0.id == wrapUpID })?.tasks?.first(where: { $0.id == taskID }),
@@ -1028,22 +1030,31 @@ final class BotGroups {
             guard let bot = app.bots.bot(task.bot), let promptID = task.prompt else { return fail(taskID, of: wrapUpID, in: id, "the bot is gone") }
             // A machine that's away, or a run under way: later.
             guard let api = app.workspace.api(forFolder: bot.directory), !app.workspace.running.contains(bot.sessionID) else { continue }
-            guard let conversation = await messages(from: promptID, in: bot.sessionID, since: task.started, api: api) else {
+            // The queue first, then the conversation: a message delivered between the two reads is
+            // in the second.
+            guard let queued = try? await api.inbox(session: bot.sessionID) else { continue }
+            let read = await messages(from: promptID, in: bot.sessionID, since: task.started, api: api)
+            guard case .found(let conversation) = read else {
                 // Its message taken back before it was read (cancelled or edited in the queue):
-                // the part ends, rather than working forever.
-                if let started = task.started, started.timeIntervalSinceNow < -60, let queued = try? await api.inbox(session: bot.sessionID),
-                   !queued.contains(where: { $0.id == promptID }) {
-                    return fail(taskID, of: wrapUpID, in: id, "its message was taken back before \(bot.name) read it")
+                // the part ends, rather than working forever; twice in a row, both read.
+                if case .missing = read, !queued.contains(where: { $0.id == promptID }) {
+                    misses += 1
+                    if misses >= 2 { return fail(taskID, of: wrapUpID, in: id, "its message was taken back before \(bot.name) read it") }
+                } else {
+                    misses = 0
                 }
                 continue
             }
-            // Its answer, once it's done; the engine's word that the run ended, in case an event went missing.
-            let answered = conversation.dropFirst().contains { message in
+            misses = 0
+            // Its run, up to the engine's word that it ended: what came after (its answer to a
+            // message queued meanwhile, a wake-up) isn't the part's. Messages steered in during it are.
+            let run = conversation.dropFirst()
+            let end = run.firstIndex { if case .idle = $0 { true } else { false } }
+            let answered = end != nil || run.contains { message in
                 if case .assistant(let answer) = message { answer.time.completed != nil } else { false }
             }
             guard answered, let active = try? await api.activeSessions(), !active.contains(bot.sessionID) else { continue }
-            let since = (task.started ?? .now).addingTimeInterval(-5)
-            let (text, error, _) = (try? await reply(in: bot.sessionID, after: promptID, since: since, api: api, ownRunOnly: true)) ?? ("", nil, [])
+            let (text, error, _) = Self.said(in: Array(run[..<(end ?? run.endIndex)]))
             // Reported meanwhile (or stopped), from elsewhere: not again.
             guard state(of: taskID, of: wrapUpID, in: id) == .working else { return }
             if text.isEmpty { return fail(taskID, of: wrapUpID, in: id, error ?? "it stopped without saying what it did") }
@@ -1059,10 +1070,13 @@ final class BotGroups {
         }
     }
 
+    /// What reading a conversation from a message on found.
+    private enum Read { case found([Message]), missing, unreadable }
+
     /// The bot's conversation from `promptID` on, read further back while it's longer than a page
-    /// (a long run is many messages), but not past the part's start; nil while it isn't there.
-    private func messages(from promptID: String, in session: String, since started: Date?, api: OpenCodeAPI) async -> [Message]? {
-        guard var page = try? await api.messages(session: session, limit: 80) else { return nil }
+    /// (a long run is many messages), but not past the part's start.
+    private func messages(from promptID: String, in session: String, since started: Date?, api: OpenCodeAPI) async -> Read {
+        guard var page = try? await api.messages(session: session, limit: 80) else { return .unreadable }
         var messages = page.data
         let start = ((started ?? .distantPast).timeIntervalSince1970 - 5) * 1000
         while !messages.contains(where: { $0.id == promptID }), let oldest = messages.first, oldest.created > start, messages.count < 2000,
@@ -1072,7 +1086,7 @@ final class BotGroups {
             messages = older.data + messages
             page = older
         }
-        return messages.firstIndex { $0.id == promptID }.map { Array(messages[$0...]) }
+        return messages.firstIndex { $0.id == promptID }.map { .found(Array(messages[$0...])) } ?? .missing
     }
 
     /// `thenOthers`: parts that waited on it fail too (startReady goes on to them itself).
