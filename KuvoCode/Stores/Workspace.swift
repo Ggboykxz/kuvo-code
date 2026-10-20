@@ -908,8 +908,19 @@ final class Workspace {
     /// for what it asks in the panel's browser; nil for any other session.
     func engineRunOwner(_ id: String) async -> String? {
         if let known = engineRunOwners[id] { return known.isEmpty ? nil : known }
-        guard session(id) == nil, let found = try? await api?.session(id) else { return nil }
-        let owner = found.metadata?["kuvo"]?["engineFor"]?.string ?? ""
+        guard session(id) == nil else { return nil }
+        // Up through its parents (a subagent of the run): the run says whose it is.
+        var current = id
+        var owner = ""
+        for _ in 0..<5 {
+            guard let found = try? await api?.session(current) else { break }
+            if let run = found.metadata?["kuvo"]?["engineFor"]?.string {
+                owner = run
+                break
+            }
+            guard let parent = found.parentID, session(parent) == nil else { break }
+            current = parent
+        }
         engineRunOwners[id] = owner
         return owner.isEmpty ? nil : owner
     }

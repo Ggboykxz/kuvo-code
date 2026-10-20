@@ -56,7 +56,12 @@ struct ChangesPanel: View {
     private var isPrimary: Bool { changes.directory == folders.first }
 
     /// The session's record of its edits is about its own folder.
-    private var engineChanges: [FileDiff] { isPrimary ? model?.changes ?? [] : [] }
+    /// The session's changes as kept for it: the engine's record, or for a coding agent's session
+    /// (whose bridge keeps none) the edits its steps made.
+    private var engineChanges: [FileDiff] {
+        guard isPrimary, let model else { return [] }
+        return OutsideAgents.isAgentSession(model.session) ? model.editedFiles : model.changes
+    }
     private var editedFiles: [FileDiff] { isPrimary ? model?.editedFiles ?? [] : [] }
 
     /// Comments name files by their path, after the folder's name outside the primary folder,
