@@ -446,8 +446,15 @@ export function handler(context: Context) {
  * its words), as the engine fills it in; after it, when it names none.
  */
 export function expandCommand(template: string, written: string): string {
-  const words = written.trim() ? written.trim().split(/\s+/) : []
-  const named = /\$ARGUMENTS|\$\d/.test(template)
-  const filled = template.replace(/\$ARGUMENTS/g, written.trim()).replace(/\$(\d)/g, (_, index: string) => words[Number(index) - 1] ?? "")
-  return named || !written.trim() ? filled.trim() : `${filled.trim()}\n\n${written.trim()}`
+  const all = written.trim()
+  const words = all ? all.split(/\s+/) : []
+  const named = /\$ARGUMENTS|\$\d+/.test(template)
+  // In one pass, so what you wrote is never filled in again: $1, $2… a word each, the highest
+  // taking the rest; $ARGUMENTS all of it, as written.
+  const highest = Math.max(0, ...[...template.matchAll(/\$(\d+)/g)].map((match) => Number(match[1])))
+  const filled = template.replace(/\$ARGUMENTS|\$(\d+)/g, (_, index?: string) => {
+    if (index === undefined) return all
+    return Number(index) === highest ? words.slice(highest - 1).join(" ") : (words[Number(index) - 1] ?? "")
+  })
+  return named || !all ? filled.trim() : `${filled.trim()}\n\n${all}`
 }

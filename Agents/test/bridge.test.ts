@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { subscribe } from "../src/events"
@@ -12,6 +12,7 @@ import { messageID, newID } from "../src/ids"
 import { compareVersions, homebrewKeg, npmGlobalPrefix, versionIn } from "../src/maintenance"
 import { evaluate, matches } from "../src/rules"
 import { handover } from "../src/handover"
+import { EngineLink } from "../src/engine"
 import { expandCommand } from "../src/server"
 import { withTextFiles } from "../src/sessions"
 import { commandSignIn } from "../src/signin"
@@ -291,11 +292,46 @@ describe("handovers", () => {
 })
 
 describe("your commands", () => {
+  test("a command from Settings or written as a file in a settings folder, the last one counting", async () => {
+    const home = mkdtempSync(join(tmpdir(), "kuvo-commands-"))
+    const project = join(home, "project", ".opencode")
+    mkdirSync(join(project, "command", "git"), { recursive: true })
+    writeFileSync(join(project, "command", "md.md"), "---\ndescription: From a file\n---\nDo the md thing with $ARGUMENTS\n")
+    writeFileSync(join(project, "command", "git", "tidy.md"), "Tidy $1")
+    const server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        if (new URL(request.url).pathname !== "/api/config") return new Response("", { status: 404 })
+        return Response.json([
+          { type: "document", path: join(home, "opencode.json"), info: { commands: { cfg: { template: "cfg says $1" }, md: { template: "overridden" } } } },
+          { type: "directory", path: project },
+        ])
+      },
+    })
+    const link = new EngineLink()
+    try {
+      link.configure(`http://127.0.0.1:${server.port}`, "pw")
+      expect(await link.commandTemplate("cfg", home)).toBe("cfg says $1")
+      expect(await link.commandTemplate("md", home)).toBe("Do the md thing with $ARGUMENTS")
+      expect(await link.commandTemplate("git/tidy", home)).toBe("Tidy $1")
+      expect(await link.commandTemplate("../project/.opencode/command/md", home)).toBeUndefined()
+      expect(await link.commandTemplate("none", home)).toBeUndefined()
+    } finally {
+      link.configure(undefined, undefined)
+      server.stop(true)
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
   test("what you write after a command fills it in, as the engine does", () => {
     expect(expandCommand("Review $ARGUMENTS carefully.", "src/a.ts")).toBe("Review src/a.ts carefully.")
     expect(expandCommand("Compare $1 with $2.", "a.ts b.ts")).toBe("Compare a.ts with b.ts.")
     expect(expandCommand("Write the changelog.", "")).toBe("Write the changelog.")
     expect(expandCommand("Write the changelog.", "for 1.2")).toBe("Write the changelog.\n\nfor 1.2")
+    expect(expandCommand("Fix this: $ARGUMENTS", "awk '{print $2}' $$ $&")).toBe("Fix this: awk '{print $2}' $$ $&")
+    expect(expandCommand("Review $1", "a.ts and b.ts")).toBe("Review a.ts and b.ts")
+    expect(expandCommand("Move $1 to $2", "a.ts b c")).toBe("Move a.ts to b c")
+    expect(expandCommand("Fix $1: $ARGUMENTS", "$ARGUMENTS x")).toBe("Fix $ARGUMENTS x: $ARGUMENTS x")
   })
 })
 

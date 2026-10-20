@@ -5,6 +5,8 @@
 //
 // The app tells the bridge where the engine is (`PUT /api/kuvo/engine`) each time either starts.
 
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 import type { Agent, PermissionAsk, RunInput, RunResult, Thread, TurnHooks } from "./agent"
 import { failure } from "./agent"
 import type { Limit } from "./auto"
@@ -163,6 +165,16 @@ export class EngineLink {
     for (const source of (await this.settingsFiles(directory)) ?? []) {
       const own = source?.info?.commands?.[name]?.template ?? source?.info?.command?.[name]?.template
       if (typeof own === "string" && own.trim()) template = own
+      // One written as a file in a settings folder (`command/<name>.md`): what follows its front matter.
+      if (source?.type === "directory" && typeof source.path === "string" && /^[\w.-]+(\/[\w.-]+)*$/.test(name) && !name.split("/").includes("..")) {
+        for (const folder of ["command", "commands"]) {
+          try {
+            const text = readFileSync(join(source.path, folder, `${name}.md`), "utf8")
+            const body = text.replace(/^---\n[\s\S]*?\n---\n?/, "").trim()
+            if (body) template = body
+          } catch {}
+        }
+      }
     }
     return template
   }
