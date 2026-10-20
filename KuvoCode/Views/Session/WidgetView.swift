@@ -371,6 +371,8 @@ private struct WidgetPage: NSViewRepresentable {
       const text = root.getAttribute("data-kuvo-send");
       root.removeAttribute("data-kuvo-send");
       if (text === null || !navigator.userActivation || !navigator.userActivation.isActive) return;
+      // Spent on this one, where the browser can: the click stays "active" a few seconds.
+      navigator.userActivation.consume?.();
       window.webkit.messageHandlers.kuvo.postMessage({ type: "send", text });
     });
     """
@@ -448,8 +450,9 @@ private struct WidgetPage: NSViewRepresentable {
                 if abs(current - new) > 0.5 { height?.wrappedValue = new }
             case "send":
                 guard let text = body["text"] as? String, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-                // One message for a click, however many the page tries in the moment it gives.
-                guard lastSent.map({ Date.now.timeIntervalSince($0) > 2 }) ?? true else { return }
+                // One message for a click, however many the page tries in the moment it gives: only
+                // just after one, and not again within it.
+                guard view?.wasClicked == true, lastSent.map({ Date.now.timeIntervalSince($0) > 2 }) ?? true else { return }
                 lastSent = .now
                 send(String(text.prefix(4000)))
             default:
@@ -510,6 +513,12 @@ final class WidgetWebView: WKWebView {
     override func mouseDown(with event: NSEvent) {
         clicked = .now
         super.mouseDown(with: event)
+    }
+
+    /// A key that presses a control (Space or Return on a button) is a click too.
+    override func keyDown(with event: NSEvent) {
+        clicked = .now
+        super.keyDown(with: event)
     }
 
     override func scrollWheel(with event: NSEvent) {
