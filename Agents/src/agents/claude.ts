@@ -367,6 +367,8 @@ class ClaudeThread implements Thread {
    * carries on): what it said so far, until a turn here takes it; or turned away.
    */
   private own?: { frames: any[]; turnedAway: boolean; taken?: Promise<void>; take?: () => void }
+  /** Subagents it sent off in the background, at work after the turn that started them: by their call. */
+  private backgroundLanes = new Map<string, Lane & { run: SubagentRun; background: boolean }>()
   /** Its background tasks (commands, subagents), by its id: commands are in the bar. */
   private tasks = new Map<string, { type: string; description: string; toolUseID?: string; shell?: string; outputFile?: string; last?: { output: string; total: number } }>()
   /** Its live background tasks, as it last listed them. */
@@ -417,9 +419,20 @@ class ClaudeThread implements Thread {
       const message = userMessage(input)
       // The turn ends with the result that answers it (one of its own before, like a command's
       // end it took up, doesn't end it).
-      this.active = { turn, hooks, resolve, streamed: new Set(), blockTools: new Map(), calls: new Map(), subagents: new Map(), auto: input.auto, steered: new Map([[message.uuid, ""]]) }
+      this.active = this.turnFor(turn, hooks, resolve, input.auto, new Map([[message.uuid, ""]]))
       this.input!.push(message)
     })
+  }
+
+  /** A turn here; as it ends, its subagents in the background are kept, to go on in their sessions. */
+  private turnFor(turn: Turn, hooks: TurnHooks, resolve: (result: RunResult) => void, auto: boolean | undefined, steered: Map<string, string>): Active {
+    const active: Active = { turn, hooks, resolve, streamed: new Set(), blockTools: new Map(), calls: new Map(), subagents: new Map(), auto, steered }
+    active.resolve = (result) => {
+      // (A turn stopped or failed stops them: the session ends them with it.)
+      if (result.outcome === "succeeded") for (const [callID, lane] of active.subagents) if (lane.background && !lane.turn.isEnded) this.backgroundLanes.set(callID, lane)
+      resolve(result)
+    }
+    return active
   }
 
   /** A turn it began on its own: taken here, with what it said so far. */
@@ -431,7 +444,7 @@ class ClaudeThread implements Thread {
     if (!this.query || !own || own.turnedAway) return Promise.resolve({ outcome: "succeeded" })
     return new Promise<RunResult>((resolve) => {
       this.lastHooks = hooks
-      this.active = { turn, hooks, resolve, streamed: new Set(), blockTools: new Map(), calls: new Map(), subagents: new Map(), auto: input.auto, steered: new Map() }
+      this.active = this.turnFor(turn, hooks, resolve, input.auto, new Map())
       for (const frame of own.frames) {
         if (!this.active) break
         this.handle(frame)
@@ -502,6 +515,17 @@ class ClaudeThread implements Thread {
         const command = task?.toolUseID ? this.commands.get(task.toolUseID) : undefined
         this.lastEnded = { type: task?.type ?? "", description: task?.description ?? String(message.summary ?? ""), command, status: String(message.status ?? "completed"), summary: message.summary }
         if (task?.shell) endShell(task.shell, message.status === "completed" ? 0 : undefined)
+        // A subagent in the background done: its session's work ends.
+        const callID = typeof message.tool_use_id === "string" ? message.tool_use_id : task?.toolUseID
+        const lane = callID ? (this.backgroundLanes.get(callID) ?? this.active?.subagents.get(callID)) : undefined
+        if (callID && lane?.background) {
+          const status = String(message.status ?? "completed")
+          if (status === "completed") lane.run.end("succeeded")
+          else if (status === "failed") lane.run.end("failed", { type: "agent", message: String(message.summary ?? "The subagent failed.") })
+          else lane.run.end("interrupted")
+          this.backgroundLanes.delete(callID)
+          this.active?.subagents.delete(callID)
+        }
         return
       }
       case "background_tasks_changed": {
@@ -634,7 +658,12 @@ class ClaudeThread implements Thread {
       if (this.commands.size > 200) for (const key of [...this.commands.keys()].slice(0, 100)) this.commands.delete(key)
     }
     const active = this.active
-    if (!active) return this.ownFrame(message)
+    if (!active) {
+      // A subagent at work in the background, after its turn: told in its session.
+      const background = message.parent_tool_use_id ? this.backgroundLanes.get(message.parent_tool_use_id) : undefined
+      if (background) return this.laneFrame(undefined, background, message)
+      return this.ownFrame(message)
+    }
     if (!message.parent_tool_use_id && Array.isArray(message.user_message_uuids)) for (const uuid of message.user_message_uuids) active.steered.delete(uuid)
     // Waiting for it to take a message it was sent after its result: it's still there while it
     // says something, and once it has taken them all, its next result ends the turn.
@@ -645,6 +674,11 @@ class ClaudeThread implements Thread {
     // A subagent's own work is told in its session, as the engine's subagents' is.
     const lane: Lane | undefined = message.parent_tool_use_id ? this.subagentLane(active, message.parent_tool_use_id) : active
     if (!lane) return
+    this.laneFrame(active, lane, message)
+  }
+
+  /** What Claude Code said, in a lane: the turn's own, or a subagent's (between turns, `active` is none). */
+  private laneFrame(active: Active | undefined, lane: Lane, message: any) {
     const turn = lane.turn
     switch (message.type) {
       case "stream_event":
@@ -654,7 +688,7 @@ class ClaudeThread implements Thread {
         const id = message.message?.id
         if (message.error === "authentication_failed" || message.message?.error === "authentication_failed") {
           this.agent.authFailedAt = Date.now()
-          active.problem = "Claude Code isn't signed in. Sign in again in Settings › Accounts."
+          if (active) active.problem = "Claude Code isn't signed in. Sign in again in Settings › Accounts."
         }
         for (const block of content) {
           if (block.type === "tool_use") {
@@ -663,7 +697,7 @@ class ClaudeThread implements Thread {
             if (!turn.hasTool(block.id)) turn.toolStart(block.id, tool.name)
             turn.toolCalled(block.id, tool.input)
             // A subagent of the turn's own: its session, from now.
-            if (lane === active && tool.name === "subagent") this.subagentLane(active, block.id)
+            if (active && lane === active && tool.name === "subagent") this.subagentLane(active, block.id)
           } else if (!id || !lane.streamed.has(id)) {
             // Not streamed (it came whole): told now.
             if (block.type === "text" && block.text) turn.text(block.text)
@@ -680,7 +714,7 @@ class ClaudeThread implements Thread {
         return
       }
       case "rate_limit_event": {
-        if (lane !== active) return
+        if (!active || lane !== active) return
         const info = message.rate_limit_info ?? {}
         // Over the plan's limit, unless extra usage you pay for carries on.
         if (info.status !== "rejected" || info.overageInUse || info.isUsingOverage) return
@@ -693,14 +727,14 @@ class ClaudeThread implements Thread {
       }
       case "system":
         // Waiting out a rate limit to try again: on Auto, the next model goes on instead.
-        if (lane === active && message.subtype === "api_retry" && (message.error === "rate_limit" || message.error === "billing_error") && active.auto) {
+        if (active && lane === active && message.subtype === "api_retry" && (message.error === "rate_limit" || message.error === "billing_error") && active.auto) {
           active.limit ??= message.error === "billing_error" ? { scope: "provider" } : { scope: "model", brief: true }
           active.problem ??= "Claude's API is rate limiting this model."
           void this.query?.interrupt().catch(() => {})
         }
         return
       case "result":
-        if (lane !== active) return
+        if (!active || lane !== active) return
         return this.finish(active, message)
     }
   }
@@ -709,6 +743,13 @@ class ClaudeThread implements Thread {
   private subagentLane(active: Active, callID: string): Lane | undefined {
     const known = active.subagents.get(callID)
     if (known) return known
+    // One at work in the background since an earlier turn: this turn has it now.
+    const kept = this.backgroundLanes.get(callID)
+    if (kept) {
+      this.backgroundLanes.delete(callID)
+      active.subagents.set(callID, kept)
+      return kept
+    }
     const call = active.calls.get(callID)
     const before = this.subagentSessions.get(callID)
     let run: SubagentRun
@@ -716,12 +757,12 @@ class ClaudeThread implements Thread {
     if (call) {
       const input = call.input
       if (kuvoTool(call.name, input).name !== "subagent") return undefined
-      run = active.hooks.subagent(callID, { title: String(input.description ?? ""), prompt: typeof input.prompt === "string" ? input.prompt : undefined, agent: input.subagent_type })
       background = input.run_in_background === true
+      run = active.hooks.subagent(callID, { title: String(input.description ?? ""), prompt: typeof input.prompt === "string" ? input.prompt : undefined, agent: input.subagent_type, background })
       this.subagentSessions.set(callID, { sessionID: run.sessionID, title: String(input.description ?? "") })
     } else if (before) {
       // One sent off in the background in an earlier turn, still at work: its session goes on.
-      run = active.hooks.subagent(callID, { title: before.title, sessionID: before.sessionID })
+      run = active.hooks.subagent(callID, { title: before.title, sessionID: before.sessionID, background: true })
       background = true
     } else {
       return undefined
@@ -779,7 +820,7 @@ class ClaudeThread implements Thread {
     }
   }
 
-  private result(active: Active, lane: Lane, block: any, structured: any) {
+  private result(active: Active | undefined, lane: Lane, block: any, structured: any) {
     const turn = lane.turn
     const id = block.tool_use_id
     const call = lane.calls.get(id)
@@ -787,8 +828,8 @@ class ClaudeThread implements Thread {
     if (text.length > outputLimit) text = text.slice(0, outputLimit) + "\n…"
     // A subagent's task came back: its session's work is done (one sent off in the background
     // goes on, and ends with the turn).
-    const subagent = lane === active ? active.subagents.get(id) : undefined
-    if (subagent && !subagent.background) {
+    const subagent = active && lane === active ? active.subagents.get(id) : undefined
+    if (active && subagent && !subagent.background) {
       subagent.run.end(block.is_error ? "failed" : "succeeded", block.is_error ? { type: "agent", message: text || "The subagent failed." } : undefined)
       active.subagents.delete(id)
     }
@@ -885,7 +926,8 @@ class ClaudeThread implements Thread {
     const hooks = this.active?.hooks ?? this.lastHooks
     if (!hooks) return {}
     let verdict = hooks.check(permissionAsk(String(input.tool_name ?? ""), input.tool_input ?? {}), true)
-    if (verdict === "ask" && !this.active) verdict = "deny"
+    // No one to ask between turns, but for a subagent in the background (it asks as its own).
+    if (verdict === "ask" && !this.active && !this.backgroundLane(input.agent_id)) verdict = "deny"
     if (verdict === "deny") {
       return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "Kuvo Code's settings don't allow this (Settings › Permissions, or this session's rules)." } }
     }
@@ -902,7 +944,13 @@ class ClaudeThread implements Thread {
     await this.ownTaken()
     const active = this.active
     const toolUseID = options?.toolUseID
-    if (!active) return { behavior: "deny", message: "There's no turn under way for this.", toolUseID }
+    // A subagent in the background asks as its own (its ask outlives the turn that started it).
+    const background = this.backgroundLane(options?.agentID)
+    if (!active && !background) return { behavior: "deny", message: "There's no turn under way for this.", toolUseID }
+    if (!active) {
+      if (name === "AskUserQuestion" || name === "ExitPlanMode") return { behavior: "deny", message: "Ask in the conversation that started you.", toolUseID }
+      return this.decide(name, input, options, (ask) => background!.run.permission(ask))
+    }
     const hooks = active.hooks
     if (name === "AskUserQuestion") {
       const questions = (input.questions ?? []) as { question: string; header?: string; options?: { label: string; description?: string }[]; multiSelect?: boolean }[]
@@ -932,8 +980,21 @@ class ClaudeThread implements Thread {
         toolUseID,
       }
     }
+    return this.decide(name, input, options, background ? (ask) => background.run.permission(ask) : hooks.permission)
+  }
+
+  /** A subagent at work in the background, by Claude Code's id for it (its task's). */
+  private backgroundLane(agentID: unknown) {
+    const callID = typeof agentID === "string" ? this.tasks.get(agentID)?.toolUseID : undefined
+    const lane = callID ? (this.backgroundLanes.get(callID) ?? this.active?.subagents.get(callID)) : undefined
+    return lane?.background ? lane : undefined
+  }
+
+  /** A tool asked about: allowed, or not, as you answer (or your rules do). */
+  private async decide(name: string, input: Record<string, any>, options: any, permission: TurnHooks["permission"]): Promise<any> {
+    const toolUseID = options?.toolUseID
     const ask = permissionAsk(name, input)
-    const decision = await hooks.permission({ toolCallID: toolUseID, ...ask, message: options?.title ?? options?.description })
+    const decision = await permission({ toolCallID: toolUseID, ...ask, message: options?.title ?? options?.description })
     if (decision === "reject") return { behavior: "deny", message: "The user declined this.", toolUseID }
     const result: any = { behavior: "allow", updatedInput: input, toolUseID }
     if (decision === "always" && Array.isArray(options?.suggestions)) {
@@ -1001,6 +1062,8 @@ class ClaudeThread implements Thread {
     this.input = undefined
     // What it left running ends with it.
     for (const task of this.tasks.values()) if (task.shell) endShell(task.shell)
+    for (const lane of this.backgroundLanes.values()) lane.run.end("interrupted")
+    this.backgroundLanes.clear()
     this.liveTasks.clear()
     this.own = undefined
   }

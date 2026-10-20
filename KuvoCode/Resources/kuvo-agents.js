@@ -3079,6 +3079,7 @@ class ClaudeThread {
   lastHooks;
   onOwnTurn;
   own;
+  backgroundLanes = new Map;
   tasks = new Map;
   liveTasks = new Set;
   commands = new Map;
@@ -3122,9 +3123,21 @@ class ClaudeThread {
     return new Promise((resolve2) => {
       this.lastHooks = hooks;
       const message = userMessage(input);
-      this.active = { turn, hooks, resolve: resolve2, streamed: new Set, blockTools: new Map, calls: new Map, subagents: new Map, auto: input.auto, steered: new Map([[message.uuid, ""]]) };
+      this.active = this.turnFor(turn, hooks, resolve2, input.auto, new Map([[message.uuid, ""]]));
       this.input.push(message);
     });
+  }
+  turnFor(turn, hooks, resolve2, auto, steered) {
+    const active = { turn, hooks, resolve: resolve2, streamed: new Set, blockTools: new Map, calls: new Map, subagents: new Map, auto, steered };
+    active.resolve = (result) => {
+      if (result.outcome === "succeeded") {
+        for (const [callID, lane] of active.subagents)
+          if (lane.background && !lane.turn.isEnded)
+            this.backgroundLanes.set(callID, lane);
+      }
+      resolve2(result);
+    };
+    return active;
   }
   adopt(input, turn, hooks) {
     const own = this.own;
@@ -3134,7 +3147,7 @@ class ClaudeThread {
       return Promise.resolve({ outcome: "succeeded" });
     return new Promise((resolve2) => {
       this.lastHooks = hooks;
-      this.active = { turn, hooks, resolve: resolve2, streamed: new Set, blockTools: new Map, calls: new Map, subagents: new Map, auto: input.auto, steered: new Map };
+      this.active = this.turnFor(turn, hooks, resolve2, input.auto, new Map);
       for (const frame of own.frames) {
         if (!this.active)
           break;
@@ -3206,6 +3219,19 @@ class ClaudeThread {
         this.lastEnded = { type: task?.type ?? "", description: task?.description ?? String(message.summary ?? ""), command, status: String(message.status ?? "completed"), summary: message.summary };
         if (task?.shell)
           endShell(task.shell, message.status === "completed" ? 0 : undefined);
+        const callID = typeof message.tool_use_id === "string" ? message.tool_use_id : task?.toolUseID;
+        const lane = callID ? this.backgroundLanes.get(callID) ?? this.active?.subagents.get(callID) : undefined;
+        if (callID && lane?.background) {
+          const status = String(message.status ?? "completed");
+          if (status === "completed")
+            lane.run.end("succeeded");
+          else if (status === "failed")
+            lane.run.end("failed", { type: "agent", message: String(message.summary ?? "The subagent failed.") });
+          else
+            lane.run.end("interrupted");
+          this.backgroundLanes.delete(callID);
+          this.active?.subagents.delete(callID);
+        }
         return;
       }
       case "background_tasks_changed": {
@@ -3334,8 +3360,12 @@ class ClaudeThread {
           this.commands.delete(key);
     }
     const active = this.active;
-    if (!active)
+    if (!active) {
+      const background = message.parent_tool_use_id ? this.backgroundLanes.get(message.parent_tool_use_id) : undefined;
+      if (background)
+        return this.laneFrame(undefined, background, message);
       return this.ownFrame(message);
+    }
     if (!message.parent_tool_use_id && Array.isArray(message.user_message_uuids))
       for (const uuid of message.user_message_uuids)
         active.steered.delete(uuid);
@@ -3346,6 +3376,9 @@ class ClaudeThread {
     const lane = message.parent_tool_use_id ? this.subagentLane(active, message.parent_tool_use_id) : active;
     if (!lane)
       return;
+    this.laneFrame(active, lane, message);
+  }
+  laneFrame(active, lane, message) {
     const turn = lane.turn;
     switch (message.type) {
       case "stream_event":
@@ -3355,7 +3388,8 @@ class ClaudeThread {
         const id = message.message?.id;
         if (message.error === "authentication_failed" || message.message?.error === "authentication_failed") {
           this.agent.authFailedAt = Date.now();
-          active.problem = "Claude Code isn't signed in. Sign in again in Settings \u203A Accounts.";
+          if (active)
+            active.problem = "Claude Code isn't signed in. Sign in again in Settings \u203A Accounts.";
         }
         for (const block of content) {
           if (block.type === "tool_use") {
@@ -3364,7 +3398,7 @@ class ClaudeThread {
             if (!turn.hasTool(block.id))
               turn.toolStart(block.id, tool.name);
             turn.toolCalled(block.id, tool.input);
-            if (lane === active && tool.name === "subagent")
+            if (active && lane === active && tool.name === "subagent")
               this.subagentLane(active, block.id);
           } else if (!id || !lane.streamed.has(id)) {
             if (block.type === "text" && block.text)
@@ -3385,7 +3419,7 @@ class ClaudeThread {
         return;
       }
       case "rate_limit_event": {
-        if (lane !== active)
+        if (!active || lane !== active)
           return;
         const info = message.rate_limit_info ?? {};
         if (info.status !== "rejected" || info.overageInUse || info.isUsingOverage)
@@ -3399,14 +3433,14 @@ class ClaudeThread {
         return;
       }
       case "system":
-        if (lane === active && message.subtype === "api_retry" && (message.error === "rate_limit" || message.error === "billing_error") && active.auto) {
+        if (active && lane === active && message.subtype === "api_retry" && (message.error === "rate_limit" || message.error === "billing_error") && active.auto) {
           active.limit ??= message.error === "billing_error" ? { scope: "provider" } : { scope: "model", brief: true };
           active.problem ??= "Claude's API is rate limiting this model.";
           this.query?.interrupt().catch(() => {});
         }
         return;
       case "result":
-        if (lane !== active)
+        if (!active || lane !== active)
           return;
         return this.finish(active, message);
     }
@@ -3415,6 +3449,12 @@ class ClaudeThread {
     const known = active.subagents.get(callID);
     if (known)
       return known;
+    const kept2 = this.backgroundLanes.get(callID);
+    if (kept2) {
+      this.backgroundLanes.delete(callID);
+      active.subagents.set(callID, kept2);
+      return kept2;
+    }
     const call = active.calls.get(callID);
     const before = this.subagentSessions.get(callID);
     let run2;
@@ -3423,11 +3463,11 @@ class ClaudeThread {
       const input = call.input;
       if (kuvoTool2(call.name, input).name !== "subagent")
         return;
-      run2 = active.hooks.subagent(callID, { title: String(input.description ?? ""), prompt: typeof input.prompt === "string" ? input.prompt : undefined, agent: input.subagent_type });
       background = input.run_in_background === true;
+      run2 = active.hooks.subagent(callID, { title: String(input.description ?? ""), prompt: typeof input.prompt === "string" ? input.prompt : undefined, agent: input.subagent_type, background });
       this.subagentSessions.set(callID, { sessionID: run2.sessionID, title: String(input.description ?? "") });
     } else if (before) {
-      run2 = active.hooks.subagent(callID, { title: before.title, sessionID: before.sessionID });
+      run2 = active.hooks.subagent(callID, { title: before.title, sessionID: before.sessionID, background: true });
       background = true;
     } else {
       return;
@@ -3495,8 +3535,8 @@ class ClaudeThread {
     if (text.length > outputLimit3)
       text = text.slice(0, outputLimit3) + `
 \u2026`;
-    const subagent = lane === active ? active.subagents.get(id) : undefined;
-    if (subagent && !subagent.background) {
+    const subagent = active && lane === active ? active.subagents.get(id) : undefined;
+    if (active && subagent && !subagent.background) {
       subagent.run.end(block.is_error ? "failed" : "succeeded", block.is_error ? { type: "agent", message: text || "The subagent failed." } : undefined);
       active.subagents.delete(id);
     }
@@ -3578,7 +3618,7 @@ class ClaudeThread {
     if (!hooks)
       return {};
     let verdict = hooks.check(permissionAsk(String(input.tool_name ?? ""), input.tool_input ?? {}), true);
-    if (verdict === "ask" && !this.active)
+    if (verdict === "ask" && !this.active && !this.backgroundLane(input.agent_id))
       verdict = "deny";
     if (verdict === "deny") {
       return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "Kuvo Code's settings don't allow this (Settings \u203A Permissions, or this session's rules)." } };
@@ -3595,8 +3635,14 @@ class ClaudeThread {
     await this.ownTaken();
     const active = this.active;
     const toolUseID = options?.toolUseID;
-    if (!active)
+    const background = this.backgroundLane(options?.agentID);
+    if (!active && !background)
       return { behavior: "deny", message: "There's no turn under way for this.", toolUseID };
+    if (!active) {
+      if (name === "AskUserQuestion" || name === "ExitPlanMode")
+        return { behavior: "deny", message: "Ask in the conversation that started you.", toolUseID };
+      return this.decide(name, input, options, (ask) => background.run.permission(ask));
+    }
     const hooks = active.hooks;
     if (name === "AskUserQuestion") {
       const questions = input.questions ?? [];
@@ -3626,8 +3672,17 @@ class ClaudeThread {
         toolUseID
       };
     }
+    return this.decide(name, input, options, background ? (ask) => background.run.permission(ask) : hooks.permission);
+  }
+  backgroundLane(agentID) {
+    const callID = typeof agentID === "string" ? this.tasks.get(agentID)?.toolUseID : undefined;
+    const lane = callID ? this.backgroundLanes.get(callID) ?? this.active?.subagents.get(callID) : undefined;
+    return lane?.background ? lane : undefined;
+  }
+  async decide(name, input, options, permission) {
+    const toolUseID = options?.toolUseID;
     const ask = permissionAsk(name, input);
-    const decision = await hooks.permission({ toolCallID: toolUseID, ...ask, message: options?.title ?? options?.description });
+    const decision = await permission({ toolCallID: toolUseID, ...ask, message: options?.title ?? options?.description });
     if (decision === "reject")
       return { behavior: "deny", message: "The user declined this.", toolUseID };
     const result = { behavior: "allow", updatedInput: input, toolUseID };
@@ -3686,6 +3741,9 @@ class ClaudeThread {
     for (const task of this.tasks.values())
       if (task.shell)
         endShell(task.shell);
+    for (const lane of this.backgroundLanes.values())
+      lane.run.end("interrupted");
+    this.backgroundLanes.clear();
     this.liveTasks.clear();
     this.own = undefined;
   }
@@ -6319,7 +6377,7 @@ class Sessions {
   state(id) {
     let live = this.live.get(id);
     if (!live) {
-      live = { threads: new Map, permissions: new Map, forms: new Map, always: [], subagents: new Map, blocks: this.policies ? undefined : [], steeredNotes: [], models: new Map };
+      live = { threads: new Map, permissions: new Map, forms: new Map, always: [], subagents: new Map, blocks: this.policies ? undefined : [], steeredNotes: [], models: new Map, background: new Set };
       this.live.set(id, live);
     }
     return live;
@@ -7050,9 +7108,13 @@ ${text.slice(0, 4000)}
     const outcome = abort.signal.aborted ? "interrupted" : result.outcome;
     const before = record.messages[record.messages.length - 1]?.id;
     turn.finish(outcome, outcome === "interrupted" ? undefined : result.error);
-    for (const child of [...live.subagents.values()])
-      child.finish(outcome === "failed" ? "interrupted" : outcome);
-    live.subagents.clear();
+    for (const [child, childTurn] of [...live.subagents]) {
+      if (outcome === "succeeded" && live.background.has(child) && !childTurn.isEnded)
+        continue;
+      childTurn.finish(outcome === "failed" ? "interrupted" : outcome);
+      live.subagents.delete(child);
+      live.background.delete(child);
+    }
     if (live.last && live.last.seen === before)
       live.last.seen = record.messages[record.messages.length - 1]?.id;
     live.last = undefined;
@@ -7298,10 +7360,14 @@ ${text.slice(0, 4000)}
   settleAsks(id, live) {
     const directory = this.store.get(id)?.session.location.directory;
     for (const [requestID, pending] of live.permissions) {
+      if (pending.turn && !pending.turn.isEnded && [...live.subagents.values()].includes(pending.turn))
+        continue;
       pending.resolve("reject");
       emit("permission.replied", { sessionID: id, requestID }, directory);
     }
-    live.permissions.clear();
+    for (const [requestID, pending] of [...live.permissions])
+      if (!pending.turn || pending.turn.isEnded || ![...live.subagents.values()].includes(pending.turn))
+        live.permissions.delete(requestID);
     for (const [formID, pending] of live.forms) {
       pending.resolve(null);
       emit("form.cancelled", { id: formID, sessionID: id }, directory);
@@ -7337,10 +7403,10 @@ ${live.agentPrompt}` : ""
       check: (ask, ownPlan) => this.checkPermission(live, record.session, ask, plan && !ownPlan),
       permission: (ask) => this.askPermission(id, live, turn, ask, plan),
       question: (ask) => this.askQuestion(id, live, turn, ask),
-      subagent: (toolCallID, task) => this.startSubagent(id, live, turn, toolCallID, task)
+      subagent: (toolCallID, task) => this.startSubagent(id, live, turn, toolCallID, task, plan)
     };
   }
-  startSubagent(id, live, parentTurn, toolCallID, task) {
+  startSubagent(id, live, parentTurn, toolCallID, task, plan = false) {
     const parent = this.record(id).session;
     const directory = parent.location.directory;
     const now = Date.now();
@@ -7351,7 +7417,7 @@ ${live.agentPrompt}` : ""
         before.messages.push({ type: "user", id: newID("msg"), time: { created: now }, text: task.prompt });
       before.session.time.updated = now;
       this.store.save(before.session.id, true);
-      return this.subagentRun(live, parentTurn, toolCallID, before.session);
+      return this.subagentRun(id, live, parentTurn, toolCallID, before.session, task.background ?? false, plan);
     }
     const session = {
       id: newID("ses"),
@@ -7372,21 +7438,28 @@ ${live.agentPrompt}` : ""
       record.messages.push({ type: "user", id: newID("msg"), time: { created: now }, text: task.prompt });
     this.store.save(session.id, true);
     emit("session.created", { sessionID: session.id, session }, directory);
-    return this.subagentRun(live, parentTurn, toolCallID, session);
+    return this.subagentRun(id, live, parentTurn, toolCallID, session, task.background ?? false, plan);
   }
-  subagentRun(live, parentTurn, toolCallID, session) {
+  subagentRun(id, live, parentTurn, toolCallID, session, background, plan) {
     live.subagents.get(session.id)?.finish("succeeded");
     const turn = new Turn(this.store, session.id, session.location.directory, parentTurn.currentModel, session.agent ?? "build");
     live.subagents.set(session.id, turn);
+    if (background)
+      live.background.add(session.id);
+    else
+      live.background.delete(session.id);
     parentTurn.toolProgress(toolCallID, { sessionID: session.id });
     return {
       sessionID: session.id,
       turn,
       end: (outcome, error) => {
         turn.finish(outcome, error);
-        if (live.subagents.get(session.id) === turn)
+        if (live.subagents.get(session.id) === turn) {
           live.subagents.delete(session.id);
-      }
+          live.background.delete(session.id);
+        }
+      },
+      permission: (ask) => this.askPermission(id, live, turn, ask, plan)
     };
   }
   checkPermission(live, session, ask, plan) {
@@ -7442,6 +7515,7 @@ ${live.agentPrompt}` : ""
     return new Promise((resolve2) => {
       live.permissions.set(request.id, {
         request,
+        turn,
         resolve: (decision) => {
           if (decision === "always")
             live.always.push({ action: ask.action, patterns: request.save ?? ask.resources });

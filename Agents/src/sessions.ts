@@ -48,7 +48,7 @@ interface Live {
   abort?: AbortController
   /** Stopped with "resume": the next message you steered starts once it has. */
   resume?: boolean
-  permissions: Map<string, { request: PermissionRequest; resolve: (decision: Decision) => void }>
+  permissions: Map<string, { request: PermissionRequest; resolve: (decision: Decision) => void; turn?: Turn }>
   forms: Map<string, { form: FormRequest; resolve: (answer: FormAnswer | null) => void }>
   /** "Always allow" answers given in this session: an action, on these patterns. */
   always: { action: string; patterns: string[] }[]
@@ -58,6 +58,8 @@ interface Live {
   last?: Slot
   /** Its subagents at work, each a session of its own: their turns, by session. */
   subagents: Map<string, Turn>
+  /** Those sent off in the background: they go on after the turn that started them. */
+  background: Set<string>
   /** Settings › Permissions' Blocks as the turn began: what nothing allows (undefined: not known). */
   blocks?: PermissionRule[]
   /** The session's agent of yours (Settings › Agents), as the turn began: what it's told to be. */
@@ -483,7 +485,7 @@ export class Sessions {
     let live = this.live.get(id)
     if (!live) {
       // Blocks aren't known until the engine says (none, without an engine to ask).
-      live = { threads: new Map(), permissions: new Map(), forms: new Map(), always: [], subagents: new Map(), blocks: this.policies ? undefined : [], steeredNotes: [], models: new Map() }
+      live = { threads: new Map(), permissions: new Map(), forms: new Map(), always: [], subagents: new Map(), blocks: this.policies ? undefined : [], steeredNotes: [], models: new Map(), background: new Set() }
       this.live.set(id, live)
     }
     return live
@@ -1257,9 +1259,14 @@ export class Sessions {
     const outcome: Outcome = abort.signal.aborted ? "interrupted" : result.outcome
     const before = record.messages[record.messages.length - 1]?.id
     turn.finish(outcome, outcome === "interrupted" ? undefined : result.error)
-    // Subagents still at work end with it.
-    for (const child of [...live.subagents.values()]) child.finish(outcome === "failed" ? "interrupted" : outcome)
-    live.subagents.clear()
+    // Subagents still at work end with it, but those it sent off in the background, which go on
+    // in their sessions (when it went through: stopped, they stop too).
+    for (const [child, childTurn] of [...live.subagents]) {
+      if (outcome === "succeeded" && live.background.has(child) && !childTurn.isEnded) continue
+      childTurn.finish(outcome === "failed" ? "interrupted" : outcome)
+      live.subagents.delete(child)
+      live.background.delete(child)
+    }
     // The agent that ended the turn knows how it ended: that's not news to hand it later.
     if (live.last && live.last.seen === before) live.last.seen = record.messages[record.messages.length - 1]?.id
     live.last = undefined
@@ -1521,10 +1528,12 @@ export class Sessions {
   private settleAsks(id: string, live: Live) {
     const directory = this.store.get(id)?.session.location.directory
     for (const [requestID, pending] of live.permissions) {
+      // A subagent at work in the background still waits for its answer.
+      if (pending.turn && !pending.turn.isEnded && [...live.subagents.values()].includes(pending.turn)) continue
       pending.resolve("reject")
       emit("permission.replied", { sessionID: id, requestID }, directory)
     }
-    live.permissions.clear()
+    for (const [requestID, pending] of [...live.permissions]) if (!pending.turn || pending.turn.isEnded || ![...live.subagents.values()].includes(pending.turn)) live.permissions.delete(requestID)
     for (const [formID, pending] of live.forms) {
       pending.resolve(null)
       emit("form.cancelled", { id: formID, sessionID: id }, directory)
@@ -1563,12 +1572,12 @@ export class Sessions {
       check: (ask, ownPlan) => this.checkPermission(live, record.session, ask, plan && !ownPlan),
       permission: (ask) => this.askPermission(id, live, turn, ask, plan),
       question: (ask) => this.askQuestion(id, live, turn, ask),
-      subagent: (toolCallID, task) => this.startSubagent(id, live, turn, toolCallID, task),
+      subagent: (toolCallID, task) => this.startSubagent(id, live, turn, toolCallID, task, plan),
     }
   }
 
   /** A subagent's session under `id`, for its tool call there: what it's told, and its turn. */
-  private startSubagent(id: string, live: Live, parentTurn: Turn, toolCallID: string, task: SubagentTask): SubagentRun {
+  private startSubagent(id: string, live: Live, parentTurn: Turn, toolCallID: string, task: SubagentTask, plan = false): SubagentRun {
     const parent = this.record(id).session
     const directory = parent.location.directory
     const now = Date.now()
@@ -1579,7 +1588,7 @@ export class Sessions {
       if (task.prompt) before.messages.push({ type: "user", id: newID("msg"), time: { created: now }, text: task.prompt })
       before.session.time.updated = now
       this.store.save(before.session.id, true)
-      return this.subagentRun(live, parentTurn, toolCallID, before.session)
+      return this.subagentRun(id, live, parentTurn, toolCallID, before.session, task.background ?? false, plan)
     }
     const session: Session = {
       id: newID("ses"),
@@ -1599,13 +1608,15 @@ export class Sessions {
     if (task.prompt) record.messages.push({ type: "user", id: newID("msg"), time: { created: now }, text: task.prompt })
     this.store.save(session.id, true)
     emit("session.created", { sessionID: session.id, session }, directory)
-    return this.subagentRun(live, parentTurn, toolCallID, session)
+    return this.subagentRun(id, live, parentTurn, toolCallID, session, task.background ?? false, plan)
   }
 
-  private subagentRun(live: Live, parentTurn: Turn, toolCallID: string, session: Session): SubagentRun {
+  private subagentRun(id: string, live: Live, parentTurn: Turn, toolCallID: string, session: Session, background: boolean, plan: boolean): SubagentRun {
     live.subagents.get(session.id)?.finish("succeeded")
     const turn = new Turn(this.store, session.id, session.location.directory, parentTurn.currentModel, session.agent ?? "build")
     live.subagents.set(session.id, turn)
+    if (background) live.background.add(session.id)
+    else live.background.delete(session.id)
     // Its step in the conversation that started it says which session it is.
     parentTurn.toolProgress(toolCallID, { sessionID: session.id })
     return {
@@ -1613,8 +1624,13 @@ export class Sessions {
       turn,
       end: (outcome, error) => {
         turn.finish(outcome, error)
-        if (live.subagents.get(session.id) === turn) live.subagents.delete(session.id)
+        if (live.subagents.get(session.id) === turn) {
+          live.subagents.delete(session.id)
+          live.background.delete(session.id)
+        }
       },
+      // Asked in the conversation that started it, while it works.
+      permission: (ask) => this.askPermission(id, live, turn, ask, plan),
     }
   }
 
@@ -1670,6 +1686,7 @@ export class Sessions {
     return new Promise<Decision>((resolve) => {
       live.permissions.set(request.id, {
         request,
+        turn,
         resolve: (decision) => {
           if (decision === "always") live.always.push({ action: ask.action, patterns: request.save ?? ask.resources })
           resolve(decision)

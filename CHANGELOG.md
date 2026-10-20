@@ -67,6 +67,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Claude Code and Codex take a message you send while they work at their next step, and a text file you attach for a coding agent goes in the message, as with the engine's models.
 - A subagent's permission card or question no longer disappears from its conversation when the conversation is read again, or when the subagent was already at work as Kuvo Code started.
 - Undo From Here and Redo work in sessions with a coding agent too: the conversation and the files go back, as with the engine's models.
+- A subagent Claude Code sends off to work in the background goes on after its turn, in its own session, where its work shows as it happens, and it can ask you for permission there.
 - Commands Claude Code leaves running in the background show in the bar over the composer, with their output and **Stop**; when one ends and Claude Code carries on by itself, the conversation shows it, as with the engine's models.
 - Sessions with Claude Code or Codex are titled by their model (or the one you picked for titles in Settings › Agents), and **Suggest a Message** and **Create Pull Request** have the session's model write, as in other sessions. With Cursor, Grok or Antigravity, your default model writes them.
 - Run a command yourself with ! in a session with a coding agent; the agent gets it and its output with your next message.

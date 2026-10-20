@@ -26,7 +26,9 @@ class FakeClaude {
   /** One-off prompts it answered (a title). */
   oneOffs: string[] = []
 
-  query = (options: { prompt: AsyncIterable<any> | string }) => {
+  options: any
+
+  query = (options: { prompt: AsyncIterable<any> | string; options?: any }) => {
     if (typeof options.prompt === "string") {
       this.oneOffs.push(options.prompt)
       return (async function* () {
@@ -34,6 +36,7 @@ class FakeClaude {
       })()
     }
     const prompt = options.prompt
+    this.options = options.options
     void (async () => {
       for await (const message of prompt) this.sent.push(message)
     })()
@@ -216,5 +219,37 @@ describe("Claude Code, on its own", () => {
     fake.result([mine])
     await until(() => idles(id).length === 1)
     expect(texts(id).join(" ")).toContain("hello to you")
+  })
+})
+
+describe("Claude Code's subagents in the background", () => {
+  test("one goes on after the turn: its work shows in its session, it can ask you, and it ends when Claude Code says", async () => {
+    const id = sessions.create({ model: { providerID: provider, id: "default" }, location: { directory: root } }).id
+    sessions.prompt(id, { id: "msg_claude_sub_0001", text: "look into it in the background", files: [], delivery: "steer" })
+    await until(() => fake.sent.length === 1)
+    const [first] = fake.sent.map((message) => message.uuid)
+    fake.out.push({ type: "assistant", message: { id: "m1", content: [{ type: "tool_use", id: "call1", name: "Agent", input: { description: "Look into it", prompt: "Look into it", subagent_type: "general-purpose", run_in_background: true } }] }, parent_tool_use_id: null, user_message_uuids: [first] })
+    fake.out.push({ type: "system", subtype: "task_started", task_id: "ag1", task_type: "local_agent", description: "Look into it", tool_use_id: "call1", is_backgrounded: true })
+    fake.out.push({ type: "system", subtype: "background_tasks_changed", tasks: [{ task_id: "ag1", task_type: "local_agent", description: "Look into it" }] })
+    fake.out.push({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "call1", content: "Launched in the background." }] }, parent_tool_use_id: null })
+    fake.say("Launched.", [first])
+    fake.result([first])
+    await until(() => idles(id).length === 1)
+    const child = sessions.list(root, id)[0]?.id
+    expect(child).toBeTruthy()
+    expect(sessions.active()).toContain(child)
+    // After the turn: its words in its session.
+    fake.out.push({ type: "assistant", message: { id: "m2", content: [{ type: "text", text: "Found the cause." }] }, parent_tool_use_id: "call1" })
+    await until(() => texts(child).includes("Found the cause."))
+    // It asks, as its own; you answer in the conversation that started it.
+    const asked = fake.options.canUseTool("Bash", { command: "rm -rf build" }, { toolUseID: "t2", agentID: "ag1" })
+    sessions.update(id, { permissions: [{ action: "shell", resource: "*", effect: "ask" }] })
+    await until(() => sessions.permissions(id).length === 1)
+    sessions.replyPermission(id, sessions.permissions(id)[0].id, "once")
+    expect((await asked).behavior).toBe("allow")
+    // Claude Code says it's done: its session's work ends.
+    fake.out.push({ type: "system", subtype: "task_notification", task_id: "ag1", status: "completed", tool_use_id: "call1", output_file: "", summary: "done" })
+    await until(() => !sessions.active().includes(child))
+    expect(sessions.messages(child).at(-1)).toMatchObject({ type: "idle", outcome: "succeeded" })
   })
 })

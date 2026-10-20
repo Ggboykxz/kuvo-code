@@ -134,12 +134,16 @@ export interface SubagentTask {
   agent?: string
   /** Its session from before, when the agent gives the same subagent more to do. */
   sessionID?: string
+  /** Sent off to work in the background: its session goes on after the turn that started it. */
+  background?: boolean
 }
 
 export interface SubagentRun {
   sessionID: string
   turn: Turn
   end(outcome: Outcome, error?: StructuredError): void
+  /** What it asks you, as its own (one in the background asks after its turn too). */
+  permission(ask: PermissionAsk): Promise<Decision>
 }
 
 export interface RunResult {
