@@ -5,17 +5,15 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
-- In full screen, the title bar's row sits on the window's glass as it does in a window, instead of a gray band.
 - With Find open, Esc closes it first; press Esc again to stop the agent.
 - Get Skills lists each skill of a repository once, not again for copies it keeps for other tools.
 - With a coding agent, a message you send again after undoing one no longer vanishes from the conversation.
 - Find marks every place it finds, also while a reply is being written, and the conversation's first message no longer sits under its bar.
 - Esc stops the agent even when the composer doesn't have the keyboard.
-- In full screen, the title bar's row looks as it does in a window, without a gray band.
 - Coding agents keep to Settings › Permissions' "Work outside the project": with Ask First they ask before reading or changing files outside it, and Don't Allow there holds for them. Answering Always to Codex, Grok or Antigravity is kept by Kuvo Code for the conversation, so your rules still hold for what comes after. If Antigravity can't be set to ask first, its turn stops instead of going on without asking.
 - Sign-in pages that ask for a passkey no longer get stuck in the browser, on your Mac or a machine: passkeys can't be used there yet, so the site offers its other ways, like your password.
 - The usage item in the menu bar is compact (Bars) by default; a style you picked stays.
-- In full screen with the tab bar hidden, there's no empty row at the top; ⌘0 shows the sidebar. Tabs in the title bar no longer flicker while you make the window narrower.
+- The green button now makes the window fill the screen, keeping its look, instead of going full screen, where the title bar showed as a gray band. Tabs in the title bar no longer flicker while you make the window narrower.
 - Find in a conversation goes straight to each place, in the middle of the view, instead of jumping back and forth.
 - Expanding a big search's output with context lines no longer freezes the window for a few seconds.
 - The coding agents (Claude Code, Codex, Cursor, Grok, Antigravity) can use the skills in Settings › Skills, including ones you add there or from other folders and catalogs, except the ones you switch off. On a machine, they get that machine's skills.
