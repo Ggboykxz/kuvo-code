@@ -1175,6 +1175,7 @@ private struct TurnEndView: View {
     /// Builds what a plan described; offered under Plan mode's last answer.
     var build: (() -> Void)?
     var reply: ((String) -> Void)?
+    @Environment(AppModel.self) private var app
 
     var body: some View {
         switch idle.outcome {
@@ -1182,6 +1183,16 @@ private struct TurnEndView: View {
             VStack(alignment: .leading, spacing: 8) {
                 ErrorCard(message: idle.error?.message ?? "The run failed.")
                 HStack(spacing: 8) {
+                    // A coding agent to sign in to: where, here or on the machine.
+                    if idle.error?.type == "signin" {
+                        let onMachine = RemoteFolder.isRemote(directory)
+                        Button(onMachine ? "Open Machines" : "Open Accounts", systemImage: "person.crop.circle") {
+                            app.openSettings(onMachine ? .machines : .accounts)
+                        }
+                        .buttonStyle(.glass)
+                        .controlSize(.small)
+                        .help(onMachine ? "Sign in to the coding agents on this machine" : "Sign in to the coding agents")
+                    }
                     if let retry {
                         Button("Try Again", systemImage: "arrow.clockwise", action: retry)
                             .buttonStyle(.glass)

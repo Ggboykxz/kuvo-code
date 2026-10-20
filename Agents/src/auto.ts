@@ -201,11 +201,27 @@ export function resetsIn(text: string | undefined, now = Date.now()): number | u
   return total > 0 ? now + Math.min(total, 31 * 86_400_000) : undefined
 }
 
-/** "4:30 PM", or "Oct 21, 9:00 AM" when it isn't today. */
+/** The time zone KUVO_TZ names, if it names one this runtime knows. */
+function zone(): string | undefined {
+  const name = process.env.KUVO_TZ
+  if (!name) return undefined
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: name })
+    return name
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * "4:30 PM", or "Oct 21, 9:00 AM" when it isn't today: in your time zone (on a machine, the
+ * Mac's, which its launch gives as KUVO_TZ).
+ */
 export function resetTime(at: number): string {
+  const timeZone = zone()
+  const day = (date: Date) => date.toLocaleDateString("en-US", { timeZone })
   const date = new Date(at)
-  const today = new Date()
-  const time = date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
-  if (date.toDateString() === today.toDateString()) return time
-  return `${date.toLocaleDateString("en-US", { month: "short", day: "numeric" })}, ${time}`
+  const time = date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone })
+  if (day(date) === day(new Date())) return time
+  return `${date.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone })}, ${time}`
 }

@@ -394,13 +394,25 @@ function resetsIn(text, now = Date.now()) {
     total += Number(part[1]) * (units[part[2].toLowerCase()] ?? 0);
   return total > 0 ? now + Math.min(total, 31 * 86400000) : undefined;
 }
+function zone() {
+  const name = process.env.KUVO_TZ;
+  if (!name)
+    return;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: name });
+    return name;
+  } catch {
+    return;
+  }
+}
 function resetTime(at) {
+  const timeZone = zone();
+  const day = (date2) => date2.toLocaleDateString("en-US", { timeZone });
   const date = new Date(at);
-  const today = new Date;
-  const time = date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-  if (date.toDateString() === today.toDateString())
+  const time = date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone });
+  if (day(date) === day(new Date))
     return time;
-  return `${date.toLocaleDateString("en-US", { month: "short", day: "numeric" })}, ${time}`;
+  return `${date.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone })}, ${time}`;
 }
 
 // Agents/src/deps.ts
@@ -9506,9 +9518,12 @@ ${text.slice(0, 4000)}
       if (!entry) {
         if (note)
           turn.notice(note);
+        const stopped = await this.whyNone(tried, input.model.id);
+        if (stopped)
+          return { outcome: "failed", error: stopped };
         if (last2?.limit)
           return { outcome: "failed", error: { type: "limit", message: `Every model in your Custom Auto list is at a usage limit for now${this.nextReset()}.` } };
-        return last2 ?? { outcome: "failed", error: { type: "limit", message: `No model in your Custom Auto list can run now: each is at a limit, or its agent isn't signed in${this.nextReset()}. Edit the list in Settings \u203A Custom Auto.` } };
+        return last2 ?? { outcome: "failed", error: { type: "limit", message: `Your Custom Auto list has no model to run. Edit it in Settings \u203A Custom Auto.` } };
       }
       if (!tried.size && heldBefore.has(Auto.modelKey(entry)))
         turn.notice(`Back on ${this.entryName(entry)}: its limit has reset.`);
@@ -9563,26 +9578,68 @@ ${text.slice(0, 4000)}
   }
   async nextEntry(tried, list) {
     for (const entry of this.auto.list(list)) {
-      if (tried.has(Auto.modelKey(entry)) || this.auto.isHeld(entry))
+      if (tried.has(Auto.modelKey(entry)))
         continue;
-      const agent = this.agent(entry.providerID);
-      if (!agent)
-        continue;
-      const account = await Promise.race([agent.account().catch(() => {
-        return;
-      }), Bun.sleep(1e4).then(() => {
-        return;
-      })]);
-      if (account && !account.signedIn)
-        continue;
-      if (agent.id === "engine") {
-        const models = await agent.models().catch(() => []);
-        if (models.length && !models.some((model2) => model2.id === entry.modelID))
-          continue;
-      }
-      return entry;
+      if (!await this.whyNot(entry))
+        return entry;
     }
     return;
+  }
+  async whyNot(entry) {
+    const held = this.auto.isHeld(entry);
+    if (held)
+      return { kind: "held", until: held.until, whole: held.scope === "provider" };
+    const agent = this.agent(entry.providerID);
+    if (!agent)
+      return { kind: "missing" };
+    const account = await Promise.race([agent.account().catch(() => {
+      return;
+    }), Bun.sleep(1e4).then(() => {
+      return;
+    })]);
+    if (account && !account.signedIn)
+      return { kind: "signedOut" };
+    if (agent.id === "engine") {
+      const models = await agent.models().catch(() => []);
+      if (models.length && !models.some((model2) => model2.id === entry.modelID))
+        return { kind: "missing" };
+    }
+    return;
+  }
+  async whyNone(tried, list) {
+    const signIn = new Set;
+    const held = new Map;
+    const gone = [];
+    for (const entry of this.auto.list(list)) {
+      if (tried.has(Auto.modelKey(entry)))
+        continue;
+      const why = await this.whyNot(entry);
+      if (!why)
+        continue;
+      if (why.kind === "signedOut")
+        signIn.add(this.entryName(entry, true));
+      else if (why.kind === "held")
+        held.set(this.entryName(entry, why.whole), why.until);
+      else
+        gone.push(this.entryName(entry));
+    }
+    if (!signIn.size && !held.size && !gone.length)
+      return;
+    const where = onMachine ? " on this machine" : "";
+    const signInPage = onMachine ? "Settings \u203A Machines \u203A Coding Agents" : "Settings \u203A Accounts";
+    const agents = [...signIn].join(", ").replace(/, ([^,]*)$/, " and $1");
+    if (!held.size && !gone.length) {
+      return { type: "signin", message: `${tried.size ? "The rest of the agents" : "None of the agents"} in your Custom Auto list ${tried.size ? "aren't" : "is"} signed in${where}. Sign in to ${agents} in ${signInPage}.` };
+    }
+    const limits = [...held].map(([name, until]) => `${name} until ${resetTime(until)}`).join("; ");
+    if (!signIn.size && !gone.length && !tried.size)
+      return { type: "limit", message: `Every model in your Custom Auto list is at a usage limit for now: ${limits}.` };
+    const reasons = [
+      ...held.size ? [`at a usage limit: ${limits}`] : [],
+      ...signIn.size ? [`not signed in${where}: ${agents} (sign in in ${signInPage})`] : [],
+      ...gone.length ? [`not available now: ${gone.join(", ")}`] : []
+    ];
+    return { type: signIn.size ? "signin" : "limit", message: `No ${tried.size ? "other " : ""}model in your Custom Auto list can run now. ${reasons.map((reason2) => reason2[0].toUpperCase() + reason2.slice(1)).join(". ")}.` };
   }
   nextReset() {
     const known = this.auto.limits().filter((limit) => limit.known).map((limit) => limit.until);

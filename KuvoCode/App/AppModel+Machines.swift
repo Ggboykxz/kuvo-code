@@ -430,6 +430,8 @@ extension AppModel {
                 environment[RemoteServer.privateSettingsVariable] = OpencodeImport.inlined(String(decoding: json, as: UTF8.self))
             }
         }
+        // Your time zone, for times its agents bridge says (when a limit resets).
+        environment["KUVO_TZ"] = TimeZone.current.identifier
         // Always, so a choice taken back here is taken back there.
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]

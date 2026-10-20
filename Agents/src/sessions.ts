@@ -16,12 +16,13 @@ import { failure } from "./agent"
 import { Auto, autoProvider, resetTime, type AutoEntry } from "./auto"
 import { emit } from "./events"
 import { handover, withHandover } from "./handover"
+import { onMachine } from "./machine"
 import { messageID, newID } from "./ids"
 import type { Roster } from "./roster"
 import { matches, ruled } from "./rules"
 import type { Record_, Store } from "./store"
 import { Turn, type Outcome } from "./turn"
-import type { AssistantMessage, Attachment, Decision, FormAnswer, FormRequest, Message, ModelRef, PermissionRequest, PermissionRule, Session, ShellMessage, FileDiff } from "./wire"
+import type { AssistantMessage, Attachment, Decision, FormAnswer, FormRequest, Message, ModelRef, PermissionRequest, PermissionRule, Session, ShellMessage, FileDiff, StructuredError } from "./wire"
 import { plain } from "./proc"
 import type { Snapshots } from "./snapshots"
 import { noTokens } from "./wire"
@@ -1712,8 +1713,11 @@ export class Sessions {
       if (signal.aborted) return { outcome: "interrupted" }
       if (!entry) {
         if (note) turn.notice(note)
+        // Why the rest can't run, each in its words; none left untried: how the last one ended.
+        const stopped = await this.whyNone(tried, input.model.id)
+        if (stopped) return { outcome: "failed", error: stopped }
         if (last?.limit) return { outcome: "failed", error: { type: "limit", message: `Every model in your Custom Auto list is at a usage limit for now${this.nextReset()}.` } }
-        return last ?? { outcome: "failed", error: { type: "limit", message: `No model in your Custom Auto list can run now: each is at a limit, or its agent isn't signed in${this.nextReset()}. Edit the list in Settings › Custom Auto.` } }
+        return last ?? { outcome: "failed", error: { type: "limit", message: `Your Custom Auto list has no model to run. Edit it in Settings › Custom Auto.` } }
       }
       if (!tried.size && heldBefore.has(Auto.modelKey(entry))) turn.notice(`Back on ${this.entryName(entry)}: its limit has reset.`)
       tried.add(Auto.modelKey(entry))
@@ -1763,20 +1767,62 @@ export class Sessions {
   /** The first entry of the Auto list `list` not at a limit, not tried for this message, and signed in. */
   private async nextEntry(tried: Set<string>, list: string): Promise<AutoEntry | undefined> {
     for (const entry of this.auto.list(list)) {
-      if (tried.has(Auto.modelKey(entry)) || this.auto.isHeld(entry)) continue
-      const agent = this.agent(entry.providerID)
-      if (!agent) continue
-      // Signed out: skipped (an agent slow to say is tried anyway).
-      const account = await Promise.race([agent.account().catch(() => undefined), Bun.sleep(10_000).then(() => undefined)])
-      if (account && !account.signedIn) continue
-      // A model the engine doesn't offer now (its provider was disconnected): skipped.
-      if (agent.id === "engine") {
-        const models = await agent.models().catch(() => [])
-        if (models.length && !models.some((model) => model.id === entry.modelID)) continue
-      }
-      return entry
+      if (tried.has(Auto.modelKey(entry))) continue
+      if (!(await this.whyNot(entry))) return entry
     }
     return undefined
+  }
+
+  /** Why an entry can't run now: at a limit, its agent signed out (or not here), its model gone. */
+  private async whyNot(entry: AutoEntry): Promise<{ kind: "held"; until: number; whole: boolean } | { kind: "signedOut" | "missing" } | undefined> {
+    const held = this.auto.isHeld(entry)
+    if (held) return { kind: "held", until: held.until, whole: held.scope === "provider" }
+    const agent = this.agent(entry.providerID)
+    if (!agent) return { kind: "missing" }
+    // Signed out: skipped (an agent slow to say is tried anyway).
+    const account = await Promise.race([agent.account().catch(() => undefined), Bun.sleep(10_000).then(() => undefined)])
+    if (account && !account.signedIn) return { kind: "signedOut" }
+    // A model the engine doesn't offer now (its provider was disconnected): skipped.
+    if (agent.id === "engine") {
+      const models = await agent.models().catch(() => [])
+      if (models.length && !models.some((model) => model.id === entry.modelID)) return { kind: "missing" }
+    }
+    return undefined
+  }
+
+  /**
+   * Why no model of the list (none left untried) can take this message, as you'd fix it: the
+   * agents to sign in to (here, or on this machine), the limits and when they reset, the models
+   * that are gone. Undefined when every one was tried.
+   */
+  private async whyNone(tried: Set<string>, list: string): Promise<StructuredError | undefined> {
+    const signIn = new Set<string>()
+    const held = new Map<string, number>()
+    const gone: string[] = []
+    for (const entry of this.auto.list(list)) {
+      if (tried.has(Auto.modelKey(entry))) continue
+      const why = await this.whyNot(entry)
+      if (!why) continue
+      if (why.kind === "signedOut") signIn.add(this.entryName(entry, true))
+      else if (why.kind === "held") held.set(this.entryName(entry, why.whole), why.until)
+      else gone.push(this.entryName(entry))
+    }
+    if (!signIn.size && !held.size && !gone.length) return undefined
+    const where = onMachine ? " on this machine" : ""
+    const signInPage = onMachine ? "Settings › Machines › Coding Agents" : "Settings › Accounts"
+    const agents = [...signIn].join(", ").replace(/, ([^,]*)$/, " and $1")
+    // Only sign-ins in the way: what to sign in to, and where.
+    if (!held.size && !gone.length) {
+      return { type: "signin", message: `${tried.size ? "The rest of the agents" : "None of the agents"} in your Custom Auto list ${tried.size ? "aren't" : "is"} signed in${where}. Sign in to ${agents} in ${signInPage}.` }
+    }
+    const limits = [...held].map(([name, until]) => `${name} until ${resetTime(until)}`).join("; ")
+    if (!signIn.size && !gone.length && !tried.size) return { type: "limit", message: `Every model in your Custom Auto list is at a usage limit for now: ${limits}.` }
+    const reasons = [
+      ...(held.size ? [`at a usage limit: ${limits}`] : []),
+      ...(signIn.size ? [`not signed in${where}: ${agents} (sign in in ${signInPage})`] : []),
+      ...(gone.length ? [`not available now: ${gone.join(", ")}`] : []),
+    ]
+    return { type: signIn.size ? "signin" : "limit", message: `No ${tried.size ? "other " : ""}model in your Custom Auto list can run now. ${reasons.map((reason) => reason[0]!.toUpperCase() + reason.slice(1)).join(". ")}.` }
   }
 
   private nextReset(): string {
