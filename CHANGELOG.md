@@ -5,6 +5,7 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- Sign-in pages that ask for a passkey no longer get stuck in the browser, on your Mac or a machine: passkeys can't be used there yet, so the site offers its other ways, like your password.
 - The usage item in the menu bar is compact (Bars) by default; a style you picked stays.
 - In full screen with the tab bar hidden, there's no empty row at the top; ⌘0 shows the sidebar. Tabs in the title bar no longer flicker while you make the window narrower.
 - Find in a conversation goes straight to each place, in the middle of the view, instead of jumping back and forth.
