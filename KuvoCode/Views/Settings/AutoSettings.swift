@@ -112,6 +112,8 @@ struct AutoSettings: View {
             HStack(spacing: 8) {
                 TextField("Name", text: Binding(get: { names[list.id] ?? list.name }, set: { names[list.id] = $0 }))
                     .textFieldStyle(.plain)
+                    .labelsHidden()
+                    .font(.system(size: 13, weight: .semibold))
                     .focused($naming, equals: list.id)
                     .onSubmit { naming = nil }
                     .help("Its name, as the model picker shows it")
@@ -127,6 +129,7 @@ struct AutoSettings: View {
                 } label: {
                     Image(systemName: "ellipsis")
                 }
+                .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
                 .help("More")

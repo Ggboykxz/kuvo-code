@@ -336,9 +336,10 @@ struct ModelPicker: View {
             // An agent's own "Auto" says whose it is.
             if name.hasPrefix("Auto") { name = "\(catalog.providerName(entry.providerID)) \(name)" }
             if let variant = entry.variant { name += " " + EffortLevel.title(variant) }
-            return name
+            // Lines break between models, never inside a name.
+            return name.replacingOccurrences(of: " ", with: "\u{00A0}").replacingOccurrences(of: "-", with: "\u{2011}")
         }
-        .joined(separator: " → ")
+        .joined(separator: "\u{00A0}→ ")
     }
 
     /// Another list (for bugfixes, features…): made now, and named and filled in Settings › Auto.

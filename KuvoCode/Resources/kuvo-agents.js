@@ -81,29 +81,53 @@ class Accounts {
 import { mkdirSync as mkdirSync2, readFileSync as readFileSync2, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "fs";
 import { join as join2 } from "path";
 var autoProvider = "auto";
+var firstList = "auto";
 var unknownReset = 30 * 60000;
 var briefReset = 3 * 60000;
 
 class Auto {
   root;
-  entries = [];
+  lists = [{ id: firstList, name: "Auto", entries: [] }];
   held = [];
   constructor(root) {
     this.root = root;
     try {
       const saved = JSON.parse(readFileSync2(this.file, "utf8"));
-      this.entries = (saved.entries ?? []).filter((entry) => entry?.providerID && entry?.modelID);
+      const lists = Array.isArray(saved.lists) ? saved.lists : [{ id: firstList, name: "Auto", entries: saved.entries ?? [] }];
+      const read = Auto.clean(lists);
+      if (read.length)
+        this.lists = read;
       this.held = (saved.limits ?? []).filter((held) => held?.key && held.until > Date.now());
     } catch {}
+  }
+  static clean(lists) {
+    const seen = new Set;
+    return lists.filter((list) => list && typeof list.id === "string" && /^[\w-]{1,64}$/.test(list.id) && !seen.has(list.id) && seen.add(list.id)).map((list) => ({
+      id: list.id,
+      name: typeof list.name === "string" && list.name.trim() ? list.name.trim().slice(0, 60) : "Auto",
+      entries: (Array.isArray(list.entries) ? list.entries : []).filter((entry) => entry && typeof entry.providerID === "string" && typeof entry.modelID === "string" && entry.providerID !== autoProvider).map((entry) => ({ providerID: entry.providerID, modelID: entry.modelID, ...entry.variant ? { variant: entry.variant } : {} }))
+    }));
   }
   get file() {
     return join2(this.root, "auto.json");
   }
-  list() {
-    return this.entries.map((entry) => ({ ...entry }));
+  list(id) {
+    const list = this.lists.find((list2) => list2.id === id) ?? this.lists[0];
+    return (list?.entries ?? []).map((entry) => ({ ...entry }));
+  }
+  all() {
+    return this.lists.map((list) => ({ ...list, entries: list.entries.map((entry) => ({ ...entry })) }));
   }
   set(entries) {
-    this.entries = entries.filter((entry) => entry && typeof entry.providerID === "string" && typeof entry.modelID === "string" && entry.providerID !== autoProvider).map((entry) => ({ providerID: entry.providerID, modelID: entry.modelID, ...entry.variant ? { variant: entry.variant } : {} }));
+    const [first, ...rest] = this.lists;
+    this.lists = [...Auto.clean([{ ...first, entries }]), ...rest];
+    this.save();
+  }
+  setLists(lists) {
+    const kept = Auto.clean(lists);
+    if (!kept.length)
+      throw new Error("Keep one list at least.");
+    this.lists = kept;
     this.save();
   }
   limits() {
@@ -140,7 +164,7 @@ class Auto {
   }
   save() {
     mkdirSync2(this.root, { recursive: true });
-    writeFileSync2(this.file + ".new", JSON.stringify({ entries: this.entries, limits: this.held }, null, 2));
+    writeFileSync2(this.file + ".new", JSON.stringify({ lists: this.lists, limits: this.held }, null, 2));
     renameSync2(this.file + ".new", this.file);
   }
 }
@@ -8118,10 +8142,10 @@ class Sessions {
       return;
     return this.roster.find(providerID2) ?? this.engine?.(providerID2);
   }
-  runs(providerID2) {
-    if (providerID2 === autoProvider)
-      return this.auto.list().length > 0;
-    return Boolean(this.agent(providerID2));
+  runs(model2) {
+    if (model2?.providerID === autoProvider)
+      return this.auto.list(model2.id).length > 0;
+    return Boolean(this.agent(model2?.providerID));
   }
   state(id) {
     let live = this.live.get(id);
@@ -8245,9 +8269,9 @@ class Sessions {
     }
   }
   create(body) {
-    if (body.model?.providerID === autoProvider && !this.auto.list().length)
-      throw new BadRequest("Your Auto list is empty: add models to it in Settings \u203A Auto.");
-    if (!body.model?.id || !this.runs(body.model.providerID))
+    if (body.model?.providerID === autoProvider && !this.auto.list(body.model.id).length)
+      throw new BadRequest("That Auto list is empty: add models to it in Settings \u203A Auto.");
+    if (!body.model?.id || !this.runs(body.model))
       throw new BadRequest("Pick a model of an agent you've connected.");
     const now = Date.now();
     const directory = body.location.directory;
@@ -8563,9 +8587,9 @@ class Sessions {
     const previous = session.model;
     if (!model2?.providerID || !model2.id)
       throw new BadRequest("That isn't a model.");
-    if (model2.providerID === autoProvider && !this.auto.list().length)
-      throw new BadRequest("Your Auto list is empty: add models to it in Settings \u203A Auto.");
-    if (!this.runs(model2.providerID))
+    if (model2.providerID === autoProvider && !this.auto.list(model2.id).length)
+      throw new BadRequest("That Auto list is empty: add models to it in Settings \u203A Auto.");
+    if (!this.runs(model2))
       throw new BadRequest("That model's agent isn't connected.");
     if (previous && previous.providerID === model2.providerID && previous.id === model2.id && previous.variant === model2.variant)
       return;
@@ -8772,7 +8796,7 @@ class Sessions {
       candidates.push(model2);
     else {
       const tried = new Set;
-      for (let entry = await this.nextEntry(tried);entry; entry = await this.nextEntry(tried)) {
+      for (let entry = await this.nextEntry(tried, model2.id);entry; entry = await this.nextEntry(tried, model2.id)) {
         tried.add(Auto.modelKey(entry));
         candidates.push({ providerID: entry.providerID, id: entry.modelID, ...entry.variant ? { variant: entry.variant } : {} });
       }
@@ -9048,7 +9072,7 @@ ${text.slice(0, 4000)}
     try {
       return await this.runAutoList(id, record, live, input, turn, signal, userMessage2, heldBefore);
     } finally {
-      record.agent.autoHeld = this.auto.list().filter((entry) => this.auto.isHeld(entry)).map((entry) => Auto.modelKey(entry));
+      record.agent.autoHeld = this.auto.list(input.model.id).filter((entry) => this.auto.isHeld(entry)).map((entry) => Auto.modelKey(entry));
       this.store.save(id);
     }
   }
@@ -9059,7 +9083,7 @@ ${text.slice(0, 4000)}
     for (;; ) {
       if (signal.aborted)
         return { outcome: "interrupted" };
-      const entry = await this.nextEntry(tried);
+      const entry = await this.nextEntry(tried, input.model.id);
       if (signal.aborted)
         return { outcome: "interrupted" };
       if (!entry) {
@@ -9102,8 +9126,8 @@ ${text.slice(0, 4000)}
       note = `${this.entryName(entry, whole)} reached ${whole ? "its usage limit" : "this model's limit"}${last2.limit.resetsAt ? ` (it resets at ${resetTime(last2.limit.resetsAt)})` : ""}.`;
     }
   }
-  async nextEntry(tried) {
-    for (const entry of this.auto.list()) {
+  async nextEntry(tried, list) {
+    for (const entry of this.auto.list(list)) {
       if (tried.has(Auto.modelKey(entry)) || this.auto.isHeld(entry))
         continue;
       const agent = this.agent(entry.providerID);
@@ -9905,14 +9929,21 @@ function handler(context) {
           return json({});
         }
         if (!b && method === "PUT") {
-          const { entries } = await body();
-          if (!Array.isArray(entries))
-            return error(400, "Send the list as entries.");
-          auto.set(entries);
+          const { entries, lists } = await body();
+          if (Array.isArray(lists)) {
+            try {
+              auto.setLists(lists);
+            } catch (problem) {
+              return error(400, problem.message);
+            }
+          } else if (Array.isArray(entries))
+            auto.set(entries);
+          else
+            return error(400, "Send the lists, or the first one's entries.");
           emit("kuvo.auto.updated", {});
         }
         if (!b && (method === "GET" || method === "PUT"))
-          return json({ data: { entries: auto.list(), limits: auto.limits() } });
+          return json({ data: { entries: auto.list(), lists: auto.all(), limits: auto.limits() } });
       }
       if (area === "experimental" && a === "session" && b) {
         const id = b;
