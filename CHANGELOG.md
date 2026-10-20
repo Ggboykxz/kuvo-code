@@ -5,6 +5,10 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- Removing an integration also takes back the keys bots had of their own for it.
+- Notifications keep their buttons for commit hashes in image tags, release names and checksums, and hide keys written as ENV['…'] =, := or =>, and names like SECRET_KEY_BASE.
+- Settings › MCP Servers no longer lists integrations, which have their own page; Permissions keeps a pattern you typed when you change its rule's kind or effect.
+- A worktree's branch prefix with a stray space or character no longer stops worktree sessions from starting.
 - Mentions stand out in your messages everywhere: files you name with @ (a click opens them in the panel) and bots or sessions you name with &, in sent, sending and waiting messages, and in bots' messages in group chats.
 - Type & in any message, a group chat's too, to name one of your bots or sessions, like &Mira: the agent knows which one you mean, and the name shows in bold (a bot's in its color) and opens that conversation. Agents can now read each other's conversations, not only write to each other.
 - Settings › Permissions › Always Allowed lists approvals you saved in sessions on your machines too, and removes them there.
