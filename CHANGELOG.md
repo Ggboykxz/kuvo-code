@@ -5,6 +5,7 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- Dragging or clicking around in a widget no longer shows Add to Chat and Copy as if you'd selected text; selecting a widget's text still does.
 - Discarding a new file in Changes that was staged and then edited again no longer leaves it to be committed; discarding a moved file puts the old one back also in Unstaged; a file that became a link comes back as it was; and the dialog says when a folder with its own repository goes to the Trash.
 - Removing a worktree asks first when it has new files, also when git is set to hide them.
 - Notifications show paths and names like `web3Provider` in full again, and one that hides something as dots has no answer buttons.
