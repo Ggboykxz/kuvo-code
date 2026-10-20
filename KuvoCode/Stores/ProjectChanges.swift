@@ -93,7 +93,8 @@ final class ProjectChanges {
         let directory = directory, scope = scope, base = base
         if scope == .session {
             hasUncommitted = false
-            apply(fallback.map { DiffParser.file(from: $0, directory: directory) })
+            // The engine's record of the session; for one it doesn't keep (a coding agent's), its edits.
+            apply((fallback.isEmpty ? edits : fallback).map { DiffParser.file(from: $0, directory: directory) })
             isLoaded = true
             return
         }
