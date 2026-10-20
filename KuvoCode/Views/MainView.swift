@@ -1029,14 +1029,16 @@ struct MainView: View {
             panelExpanded = false
             app.showsSettings = false
             groupEditor = nil
-            projectEditor = nil
             botEditor = BotEditorRequest(bot: bot, recipe: recipe)
         }
         focus = .conversation
     }
 
-    /// Makes a project, or changes one, in a popup over what's in the window.
+    /// Makes a project, or changes one, in a popup over what's in the window. One open already
+    /// stays, with what's typed in it: a shortcut or a session opened from a notification
+    /// doesn't take its place.
     private func openProjectEditor(_ request: ProjectEditorRequest) {
+        guard projectEditor == nil else { return }
         projectEditor = request
     }
 
@@ -1046,7 +1048,6 @@ struct MainView: View {
             panelExpanded = false
             app.showsSettings = false
             botEditor = nil
-            projectEditor = nil
             groupEditor = GroupEditorRequest(group: group)
         }
         focus = .conversation
@@ -1131,7 +1132,6 @@ struct MainView: View {
             app.showsSettings = false
             botEditor = nil
             groupEditor = nil
-            projectEditor = nil
         }
     }
 
