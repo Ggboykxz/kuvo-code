@@ -1,85 +1,187 @@
 import OpenCodeKit
 import SwiftUI
 
-/// Auto: your own order of models (any coding agent's or provider's, each with its effort) to go
-/// through when one reaches a usage limit. A session on Auto runs each message on the first one
-/// that isn't held back, and goes on with the next, with what was done, when one reaches its limit
-/// partway.
+/// Auto: your lists of models (any coding agent's or provider's, each with its effort), one for
+/// bugfixes, one for features, each to go through in order when one reaches a usage limit. A
+/// session on Auto runs each message on the first of its list that isn't held back, and goes on
+/// with the next, with what was done, when one reaches its limit partway.
 struct AutoSettings: View {
     @Environment(AppModel.self) private var app
     @Environment(Catalog.self) private var catalog
     @State private var failure: String?
     @State private var isClearing = false
+    /// Names as you type them, by list, saved once you're done with one.
+    @State private var names: [String: String] = [:]
+    @FocusState private var naming: String?
 
     private var agents: OutsideAgents { app.agents }
-    private var list: AutoList { agents.auto }
+    private var lists: [AutoList.Named] { agents.auto.all }
 
     var body: some View {
-        ScrollingSettingsForm {
-            Section {
+        ScrollViewReader { proxy in
+            ScrollingSettingsForm {
                 if agents.api == nil {
-                    Text(agents.failure.map { "Auto runs with the coding agents, which couldn't start: \($0)" } ?? "Auto runs with the coding agents, which are still starting.")
-                        .foregroundStyle(.secondary)
-                } else {
-                    if list.entries.isEmpty {
-                        Text("Add the models to go through, in the order you want them. Pick Auto in a new session's model picker to use it.")
+                    Section {
+                        Text(agents.failure.map { "Auto runs with the coding agents, which couldn't start: \($0)" } ?? "Auto runs with the coding agents, which are still starting.")
                             .foregroundStyle(.secondary)
                     }
-                    ForEach(Array(list.entries.enumerated()), id: \.element.id) { index, entry in
-                        AutoEntryRow(
-                            index: index,
-                            count: list.entries.count,
-                            entry: entry,
-                            limit: list.limits.first { $0.holds(entry) },
-                            replace: { ref in change { $0[index] = AutoEntry(ref) } },
-                            move: { offset in change { $0.swapAt(index, index + offset) } },
-                            remove: { change { $0.remove(at: index) } }
-                        )
+                } else {
+                    ForEach(lists) { list in
+                        listSection(list)
                     }
-                    HStack {
-                        ModelChip(selection: nil, onSelect: { ref in change { $0.append(AutoEntry(ref)) } }, scope: .all, offersAuto: false) { _, _ in
-                            Label("Add Model", systemImage: "plus")
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 5)
-                                .hoverHighlight(in: Capsule(), mutesInk: true)
+                    Section {
+                        HStack {
+                            Button { newList() } label: {
+                                Label("New List", systemImage: "plus")
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 5)
+                                    .hoverHighlight(in: Capsule(), mutesInk: true)
+                            }
+                            .buttonStyle(.plain)
+                            .clickablePointer()
+                            Spacer()
                         }
-                        Spacer()
+                    } footer: {
+                        Text("When one reaches a limit on your whole account (a plan's 5-hour window), Auto skips all of that account's models, in every list; when one model reaches its own limit, only that model. Each comes back once its limit resets.")
                     }
                 }
-            } header: {
-                Text("Your Order")
-            } footer: {
-                Text("When one reaches a limit on your whole account (a plan's 5-hour window), Auto skips all of that account's models; when one model reaches its own limit, only that model. Each comes back once its limit resets.")
-            }
-            if !list.limits.isEmpty {
-                Section {
-                    LabeledContent {
-                        Button("Try All Again") { clearLimits() }
-                            .disabled(isClearing)
-                    } label: {
-                        Text("Held back at a limit")
-                        Text("If a limit has reset sooner than its agent said, Auto can try them all again.")
+                if !agents.auto.limits.isEmpty {
+                    Section {
+                        LabeledContent {
+                            Button("Try All Again") { clearLimits() }
+                                .disabled(isClearing)
+                        } label: {
+                            Text("Held back at a limit")
+                            Text("If a limit has reset sooner than its agent said, Auto can try them all again.")
+                        }
                     }
+                }
+            }
+            // The list picked to edit (or just made) in view, a new one's name ready to type.
+            .onChange(of: agents.autoFocus, initial: true) { _, focus in
+                guard let focus else { return }
+                Task {
+                    for _ in 0..<20 where !lists.contains(where: { $0.id == focus }) { try? await Task.sleep(for: .milliseconds(100)) }
+                    try? await Task.sleep(for: .milliseconds(150))
+                    withAnimation(.ui) { proxy.scrollTo(focus, anchor: .top) }
+                    if lists.first(where: { $0.id == focus })?.entries.isEmpty == true { naming = focus }
+                    agents.autoFocus = nil
                 }
             }
         }
         .task { await agents.loadAuto() }
-        .alert("Couldn't Save Your Auto List", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
+        .onChange(of: naming) { old, _ in
+            if let old { rename(old) }
+        }
+        .alert("Couldn't Save Auto", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(failure ?? "")
         }
     }
 
-    /// Your list, changed, saved.
-    private func change(_ edit: (inout [AutoEntry]) -> Void) {
-        var entries = list.entries
-        edit(&entries)
-        // The same model at the same effort twice would only be tried once.
-        var seen = Set<String>()
-        entries = entries.filter { seen.insert($0.id).inserted }
+    /// One list: its name (typed in place), its models in order, a way to add one, and a menu to
+    /// move or delete it.
+    private func listSection(_ list: AutoList.Named) -> some View {
+        Section {
+            if list.entries.isEmpty {
+                Text("Add the models to go through, in the order you want them. Pick this list in a session's model picker to use it.")
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(Array(list.entries.enumerated()), id: \.element.id) { index, entry in
+                AutoEntryRow(
+                    index: index,
+                    count: list.entries.count,
+                    entry: entry,
+                    limit: agents.auto.limits.first { $0.holds(entry) },
+                    replace: { ref in change(list.id) { $0[index] = AutoEntry(ref) } },
+                    move: { offset in change(list.id) { $0.swapAt(index, index + offset) } },
+                    remove: { change(list.id) { $0.remove(at: index) } }
+                )
+            }
+            HStack {
+                ModelChip(selection: nil, onSelect: { ref in change(list.id) { $0.append(AutoEntry(ref)) } }, scope: .all, offersAuto: false) { _, _ in
+                    Label("Add Model", systemImage: "plus")
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .hoverHighlight(in: Capsule(), mutesInk: true)
+                }
+                Spacer()
+            }
+        } header: {
+            HStack(spacing: 8) {
+                TextField("Name", text: Binding(get: { names[list.id] ?? list.name }, set: { names[list.id] = $0 }))
+                    .textFieldStyle(.plain)
+                    .focused($naming, equals: list.id)
+                    .onSubmit { naming = nil }
+                    .help("Its name, as the model picker shows it")
+                Menu {
+                    let index = lists.firstIndex { $0.id == list.id } ?? 0
+                    Button("Move Up") { moveList(list.id, by: -1) }
+                        .disabled(index == 0)
+                    Button("Move Down") { moveList(list.id, by: 1) }
+                        .disabled(index == lists.count - 1)
+                    Divider()
+                    Button("Delete List", role: .destructive) { deleteList(list.id) }
+                        .disabled(lists.count == 1)
+                } label: {
+                    Image(systemName: "ellipsis")
+                }
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("More")
+            }
+            .id(list.id)
+        }
+    }
+
+    /// One list's models, changed, saved.
+    private func change(_ id: String, _ edit: (inout [AutoEntry]) -> Void) {
+        save { lists in
+            guard let index = lists.firstIndex(where: { $0.id == id }) else { return }
+            var entries = lists[index].entries
+            edit(&entries)
+            // The same model at the same effort twice would only be tried once.
+            var seen = Set<String>()
+            lists[index].entries = entries.filter { seen.insert($0.id).inserted }
+        }
+    }
+
+    private func rename(_ id: String) {
+        guard let typed = names.removeValue(forKey: id)?.trimmingCharacters(in: .whitespacesAndNewlines), !typed.isEmpty else { return }
+        save { lists in
+            if let index = lists.firstIndex(where: { $0.id == id }), lists[index].name != typed { lists[index].name = typed }
+        }
+    }
+
+    private func newList() {
+        let list = AutoList.Named(id: "auto-" + UUID().uuidString.prefix(8).lowercased(), name: "New List", entries: [])
+        agents.autoFocus = list.id
+        save { $0.append(list) }
+    }
+
+    private func moveList(_ id: String, by offset: Int) {
+        save { lists in
+            guard let index = lists.firstIndex(where: { $0.id == id }), lists.indices.contains(index + offset) else { return }
+            lists.swapAt(index, index + offset)
+        }
+    }
+
+    private func deleteList(_ id: String) {
+        save { lists in
+            guard lists.count > 1 else { return }
+            lists.removeAll { $0.id == id }
+        }
+    }
+
+    /// Your lists, changed, saved.
+    private func save(_ edit: (inout [AutoList.Named]) -> Void) {
+        var all = lists
+        let before = all
+        edit(&all)
+        guard all != before else { return }
         Task {
-            do { try await agents.saveAuto(entries) } catch { failure = error.localizedDescription }
+            do { try await agents.saveAuto(all) } catch { failure = error.localizedDescription }
         }
     }
 

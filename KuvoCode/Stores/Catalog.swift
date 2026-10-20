@@ -149,32 +149,48 @@ final class Catalog {
 
     func model(_ ref: ModelRef?) -> Model? {
         guard let ref else { return nil }
-        if ref.providerID == OutsideAgents.autoProvider { return Self.autoModel }
+        if ref.providerID == OutsideAgents.autoProvider { return autoModel(ref.id) }
         return models.first { $0.id == ref.id && $0.providerID == ref.providerID }
     }
 
     /// The model, if it's one you can use now (see `offered`).
     func offeredModel(_ ref: ModelRef?) -> Model? {
         guard let ref else { return nil }
-        if ref.providerID == OutsideAgents.autoProvider { return isAutoAvailable ? Self.autoModel : nil }
+        if ref.providerID == OutsideAgents.autoProvider { return isAutoAvailable(ref.id) ? autoModel(ref.id) : nil }
         return offered.first { $0.id == ref.id && $0.providerID == ref.providerID }
     }
 
     // MARK: Auto
 
-    /// Your Auto list, and what's held back at a limit.
+    /// Your Auto lists, and what's held back at a limit.
     var auto: AutoList { outsideAgents?.auto ?? AutoList() }
 
-    /// Auto can be picked: the bridge is up and your list has models in it.
-    var isAutoAvailable: Bool { outsideAgents?.api != nil && !auto.entries.isEmpty }
+    /// Auto can be picked: the bridge is up and one of your lists has models in it.
+    var isAutoAvailable: Bool { outsideAgents?.api != nil && auto.all.contains { !$0.entries.isEmpty } }
 
-    /// Auto, as a model the composer's chip and the picker show.
-    static let autoModel: Model = {
+    /// That Auto list can be picked: the bridge is up and it has models in it.
+    func isAutoAvailable(_ id: String?) -> Bool {
+        outsideAgents?.api != nil && auto.list(id)?.entries.isEmpty == false
+    }
+
+    /// An Auto list, as a model the composer's chip and the picker show: by its name.
+    func autoModel(_ id: String?) -> Model? {
+        guard let list = auto.list(id) else { return nil }
+        var model = Self.autoTemplate
+        model.id = list.id
+        model.name = list.name
+        return model
+    }
+
+    /// Your Auto lists, as models, in your order.
+    var autoModels: [Model] { auto.all.compactMap { autoModel($0.id) } }
+
+    private static let autoTemplate: Model = {
         let json = #"{"id":"auto","providerID":"auto","name":"Auto","capabilities":{"tools":true,"input":["text","image"],"output":["text"]},"variants":[],"time":{"released":0},"cost":[{"input":0,"output":0}],"status":"active","enabled":true,"limit":{"context":200000,"output":32000}}"#
         return try! JSONDecoder().decode(Model.self, from: Data(json.utf8))
     }()
 
-    static var autoRef: ModelRef { ModelRef(id: "auto", providerID: OutsideAgents.autoProvider) }
+    static var autoRef: ModelRef { ModelRef(id: AutoList.firstID, providerID: OutsideAgents.autoProvider) }
 
     /// A model picked that you can't use now (gone from its provider, or its account signed out
     /// of): it would only fail. Not before the models are known.

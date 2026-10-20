@@ -234,7 +234,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .privacy: "What Kuvo Code shares, and what stays on this Mac."
         case .storage: "What Kuvo Code keeps on this Mac, and room you can get back."
         case .accounts: "Sign in with a subscription you already have, or add an API key. Credentials stay on this Mac and the machines you add."
-        case .auto: "Your order of models to go through when one reaches a usage limit."
+        case .auto: "Your lists of models to go through, in order, when one reaches a usage limit: one for bugfixes, one for features. Pick one in the model picker."
         case .usage: nil
         case .agents: "The agents you pick in the composer, and the subagents they hand work to."
         case .permissions: "What the agent may do without asking you first."
@@ -264,7 +264,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .privacy: "analytics anonymous usage data"
         case .storage: "disk space size clean up delete old sessions logs cache"
         case .accounts: "providers sign in api key login models openai anthropic copilot"
-        case .auto: "fallback failover rate usage limit order chain switch models"
+        case .auto: "fallback failover rate usage limit order chain switch models lists presets"
         case .usage: "limits spend menu bar plan"
         case .agents: "modes build plan subagents default model title"
         case .permissions: "allow ask deny approve rules"

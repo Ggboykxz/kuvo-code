@@ -259,6 +259,12 @@ struct ModelChipLabel: View {
 
     var body: some View {
         HStack(spacing: 5) {
+            // One of your Auto lists, by its name.
+            if model?.providerID == OutsideAgents.autoProvider {
+                Image(systemName: "list.number")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
             Text(model?.name ?? "Choose a Model")
                 .lineLimit(1)
             if let variant {

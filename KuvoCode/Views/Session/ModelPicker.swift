@@ -244,53 +244,81 @@ struct ModelPicker: View {
         }
     }
 
-    /// Auto: what it is, your list, and a way to it.
+    /// Auto: your lists (one for bugfixes, one for features), each with its models in order; on
+    /// the one under the pointer, a way to edit it; and a way to make another.
     @ViewBuilder private var autoContent: some View {
         railTitle("Auto")
-        let entries = catalog.auto.entries
-        if entries.isEmpty || catalog.outsideAgents?.api == nil {
-            note(catalog.outsideAgents?.api == nil
-                 ? "Auto runs with the coding agents, which are still starting."
-                 : "Make a list of models, from any agent or provider, to go through in your order: when one reaches its usage limit, the next goes on with the work.")
+        let lists = catalog.auto.all
+        if catalog.outsideAgents?.api == nil {
+            note("Auto runs with the coding agents, which are still starting.")
+        } else if lists.allSatisfy(\.entries.isEmpty), lists.count == 1 {
+            note("Make a list of models, from any agent or provider, to go through in your order: when one reaches its usage limit, the next goes on with the work.")
             settingsButton("Set Up Auto…", page: .auto)
         } else {
-            let names = entries.prefix(3).map { entry in catalog.model(entry.ref)?.name ?? entry.modelID }
-            autoRow(detail: names.joined(separator: " → ") + (entries.count > 3 ? " → …" : ""))
-            settingsButton("Edit Your List…", page: .auto)
+            ForEach(Array(lists.enumerated()), id: \.element.id) { index, list in
+                autoRow(list, number: index)
+            }
+            newListRow
         }
     }
 
-    private func autoRow(detail: String) -> some View {
-        let id = rowID(Catalog.autoModel)
-        let isCurrent = choice?.providerID == OutsideAgents.autoProvider
+    private func autoRow(_ list: AutoList.Named, number: Int) -> some View {
+        let model = catalog.autoModel(list.id)
+        let id = model.map(rowID) ?? list.id
+        let isCurrent = choice?.providerID == OutsideAgents.autoProvider && catalog.auto.list(choice?.id)?.id == list.id
         return Button {
-            pick(Catalog.autoModel)
+            if let model { pick(model) }
         } label: {
-            HStack(spacing: 9) {
+            HStack(alignment: .top, spacing: 9) {
                 Image(systemName: "list.number")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.secondary)
                     .frame(width: 18)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Auto")
+                    .padding(.top, 2)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(list.name)
                         .font(.system(size: 14))
-                    Text(detail)
+                        .lineLimit(1)
+                    // The whole of it, in order: nothing cut off.
+                    Text(flow(of: list))
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
+                .layoutPriority(1)
                 Spacer(minLength: 4)
-                Text("⌘1")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
-                    .fixedSize()
+                // Under the pointer, editing it takes its shortcut's place.
+                ZStack(alignment: .trailing) {
+                    if number < 9 {
+                        Text("⌘\(number + 1)")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                            .fixedSize()
+                            .opacity(highlight == id ? 0 : 1)
+                    }
+                    Button {
+                        editAuto(list.id)
+                    } label: {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 22, height: 20)
+                            .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
+                    .clickablePointer()
+                    .help("Edit This List")
+                    .opacity(highlight == id ? 1 : 0)
+                }
+                .padding(.top, 1)
                 Image(systemName: "checkmark")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.secondary)
                     .opacity(isCurrent ? 1 : 0)
+                    .padding(.top, 1)
             }
             .padding(.horizontal, 10)
-            .frame(height: 42)
+            .padding(.vertical, 8)
             .background(highlight == id ? Color.primary.opacity(0.07) : .clear, in: .rect(cornerRadius: 10))
             .contentShape(.rect(cornerRadius: 10))
         }
@@ -298,6 +326,57 @@ struct ModelPicker: View {
         .clickablePointer()
         .onHover { if $0 { highlight = id } }
         .id(id)
+    }
+
+    /// A list's models in order: "Gemini 4 Argon (High) → GPT-6.1-Sol High → Cursor Auto".
+    private func flow(of list: AutoList.Named) -> String {
+        guard !list.entries.isEmpty else { return "No models yet: add some to use it" }
+        return list.entries.map { entry in
+            var name = catalog.model(entry.ref)?.name ?? entry.modelID
+            // An agent's own "Auto" says whose it is.
+            if name.hasPrefix("Auto") { name = "\(catalog.providerName(entry.providerID)) \(name)" }
+            if let variant = entry.variant { name += " " + EffortLevel.title(variant) }
+            return name
+        }
+        .joined(separator: " → ")
+    }
+
+    /// Another list (for bugfixes, features…): made now, and named and filled in Settings › Auto.
+    private var newListRow: some View {
+        let id = "auto-new"
+        return Button(action: newAutoList) {
+            HStack(spacing: 9) {
+                Image(systemName: "plus")
+                    .font(.system(size: 12, weight: .medium))
+                    .frame(width: 18)
+                Text("New List…")
+                    .font(.system(size: 13))
+                Spacer()
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 10)
+            .frame(height: 32)
+            .background(highlight == id ? Color.primary.opacity(0.07) : .clear, in: .rect(cornerRadius: 10))
+            .contentShape(.rect(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+        .clickablePointer()
+        .onHover { if $0 { highlight = id } }
+        .help("Make another list of models for Auto to go through")
+    }
+
+    /// One of your Auto lists, in Settings › Auto.
+    private func editAuto(_ id: String) {
+        catalog.outsideAgents?.autoFocus = id
+        close()
+        openSettings(.auto)
+    }
+
+    private func newAutoList() {
+        guard let agents = catalog.outsideAgents else { return }
+        let list = AutoList.Named(id: "auto-" + UUID().uuidString.prefix(8).lowercased(), name: "New List", entries: [])
+        editAuto(list.id)
+        Task { try? await agents.saveAuto(agents.auto.all + [list]) }
     }
 
     private func railTitle(_ title: String) -> some View {
@@ -560,6 +639,11 @@ struct ModelPicker: View {
     /// A model, keeping the effort you had if it has that level too; then its effort, or, for a
     /// model without levels, the card closes.
     private func pick(_ model: Model) {
+        // An Auto list with nothing in it yet: filled in first.
+        if model.providerID == OutsideAgents.autoProvider, !catalog.isAutoAvailable(model.id) {
+            editAuto(model.id)
+            return
+        }
         let keep = variant.flatMap { level in model.variants.contains { $0.id == level } ? level : nil }
         picked = ModelRef(id: model.id, providerID: model.providerID, variant: keep)
         if model.variants.isEmpty {
@@ -668,7 +752,7 @@ struct ModelPicker: View {
         if !query.isEmpty { return results }
         switch railSelection {
         case Self.favoritesRail: return favorites
-        case Self.autoRail: return catalog.auto.entries.isEmpty || catalog.outsideAgents?.api == nil ? [] : [Catalog.autoModel]
+        case Self.autoRail: return catalog.outsideAgents?.api == nil ? [] : catalog.autoModels
         default:
             guard let provider = selectedProvider, provider.unavailable == nil else { return [] }
             let (newest, older) = split(provider.models)
@@ -695,7 +779,7 @@ struct ModelPicker: View {
         let words = query.lowercased().split(separator: " ").map(String.init)
         guard !words.isEmpty else { return [] }
         var all = providers.filter { $0.unavailable == nil }.flatMap(\.models)
-        if showsAuto, catalog.isAutoAvailable { all.insert(Catalog.autoModel, at: 0) }
+        if showsAuto { all.insert(contentsOf: catalog.autoModels.filter { catalog.isAutoAvailable($0.id) }, at: 0) }
         return all.filter { model in
             let text = "\(model.name) \(model.id) \(model.family ?? "") \(catalog.providerName(model.providerID))".lowercased()
             return words.allSatisfy { text.contains($0) }

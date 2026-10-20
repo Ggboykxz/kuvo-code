@@ -248,14 +248,17 @@ final class OutsideAgents {
         if list != auto { auto = list }
     }
 
-    /// Your list as you arranged it.
-    func saveAuto(_ entries: [AutoEntry]) async throws {
+    /// A list of Auto's to show in Settings › Auto as it opens (one picked to edit, or just made).
+    var autoFocus: String?
+
+    /// Your lists as you arranged them.
+    func saveAuto(_ lists: [AutoList.Named]) async throws {
         guard let api else { throw Failure.unavailable("Auto") }
         let saved = auto
-        let arranged = AutoList(entries: entries, limits: auto.limits)
+        let arranged = AutoList(entries: lists.first?.entries ?? [], lists: lists, limits: auto.limits)
         auto = arranged
         do {
-            auto = try await api.saveAutoList(entries)
+            auto = try await api.saveAutoLists(lists)
         } catch {
             // Not saved, as far as it heard: the list Auto uses, which may have come meanwhile (a
             // save that went through, its answer lost), else the one before.
@@ -372,9 +375,31 @@ nonisolated struct AutoLimit: Codable, Hashable, Sendable {
     }
 }
 
+/// Your Auto lists, and what's held back at a limit (for every list).
 nonisolated struct AutoList: Codable, Hashable, Sendable {
+    /// The first list's models (all a bridge from before lists says).
     var entries: [AutoEntry] = []
+    var lists: [Named]?
     var limits: [AutoLimit] = []
+
+    /// One of your lists, with its name (one for bugfixes, one for features): a session on Auto
+    /// runs on one, named by its model's ID.
+    struct Named: Codable, Hashable, Identifiable, Sendable {
+        var id: String
+        var name: String
+        var entries: [AutoEntry]
+    }
+
+    /// The first list's ID, which Auto had before there were lists.
+    static let firstID = "auto"
+
+    /// Every list, in your order.
+    var all: [Named] { lists ?? [Named(id: Self.firstID, name: "Auto", entries: entries)] }
+
+    /// The list a session's model names: that one, or the first (for one deleted since).
+    func list(_ id: String?) -> Named? {
+        all.first { $0.id == id } ?? all.first
+    }
 }
 
 extension OpenCodeAPI {
@@ -398,9 +423,9 @@ extension OpenCodeAPI {
         try await client.send(try client.request("GET", "api/kuvo/auto"), as: DataEnvelope<AutoList>.self).data
     }
 
-    func saveAutoList(_ entries: [AutoEntry]) async throws -> AutoList {
-        struct Body: Encodable { var entries: [AutoEntry] }
-        return try await client.send(try client.request("PUT", "api/kuvo/auto", body: Body(entries: entries)), as: DataEnvelope<AutoList>.self).data
+    func saveAutoLists(_ lists: [AutoList.Named]) async throws -> AutoList {
+        struct Body: Encodable { var lists: [AutoList.Named] }
+        return try await client.send(try client.request("PUT", "api/kuvo/auto", body: Body(lists: lists)), as: DataEnvelope<AutoList>.self).data
     }
 
     func clearAutoLimits() async throws {
