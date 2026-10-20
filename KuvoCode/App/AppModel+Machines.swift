@@ -202,25 +202,26 @@ extension AppModel {
         for _ in 0..<240 where api == nil { try? await Task.sleep(for: .milliseconds(250)) }
         await engine.start(machineLaunch(), cache: AppInfo.supportDirectory.appending(path: "engine-linux"))
         // Removed while it started: nothing of yours goes there (its removal waits in the queue).
+        // Checked again before each step that sends it something, as removing can come any time.
         guard machines.engine(engine.machine.id) === engine else {
             if engine.isReady { await engine.stopEngine() }
             return
         }
         // What waits for it (a bot deleted, an integration removed while it was away), now.
-        if engine.isReady { await machines.runWaiting(only: engine.machine.id) }
+        if live(engine) { await machines.runWaiting(only: engine.machine.id) }
         // Its sessions, once it's up: tried again a few times, as they're what makes them live.
-        for wait in [0, 2, 5, 10, 20] where engine.isReady {
+        for wait in [0, 2, 5, 10, 20] where live(engine) {
             try? await Task.sleep(for: .seconds(wait))
-            guard engine.isReady else { break }
+            guard live(engine) else { break }
             if await workspace.refresh(engine) { break }
         }
         // Phones you've paired reach it directly, through its own bridge.
-        if engine.isReady { await phoneLink.sync(engine) }
+        if live(engine) { await phoneLink.sync(engine) }
         // Its bots' keys of their own, which may have changed while it was away.
-        if engine.isReady { await BotKeys.applyAll(on: engine.machine.id, app: self) }
+        if live(engine) { await BotKeys.applyAll(on: engine.machine.id, app: self) }
         // What you signed in to here works there too, kept in step while it's connected.
         engine.signInSync?.cancel()
-        if engine.isReady {
+        if live(engine) {
             await syncSignIns(with: engine)
             await syncSignInFiles(with: engine)
             await AgentMail.shared.share(with: engine)
@@ -229,16 +230,16 @@ extension AppModel {
             engine.signInSync = Task { [weak self, weak engine] in
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(600))
-                    guard let engine, engine.isReady, !Task.isCancelled else { return }
+                    guard let engine, self?.live(engine) == true, !Task.isCancelled else { return }
                     await self?.syncSignIns(with: engine)
                     await self?.syncSignInFiles(with: engine)
                 }
             }
             engine.agentSync?.cancel()
-            engine.agentSync = Task { [weak engine] in
+            engine.agentSync = Task { [weak self, weak engine] in
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(60))
-                    guard let engine, engine.isReady, !Task.isCancelled else { return }
+                    guard let engine, self?.live(engine) == true, !Task.isCancelled else { return }
                     await AgentMail.shared.share(with: engine)
                     await AgentMail.shared.collect(from: engine)
                 }
@@ -246,6 +247,11 @@ extension AppModel {
             // Settings changed here while it connected, after it took the ones it has.
             keepSettingsCurrent(engine)
         }
+    }
+
+    /// A machine's engine that's up and still added: one removed meanwhile gets nothing more.
+    func live(_ engine: MachineEngine) -> Bool {
+        engine.isReady && machines.engine(engine.machine.id) === engine
     }
 
     /// Closes the connection to a machine. Its engine stops too, unless a session there is still

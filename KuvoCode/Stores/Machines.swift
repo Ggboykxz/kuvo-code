@@ -431,10 +431,12 @@ final class Machines {
     /// The mark on an integration's clean-up, to drop if it's added again.
     static func integrationMark(_ id: String) -> String { "# Kuvo Code: integration \(id)\n" }
 
-    /// Runs `script` on the machine the next time it answers.
+    /// Runs `script` on the machine the next time it answers (tried at once too).
     func runLater(_ script: String, on machine: String) {
         Self.waiting[machine, default: []].append(script)
-        if Self.waitingSince[machine] == nil { Self.waitingSince[machine] = .now }
+        // Given up on 30 days after the last thing queued or run there, not the first.
+        Self.waitingSince[machine] = .now
+        Task { [weak self] in await self?.runWaiting(only: machine) }
     }
 
     /// Drops the clean-ups marked `mark` (whatever they were for came back), on every machine.
@@ -451,14 +453,33 @@ final class Machines {
     }
 
     @ObservationIgnored private var runningWaiting = false
+    /// Machines asked for while a pass ran, for one more after it.
+    @ObservationIgnored private var askedWhileRunning: Set<String?> = []
 
     /// Runs what waits, each machine's in order, for the machines that answer (`only` one, when
     /// it just connected). The queue is read afresh for each, as it can change meanwhile, and only
     /// the one that ran leaves it. A removal for a machine added again is dropped, never run.
     func runWaiting(only: String? = nil) async {
-        guard !runningWaiting else { return }
+        guard !runningWaiting else {
+            askedWhileRunning.insert(only)
+            return
+        }
         runningWaiting = true
-        defer { runningWaiting = false }
+        await runWaitingPass(only: only)
+        // What was asked for meanwhile (a machine that just connected), once more.
+        while !askedWhileRunning.isEmpty {
+            let asked = askedWhileRunning
+            askedWhileRunning = []
+            if asked.contains(nil) {
+                await runWaitingPass(only: nil)
+            } else {
+                for machine in asked.compactMap({ $0 }) { await runWaitingPass(only: machine) }
+            }
+        }
+        runningWaiting = false
+    }
+
+    private func runWaitingPass(only: String?) async {
         for machine in Self.waiting.keys where only == nil || only == machine {
             if let since = Self.waitingSince[machine], since.timeIntervalSinceNow < -30 * 86_400 {
                 setWaiting([], on: machine)
@@ -472,6 +493,7 @@ final class Machines {
                 var left = Self.waiting[machine] ?? []
                 if let index = left.firstIndex(of: script) { left.remove(at: index) }
                 setWaiting(left, on: machine)
+                if !left.isEmpty { Self.waitingSince[machine] = .now }
             }
         }
     }
