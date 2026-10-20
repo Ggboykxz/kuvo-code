@@ -259,7 +259,7 @@ final class BotGroups {
         let onAgents = if let seat = group?.seats[bot.id] {
             group?.agentSeats?.contains(seat) == true
         } else {
-            bot.machine == nil && OutsideAgents.runsInBridge((bot.model ?? app.workspace.session(bot.sessionID)?.model)?.providerID)
+            OutsideAgents.runsWithAgents(bot.model ?? app.workspace.session(bot.sessionID)?.model, machine: bot.machine)
         }
         return onAgents ? app.workspace.agents?.api : app.workspace.api(forFolder: bot.directory)
     }
@@ -372,7 +372,7 @@ final class BotGroups {
     /// A bot's new default model, for its seats.
     func modelChanged(of bot: Bot) async {
         guard let model = bot.model else { return }
-        let onAgents = bot.machine == nil && OutsideAgents.runsInBridge(model.providerID)
+        let onAgents = OutsideAgents.runsWithAgents(model, machine: bot.machine)
         for group in list {
             guard let seat = group.seats[bot.id] else { continue }
             // One that runs elsewhere than the new model can (the engine, the agents): a new seat
@@ -671,7 +671,7 @@ final class BotGroups {
             return .absent
         }
         guard let api = seatAPI(of: bot, in: group(id)) else {
-            note("\(bot.name) couldn’t answer: \(app.workspace.agents?.api == nil && bot.machine == nil && OutsideAgents.runsInBridge(bot.model?.providerID) ? "the coding agents aren’t running" : "the engine isn’t running").", in: id)
+            note("\(bot.name) couldn’t answer: \(app.workspace.agents?.api == nil && OutsideAgents.runsWithAgents(bot.model, machine: bot.machine) ? "the coding agents aren’t running" : "the engine isn’t running").", in: id)
             return .absent
         }
         do {
@@ -1189,7 +1189,7 @@ final class BotGroups {
         }
         guard let group = group(id), let app else { throw CancellationError() }
         let model = bot.model ?? app.workspace.session(bot.sessionID)?.model
-        let onAgents = bot.machine == nil && OutsideAgents.runsInBridge(model?.providerID)
+        let onAgents = OutsideAgents.runsWithAgents(model, machine: bot.machine)
         // (Cursor can't stop to ask, so its rules can't hold it back: it plans instead of changing anything.)
         let agent = onAgents && OutsideAgents.base(model?.providerID ?? "") == "cursor" ? "plan" : nil
         let session = try await api.createSession(directory: bot.directory, title: "\(bot.name) in \(group.name)", agent: agent, model: model, permissions: Self.seatRules(for: bot))

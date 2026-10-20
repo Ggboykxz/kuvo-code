@@ -257,6 +257,7 @@ final class AppModel {
             workspace.machineAPI = { [weak self] machine in self?.machines.engine(machine)?.api }
             bots.app = self
             groups.app = self
+            workspace.onMovedToAgents = { [weak bots] from, to in await bots?.movedToAgents(from: from, to: to) ?? false }
             workspace.runsOnAgents(bots.agentSessionIDs)
             workspace.botSessions = bots.sessionIDs
             // Bots' keys of their own, in their folders' settings as integrations are now.

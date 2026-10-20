@@ -76,17 +76,15 @@ struct Composer: View {
     @Environment(\.bot) private var bot
     @FocusState private var isFocused: Bool
 
-    /// The models its picker offers: every one, with the coding agents' and Auto, on this Mac (a
-    /// session on the engine picking one carries on with the agents, a bot's too); the engine's for
-    /// a session on a machine, and a machine's bot.
+    /// The models its picker offers, by where the conversation lives (see `ModelScope.at`): the
+    /// same for a session, a chat and a bot's conversation.
     private var modelScope: ModelScope {
         if let scope { return scope }
-        if let bot { return bot.machine == nil ? .all : .engine }
         if let session {
             guard let current = workspace.session(session) else { return .engine }
-            return RemoteFolder.isRemote(current.location.directory) ? .engine : .all
+            return .at(current.location.directory)
         }
-        return folders.first.map(RemoteFolder.isRemote) == true ? .engine : .all
+        return .at(folders.first)
     }
     @FocusState private var answering: UUID?
     @Environment(\.composerFocused) private var composerFocused

@@ -818,6 +818,8 @@ final class Workspace {
     func moveToAgents(_ id: String, model: ModelRef) async throws {
         guard let moved = try await carryToAgents(id, model: model) else { return }
         Analytics.shared.track("session_moved_to_agents", Analytics.model(provider: model.providerID, model: model.id))
+        // One something else keeps (a bot's conversation): it takes the new session, in its place.
+        if await onMovedToAgents?(id, moved) == true { return }
         await setArchived(id, true)
         let swap = TabSwap(from: id, to: moved.id)
         swappedTab = swap
@@ -830,6 +832,10 @@ final class Workspace {
             }
         }
     }
+
+    /// Told when a conversation moved to the coding agents (from, to): true when something else
+    /// keeps it (a bot), which then takes it over; the app sets it.
+    @ObservationIgnored var onMovedToAgents: ((_ from: String, _ to: Session) async -> Bool)?
 
     /// Sessions known to be the agents bridge's before it has told of them (a bot's conversation,
     /// a seat in a group chat): asked there from the start.

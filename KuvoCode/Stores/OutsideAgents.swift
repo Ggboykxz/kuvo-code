@@ -119,6 +119,12 @@ final class OutsideAgents {
         providerID == autoProvider || isAgent(providerID)
     }
 
+    /// A conversation on `model` that lives on `machine` (nil for this Mac) runs with the coding
+    /// agents: a session's, a chat's, a bot's, a seat in a group chat alike.
+    static func runsWithAgents(_ model: ModelRef?, machine: String?) -> Bool {
+        ModelScope.on(machine: machine) == .all && runsInBridge(model?.providerID)
+    }
+
     /// A session one of these agents runs: the bridge marks its own.
     static func isAgentSession(_ session: Session) -> Bool {
         session.metadata?["kuvoAgent"]?.string != nil

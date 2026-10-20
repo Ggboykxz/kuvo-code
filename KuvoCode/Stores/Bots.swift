@@ -229,9 +229,9 @@ final class Bots {
         // The one picked, if you can use it where it lives (on this Mac, a coding agent's too);
         // otherwise the last one used, or that engine's default. Before its models are known (just
         // after launch), the one picked or last used, as it is.
-        bot.model = catalog.startingModel(model, LastModel.current, scope: machine == nil ? .all : .engine)
-        // A coding agent's model (or Auto): its conversation runs with the agents.
-        if machine == nil, OutsideAgents.runsInBridge(bot.model?.providerID) { bot.agents = true }
+        bot.model = catalog.startingModel(model, LastModel.current, scope: .on(machine: machine))
+        // A coding agent's model (or Custom Auto): its conversation runs with the agents.
+        if OutsideAgents.runsWithAgents(bot.model, machine: machine) { bot.agents = true }
         guard let api = api(for: bot) else {
             if bot.agents == true { throw OutsideAgents.Failure.notRunning(app.workspace.agents?.failure) }
             throw Failure.notConnected(machine ?? AppInfo.name)
@@ -308,21 +308,23 @@ final class Bots {
     }
 
     /// A bot's conversation carried on with the coding agents on `model` (a model of theirs, or
-    /// Auto), as a session's does: a session of theirs takes its place, set up as its own, and the
-    /// engine's goes. Its default model stays as it was.
+    /// Custom Auto), the way any session's is (`Workspace.moveToAgents`, which tells
+    /// `movedToAgents`). Its default model stays as it was.
     @discardableResult
     func moveToAgents(_ bot: Bot, model: ModelRef) async throws -> Bot {
-        guard let app, bot.machine == nil, bot.agents != true else { return bot }
-        let old = bot.sessionID
+        guard let app, bot.agents != true, OutsideAgents.runsWithAgents(model, machine: bot.machine) else { return bot }
+        try await app.workspace.moveToAgents(bot.sessionID, model: model)
+        return self.bot(bot.id) ?? bot
+    }
+
+    /// A conversation that moved to the coding agents (`Workspace.moveToAgents`): a bot's takes the
+    /// new session, set up as its own, and the engine's goes. True when it was a bot's.
+    func movedToAgents(from old: String, to moved: Session) async -> Bool {
+        guard let app, let index = list.firstIndex(where: { $0.sessionID == old }) else { return false }
         let kept = app.workspace.session(old)?.metadata?["kuvo"]
-        guard let moved = try await app.workspace.carryToAgents(old, model: model) else { throw Failure.notConnected(AppInfo.name) }
-        var bot = bot
-        bot.sessionID = moved.id
-        bot.agents = true
-        if let index = list.firstIndex(where: { $0.id == bot.id }) {
-            list[index].sessionID = moved.id
-            list[index].agents = true
-        }
+        list[index].sessionID = moved.id
+        list[index].agents = true
+        let bot = list[index]
         save()
         noteSessions()
         if let api = app.workspace.agents?.api {
@@ -332,8 +334,7 @@ final class Bots {
         }
         try? await writeSession(of: bot)
         await app.workspace.delete(old)
-        Analytics.shared.track("bot_moved_to_agents", Analytics.model(provider: model.providerID, model: model.id))
-        return bot
+        return true
     }
 
     /// Whether `work` got to its engine: one it turned down counts, as asking again wouldn't change
@@ -358,7 +359,7 @@ final class Bots {
         waitingEdits = waiting
         guard var bot = bot(id) else { return }
         // A coding agent's model for a bot on the engine: its conversation carries on with them first.
-        if all.contains("model"), bot.machine == nil, bot.agents != true, let model = bot.model, OutsideAgents.runsInBridge(model.providerID) {
+        if all.contains("model"), bot.agents != true, let model = bot.model, OutsideAgents.runsWithAgents(model, machine: bot.machine) {
             do {
                 bot = try await moveToAgents(bot, model: model)
             } catch {

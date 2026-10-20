@@ -71,10 +71,9 @@ struct BotEditor: View {
     private let recipe: BotRecipe?
 
     /// The models of the engine where it lives.
-    /// The models it can use: on this Mac every one, the coding agents' and Auto too; on a
-    /// machine, its engine's.
+    /// The models it can use, by where it lives, as for any conversation (see `ModelScope.on`).
     private var modelScope: ModelScope {
-        machine == nil ? .all : .engine
+        .on(machine: machine)
     }
 
     private var placeCatalog: Catalog {
@@ -415,8 +414,8 @@ struct BotEditor: View {
             for engine in app.machines.list.compactMap({ app.machines.engine($0.id) }) {
                 menu.addItem(ActionItem(engine.machine.name, subtitle: engine.statusText, image: NSImage(systemSymbolName: "server.rack", accessibilityDescription: nil), checked: machine == engine.machine.id) {
                     machine = engine.machine.id
-                    // A coding agent's model works on this Mac only: there, its engine's.
-                    if OutsideAgents.runsInBridge(model?.providerID) { model = placeCatalog.startingModel(lastModel, scope: .engine) }
+                    // One it can't use there (a coding agent's): that machine's engine's.
+                    if let current = model, !modelScope.allows(current.providerID) { model = placeCatalog.startingModel(lastModel, scope: modelScope) }
                     project = nil
                     if case .failed = engine.state { app.connect(engine) }
                 })
