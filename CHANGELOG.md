@@ -5,6 +5,11 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- A session an agent starts on its own asks first when the agent's session does, and its answer is found reliably also on a machine whose clock differs.
+- Discard leaves a submodule's folder alone again; Merge and Pull Request count the new files the Changes panel lists; and This Session shows a file the agent wrote and then edited once.
+- Notifications hide a number after a password or Authorization again, show commit hashes in commands, and stay quick on very long text.
+- Bring Over copies files opencode's settings name into Kuvo Code's own folder (so they keep working, also on machines), brings API keys and skills even when opencode's settings can't be read, and brings a server named like one of your integrations under a name of its own.
+- The New Project popup keeps what you typed when a shortcut or a notification would open something else, and a file Kuvo Code sets aside because it couldn't read it no longer replaces one set aside before.
 - Shift-Return or Option-Return in your answer to a quote starts a new line instead of sending, and an image an agent made shows large also with Each Step and in group chats.
 - Antigravity's file reads show as done once they're done (with what was read), instead of "Reading…" until its turn ends. Undo never takes back edits you made while Kuvo Code was closed, and a coding agent carrying on by itself while you undo no longer makes the undo final.
 - A command's output in the conversation is colored as a terminal shows it: a search's files, line numbers and what it found, a diff's added and removed lines, and errors and warnings.
