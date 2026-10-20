@@ -106,7 +106,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     /// password or Authorization (Bearer), and long runs of letters and digits like a key's.
     nonisolated static func masked(_ text: String) -> String {
         // No more than a notification shows (and the patterns stay quick on a long reply).
-        let text = maskedNamed(text.count > shownLength ? String(text.prefix(shownLength)) + "…" : text)
+        let text = maskedNamed(text.count > shownLength ? Self.cut(text) : text)
         // A long run of letters and digits, as a key is: 24 or more with both, or a key's own
         // start (sk-, ghp_, xoxb-, AKIA…). Not a commit's hash or a UUID, nor a path or a name
         // made of words (a branch, a package, a test), which aren't secret.
@@ -130,7 +130,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
             // word.
             let plain = run
                 .replacingOccurrences(of: #"(?<![0-9A-Fa-f])[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?![0-9A-Fa-f])"#, with: "u", options: .regularExpression)
-                .replacingOccurrences(of: #"(?<![0-9A-Za-z])([0-9a-f]{40}|[0-9a-f]{64})(?![0-9A-Za-z])"#, with: "h", options: .regularExpression)
+                .replacingOccurrences(of: #"(?:(?<![^/+])|(?<=(?i:commit|sha|rev|revision|hash|ref|head)[=:_-]))([0-9a-f]{40}|[0-9a-f]{64})(?![0-9A-Za-z])"#, with: "h", options: .regularExpression)
                 .replacingOccurrences(of: #"/var/folders/[^/]+/[^/]+"#, with: "/var/folders/t/t", options: .regularExpression)
             let wordy = plain.split(whereSeparator: { "/-_.".contains($0) }).allSatisfy { part in
                 if part.count < 12 { return true }
@@ -154,14 +154,24 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
 
     private nonisolated static let shownLength = 4000
 
+    /// `text` cut to what a notification shows, at a space, so a key isn't cut short of looking like one.
+    private nonisolated static func cut(_ text: String) -> String {
+        let start = text.prefix(shownLength)
+        let end = start.lastIndex(where: \.isWhitespace) ?? start.endIndex
+        return String(start[..<end]) + "…"
+    }
+
     /// `text` with the secrets it names as dots: after a name that says it's one (token=…,
     /// "password": …, Authorization: Bearer …, --token …, aws_secret_access_key …; after a token's
     /// name, not a number, as in max_tokens=4096), in an address (https://user:pass@host, https://TOKEN@host, a Slack
     /// webhook's), curl -u user:pass and mysql -pPASS.
     nonisolated static func maskedNamed(_ text: String) -> String {
         var text = text
-        let named = #"(?i)((?:api[_-]?key|secret(?:[_-]?access[_-]?key)?|password|passwd|authorization)["']?\s*[:=]\s*["']?(?:bearer\s+|basic\s+)?+|bearer\s+|--(?:token|password|passwd|secret|api-key|key)[=\s]+)[^\s"'&;]{3,}"#
+        let named = #"(?i)((?:api[_-]?key|secret(?:[_-]?access[_-]?key)?|password|passwd|authorization)["']?\s*[:=]\s*["']?(?:bearer\s+|basic\s+)?+|bearer\s+|--(?:password|passwd|secret|api-key)[=\s]+)[^\s"'&;]{3,}"#
         text = text.replacingOccurrences(of: named, with: "$1•••", options: .regularExpression)
+        // --key and --token take other things too: a field (sort --key 2,3), a count.
+        let flag = #"(?i)(--(?:token|key)[=\s]+)(?![0-9][^\s"'&;]{0,7}(?:[\s"'&;]|$))[^\s"'&;]{3,}"#
+        text = text.replacingOccurrences(of: flag, with: "$1•••", options: .regularExpression)
         // After a token's name, a number is a count (max_tokens=4096), not one.
         let token = #"(?i)(token["']?\s*[:=]\s*["']?(?:bearer\s+|basic\s+)?+)(?![0-9]+(?:[\s"'&;,}]|$))[^\s"'&;]{3,}"#
         text = text.replacingOccurrences(of: token, with: "$1•••", options: .regularExpression)
