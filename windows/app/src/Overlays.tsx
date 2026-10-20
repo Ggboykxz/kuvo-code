@@ -5,57 +5,165 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { errorText } from "./lib";
 import { ChangesPanel } from "./Changes";
-import { complain, loadProjectFiles, loadSessions, notify, openSession, render, state, useStore, newSession, exportConversation, stopRun } from "./store";
+import { complain, loadProjectFiles, loadSessions, notify, openProjectFile, openSession, render, state, useStore, newSession, exportConversation, stopRun } from "./store";
 import { keysOf } from "./shortcuts";
 
 // ---- The command palette ----
+
+type PaletteKind = "action" | "command" | "session" | "file";
+type PaletteRow = {
+  id: string;
+  kind: PaletteKind;
+  title: string;
+  detail?: string;
+  shortcut?: string;
+  run: () => void | Promise<void>;
+};
+type PaletteSection = { title: string; items: PaletteRow[] };
+
+/// The Mac palette's loose matching (CommandPalette.swift:190-211): the start, then the
+/// start of a word, then the words' first letters, then anywhere, then each word.
+function fuzzyRank(query: string, text: string): number | null {
+  const q = query.toLowerCase().trim();
+  const t = text.toLowerCase();
+  if (!q) return null;
+  const words = t.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  if (t.startsWith(q)) return 0;
+  if (words.some(word => word.startsWith(q))) return 1;
+  if (q.length > 1 && !q.includes(" ") && words.map(word => word[0]).join("").startsWith(q)) return 2;
+  if (t.includes(q)) return 3;
+  const parts = q.split(/\s+/);
+  if (parts.length > 1 && parts.every(part => words.some(word => word.startsWith(part)))) return 4;
+  return null;
+}
+
+function paletteIcon(kind: PaletteKind) {
+  if (kind === "session") {
+    return (
+      <svg viewBox="0 0 16 16" width="16" height="16" fill="none" aria-hidden="true">
+        <path d="M2.7 3.4h10.6v6.7H8.2l-3.2 2.5v-2.5H2.7z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  if (kind === "file") {
+    return (
+      <svg viewBox="0 0 16 16" width="16" height="16" fill="none" aria-hidden="true">
+        <path d="M4 2.2h5.1L12.8 6v7.8H4z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+        <path d="M9 2.4V6h3.6" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  if (kind === "command") {
+    return (
+      <svg viewBox="0 0 16 16" width="16" height="16" fill="none" aria-hidden="true">
+        <rect x="2.2" y="3.2" width="11.6" height="9.6" rx="2" stroke="currentColor" strokeWidth="1.2" />
+        <path d="M5 6.2l2.1 1.9L5 10M8.5 10.2h2.7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" aria-hidden="true">
+      <path d="M2.8 8h9.7M8.8 4.3L12.5 8l-3.7 3.7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
 
 export function Palette() {
   useStore();
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
+  const [files, setFiles] = useState<{ path: string; name: string; relative: string }[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (state.paletteOpen) {
       setQuery("");
+      setIndex(0);
       setTimeout(() => inputRef.current?.focus(), 0);
     }
   }, [state.paletteOpen]);
 
   const needle = query.trim().toLowerCase();
-  const sessions = state.sessions.filter(s => !needle || (s.title || "").toLowerCase().includes(needle)).slice(0, 6);
-  const commands = state.commands.filter(c => !needle || c.name.toLowerCase().includes(needle)).slice(0, 6);
-  const [files, setFiles] = useState<{ path: string; name: string; relative: string }[]>([]);
   useEffect(() => {
-    if (!state.paletteOpen || !state.project) return;
+    if (!state.paletteOpen || !state.project || !needle) { setFiles([]); return; }
     void api<{ files: { path: string; name: string; relative: string }[] }>(`/api/search?q=${encodeURIComponent(needle)}`)
-      .then(answer => setFiles((answer.files ?? []).slice(0, 6)))
+      .then(answer => setFiles((answer.files ?? []).slice(0, 5)))
       .catch(() => setFiles([]));
   }, [state.paletteOpen, needle, state.project]);
-  // The palette finds a session, a file or a command — and the things that can be done, with
-  // the keys that do them, the Mac app's way (it is where one learns the shortcuts).
-  const everything: [string, string | null, () => void | Promise<void>][] = [
-    ["Appearance", "settings", async () => { state.settingsOpen = true; state.settingsSection = "appearance"; render(); }],
-    ["New session", "new-session", async () => { await newSession(); }],
-    ["Save the conversation as Markdown", "save", async () => { await exportConversation(); }],
-    ["Find in the conversation", "find", () => { (document.getElementById("find") as HTMLInputElement | null)?.focus(); }],
-    ["Stop the agent", "stop", async () => { await stopRun(); }],
-    ["Files", "files", () => { state.drawerOpen = true; state.drawerTab = "files"; render(); }],
-    ["Changes", "changes", () => { state.drawerOpen = true; state.drawerTab = "changes"; render(); }],
-    ["New terminal", "terminal", () => { state.drawerOpen = true; state.drawerTab = "terminal"; render(); }],
-    ["Show or hide the sidebar", "sidebar", () => { state.sidebarOpen = state.sidebarOpen === false; render(); }],
-    ["Rename this session", null, async () => {
+
+  const folder = state.project ? state.project.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? "" : "";
+  const coreActions: PaletteRow[] = [
+    { id: "action:new-session", kind: "action", title: "New session", shortcut: keysOf("new-session"), run: async () => { await newSession(); } },
+    { id: "action:stop", kind: "action", title: "Stop the agent", shortcut: keysOf("stop"), run: async () => { await stopRun(); } },
+    { id: "action:find", kind: "action", title: "Find in the conversation", shortcut: keysOf("find"), run: () => { (document.getElementById("find") as HTMLInputElement | null)?.focus(); } },
+    { id: "action:save", kind: "action", title: "Save the conversation as Markdown", shortcut: keysOf("save"), run: async () => { await exportConversation(); } },
+    { id: "action:files", kind: "action", title: "Show Files", shortcut: keysOf("files"), run: () => { state.drawerOpen = true; state.drawerTab = "files"; render(); } },
+    { id: "action:changes", kind: "action", title: "Show Changes", shortcut: keysOf("changes"), run: () => { state.drawerOpen = true; state.drawerTab = "changes"; render(); } },
+    { id: "action:terminal", kind: "action", title: "New Terminal", shortcut: keysOf("terminal"), run: () => { state.drawerOpen = true; state.drawerTab = "terminal"; render(); } },
+    { id: "action:panel", kind: "action", title: state.drawerOpen ? "Hide Panel" : "Show Panel", shortcut: keysOf("panel"), run: () => { state.drawerOpen = !state.drawerOpen; render(); } },
+    { id: "action:sidebar", kind: "action", title: state.sidebarOpen === false ? "Show Sessions" : "Hide Sessions", shortcut: keysOf("sidebar"), run: () => { state.sidebarOpen = state.sidebarOpen === false; render(); } },
+    { id: "action:settings", kind: "action", title: "Settings", shortcut: keysOf("settings"), run: () => { state.settingsOpen = true; state.settingsSection = "appearance"; render(); } },
+    { id: "action:rename", kind: "action", title: "Rename this session", run: async () => {
       const title = prompt("Name this session", state.session?.title ?? "");
       if (!title) return;
       await api(`/api/sessions/${encodeURIComponent(state.session!.id)}/rename`, { method: "POST", body: { title } });
       await loadSessions();
-    }],
-    ["Refresh sessions", null, async () => { await loadSessions(); notify("Kuvo Code", "Sessions refreshed."); }],
+    } },
+    { id: "action:refresh", kind: "action", title: "Refresh sessions", run: async () => { await loadSessions(); notify("Kuvo Code", "Sessions refreshed."); } },
   ];
-  // What is typed is looked for in the things that can be done, as in the sessions and the files.
-  const actions = everything.filter(([title]) => !needle || title.toLowerCase().includes(needle));
-  const total = sessions.length + commands.length + files.length + actions.length;
+  const commandActions: PaletteRow[] = state.commands.map(command => ({
+    id: `command:${command.name}`,
+    kind: "command",
+    title: `/${command.name}`,
+    detail: command.description,
+    run: () => {
+      const prompt = document.getElementById("prompt") as HTMLTextAreaElement | null;
+      if (prompt) {
+        prompt.value = `/${command.name} `;
+        prompt.dispatchEvent(new Event("input", { bubbles: true }));
+        prompt.focus();
+      }
+    },
+  }));
+  const sessionRows: PaletteRow[] = state.sessions.map(session => ({
+    id: `session:${session.id}`,
+    kind: "session",
+    title: session.title || "New Session",
+    detail: folder,
+    run: async () => { await openSession(session.id); },
+  }));
+  const actionRows = [...coreActions, ...commandActions];
+  const fileRows: PaletteRow[] = files.map(file => {
+    const relative = file.relative || file.path;
+    const cut = relative.lastIndexOf("/");
+    return {
+      id: `file:${file.path}`,
+      kind: "file",
+      title: file.name,
+      detail: cut > 0 ? relative.slice(0, cut) : undefined,
+      run: async () => { await openProjectFile(relative); },
+    };
+  });
+
+  const best = (rows: PaletteRow[], limit: number) => rows
+    .map((row, order) => ({ row, rank: fuzzyRank(needle, row.title), order }))
+    .filter((item): item is { row: PaletteRow; rank: number; order: number } => item.rank !== null)
+    .sort((a, b) => a.rank - b.rank || a.order - b.order)
+    .slice(0, limit)
+    .map(item => item.row);
+  const sections: PaletteSection[] = needle
+    ? [
+        { title: "Actions", items: best(actionRows, 5) },
+        { title: "Sessions", items: best(sessionRows, 5) },
+        { title: "Files", items: fileRows },
+      ].filter(section => section.items.length > 0)
+    : [
+        { title: "Recent Sessions", items: sessionRows.slice(0, 5) },
+        { title: "Actions", items: actionRows.slice(0, 7) },
+      ].filter(section => section.items.length > 0);
+  const rows = sections.flatMap(section => section.items);
+  const current = rows.length ? Math.min(index, rows.length - 1) : 0;
+  const total = rows.length;
   const run = async (action: () => void | Promise<void>) => {
     state.paletteOpen = false;
     render();
@@ -64,87 +172,59 @@ export function Palette() {
 
   return (
     <div id="palette" className={`palette ${state.paletteOpen ? "shown" : ""}`} hidden={!state.paletteOpen} onClick={event => { if (event.target === event.currentTarget) { state.paletteOpen = false; render(); } }}>
-      {/* The palette is one card of glass: the search above the list. */}
+      {/* The palette is one card of glass: a 48 pt search, then the list (CommandPalette.swift:81-111). */}
       <div className="palette-card">
-      <input
-        id="palette-input"
-        placeholder="Search sessions, files and actions…"
-        spellCheck={false}
-        autoComplete="off"
-        value={query}
-        ref={inputRef}
-        onChange={event => { setQuery(event.target.value); setIndex(0); }}
-        onKeyDown={event => {
-          if (event.key === "ArrowDown") { event.preventDefault(); setIndex(current => (current + 1) % Math.max(total, 1)); return; }
-          if (event.key === "ArrowUp") { event.preventDefault(); setIndex(current => (current - 1 + total) % Math.max(total, 1)); return; }
-          if (event.key === "Enter") {
-            event.preventDefault();
-            const rows = [
-              ...sessions.map(session => () => openSession(session.id)),
-              ...commands.map(command => () => {
-                const prompt = document.getElementById("prompt") as HTMLTextAreaElement | null;
-                if (prompt) { prompt.value = `/${command.name} `; prompt.dispatchEvent(new Event("input", { bubbles: true })); prompt.focus(); }
-              }),
-              ...actions.map(([, , action]) => action),
-            ];
-            void run(rows[index] ?? (() => {}));
-          }
-        }}
-      />
-      <div id="palette-list" className="palette-list">
-        {sessions.map(session => (
-          <div
-            key={session.id}
-            className={`palette-item ${sessions.indexOf(session) === index ? "selected" : ""}`}
-            onClick={() => void run(async () => { await openSession(session.id); })}
-          >
-            <span className="palette-kind">session</span>
-            <span>{session.title || "Untitled"}</span>
-          </div>
-        ))}
-        {commands.map(command => (
-          <div
-            key={command.name}
-            className={`palette-item ${sessions.length + commands.indexOf(command) === index ? "selected" : ""}`}
-            onClick={() => void run(async () => {
-              const prompt = document.getElementById("prompt") as HTMLTextAreaElement | null;
-              if (prompt) {
-                prompt.value = `/${command.name} `;
-                prompt.dispatchEvent(new Event("input", { bubbles: true }));
-                prompt.focus();
+        <div className="palette-search">
+          <svg viewBox="0 0 16 16" width="15" height="15" fill="none" aria-hidden="true">
+            <circle cx="6.8" cy="6.8" r="4.1" stroke="currentColor" strokeWidth="1.3" />
+            <path d="M9.9 9.9L13.4 13.4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+          </svg>
+          <input
+            id="palette-input"
+            placeholder={state.project ? "Search sessions, files and actions" : "Search sessions and actions"}
+            spellCheck={false}
+            autoComplete="off"
+            value={query}
+            ref={inputRef}
+            onChange={event => { setQuery(event.target.value); setIndex(0); }}
+            onKeyDown={event => {
+              if (event.key === "ArrowDown") { event.preventDefault(); setIndex(current => (current + 1) % Math.max(total, 1)); return; }
+              if (event.key === "ArrowUp") { event.preventDefault(); setIndex(current => (current - 1 + total) % Math.max(total, 1)); return; }
+              if (event.key === "Escape") { event.preventDefault(); state.paletteOpen = false; render(); return; }
+              if (event.key === "Enter") {
+                event.preventDefault();
+                const chosen = rows[current];
+                if (chosen) void run(chosen.run);
               }
-            })}
-          >
-            <span className="palette-kind">command</span>
-            <span>/{command.name}</span>
+            }}
+          />
+        </div>
+        {sections.length ? (
+          <div id="palette-list" className="palette-list">
+            {sections.map(section => (
+              <div className="palette-section" key={section.title}>
+                <div className="palette-title">{section.title}</div>
+                {section.items.map(item => {
+                  const position = rows.indexOf(item);
+                  return (
+                    <div
+                      key={item.id}
+                      className={`palette-item ${position === current ? "selected" : ""}`}
+                      onClick={() => void run(item.run)}
+                    >
+                      <span className={`palette-icon ${item.kind}`} aria-hidden="true">{paletteIcon(item.kind)}</span>
+                      <span className="palette-name">{item.title}</span>
+                      {item.detail ? <span className="palette-detail">{item.detail}</span> : null}
+                      {item.shortcut ? <span className="palette-keys">{item.shortcut}</span> : null}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
           </div>
-        ))}
-        {files.map(file => (
-          <div
-            key={file.path}
-            className={`palette-item ${sessions.length + commands.length + files.indexOf(file) === index ? "selected" : ""}`}
-            onClick={() => void run(async () => {
-              state.drawerOpen = true;
-              state.drawerTab = "files";
-              render();
-            })}
-          >
-            <span className="palette-kind">file</span>
-            <span>{file.relative}</span>
-          </div>
-        ))}
-        {actions.map(([title, shortcut, action], position) => (
-          <div
-            key={title}
-            className={`palette-item ${sessions.length + commands.length + files.length + position === index ? "selected" : ""}`}
-            onClick={() => void run(action)}
-          >
-            <span className="palette-kind">action</span>
-            <span>{title}</span>
-            {shortcut ? <span className="palette-keys">{keysOf(shortcut)}</span> : null}
-          </div>
-        ))}
-      </div>
+        ) : (
+          <div className="palette-empty">Nothing matches.</div>
+        )}
       </div>
     </div>
   );
@@ -294,24 +374,50 @@ export function Drawer() {
   }, [state.drawerOpen, state.drawerTab, state.project]);
 
   return (
-    <div id="drawer" className={`drawer ${state.drawerOpen ? "shown" : ""}`} hidden={!state.drawerOpen}>
+    <section id="drawer" className={`drawer utility-pane card ${state.drawerOpen ? "shown" : ""}`} hidden={!state.drawerOpen} aria-label="Panel">
       <div className="drawer-head">
-        <div className="drawer-tabs">
-          <button className={`drawer-tab ${state.drawerTab === "files" ? "active" : ""}`} onClick={() => { state.drawerTab = "files"; render(); }}>Files</button>
-          <button className={`drawer-tab ${state.drawerTab === "changes" ? "active" : ""}`} onClick={() => { state.drawerTab = "changes"; render(); }}>Changes</button>
-          <button className={`drawer-tab ${state.drawerTab === "terminal" ? "active" : ""}`} onClick={() => { state.drawerTab = "terminal"; render(); }}>Terminal</button>
+        <div className="drawer-tabs" role="tablist" aria-label="Panel tabs">
+          <button className={`drawer-tab ${state.drawerTab === "files" ? "active" : ""}`} role="tab" aria-selected={state.drawerTab === "files"} onClick={() => { state.drawerTab = "files"; render(); }}>
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" aria-hidden="true">
+              <path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.2l1.4 1.5H12.5A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+            </svg>
+            <span>Files</span>
+          </button>
+          <button className={`drawer-tab ${state.drawerTab === "changes" ? "active" : ""}`} role="tab" aria-selected={state.drawerTab === "changes"} onClick={() => { state.drawerTab = "changes"; render(); }}>
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" aria-hidden="true">
+              <path d="M8 2.5v11M2.5 8h11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+            </svg>
+            <span>Changes</span>
+          </button>
+          <button className={`drawer-tab ${state.drawerTab === "terminal" ? "active" : ""}`} role="tab" aria-selected={state.drawerTab === "terminal"} onClick={() => { state.drawerTab = "terminal"; render(); }}>
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" aria-hidden="true">
+              <rect x="2.2" y="3" width="11.6" height="10" rx="2" stroke="currentColor" strokeWidth="1.2" />
+              <path d="M5 6l2 2-2 2M8.3 10h2.8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <span>Terminal</span>
+          </button>
         </div>
-        <button id="drawer-close" className="small" onClick={() => { state.drawerOpen = false; render(); }}>✕</button>
+        <button id="drawer-close" className="titlebar-icon panel-action" title="Hide Panel" aria-label="Hide Panel" onClick={() => { state.drawerOpen = false; render(); }}>
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+            <path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+          </svg>
+        </button>
       </div>
       <div id="drawer-files" className="drawer-body" hidden={state.drawerTab !== "files"}>
-        <input
-          id="files-search"
-          className="file-search"
-          placeholder="Search in files…"
-          spellCheck={false}
-          value={fileQuery}
-          onChange={event => setFileQuery(event.target.value)}
-        />
+        <label className="search-well">
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" aria-hidden="true">
+            <circle cx="6.9" cy="6.9" r="4" stroke="currentColor" strokeWidth="1.2" />
+            <path d="M9.9 9.9l3.2 3.2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+          </svg>
+          <input
+            id="files-search"
+            className="file-search"
+            placeholder="Search in files…"
+            spellCheck={false}
+            value={fileQuery}
+            onChange={event => setFileQuery(event.target.value)}
+          />
+        </label>
         <div id="files-search-results" className="search-results" hidden={!fileMatches.length}>
           {fileMatches.map(match => (
             <div className="hit" key={match.path}>
@@ -343,7 +449,7 @@ export function Drawer() {
         <div id="terminal" ref={terminalRef} className="terminal" />
         <div id="terminal-note" className="where">{terminalNote}</div>
       </div>
-    </div>
+    </section>
   );
 }
 

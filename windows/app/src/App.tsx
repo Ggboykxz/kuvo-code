@@ -41,7 +41,7 @@ import {
   undoFromHere,
   useStore,
 } from "./store";
-import { Settings } from "./Settings";
+import { Settings, settingsPageTitle } from "./Settings";
 import { DiffModal, Drawer, Palette, Picker, Toast } from "./Overlays";
 
 // ---- The pieces of the transcript ----
@@ -522,6 +522,18 @@ function CardHeader() {
       </div>
       <div className="spacer" />
       <div className="card-actions">
+        <button
+          id="split"
+          className={`card-action icon ${state.split ? "active" : ""}`}
+          title="Show a second session beside this one"
+          aria-label="Split view"
+          onClick={() => void toggleSplit()}
+        >
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+            <rect x="2.2" y="3" width="11.6" height="10" rx="2" stroke="currentColor" strokeWidth="1.2" />
+            <path d="M8 3v10" stroke="currentColor" strokeWidth="1.2" />
+          </svg>
+        </button>
         {state.sessionDiff.length ? (
           <button
             id="changes"
@@ -539,52 +551,191 @@ function CardHeader() {
 }
 
 function Header() {
+  const showingSettings = state.settingsOpen;
   const running = state.engine?.status === "running";
   const branch = state.vcs?.branch?.current;
+  const sidebarOpen = state.sidebarOpen !== false;
+  const folder = state.project ? state.project.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? "" : "";
+  const engineText = running ? `engine ${state.engine?.version ?? ""}`.trim() : state.engine?.status ?? "…";
   return (
-    <header>
-      <div className="brand">Kuvo&nbsp;Code</div>
-      <button id="project" className="path" title="Change the project folder" onClick={() => { state.pickerOpen = true; render(); }}>
-        {state.project ?? "choose a folder…"}
-      </button>
-      <div className="spacer" />
-      <button id="toggle-files" className="small" title="Files and terminal" onClick={() => { state.drawerOpen = !state.drawerOpen; render(); }}>Files</button>
-      <button
-        id="toggle-sidebar"
-        className="small"
-        title="Show or hide the sidebar"
-        onClick={() => { state.sidebarOpen = !state.sidebarOpen; render(); }}
-      >
-        {state.sidebarOpen === false ? "Show sessions" : "Hide sessions"}
-      </button>
-      <button id="split" className={`small ${state.split ? "active" : ""}`} title="Show a second session beside this one" onClick={() => void toggleSplit()}>Split</button>
-      <button
-        id="palette-open"
-        className="small icon"
-        title="Commands, sessions and files (Ctrl+K)"
-        aria-label="Commands, sessions and files"
-        onClick={() => { state.paletteOpen = true; render(); }}
-      >
-        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
-          <circle cx="6.8" cy="6.8" r="4.1" stroke="currentColor" strokeWidth="1.3" />
-          <path d="M9.9 9.9L13.4 13.4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-        </svg>
-      </button>
-      <button id="settings-open" className="small" title="Appearance" onClick={() => { state.settingsOpen = true; state.settingsSection = "appearance"; render(); }}>Appearance</button>
-      <button id="export" className="small" title="Export conversation as Markdown" onClick={() => void exportConversation()}>Export</button>
-      <span id="vcs" className="vcs-chip" hidden={!branch}>{branch ?? ""}</span>
-      <input
-        id="find"
-        className="file-search header-find"
-        placeholder="Find in conversation…"
-        spellCheck={false}
-        value={state.findQuery}
-        onChange={event => { state.findQuery = event.target.value; render(); }}
-      />
-      <div id="engine" className={`engine ${running ? "up" : state.engine?.status === "starting" ? "starting" : "down"}`} title="The engine on this machine">
-        {running ? `engine ${state.engine?.version ?? ""}`.trim() : state.engine?.status ?? "…"}
+    <header className={`titlebar ${sidebarOpen ? "" : "sidebar-hidden"} ${showingSettings ? "showing-settings" : ""}`}>
+      <div className="titlebar-identity">
+        {showingSettings ? (
+          <button
+            id="settings-back"
+            className="titlebar-icon"
+            title="Back to Sessions (Esc)"
+            aria-label="Back to Sessions"
+            onClick={() => { state.settingsOpen = false; render(); }}
+          >
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
+              <path d="M9.8 3.4L5.2 8l4.6 4.6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        ) : (
+          <>
+            <button
+              id="toggle-sidebar"
+              className="titlebar-icon"
+              title={sidebarOpen ? "Hide Sessions" : "Show Sessions"}
+              aria-label={sidebarOpen ? "Hide Sessions" : "Show Sessions"}
+              aria-pressed={!sidebarOpen}
+              onClick={() => { state.sidebarOpen = !sidebarOpen; render(); }}
+            >
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
+                <rect x="2.2" y="3" width="11.6" height="10" rx="2" stroke="currentColor" strokeWidth="1.2" />
+                <path d="M6.3 3v10" stroke="currentColor" strokeWidth="1.2" />
+              </svg>
+            </button>
+            <div className="identity" title={state.project ?? "Choose a folder"}>
+              <button
+                id="project"
+                className="identity-hit"
+                title="Change the project folder"
+                aria-label="Change the project folder"
+                onClick={() => { state.pickerOpen = true; render(); }}
+              ><span className="sr-only">{state.project ?? "choose a folder…"}</span></button>
+              <span className="identity-name">{folder || "choose a folder…"}</span>
+              {branch ? (
+                <span className="identity-branch">
+                  <svg viewBox="0 0 12 12" width="10" height="10" fill="none" aria-hidden="true">
+                    <circle cx="3" cy="2.6" r="1.2" stroke="currentColor" strokeWidth="1" />
+                    <circle cx="3" cy="9.4" r="1.2" stroke="currentColor" strokeWidth="1" />
+                    <circle cx="9" cy="8.1" r="1.2" stroke="currentColor" strokeWidth="1" />
+                    <path d="M3 3.8v4.4M4.2 7.6c2.3 0 3.3-.7 3.8-2.1" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+                  </svg>
+                  <span>{branch}</span>
+                </span>
+              ) : null}
+            </div>
+          </>
+        )}
+      </div>
+      <div className="titlebar-tabs">
+        {showingSettings ? (
+          <div className="tab-track" role="tablist" aria-label="Settings">
+            <button className="tab active settings-tab" role="tab" aria-selected="true" tabIndex={-1}>
+              <span className="tab-icon" aria-hidden="true">
+                <svg viewBox="0 0 16 16" width="10" height="10" fill="none">
+                  <circle cx="8" cy="8" r="2.3" stroke="currentColor" strokeWidth="1.2" />
+                  <path d="M8 1.9v1.7M8 12.4v1.7M1.9 8h1.7M12.4 8h1.7M3.7 3.7l1.2 1.2M11.1 11.1l1.2 1.2M12.3 3.7l-1.2 1.2M4.9 11.1l-1.2 1.2" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+                </svg>
+              </span>
+              <span className="tab-title">{settingsPageTitle(state.settingsSection)}</span>
+            </button>
+          </div>
+        ) : (
+          <SessionTabs />
+        )}
+      </div>
+      <div className="titlebar-actions">
+        <button
+          id="palette-open"
+          className="titlebar-icon"
+          title="Commands, sessions and files (Ctrl+K)"
+          aria-label="Commands, sessions and files"
+          onClick={() => { state.paletteOpen = true; render(); }}
+        >
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
+            <circle cx="6.8" cy="6.8" r="4.1" stroke="currentColor" strokeWidth="1.3" />
+            <path d="M9.9 9.9L13.4 13.4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+          </svg>
+        </button>
+        {showingSettings ? null : (
+          <>
+            <button
+              id="settings-open"
+              className="titlebar-icon"
+              title="Settings"
+              aria-label="Settings"
+              onClick={() => { state.settingsOpen = true; state.settingsSection = "appearance"; render(); }}
+            >
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
+                <path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+                <circle cx="5.5" cy="4.5" r="1.5" fill="var(--panel)" stroke="currentColor" strokeWidth="1.2" />
+                <circle cx="10.2" cy="8" r="1.5" fill="var(--panel)" stroke="currentColor" strokeWidth="1.2" />
+                <circle cx="6.8" cy="11.5" r="1.5" fill="var(--panel)" stroke="currentColor" strokeWidth="1.2" />
+              </svg>
+            </button>
+            <button
+              id="toggle-files"
+              className="titlebar-icon"
+              title={state.drawerOpen ? "Hide Panel" : "Show Panel"}
+              aria-label={state.drawerOpen ? "Hide Panel" : "Show Panel"}
+              aria-pressed={state.drawerOpen}
+              onClick={() => { state.drawerOpen = !state.drawerOpen; render(); }}
+            >
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
+                <rect x="2.2" y="3" width="11.6" height="10" rx="2" stroke="currentColor" strokeWidth="1.2" />
+                <path d="M9.7 3v10" stroke="currentColor" strokeWidth="1.2" />
+              </svg>
+            </button>
+          </>
+        )}
+        <input
+          id="find"
+          className="file-search header-find"
+          placeholder="Find in conversation…"
+          spellCheck={false}
+          value={state.findQuery}
+          onChange={event => { state.findQuery = event.target.value; render(); }}
+        />
+        <span id="engine" className={`engine sr-only ${running ? "up" : state.engine?.status === "starting" ? "starting" : "down"}`} title="The engine on this machine">
+          {engineText}
+        </span>
       </div>
     </header>
+  );
+}
+
+/// The Mac's TabStrip (TitleBar.swift:78-330): open sessions as tabs in one glass track,
+/// with the active one a raised white pill, a hairline between the inactive neighbours,
+/// and the close button under the pointer. The strip starts where the conversation card
+/// does, so the project identity takes the sidebar's width.
+function SessionTabs() {
+  if (!state.openSessions.length) return null;
+  return (
+    <div className="tab-track" role="tablist" aria-label="Open sessions">
+      {state.openSessions.map(id => {
+        const session = state.sessions.find(item => item.id === id) ?? (state.session?.id === id ? state.session : null);
+        const active = id === state.session?.id;
+        const running = active && state.transcript?.running;
+        const unread = Boolean(session?.time?.idle && session?.time?.viewed && session.time.idle > session.time.viewed && !active);
+        const status = running ? "running" : unread ? "unread" : "";
+        const title = session?.title || "New Session";
+        const help = running ? `${title} — Working` : unread ? `${title} — Finished` : title;
+        return (
+          <button
+            key={id}
+            className={`tab ${active ? "active" : ""}`}
+            role="tab"
+            aria-selected={active}
+            tabIndex={active ? 0 : -1}
+            title={help}
+            onClick={() => { state.settingsOpen = false; void openSession(id); }}
+          >
+            <span className="tab-icon" aria-hidden="true">
+              <svg viewBox="0 0 16 16" width="10" height="10" fill="none">
+                <path d="M2.7 3.4h10.6v6.7H8.2l-3.2 2.5v-2.5H2.7z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+              </svg>
+              {status ? <span className={`tab-status ${status}`} /> : null}
+            </span>
+            <span className="tab-title">{title}</span>
+            <span
+              className="tab-close"
+              role="button"
+              aria-label={`Close ${title}`}
+              title="Close Tab"
+              onClick={event => { event.stopPropagation(); closeSessionTab(id); }}
+            >
+              <svg viewBox="0 0 12 12" width="8" height="8" fill="none" aria-hidden="true">
+                <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+              </svg>
+            </span>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -626,14 +777,20 @@ function Sidebar() {
         </svg>
         <span>New Session</span>
       </button>
-      <input
-        id="session-search"
-        className="file-search sidebar-search"
-        placeholder="Search"
-        spellCheck={false}
-        value={state.sessionQuery}
-        onChange={event => { state.sessionQuery = event.target.value; render(); }}
-      />
+      <label className="search-well sidebar-search">
+        <svg viewBox="0 0 16 16" width="12" height="12" fill="none" aria-hidden="true">
+          <circle cx="6.9" cy="6.9" r="4" stroke="currentColor" strokeWidth="1.2" />
+          <path d="M9.9 9.9l3.2 3.2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+        </svg>
+        <input
+          id="session-search"
+          className="file-search"
+          placeholder="Search"
+          spellCheck={false}
+          value={state.sessionQuery}
+          onChange={event => { state.sessionQuery = event.target.value; render(); }}
+        />
+      </label>
       <div className="sidebar-scroll">
       <ul id="sessions">
         {visible.map(session => {
@@ -1245,6 +1402,11 @@ export function App() {
   const inShell = new URLSearchParams(window.location.search).get("shell") === "1";
 
   useEffect(() => {
+    document.body.classList.toggle("in-shell", inShell);
+    return () => document.body.classList.remove("in-shell");
+  }, [inShell]);
+
+  useEffect(() => {
     if (!state.project) return;
     void loadVcs();
     void loadSessionDiff();
@@ -1253,24 +1415,12 @@ export function App() {
 
   return (
     <>
-      {inShell ? <div className="titlebar-drag" /> : null}
       <Header />
       <main className={state.sidebarOpen === false ? "sidebar-hidden" : ""}>
         <Sidebar />
         <section id="conversation" className="card conversation-card">
           <div className="card-fade" aria-hidden="true" />
           <CardHeader />
-          <div id="session-tabs" className="session-tabs" hidden={state.openSessions.length < 2}>
-            {state.openSessions.map(id => {
-              const session = state.sessions.find(s => s.id === id) ?? (state.session?.id === id ? state.session : null);
-              return (
-                <div key={id} className={`session-tab ${id === state.session?.id ? "active" : ""}`}>
-                  <span onClick={() => void openSession(id)}>{session?.title || id.slice(0, 8)}</span>
-                  <span className="close" onClick={event => { event.stopPropagation(); closeSessionTab(id); }}>✕</span>
-                </div>
-              );
-            })}
-          </div>
           <div id="empty" className="empty" hidden={hasSession}>
             <h1>{needsFolder ? "Start with a folder" : "A session to work in"}</h1>
             <p>
@@ -1332,11 +1482,11 @@ export function App() {
             {state.split ? <EntryNodes transcript={state.transcripts.get(state.split) ?? { entries: [], pending: [], permissions: [], running: false }} /> : null}
           </div>
         </section>
+        <Drawer />
       </main>
       <Palette />
       <Picker />
       <Settings />
-      <Drawer />
       <DiffModal />
       <Toast />
       <ImageViewer />

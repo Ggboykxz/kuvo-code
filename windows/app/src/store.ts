@@ -168,6 +168,7 @@ export async function openProjectFile(relative: string) {
     const { content } = await api<{ content: string }>(`/api/file?path=${encodeURIComponent(relative)}`);
     state.openFile = relative;
     state.openFileContent = content;
+    state.settingsOpen = false;
     state.drawerOpen = true;
     state.drawerTab = "files";
     render();
@@ -197,6 +198,7 @@ export async function openSession(id: string) {
     state.session = detail.session;
     state.transcript = fromHistory(id, detail.messages as never[], detail.permissions as never[], detail.running);
     state.revert = detail.revert ?? null;
+    state.settingsOpen = false;
     if (!state.openSessions.includes(id)) state.openSessions.push(id);
     render();
     await Promise.all([loadInbox(), loadVcs(), loadSessionDiff(), loadForms()]);
@@ -405,7 +407,10 @@ export async function saveConfig() {
   try {
     await api("/api/config", { method: "PUT", body: { settings: state.config } });
     notify("Kuvo Code", "Saved to the engine's settings.");
-    await bootConfig();
+    // What was just written is what the app keeps: reading it back could hand the page the
+    // file as it was a moment ago, and a shortcut recorded a second ago would answer to its
+    // old keys (the file is written by the engine, in its own time).
+    await bootConfig(true);
     return true;
   } catch (error) {
     complain(error);
@@ -413,14 +418,14 @@ export async function saveConfig() {
   }
 }
 
-export async function bootConfig() {
+export async function bootConfig(keepsSettings = false) {
   const [cfg, mcp, skills] = await Promise.all([
     api<{ settings: Record<string, unknown> | null; path: string; problem: string | null; live?: unknown; opencode?: AppState["opencode"] }>("/api/config").catch(() => null),
     api<{ servers: McpServer[] }>("/api/mcp").catch(() => null),
     api<{ skills: AppState["skillsEngine"]; folder: string }>("/api/skills").catch(() => null),
   ]);
   if (cfg) {
-    state.config = cfg.settings && typeof cfg.settings === "object" ? cfg.settings : {};
+    if (!keepsSettings) state.config = cfg.settings && typeof cfg.settings === "object" ? cfg.settings : {};
     state.configPath = cfg.path;
     state.configProblem = cfg.problem ?? null;
     state.configLive = cfg.live ?? null;
