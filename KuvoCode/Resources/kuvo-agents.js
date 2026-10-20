@@ -119,6 +119,28 @@ async function installGrok(deps) {
   writeFileSync(path + ".version", machineVersions.grok);
   return path;
 }
+function takeSharedFile(file, content) {
+  const mark = file + ".from-mac";
+  const own = existsSync(file) && !existsSync(mark);
+  if (own)
+    return false;
+  if (content === null) {
+    if (!existsSync(mark))
+      return false;
+    rmSync(file, { force: true });
+    rmSync(mark, { force: true });
+    return true;
+  }
+  try {
+    if (readFileSync(file, "utf8") === content)
+      return false;
+  } catch {}
+  mkdirSync(dirname(file), { recursive: true, mode: 448 });
+  writeFileSync(file + ".new", content, { mode: 384 });
+  renameSync(file + ".new", file);
+  writeFileSync(mark, "", { mode: 384 });
+  return true;
+}
 
 // Agents/src/accounts.ts
 var kinds = ["claude", "codex", "cursor", "grok", "antigravity"];
@@ -3479,6 +3501,28 @@ class AntigravityAgent {
     rmSync5(this.tokenFile, { force: true });
     rmSync5(this.modelsFile, { force: true });
   }
+  async sharedSignIn() {
+    if (this.instance.home || this.endedSignIn !== undefined || !existsSync6(this.tokenFile))
+      return;
+    try {
+      const token = JSON.parse(readFileSync9(this.tokenFile, "utf8"));
+      return token?.refresh_token ? { token } : undefined;
+    } catch {
+      return;
+    }
+  }
+  async takeSharedSignIn(shared) {
+    if (this.instance.home)
+      return false;
+    const token = shared?.token;
+    const changed = takeSharedFile(this.tokenFile, token && typeof token.refresh_token === "string" ? JSON.stringify(token) : null);
+    if (changed) {
+      this.endedSignIn = undefined;
+      if (!shared)
+        rmSync5(this.modelsFile, { force: true });
+    }
+    return changed;
+  }
   saveModels(setup) {
     const option = (setup?.configOptions ?? []).find((option2) => option2.id === "model" || option2.category === "model");
     const flat = [];
@@ -6774,6 +6818,28 @@ class CursorAgent {
     rmSync7(this.authFile, { force: true });
     this.accountCache = undefined;
     this.modelList = undefined;
+  }
+  async sharedSignIn() {
+    if (this.instance.home || !existsSync10(this.authFile))
+      return;
+    try {
+      const saved = JSON.parse(readFileSync11(this.authFile, "utf8"));
+      if (!saved?.apiKey || saved.apiKeyExpiresAtMs && saved.apiKeyExpiresAtMs < Date.now())
+        return;
+      return saved;
+    } catch {
+      return;
+    }
+  }
+  async takeSharedSignIn(shared) {
+    if (this.instance.home)
+      return false;
+    const changed = takeSharedFile(this.authFile, shared && typeof shared.apiKey === "string" ? JSON.stringify(shared) : null);
+    if (changed) {
+      this.accountCache = undefined;
+      this.modelList = undefined;
+    }
+    return changed;
   }
   async models() {
     const sdk = await this.sdk();
@@ -10422,6 +10488,20 @@ function handler(context) {
         const target = b ? roster.find(b) : undefined;
         if (!target)
           return error(404, "No such account.");
+        if (c === "shared" && method === "GET")
+          return json({ data: await target.sharedSignIn?.().catch(() => {
+            return;
+          }) ?? null });
+        if (c === "shared" && method === "PUT") {
+          const { shared } = await body();
+          const changed = await target.takeSharedSignIn?.(shared && typeof shared === "object" ? shared : null).catch(() => false) ?? false;
+          if (changed) {
+            target.forgetModels?.();
+            emit("integration.updated", { integrationID: target.providerID });
+            emit("model.updated", {});
+          }
+          return json({ data: { changed } });
+        }
         if (target.instance.id === "default")
           return error(400, "That's the agent's own sign-in: sign out of it where you signed in.");
         if (method === "PATCH") {

@@ -343,6 +343,11 @@ final class AppModel {
         agents.onEvent = { [weak self] event in
             self?.catalog.handle(event)
             self?.workspace.handleAgents(event)
+            // You signed in or out of an agent whose sign-in works on your machines too: there too.
+            struct Updated: Decodable { var integrationID: String? }
+            if event.type == "integration.updated", let id = (try? event.payload(as: Updated.self))?.integrationID, Self.sharedAgentSignIns.contains(id), let self {
+                for engine in machines.engines.values where engine.isReady { Task { await self.syncAgentSignIns(with: engine) } }
+            }
         }
         agents.onStopped = { [weak self] in
             self?.catalog.forgetAgents()

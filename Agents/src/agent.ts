@@ -215,6 +215,18 @@ export interface Agent {
   instance: AgentAccount
   /** An added account is being removed: sign out where the agent keeps it outside its folder. */
   removeAccount?(): Promise<void>
+  /**
+   * Its sign-in, when it works in two places at once (an API key; a sign-in its maker never
+   * rotates): your Mac's, for your machines, so signing in once is enough there. Undefined: none,
+   * or one that can't be shared (two copies renewing it would sign one out).
+   */
+  sharedSignIn?(): Promise<Record<string, unknown> | undefined>
+  /**
+   * On a machine: your Mac's sign-in (`shared`), in place of one it gave before, never of one
+   * made on the machine itself; null: the Mac's is gone, and so goes the one it gave. True when
+   * that changed anything.
+   */
+  takeSharedSignIn?(shared: Record<string, unknown> | null): Promise<boolean>
   /** Stops what it keeps running (an app-server): its account is gone. */
   shutdown?(): void
   /** The version of its program you have, the newest, and how it's updated (an agent you install). */

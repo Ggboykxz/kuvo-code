@@ -6,6 +6,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs"
 import { join } from "node:path"
 import { providerID, type AgentAccount } from "../accounts"
+import { takeSharedFile } from "../machine"
 import type { Agent, AgentContext, Account, RunInput, RunResult, SignInAttempt, SubagentRun, Thread, TurnHooks } from "../agent"
 import { accountName, failure, model } from "../agent"
 import type { Limit } from "../auto"
@@ -151,6 +152,28 @@ export class CursorAgent implements Agent {
     rmSync(this.authFile, { force: true })
     this.accountCache = undefined
     this.modelList = undefined
+  }
+
+  /** Its sign-in is an API key Cursor made for Kuvo Code: it works on your machines too. */
+  async sharedSignIn() {
+    if (this.instance.home || !existsSync(this.authFile)) return undefined
+    try {
+      const saved = JSON.parse(readFileSync(this.authFile, "utf8"))
+      if (!saved?.apiKey || (saved.apiKeyExpiresAtMs && saved.apiKeyExpiresAtMs < Date.now())) return undefined
+      return saved as Record<string, unknown>
+    } catch {
+      return undefined
+    }
+  }
+
+  async takeSharedSignIn(shared: Record<string, unknown> | null) {
+    if (this.instance.home) return false
+    const changed = takeSharedFile(this.authFile, shared && typeof shared.apiKey === "string" ? JSON.stringify(shared) : null)
+    if (changed) {
+      this.accountCache = undefined
+      this.modelList = undefined
+    }
+    return changed
   }
 
   async models(): Promise<Model[]> {

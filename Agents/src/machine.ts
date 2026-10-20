@@ -147,3 +147,28 @@ export async function installGrok(deps: Deps): Promise<string> {
   writeFileSync(path + ".version", machineVersions.grok)
   return path
 }
+
+/**
+ * A sign-in kept in one file, your Mac's on a machine: written (a file only you can read) with a
+ * mark beside it saying it's the Mac's, or, `content` null, taken away with its mark. One signed
+ * in on the machine itself (no mark) stays as it is. True when that changed anything.
+ */
+export function takeSharedFile(file: string, content: string | null): boolean {
+  const mark = file + ".from-mac"
+  const own = existsSync(file) && !existsSync(mark)
+  if (own) return false
+  if (content === null) {
+    if (!existsSync(mark)) return false
+    rmSync(file, { force: true })
+    rmSync(mark, { force: true })
+    return true
+  }
+  try {
+    if (readFileSync(file, "utf8") === content) return false
+  } catch {}
+  mkdirSync(dirname(file), { recursive: true, mode: 0o700 })
+  writeFileSync(file + ".new", content, { mode: 0o600 })
+  renameSync(file + ".new", file)
+  writeFileSync(mark, "", { mode: 0o600 })
+  return true
+}

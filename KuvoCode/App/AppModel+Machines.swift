@@ -209,6 +209,8 @@ extension AppModel {
                 await engine.catalog.refreshAgents()
                 _ = await self.workspace.refresh(engine)
                 if self.agents.isAutoLoaded { await engine.agents.copyLists(self.agents.auto.all) }
+                // Your sign-ins that work there too (its bridge started since the machine connected).
+                await self.syncAgentSignIns(with: engine)
             }
         }
         engine.onExit = { [weak self] in
@@ -264,6 +266,7 @@ extension AppModel {
         if live(engine) {
             await syncSignIns(with: engine)
             await syncSignInFiles(with: engine)
+            await syncAgentSignIns(with: engine)
             await AgentMail.shared.share(with: engine)
             await AgentMail.shared.collect(from: engine)
             await AgentMail.shared.deliverWaiting(to: engine)
@@ -275,6 +278,7 @@ extension AppModel {
                     guard let engine, self?.live(engine) == true, !Task.isCancelled else { return }
                     await self?.syncSignIns(with: engine)
                     await self?.syncSignInFiles(with: engine)
+                    await self?.syncAgentSignIns(with: engine)
                 }
             }
             engine.agentSync?.cancel()
