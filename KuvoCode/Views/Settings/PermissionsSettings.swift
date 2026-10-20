@@ -72,8 +72,9 @@ struct PermissionsSettings: View {
                         Spacer()
                         Button {
                             Task {
-                                // From the engine that keeps it.
-                                try? await (item.engine?.api ?? app.api)?.removeSavedPermission(permission.id)
+                                // From the engine that keeps it (a machine's, not this Mac's, also
+                                // while it's away: then it stays, and shows again).
+                                try? await (item.engine.map(\.api) ?? app.api)?.removeSavedPermission(permission.id)
                                 await loadSaved()
                             }
                         } label: {
@@ -133,6 +134,8 @@ struct PermissionsSettings: View {
                 }
             }
             all += found.map { Saved(permission: $0, engine: engine) }
+            // Shown as each engine answers: a slow machine doesn't hold up this Mac's.
+            saved = all
         }
         saved = all
     }
@@ -359,6 +362,13 @@ private struct RuleRow: View {
     let problem: (PermissionRule) -> String?
     /// The rule as changed, or nil to remove it.
     let change: (PermissionRule?) -> Void
+
+    /// The pattern a change of kind or effect keeps: what's typed, once it can be a rule's (the
+    /// row it moves to doesn't have it), else the saved one.
+    private var pattern: String {
+        let typed = resource.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !typed.isEmpty && problem(PermissionRule(action: rule.action, resource: typed, effect: rule.effect)) == nil ? typed : rule.resource
+    }
     /// Each change to the pattern as it's typed.
     let typed: (String) -> Void
     /// For a new one: save it now, if it can be.
@@ -380,7 +390,7 @@ private struct RuleRow: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 8) {
                 // A fixed width that long titles truncate in, so the patterns line up.
-                Picker("Action", selection: Binding(get: { rule.action }, set: { change(PermissionRule(action: $0, resource: rule.resource, effect: rule.effect)) })) {
+                Picker("Action", selection: Binding(get: { rule.action }, set: { change(PermissionRule(action: $0, resource: pattern, effect: rule.effect)) })) {
                     ForEach(actions, id: \.id) { Text($0.title).tag($0.id) }
                     if !actions.contains(where: { $0.id == rule.action }) { Text(rule.action).tag(rule.action) }
                 }
@@ -397,7 +407,7 @@ private struct RuleRow: View {
                         }
                     }
                     .onChange(of: resource) { typed(resource) }
-                Picker("Effect", selection: Binding(get: { rule.effect }, set: { change(PermissionRule(action: rule.action, resource: rule.resource, effect: $0)) })) {
+                Picker("Effect", selection: Binding(get: { rule.effect }, set: { change(PermissionRule(action: rule.action, resource: pattern, effect: $0)) })) {
                     ForEach(effects, id: \.self) { Text(Self.title(of: $0)).tag($0) }
                 }
                 .labelsHidden()
