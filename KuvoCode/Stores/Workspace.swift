@@ -801,6 +801,40 @@ final class Workspace {
         requestedTab = session.id
     }
 
+    /// An engine session you picked a coding agent's model (or Auto) in: it carries on with the
+    /// agents, in a session of theirs with its conversation (their first agent is handed all of
+    /// it), opened in its place; the engine's goes to Archived, its draft comes along.
+    func moveToAgents(_ id: String, model: ModelRef) async throws {
+        guard let session = session(id), let engine = api(forSession: id) else { return }
+        if RemoteFolder.isRemote(session.location.directory) {
+            throw OutsideAgents.Failure.onlyOnThisMac(model.providerID == OutsideAgents.autoProvider ? "Auto" : OutsideAgents.name(model.providerID))
+        }
+        guard let bridge = agents?.api else { throw OutsideAgents.Failure.notRunning(agents?.failure) }
+        // Not partway through a turn.
+        if running.contains(id) {
+            _ = try? await engine.interrupt(session: id)
+            try? await engine.wait(session: id)
+        }
+        // Its whole conversation, page by page (a great many messages at most).
+        var page = try await engine.messages(session: id, limit: 200)
+        var messages = page.data
+        while page.data.count >= 200, messages.count < 20_000, let cursor = page.cursor?.next ?? page.cursor?.previous {
+            page = try await engine.messages(session: id, limit: 200, before: cursor)
+            if page.data.isEmpty { break }
+            messages = page.data + messages
+        }
+        let moved = try await bridge.importSession(directory: session.location.directory, title: session.title, agent: session.agent, model: model,
+                                                   permissions: session.permissions, messages: messages)
+        if let tree = worktrees[session.location.directory] {
+            try? await bridge.setInstruction(session: moved.id, key: Self.worktreeInstructionKey, text: Self.instructions(for: tree))
+        }
+        upsert(moved)
+        Drafts.shared[moved.id] = Drafts.shared[id]
+        Analytics.shared.track("session_moved_to_agents", Analytics.model(provider: model.providerID, model: model.id))
+        await setArchived(id, true)
+        requestedTab = moved.id
+    }
+
     /// A session was deleted: its panel goes with it. The app sets it.
     @ObservationIgnored var onDeleted: ((String) -> Void)?
 

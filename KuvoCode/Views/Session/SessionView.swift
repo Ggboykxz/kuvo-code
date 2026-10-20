@@ -224,7 +224,14 @@ private struct BottomStack: View {
                         defaultApproval = approval
                     },
                     onSelectModel: { ref in
-                        model.selectModel(ref)
+                        // A coding agent's model (or Auto) in a session on the engine: it carries on with them.
+                        if !OutsideAgents.isAgentSession(model.session), OutsideAgents.runsInBridge(ref.providerID) {
+                            Task {
+                                do { try await workspace.moveToAgents(model.id, model: ref) } catch { model.failure = error.localizedDescription }
+                            }
+                        } else {
+                            model.selectModel(ref)
+                        }
                         lastModel = ref
                     },
                     onSend: { send(queue: false) },

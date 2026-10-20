@@ -316,6 +316,14 @@ public struct OpenCodeAPI: Sendable {
         return appSession(try await send("POST", "api/session", body: body, as: DataEnvelope<Session>.self).data)
     }
 
+    /// A new session with a conversation from elsewhere (the agents bridge takes one from the
+    /// engine): its messages as they were, carried on here.
+    public func importSession(directory: String, title: String?, agent: String?, model: ModelRef, permissions: [PermissionRule]?, messages: [Message]) async throws -> Session {
+        struct Body: Encodable { var title: String?; var agent: String?; var model: ModelRef; var location: Location; var permissions: [PermissionRule]?; var messages: [Message] }
+        let body = Body(title: title, agent: agent, model: model, location: Location(directory: enginePath(directory)), permissions: permissions, messages: messages)
+        return appSession(try await send("POST", "api/session/import", body: body, as: DataEnvelope<Session>.self).data)
+    }
+
     public func renameSession(_ id: String, title: String) async throws {
         struct Body: Encodable { var title: String }
         try await send("PATCH", "api/session/\(id.pathEscaped)", body: Body(title: title))

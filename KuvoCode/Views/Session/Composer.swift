@@ -74,14 +74,15 @@ struct Composer: View {
     @Environment(\.bot) private var bot
     @FocusState private var isFocused: Bool
 
-    /// The models its picker offers: every one, with the coding agents' and Auto, for a session
-    /// the agents bridge runs (it hands the conversation over) or a new one on this Mac; the
-    /// engine's for a session on the engine, or on a machine.
+    /// The models its picker offers: every one, with the coding agents' and Auto, on this Mac (a
+    /// session on the engine picking one carries on with the agents); the engine's for a session
+    /// on a machine, and a bot's.
     private var modelScope: ModelScope {
         if let scope { return scope }
+        if bot != nil { return .engine }
         if let session {
             guard let current = workspace.session(session) else { return .engine }
-            return OutsideAgents.isAgentSession(current) ? .all : .engine
+            return RemoteFolder.isRemote(current.location.directory) ? .engine : .all
         }
         return folders.first.map(RemoteFolder.isRemote) == true ? .engine : .all
     }
