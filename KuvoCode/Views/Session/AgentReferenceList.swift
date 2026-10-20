@@ -66,6 +66,7 @@ struct AgentPicking: ViewModifier {
                 picker.typed = query
             }
             .onChange(of: excluding) { picker.reset() }
+            .modifier(FieldMentions(text: text))
     }
 
     private func pick() -> KeyPress.Result {

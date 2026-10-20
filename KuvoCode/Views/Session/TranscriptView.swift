@@ -832,7 +832,7 @@ struct UserBubble: View {
             // What it replied to, each part above the words that answer it.
             let parts = Self.parts(text)
             let marks = highlight?.spread(over: parts.map(\.text))
-            let agents = MessageMentions.agents(references)
+            let agents = MessageMentions.agents(references, bots: app.bots)
             ForEach(parts.indices, id: \.self) { index in
                 Group {
                     if parts[index].isQuote {

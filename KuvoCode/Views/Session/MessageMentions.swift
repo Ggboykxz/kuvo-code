@@ -15,9 +15,10 @@ nonisolated enum MessageMentions {
         var look: BotLook?
     }
 
-    /// `references` with the looks of those that are bots.
-    @MainActor static func agents(_ references: [AgentReferences.Reference]) -> [Agent] {
-        let bots = AgentMail.shared.app?.bots
+    /// `references` with the looks of those that are bots: `bots`' (a view's own, so it's drawn
+    /// again as they load), or the app's.
+    @MainActor static func agents(_ references: [AgentReferences.Reference], bots: Bots? = nil) -> [Agent] {
+        let bots = bots ?? AgentMail.shared.app?.bots
         return references.map { Agent(reference: $0, look: bots?.bot(forSession: $0.session)?.look) }
     }
 
@@ -82,22 +83,25 @@ nonisolated enum MessageMentions {
         guard attributed.runs.contains(where: { $0[AgentMark.self] != nil || $0.link != nil }) else { return Text(attributed) }
         var pieces: [Text] = []
         for run in attributed.runs {
-            guard let agent = run[AgentMark.self] else {
-                let piece = Text(AttributedString(attributed[run.range]))
-                pieces.append(run.link == nil ? piece : piece.customAttribute(LinkRun()))
-                continue
-            }
-            if let look = agent.look, let face = face(look, size: size) {
-                pieces.append(Text("\(Image(nsImage: face))").baselineOffset(-size * 0.2))
+            var piece: Text
+            if let agent = run[AgentMark.self] {
+                if let look = agent.look, let face = face(look, size: size) {
+                    piece = Text("\(Image(nsImage: face))").baselineOffset(-size * 0.2)
+                } else {
+                    piece = Text("\(Image(systemName: "bubble.left"))").font(.system(size: size * 0.82)).foregroundStyle(.secondary)
+                }
             } else {
-                pieces.append(Text("\(Image(systemName: "bubble.left"))").font(.system(size: size * 0.82)).foregroundStyle(.secondary))
+                piece = Text(AttributedString(attributed[run.range]))
             }
+            // A link's words and its face both open it.
+            if let link = run.link { piece = piece.customAttribute(LinkRun(url: link)) }
+            pieces.append(piece)
         }
         return pieces.reduce(Text("")) { Text("\($0)\($1)") }
     }
 
     /// A bot's face as a picture of `size` points, drawn once for each look and size.
-    @MainActor private static func face(_ look: BotLook, size: CGFloat) -> NSImage? {
+    @MainActor static func face(_ look: BotLook, size: CGFloat) -> NSImage? {
         let scale = NSScreen.main?.backingScaleFactor ?? 2
         let key = "\(look.hashValue) \(size) \(scale)"
         if let known = faces[key] { return known }
@@ -139,23 +143,20 @@ nonisolated enum MessageMentions {
     }
 }
 
-/// The pointing hand over a link in a text made by `MessageMentions.text(_:size:)`, as over a
-/// link anywhere else (SwiftUI's Text shows none). Only for a text with links in it.
+/// The links in a text made by `MessageMentions.text(_:size:)`, as links anywhere else: the
+/// pointing hand over them, and a click opening them (with `openURL`). SwiftUI's Text shows no
+/// hand over its links, and a selectable one keeps its text cursor over a pointer style, so a
+/// view of AppKit's lies over each. Only for a text with links in it.
 struct LinkPointer: ViewModifier {
     var isOn: Bool
-    @State private var places = OSAllocatedUnfairLock<[CGRect]>(initialState: [])
-    @State private var isOver = false
+    @State private var spots = LinkSpots()
+    @Environment(\.openURL) private var openURL
 
     func body(content: Content) -> some View {
         if isOn {
             content
-                .textRenderer(LinkPlaces(places: places))
-                .onContinuousHover { phase in
-                    var over = false
-                    if case .active(let point) = phase { over = places.withLock { $0.contains { $0.contains(point) } } }
-                    if over != isOver { isOver = over }
-                }
-                .pointerStyle(isOver ? .link : nil)
+                .textRenderer(LinkPlaces(spots: spots))
+                .overlay { LinkArea(spots: spots, open: { openURL($0) }) }
         } else {
             content
         }
@@ -163,22 +164,125 @@ struct LinkPointer: ViewModifier {
 }
 
 /// A run of a link, for `LinkPointer`.
-nonisolated struct LinkRun: TextAttribute {}
+nonisolated struct LinkRun: TextAttribute {
+    var url: URL
+}
+
+/// Where a text's links are drawn, kept by `LinkPlaces` as it draws, for `LinkArea`.
+nonisolated final class LinkSpots: Sendable {
+    struct Spot: Equatable, Sendable {
+        var rect: CGRect
+        var url: URL
+    }
+
+    private let spots = OSAllocatedUnfairLock<[Spot]>(initialState: [])
+    /// Told when they change.
+    private let changed = OSAllocatedUnfairLock<(@Sendable () -> Void)?>(initialState: nil)
+
+    var all: [Spot] { spots.withLock { $0 } }
+
+    func set(_ new: [Spot]) {
+        guard spots.withLock({ old in
+            guard old != new else { return false }
+            old = new
+            return true
+        }) else { return }
+        if let tell = changed.withLock({ $0 }) { DispatchQueue.main.async(execute: tell) }
+    }
+
+    func onChange(_ tell: (@Sendable () -> Void)?) {
+        changed.withLock { $0 = tell }
+    }
+}
 
 /// Draws a text as it is, keeping where its links are.
 nonisolated private struct LinkPlaces: TextRenderer {
-    let places: OSAllocatedUnfairLock<[CGRect]>
+    let spots: LinkSpots
 
     func draw(layout: Text.Layout, in context: inout GraphicsContext) {
-        var found: [CGRect] = []
+        var found: [LinkSpots.Spot] = []
         for line in layout {
             for run in line {
-                if run[LinkRun.self] != nil { found.append(run.typographicBounds.rect) }
+                if let link = run[LinkRun.self] { found.append(.init(rect: run.typographicBounds.rect, url: link.url)) }
                 context.draw(run)
             }
         }
-        let kept = found
-        places.withLock { $0 = kept }
+        spots.set(found)
+    }
+}
+
+/// A text's links in AppKit: the pointing hand over each, and a click on one opening it. Away from
+/// them, the pointer and clicks go on to the text below.
+private struct LinkArea: NSViewRepresentable {
+    let spots: LinkSpots
+    let open: (URL) -> Void
+
+    func makeNSView(context: Context) -> LinkAreaView {
+        let view = LinkAreaView()
+        view.spots = spots
+        view.open = open
+        spots.onChange { [weak view] in
+            MainActor.assumeIsolated { view?.spotsChanged() }
+        }
+        return view
+    }
+
+    func updateNSView(_ view: LinkAreaView, context: Context) {
+        view.open = open
+    }
+
+    static func dismantleNSView(_ view: LinkAreaView, coordinator: ()) {
+        view.spots?.onChange(nil)
+    }
+}
+
+private final class LinkAreaView: NSView {
+    var spots: LinkSpots?
+    var open: ((URL) -> Void)?
+    private var pressed: LinkSpots.Spot?
+
+    override var isFlipped: Bool { true }
+
+    private func spot(at point: NSPoint) -> LinkSpots.Spot? {
+        spots?.all.first { $0.rect.contains(point) }
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard !isHidden, let superview else { return nil }
+        return spot(at: convert(point, from: superview)) == nil ? nil : self
+    }
+
+    func spotsChanged() {
+        window?.invalidateCursorRects(for: self)
+        updateTrackingAreas()
+    }
+
+    override func resetCursorRects() {
+        for spot in spots?.all ?? [] { addCursorRect(spot.rect, cursor: .pointingHand) }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        for spot in spots?.all ?? [] {
+            addTrackingArea(NSTrackingArea(rect: spot.rect, options: [.cursorUpdate, .activeInKeyWindow], owner: self))
+        }
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        NSCursor.pointingHand.set()
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        pressed = spot(at: convert(event.locationInWindow, from: nil))
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        defer { pressed = nil }
+        guard let pressed, spot(at: convert(event.locationInWindow, from: nil))?.url == pressed.url else { return }
+        open?(pressed.url)
     }
 }
 
