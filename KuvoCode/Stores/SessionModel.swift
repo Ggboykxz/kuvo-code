@@ -781,9 +781,14 @@ final class SessionModel {
                 defer { steerInFlight.remove(id) }
                 try await api.prompt(session: self.id, id: id, text: message, files: prepared.files, delivery: held ? .queue : delivery)
                 restoredFailed = ""
+                if steering { sentSteer.insert(id) }
                 if wasCancelled(id) { try? await api.cancelInbox(session: self.id, item: id) }
-                // Or held as it went.
-                if !held, holdOnArrival.remove(id) != nil { try? await api.setDelivery(session: self.id, item: id, delivery: .queue) }
+                // Or held as it went: moved before Stop's wait ends (it waits on this).
+                if !held, holdOnArrival.contains(id) {
+                    try? await api.setDelivery(session: self.id, item: id, delivery: .queue)
+                    holdOnArrival.remove(id)
+                    sentSteer.remove(id)
+                }
             } catch {
                 editTranscript { $0.removeLocal(id: id) }
                 // It didn't go: back in the composer as it was, ahead of anything written since
@@ -931,9 +936,16 @@ final class SessionModel {
     private func holdWaiting() async {
         drainTask?.cancel()
         let steering = transcript.pending.filter { $0.delivery == .steer && !$0.isLocal }
-        // Ones still on their way go to the queue as they arrive (see `send`).
+        // Ones still on their way go to the queue as they arrive (see `send`); one already there,
+        // not yet shown as there, is moved here.
         let arriving = transcript.pending.filter { $0.delivery == .steer && $0.isLocal && !starters.contains($0.id) }
-        holdOnArrival.formUnion(arriving.map(\.id))
+        let arrived = arriving.filter { sentSteer.contains($0.id) }
+        holdOnArrival.formUnion(arriving.filter { !sentSteer.contains($0.id) }.map(\.id))
+        for item in arrived {
+            sentSteer.remove(item.id)
+            try? await api.setDelivery(session: id, item: item.id, delivery: .queue)
+        }
+        sentSteer.formIntersection(transcript.pending.filter(\.isLocal).map(\.id))
         if hasQueue || !steering.isEmpty || !arriving.isEmpty { isQueuePaused = true }
         let newlyHeld = (steering + arriving).map(\.id)
         heldBack = newlyHeld + heldBack.filter { id in !newlyHeld.contains(id) && transcript.pending.contains { $0.id == id } }
@@ -943,8 +955,10 @@ final class SessionModel {
     /// Messages for the agent's next step still on their way when Stop (or Undo) held the others:
     /// they go to the queue too, rather than starting it again.
     @ObservationIgnored private var holdOnArrival: Set<String> = []
-    /// Messages for the next step whose request is on its way to the engine now.
+    /// Messages for the next step whose request is on its way to the engine now, and those whose
+    /// request went but that aren't shown as the engine's yet.
     @ObservationIgnored private var steerInFlight: Set<String> = []
+    @ObservationIgnored private var sentSteer: Set<String> = []
 
     /// Whether a message on its way was cancelled meanwhile (and forgets it).
     private func wasCancelled(_ id: String) -> Bool {
