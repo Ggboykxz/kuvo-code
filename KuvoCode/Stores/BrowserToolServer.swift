@@ -363,7 +363,16 @@ enum BrowserTools {
         if let handedBack = await agent.waitForControl() {
             return ["content": [["type": "text", "text": handedBack]], "isError": false]
         }
+        // A page that went to a file the conversation may not read since the last step isn't read
+        // first (going elsewhere is fine); one a step took there keeps its result back.
+        let browses = name.hasPrefix("browser_") && name != "browser_new_tab"
+        if browses, name != "browser_navigate", let note = await agent.leaveForbiddenFile() {
+            return ["content": [["type": "text", "text": note]], "isError": true]
+        }
         var result = await perform(name, arguments: arguments, agent: agent, caller: caller)
+        if browses || name == "browser_new_tab", let note = await agent.leaveForbiddenFile() {
+            return ["content": [["type": "text", "text": note]], "isError": true]
+        }
         // Downloads that started or finished meanwhile, ahead of the tool's own result.
         let notes = agent.takeNotes()
         if !notes.isEmpty, var content = result["content"] as? [[String: Any]], content.first?["type"] as? String == "text" {

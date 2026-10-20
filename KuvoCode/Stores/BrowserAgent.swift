@@ -320,7 +320,7 @@ final class BrowserAgent {
         // What you filled in stays out of it, as out of a screenshot.
         _ = await run(Self.printMaskScript, [:], in: browser)
         let saved = await PagePrinter.save(browser.webView, to: printed)
-        _ = await run(Self.unmaskScript, [:], in: browser)
+        _ = await run(Self.printUnmaskScript, [:], in: browser)
         switch saved {
         case .saved(let pages):
             do {
@@ -526,6 +526,32 @@ final class BrowserAgent {
 
     /// The tab a bot works in during this call.
     private var use: BrowserSession?
+
+    /// Where the page this call works in is now, if it's a file the conversation may not read
+    /// without asking (see `BrowserTools.fileNote`): it got there by a link, a redirect or going
+    /// back, which its address wasn't checked for. The page goes blank, and this says why.
+    func leaveForbiddenFile() async -> String? {
+        let page: BrowserSession?
+        if let owner {
+            page = use ?? utilities.botBrowser(owner)
+        } else if let caller {
+            page = utilities.agentBrowser(for: caller)
+        } else {
+            page = utilities.activeBrowser
+        }
+        guard let page else { return nil }
+        // The address it shows, and its document's own, apart from the page's scripts: going
+        // back, the page can be there before the address says so.
+        var addresses = [page.webView.url?.absoluteString].compactMap { $0 }
+        if let own = try? await page.webView.evaluateJavaScript("location.href", in: nil, contentWorld: .defaultClient) as? String {
+            addresses.append(own)
+        }
+        guard let note = addresses.lazy.compactMap({ BrowserTools.fileNote(for: $0, caller: self.caller) }).first else { return nil }
+        page.webView.stopLoading()
+        page.load("about:blank")
+        await settle(page, expectNavigation: true)
+        return note + " The page got there by a link or by itself, so it's blank now."
+    }
 
     /// The tab in use, for the tab list.
     private var inUse: BrowserSession? {
@@ -977,20 +1003,23 @@ final class BrowserAgent {
     """
 
     /// Hides what the user filled in, for a screenshot, and shows it again.
-    static let maskScript = mask("color:transparent!important;-webkit-text-fill-color:transparent!important;text-shadow:none!important")
+    static let maskScript = mask("color:transparent!important;-webkit-text-fill-color:transparent!important;text-shadow:none!important", id: "kuvo-secret-mask")
+    static let unmaskScript = unmask("kuvo-secret-mask")
 
     /// The same for a PDF: there, text drawn clear is still in it, to copy or search, so the
-    /// fields are left out (their place stays empty).
-    static let printMaskScript = mask("visibility:hidden!important")
+    /// fields are left out (their place stays empty). A mask of its own, so a screenshot at the
+    /// same time neither stands in for it nor takes it away.
+    static let printMaskScript = mask("visibility:hidden!important", id: "kuvo-secret-print-mask")
+    static let printUnmaskScript = unmask("kuvo-secret-print-mask")
 
-    private static func mask(_ rule: String) -> String {
+    private static func mask(_ rule: String, id: String) -> String {
         """
         \(secretRootsScript)
         for (const root of roots) {
-          if (!root.querySelector('[data-kuvo-secret]') || root.getElementById('kuvo-secret-mask')) continue;
+          if (!root.querySelector('[data-kuvo-secret]') || root.getElementById('\(id)')) continue;
           const doc = root.ownerDocument || root;
           const style = doc.createElement('style');
-          style.id = 'kuvo-secret-mask';
+          style.id = '\(id)';
           style.textContent = '[data-kuvo-secret]{\(rule)}';
           (root.head || root.documentElement || root).appendChild(style);
         }
@@ -998,11 +1027,13 @@ final class BrowserAgent {
         """
     }
 
-    static let unmaskScript = """
-    \(secretRootsScript)
-    for (const root of roots) root.getElementById('kuvo-secret-mask')?.remove();
-    return 'ok';
-    """
+    private static func unmask(_ id: String) -> String {
+        """
+        \(secretRootsScript)
+        for (const root of roots) root.getElementById('\(id)')?.remove();
+        return 'ok';
+        """
+    }
 
     /// Presses `key` on the element with the focus, inside frames and shadow roots too.
     static let pressScript = """

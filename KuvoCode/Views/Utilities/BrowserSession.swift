@@ -197,9 +197,12 @@ final class BrowserSession: NSObject {
         guard let url = Self.url(from: input) else { return }
         // A question the page left open is turned down as you go elsewhere.
         if dialog != nil { answerDialog(accept: false) }
-        // A file on this Mac, with what's in its folder (its pictures, its styles).
+        // A file on this Mac, with what's in its folder (its pictures, its styles); a folder, with
+        // what's in it, not its parent's.
         if url.isFileURL {
-            webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+            var isFolder: ObjCBool = false
+            let folder = FileManager.default.fileExists(atPath: url.path, isDirectory: &isFolder) && isFolder.boolValue
+            webView.loadFileURL(url, allowingReadAccessTo: folder ? url : url.deletingLastPathComponent())
         } else {
             webView.load(URLRequest(url: url))
         }

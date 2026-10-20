@@ -428,6 +428,7 @@ extension MachineBrowserInstaller {
                 "mask": BrowserAgent.maskScript,
                 "printMask": BrowserAgent.printMaskScript,
                 "unmask": BrowserAgent.unmaskScript,
+                "printUnmask": BrowserAgent.printUnmaskScript,
             ],
             "tools": BrowserTools.definitions,
             "instructions": BrowserTools.instructions(machine: true),
