@@ -899,6 +899,18 @@ final class Workspace {
         }
     }
 
+    /// The session with the coding agents a hidden engine run works for (Auto's engine model, say),
+    /// for what it asks in the panel's browser; nil for any other session.
+    func engineRunOwner(_ id: String) async -> String? {
+        if let known = engineRunOwners[id] { return known.isEmpty ? nil : known }
+        guard session(id) == nil, let found = try? await api?.session(id) else { return nil }
+        let owner = found.metadata?["kuvo"]?["engineFor"]?.string ?? ""
+        engineRunOwners[id] = owner
+        return owner.isEmpty ? nil : owner
+    }
+
+    @ObservationIgnored private var engineRunOwners: [String: String] = [:]
+
     /// The agents bridge stopped for good: its sessions aren't at work, nor asking anything.
     func agentsStopped() {
         for (request, id) in asking where sharedForms[request] == nil && (session(id).map(OutsideAgents.isAgentSession) ?? false) {

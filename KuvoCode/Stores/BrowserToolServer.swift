@@ -11,6 +11,9 @@ final class BrowserToolServer {
     private var connections: [ObjectIdentifier: HTTPConnection] = [:]
     private let token = UUID().uuidString + UUID().uuidString
     private(set) var url: URL?
+    /// The session a caller works for, when it isn't one you see: an engine run in a session with
+    /// the coding agents (Auto's, say) is that session's.
+    var owner: ((String) async -> String?)?
 
     init(agent: BrowserAgent) {
         self.agent = agent
@@ -151,7 +154,8 @@ final class BrowserToolServer {
             let arguments = params["arguments"] as? [String: Any] ?? [:]
             // The engine names the session calling, so an ask goes to the right conversation; the
             // agents bridge, in a header.
-            let caller = (params["_meta"] as? [String: Any])?["ai.opencode/sessionID"] as? String ?? session
+            var caller = (params["_meta"] as? [String: Any])?["ai.opencode/sessionID"] as? String ?? session
+            if let named = caller, let owner, let own = await owner(named) { caller = own }
             // Not the browser's: no page to serve it.
             if name == BrowserTools.showInPanel { return reply(BrowserTools.showInPanelCall(arguments, caller: caller)) }
             if name == BrowserTools.showWidget { return reply(BrowserTools.showWidgetCall(arguments)) }
