@@ -200,6 +200,8 @@ extension AppModel {
     private func start(_ engine: MachineEngine) async {
         // It takes this Mac's accounts and settings, so this Mac's engine comes first.
         for _ in 0..<240 where api == nil { try? await Task.sleep(for: .milliseconds(250)) }
+        // Removed a moment ago and added again: after the removal there has finished.
+        await machines.waitForRemoval(of: engine.machine.id)
         await engine.start(machineLaunch(), cache: AppInfo.supportDirectory.appending(path: "engine-linux"))
         // Removed while it started: nothing of yours goes there (its removal waits in the queue).
         // Checked again before each step that sends it something, as removing can come any time.

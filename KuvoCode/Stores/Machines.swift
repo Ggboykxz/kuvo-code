@@ -453,6 +453,13 @@ final class Machines {
     }
 
     @ObservationIgnored private var runningWaiting = false
+    /// Machines a removal is running on now.
+    @ObservationIgnored private var removing: Set<String> = []
+
+    /// Until no removal runs on the machine (a minute at most): one added again starts after it.
+    func waitForRemoval(of machine: String) async {
+        for _ in 0..<240 where removing.contains(machine) { try? await Task.sleep(for: .milliseconds(250)) }
+    }
     /// Machines asked for while a pass ran, for one more after it.
     @ObservationIgnored private var askedWhileRunning: Set<String?> = []
 
@@ -487,8 +494,14 @@ final class Machines {
             }
             while let script = Self.waiting[machine]?.first {
                 let listed = list.contains { $0.id == machine }
-                if !(script.hasPrefix(Self.removalMark) && listed) {
-                    guard (try? await Machine(destination: machine).connection.run(script)) != nil else { break }
+                let removal = script.hasPrefix(Self.removalMark)
+                if !(removal && listed) {
+                    // A removal under way: one added again meanwhile waits for it to end (see
+                    // `waitForRemoval`) rather than starting while it signs out and stops.
+                    if removal { removing.insert(machine) }
+                    let ran = (try? await Machine(destination: machine).connection.run(script)) != nil
+                    if removal { removing.remove(machine) }
+                    guard ran else { break }
                 }
                 var left = Self.waiting[machine] ?? []
                 if let index = left.firstIndex(of: script) { left.remove(at: index) }
