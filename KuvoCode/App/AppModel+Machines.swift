@@ -367,7 +367,7 @@ extension AppModel {
                 }
             }
             if var mcp = settings["mcp"] as? [String: Any], var servers = mcp["servers"] as? [String: Any] {
-                for id in Integrations.macOnly { servers.removeValue(forKey: id) }
+                for id in Integrations.macOnly + MCPCatalog.macOnly { servers.removeValue(forKey: id) }
                 // Keys there come in files of their own on the machine, not this Mac's.
                 servers = Integrations.keyVariables(in: servers) as? [String: Any] ?? servers
                 // Integrations go in its settings file, as here, so a folder's own outrank them:

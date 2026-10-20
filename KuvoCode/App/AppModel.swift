@@ -208,6 +208,7 @@ final class AppModel {
             // search that works unless it chose otherwise.
             engineConfig.addDefaults()
             Integrations.upgrade(engineConfig)
+            MCPCatalog.upgrade(engineConfig)
             MCPSettings.upgrade(engineConfig)
             // What some providers need until opencode handles it (see ProviderCompatibility).
             let compatibility = ProviderCompatibility.config

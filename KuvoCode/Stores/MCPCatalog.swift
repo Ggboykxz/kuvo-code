@@ -31,8 +31,27 @@ nonisolated enum MCPCatalog {
         .object(["type": .string("remote"), "url": .string(url)])
     }
 
+    /// Run through `kuvo-npx`, pinned, and apart from the project (its .npmrc, bunfig.toml or
+    /// .env), as integrations' packages are.
     private static func local(_ command: [String]) -> JSONValue {
-        .object(["type": .string("local"), "command": .array(command.map(JSONValue.string))])
+        .object(["type": .string("local"), "command": .array(([Launcher.name] + command).map(JSONValue.string)),
+                 "environment": .object([Integrations.apart: .string("1")])])
+    }
+
+    /// Servers that use this Mac's own apps (its Chrome), left out of machines' settings.
+    static let macOnly = ["chrome-devtools"]
+
+    /// One added as an older version offered it (unpinned, with the project's settings): as it's
+    /// offered now, keeping anything else set on it.
+    @MainActor static func upgrade(_ config: EngineConfig) {
+        guard case .object(var server)? = config.value(at: MCPSettings.path + ["chrome-devtools"]),
+              case .array(let command)? = server["command"], command.map(\.string) == [Launcher.name, "chrome-devtools-mcp@latest"],
+              case .object(let offered)? = servers.first(where: { $0.id == "chrome-devtools" })?.settings else { return }
+        server["command"] = offered["command"]
+        var environment = server["environment"]?.object ?? [:]
+        environment[Integrations.apart] = .string("1")
+        server["environment"] = .object(environment)
+        config.set(.object(server), at: MCPSettings.path + ["chrome-devtools"])
     }
 
     static let servers: [Server] = [
@@ -46,6 +65,6 @@ nonisolated enum MCPCatalog {
         Server(id: "context7", title: "Context7", summary: "Current docs and examples for libraries", access: .open, settings: remote("https://mcp.context7.com/mcp")),
         Server(id: "cloudflare-docs", title: "Cloudflare Docs", summary: "Cloudflare's documentation", access: .open, settings: remote("https://docs.mcp.cloudflare.com/mcp")),
         Server(id: "huggingface", title: "Hugging Face", summary: "Models, datasets, Spaces and papers", access: .open, settings: remote("https://huggingface.co/mcp")),
-        Server(id: "chrome-devtools", title: "Chrome DevTools", summary: "Inspect and debug pages in Google Chrome", access: .local, settings: local([Launcher.name, "chrome-devtools-mcp@latest"])),
+        Server(id: "chrome-devtools", title: "Chrome DevTools", summary: "Inspect and debug pages in Google Chrome", access: .local, settings: local(["chrome-devtools-mcp@1.11.0"])),
     ]
 }
