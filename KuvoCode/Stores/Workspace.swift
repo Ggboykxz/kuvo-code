@@ -1519,8 +1519,10 @@ final class Workspace {
     }
 
     /// A session the engine didn't name after its run (its title model gave nothing back, as
-    /// GLM-5.3 Flash's does): the start of its first message, as a chat app names one, so the
-    /// sidebar isn't a column of "New Session". Saved in the engine, for every place that shows it.
+    /// GLM-5.3 Flash's does, or a coding agent can't write one, as Antigravity can't): a title
+    /// from this Mac's engine's default model, else the start of its first message, as a chat app
+    /// names one, so the sidebar isn't a column of "New Session". Saved in the engine, for every
+    /// place that shows it.
     private func nameIfUntitled(_ id: String) {
         guard !seats.contains(id), !namingUntitled.contains(id) else { return }
         namingUntitled.insert(id)
@@ -1538,12 +1540,28 @@ final class Workspace {
                 let words = AgentMail.parse(text)?.text ?? text
                 return words.isEmpty ? nil : words
             }.first
-            guard let first, let title = Self.title(from: first) else { return }
+            guard let first else { return }
+            let written = try? await self.api?.generate(Self.titlePrompt(for: first))
+            guard let title = written.flatMap(Self.cleanTitle) ?? Self.title(from: first),
+                  self.session(id)?.title?.isEmpty != false else { return }
             try? await api.renameSession(id, title: title)
             await reload(id)
         }
     }
     @ObservationIgnored private var namingUntitled: Set<String> = []
+
+    /// What a model is asked for a title, as the agents bridge asks.
+    nonisolated static func titlePrompt(for message: String) -> String {
+        "Write a title for a conversation that begins with the message below: a few words (six at most) saying what it's about, in the message's language. Reply with the title alone, without quotes or a period at the end.\n\n<message>\n\(message.prefix(4000))\n</message>"
+    }
+
+    /// A model's answer as a title: its first line, without quotes or a period around it.
+    nonisolated static func cleanTitle(_ answer: String) -> String? {
+        var line = answer.split(whereSeparator: \.isNewline).lazy.map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty } ?? ""
+        if line.lowercased().hasPrefix("title:") { line = String(line.dropFirst(6)) }
+        let title = line.trimmingCharacters(in: CharacterSet(charactersIn: "\"'“”‘’`*# ")).trimmingCharacters(in: CharacterSet(charactersIn: "\"'“”‘’`* ."))
+        return title.isEmpty ? nil : String(title.prefix(80))
+    }
 
     /// A title from a message: its words without review comments, the note of attached files or
     /// line breaks, up to the end of its first sentence or about 48 characters, at a word. A dot in
