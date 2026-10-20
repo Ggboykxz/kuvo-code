@@ -847,7 +847,12 @@ final class Workspace {
         } catch { log.error("sessions: \(String(describing: error), privacy: .public)") }
         do {
             let active = try await api.activeSessions()
-            running = active.union(running.filter { id in session(id).map { RemoteFolder.isRemote($0.location.directory) || OutsideAgents.isAgentSession($0) } ?? false })
+            // What this Mac's engine doesn't run stays as it was: a machine's sessions and the
+            // bridge's, and their subagents (which have no row: by the session they work for).
+            running = active.union(running.filter { id in
+                (session(id) ?? session(root(of: id))).map { RemoteFolder.isRemote($0.location.directory) || OutsideAgents.isAgentSession($0) }
+                    ?? (sessionMachines[id] != nil || bridgeSessions.contains(id))
+            })
         } catch { log.error("active sessions: \(String(describing: error), privacy: .public)") }
         isLoaded = true
     }
