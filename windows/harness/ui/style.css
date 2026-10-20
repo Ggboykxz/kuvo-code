@@ -276,7 +276,9 @@ button.small:hover { color: var(--ink); background: var(--hover); border-color: 
 /* A drawn mark, in the button's own ink — never an emoji. */
 button.icon { display: inline-flex; align-items: center; justify-content: center; padding: 4px 6px; }
 button.icon svg { display: block; }
-button:disabled { opacity: .4; cursor: default; }
+/* A control that cannot be used (Pressable.swift:61): dimmed, and with no fill of its
+   own under the pointer. */
+button:disabled { opacity: .45; cursor: default; }
 button:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 
 input, textarea, select {
@@ -3190,3 +3192,20 @@ button > svg, .small > svg, .session-delete > svg, .keycap-clear > svg { display
 }
 .entry-action:hover { background: var(--hover); color: var(--ink); }
 .entry-action-text { white-space: nowrap; }
+
+/* The remove (Pressable.swift:93-112): it turns red under the pointer, and is dimmer
+   while it is pressed. */
+.remove-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-faint);
+}
+.remove-button:hover { background: var(--danger-soft); color: var(--danger); }
+.remove-button:active { opacity: .7; }

@@ -1352,7 +1352,7 @@ function Composer() {
         {files.map((file, index) => (
           <span className="attachment-chip" key={index}>
             {file.name}
-            <button className="small" type="button" title="Remove this file" aria-label="Remove this file" onClick={() => setFiles(current => current.filter((_, i) => i !== index))}>
+            <button className="remove-button" type="button" title="Remove this file" aria-label="Remove this file" onClick={() => setFiles(current => current.filter((_, i) => i !== index))}>
               <Symbol name="xmark" size={10} />
             </button>
           </span>

@@ -316,7 +316,7 @@ const checks = [
     assert.equal(lightTokens("motion-hover"), "120ms");
     assert.equal(lightTokens("ease-hover"), "cubic-bezier(0, 0, 0.2, 1)");
     // The press is a fill: the Mac has no press scale (Pressable.swift:8-9).
-    const pressed = rule("button:active {");
+    const pressed = rule("button:active { transform: none; }");
     assert.doesNotMatch(pressed, /scale/);
     assert.match(pressed, /transform: none/);
   }],
@@ -523,6 +523,16 @@ const checks = [
     assert.match(rule(".entry-actions {\n  display: flex;"), /opacity: 0/);
     assert.match(rule(".entry-actions {\n  display: flex;"), /min-height: 22px/);
     assert.match(css, /\.entry\.user:hover \.entry-actions,[\s\S]*?opacity: 1;/);
+  }],
+
+  ["a control that cannot be used is dimmed, and a remove turns red", ({ css, rule }) => {
+    // Pressable.swift:61 — a control that cannot be used is dimmed to 45 %.
+    assert.match(rule("button:disabled {"), /opacity: \.45/);
+    // Pressable.swift:93-112 — the remove turns red under the pointer, and is dimmer
+    // while it is pressed.
+    assert.match(rule(".remove-button {"), /color: var\(--ink-faint\)/);
+    assert.match(css, /\.remove-button:hover \{ background: var\(--danger-soft\); color: var\(--danger\); \}/);
+    assert.match(css, /\.remove-button:active \{ opacity: \.7; \}/);
   }],
 
   ["the window is built by Next.js, and exported as the static files the harness serves", ({ next, page, build }) => {
