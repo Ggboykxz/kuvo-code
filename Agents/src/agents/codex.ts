@@ -11,6 +11,7 @@ import type { Limit } from "../auto"
 import { accountName, failure, model } from "../agent"
 import { fromPatch } from "../diff"
 import { emit } from "../events"
+import { newID } from "../ids"
 import { maintenance, update, type MaintenanceDefinition } from "../maintenance"
 import { which } from "../proc"
 import { RPC, RPCError } from "../rpc"
@@ -180,6 +181,16 @@ export class CodexAgent implements Agent {
     return this.spawned.get(nativeID)
   }
 
+  /** How much each model holds, as Codex said in a turn. */
+  private contexts = new Map<string, number>()
+
+  noteContext(model: string, window: number) {
+    if (this.contexts.get(model) === window) return
+    this.contexts.set(model, window)
+    this.modelList = undefined
+    emit("model.updated", {})
+  }
+
   /** Threads of agents a session's Codex spawned: their events and approvals go to that session. */
   private spawned = new Map<string, CodexThread>()
 
@@ -243,7 +254,7 @@ export class CodexAgent implements Agent {
           model(this.providerID, info.model ?? info.id, info.displayName ?? info.model, {
             variants: (info.supportedReasoningEfforts ?? []).map((effort: any) => effort.reasoningEffort),
             images: (info.inputModalities ?? []).includes("image"),
-            context: 400_000,
+            context: this.contexts.get(info.model ?? info.id) ?? 400_000,
             // Listed in Codex's order: its default first.
             released: info.isDefault ? 2000 : order--,
           }),
@@ -310,6 +321,8 @@ interface Active extends Lane {
   subagents: Map<string, SubagentLane>
   /** Spawn calls under way whose thread isn't known yet, oldest first. */
   spawning: string[]
+  /** Its to-do list's tool call, kept up to date until the turn ends. */
+  plan?: { id: string; todos: { content: string; status: string }[] }
   resolve: (result: RunResult) => void
   turnID?: string
   /** On Auto: a limit ends the turn rather than being waited out. */
@@ -491,7 +504,19 @@ class CodexThread implements Thread {
         return this.itemStarted(active, params.item)
       case "item/completed":
         return this.itemCompleted(active, params.item)
+      case "turn/plan/updated": {
+        // Its to-do list, one a turn, brought up to date as it works through it.
+        const todos = ((params.plan ?? []) as { step: string; status: string }[]).map((entry) => ({ content: entry.step, status: entry.status === "inProgress" ? "in_progress" : entry.status }))
+        const id = active.plan?.id ?? newID("call")
+        active.plan = { id, todos }
+        if (!turn.hasTool(id)) turn.toolStart(id, "todowrite", { todos })
+        else turn.toolCalled(id, { todos })
+        return
+      }
       case "thread/tokenUsage/updated": {
+        // How much its model holds, as Codex says: the models list it.
+        const window = params.tokenUsage?.modelContextWindow
+        if (typeof window === "number" && window > 0) this.agent.noteContext(active.model, window)
         const last = params.tokenUsage?.last
         if (last) {
           active.usage = {
@@ -526,6 +551,7 @@ class CodexThread implements Thread {
       }
       case "turn/completed": {
         this.active = undefined
+        if (active.plan) turn.toolSucceeded(active.plan.id, "", { todos: active.plan.todos })
         turn.endStep({ tokens: active.usage })
         const status = params.turn?.status
         // A limit only when the turn didn't go through: one it got past on a retry doesn't count.

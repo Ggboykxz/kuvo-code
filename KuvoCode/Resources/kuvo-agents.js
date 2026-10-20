@@ -3289,6 +3289,14 @@ class CodexAgent {
         return thread;
     return this.spawned.get(nativeID);
   }
+  contexts = new Map;
+  noteContext(model2, window) {
+    if (this.contexts.get(model2) === window)
+      return;
+    this.contexts.set(model2, window);
+    this.modelList = undefined;
+    emit("model.updated", {});
+  }
   spawned = new Map;
   adopt(threadID, thread) {
     this.spawned.set(threadID, thread);
@@ -3349,7 +3357,7 @@ class CodexAgent {
         models.push(model(this.providerID, info.model ?? info.id, info.displayName ?? info.model, {
           variants: (info.supportedReasoningEfforts ?? []).map((effort) => effort.reasoningEffort),
           images: (info.inputModalities ?? []).includes("image"),
-          context: 400000,
+          context: this.contexts.get(info.model ?? info.id) ?? 400000,
           released: info.isDefault ? 2000 : order--
         }));
       }
@@ -3546,7 +3554,20 @@ ${others.map((path) => `- ${path}`).join(`
         return this.itemStarted(active, params.item);
       case "item/completed":
         return this.itemCompleted(active, params.item);
+      case "turn/plan/updated": {
+        const todos = (params.plan ?? []).map((entry) => ({ content: entry.step, status: entry.status === "inProgress" ? "in_progress" : entry.status }));
+        const id = active.plan?.id ?? newID("call");
+        active.plan = { id, todos };
+        if (!turn.hasTool(id))
+          turn.toolStart(id, "todowrite", { todos });
+        else
+          turn.toolCalled(id, { todos });
+        return;
+      }
       case "thread/tokenUsage/updated": {
+        const window = params.tokenUsage?.modelContextWindow;
+        if (typeof window === "number" && window > 0)
+          this.agent.noteContext(active.model, window);
         const last2 = params.tokenUsage?.last;
         if (last2) {
           active.usage = {
@@ -3580,6 +3601,8 @@ ${others.map((path) => `- ${path}`).join(`
       }
       case "turn/completed": {
         this.active = undefined;
+        if (active.plan)
+          turn.toolSucceeded(active.plan.id, "", { todos: active.plan.todos });
         turn.endStep({ tokens: active.usage });
         const status = params.turn?.status;
         const limit = status === "failed" ? active.limit ?? this.limitOf(params.turn?.error, active.model) : status === "interrupted" && active.stoppedForLimit ? active.limit : undefined;
