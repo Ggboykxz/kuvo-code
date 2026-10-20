@@ -13,7 +13,7 @@ import { newID } from "./ids"
 import { RPC, RPCError } from "./rpc"
 import { kuvoTools } from "./kuvotools"
 import type { Turn } from "./turn"
-import type { Decision, FormField, Session } from "./wire"
+import type { Decision, FormField, Session, TokenUsage } from "./wire"
 
 const outputLimit = 30_000
 /** An agent's words for a usage limit (not any error that mentions a quota). */
@@ -87,6 +87,8 @@ interface Active {
   heard?: boolean
   /** The prompt came back answered (not turned away). */
   answered?: boolean
+  /** How much of its context the conversation fills, as the agent last said (usage_update). */
+  used?: number
 }
 
 export class AcpThread implements Thread {
@@ -300,7 +302,7 @@ export class AcpThread implements Thread {
     }
     if (this.active === active) this.active = undefined
     if (active.plan) active.turn.toolSucceeded(active.plan.id, "", { todos: active.plan.todos })
-    active.turn.endStep()
+    active.turn.endStep({ tokens: this.stepTokens(active) })
     if (active.hooks.signal.aborted) active.resolve({ outcome: "interrupted" })
     // It had the message when it said something about it, or answered the prompt itself.
     else if (limit) active.resolve({ outcome: "failed", error: { type: "limit", message: message ?? `You've reached your ${this.name} usage limit for now.` }, limit, taken: active.heard || active.answered })
@@ -341,6 +343,9 @@ export class AcpThread implements Thread {
       case "tool_call":
       case "tool_call_update":
         return this.tool(active, update)
+      case "usage_update":
+        if (typeof update.used === "number") active.used = update.used
+        return
       case "plan": {
         // One to-do list a turn, brought up to date as the agent works through it.
         const todos = (update.entries ?? []).map((entry: any) => ({ content: entry.content, status: entry.status === "in_progress" ? "in_progress" : entry.status }))
@@ -358,8 +363,13 @@ export class AcpThread implements Thread {
   private words(active: Active) {
     if (!active.toolsSinceText) return
     active.toolsSinceText = false
-    active.turn.endStep()
+    active.turn.endStep({ tokens: this.stepTokens(active) })
     active.turn.startStep()
+  }
+
+  /** A step's tokens, as the context gauge reads them: what the conversation fills, as the agent said. */
+  private stepTokens(active: Active): TokenUsage | undefined {
+    return active.used === undefined ? undefined : { input: active.used, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
   }
 
   private tool(active: Active, update: any) {

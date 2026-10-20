@@ -1521,7 +1521,7 @@ ${others.map((path) => `- ${path}`).join(`
       this.active = undefined;
     if (active.plan)
       active.turn.toolSucceeded(active.plan.id, "", { todos: active.plan.todos });
-    active.turn.endStep();
+    active.turn.endStep({ tokens: this.stepTokens(active) });
     if (active.hooks.signal.aborted)
       active.resolve({ outcome: "interrupted" });
     else if (limit)
@@ -1563,6 +1563,10 @@ ${others.map((path) => `- ${path}`).join(`
       case "tool_call":
       case "tool_call_update":
         return this.tool(active, update);
+      case "usage_update":
+        if (typeof update.used === "number")
+          active.used = update.used;
+        return;
       case "plan": {
         const todos = (update.entries ?? []).map((entry) => ({ content: entry.content, status: entry.status === "in_progress" ? "in_progress" : entry.status }));
         const id = active.plan?.id ?? newID("call");
@@ -1579,8 +1583,11 @@ ${others.map((path) => `- ${path}`).join(`
     if (!active.toolsSinceText)
       return;
     active.toolsSinceText = false;
-    active.turn.endStep();
+    active.turn.endStep({ tokens: this.stepTokens(active) });
     active.turn.startStep();
+  }
+  stepTokens(active) {
+    return active.used === undefined ? undefined : { input: active.used, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
   }
   tool(active, update) {
     const turn = active.turn;
