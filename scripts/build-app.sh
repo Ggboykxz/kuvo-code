@@ -37,6 +37,7 @@ PLIST="$APP/Contents/Info.plist"
     -c "Add :SUFeedURL string $FEED_URL" \
     -c "Add :SUPublicEDKey string $UPDATE_PUBLIC_KEY" \
     -c "Add :SUEnableAutomaticChecks bool true" \
+    -c "Add :SUVerifyUpdateBeforeExtraction bool true" \
     "$PLIST"
 
 # Sparkle, trimmed to what Kuvo Code uses: Apple silicon only, no XPC services

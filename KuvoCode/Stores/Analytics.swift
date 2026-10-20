@@ -200,7 +200,11 @@ final class Analytics {
         let providers = UsageMenuBar.shared.trackedProviderIDs
         guard defaults.string(forKey: Self.usageDayKey) != Self.today, !providers.isEmpty else { return }
         defaults.set(Self.today, forKey: Self.usageDayKey)
-        for provider in providers { track("usage_tracked", ["provider": provider]) }
+        // The tool only: an account's own ID ("codex@1a2b3c4d", a hash of who it is) would be the
+        // same on every Mac it's used on.
+        for provider in Set(providers.map { String($0.split(separator: "@").first ?? Substring($0)) }).sorted() {
+            track("usage_tracked", ["provider": provider])
+        }
     }
 
     private func markActiveDay() {
