@@ -5,6 +5,7 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- Shift-Return or Option-Return in your answer to a quote starts a new line instead of sending, and an image an agent made shows large also with Each Step and in group chats.
 - Antigravity's file reads show as done once they're done (with what was read), instead of "Reading…" until its turn ends. Undo never takes back edits you made while Kuvo Code was closed, and a coding agent carrying on by itself while you undo no longer makes the undo final.
 - A command's output in the conversation is colored as a terminal shows it: a search's files, line numbers and what it found, a diff's added and removed lines, and errors and warnings.
 - Discarding in Changes moves a folder that took a file's place (a repository cloned there, or new files) to the Trash before the file comes back, instead of git deleting it for good; and a changed file too big to show says so instead of looking unchanged.
