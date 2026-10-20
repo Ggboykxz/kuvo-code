@@ -374,6 +374,26 @@ describe("permissions", () => {
     expect(sessions.messages(id).some((message) => message.type === "agent-switched")).toBe(true)
   })
 
+  test("Always on a command lets that command through, not a line that adds another", async () => {
+    const answers: string[] = []
+    a.script = async (_input, _turn, hooks) => {
+      answers.push(await hooks.permission({ action: "shell", resources: ["npm test"], save: ["npm test *"] }))
+      answers.push(await hooks.permission({ action: "shell", resources: ["npm test -- a"] }))
+      answers.push(await hooks.permission({ action: "shell", resources: ["npm test && rm -rf build"] }))
+      return { outcome: "succeeded" }
+    }
+    const id = create()
+    sessions.update(id, { permissions: [{ action: "shell", resource: "*", effect: "ask" }] })
+    send(id, "go")
+    await until(() => sessions.permissions(id).length === 1)
+    sessions.replyPermission(id, sessions.permissions(id)[0].id, "always")
+    await until(() => sessions.permissions(id).length === 1)
+    expect(sessions.permissions(id)[0].resources).toEqual(["npm test && rm -rf build"])
+    sessions.replyPermission(id, sessions.permissions(id)[0].id, "reject")
+    await settled(id, 1)
+    expect(answers).toEqual(["always", "once", "reject"])
+  })
+
   test("Always also lets through what else waits on the same thing", async () => {
     const answers: string[] = []
     a.script = async (_input, _turn, hooks) => {
@@ -470,16 +490,97 @@ describe("asks and conversations", () => {
 
   test("Blocks not known (the engine can't be reached): the agent asks, rather than run on its own", async () => {
     const agents = new Map([a, b].map((agent) => [agent.providerID, agent]))
-    sessions = new Sessions(store, { find: (provider: string | undefined) => (provider ? agents.get(provider) : undefined) } as unknown as Roster, auto, undefined, async () => undefined)
+    let reads = 0
+    sessions = new Sessions(store, { find: (provider: string | undefined) => (provider ? agents.get(provider) : undefined) } as unknown as Roster, auto, undefined, async () => {
+      reads++
+      return undefined
+    })
     let approvesAll: boolean | undefined
+    let cannotAsk: boolean | undefined
+    let checked: unknown[] = []
+    let decided: string | undefined
     a.script = async (input, turn, hooks, thread) => {
       approvesAll = hooks.approvesAll()
+      cannotAsk = hooks.approvesAll(false)
+      checked = [hooks.check({ action: "shell", resources: ["git push"] }), hooks.check({ action: "read", resources: ["/tmp/project/a.ts"] })]
+      decided = await hooks.permission({ action: "shell", resources: ["git push"] })
+      return replies(input, turn, hooks, thread)
+    }
+    const id = create()
+    send(id, "go")
+    // Read again before asking, and asked, since they still aren't known.
+    await until(() => sessions.permissions(id).length === 1)
+    expect(reads).toBe(2)
+    sessions.replyPermission(id, sessions.permissions(id)[0].id, "reject")
+    await settled(id, 1)
+    expect(approvesAll).toBe(false)
+    // An agent that can't ask isn't held back by Blocks no one knows.
+    expect(cannotAsk).toBe(true)
+    expect(checked).toEqual(["ask", undefined])
+    expect(decided).toBe("reject")
+  })
+
+  test("known Blocks that refuse something hold back even an agent that can't ask", async () => {
+    const agents = new Map([a, b].map((agent) => [agent.providerID, agent]))
+    sessions = new Sessions(store, { find: (provider: string | undefined) => (provider ? agents.get(provider) : undefined) } as unknown as Roster, auto, undefined, async () => [
+      { action: "shell", resource: "git push *", effect: "deny" },
+    ])
+    let cannotAsk: boolean | undefined
+    a.script = async (input, turn, hooks, thread) => {
+      cannotAsk = hooks.approvesAll(false)
       return replies(input, turn, hooks, thread)
     }
     const id = create()
     send(id, "go")
     await settled(id, 1)
-    expect(approvesAll).toBe(false)
+    expect(cannotAsk).toBe(false)
+  })
+
+  test("an agent of yours that refuses edits doesn't approve all, and its rules don't outlast a switch", async () => {
+    const agents = new Map([a, b].map((agent) => [agent.providerID, agent]))
+    let engineAnswers = true
+    sessions = new Sessions(store, { find: (provider: string | undefined) => (provider ? agents.get(provider) : undefined) } as unknown as Roster, auto, undefined, async () => [], async (name) =>
+      !engineAnswers
+        ? undefined
+        : name === "reviewer"
+          ? { system: "Change nothing.", permissions: [{ action: "*", resource: "*", effect: "allow" }, { action: "edit", resource: "*", effect: "deny" }] }
+          : { permissions: [{ action: "*", resource: "*", effect: "allow" }, { action: "read", resource: "*.env", effect: "ask" }, { action: "browser", resource: "*", effect: "deny" }] },
+    )
+    const seen: unknown[] = []
+    a.script = async (input, turn, hooks, thread) => {
+      seen.push(hooks.approvesAll(), await hooks.permission({ action: "edit", resources: ["/tmp/project/a.ts"] }))
+      return replies(input, turn, hooks, thread)
+    }
+    const id = sessions.create({ model: { providerID: "alpha", id: "one" }, agent: "reviewer", location: { directory: "/tmp/project" } }).id
+    send(id, "look")
+    await settled(id, 1)
+    // Build: its .env ask and its browser rule don't stop it approving all.
+    sessions.selectAgent(id, "build")
+    send(id, "fix it")
+    await settled(id, 2)
+    // Back to the reviewer while the engine doesn't answer, then to Build: the reviewer's rules
+    // aren't Build's.
+    sessions.selectAgent(id, "reviewer")
+    send(id, "look again")
+    await settled(id, 3)
+    engineAnswers = false
+    sessions.selectAgent(id, "build")
+    send(id, "fix it now")
+    await settled(id, 4)
+    expect(seen).toEqual([false, "reject", true, "once", false, "reject", true, "once"])
+  })
+
+  test("Claude Code's own plan mode isn't refused its plan file by the hook", async () => {
+    let checked: unknown[] = []
+    a.script = async (input, turn, hooks, thread) => {
+      checked = [hooks.check({ action: "edit", resources: ["/home/me/.claude/plans/plan.md"] }, true), hooks.check({ action: "edit", resources: ["/tmp/project/a.ts"] })]
+      return replies(input, turn, hooks, thread)
+    }
+    const id = create()
+    sessions.selectAgent(id, "plan")
+    send(id, "plan it")
+    await settled(id, 1)
+    expect(checked).toEqual([undefined, "deny"])
   })
 
   test("reading a .env file asks first, as on the engine; an example of one doesn't", async () => {

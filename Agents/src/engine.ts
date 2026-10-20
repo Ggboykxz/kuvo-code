@@ -103,20 +103,25 @@ export class EngineLink {
    * answer, and undefined when it never has. `usable` says whether an answer is (a folder the
    * engine hasn't loaded yet answers with nothing at first).
    */
-  private async read(path: string, directory: string, usable: (value: any) => boolean = () => true): Promise<any> {
+  private async read(path: string, directory: string, usable: (value: any) => boolean = () => true, fresh = false): Promise<any> {
     const key = `${path}\n${directory}`
     const kept = this.reads.get(key)
     if (!this.url) return kept?.value
-    if (kept && Date.now() - kept.at < (kept.failed ? 10_000 : 30_000)) return kept.value
+    if (!fresh && kept && Date.now() - kept.at < (kept.failed ? 10_000 : 30_000)) return kept.value
     if (kept?.pending) return kept.pending
+    // What a restarted engine answers counts, not an answer from the one before it.
+    const generation = this.generation
+    const keep = (entry: { at: number; value: any; failed?: boolean }) => {
+      if (generation === this.generation) this.reads.set(key, entry)
+    }
     const pending = this.request("GET", path, undefined, 4_000, directory).then(
       (value) => {
-        if (usable(value)) this.reads.set(key, { at: Date.now(), value })
-        else this.reads.set(key, { at: 0, value: kept?.value })
+        if (usable(value)) keep({ at: Date.now(), value })
+        else keep({ at: 0, value: kept?.value })
         return usable(value) ? value : kept?.value
       },
       () => {
-        this.reads.set(key, { at: Date.now(), value: kept?.value, failed: true })
+        keep({ at: Date.now(), value: kept?.value, failed: true })
         return kept?.value
       },
     )
@@ -133,10 +138,14 @@ export class EngineLink {
 
   /** The session's agent as the engine has it (yours, from Settings or a file): what it's told, and its permissions. */
   async agent(name: string, directory: string): Promise<{ system?: string; permissions?: PermissionRule[] } | undefined> {
-    const answer = await this.read("/api/agent", directory, (value) => Array.isArray(value?.data) && value.data.length > 0)
+    const usable = (value: any) => Array.isArray(value?.data) && value.data.length > 0
+    const named = (value: any) => (value?.data ?? []).find((agent: any) => agent?.id === name || agent?.name === name)
+    let answer = await this.read("/api/agent", directory, usable)
+    // One you've just added isn't in what was read a moment ago.
+    if (answer !== undefined && !named(answer)) answer = await this.read("/api/agent", directory, usable, true)
     // Not known: what its settings say it's told, for one of yours.
     if (answer === undefined) return name === "build" || name === "plan" ? undefined : { system: await this.agentPrompt(name, directory) }
-    const found = (answer?.data ?? []).find((agent: any) => agent?.id === name || agent?.name === name)
+    const found = named(answer)
     if (!found) return undefined
     return { system: typeof found.system === "string" && found.system.trim() ? found.system.trim() : undefined, permissions: Array.isArray(found.permissions) ? found.permissions : undefined }
   }

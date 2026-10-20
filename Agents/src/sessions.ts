@@ -62,6 +62,8 @@ interface Live {
   agentPrompt?: string
   /** The session's agent's permissions as the engine has them (its defaults, Settings', the agent's own). */
   agentRules?: PermissionRule[]
+  /** Which agent those are. */
+  rulesFor?: string
 }
 
 /** What the bridge keeps of each agent's conversation in a session. */
@@ -158,21 +160,167 @@ const engineDefaults: PermissionRule[] = [
 ]
 
 /**
- * A command line's commands, each checked on its own as the engine does (`a && b`, `a | b`,
- * `a; b`, `$(b)`), with the whole line: a rule for one of them holds in any line.
+ * A command line's commands, each checked on its own as the engine does (it checks every command
+ * in the line: `a && b`, `a | b`, `a & b`, `a; b`, `$(b)`, `if a; then b; fi`, `{ b; }`), with
+ * the whole line: a rule for one of them holds in any line. What's quoted stays in its command.
  */
 export function commandParts(line: string): string[] {
-  const parts = line
-    .split(/&&|\|\||[;|\n]|\$\(|`|[()]/)
-    .map((part) => part.trim())
-    .filter(Boolean)
-  return [line.trim(), ...parts.filter((part) => part !== line.trim())]
+  const whole = line.trim()
+  const parts: string[] = []
+  splitCommands(whole, parts)
+  return [whole, ...new Set(parts.filter((part) => part !== whole))]
+}
+
+/** Words that open or close a block around commands, not commands themselves. */
+const shellKeywords = new Set(["if", "then", "else", "elif", "do", "while", "until", "!", "time", "{", "}", "fi", "done", "esac"])
+
+function splitCommands(text: string, out: string[]) {
+  let current = ""
+  const push = () => {
+    const words = current.trim().split(/\s+/)
+    while (words.length && shellKeywords.has(words[0])) words.shift()
+    const part = words.join(" ")
+    // A loop's or a case's own line: what runs is inside it.
+    if (part && !/^(for|case|select|function)\s/.test(part)) out.push(part)
+    current = ""
+  }
+  // A command inside this one ($(…), <(…), `…`): checked on its own, and kept in this one's text.
+  const inner = (start: number, open: number): number => {
+    const end = open === -1 ? backtickEnd(text, start) : parenEnd(text, start)
+    splitCommands(text.slice(start, end), out)
+    return end
+  }
+  let i = 0
+  while (i < text.length) {
+    const ch = text[i]
+    if (ch === "\\") {
+      current += text.slice(i, i + 2)
+      i += 2
+    } else if (ch === "'") {
+      const end = text.indexOf("'", i + 1)
+      const stop = end < 0 ? text.length : end + 1
+      current += text.slice(i, stop)
+      i = stop
+    } else if (ch === '"') {
+      let j = i + 1
+      while (j < text.length && text[j] !== '"') {
+        if (text[j] === "\\") j += 2
+        else if (text.startsWith("$(", j)) j = inner(j + 2, 0) + 1
+        else if (text[j] === "`") j = inner(j + 1, -1) + 1
+        else j++
+      }
+      current += text.slice(i, j + 1)
+      i = j + 1
+    } else if (text.startsWith("$(", i) || text.startsWith("<(", i) || text.startsWith(">(", i)) {
+      const end = inner(i + 2, 0)
+      current += text.slice(i, end + 1)
+      i = end + 1
+    } else if (ch === "`") {
+      const end = inner(i + 1, -1)
+      current += text.slice(i, end + 1)
+      i = end + 1
+    } else if (ch === "<" && text.startsWith("<<", i) && text[i + 2] !== "<") {
+      // A here-document: its lines are what it reads, not commands.
+      const match = /^<<-?\s*(['"]?)([\w.-]+)\1/.exec(text.slice(i))
+      if (!match) {
+        current += "<<"
+        i += 2
+        continue
+      }
+      current += match[0]
+      i += match[0].length
+      const lineEnd = text.indexOf("\n", i)
+      if (lineEnd < 0) continue
+      current += text.slice(i, lineEnd)
+      let at = lineEnd + 1
+      let found = -1
+      while (at <= text.length) {
+        const next = text.indexOf("\n", at)
+        const body = text.slice(at, next < 0 ? text.length : next)
+        if (body.trim() === match[2]) {
+          found = next < 0 ? text.length : next
+          break
+        }
+        if (next < 0) break
+        at = next + 1
+      }
+      i = found < 0 ? text.length : found
+    } else if (ch === "&" && (text[i + 1] === ">" || /[<>]$/.test(current))) {
+      // A redirection (2>&1, &>file), not a command of its own.
+      current += ch
+      i++
+    } else if (ch === "|" && /[>]$/.test(current)) {
+      current += ch
+      i++
+    } else if (ch === "&" || ch === "|" || ch === ";" || ch === "\n" || ch === "(" || ch === ")") {
+      push()
+      i += text[i + 1] === ch || (ch === "|" && text[i + 1] === "&") ? 2 : 1
+    } else {
+      current += ch
+      i++
+    }
+  }
+  push()
+}
+
+/** Where the `)` that closes what starts at `start` is (quotes and nesting followed), or the end. */
+function parenEnd(text: string, start: number): number {
+  let depth = 1
+  let i = start
+  while (i < text.length) {
+    const ch = text[i]
+    if (ch === "\\") i += 2
+    else if (ch === "'") {
+      const end = text.indexOf("'", i + 1)
+      i = end < 0 ? text.length : end + 1
+    } else if (ch === '"') {
+      let j = i + 1
+      while (j < text.length && text[j] !== '"') j += text[j] === "\\" ? 2 : 1
+      i = j + 1
+    } else if (ch === "(") {
+      depth++
+      i++
+    } else if (ch === ")") {
+      if (--depth === 0) return i
+      i++
+    } else i++
+  }
+  return text.length
+}
+
+function backtickEnd(text: string, start: number): number {
+  let i = start
+  while (i < text.length && text[i] !== "`") i += text[i] === "\\" ? 2 : 1
+  return Math.min(i, text.length)
 }
 
 /** What an ask is about, a command line's commands one by one. */
 function partsOf(ask: PermissionAsk): string[] {
-  return ask.action === "shell" || ask.action === "bash" ? ask.resources.flatMap(commandParts) : ask.resources
+  return isShell(ask.action) ? ask.resources.flatMap(commandParts) : ask.resources
 }
+
+function isShell(action: string): boolean {
+  return action === "shell" || action === "bash"
+}
+
+/**
+ * You allowed it before ("Always"): each of its resources is one you allowed as it is, or, for a
+ * command line, each command in it is covered (a command allowed doesn't take others along).
+ */
+function coveredBy(patterns: string[], action: string, resources: string[]): boolean {
+  return resources.every((resource) => {
+    if (patterns.includes(resource)) return true
+    if (!isShell(action)) return patterns.some((pattern) => matches(pattern, resource))
+    const [, ...commands] = commandParts(resource)
+    return (commands.length ? commands : [resource.trim()]).every((command) => patterns.some((pattern) => matches(pattern, command)))
+  })
+}
+
+/** What the agents do on their own when nothing is to be approved: a rule about these holds them back. */
+const agentActions = new Set(["*", "edit", "write", "patch", "shell", "bash", "read", "webfetch", "websearch", "external_directory"])
+
+/** Actions that only look: asked about while Blocks aren't known only when a rule says so. */
+const looks = new Set(["read", "glob", "grep", "list", "websearch", "todowrite", "todoread", "question"])
 
 /** What rules say of each part (the last rule that matches it), the strictest of them: deny, then ask, then allow. */
 export function strictest(rules: PermissionRule[], action: string, parts: string[]): "allow" | "deny" | "ask" | undefined {
@@ -822,8 +970,12 @@ export class Sessions {
     // what an agent of yours is told to be.
     const blocks = this.policies ? await this.policies(directory).catch(() => undefined) : []
     if (blocks !== undefined) live.blocks = blocks
-    const info = this.agentInfo ? await this.agentInfo(session.agent ?? "build", directory).catch(() => undefined) : undefined
-    live.agentRules = info?.permissions ?? live.agentRules
+    const agentName = session.agent ?? "build"
+    const info = this.agentInfo ? await this.agentInfo(agentName, directory).catch(() => undefined) : undefined
+    // Not known now: the rules kept stand only for the same agent (another's would be wrong).
+    if (info?.permissions) live.agentRules = info.permissions
+    else if (live.rulesFor !== agentName) live.agentRules = undefined
+    live.rulesFor = agentName
     const own = session.agent && session.agent !== "build" && session.agent !== "plan" ? session.agent : undefined
     live.agentPrompt = own ? info?.system : undefined
 
@@ -1100,11 +1252,17 @@ export class Sessions {
       // Nothing to ask, and nothing refused: an agent may run its tools on its own. With a
       // rule or a block that refuses something (or Blocks not known), or in plan mode, it asks
       // here, and they answer.
-      approvesAll: (canAsk = true) =>
-        !plan &&
-        !(record.session.permissions ?? []).some((rule) => rule.effect === "ask" || rule.effect === "deny") &&
-        (!canAsk || (live.blocks !== undefined && !live.blocks.some((rule) => rule.effect === "deny"))),
-      check: (ask) => this.checkPermission(live, record.session, ask, plan),
+      // An agent that can't ask (Cursor) still keeps to known Blocks; only ones not known yet
+      // don't hold it back.
+      approvesAll: (canAsk = true) => {
+        if (plan) return false
+        if ((record.session.permissions ?? []).some((rule) => rule.effect === "ask" || rule.effect === "deny")) return false
+        const isDefault = (rule: PermissionRule) => engineDefaults.some((other) => other.action === rule.action && other.resource === rule.resource && other.effect === rule.effect)
+        if ((live.agentRules ?? []).some((rule) => rule.effect !== "allow" && agentActions.has(rule.action) && !isDefault(rule))) return false
+        if (live.blocks === undefined) return !canAsk
+        return !live.blocks.some((rule) => rule.effect === "deny")
+      },
+      check: (ask, ownPlan) => this.checkPermission(live, record.session, ask, plan && !ownPlan),
       permission: (ask) => this.askPermission(id, live, turn, ask, plan),
       question: (ask) => this.askQuestion(id, live, turn, ask),
       subagent: (toolCallID, task) => this.startSubagent(id, live, turn, toolCallID, task),
@@ -1169,26 +1327,37 @@ export class Sessions {
     if (plan && changes.has(ask.action)) return "deny"
     const effect = strictest([...(live.agentRules ?? engineDefaults), ...(session.permissions ?? [])], ask.action, parts)
     if (effect === "deny") return "deny"
-    const allowedBefore = live.always.some((rule) => rule.action === ask.action && ask.resources.every((resource) => rule.patterns.some((pattern) => matches(pattern, resource))))
-    return effect === "ask" && !allowedBefore ? "ask" : undefined
+    // Blocks not known (the engine didn't answer): asked, which reads them again.
+    if (live.blocks === undefined && !looks.has(ask.action)) return "ask"
+    return effect === "ask" && !this.allowedBefore(live, ask) ? "ask" : undefined
   }
 
-  private askPermission(id: string, live: Live, turn: Turn, ask: PermissionAsk, plan: boolean): Promise<Decision> {
+  private allowedBefore(live: Live, ask: PermissionAsk): boolean {
+    return live.always.some((rule) => rule.action === ask.action && coveredBy(rule.patterns, ask.action, ask.resources))
+  }
+
+  private async askPermission(id: string, live: Live, turn: Turn, ask: PermissionAsk, plan: boolean): Promise<Decision> {
     const session = this.record(id).session
     const parts = partsOf(ask)
+    // Blocks not known yet (the engine was slow, or restarting): read again, and asked about if
+    // they still aren't.
+    if (live.blocks === undefined && this.policies) {
+      const blocks = await this.policies(session.location.directory).catch(() => undefined)
+      if (blocks !== undefined) live.blocks = blocks
+    }
+    const unknown = live.blocks === undefined && !looks.has(ask.action)
     // Blocks win over everything, approvals included; each command of a command line counts.
-    if (live.blocks && strictest(live.blocks, ask.action, parts) === "deny") return Promise.resolve("reject")
-    if (plan && changes.has(ask.action)) return Promise.resolve("reject")
+    if (live.blocks && strictest(live.blocks, ask.action, parts) === "deny") return "reject"
+    if (plan && changes.has(ask.action)) return "reject"
     // The engine's asks were weighed by it already: without a rule of yours, they're yours to
     // answer. Others go by the session's agent's permissions as the engine has them (its own
     // defaults, reading a .env file asks first), with the session's rules over them.
     const effect = ask.weighed
       ? strictest(session.permissions ?? [], ask.action, parts)
       : (strictest([...(live.agentRules ?? engineDefaults), ...(session.permissions ?? [])], ask.action, parts) ?? "allow")
-    if (effect === "deny") return Promise.resolve("reject")
-    const allowedBefore = live.always.some((rule) => rule.action === ask.action && ask.resources.every((resource) => rule.patterns.some((pattern) => matches(pattern, resource))))
-    if (effect === "allow" || allowedBefore) return Promise.resolve("once")
-    if (turn.isEnded || live.abort?.signal.aborted) return Promise.resolve("reject")
+    if (effect === "deny") return "reject"
+    if (!unknown && (effect === "allow" || this.allowedBefore(live, ask))) return "once"
+    if (turn.isEnded || live.abort?.signal.aborted) return "reject"
     const request: PermissionRequest = {
       id: newID("per"),
       sessionID: id,
@@ -1230,7 +1399,7 @@ export class Sessions {
     if (decision !== "always") return
     const patterns = pending.request.save ?? pending.request.resources
     for (const [otherID, other] of [...live.permissions]) {
-      const covered = other.request.action === pending.request.action && other.request.resources.every((resource) => patterns.some((pattern) => matches(pattern, resource)))
+      const covered = other.request.action === pending.request.action && coveredBy(patterns, other.request.action, other.request.resources)
       if (!covered) continue
       live.permissions.delete(otherID)
       other.resolve("once")

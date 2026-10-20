@@ -310,6 +310,8 @@ class ClaudeThread implements Thread {
   private query?: any
   private input?: Queue<any>
   private active?: Active
+  /** The last turn's hooks: its rules still hold for a subagent at work after it. */
+  private lastHooks?: TurnHooks
   private opened?: { model: string; effort?: string; plan: boolean; append: string; program: number; tools?: string }
 
   constructor(
@@ -343,6 +345,7 @@ class ClaudeThread implements Thread {
     }
     if (hooks.signal.aborted) return { outcome: "interrupted" }
     return new Promise<RunResult>((resolve) => {
+      this.lastHooks = hooks
       this.active = { turn, hooks, resolve, streamed: new Set(), blockTools: new Map(), calls: new Map(), subagents: new Map(), auto: input.auto }
       this.input!.push(userMessage(input))
     })
@@ -627,11 +630,18 @@ class ClaudeThread implements Thread {
     if (spent > 0 && this.agent.usesKey()) active.turn.addUsage(undefined, spent)
   }
 
-  /** Your Blocks refuse a tool; what your rules ask first about is asked (canUseTool then asks you). */
+  /**
+   * Your Blocks refuse a tool; what your rules ask first about is asked (canUseTool then asks
+   * you). Between turns (a subagent still at work), the last turn's rules hold, and what would
+   * be asked is refused: there's no one to ask. Plan mode is Claude Code's own (it writes its
+   * plan to a file, and refuses other edits through canUseTool).
+   */
   private async preToolUse(input: any): Promise<any> {
-    const hooks = this.active?.hooks
-    if (!hooks || input?.hook_event_name !== "PreToolUse") return {}
-    const verdict = hooks.check(permissionAsk(String(input.tool_name ?? ""), input.tool_input ?? {}))
+    if (input?.hook_event_name !== "PreToolUse") return {}
+    const hooks = this.active?.hooks ?? this.lastHooks
+    if (!hooks) return {}
+    let verdict = hooks.check(permissionAsk(String(input.tool_name ?? ""), input.tool_input ?? {}), true)
+    if (verdict === "ask" && !this.active) verdict = "deny"
     if (verdict === "deny") {
       return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "Kuvo Code's settings don't allow this (Settings › Permissions, or this session's rules)." } }
     }

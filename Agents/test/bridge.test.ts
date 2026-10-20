@@ -14,7 +14,7 @@ import { evaluate, matches } from "../src/rules"
 import { handover } from "../src/handover"
 import { EngineLink } from "../src/engine"
 import { expandCommand } from "../src/server"
-import { withTextFiles } from "../src/sessions"
+import { commandParts, withTextFiles } from "../src/sessions"
 import { commandSignIn } from "../src/signin"
 
 describe("diffs", () => {
@@ -288,6 +288,34 @@ describe("handovers", () => {
       () => "Alpha, one",
     )!
     expect(text.indexOf("I'll fix the parser.")).toBeLessThan(text.indexOf("src/parser.ts"))
+  })
+})
+
+describe("a command line's commands", () => {
+  const commands = (line: string) => commandParts(line).slice(1)
+
+  test("each command counts, however the line joins them", () => {
+    expect(commands("a && b || c")).toEqual(["a", "b", "c"])
+    expect(commands("true & git push")).toContain("git push")
+    expect(commands("if true; then git push; fi")).toContain("git push")
+    expect(commands("{ git push; }")).toContain("git push")
+    expect(commands("! git push")).toContain("git push")
+    expect(commands("time git push")).toContain("git push")
+    expect(commands("for r in o; do git push $r; done")).toContain("git push $r")
+    expect(commands("(cd x && git push)")).toContain("git push")
+    expect(commands('echo "$(git push)"')).toContain("git push")
+    expect(commands("echo `git push`")).toContain("git push")
+    expect(commands("diff <(git show HEAD:a) a")).toContain("git show HEAD:a")
+  })
+
+  test("what's quoted, redirected or read from a here-document stays in its command", () => {
+    expect(commandParts('git commit -m "wip; git push later"')).toEqual(['git commit -m "wip; git push later"'])
+    expect(commandParts("git commit -m 'docs (git push) flow'")).toEqual(["git commit -m 'docs (git push) flow'"])
+    expect(commands("ls 2>&1 | grep x")).toEqual(["ls 2>&1", "grep x"])
+    expect(commands("make &> log; echo done")).toEqual(["make &> log", "echo done"])
+    const heredoc = commands("cat > notes <<'EOF'\ngit push\nEOF\necho hi")
+    expect(heredoc).not.toContain("git push")
+    expect(heredoc).toContain("echo hi")
   })
 })
 

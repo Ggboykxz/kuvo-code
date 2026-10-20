@@ -94,14 +94,17 @@ export interface TurnHooks {
    * an agent of yours' own (left out with false, for the engine, which runs it itself).
    */
   instructions(withAgent?: boolean): string
-  /** What your Blocks and rules say of an action, without asking you: refused, or to ask first. */
-  check(ask: PermissionAsk): "deny" | "ask" | undefined
+  /**
+   * What your Blocks and rules say of an action, without asking you: refused, or to ask first.
+   * `ownPlan`: the agent keeps plan mode itself (Claude Code writes its plan to a file).
+   */
+  check(ask: PermissionAsk, ownPlan?: boolean): "deny" | "ask" | undefined
   /** The agent's own state for this session, kept with it (its conversation's ID). */
   state: Record<string, unknown>
   saveState(): void
   /**
    * Approve All: the agent runs its tools without asking (your rules that deny still hold). For
-   * an agent that can't ask anyway (`canAsk` false), Blocks don't change it.
+   * an agent that can't ask anyway (`canAsk` false), Blocks not known yet don't change it.
    */
   approvesAll(canAsk?: boolean): boolean
   signal: AbortSignal
