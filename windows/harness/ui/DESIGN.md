@@ -195,7 +195,7 @@ app's own header is reproduced, not the OS's.
 | --- | --- | --- |
 | 0 | Extraction ledger, inventory, map | done |
 | 1 | This binding: tokens, canvas, cards, composer, bubble, type | 0.5.37 |
-| 2a | The conversation card and its 38 pt header, the 62 pt fade, 8 pt window gaps, the sidebar on the glass, 32 pt rows, one search, the composer on the column | 0.5.38 |
+| 2a | The conversation card and its 38 pt header, the 62 pt fade, 8 pt window gaps, the sidebar on the glass, 32 pt rows, one search, the composer on the column | 0.5.38 ✅ |
 | 2b | The title bar's tabs, the drawer, the palette and the settings card | next |
 | 3 | Motion: analytic spring, press, shimmer, reduced motion | |
 | 4 | Icons: 89 symbols as SVG, six drawn marks | |
