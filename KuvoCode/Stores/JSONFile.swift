@@ -15,7 +15,13 @@ nonisolated enum JSONFile {
             return try decoder.decode(type, from: data)
         } catch {
             let when = Date.now.formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false).timeSeparator(.omitted).dateSeparator(.omitted))
-            let aside = file.deletingPathExtension().appendingPathExtension("unreadable-\(when).json")
+            // Its own name, also beside one set aside the same second.
+            var aside = file.deletingPathExtension().appendingPathExtension("unreadable-\(when).json")
+            var number = 2
+            while FileManager.default.fileExists(atPath: aside.path) {
+                aside = file.deletingPathExtension().appendingPathExtension("unreadable-\(when)-\(number).json")
+                number += 1
+            }
             try? FileManager.default.moveItem(at: file, to: aside)
             log.error("\(file.lastPathComponent, privacy: .public) couldn't be read and was set aside as \(aside.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
             return nil
