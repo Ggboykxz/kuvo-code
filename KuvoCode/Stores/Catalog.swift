@@ -238,8 +238,10 @@ final class Catalog {
         async let commands = api.commands()
         do { engineIntegrations = try await integrations } catch { log.error("integrations: \(String(describing: error), privacy: .public)") }
         var starting = false
+        var modelsRead = false
         do {
             engineModels = try await models
+            modelsRead = true
             if isMac { ProviderCompatibility.learn(from: engineModels) }
             LogoImages.shared.prefetch(engineModels.flatMap { [$0.makerLogoID, $0.providerID] })
         } catch {
@@ -249,9 +251,13 @@ final class Catalog {
         do { self.defaultModel = try await defaultModel } catch { log.error("default model: \(String(describing: error), privacy: .public)") }
         do { self.agents = try await agents } catch { log.error("agents: \(String(describing: error), privacy: .public)") }
         do { self.commands = try await commands } catch { log.error("commands: \(String(describing: error), privacy: .public)") }
+        // What's new shows at once; each folder's own commands follow (reading one can start its
+        // tools there, so not before).
+        merge()
+        // Loaded once the models have been read: a new bot's model is checked against them.
+        if modelsRead { isLoaded = true }
         for directory in projectCommands.keys { await loadCommands(in: directory) }
         merge()
-        isLoaded = true
         if starting { waitForEngine() } else { unavailableSince = nil }
     }
 
