@@ -222,6 +222,26 @@ describe("Claude Code, on its own", () => {
   })
 })
 
+describe("Claude Code, on its own, not taken", () => {
+  test("a turn it begins while an undo is staged is stopped, and the undo stays", async () => {
+    const id = sessions.create({ model: { providerID: provider, id: "default" }, location: { directory: root } }).id
+    sessions.prompt(id, { id: "msg_claude_bg_00003", text: "hello", files: [], delivery: "steer" })
+    await until(() => fake.sent.length === 1)
+    const [mine] = fake.sent.map((message) => message.uuid)
+    fake.say("hi", [mine])
+    fake.result([mine])
+    await until(() => idles(id).length === 1)
+    await sessions.stageRevert(id, "msg_claude_bg_00003")
+    fake.say("about the command that ended", [])
+    await until(() => fake.interrupts === 1)
+    fake.result([])
+    await Bun.sleep(50)
+    expect(sessions.get(id).revert?.messageID).toBe("msg_claude_bg_00003")
+    expect(idles(id)).toHaveLength(1)
+    expect(sessions.messages(id).some((message) => message.type === "synthetic")).toBe(false)
+  })
+})
+
 describe("Claude Code's subagents in the background", () => {
   test("one goes on after the turn: its work shows in its session, it can ask you, and it ends when Claude Code says", async () => {
     const id = sessions.create({ model: { providerID: provider, id: "default" }, location: { directory: root } }).id

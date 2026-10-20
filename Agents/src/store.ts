@@ -2,7 +2,7 @@
 // `session.json` (the session as the app reads it), `messages.json` (its conversation, in the
 // engine's form) and `agent.json` (what the agent needs to go on: its own conversation's ID).
 
-import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import type { Message, Session } from "./wire"
 
@@ -44,6 +44,15 @@ export class Store {
 
   get(id: string): Record_ | undefined {
     return this.records.get(id)
+  }
+
+  /** When its conversation was last written (ms), if it has been. */
+  writtenAt(id: string): number | undefined {
+    try {
+      return statSync(join(this.root, id, "messages.json")).mtimeMs
+    } catch {
+      return undefined
+    }
   }
 
   add(session: Session) {

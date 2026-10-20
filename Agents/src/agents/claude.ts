@@ -474,17 +474,17 @@ class ClaudeThread implements Thread {
     const taken = new Promise<void>((resolve) => (take = resolve))
     const own: NonNullable<ClaudeThread["own"]> = { frames: [message], turnedAway: false, taken, take }
     this.own = own
-    // Taken now (what's here is told to the turn at once) or soon; or turned away.
-    if (!(this.onOwnTurn?.(this.ownNote()) ?? false)) {
-      own.turnedAway = true
-      take()
-      return
-    }
-    // Not taken in a while (the session went meanwhile): turned away.
-    setTimeout(() => {
-      if (this.own === own) own.turnedAway = true
-      take()
-    }, 15_000)
+    // Taken now (what's here is told to the turn at once) or once nothing else runs; or turned away.
+    if (!(this.onOwnTurn?.(this.ownNote()) ?? false)) this.turnAway()
+  }
+
+  /** A turn it began on its own that isn't taken: it stops (nothing would show what it does). */
+  turnAway() {
+    const own = this.own
+    if (!own || own.turnedAway) return
+    own.turnedAway = true
+    own.take?.()
+    void this.query?.interrupt().catch(() => {})
   }
 
   /** What began a turn it started on its own, as the conversation says it. */
@@ -1200,6 +1200,7 @@ class ClaudeThread implements Thread {
     for (const lane of this.backgroundLanes.values()) lane.run.end("interrupted")
     this.backgroundLanes.clear()
     this.liveTasks.clear()
+    this.own?.take?.()
     this.own = undefined
   }
 }

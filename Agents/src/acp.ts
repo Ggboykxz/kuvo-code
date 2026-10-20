@@ -128,7 +128,7 @@ export class AcpThread implements Thread {
   private startedOver = false
   onOwnTurn?: (note: OwnTurn) => boolean
   /** Updates of a turn the agent began on its own, until a turn here takes them; or turned away. */
-  private own?: { updates: any[]; turnedAway: boolean }
+  private own?: { updates: any[]; turnedAway: boolean; ended?: boolean; quiet?: ReturnType<typeof setTimeout> }
 
   constructor(
     private readonly flavor: AcpFlavor,
@@ -358,7 +358,9 @@ export class AcpThread implements Thread {
       },
       endOwn: () => {
         if (active?.own) this.end(active, "succeeded")
-        else if (this.own && !this.own.turnedAway) this.own.turnedAway = true
+        // Over before it was taken: the turn that takes it ends with what it said.
+        else if (this.own && !this.own.turnedAway) this.own.ended = true
+        else if (this.own) this.own = undefined
       },
     }
   }
@@ -375,6 +377,7 @@ export class AcpThread implements Thread {
       turn.startStep()
       this.quietly(active)
       for (const update of own.updates) this.notification("session/update", update)
+      if (own.ended && this.active === active) this.end(active, "succeeded")
     })
   }
 
@@ -530,12 +533,31 @@ export class AcpThread implements Thread {
     const known = this.own
     if (known) {
       if (!known.turnedAway) known.updates.push(params)
+      else this.forget(known)
       return
     }
     if (!["agent_message_chunk", "agent_thought_chunk", "tool_call"].includes(update.sessionUpdate)) return
     const own = { updates: [params], turnedAway: false }
     this.own = own
-    if (!(this.onOwnTurn?.({ text: `${this.name} carried on by itself.` }) ?? false)) own.turnedAway = true
+    if (!(this.onOwnTurn?.({ text: `${this.name} carried on by itself.` }) ?? false)) this.turnAway()
+  }
+
+  /** A turn it began on its own that isn't taken: it stops (nothing would show what it does). */
+  turnAway() {
+    const own = this.own
+    if (!own || own.turnedAway) return
+    own.turnedAway = true
+    if (this.rpc && this.sessionID) this.rpc.notify("session/cancel", { sessionId: this.sessionID })
+    this.forget(own)
+  }
+
+  /** One turned away is let go once the agent has been quiet a while: what it begins next is asked about again. */
+  private forget(own: NonNullable<AcpThread["own"]>) {
+    clearTimeout(own.quiet)
+    own.quiet = setTimeout(() => {
+      if (this.own === own) this.own = undefined
+    }, acpTiming.ownQuiet)
+    ;(own.quiet as any).unref?.()
   }
 
   /** Words after a tool begin a new step. */

@@ -92,8 +92,8 @@ const legacyKeys = ["claudeSession", "claudeStarted", "codexThread", "acpSession
 /** What an agent that has your message already is told when it's to go on with it on another of its models. */
 const carryOn = "Carry on with my last message from where you left off: you're on another model now."
 
-/** How long an agent gets to stop when you press Stop, before its conversation is closed; how long a session's agents keep running with nothing to do (the next message starts them again, in the same conversation). */
-export const timing = { stopGrace: 8_000, idleClose: 15 * 60_000 }
+/** How long an agent gets to stop when you press Stop, before its conversation is closed; how long a session's agents keep running with nothing to do (the next message starts them again, in the same conversation); how lately a turn the bridge quit in must have last written for what changed since to count as its own. */
+export const timing = { stopGrace: 8_000, idleClose: 15 * 60_000, cutShort: 2 * 60_000 }
 
 /** In plan mode, what changes files: refused, whatever your rules say. */
 const changes = new Set(["edit", "write", "patch"])
@@ -577,10 +577,17 @@ export class Sessions {
       record.session.time.idle = at
       changed = true
     }
-    if (changed) this.store.save(id, true)
     // A turn cut short kept the files before it but not what it changed: read now, so Undo
-    // still works for it and the messages before it.
-    if (this.snapshots && Object.values(this.notes(record)).some((note) => note.before && !note.files && !note.failed)) void this.finishNotes(id)
+    // still works for it and the messages before it; unless it stopped a while ago (the app was
+    // closed), when what changed since may be yours, which Undo mustn't take back.
+    const open = Object.values(this.notes(record)).filter((note) => note.before && !note.files && !note.failed)
+    const stopped = this.store.writtenAt(id)
+    if (open.length && this.snapshots && stopped !== undefined && Date.now() - stopped < timing.cutShort) void this.finishNotes(id)
+    else if (open.length) {
+      for (const note of open) note.failed = true
+      changed = true
+    }
+    if (changed) this.store.save(id, true)
   }
 
   private async finishNotes(id: string) {
@@ -1327,15 +1334,31 @@ export class Sessions {
     const input = live?.adopting
     if (!live || !input) return false
     live.adopting = undefined
+    // An undo came first (it was being staged): taking the turn would make it final.
+    if (this.store.get(id)?.session.revert) {
+      live.threads.get(input.adopt!.providerID)?.turnAway?.()
+      return false
+    }
     void this.start(id, input)
     return true
   }
 
   /** The message on one agent's model, with what that agent hasn't seen of the conversation. */
   private async runOn(id: string, record: Record_, live: Live, model: ModelRef, input: RunInput, turn: Turn, signal: AbortSignal, userMessage: string): Promise<RunResult> {
+    // A turn its agent began on its own, stopped before it was taken: it stops there too.
+    let reached = false
+    const turnAway = () => {
+      if (input.adopt && !reached) live.threads.get(model.providerID)?.turnAway?.()
+    }
     const agent = this.agent(model.providerID)
-    if (!agent) return { outcome: "failed", error: { type: "agent", message: "This model's agent isn't available: sign in to it in Settings › Accounts, or pick another model." } }
-    if (signal.aborted) return { outcome: "interrupted" }
+    if (!agent) {
+      turnAway()
+      return { outcome: "failed", error: { type: "agent", message: "This model's agent isn't available: sign in to it in Settings › Accounts, or pick another model." } }
+    }
+    if (signal.aborted) {
+      turnAway()
+      return { outcome: "interrupted" }
+    }
     const slots = this.slots(record)
     const slot = (slots[model.providerID] ??= { state: {} })
     let thread = live.threads.get(model.providerID)
@@ -1378,6 +1401,7 @@ export class Sessions {
       const handed = handover(before, partway, (message) => this.stepName(message))
       const text = withHandover(hasMessage ? carryOn : input.text, handed)
       const files = hasMessage ? [] : input.files
+      reached = true
       const result = await Promise.race([thread.run({ ...input, model, text, files }, turn, hooks), abandoned])
       // It has seen all of it now, its own replies too; but one that failed with nothing done
       // couldn't take your message (its model is gone, it was turned away), and doesn't count as
@@ -1395,6 +1419,7 @@ export class Sessions {
       if (live.threads.get(model.providerID) === thread) live.threads.delete(model.providerID)
       throw error
     } finally {
+      turnAway()
       if (live.running === running) live.running = undefined
       this.store.save(id, true)
     }

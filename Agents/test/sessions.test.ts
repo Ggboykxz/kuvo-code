@@ -2,7 +2,7 @@
 // Auto down its list, and what a session keeps. Each test has a folder of its own, removed after.
 
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { AcpThread } from "../src/acp"
@@ -65,6 +65,8 @@ class FakeAgent implements Agent {
 class FakeThread implements Thread {
   interrupted = 0
   closed = false
+  turnedAway = 0
+  onOwnTurn?: Thread["onOwnTurn"]
   onStop?: () => void
   steer?: (input: { id: string; text: string; files: unknown[] }) => Promise<boolean>
   /** Its next prepare says it started over. */
@@ -96,6 +98,9 @@ class FakeThread implements Thread {
   }
   close() {
     this.closed = true
+  }
+  turnAway() {
+    this.turnedAway++
   }
 }
 
@@ -1028,6 +1033,73 @@ describe("undo, carefully", () => {
     await Bun.sleep(300)
     await sessions.stageRevert(id, first)
     expect(readFileSync(join(folder, "a.txt"), "utf8")).toBe("one\n")
+  })
+
+  test("a turn cut short long ago (the app was closed) isn't undone through: your edits since stay", async () => {
+    const folder = repository({ "a.txt": "one\n" })
+    withSnapshots()
+    a.script = async (input, turn, hooks, thread) => {
+      writeFileSync(join(folder, "a.txt"), "two\n")
+      return replies(input, turn, hooks, thread)
+    }
+    const id = sessions.create({ model: { providerID: "alpha", id: "one" }, location: { directory: folder } }).id
+    const first = send(id, "change it")
+    await settled(id, 1)
+    a.script = async (_input, turn) => {
+      turn.startStep()
+      return new Promise(() => {})
+    }
+    send(id, "change it again")
+    await until(() => a.runs.length === 2)
+    await Bun.sleep(600)
+    sessions.closeAll()
+    // Closed a while; you edited meanwhile.
+    const old = new Date(Date.now() - 10 * 60_000)
+    utimesSync(join(root, "sessions", id, "messages.json"), old, old)
+    writeFileSync(join(folder, "a.txt"), "mine\n")
+    const agents = new Map([a, b].map((agent) => [agent.providerID, agent]))
+    sessions = new Sessions(new Store(join(root, "sessions")), { find: (provider: string | undefined) => (provider ? agents.get(provider) : undefined) } as unknown as Roster, auto, undefined, undefined, undefined, new Snapshots(join(root, "snapshots")))
+    await Bun.sleep(300)
+    await expect(sessions.stageRevert(id, first)).rejects.toThrow("couldn't keep")
+    expect(readFileSync(join(folder, "a.txt"), "utf8")).toBe("mine\n")
+  })
+
+  test("a turn the agent begins on its own while Undo is being staged is turned away, and the undo stays", async () => {
+    const folder = repository({ "a.txt": "one\n" })
+    withSnapshots()
+    a.script = async (input, turn, hooks, thread) => {
+      writeFileSync(join(folder, "a.txt"), "two\n")
+      return replies(input, turn, hooks, thread)
+    }
+    const id = sessions.create({ model: { providerID: "alpha", id: "one" }, location: { directory: folder } }).id
+    const first = send(id, "change it")
+    await settled(id, 1)
+    const staging = sessions.stageRevert(id, first)
+    // Taken for now (the files are being put back), then let go once the undo is staged.
+    expect(a.threads[0].onOwnTurn!({ text: "Alpha carried on by itself." })).toBe(true)
+    await staging
+    await Bun.sleep(50)
+    expect(a.threads[0].turnedAway).toBe(1)
+    expect(a.runs).toHaveLength(1)
+    expect(sessions.get(id).revert?.messageID).toBe(first)
+    expect(readFileSync(join(folder, "a.txt"), "utf8")).toBe("one\n")
+    // And one while it's staged isn't taken at all.
+    expect(a.threads[0].onOwnTurn!({ text: "Alpha carried on by itself." })).toBe(false)
+  })
+
+  test("Stop before a turn the agent began on its own is taken stops that too", async () => {
+    const folder = repository({ "a.txt": "one\n" })
+    withSnapshots()
+    const id = sessions.create({ model: { providerID: "alpha", id: "one" }, location: { directory: folder } }).id
+    send(id, "hello")
+    await settled(id, 1)
+    expect(a.threads[0].onOwnTurn!({ text: "Alpha carried on by itself." })).toBe(true)
+    // Its files are being kept: Stop comes first.
+    await sessions.interrupt(id)
+    await settled(id, 2)
+    expect(idles(id)[1].outcome).toBe("interrupted")
+    expect(a.runs).toHaveLength(1)
+    expect(a.threads[0].turnedAway).toBe(1)
   })
 
   test("Undo doesn't start what was waiting, so it isn't made final at once", async () => {

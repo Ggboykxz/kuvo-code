@@ -178,9 +178,12 @@ export interface Thread {
   close(): void
   /**
    * Set by the session: the agent began a turn of its own between turns (a command it left
-   * running ended, and it carries on). True when a turn here takes it (`run` with `adopt`).
+   * running ended, and it carries on). True when a turn here takes it (`run` with `adopt`, or
+   * `turnAway` when it can't after all).
    */
   onOwnTurn?: (note: OwnTurn) => boolean
+  /** A turn it began on its own that the session took but now won't (an undo came first, or Stop): it stops. */
+  turnAway?(): void
   /** It has work going that closing it would end (commands left running): it's kept open. */
   readonly keepsWorking?: boolean
 }
