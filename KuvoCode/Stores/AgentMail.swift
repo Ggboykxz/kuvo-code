@@ -236,7 +236,8 @@ final class AgentMail {
     private var started: [String: [Date]] = [:]
 
     /// A new session from the conversation `caller`: an agent of its own, in the caller's folder
-    /// (or the one given), on the caller's model, with your usual approval. It gets `task` as a
+    /// (or the one given), on the caller's model, with the caller's approval (yours by default for
+    /// one from outside a session), so Ask First isn't got around. It gets `task` as a
     /// message from the caller, so it knows who to report to, and its metadata says who started it,
     /// for the window to show it beside them.
     func start(_ arguments: [String: Any], caller: String?) async -> (text: String, isError: Bool) {
@@ -265,7 +266,7 @@ final class AgentMail {
             return ("You've started several sessions in the last few minutes. Write to those (send_message), or ask the user before starting more.", true)
         }
         started[key] = lately + [.now]
-        let approval = UserDefaults.standard.string(forKey: ToolApproval.key).flatMap(ToolApproval.init) ?? .approveAll
+        let approval = parent.map { ToolApproval(rules: $0.permissions) } ?? UserDefaults.standard.string(forKey: ToolApproval.key).flatMap(ToolApproval.init) ?? .approveAll
         let session: Session
         do {
             session = try await workspace.createSession(in: folder, model: parent?.model, agent: nil, approval: approval)
@@ -310,8 +311,11 @@ final class AgentMail {
             // Done; or not seen at work (a quick one, between looks): its words after ours.
             guard started || Date.now.timeIntervalSince(began) > 6 else { continue }
             guard let messages = try? await api.messages(session: session, limit: 20).data else { continue }
-            let words = messages.compactMap { message -> String? in
-                guard case .assistant(let assistant) = message, assistant.id > id else { return nil }
+            // What comes after ours in the conversation (all of it, when ours is further back), not
+            // by comparing IDs: a machine's are made from its own clock.
+            let ours = messages.firstIndex { if case .user(let user) = $0 { user.id == id } else { false } }
+            let words = messages[(ours.map { $0 + 1 } ?? 0)...].compactMap { message -> String? in
+                guard case .assistant(let assistant) = message else { return nil }
                 let text = assistant.content.compactMap { if case .text(let part) = $0 { part.text } else { nil } }.joined(separator: "\n")
                 return text.isEmpty ? nil : text
             }
