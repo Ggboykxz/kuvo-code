@@ -18,6 +18,7 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const CONFIG = /*KUVO_CONFIG*/ { scripts: {}, tools: [], instructions: "", version: "dev" };
 
@@ -50,7 +51,7 @@ const TAB_IDLE = Number(process.env.KUVO_BROWSER_TAB_IDLE || 12 * 3600) * 1000;
 
 // Goes up with every change to the keeper (host mode): a newer one replaces one that's running
 // (its pages close, its sign-ins stay), and an older one never replaces a newer.
-const KEEPER = 23;
+const KEEPER = 24;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -704,7 +705,8 @@ async function host() {
           return stop();
         case "Kuvo.ask": {
           const params = message.params ?? {};
-          if (!params.id) return;
+          // One already asked keeps its asker: its answer goes to it.
+          if (!params.id || asks.has(params.id)) return;
           asks.set(params.id, { client, params });
           return broadcast({ method: "Kuvo.asked", params });
         }
@@ -1408,16 +1410,57 @@ async function backTo(p, host, fields = []) {
   return null;
 }
 
-/// The site a page is on, as the ask names it and Passwords keeps it: its host, or for a page
-/// from a file, that it is one.
+/// The site a page is on, as the ask names it and Passwords keeps it: its host ("http://" and it,
+/// for a page that isn't private, never the https site's), or for a page from a file, that it
+/// is one.
 function hostOf(url) {
   try {
     const parsed = new URL(url);
     if (parsed.protocol === "file:") return "a file on this machine";
+    if (parsed.protocol === "http:") return parsed.hostname ? "http://" + parsed.hostname : null;
     return parsed.hostname || null;
   } catch {
     return null;
   }
+}
+
+/// The site the fill script checks the page is still on (it names a page from a file as one on
+/// the Mac, so that one goes by the address alone).
+const siteOf = (host) => (host === "a file on this machine" ? undefined : host);
+
+/// What the browser says instead of opening `address`, a file outside the conversation's folder
+/// (and the temporary folders, where an agent writes a page to open), when it asks before reading
+/// those: opened, the browser read it without asking, where a command would have asked. Links are
+/// followed to where they lead. A subagent's goes by the conversation that started it. As the
+/// Mac's BrowserTools.fileNote.
+async function fileNote(address, session) {
+  const target = destination(address);
+  if (!target || !target.startsWith("file:")) return null;
+  let file;
+  try {
+    file = fileURLToPath(target);
+  } catch {
+    return null;
+  }
+  let found = null;
+  for (let id = session, step = 0; id && step < 6; step++) {
+    found = (await engine("GET", `api/session/${encodeURIComponent(id)}`).catch(() => null))?.data ?? null;
+    id = found?.parentID ?? null;
+  }
+  // Approve All: no rule asking before commands (nor one refusing them, as a group chat's seat has).
+  const rules = found?.permissions ?? [];
+  if (found && !rules.some((rule) => rule.action === "shell" && (rule.effect === "ask" || rule.effect === "deny"))) return null;
+  const real = (place) => {
+    try {
+      return fs.realpathSync(place);
+    } catch {
+      return path.resolve(place);
+    }
+  };
+  const where = real(file);
+  const places = [found?.location?.directory, os.tmpdir(), "/tmp"].filter(Boolean).map(real);
+  if (places.some((place) => where === place || where.startsWith(place.endsWith("/") ? place : place + "/"))) return null;
+  return `Not opened: ${file} is outside this conversation's folder, and this session asks before reading files elsewhere. Ask the user first; if they agree, copy it into the folder (a command, which asks them) and open it there.`;
 }
 
 /// Nil if the field is there and takes `wanted` ("password" or "text"), else why not.
@@ -1762,9 +1805,15 @@ async function tool(name, args) {
     return text(await snapshot(await use(chosen.targetId)));
   }
 
-  if (name === "browser_new_tab") {
-    const c = await browser();
+  if (name === "browser_navigate" || name === "browser_new_tab") {
     const url = string("url");
+    const refused = url ? await fileNote(url, caller) : null;
+    if (refused) return text(refused, true);
+  }
+
+  if (name === "browser_new_tab") {
+    const url = string("url");
+    const c = await browser();
     const { targetId } = await c.send("Target.createTarget", { url: "about:blank", newWindow: true });
     if (caller) await c.send("Kuvo.claim", { targetId, session: caller });
     const p = await use(targetId);
@@ -1850,7 +1899,15 @@ async function tool(name, args) {
       try {
         // On the paper the Mac prints on, with the page's colors.
         const paper = process.env.KUVO_PAPER === "letter" ? { paperWidth: 8.5, paperHeight: 11 } : { paperWidth: 8.27, paperHeight: 11.69 };
-        const { data } = await link.send("Page.printToPDF", { printBackground: true, preferCSSPageSize: true, marginTop: 0.5, marginBottom: 0.5, marginLeft: 0.5, marginRight: 0.5, ...paper }, p.session, 60_000);
+        // What the user filled in stays out of it, as out of a screenshot (left out, since text
+        // drawn clear is still in a PDF).
+        await run(p, scripts.printMask);
+        let data;
+        try {
+          ({ data } = await link.send("Page.printToPDF", { printBackground: true, preferCSSPageSize: true, marginTop: 0.5, marginBottom: 0.5, marginLeft: 0.5, marginRight: 0.5, ...paper }, p.session, 60_000));
+        } finally {
+          await run(p, scripts.unmask);
+        }
         const bytes = Buffer.from(data, "base64");
         fs.mkdirSync(path.dirname(file), { recursive: true });
         fs.writeFileSync(file, bytes);
@@ -1888,7 +1945,7 @@ async function tool(name, args) {
       if (changed) return text(note() + changed + " Nothing was filled: take a fresh browser_snapshot, and ask again if it's still needed.");
       const filled = [];
       for (const [index, value, what, wanted] of fields) {
-        const outcome = await run(p, scripts.find + scripts.fill, { index, value, wanted });
+        const outcome = await run(p, scripts.find + scripts.fill, { index, value, wanted, site: siteOf(host) });
         if (outcome !== "ok") return text(note() + outcome);
         filled.push(what);
       }
@@ -1906,7 +1963,7 @@ async function tool(name, args) {
       if (answer.type !== "code" || !answer.code) return text(note() + noAnswer(answer, "give a code"));
       const changed = await backTo(p, host, [[index, "code"]]);
       if (changed) return text(note() + changed + " Nothing was filled: take a fresh browser_snapshot, and ask again if it's still needed.");
-      const outcome = await run(p, scripts.find + scripts.fill, { index, value: answer.code, wanted: "code" });
+      const outcome = await run(p, scripts.find + scripts.fill, { index, value: answer.code, wanted: "code", site: siteOf(host) });
       if (outcome !== "ok") return text(note() + outcome);
       await sleep(300);
       return withNote(snapshot(p).then((page) => "Filled the code (you can't see it). Submit it if the page doesn't on its own.\n\n" + page));

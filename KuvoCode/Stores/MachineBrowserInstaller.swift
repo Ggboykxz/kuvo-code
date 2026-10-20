@@ -426,6 +426,7 @@ extension MachineBrowserInstaller {
                 "rect": BrowserAgent.rectScript,
                 "fill": BrowserAgent.fillScript,
                 "mask": BrowserAgent.maskScript,
+                "printMask": BrowserAgent.printMaskScript,
                 "unmask": BrowserAgent.unmaskScript,
             ],
             "tools": BrowserTools.definitions,
