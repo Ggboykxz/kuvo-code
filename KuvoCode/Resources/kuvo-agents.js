@@ -1548,6 +1548,8 @@ ${others.map((path) => `- ${path}`).join(`
     const active = this.active;
     if (!active || this.loading || params?._meta?.isReplay)
       return;
+    if (params?.sessionId && this.sessionID && params.sessionId !== this.sessionID)
+      return;
     active.heard = true;
     const update = params?.update ?? {};
     const turn = active.turn;

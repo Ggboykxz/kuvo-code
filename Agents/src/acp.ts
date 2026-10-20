@@ -328,6 +328,9 @@ export class AcpThread implements Thread {
     const active = this.active
     // What a load replays is already in the conversation.
     if (!active || this.loading || params?._meta?.isReplay) return
+    // Another session's (a subagent's child session, where the agent keeps it on this connection):
+    // not this conversation's words.
+    if (params?.sessionId && this.sessionID && params.sessionId !== this.sessionID) return
     active.heard = true
     const update = params?.update ?? {}
     const turn = active.turn
