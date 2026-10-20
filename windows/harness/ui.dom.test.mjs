@@ -163,6 +163,25 @@ test("the page, in a DOM, against the real engine", {
   page.element("start")?.click();
   await page.seen("the session to appear", () => page.document.querySelectorAll("#sessions li").length === 1, 30_000);
 
+  // The title bar: the Mac's tab strip, with the open session in it, and the project's
+  // name over the sessions' width.
+  await page.seen("the tab strip to show the session", () => {
+    const tab = page.document.querySelector('.tab-track [role="tab"]');
+    return Boolean(tab) && tab.classList.contains("active");
+  }, 10_000);
+  assert.equal(page.document.querySelectorAll('.tab-track [role="tab"]').length, 1, "the open session is one tab");
+  assert.ok(page.document.querySelector(".tab-pill"), "the chosen tab carries the raised pill");
+  assert.equal(page.document.querySelector(".identity-name")?.textContent, path.basename(project), "the title bar names the project");
+
+  // The panel: a card in the window's row, with the Mac's tab strip.
+  page.element("toggle-files")?.click();
+  await page.seen("the panel to open", () => page.element("drawer")?.hidden === false, 10_000);
+  const drawer = page.element("drawer");
+  assert.ok(drawer?.closest("main"), "the panel sits in the window's row, beside the conversation");
+  assert.deepEqual([...drawer.querySelectorAll(".drawer-tab")].map(node => node.textContent.trim()), ["Files", "Changes", "Terminal"]);
+  page.element("drawer-close")?.click();
+  await page.seen("the panel to close", () => page.element("drawer")?.hidden === true, 10_000);
+
   // The model menu (a call scoped to the project folder, sent as a header).
   await page.seen("the models to load", () => {
     const button = page.element("model");
@@ -229,6 +248,11 @@ test("the page, in a DOM, against the real engine", {
   const pages = page.document.querySelector(".settings-pages");
   assert.ok(nav, "the settings have a navigation");
   assert.ok(pages, "the settings have their pages");
+  // The Mac's shape: the settings take the sessions' place — a sidebar on the glass, and
+  // the open page in a card beside it.
+  assert.ok(page.document.querySelector(".settings-sidebar"), "the settings have their own sidebar");
+  assert.ok(page.document.querySelector(".settings-content.card"), "the open page is in a card");
+  assert.match(page.document.querySelector(".settings-content-head h1")?.textContent ?? "", /Appearance|General/);
   assert.equal(nav.querySelectorAll(".settings-page").length, 0, "no page sits inside the navigation");
   assert.equal([...page.document.querySelectorAll(".settings-page")].filter(node => !node.closest(".settings-pages")).length, 0, "every page belongs to the settings");
   for (const button of nav.querySelectorAll("button")) {
@@ -284,6 +308,9 @@ test("the page, in a DOM, against the real engine", {
   }, 10_000);
   const usage = page.document.querySelector('.settings-page[data-section="usage"]');
   assert.match(usage.textContent, /\$\d+\.\d{4}/, "the usage page shows what the agent spent");
+  // And the way back is in the title bar, as it is on the Mac.
+  page.element("settings-back")?.click();
+  await page.seen("the settings to close", () => page.element("settings-modal")?.hidden === true, 10_000);
 
   // The palette: it finds things, and it shows the keys that do the things.
   page.document.body.dispatchEvent(new page.window.KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true }));
@@ -292,6 +319,10 @@ test("the page, in a DOM, against the real engine", {
   const newSessionRow = paletteRows.find(row => row.textContent.includes("New session"));
   assert.ok(newSessionRow, "the palette offers a new session");
   assert.match(newSessionRow.textContent, /Ctrl\+N/, "the palette shows the keys that do it");
+  // The Mac's sections: the recent sessions, and the actions.
+  const sections = [...page.document.querySelectorAll("#palette-list .palette-title")].map(node => node.textContent.trim());
+  assert.ok(sections.includes("Recent Sessions"), "the palette opens with the recent sessions");
+  assert.ok(sections.includes("Actions"), "and with the actions");
   page.document.body.dispatchEvent(new page.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   await page.seen("the palette to close", () => page.element("palette")?.hidden === true, 10_000);
 

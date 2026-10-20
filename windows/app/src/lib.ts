@@ -40,6 +40,9 @@ export function renderMath(text: string): string {
   };
   source = source.replace(/\$\$([\s\S]+?)\$\$/g, (_, tex) => formula(tex, true));
   source = source.replace(/\$([^$\n]+?)\$/g, (_, tex) => formula(tex, false));
+  // The formulas are held aside while the text is parsed, and put back after: a NUL
+  // cannot occur in the text itself, and it cannot be typed in a formula.
+  // oxlint-disable-next-line eslint/no-control-regex -- the placeholders are marked with NUL on purpose
   return source.replace(/\u0000(\d+)\u0000/g, (_, index) => kept[Number(index)]);
 }
 

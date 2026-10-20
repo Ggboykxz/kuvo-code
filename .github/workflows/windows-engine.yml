@@ -74,7 +74,13 @@ jobs:
         working-directory: windows/app
         run: |
           npm install --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000
+          # Linted and type-checked first: the code is read before it is shipped.
+          npm run lint
+          npm run typecheck
           npm run build
+          # The third-party terms travel with the app: the list is written from the
+          # packages that are installed, and this fails when it is out of date.
+          node ../tools/third-party-licenses.mjs --check
 
       # Downloads the pinned Windows build, checks it against npm's checksum, starts it and
       # asks it for its info: the same road a client takes, on the platform it ships to.
@@ -133,7 +139,13 @@ jobs:
         working-directory: windows/app
         run: |
           npm install --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000
+          # Linted and type-checked first: the code is read before it is shipped.
+          npm run lint
+          npm run typecheck
           npm run build
+          # The third-party terms travel with the app: the list is written from the
+          # packages that are installed, and this fails when it is out of date.
+          node ../tools/third-party-licenses.mjs --check
 
       - name: Build the harness executable
         working-directory: windows/harness

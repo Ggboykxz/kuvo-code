@@ -445,20 +445,16 @@ aside {
 .notice { max-width: var(--readable-width); width: 100%; margin: 0 auto; color: var(--ink-soft); font-size: var(--text-md); }
 
 .reasoning { color: var(--ink-soft); font-size: var(--text-md); border-left: 1px solid var(--line); padding-left: var(--space-3); }
-.reasoning summary { cursor: pointer; font-size: var(--text-sm); color: var(--ink-faint); }
+.reasoning summary { cursor: pointer; font-size: var(--text-sm); color: var(--ink-soft); }
 
-/* Shimmer text for "Thinking…" / running state (the Mac app's ShimmerText). */
-.shimmer {
-  background: linear-gradient(90deg, var(--ink-soft) 25%, var(--ink) 50%, var(--ink-soft) 75%);
-  background-size: 200% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  animation: shimmer 1.6s linear infinite;
-}
-@keyframes shimmer {
-  from { background-position: 200% 0; }
-  to { background-position: -200% 0; }
+/* The thinking shimmer: AI Elements' Shimmer (Vercel), painted in the Mac's ink — the
+   words in the secondary colour, a light sweeping across them (Theme.swift:42-60).
+   The light is --color-background, the words --color-muted-foreground. */
+.thinking-shimmer {
+  --color-background: var(--ink);
+  --color-muted-foreground: var(--ink-soft);
+  margin: 0;
+  font-size: inherit;
 }
 
 /* ---- Tool cards ---- */
@@ -1253,9 +1249,9 @@ li.unread .session { position: relative; padding-left: 16px; }
 /* What floats comes in; what leaves goes out, a little quicker. The overlays that stay in
    the document (hidden, not unmounted) get the motion when they are shown, so opening one
    twice moves it twice. */
-.palette.shown { animation: kuvo-pop var(--motion-fast) var(--ease-spring) both; }
+.palette.shown { animation: kuvo-pop var(--motion-spring) var(--ease-spring) both; }
 .settings.shown { animation: kuvo-fade var(--motion-fast) var(--ease-standard) both; }
-.settings.shown .settings-card { animation: kuvo-rise var(--motion-base) var(--ease-spring) both; }
+.settings.shown .settings-content { animation: kuvo-rise var(--motion-spring) var(--ease-spring) both; }
 .drawer.shown { animation: kuvo-slide-in var(--motion-base) var(--ease-standard) both; }
 .diff-modal.shown { animation: kuvo-fade var(--motion-fast) var(--ease-standard) both; }
 .picker-modal.shown { animation: kuvo-fade var(--motion-fast) var(--ease-standard) both; }
@@ -1572,13 +1568,21 @@ li.unread .session { position: relative; padding-left: 16px; }
   --shadow-composer: inset 0 1px 0 rgba(255, 255, 255, 0.80), 0 2px 8px rgba(0, 0, 0, 0.07);
   --shadow-lifted: 0 16px 48px rgba(15, 23, 42, 0.14), 0 1px 2px rgba(15, 23, 42, 0.08);
 
-  /* Motion: the hover beat is 120 ms; the app's spring is Phase 3. */
+  /* Motion: the hover beat is 120 ms, and the app's own motion is one spring —
+     .spring(response: 0.32, dampingFraction: 0.86) (Theme.swift:21-31), written as the
+     analytic curve: 0 at the start, a little past 1, and home. */
   --motion-quick: 120ms;
   --motion-fast: 120ms;
   --motion-base: 320ms;
   --motion-slow: 500ms;
   --motion-hover: 120ms;
+  /* The spring's own length: the time it takes to settle (98 % by 0.23 s). */
+  --motion-spring: 450ms;
   --ease-hover: cubic-bezier(0, 0, 0.2, 1);
+  --ease-spring: linear(0, 0.0225, 0.0792, 0.1565, 0.2446, 0.3362, 0.4264, 0.5117, 0.5902, 0.6607, 0.7228, 0.7766, 0.8225, 0.8611, 0.8931, 0.9193, 0.9405, 0.9573, 0.9705, 0.9807, 0.9885, 0.9942, 0.9983, 1.0012, 1.0031, 1.0042, 1.0048, 1.005, 1.0049, 1.0047, 1.0043, 1.0039, 1.0034, 1.003, 1.0025, 1.0021, 1.0018, 1.0014, 1.0012, 1);
+  /* A pressable control: 8 % under the pointer, 13 % while it is down (Pressable.swift:8-9). */
+  --press-hover: color-mix(in oklab, var(--ink) 8%, transparent);
+  --press-active: color-mix(in oklab, var(--ink) 13%, transparent);
 
   /* Type: the Mac's message sizes and code size (Look.swift:48-83). */
   --message-size: 14px;
@@ -2180,6 +2184,7 @@ header.titlebar.sidebar-hidden .titlebar-identity { flex-basis: auto; width: aut
   gap: 8px;
   flex: 0 0 auto;
   min-width: 0;
+  position: relative;
   height: 30px;
   padding: 0 8px 0 6px;
   border: 0;
@@ -2723,4 +2728,114 @@ main.sidebar-hidden .drawer.utility-pane { margin-left: var(--pane-gap); }
   .settings-content-head, .settings-page { padding-left: 24px; padding-right: 24px; }
   .drawer.utility-pane { flex-basis: 360px; width: 360px; }
   .drawer-tab { min-width: 92px; }
+}
+
+/* ==========================================================================
+   Phase 3 — the Mac's motion
+
+   The app's own motion is one spring: .spring(response: 0.32, dampingFraction:
+   0.86) (Theme.swift:21-31). It is written here as the analytic curve, so a
+   transition settles the way the Mac's do — a little past its mark, then back.
+   Under the pointer everything moves in 0.12 s, and a control that is pressed is
+   filled, not squeezed: the Mac has no press scale (Pressable.swift:8-9, 56-70).
+   ========================================================================== */
+
+/* The press is a fill, not a squeeze. */
+button:active { transform: none; }
+
+/* The controls that carry no border of their own: the pointer fills them, and
+   they move in the Mac's 0.12 s. */
+button.small,
+.titlebar-icon,
+.card-action,
+.tab,
+.drawer-tab,
+.panel-action {
+  transition: background var(--motion-hover) var(--ease-hover),
+              color var(--motion-hover) var(--ease-hover),
+              box-shadow var(--motion-hover) var(--ease-hover);
+}
+button.small:hover { background: var(--press-hover); }
+button.small:active { background: var(--press-active); }
+.titlebar-icon:hover { background: var(--press-hover); }
+.titlebar-icon:active { background: var(--press-active); }
+.card-action:hover { background: var(--press-hover); }
+.card-action:active { background: var(--press-active); }
+
+/* The rows of the lists: a 6 % fill under the pointer (SidebarView.swift:738),
+   the accent glass for the chosen one, and the 0.12 s of the Mac. */
+#sessions li,
+.settings-nav button,
+.palette-item,
+.choice-item {
+  transition: background var(--motion-hover) var(--ease-hover),
+              color var(--motion-hover) var(--ease-hover);
+}
+#sessions li:hover { background: var(--hover); }
+.palette-item:hover { background: var(--hover); }
+
+/* The cards: the shadow and the edge move with the spring, as the Mac's do. */
+.card,
+.composer,
+.settings-content,
+.drawer.utility-pane {
+  transition: box-shadow var(--motion-spring) var(--ease-spring),
+              border-color var(--motion-spring) var(--ease-spring),
+              background-color var(--motion-spring) var(--ease-spring);
+}
+
+/* The working mark: the Mac's spinner is the app's own prompt mark, drawn as it
+   works (Spinner.swift:11-55); the mark itself lands with the icons (Phase 4),
+   and until then this is the same beat — a round every 1.6 s. */
+.tab-status.running {
+  width: 7px;
+  height: 7px;
+  background: transparent;
+  border: 1.5px solid color-mix(in oklab, var(--accent) 30%, transparent);
+  border-top-color: var(--accent);
+  animation: kuvo-spin 1.6s linear infinite;
+}
+@keyframes kuvo-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* The system asks for less movement: it gets less. The shimmer stops (the app
+   reads the setting and the system, App.tsx), and the spinner stands still —
+   the Mac's own mark, held (Spinner.swift:19-24). */
+@media (prefers-reduced-motion: reduce) {
+  .tab-status.running { animation: none; }
+  .thinking-shimmer { animation: none; }
+}
+
+/* The active tab's pill: the Mac's, sliding to the tab you pick (TitleBar.swift:186-193).
+   It is drawn by Motion (layoutId), so the move is the app's spring, not a cut. */
+.tab-pill {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.07),
+              0 0.5px 1px rgba(15, 23, 42, 0.10),
+              0 2px 6px rgba(15, 23, 42, 0.08),
+              inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  pointer-events: none;
+}
+.tab.active { background: transparent; box-shadow: none; }
+/* The pill is under the tab's own words and mark, as the Mac's is. */
+.tab > *:not(.tab-pill) { position: relative; z-index: 1; }
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) .tab-pill {
+    background: rgba(255, 255, 255, 0.17);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.13),
+                0 0.5px 1px rgba(0, 0, 0, 0.35),
+                0 2px 6px rgba(0, 0, 0, 0.30);
+  }
+}
+html[data-theme="dark"] .tab-pill {
+  background: rgba(255, 255, 255, 0.17);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.13),
+              0 0.5px 1px rgba(0, 0, 0, 0.35),
+              0 2px 6px rgba(0, 0, 0, 0.30);
 }

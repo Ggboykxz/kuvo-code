@@ -141,13 +141,40 @@ not a global zoom: `--message-size` applies to messages and the composer, never 
 | Surface hand-over | spring, 320 ms, response 0.32, damping 0.86 | `Theme.swift:31-42` |
 | Press | fill 13 %, no scale | `Theme.swift:54-60` |
 | Hover fill | 6 % rows, 8 % buttons | `Theme.swift:44-52` |
-| Shimmer | 1.8 s linear, 0.55 → 1.0 opacity | `Theme.swift:121-140` |
-| Reduced motion | 1 ms transitions; shimmer still | `Theme.swift` |
+| Shimmer | 1.6 s linear, the light sweeping across the words | `Theme.swift:42-60, 93` |
+| Spinner | 1.6 s, the app's own mark | `Spinner.swift:11-55` |
+| Reduced motion | 1 ms transitions; the shimmer still | `Theme.swift` |
 
-Phase 1 sets the durations and the 120 ms hover beat. The CSS still uses
-`cubic-bezier(0.34, 1.3, 0.64, 1)` for surfaces and a 0.97 press scale; Phase 3 replaces the
-curve with the Mac's analytic spring and removes the scale. The shimmer is kept as-is: it is
-the one place where the app is allowed to feel alive while it waits.
+The app's motion is one spring — `.spring(response: 0.32, dampingFraction: 0.86)` — and it is
+written down twice, because CSS and a component library each want it in their own words:
+
+- In CSS, as the analytic curve, sampled: `--ease-spring: linear(0, 0.0225, …, 1)` over
+  `--motion-spring: 450ms` (the time the spring takes to settle; 98 % by 0.23 s). It goes half
+  a percent past its mark and comes home — the Mac's own overshoot
+  (`e^(−0.86π / √(1 − 0.86²)) = 0.5 %`).
+- In the components, as Motion's spring: `stiffness 385.5, damping 33.8, mass 1` — the same
+  spring, as ω = 2π / 0.32 and c = 2ζω (`windows/app/src/motion.ts`). The tab's pill slides
+  with it, the way the Mac's does when it moves to the tab you pick.
+
+The pointer fills a control in 120 ms (8 % under the pointer, 13 % while it is down) and the
+press never squeezes it. The shimmer is kept as-is: it is the one place where the app is
+allowed to feel alive while it waits.
+
+## What comes from elsewhere
+
+Three pieces of the app are not written here, and each is used where it carries no look of its
+own — the Mac's own values are bound to them instead:
+
+| Piece | License | Used for |
+| --- | --- | --- |
+| AI Elements' `Shimmer` (Vercel) | Apache-2.0 | the light sweeping across "Thinking…" (`windows/app/src/components/ai-elements/shimmer.tsx`) |
+| Motion (the `motion` package) | MIT | the spring behind the tab's pill, and the shared layout that moves it |
+| Tailwind CSS | MIT | the utilities the AI Elements' components are written in; the Mac's own stylesheet rides in the layer below them, and the shadcn tokens are bound to the Mac's |
+
+Nothing else in the app wears their look: the Mac's stylesheet is the base (Tailwind's
+preflight is not imported), and only the AI Elements' own files are scanned for classes. Their
+license terms travel with the app, in `windows/THIRD_PARTY_LICENSES.txt`.
+
 
 ## Radii
 
@@ -196,8 +223,8 @@ app's own header is reproduced, not the OS's.
 | 0 | Extraction ledger, inventory, map | done |
 | 1 | This binding: tokens, canvas, cards, composer, bubble, type | 0.5.37 |
 | 2a | The conversation card and its 38 pt header, the 62 pt fade, 8 pt window gaps, the sidebar on the glass, 32 pt rows, one search, the composer on the column | 0.5.38 ✅ |
-| 2b | The title bar's tabs, the drawer, the palette and the settings card | next |
-| 3 | Motion: analytic spring, press, shimmer, reduced motion | |
+| 2b | The title bar's tabs, the drawer, the palette and the settings card | 0.5.39 ✅ |
+| 3 | Motion: analytic spring, press, shimmer, reduced motion | 0.5.40 |
 | 4 | Icons: 89 symbols as SVG, six drawn marks | |
 | 5 | Wording: 1,208 strings verbatim | |
 | 6 | Screens: 23 settings pages, transcript, drawers | |

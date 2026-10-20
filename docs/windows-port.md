@@ -236,6 +236,19 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     packed executable carries that build. The state stays a plain object the way the page
     has always kept it; React draws it. The hand-written page stays as a fallback when
     there is no build, so the app never shows nothing.
+  - **2.22. The app's motion is the Mac's own spring, and the pieces that carry no look
+    of their own come from elsewhere. Phase 3 wrote the Mac's `.spring(response: 0.32,
+    dampingFraction: 0.86)` down twice: as the analytic curve in CSS (`--ease-spring`,
+    `--motion-spring: 450ms`, the true half-percent overshoot) and as Motion's spring
+    (stiffness 385.5, damping 33.8) for the components that move — the tab's pill slides to
+    the tab you pick, as the Mac's does. The hover is 120 ms and the press is a 13 % fill,
+    never a squeeze. The shimmer over "Thinking…" is AI Elements' `Shimmer` (Vercel,
+    Apache-2.0), painted in the Mac's ink: the shadcn tokens it reads are bound to the Mac's
+    tokens, Tailwind's preflight is not imported, and only the AI Elements' own files are
+    scanned for classes, so the Mac's stylesheet stays the base of the app. Their terms
+    travel with the app, in `windows/THIRD_PARTY_LICENSES.txt`, written by
+    `windows/tools/third-party-licenses.mjs` and checked in CI. The app is linted too
+    (oxlint) and type-checked before it is built, in CI and before every push.
   - **2.21. The look is bound to OpenDesign's design direction `modern-minimal`
     ("Modern minimal — Linear / Vercel"), read with the tool that ships it
     (`od tools directions --id modern-minimal --json`): system fonts, hairline borders, no

@@ -9,6 +9,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { build, context } from "esbuild";
 
@@ -34,14 +35,17 @@ const options = {
 
 /// The page and the stylesheet the page wears: the design the app is bound to (DESIGN.md
 /// beside them) lives with the harness for now, and comes over when the migration ends.
+///
+/// The stylesheet is compiled by Tailwind, so the AI Elements' components — written in
+/// Tailwind's utilities — carry their classes, and the Mac's own rules ride in the layer
+/// below them. The hand-written page (ui/) still wears the plain stylesheet.
 function copyAssets() {
   fs.mkdirSync(out, { recursive: true });
   fs.copyFileSync(path.join(here, "src", "index.html"), path.join(out, "index.html"));
   // The app's icon: the page's favicon (the same drawing the Mac build ships).
   const icon = path.join(here, "src", "icon.png");
   if (fs.existsSync(icon)) fs.copyFileSync(icon, path.join(out, "icon.png"));
-  const style = path.join(legacy, "style.css");
-  if (fs.existsSync(style)) fs.copyFileSync(style, path.join(out, "style.css"));
+  compileStyles();
   const vendor = path.join(legacy, "vendor");
   if (fs.existsSync(vendor)) {
     fs.mkdirSync(path.join(out, "vendor"), { recursive: true });
@@ -49,6 +53,21 @@ function copyAssets() {
       fs.copyFileSync(path.join(vendor, entry), path.join(out, "vendor", entry));
     }
   }
+}
+
+/// The stylesheet the built page wears: the Mac's binding with Tailwind's utilities for the
+/// AI Elements' components folded in. Tailwind's own CLI does it, from this app's copy.
+function compileStyles() {
+  const entry = path.join(here, "src", "tailwind.css");
+  if (!fs.existsSync(entry)) {
+    fs.copyFileSync(path.join(legacy, "style.css"), path.join(out, "style.css"));
+    return;
+  }
+  const cli = path.join(here, "node_modules", "@tailwindcss", "cli", "dist", "index.mjs");
+  execFileSync(process.execPath, [cli, "-i", entry, "-o", path.join(out, "style.css"), "--minify"], {
+    stdio: "inherit",
+    cwd: here,
+  });
 }
 
 if (process.argv.includes("--watch")) {

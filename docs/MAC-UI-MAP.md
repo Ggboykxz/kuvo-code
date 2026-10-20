@@ -70,9 +70,10 @@ shadows, and accent glass.
 | 15 | Header | Session **tabs**, project identity, traffic-light inset, Hide Sessions / Hide Panel, split (`TitleBar.swift:218-251,579-599`) | Flat row: Files / Hide sessions / Split / `@` / Appearance / Export, find field always on (`App.tsx`) | 2, 6 |
 | 16 | Sidebar | One search well, project tree, 32 pt rows, 18 pt icons, unread and bot avatars (`SidebarView.swift:675-726`) | Two stacked search fields; flat list (`App.tsx`) | 2, 6 |
 
-**After 0.5.37:** rows 1–3, 6, 7, 9, 10, 12 and 13 are bound to the Mac's values; rows 4, 5,
-8, 11, 14–16 remain for Phases 2–6. The table is the baseline the release is measured against,
-not a description of the current page.
+**After 0.5.40:** rows 1–13 and 15–16 are bound to the Mac's values — the cards and their
+gaps (0.5.38), the materials, the header's tabs and the palette (0.5.39), and the motion
+(0.5.40). Row 14, the icons, and the rest of Phase 6 (the screens) remain. The table is the
+baseline the release is measured against, not a description of the current page.
 
 **Decision, taken and executed in Phase 1.** `DESIGN.md` is rewritten around the Mac's own
 system — `Theme.swift`, `Look.swift`, `Surfaces.swift`, `Card.swift`, `WindowGlass.swift` — and
@@ -234,27 +235,28 @@ For a unit mass spring: stiffness `k = (2π / 0.32)² = 385.5`, damping
 `ω_d = 19.64 × √(1 − 0.86²) = 10.02 rad/s`. First overshoot:
 `e^(−0.86π / √(1 − 0.86²)) = 0.5 %` — a fast settle with a barely visible give.
 
-The Windows spring is currently `cubic-bezier(0.34, 1.3, 0.64, 1)` over 320 ms
-(`style.css:64`): a much larger overshoot (the 1.3 control point), which is not the Mac's.
-Phase 3 will emit a CSS `linear()` sampled from the analytic solution, with
-`duration: 0.45 s` (the full settle; 98 % by ~0.23 s) and the true 0.5 % overshoot, not a
-synthetic one. For interrupted transitions the browser retargets from the current value, which
-is the best CSS equivalent of SwiftUI's velocity-preserving springs.
+The Windows spring is now the Mac's own: the analytic solution, sampled as a CSS
+`linear()` over 450 ms — the full settle (98 % by ~0.23 s) — with the true 0.5 % overshoot,
+not a synthetic one (`--ease-spring`, `--motion-spring`; `windows/harness/ui/style.css`).
+The components take the same spring as Motion's: stiffness 385.5, damping 33.8, mass 1
+(`windows/app/src/motion.ts`), which is what moves the tab's pill from one tab to the next.
+For interrupted transitions the browser retargets from the current value, which is the best
+CSS equivalent of SwiftUI's velocity-preserving springs.
 
 ### 5.2 The catalogue
 
 | Motion | Mac value | Where | Windows today | Phase |
 | --- | --- | --- | --- | --- |
-| Default (`ui`) | spring 0.32 / 0.86 | everywhere (`withAnimation(.ui)`, `animation(.ui, value:)`) | 320 ms over-bouncy cubic-bezier | 3 |
-| Hover | `easeOut(0.12)` | `HoverHighlight.swift:20`, `Pressable.swift:63,187,217`, `CodeBlockStyle` | 200 ms standard | 3 |
-| Glass hover | `easeOut(0.15)` | `WindowGlass.swift:69` | 200 ms | 3 |
-| Press | fill 13 %, no scale | `Pressable.swift:8-9,66-70` | `scale(0.97)` + no fill | 3 |
-| List selection | tint 16 %, pressed 24 % | `Pressable.swift:158-162` | accent-soft | 3 |
-| Disabled | opacity 45 % | `Pressable.swift:61` | mixed | 3 |
-| Palette / picks | `.ui` spring, matched geometry | `PillPicker.swift:22`, `CommandPalette` | 320 ms spring, no shared element | 3, 6 |
+| Default (`ui`) | spring 0.32 / 0.86 | everywhere (`withAnimation(.ui)`, `animation(.ui, value:)`) | 450 ms over the analytic curve (0.5 % overshoot) | 3 ✅ |
+| Hover | `easeOut(0.12)` | `HoverHighlight.swift:20`, `Pressable.swift:63,187,217`, `CodeBlockStyle` | 120 ms ease-out | 3 ✅ |
+| Glass hover | `easeOut(0.15)` | `WindowGlass.swift:69` | 120 ms | 3 ✅ |
+| Press | fill 13 %, no scale | `Pressable.swift:8-9,66-70` | fill 13 %, no scale | 3 ✅ |
+| List selection | tint 16 %, pressed 24 % | `Pressable.swift:158-162` | accent wash 16 % | 3 ✅ |
+| Disabled | opacity 45 % | `Pressable.swift:61` | mixed | 3, 6 |
+| Palette / picks | `.ui` spring, matched geometry | `PillPicker.swift:22`, `CommandPalette` | the palette on the spring; the tab's pill slides with it | 3, 6 |
 | Image viewer | open 0.16, close 0.14, `isOpen` 0.15 easeOut | `ImageViewer.swift` | 320 ms spring zoom (`style.css:1489`) | 6 |
 | Count / copy icon | content transition, symbol effect replace | `CodeBlockStyle`, copy buttons | None | 4 |
-| Reduced motion | Spinner still, shimmer off, bots still, transitions reduced | `Spinner.swift:19-24`, `Theme.swift:53`, `BotAvatar.swift:80` | Setting exists | 3 |
+| Reduced motion | Spinner still, shimmer off, bots still, transitions reduced | `Spinner.swift:19-24`, `Theme.swift:53`, `BotAvatar.swift:80` | the shimmer stops, the spinner stands still, transitions reduced | 3 ✅ |
 
 ### 5.3 Perpetual motion
 
@@ -597,7 +599,7 @@ interpretation of it.
 | **0. Extraction** | This document, the generated inventory, the generator | all rows extracted; statuses set | docs commit (no release) |
 | **1. Tokens** | Rebind `DESIGN.md`; replace `:root` light/dark with §3; radii 14/18/10/8/7/6/5; shadows; type sizes and faces; accent presets | §1 rows 1, 3, 7, 9, 10, 12, 13; §3 | 0.5.37 ✅ |
 | **2a. Cards & glass** | The conversation card, 38 pt header + 62 pt fade, 8 pt window gaps, the sidebar on the glass (no surface), 32 pt rows, one search, the composer inside the card | §1 rows 3–8, 15, 16; §2; §4 Card/Composer/Bubble | 0.5.38 ✅ |
-| **2b. Title bar & overlays** | Title-bar tabs, drawer, palette 600/18, settings card, gauge popover, wells | §1 rows 15, 16; §2; §4 | 0.5.39 |
+| **2b. Title bar & overlays** | Title-bar tabs, drawer, palette 600/18, settings card, gauge popover, wells | §1 rows 15, 16; §2; §4 | 0.5.39 ✅ |
 | **3. Motion** | Analytic spring `linear()`, hover 0.12, press fills, list tint, shimmer, spinner, image-viewer transitions, reduced motion | §5 | 0.5.40 |
 | **4. Icons** | 89 symbols → drawn SVGs; FolderIcon; PromptMark; provider logos; remove text glyphs and the naked `@` | §7 | 0.5.41 |
 | **5. Wording** | 1 208 sites compared; menus, tooltips, accessibility labels; punctuation | §8 | 0.5.42 |

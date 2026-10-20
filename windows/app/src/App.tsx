@@ -27,6 +27,7 @@ import {
   loadSessionDiff,
   loadSessions,
   loadVcs,
+  look,
   newSession,
   notify,
   openProjectFile,
@@ -43,6 +44,16 @@ import {
 } from "./store";
 import { Settings, settingsPageTitle } from "./Settings";
 import { DiffModal, Drawer, Palette, Picker, Toast } from "./Overlays";
+import { Shimmer } from "./components/ai-elements/shimmer";
+import { motion } from "motion/react";
+import { macSpringOrStill } from "./motion";
+
+/// The app's own motion setting, and the system's: when either asks for less, the
+/// shimmer stops (the Mac's ShimmerText reads the system's, Theme.swift:46-60).
+function motionIsReduced() {
+  if (look.motion === "reduced") return true;
+  return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
 
 // ---- The pieces of the transcript ----
 
@@ -242,7 +253,11 @@ function AssistantEntry({ entry }: { entry: TranscriptEntry }) {
         if (part.type === "reasoning") {
           return (
             <details key={index} className="reasoning">
-              <summary className={entry.running ? "shimmer" : ""}>Thinking</summary>
+              <summary>
+                {entry.running && !motionIsReduced()
+                  ? <Shimmer as="span" className="thinking-shimmer" duration={1.6}>Thinking…</Shimmer>
+                  : "Thinking…"}
+              </summary>
               <div className="text markdown" dangerouslySetInnerHTML={{ __html: renderMarkdown(part.text ?? "", state.projectFiles) }} />
             </details>
           );
@@ -615,6 +630,7 @@ function Header() {
         {showingSettings ? (
           <div className="tab-track" role="tablist" aria-label="Settings">
             <button className="tab active settings-tab" role="tab" aria-selected="true" tabIndex={-1}>
+              <motion.span className="tab-pill" layoutId="settings-tab-pill" transition={macSpringOrStill(motionIsReduced())} />
               <span className="tab-icon" aria-hidden="true">
                 <svg viewBox="0 0 16 16" width="10" height="10" fill="none">
                   <circle cx="8" cy="8" r="2.3" stroke="currentColor" strokeWidth="1.2" />
@@ -714,6 +730,7 @@ function SessionTabs() {
             title={help}
             onClick={() => { state.settingsOpen = false; void openSession(id); }}
           >
+            {active ? <motion.span className="tab-pill" layoutId="session-tab-pill" transition={macSpringOrStill(motionIsReduced())} /> : null}
             <span className="tab-icon" aria-hidden="true">
               <svg viewBox="0 0 16 16" width="10" height="10" fill="none">
                 <path d="M2.7 3.4h10.6v6.7H8.2l-3.2 2.5v-2.5H2.7z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />

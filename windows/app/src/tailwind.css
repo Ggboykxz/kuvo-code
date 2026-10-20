@@ -1,0 +1,30 @@
+/* The Tailwind layer the AI Elements components live in.
+   Upstream's components are written in Tailwind's utilities and read shadcn's tokens
+   (--color-background, --color-muted-foreground, …). The tokens here are bound to the
+   Mac's own (windows/harness/ui/style.css), so a component that comes from Vercel is
+   painted in the Mac's ink; and the Mac's stylesheet sits in its own layer, below the
+   utilities, so nothing else in the app is touched by them.
+
+   Preflight is deliberately not imported: the Mac's own rules are the base of the app. */
+
+@layer theme, mac, utilities;
+
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+@import "../../harness/ui/style.css" layer(mac);
+
+/* The shadcn tokens, bound to the Mac's. */
+@theme inline {
+  --color-background: var(--panel);
+  --color-foreground: var(--ink);
+  --color-muted: var(--well);
+  --color-muted-foreground: var(--ink-soft);
+  --color-border: var(--line);
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--accent-ink);
+  --color-accent: var(--accent-soft);
+  --color-ring: var(--accent);
+}
+
+/* Only the AI Elements' own files are scanned: the utilities they use, and nothing else. */
+@source "./components/ai-elements";

@@ -120,6 +120,7 @@ or noted:
 The view is bound to the **Mac app's own design layer** (`KuvoCode/Design/`), extracted in
 `docs/MAC-UI-MAP.md` and written down in `windows/harness/ui/DESIGN.md`. Phase 1 retired
 OpenDesign's `modern-minimal`: the Mac's warm canvas, card fills, accent glass, radii, shadows
-and type sizes are the binding. The motion layer still uses the CSS approximation until Phase 3
-converts it to the Mac's analytic spring.
+and type sizes are the binding. The motion layer is the Mac's too since 0.5.40: one spring —
+`.spring(response: 0.32, dampingFraction: 0.86)` — as the analytic curve in CSS and as
+Motion's spring in the components, the 120 ms hover, the 13 % press fill, and the shimmer.
 The contrast of every text/surface pair passes AA in both themes.
