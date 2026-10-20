@@ -542,9 +542,15 @@ final class SessionModel {
             // What's asked as it was, for a read that failed (over SSH, say): no card goes for
             // one the agent still waits on, which no event would bring back.
             // Its subagents at work ask here too (nothing else shows what they ask): theirs are
-            // read with its own, as each read replaces what's shown.
-            let helpers = transcript.helpers.union(Self.subagents(in: page.data, adding: [], known: foundSubagents).filter { !$0.isStepDone || $0.isBackground }.map(\.id))
-            let (helperAsks, helperForms) = await Self.asks(of: helpers, api: api)
+            // read with its own, as each read replaces what's shown. Those at work, and those
+            // whose asks show (one a subagent of a subagent started); finished ones aren't read.
+            let atWork = Self.subagents(in: page.data, adding: [], known: foundSubagents).filter { !$0.isStepDone || $0.isBackground }.map(\.id)
+            let showing = (transcript.permissions.map(\.sessionID) + transcript.forms.map(\.sessionID)).filter { transcript.helpers.contains($0) }
+            let helpers = Set(atWork + showing)
+            let theirs = await Self.asks(of: helpers, api: api)
+            // One that couldn't be read keeps the asks it showed: it still waits on them.
+            let helperAsks = theirs.permissions + transcript.permissions.filter { theirs.unread.contains($0.sessionID) }
+            let helperForms = theirs.forms + transcript.forms.filter { theirs.unread.contains($0.sessionID) }
             let asked = (try? await permissions).map { $0 + helperAsks } ?? transcript.permissions
             let readForms = try? await forms
             let readShared = try? await shared
@@ -1392,20 +1398,25 @@ final class SessionModel {
     }
 
     /// What some subagents ask now, read side by side; one that can't be read asks nothing here.
-    private static func asks(of helpers: Set<String>, api: OpenCodeAPI) async -> ([PermissionRequest], [FormRequest]) {
-        guard !helpers.isEmpty else { return ([], []) }
-        return await withTaskGroup(of: ([PermissionRequest], [FormRequest]).self) { group in
+    /// What subagents ask, and those that couldn't be read.
+    private static func asks(of helpers: Set<String>, api: OpenCodeAPI) async -> (permissions: [PermissionRequest], forms: [FormRequest], unread: Set<String>) {
+        guard !helpers.isEmpty else { return ([], [], []) }
+        return await withTaskGroup(of: (String, [PermissionRequest]?, [FormRequest]?).self) { group in
             for helper in helpers {
                 group.addTask {
                     async let permissions = api.permissions(session: helper)
                     async let forms = api.forms(session: helper)
-                    return ((try? await permissions) ?? [], (try? await forms) ?? [])
+                    return (helper, try? await permissions, try? await forms)
                 }
             }
-            var all: ([PermissionRequest], [FormRequest]) = ([], [])
-            for await (permissions, forms) in group {
-                all.0 += permissions
-                all.1 += forms
+            var all: (permissions: [PermissionRequest], forms: [FormRequest], unread: Set<String>) = ([], [], [])
+            for await (helper, permissions, forms) in group {
+                guard let permissions, let forms else {
+                    all.unread.insert(helper)
+                    continue
+                }
+                all.permissions += permissions
+                all.forms += forms
             }
             return all
         }

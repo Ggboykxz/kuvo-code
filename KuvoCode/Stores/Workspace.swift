@@ -782,6 +782,14 @@ final class Workspace {
     /// A session the window should open: a fork, say.
     var requestedTab: String?
 
+    /// A session that carries on in another, whose tab takes its place.
+    struct TabSwap: Equatable {
+        var from: String
+        var to: String
+    }
+
+    var swappedTab: TabSwap?
+
     /// A new session with `id`'s conversation before `message`, opened in a tab with the
     /// message in its composer, ready to try another way.
     func fork(_ id: String, from message: Message.User) async throws {
@@ -823,16 +831,46 @@ final class Workspace {
             if page.data.isEmpty { break }
             messages = page.data + messages
         }
+        // An undo waiting to be kept: the conversation as it is now, without what it took back
+        // (its files are back already, and its message is in your composer).
+        let current = (try? await engine.session(id)) ?? session
+        if let revert = current.revert, let cut = messages.firstIndex(where: { $0.id == revert.messageID }) {
+            messages = Array(messages[..<cut])
+        }
+        let waiting = (try? await engine.inbox(session: id)) ?? []
         let moved = try await bridge.importSession(directory: session.location.directory, title: session.title, agent: session.agent, model: model,
-                                                   permissions: session.permissions, messages: messages)
+                                                   permissions: current.permissions, messages: messages)
+        let extra = extraFolders(session.location.directory)
+        if !extra.isEmpty {
+            try? await bridge.setInstruction(session: moved.id, key: ProjectFolders.instructionKey, text: ProjectFolders.instructions(primary: session.location.directory, folders: extra))
+        }
         if let tree = worktrees[session.location.directory] {
             try? await bridge.setInstruction(session: moved.id, key: Self.worktreeInstructionKey, text: Self.instructions(for: tree))
+        }
+        // What you'd sent that was waiting comes along, still waiting.
+        for item in waiting where item.type == "user" {
+            guard let text = item.text else { continue }
+            let files = Self.promptFiles(in: item.payload)
+            do {
+                try await bridge.prompt(session: moved.id, id: Identifier.message(), text: text, files: files, delivery: .queue)
+                try? await engine.cancelInbox(session: id, item: item.id)
+            } catch {}
         }
         upsert(moved)
         Drafts.shared[moved.id] = Drafts.shared[id]
         Analytics.shared.track("session_moved_to_agents", Analytics.model(provider: model.providerID, model: model.id))
         await setArchived(id, true)
-        requestedTab = moved.id
+        swappedTab = TabSwap(from: id, to: moved.id)
+    }
+
+    /// A waiting message's files as they were sent: on this Mac, or with it (`data:`).
+    private static func promptFiles(in payload: JSONValue) -> [OpenCodeAPI.PromptFile] {
+        (payload["files"]?.array ?? []).compactMap { file in
+            let name = file["name"]?.string
+            if let uri = file["source"]?["uri"]?.string ?? file["uri"]?.string { return .init(uri: uri, name: name) }
+            guard let data = file["data"]?.string else { return nil }
+            return .init(uri: "data:\(file["mime"]?.string ?? "application/octet-stream");base64,\(data)", name: name)
+        }
     }
 
     /// A session was deleted: its panel goes with it. The app sets it.
@@ -961,7 +999,8 @@ final class Workspace {
         var current = id
         var owner = ""
         for _ in 0..<5 {
-            guard let found = try? await api?.session(current) else { break }
+            // Not read (the engine was busy, or restarting): asked again next time.
+            guard let found = try? await api?.session(current) else { return nil }
             if let run = found.metadata?["kuvo"]?["engineFor"]?.string {
                 owner = run
                 break
@@ -974,6 +1013,9 @@ final class Workspace {
     }
 
     @ObservationIgnored private var engineRunOwners: [String: String] = [:]
+
+    /// What subagents not known yet asked or settled while they're being found, in order.
+    @ObservationIgnored private var helperEvents: [String: [ServerEvent]] = [:]
 
     /// One of the agents bridge's sessions: a session with the coding agents, or a subagent's of
     /// one (which has no row of its own).
@@ -1342,12 +1384,18 @@ final class Workspace {
             model.apply(event)
         }
         // A subagent's asks: shown in the conversation it works for (found first, for one at work
-        // before the app knew of it).
+        // before the app knew of it, its asks and answers kept in order meanwhile).
         if Self.asksEvents.contains(event.type), let id = event.sessionID ?? Self.formSessionID(event), session(id) == nil, parents[id] == nil, models[id] == nil, id != FormRequest.anySession {
-            Task {
-                await reload(id)
-                let parent = root(of: id)
-                if parent != id, let model = models[parent] { model.applyHelper(event, from: id) }
+            if helperEvents[id] != nil {
+                helperEvents[id]?.append(event)
+            } else {
+                helperEvents[id] = [event]
+                Task {
+                    await reload(id)
+                    let events = helperEvents.removeValue(forKey: id) ?? []
+                    let parent = root(of: id)
+                    if parent != id, let model = models[parent] { for event in events { model.applyHelper(event, from: id) } }
+                }
             }
         } else if Self.asksEvents.contains(event.type), let id = event.sessionID ?? Self.formSessionID(event), case let parent = root(of: id), parent != id, let model = models[parent] {
             model.applyHelper(event, from: id)

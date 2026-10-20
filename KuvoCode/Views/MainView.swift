@@ -475,6 +475,11 @@ struct MainView: View {
             openTab(id)
             workspace.requestedTab = nil
         }
+        .onChange(of: workspace.swappedTab) { _, swap in
+            guard let swap else { return }
+            workspace.swappedTab = nil
+            swapTab(swap.from, with: swap.to)
+        }
         // From outside the window: a folder opened with Kuvo Code, or the Dock menu.
         .onChange(of: app.request, initial: true) { _, request in
             guard let request else { return }
@@ -1226,6 +1231,22 @@ struct MainView: View {
         Drafts.shared[key].files += files.filter { !Drafts.shared[key].files.contains($0) }
         if SidebarView.draftDirectory(from: key) != nil { draftFocus += 1 } else { workspace.model(for: key)?.focusComposer() }
         focus = .conversation
+    }
+
+    /// A session that carries on in another: the new one takes its tab (or its place beside
+    /// one), and is shown.
+    private func swapTab(_ old: String, with id: String) {
+        if let tab = splitPairs.first(where: { $0.value == old })?.key {
+            splitPairs[tab] = id
+            openTab(id)
+            return
+        }
+        guard tabs.contains(old) else { return openTab(id) }
+        if let beside = splitPairs[old] {
+            splitPairs[old] = nil
+            splitPairs[id] = beside
+        }
+        replaceTab(old, with: id)
     }
 
     /// A draft became a real session: it keeps its place in the tab strip.
