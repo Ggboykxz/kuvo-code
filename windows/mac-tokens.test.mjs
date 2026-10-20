@@ -358,6 +358,8 @@ const checks = [
     assert.match(symbols, /export const PROMPT_CHEVRON = "M77 74L267 262 77 450"/);
     assert.match(symbols, /export const PROMPT_CURSOR = "M377 450h230"/);
     assert.match(symbols, /Math\.max\(1, size \* 0\.11\) \* \(PROMPT_BOX \/ size\)/);
+    // The mark is drawn in the spinner, on the box's own units.
+    assert.match(spinner, /viewBox=\{`0 0 \$\{PROMPT_BOX\} \$\{PROMPT_HEIGHT\}`\}/);
     // And the spinner draws the faint copy under the drawn one (Spinner.swift:118-126).
     assert.match(spinner, /className="spinner-faint"/);
     assert.match(spinner, /className="spinner-drawn"/);
@@ -405,7 +407,8 @@ const checks = [
     assert.match(symbols, /viewBox="0 0 16 13"/);
     assert.match(symbols, /fillOpacity="0\.2"/);
     assert.match(symbols, /const stroke = size \/ 11\.5;/);
-    assert.match(symbols, /viewBox="0 0 690 530"/);
+    assert.match(symbols, /export const PROMPT_BOX = 690;/);
+    assert.match(symbols, /export const PROMPT_HEIGHT = 530;/);
     assert.match(symbols, /M77 74L267 262 77 450/);
     assert.match(symbols, /M377 450h230/);
   }],

@@ -483,8 +483,8 @@ listed here because their drawing is not a single `Shape`:
 
 | Drawn type | What it is | Exact geometry | Windows | Phase |
 | --- | --- | --- | --- | --- |
-| `FolderShape` / `FolderIcon` | Closed and open folder | 16 × 13 grid, fill foreground 20 %, stroke `size / 11.5`, round caps and joins, open state has a different back/tab | ⬜ | 4 |
-| `PromptMark` | The `>_` app mark, chevron or cursor | aspect 530 / 690; original coordinates mapped from (170, 250)–(860, 780); round caps; used at 11 pt in the spinner | ⬜ | 3, 4 |
+| `FolderShape` / `FolderIcon` | Closed and open folder | 16 × 13 grid, fill foreground 20 %, stroke `size / 11.5`, round caps and joins, open state has a different back/tab | ✅ (0.5.42) | 4 |
+| `PromptMark` | The `>_` app mark, chevron or cursor | aspect 530 / 690; original coordinates mapped from (170, 250)–(860, 780); round caps; used at 11 pt in the spinner | ✅ (0.5.64: the mark draws itself in dashes, at the Mac's weight) | 3, 4 |
 | `Star` | The sparkle beside a bot | `BotAvatar.swift:313` | ⛔ | — |
 | `BotShape` | 5 body silhouettes | round, squircle, pebble, gem, bloom; `BotAvatar.swift:535` | ⛔ | — |
 | `BotFace` | 6 faces | calm, happy, sleepy, wink, curious, bright; `BotAvatar.swift:592` | ⛔ | — |

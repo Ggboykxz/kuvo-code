@@ -165,26 +165,3 @@ export const PROMPT_CURSOR = "M377 450h230";
 export function promptStroke(size: number): number {
   return Math.max(1, size * 0.11) * (PROMPT_BOX / size);
 }
-
-export function PromptMark({ size = 11, className }: { size?: number; className?: string }) {
-  const height = (size * PROMPT_HEIGHT) / PROMPT_BOX;
-  const stroke = promptStroke(size);
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 690 530"
-      width={size}
-      height={height}
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={stroke}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      focusable="false"
-    >
-      <path d={PROMPT_CHEVRON} />
-      <path d={PROMPT_CURSOR} />
-    </svg>
-  );
-}
