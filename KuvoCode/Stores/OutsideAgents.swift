@@ -232,12 +232,15 @@ final class OutsideAgents {
     func saveAuto(_ entries: [AutoEntry]) async throws {
         guard let api else { throw Failure.unavailable("Auto") }
         let saved = auto
-        auto = AutoList(entries: entries, limits: auto.limits)
+        let arranged = AutoList(entries: entries, limits: auto.limits)
+        auto = arranged
         do {
             auto = try await api.saveAutoList(entries)
         } catch {
-            // Not saved: the list Auto still uses.
-            auto = saved
+            // Not saved, as far as it heard: the list Auto uses, which may have come meanwhile (a
+            // save that went through, its answer lost), else the one before.
+            if auto == arranged { auto = saved }
+            await loadAuto()
             throw error
         }
     }
