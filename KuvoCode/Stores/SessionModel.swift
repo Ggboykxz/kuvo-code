@@ -770,10 +770,17 @@ final class SessionModel {
                 let prepared = await Task.detached { machine.map { Attachments.prepare(files, for: model, machine: $0) } ?? Attachments.prepare(files, for: model) }.value
                 let message = Attachments.text(text, for: prepared)
                 await waitForTools()
-                guard !wasCancelled(id) else { return }
+                guard !wasCancelled(id) else {
+                    holdOnArrival.remove(id)
+                    return
+                }
                 // Held while it was on its way: to the queue, not the next step.
                 let held = holdOnArrival.remove(id) != nil
+                let steering = !held && delivery == .steer
+                if steering { steerInFlight.insert(id) }
+                defer { steerInFlight.remove(id) }
                 try await api.prompt(session: self.id, id: id, text: message, files: prepared.files, delivery: held ? .queue : delivery)
+                restoredFailed = ""
                 if wasCancelled(id) { try? await api.cancelInbox(session: self.id, item: id) }
                 // Or held as it went.
                 if !held, holdOnArrival.remove(id) != nil { try? await api.setDelivery(session: self.id, item: id, delivery: .queue) }
@@ -909,15 +916,11 @@ final class SessionModel {
     func stop() {
         Task {
             await holdWaiting()
-            // A message still on its way, held: in before the stop (ten seconds at most), so it
-            // can't land after it on an idle session and start the agent again.
-            if !holdOnArrival.isEmpty, let sending {
-                await withTaskGroup(of: Void.self) { group in
-                    group.addTask { await sending.value }
-                    group.addTask { try? await Task.sleep(for: .seconds(10)) }
-                    await group.next()
-                    group.cancelAll()
-                }
+            // A held message whose request for the next step is already on its way: in before the
+            // stop (ten seconds at most), so it can't land after it on an idle session and start
+            // the agent again. One not sent yet goes to the queue anyway (see `send`).
+            for _ in 0..<100 where !holdOnArrival.isDisjoint(with: steerInFlight) {
+                try? await Task.sleep(for: .milliseconds(100))
             }
             try? await api.interrupt(session: id)
         }
@@ -932,13 +935,16 @@ final class SessionModel {
         let arriving = transcript.pending.filter { $0.delivery == .steer && $0.isLocal && !starters.contains($0.id) }
         holdOnArrival.formUnion(arriving.map(\.id))
         if hasQueue || !steering.isEmpty || !arriving.isEmpty { isQueuePaused = true }
-        heldBack = (steering + arriving).map(\.id) + heldBack.filter { id in transcript.pending.contains { $0.id == id } }
+        let newlyHeld = (steering + arriving).map(\.id)
+        heldBack = newlyHeld + heldBack.filter { id in !newlyHeld.contains(id) && transcript.pending.contains { $0.id == id } }
         for item in steering { try? await api.setDelivery(session: id, item: item.id, delivery: .queue) }
     }
 
     /// Messages for the agent's next step still on their way when Stop (or Undo) held the others:
     /// they go to the queue too, rather than starting it again.
     @ObservationIgnored private var holdOnArrival: Set<String> = []
+    /// Messages for the next step whose request is on its way to the engine now.
+    @ObservationIgnored private var steerInFlight: Set<String> = []
 
     /// Whether a message on its way was cancelled meanwhile (and forgets it).
     private func wasCancelled(_ id: String) -> Bool {
@@ -1022,7 +1028,13 @@ final class SessionModel {
             for _ in 0..<600 where settledEdits[item.id] == nil && transcript.pending.contains(where: { $0.id == item.id }) {
                 try? await Task.sleep(for: .milliseconds(50))
             }
-            let cancelled = settledEdits[item.id] ?? (!transcript.pending.contains { $0.id == item.id } && !transcript.messages.contains { $0.id == item.id })
+            var cancelled = settledEdits[item.id] ?? (!transcript.pending.contains { $0.id == item.id } && !transcript.messages.contains { $0.id == item.id })
+            // No word at all (its events lost, a machine's feed dropped): the engine's queue and
+            // conversation say, so the text isn't lost.
+            if settledEdits[item.id] == nil, !cancelled, let queued = try? await api.inbox(session: id),
+               let recent = try? await api.messages(session: id, limit: 40).data {
+                cancelled = !queued.contains { $0.id == item.id } && !recent.contains { $0.id == item.id }
+            }
             guard cancelled else { return }
             restoreDraft(item.text, files: item.files)
         }
@@ -1042,7 +1054,7 @@ final class SessionModel {
     @ObservationIgnored private var restoredFailed = ""
 
     private func restoreFailed(text: String, files: [URL], quotes: [Drafts.Quote], comments: [ReviewComment]) {
-        guard !restoredFailed.isEmpty, draftText.hasPrefix(restoredFailed) else {
+        guard !restoredFailed.isEmpty, draftText == restoredFailed || draftText.hasPrefix(restoredFailed + "\n\n") else {
             restore(text: text, files: files, quotes: quotes, comments: comments)
             restoredFailed = text
             return
