@@ -23,7 +23,7 @@ beforeEach(() => {
 afterEach(() => sessions?.closeAll())
 
 /** An ACP agent whose prompt sends `updates` (each `[sessionId, update]`), then, after the answer, `later`. */
-function agentSaying(updates: [string, any][], later: [string, any][] = [], request?: any): Agent {
+function agentSaying(updates: [string, any][], later: [string, any][] = [], request?: any, options: { afterReply?: [string, any][]; fileSystem?: boolean } = {}): Agent {
   const script = join(root, "agent.js")
   writeFileSync(
     script,
@@ -47,7 +47,9 @@ process.stdin.on("data", (chunk) => {
       if (${JSON.stringify(Boolean(request))}) send({ id: 900, method: ${JSON.stringify(request?.method ?? "")}, params: ${JSON.stringify(request?.params ?? {})} })
       else send({ id: prompt, result: { stopReason: "end_turn" } })
     } else if (message.id === 900) {
-      update("s1", { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Got " + JSON.stringify(message.result) } })
+      const after = ${JSON.stringify(options.afterReply ?? null)}
+      if (after) for (const [sessionId, value] of after) update(sessionId, value)
+      else update("s1", { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Got " + JSON.stringify(message.result) } })
       send({ id: prompt, result: { stopReason: "end_turn" } })
     } else if (message.id !== undefined) send({ id: message.id, result: {} })
     if (message.method === "session/prompt" && ${JSON.stringify(later.length > 0)}) setTimeout(() => { for (const [sessionId, value] of ${JSON.stringify(later)}) update(sessionId, value) }, 300)
@@ -63,7 +65,7 @@ process.stdin.on("data", (chunk) => {
     methods: () => [],
     account: async () => ({ installed: true, signedIn: true }),
     models: async () => [],
-    thread: (session, state) => new AcpThread({ fileSystem: false, authMethod: () => undefined, command: async () => ({ argv: [process.execPath, script], cwd: root }), selectModel: async () => {} }, session, state, "Agent"),
+    thread: (session, state) => new AcpThread({ fileSystem: options.fileSystem ?? false, authMethod: () => undefined, command: async () => ({ argv: [process.execPath, script], cwd: root }), selectModel: async () => {} }, session, state, "Agent"),
   }
 }
 
@@ -100,6 +102,26 @@ describe("ACP agents, nothing dropped", () => {
     expect(JSON.stringify(failed.state)).toContain("1 test failed")
     expect(words(id)).toContain("[Docs](https://kuvo.run)")
     expect(notices(id)).toContain("Something new to read.")
+  })
+
+  test("a file it has Kuvo Code read shows as read then, though it says so only as the turn ends (Antigravity)", async () => {
+    const file = join(root, "notes.txt")
+    writeFileSync(file, "first\nsecond\nthird\n")
+    const missing = join(root, "gone.txt")
+    const read = (id: string, path: string, title = "Running client_view_file") => ["s1", { sessionUpdate: "tool_call", toolCallId: id, title, kind: "read", status: "in_progress", locations: [{ path }], rawInput: { absolute_path: path } }] as [string, any]
+    const done = (id: string) => ["s1", { sessionUpdate: "tool_call_update", toolCallId: id, status: "completed" }] as [string, any]
+    const id = await run(
+      agentSaying([read("r1", missing)], [], { method: "fs/read_text_file", params: { sessionId: "s1", path: file, line: 1, limit: 2 } }, {
+        fileSystem: true,
+        afterReply: [read("r3", file, "Running view_file"), read("r2", file), ["s1", { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "It says first." } }], done("r3"), done("r2"), done("r1")],
+      }),
+    )
+    // Its own read of it (view_file) is done by the time it answers; the one Kuvo Code did shows what was read.
+    const [gone, own, notes] = tools(id)
+    expect(gone).toMatchObject({ name: "read", state: { status: "error" } })
+    expect(JSON.stringify(gone.state)).toContain("There's no such file.")
+    expect(own).toMatchObject({ id: "r3", name: "read", state: { status: "completed" } })
+    expect(notes).toMatchObject({ id: "r2", name: "read", state: { status: "completed", content: [{ type: "text", text: "first\nsecond" }] } })
   })
 
   test("a subagent's session (another session of the agent's), with its task", async () => {

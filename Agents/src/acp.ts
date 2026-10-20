@@ -4,7 +4,7 @@
 // picks a model, and anything of its own.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
-import { dirname } from "node:path"
+import { dirname, resolve } from "node:path"
 import type { OwnTurn, RunInput, RunResult, Thread, TurnHooks, SubagentRun, SubagentTask } from "./agent"
 import { failure } from "./agent"
 import type { Limit } from "./auto"
@@ -108,7 +108,12 @@ interface Active {
   own?: boolean
   quiet?: ReturnType<typeof setTimeout>
   compacted?: boolean
-    /** Sessions of its subagents (updates for another session of the agent's), by that session. */
+  /**
+   * Files the agent had Kuvo Code read for it (Antigravity's file viewer), by path, not yet matched
+   * to the tool call that read them: the agent says its reads are done only as the turn ends.
+   */
+  served: Map<string, { text?: string; error?: string }[]>
+  /** Sessions of its subagents (updates for another session of the agent's), by that session. */
   children: Map<string, { run: SubagentRun; row: string; toolsSinceText: boolean; tools: Map<string, any> } | { prompt: string }>
 }
 
@@ -300,7 +305,7 @@ export class AcpThread implements Thread {
     if (others.length) text += `\n\nAttached files:\n${others.map((path) => `- ${path}`).join("\n")}`
     prompt.unshift({ type: "text", text })
     return new Promise<RunResult>((resolve) => {
-      const active: Active = { turn, hooks, resolve, rpc, tools: new Map(), toolsSinceText: false, ended: false, instructed, children: new Map() }
+      const active: Active = { turn, hooks, resolve, rpc, tools: new Map(), toolsSinceText: false, ended: false, instructed, children: new Map(), served: new Map() }
       this.active = active
       turn.startStep()
       active.follower = this.flavor.follow?.(sessionId, turn, hooks)
@@ -372,7 +377,7 @@ export class AcpThread implements Thread {
     const rpc = this.rpc
     if (!own || own.turnedAway || !rpc) return Promise.resolve({ outcome: "succeeded" })
     return new Promise<RunResult>((resolve) => {
-      const active: Active = { turn, hooks, resolve, rpc, tools: new Map(), toolsSinceText: false, ended: false, children: new Map(), own: true }
+      const active: Active = { turn, hooks, resolve, rpc, tools: new Map(), toolsSinceText: false, ended: false, children: new Map(), served: new Map(), own: true }
       this.active = active
       turn.startStep()
       this.quietly(active)
@@ -564,6 +569,15 @@ export class AcpThread implements Thread {
   private words(active: Active) {
     if (!active.toolsSinceText) return
     active.toolsSinceText = false
+    // Its reads are over by now (Antigravity says so only as the turn ends): one of a file that
+    // isn't there failed, the rest are done.
+    if (this.flavor.fileSystem) {
+      for (const [id, call] of active.tools) {
+        if (!this.openRead(call) || call.settled) continue
+        const path = readPath(call)
+        this.settleRead(active, id, path && !existsSync(path) ? { error: "There's no such file." } : { text: "" })
+      }
+    }
     active.turn.endStep({ tokens: this.stepTokens(active) })
     active.turn.startStep()
   }
@@ -580,6 +594,8 @@ export class AcpThread implements Thread {
     const merged = { ...(active.tools.get(id) ?? {}), ...Object.fromEntries(Object.entries(update).filter(([, value]) => value !== undefined && value !== null)) }
     active.tools.set(id, merged)
     if (this.flavor.hides?.(merged)) return
+    // A read already shown with what Kuvo Code read for it: the agent's own "done" (empty) changes nothing.
+    if (merged.settled) return
     const kuvo = kuvoTool(merged)
     if (!turn.hasTool(id)) {
       active.toolsSinceText = true
@@ -601,6 +617,33 @@ export class AcpThread implements Thread {
     if (merged.status === "completed") turn.toolSucceeded(id, withPictures(output, [...pictures, ...made]), metadata)
     else if (merged.status === "failed") turn.toolFailed(id, output || "The tool failed.", metadata)
     else if (output) turn.toolProgress(id, metadata)
+    // A file Kuvo Code read for it before it said which call read it.
+    const path = this.openRead(merged) && clientRead(merged) ? readPath(merged) : undefined
+    const served = path ? active.served.get(path)?.shift() : undefined
+    if (served) this.settleRead(active, id, served)
+  }
+
+  private openRead(call: any): boolean {
+    return call.kind === "read" && call.status !== "completed" && call.status !== "failed"
+  }
+
+  /** A read shown done, with what was read (or why it couldn't be). */
+  private settleRead(active: Active, id: string, served: { text?: string; error?: string }) {
+    const call = active.tools.get(id)
+    if (call) call.settled = true
+    if (served.error !== undefined) active.turn.toolFailed(id, served.error)
+    else active.turn.toolSucceeded(id, served.text ?? "")
+  }
+
+  /** What Kuvo Code read for the agent: the read it was for shows it, now or once the agent names it. */
+  private served(path: string, served: { text?: string; error?: string }) {
+    const active = this.active
+    if (!active) return
+    const file = resolve(path)
+    for (const [id, call] of active.tools) {
+      if (this.openRead(call) && !call.settled && clientRead(call) && readPath(call) === file) return this.settleRead(active, id, served)
+    }
+    active.served.set(file, [...(active.served.get(file) ?? []), served])
   }
 
   private async request(method: string, params: any): Promise<unknown> {
@@ -636,12 +679,19 @@ export class AcpThread implements Thread {
       }
       case "fs/read_text_file": {
         if (!this.flavor.fileSystem) break
-        let content = readFileSync(params.path, "utf8")
+        let content: string
+        try {
+          content = readFileSync(params.path, "utf8")
+        } catch (error) {
+          this.served(params.path, { error: (error as any)?.code === "ENOENT" ? "There's no such file." : failure(error).message })
+          throw error
+        }
         if (params.line || params.limit) {
           const lines = content.split("\n")
           const start = Math.max(0, (params.line ?? 1) - 1)
           content = lines.slice(start, params.limit ? start + params.limit : undefined).join("\n")
         }
+        this.served(params.path, { text: content })
         return { content }
       }
       case "fs/write_text_file": {
@@ -753,6 +803,19 @@ function resources(call: any): string[] {
   const paths = (call.locations ?? []).map((location: any) => location.path).filter(Boolean)
   if (paths.length) return paths
   return [raw.path ?? raw.url ?? raw.file_path ?? "*"]
+}
+
+/** A read the agent has Kuvo Code do (Antigravity's client_view_file, not its own view_file). */
+function clientRead(call: any): boolean {
+  const title = String(call.title ?? "")
+  return /client/i.test(title) || !/view_file/i.test(title)
+}
+
+/** The file a read is of, as a full path. */
+function readPath(call: any): string | undefined {
+  const raw = call.rawInput ?? {}
+  const path = call.locations?.[0]?.path ?? raw.absolute_path ?? raw.path ?? raw.file_path ?? raw.filePath
+  return typeof path === "string" && path ? resolve(path) : undefined
 }
 
 function backticked(title: unknown): string | undefined {
