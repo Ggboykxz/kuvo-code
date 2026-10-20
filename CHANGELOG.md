@@ -5,6 +5,10 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- Discarding a new file in Changes that was staged and then edited again no longer leaves it to be committed; discarding a moved file puts the old one back also in Unstaged; a file that became a link comes back as it was; and the dialog says when a folder with its own repository goes to the Trash.
+- Removing a worktree asks first when it has new files, also when git is set to hide them.
+- Notifications show paths and names like `web3Provider` in full again, and one that hides something as dots has no answer buttons.
+- Review comments stay for your next message when Kuvo Code writes one for you (Build after Plan, Ask the Agent to Fix It), and branching from a message brings its comments along.
 - Review comments you haven't sent stay with the session when you close its tab or quit, and go when it's deleted.
 - In Changes, Stage, Unstage and Discard act on just that file, even when its name looks like a pattern (`app/[slug]/page.tsx`); discarding a new file only noted with `git add -N` moves it to the Trash instead of emptying it.
 - A bot on a machine saves a long memory too, and a command a machine can't decode fails rather than reporting success.
