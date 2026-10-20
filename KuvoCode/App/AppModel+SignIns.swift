@@ -24,7 +24,12 @@ extension AppModel {
 
     private func copySignIns(with engine: MachineEngine) async {
         guard let mac = api, let remote = engine.api else { return }
-        await signOutWhileAway(engine, api: remote)
+        await copySignIns(mac: mac, remote: remote, machine: engine.machine.id)
+    }
+
+    /// One sync between this Mac's engine (`mac`) and `machine`'s (`remote`).
+    func copySignIns(mac: OpenCodeAPI, remote: OpenCodeAPI, machine: String) async {
+        await signOutWhileAway(machine, mac: mac, api: remote)
         async let macServers = mac.mcpServers()
         async let remoteServers = remote.mcpServers()
         async let macEntries = mac.credentialEntries()
@@ -35,8 +40,8 @@ extension AppModel {
             guard let local = server.integrationID, let match = there.first(where: { $0.name == server.name }), let far = match.integrationID,
                   let mine = ours.first(where: { $0.integrationID == local && $0.active && $0.isOAuth }) else { continue }
             let yours = theirs.first { $0.integrationID == far && $0.active && $0.isOAuth }
-            switch await exchange(mine, yours, here: local, there: far, mac: mac, remote: remote, machine: engine.machine.id, ours: ours) {
-            case true?: await reconnect(match.name, api: remote, machine: engine.machine.id)
+            switch await exchange(mine, yours, here: local, there: far, mac: mac, remote: remote, machine: machine, ours: ours) {
+            case true?: await reconnect(match.name, api: remote, machine: machine)
             case false?: await reconnect(server.name, api: mac, machine: nil)
             case nil: break
             }
@@ -45,7 +50,7 @@ extension AppModel {
         // the catalog names as an account's, not a server's.)
         let integrations = catalog.integrations.isEmpty ? ((try? await mac.integrations()) ?? []) : catalog.integrations
         let accounts = Set(integrations.filter { !$0.isMCP }.map(\.id))
-        await removeRenewingCopies(ours: ours, theirs: theirs, accounts: accounts, mac: mac, remote: remote, machine: engine.machine.id)
+        await removeRenewingCopies(ours: ours, theirs: theirs, accounts: accounts, mac: mac, remote: remote, machine: machine)
         for mine in ours where mine.active && accounts.contains(mine.integrationID) && !Self.renewsItself(mine) {
             let yours = theirs.first { $0.integrationID == mine.integrationID && $0.active }
             // The machine signed in on its own (a ChatGPT sign-in where this Mac has a key): its own
@@ -54,7 +59,7 @@ extension AppModel {
             // Two of your accounts with one label here (two GitLab accounts on one host): the label
             // can't say which the machine's copy is of.
             let byLabel = ours.filter { $0.integrationID == mine.integrationID && $0.label == mine.label }.count == 1
-            await exchange(mine, yours, here: mine.integrationID, there: mine.integrationID, mac: mac, remote: remote, machine: engine.machine.id, ours: ours, byLabel: byLabel)
+            await exchange(mine, yours, here: mine.integrationID, there: mine.integrationID, mac: mac, remote: remote, machine: machine, ours: ours, byLabel: byLabel)
         }
     }
 
@@ -246,9 +251,8 @@ extension AppModel {
 
     /// Signs `engine`'s machine out of what you signed out of here, unless you've signed in to it
     /// again since. One it couldn't is left for the next time.
-    private func signOutWhileAway(_ engine: MachineEngine, api remote: OpenCodeAPI) async {
-        let id = engine.machine.id
-        guard let missed = Self.pendingSignOuts[id], let mac = api,
+    private func signOutWhileAway(_ id: String, mac: OpenCodeAPI, api remote: OpenCodeAPI) async {
+        guard let missed = Self.pendingSignOuts[id],
               let ours = try? await mac.credentialEntries(), let theirs = try? await remote.credentialEntries() else { return }
         var done: Set<String> = []
         for item in Set(missed) {

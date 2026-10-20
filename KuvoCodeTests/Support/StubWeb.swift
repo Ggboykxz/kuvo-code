@@ -13,6 +13,8 @@ nonisolated final class StubWeb: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) private static var answers: [String: Answer] = [:]
     /// Answers by address without its query, worked out from the request (its query, a page).
     nonisolated(unsafe) private static var routes: [String: @Sendable (URLComponents) -> Answer] = [:]
+    /// Answers for every address under a prefix, from the whole request (its method and body).
+    nonisolated(unsafe) private static var handlers: [(prefix: String, answer: @Sendable (URLRequest, Data) -> Answer)] = []
     nonisolated(unsafe) private static var hosts: Set<String> = []
     nonisolated(unsafe) private(set) static var asked: [String] = []
 
@@ -21,6 +23,7 @@ nonisolated final class StubWeb: URLProtocol, @unchecked Sendable {
         lock.withLock {
             answers = [:]
             routes = [:]
+            handlers = []
             asked = []
             Self.hosts = hosts
         }
@@ -46,6 +49,11 @@ nonisolated final class StubWeb: URLProtocol, @unchecked Sendable {
         lock.withLock { routes[url] = answer }
     }
 
+    /// Answers every request to an address starting with `prefix` with what `answer` makes of it.
+    static func handle(_ prefix: String, _ answer: @escaping @Sendable (URLRequest, Data) -> Answer) {
+        lock.withLock { handlers.append((prefix, answer)) }
+    }
+
     static func json(_ value: Any, status: Int = 200) -> Answer {
         Answer(status: status, body: (try? JSONSerialization.data(withJSONObject: value)) ?? Data())
     }
@@ -66,7 +74,9 @@ nonisolated final class StubWeb: URLProtocol, @unchecked Sendable {
             Self.asked.append(url.absoluteString)
             return Self.routes[bare.string ?? ""]
         }
-        let answer = Self.lock.withLock { Self.answers[url.absoluteString] } ?? route?(components) ?? Answer(status: 404)
+        let handler = Self.lock.withLock { Self.handlers.first { url.absoluteString.hasPrefix($0.prefix) }?.answer }
+        let answer = Self.lock.withLock { Self.answers[url.absoluteString] } ?? route?(components)
+            ?? handler?(request, Self.body(of: request)) ?? Answer(status: 404)
         let response = HTTPURLResponse(url: url, statusCode: answer.status, httpVersion: "HTTP/1.1", headerFields: nil)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: answer.body)
@@ -74,4 +84,20 @@ nonisolated final class StubWeb: URLProtocol, @unchecked Sendable {
     }
 
     override func stopLoading() {}
+
+    /// What a request sends: its body, or what its stream gives (as URLSession hands it on).
+    private static func body(of request: URLRequest) -> Data {
+        if let body = request.httpBody { return body }
+        guard let stream = request.httpBodyStream else { return Data() }
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 16_384)
+        while stream.hasBytesAvailable {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            guard count > 0 else { break }
+            data.append(buffer, count: count)
+        }
+        return data
+    }
 }
