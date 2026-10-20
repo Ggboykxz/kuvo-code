@@ -15,7 +15,14 @@ public struct Transcript: Sendable, Equatable {
     public var isRunning = false
     /// When the model last sent anything in this session (a step starting, its words, its
     /// thinking, a tool's input): for telling a reply that stalled partway from one being written.
-    public var lastHeard: Milliseconds?
+    /// By this computer's clock, which it's compared with: the engine's (a machine's) needn't
+    /// agree. Not part of what two transcripts compare: it differs between two reads of the same
+    /// events.
+    public var lastHeard: Milliseconds? {
+        get { heard.value }
+        set { heard.value = newValue }
+    }
+    private var heard = Unequated<Milliseconds?>(value: nil)
     /// The engine's own notices waiting to go in, like a background command's end: shown when
     /// they do, as a read would have them.
     var waitingNotices: [String: Message.Notice] = [:]
@@ -178,7 +185,7 @@ public struct Transcript: Sendable, Equatable {
     private mutating func reduce(_ event: ServerEvent) throws {
         let now = event.created ?? Date().timeIntervalSince1970 * 1000
         let messageID = "msg_" + event.id.dropFirst("evt_".count)
-        if event.sessionID == sessionID, Self.heard.contains(event.type) { lastHeard = now }
+        if event.sessionID == sessionID, Self.heard.contains(event.type) { lastHeard = Date().timeIntervalSince1970 * 1000 }
 
         switch event.type {
         case "permission.asked":
@@ -589,4 +596,10 @@ extension Message.Content {
     func isTool(_ id: String) -> Bool {
         if case .tool(let call) = self { call.id == id } else { false }
     }
+}
+
+/// A value two of what holds it don't compare: when something happened by this computer's clock.
+struct Unequated<Value: Sendable>: Sendable, Equatable {
+    var value: Value
+    static func == (_: Self, _: Self) -> Bool { true }
 }
