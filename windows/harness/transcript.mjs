@@ -20,7 +20,7 @@ function messageEntry(message) {
     case "user":
       return { kind: "user", id: message.id, created, text: message.text ?? "", files: (message.files ?? []).map(file => ({ mime: file.mime, name: file.name, data: file.data ?? null, uri: file.source?.type === "uri" ? file.source.uri : null })) };
     case "assistant": {
-      const entry = { kind: "assistant", id: message.id, created, parts: [], agent: message.agent, model: message.model?.id, error: message.error, finish: message.finish, cost: message.cost, tokens: message.tokens };
+      const entry = { kind: "assistant", id: message.id, created, completed: message.time?.completed ?? 0, parts: [], agent: message.agent, model: message.model?.id, error: message.error, finish: message.finish, cost: message.cost, tokens: message.tokens };
       (message.content ?? []).forEach((block, ordinal) => {
         if (block.type === "text") entry.parts.push({ type: "text", ordinal, text: block.text ?? "", done: !!block.time?.completed });
         else if (block.type === "reasoning") entry.parts.push({
@@ -62,11 +62,18 @@ export function fromHistory(sessionID, messages, permissions = [], running = fal
   // A run is running while its last words are unfinished — the Mac app's own measure
   // (Message.isRunning reads the message's status), not the engine's session flag, which
   // can still say "running" for a moment after the turn is over.
-  const unfinished = transcript.entries.some(entry => entry.kind === "assistant" && (entry.parts ?? []).some(part => {
+  // The Mac's own measure (Message.isRunning): the *last* words of the conversation, and
+  // whether they are finished. The parts can lag behind the message in the engine's
+  // history, and an earlier message that never finished is not a run under way.
+  const last = [...transcript.entries].reverse().find(entry => entry.kind === "assistant");
+  const unfinished = Boolean(last) && !last.completed && (last.parts ?? []).some(part => {
     if (part.type === "text" || part.type === "reasoning") return part.done === false;
     return part.status === "running" || part.status === "pending";
-  }));
-  transcript.running = Boolean(running) && unfinished;
+  });
+  // The Mac's own measure (Message.isRunning): the message's own state. The engine's
+  // session flag can still say "running" for a moment after the turn is over, and the
+  // window would keep showing that the agent is at work.
+  transcript.running = unfinished;
   return transcript;
 }
 

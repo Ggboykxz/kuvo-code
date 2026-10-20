@@ -890,7 +890,8 @@ function PermissionsPage({ permissions, onChange }: {
 }) {
   return (
     <>
-      <div id="saved-permissions" className="saved-permissions">
+      <SettingGroup title="Rules">
+        <div id="saved-permissions" className="saved-permissions">
         {permissions.map(rule => (
           <div key={rule.id} className="cfg-row">
             <div className="cfg-row-main">
@@ -912,8 +913,9 @@ function PermissionsPage({ permissions, onChange }: {
             </button>
           </div>
         ))}
-      </div>
-      <div className="settings-note">What this session's agent was once told it may always do, as the engine remembers it.</div>
+        </div>
+        <div className="settings-note">What this session's agent was once told it may always do, as the engine remembers it.</div>
+      </SettingGroup>
     </>
   );
 }
@@ -921,11 +923,15 @@ function PermissionsPage({ permissions, onChange }: {
 function SystemPage({ system }: { system: { engine?: string; storage?: string; lists?: string } }) {
   return (
     <>
-      <div id="engine-line" className="gauge-line big">{system.engine ?? ""}</div>
-      <div id="storage-log" className="gauge-line">{system.storage ?? ""}</div>
-      <div id="storage-attachments" className="gauge-line" />
-      <div id="config-lists" className="gauge-line">{system.lists ?? ""}</div>
-      <div className="settings-note">Where this machine keeps things, and what the engine is running — what the Mac app's Engine and Storage settings show.</div>
+      <SettingGroup title="Engine">
+        <div id="engine-line" className="gauge-line big">{system.engine ?? ""}</div>
+      </SettingGroup>
+      <SettingGroup title="Storage">
+        <div id="storage-log" className="gauge-line">{system.storage ?? ""}</div>
+        <div id="storage-attachments" className="gauge-line" />
+        <div id="config-lists" className="gauge-line">{system.lists ?? ""}</div>
+        <div className="settings-note">Where this machine keeps things, and what the engine is running — what the Mac app's Engine and Storage settings show.</div>
+      </SettingGroup>
     </>
   );
 }

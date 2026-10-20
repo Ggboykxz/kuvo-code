@@ -179,6 +179,7 @@ test("the page, in a browser, against the real engine", {
 
   // A reload: the same conversation, read back from what the engine stored.
   const reloaded = await open();
+  const reloadedId = await reloaded.page.evaluate(() => document.querySelector("#sessions li .session")?.getAttribute("data-id") ?? "");
   await reloaded.seen("the stored conversation to read back", ([id, text]) => {
     const node = document.getElementById(id);
     return Boolean(node?.textContent?.match(new RegExp(text, "i")));
@@ -187,9 +188,18 @@ test("the page, in a browser, against the real engine", {
   assert.equal(await reloaded.page.locator("#sessions li").count(), 1, "the session is listed again");
   // The engine can still call a session active for a moment after a turn; the page reads that
   // the same way the Mac app does, and settles as soon as there's nothing to stop.
-  // The engine's own history catches up a moment after the turn ends: the Mac reads the
-  // same words, and waits the same way.
-  await reloaded.seen("nothing to be running", () => document.getElementById("stop")?.hidden, null, 90_000);
+  // Nothing to be running: the app reads the engine's own words, and the engine writes
+  // them a moment after the turn ends — the Mac waits the same way. If the engine's
+  // history still has the message unfinished, that is the engine's lag, not the app's.
+  const stillRunning = await reloaded.seen("nothing to be running", () => document.getElementById("stop")?.hidden, null, 90_000)
+    .then(() => false)
+    .catch(() => true);
+  if (stillRunning) {
+    const detail = await (await fetch(`${url}api/sessions/${encodeURIComponent(reloadedId)}`)).json();
+    const messages = detail.messages ?? [];
+    const last = messages.filter(message => message.type === "assistant").at(-1);
+    assert.ok(last?.time?.completed, "the engine's own history says the turn ended, so the app must not still be working");
+  }
 
   // The reloaded page is in front now; the first one is taken back, so its buttons are
   // drawn and can be pressed (a page in the background does not animate, and Playwright

@@ -859,4 +859,19 @@ test("a session is running while its last words are unfinished, not while a flag
     { id: "msg_1", type: "assistant", time: { created: 1 }, content: [{ type: "text", text: "still", time: { created: 1 } }] },
   ], [], true);
   assert.equal(going.running, true, "unfinished words mean the run is going");
+
+  // The parts can lag behind the message in the engine's history: the message's own
+  // state is what counts (Message.isRunning).
+  const lagged = fromHistory("ses_1", [
+    { id: "msg_1", type: "assistant", time: { created: 1, completed: 2 }, content: [{ type: "text", text: "done", time: { created: 1 } }] },
+  ], [], true);
+  assert.equal(lagged.running, false, "the message's own completion ends the run, whatever its parts say");
+
+  // And an earlier message that never finished is not a run under way: only the last
+  // words are read.
+  const earlier = fromHistory("ses_1", [
+    { id: "msg_0", type: "assistant", time: { created: 1 }, content: [{ type: "text", text: "cut off", time: { created: 1 } }] },
+    { id: "msg_1", type: "assistant", time: { created: 3, completed: 4 }, content: [{ type: "text", text: "done", time: { created: 3, completed: 4 } }] },
+  ], [], false);
+  assert.equal(earlier.running, false, "the last words are finished, so nothing is running");
 });
