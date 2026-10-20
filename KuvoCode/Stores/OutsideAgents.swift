@@ -530,7 +530,7 @@ extension Catalog {
             else if let until = auto.limit(for: agent.id) { found.append((name, .atLimit(until: until))) }
         }
         for plan in providers where plan.isConnected || plan.connections.contains(where: { $0.status?.status == "needs_auth" }) {
-            if plan.connections.contains(where: { $0.status?.status == "needs_auth" }) || endedSignIns.contains(plan.id) { found.append((plan.name, .signInEnded)) }
+            if plan.connections.contains(where: { $0.status?.status == "needs_auth" }) || hasEndedSignIn(plan.id) { found.append((plan.name, .signInEnded)) }
             else if let until = auto.limit(for: plan.id) { found.append((plan.name, .atLimit(until: until))) }
         }
         return found

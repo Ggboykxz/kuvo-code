@@ -110,7 +110,7 @@ struct SubscriptionsSection: View {
             if let machine { return "Signed in on \(machine.machine.name) on its own. Signing in finishes in your browser here." }
             return app.machines.list.isEmpty ? "Sign in with a plan or account you already have." : "Sign in with a plan or account you already have. Each of your machines signs in to these on its own."
         case .plans:
-            if let machine { return "Their models, in Kuvo Code's own agent on \(machine.machine.name), which signs in on its own. GitHub Copilot comes from this Mac." }
+            if let machine { return "Their models, in Kuvo Code's own agent on \(machine.machine.name), which signs in on its own. GitHub Copilot comes from this Mac, signed in to there." }
             return app.machines.list.isEmpty ? "Their models, in Kuvo Code's own agent." : "Their models, in Kuvo Code's own agent. Your machines sign in to them on their own, but for GitHub Copilot, which they get from here."
         }
     }
@@ -147,7 +147,8 @@ struct SubscriptionsSection: View {
             let added = accounts.filter { OutsideAgents.account($0.id) != nil }
             all.append(Product(kind: .agent(own: own, added: added)))
         }
-        for id in Catalog.planProviders where shows == .plans {
+        // GitHub Copilot's sign-in comes to a machine from this Mac, so it's signed in to here.
+        for id in Catalog.planProviders where shows == .plans && !(machine != nil && id == "github-copilot") {
             guard let plan = catalog.providers.first(where: { $0.id == id }) else { continue }
             all.append(Product(kind: .plan(plan)))
         }
@@ -580,7 +581,7 @@ private struct PlanAccountRow: View {
 
     /// Its sign-in ended: the engine says so, or a run was refused it (the one in use).
     private var needsSignIn: Bool {
-        connection.status?.status == "needs_auth" || (isInUse && catalog.endedSignIns.contains(plan.id))
+        connection.status?.status == "needs_auth" || (isInUse && catalog.hasEndedSignIn(plan.id))
     }
 
     private var who: String {

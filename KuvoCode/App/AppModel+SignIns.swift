@@ -45,7 +45,7 @@ extension AppModel {
         // the catalog names as an account's, not a server's.)
         let integrations = catalog.integrations.isEmpty ? ((try? await mac.integrations()) ?? []) : catalog.integrations
         let accounts = Set(integrations.filter { !$0.isMCP }.map(\.id))
-        await removeRenewingCopies(ours: ours, theirs: theirs, accounts: accounts, remote: remote, machine: engine.machine.id)
+        await removeRenewingCopies(ours: ours, theirs: theirs, accounts: accounts, mac: mac, remote: remote, machine: engine.machine.id)
         for mine in ours where mine.active && accounts.contains(mine.integrationID) && !Self.renewsItself(mine) {
             let yours = theirs.first { $0.integrationID == mine.integrationID && $0.active }
             // The machine signed in on its own (a ChatGPT sign-in where this Mac has a key): its own
@@ -117,8 +117,9 @@ extension AppModel {
 
     /// Takes off a machine the copies this Mac made there of its sign-ins that renew themselves
     /// (before they were kept apart): the copy noted, or one with this Mac's very refresh token.
+    /// One the machine renewed while apart comes back here first, as this Mac's is refused now.
     /// One the machine signed in to on its own stays.
-    private func removeRenewingCopies(ours: [CredentialEntry], theirs: [CredentialEntry], accounts: Set<String>, remote: OpenCodeAPI, machine: String) async {
+    private func removeRenewingCopies(ours: [CredentialEntry], theirs: [CredentialEntry], accounts: Set<String>, mac: OpenCodeAPI, remote: OpenCodeAPI, machine: String) async {
         for integration in accounts {
             let mine = ours.filter { $0.integrationID == integration && Self.renewsItself($0) }
             let copy = Self.copy(on: machine, of: integration)
@@ -128,7 +129,14 @@ extension AppModel {
                     && (yours.id == copy?.machine || mine.contains { Self.lasting($0) == Self.lasting(yours) })
             }
             var removed = true
-            for yours in copies where (try? await remote.removeCredential(yours.id)) == nil { removed = false }
+            for yours in copies {
+                if let here = mine.first(where: \.active) ?? mine.first, Self.lasting(here) != Self.lasting(yours), yours.expires > here.expires,
+                   Self.accountID(here).map({ $0 == Self.accountID(yours) }) ?? (copy == Copy(mac: here.id, machine: yours.id)) {
+                    guard (try? await mac.storeCredential(yours, for: integration, activate: here.active)) != nil else { removed = false; continue }
+                    try? await mac.removeCredential(here.id)
+                }
+                if (try? await remote.removeCredential(yours.id)) == nil { removed = false }
+            }
             // Noted while there was a copy to note: a key copied since keeps its note.
             if removed, copy != nil, !ours.contains(where: { $0.integrationID == integration && $0.active && !Self.renewsItself($0) }) {
                 Self.noteCopy(nil, on: machine, of: integration)
@@ -203,24 +211,29 @@ extension AppModel {
         let mac = api
         Task {
             var copied = true
+            // An account's sign-ins that renew themselves aren't copied: a machine's is its own, and
+            // stays. (An integration's server's are, as its keys are.)
+            let isAccount = catalog.integrations.contains { $0.id == integration && !$0.isMCP }
             if let mac, let entries = try? await mac.credentialEntries() {
                 let removing = entries.filter { $0.integrationID == integration }
-                // An account's sign-ins that renew themselves aren't copied: a machine's is its own,
-                // and stays. (An integration's server's are, as its keys are.)
-                let isAccount = catalog.integrations.contains { $0.id == integration && !$0.isMCP }
                 copied = !isAccount || removing.isEmpty || removing.contains { !Self.renewsItself($0) }
                 for entry in removing { try? await mac.removeCredential(entry.id) }
             }
             guard copied else { return }
+            // An account's, as "keys:<id>": only the copies go, not a sign-in the machine made itself.
+            let entry = isAccount ? Self.keysOnly + integration : integration
             // Only after this Mac's is gone: one it still has counts as signed in to again.
             var pending = Self.pendingSignOuts.filter { id, _ in machines.list.contains { $0.id == id } }
-            for machine in machines.list where !(pending[machine.id] ?? []).contains(integration) {
-                pending[machine.id, default: []].append(integration)
+            for machine in machines.list where !(pending[machine.id] ?? []).contains(entry) {
+                pending[machine.id, default: []].append(entry)
             }
             Self.pendingSignOuts = pending
             for engine in machines.engines.values where engine.isReady { nudgeSignIns(engine) }
         }
     }
+
+    /// A sign-out of an account's copies only (its keys, GitHub Copilot's sign-in), in `pendingSignOuts`.
+    private static let keysOnly = "keys:"
 
     /// The sign-outs each machine still has to take, by machine.
     private static var pendingSignOuts: [String: [String]] {
@@ -235,15 +248,18 @@ extension AppModel {
         guard let missed = Self.pendingSignOuts[id], let mac = api,
               let ours = try? await mac.credentialEntries(), let theirs = try? await remote.credentialEntries() else { return }
         var done: Set<String> = []
-        for integration in Set(missed) {
+        for item in Set(missed) {
+            let keysOnly = item.hasPrefix(Self.keysOnly)
+            let integration = keysOnly ? String(item.dropFirst(Self.keysOnly.count)) : item
+            let copy = Self.copy(on: id, of: integration)
             var removed = true
             // Signed in to here again: the sync copies that one over instead.
             if !ours.contains(where: { $0.integrationID == integration }) {
-                for entry in theirs where entry.integrationID == integration {
+                for entry in theirs where entry.integrationID == integration && (!keysOnly || !Self.renewsItself(entry) || entry.id == copy?.machine) {
                     if (try? await remote.removeCredential(entry.id)) == nil { removed = false }
                 }
             }
-            if removed { done.insert(integration) }
+            if removed { done.insert(item) }
         }
         // As the list is now: a sign-out made meanwhile stays on it.
         var pending = Self.pendingSignOuts

@@ -338,7 +338,7 @@ private struct ConnectedRow: View {
     private var active: Integration.Connection? { provider.connections.first }
 
     /// Its sign-in ended: the engine says so, or a run was refused it.
-    private var signInEnded: Bool { catalog.endedSignIns.contains(provider.id) }
+    private var signInEnded: Bool { catalog.hasEndedSignIn(provider.id) }
     private var needsAttention: Bool { active?.status?.status == "needs_auth" || signInEnded }
 
     private var detail: String {

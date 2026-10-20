@@ -1181,12 +1181,22 @@ private struct TurnEndView: View {
     var reply: ((String) -> Void)?
     @Environment(AppModel.self) private var app
 
-    /// What went wrong. A sign-in the engine couldn't renew says only "Request failed: 400": said
-    /// plainly, with the service's words after it.
+    /// The model's account was refused because its sign-in couldn't be renewed: the engine says only
+    /// "Request failed: 400" then (a key refused, the service says why itself).
+    private var signInEnded: Bool {
+        idle.error?.type == "provider.auth" && idle.error?.message.hasPrefix("Request failed") == true
+    }
+
+    /// What went wrong; an ended sign-in said plainly, with the service's words after it.
     private var message: String {
         guard let error = idle.error else { return "The run failed." }
-        guard error.type == "provider.auth" else { return error.message }
-        return "This model's sign-in has ended and couldn't be renewed, so the request was refused (\(error.message)). Sign in to its account again."
+        guard signInEnded else { return error.message }
+        let ended = "This model's sign-in has ended and couldn't be renewed, so the request was refused (\(error.message))."
+        // A machine signs in on its own, to its plans, or to a plan's coding agent there.
+        if let machine = RemoteFolder.machine(of: directory) {
+            return ended + " Sign in to it on \(machine) in Accounts, or use its plan's coding agent there (Codex for ChatGPT)."
+        }
+        return ended + " Sign in to its account again."
     }
 
     var body: some View {
@@ -1199,10 +1209,10 @@ private struct TurnEndView: View {
                     // runs (a machine signs in on its own).
                     if idle.error?.type == "provider.auth" {
                         let machine = RemoteFolder.machine(of: directory)
-                        Button("Sign In Again", systemImage: "person.crop.circle") { app.openAccounts(on: machine) }
+                        Button(signInEnded ? "Sign In Again" : "Open Accounts", systemImage: "person.crop.circle") { app.openAccounts(on: machine) }
                             .buttonStyle(.glass)
                             .controlSize(.small)
-                            .help(machine.map { "Sign in again in Accounts, on \($0)" } ?? "Sign in again in Accounts")
+                            .help(machine.map { "Accounts, on \($0)" } ?? "Accounts")
                     }
                     // A coding agent to sign in to: where this conversation runs (a machine signs in
                     // on its own), Accounts open on it.

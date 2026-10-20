@@ -374,19 +374,30 @@ final class Catalog {
         do { projectCommands[directory] = try await api.commands(directory: directory) } catch { log.error("commands: \(String(describing: error), privacy: .public)") }
     }
 
-    /// Accounts whose sign-in ran out and couldn't be renewed (the service refused it): a run on
-    /// one of their models failed asking for it. Until a sign-in changes (signed in again, or
-    /// renewed after all).
-    private(set) var endedSignIns: Set<String> = []
+    /// Sign-ins that ran out and couldn't be renewed (the service refused them), by provider: the
+    /// one a run on its model was refused.
+    private var endedSignIns: [String: String] = [:]
 
-    /// A run on `provider`'s model was refused its sign-in.
+    /// A run on `provider`'s model was refused its account: its sign-in in use, if that's one (a
+    /// key refused says why itself).
     func signInEnded(_ provider: String) {
-        guard !OutsideAgents.runsInBridge(provider), !endedSignIns.contains(provider) else { return }
-        endedSignIns.insert(provider)
+        guard !OutsideAgents.runsInBridge(provider), let active = activeCredential(of: provider),
+              active.method == "oauth", let id = active.credentialID, endedSignIns[provider] != id else { return }
+        endedSignIns[provider] = id
+    }
+
+    /// `provider`'s sign-in in use ended: the one refused is still the one in use (signed in again,
+    /// it's another).
+    func hasEndedSignIn(_ provider: String) -> Bool {
+        guard let id = endedSignIns[provider] else { return false }
+        return activeCredential(of: provider)?.credentialID == id
+    }
+
+    private func activeCredential(of provider: String) -> Integration.Connection? {
+        integrations.first { $0.id == provider }?.connections.first { $0.type == "credential" }
     }
 
     func handle(_ event: ServerEvent) {
-        if ["credential.updated", "credential.switched"].contains(event.type), !endedSignIns.isEmpty { endedSignIns = [] }
         switch event.type {
         case "integration.updated", "credential.updated", "credential.switched", "provider.updated",
              "model.updated", "agent.updated", "command.updated", "config.updated":
