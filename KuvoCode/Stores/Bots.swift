@@ -855,8 +855,12 @@ final class Bots {
 
     private func write(memory text: String, of bot: Bot) async -> Bool {
         guard let machine = bot.machine else { return (try? Data(text.utf8).write(to: URL(filePath: bot.memoryFile), options: .atomic)) != nil }
-        let script = "printf '%s' \(SSHConnection.quoted(text)) >\(SSHConnection.quoted(bot.memoryFile))"
-        return await Task.detached { RemoteShell.run(script, on: machine) }.value != nil
+        // On its input, not its command line (which has a size limit a long memory can pass).
+        let file = FileManager.default.temporaryDirectory.appending(path: "kuvo-memory-\(UUID().uuidString).md")
+        defer { try? FileManager.default.removeItem(at: file) }
+        guard (try? Data(text.utf8).write(to: file)) != nil else { return false }
+        let quoted = SSHConnection.quoted(bot.memoryFile)
+        return (try? await SSHConnection(destination: machine).run("cat >\(quoted).new && mv -f \(quoted).new \(quoted)", input: file)) != nil
     }
 
     /// When each Mac bot's memory was last read, so it's read again only once it changes.
