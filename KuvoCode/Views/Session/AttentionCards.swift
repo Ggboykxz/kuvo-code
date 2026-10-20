@@ -12,6 +12,8 @@ struct PermissionCard: View {
     @Environment(\.takesCardKeys) private var takesKeys
 
     var body: some View {
+        // Read from its metadata once a drawing, not for each use.
+        let diffs = request.diffs
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
                 Image(systemName: symbol)
@@ -30,11 +32,12 @@ struct PermissionCard: View {
             }
 
             // All that Allow allows: every file's changes, the whole command, scrolling when long.
-            if !request.diffs.isEmpty {
+            if !diffs.isEmpty {
+                // Each file's changes whole (no "more lines"), made as they scroll into view.
                 AllowedWell(maxHeight: 360) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        ForEach(request.diffs) { diff in
-                            DiffView(diff: diff, title: relative(diff.file), maxLines: 14)
+                    LazyVStack(alignment: .leading, spacing: 10) {
+                        ForEach(diffs) { diff in
+                            DiffView(diff: diff, title: relative(diff.file))
                         }
                     }
                 }
