@@ -553,8 +553,8 @@ final class Machines {
     }
 
     /// What removing a machine does there, without its engine: stops it (its bots stop waking),
-    /// signs out of the accounts it had (in its own database, with its own runtime), and deletes
-    /// what integrations kept there. Its sessions stay.
+    /// signs out of the accounts it had (in its own database, with its own runtime) and of its
+    /// coding agents, and deletes what integrations kept there. Its sessions stay.
     static var removalScript: String {
         removalMark + """
         K="$HOME/\(RemoteEngineInstaller.root)"
@@ -567,6 +567,9 @@ final class Machines {
           KUVO_DB="$K/data/opencode/opencode.db" BUN_BE_BUN=1 "$E" -e 'const { Database } = require("bun:sqlite"); const db = new Database(process.env.KUVO_DB); db.run("DELETE FROM credential"); db.close()' || exit 1
         fi
         rm -rf "$K/integrations" "$K/keys"
+        # The coding agents' sign-ins there (their conversations stay, as the engine's sessions do).
+        [ -d "$K/agents" ] && find "$K/agents" -path "$K/agents/runtime" -prune -o \\( -name .credentials.json -o -name auth.json -o -name 'auth.json.*' -o -name acp_token.json -o -name 'acp_token.json.*' -o -name 'oauth-token.json*' \\) -type f -exec rm -f {} + 2>/dev/null
+        true
         """
     }
 
@@ -635,22 +638,35 @@ final class Machines {
 /// A sign-in to an agent on a machine whose page sends your browser back to `localhost` there
 /// (Claude Code's, Codex's, Grok's): that port, forwarded from this Mac to the machine over SSH
 /// while the sign-in runs (a quarter of an hour at most), so the page reaches the agent there.
-@MainActor final class SignInForward {
-    private var process: Process?
-    private var timeout: Task<Void, Never>?
+@MainActor @Observable final class SignInForward {
+    @ObservationIgnored private var process: Process?
+    @ObservationIgnored private var timeout: Task<Void, Never>?
+    /// Its port couldn't be forwarded (something on this Mac has it): why, to say beside the sign-in.
+    private(set) var problem: String?
 
     /// Forwards the port that `url`'s `redirect_uri` names on localhost, if it names one.
     func start(for url: URL, on machine: String) {
         guard let port = Self.callbackPort(in: url) else { return }
         stop()
+        problem = nil
         let process = Process()
         process.executableURL = URL(filePath: "/usr/bin/ssh")
-        // (Not the shared connection: this one's forward ends with it.)
+        // (Not the shared connection: this one's forward ends with it.) What runs there reads this
+        // app's end of a pipe, so it ends as the connection does, as the engine's tunnel does.
         process.arguments = Machine(destination: machine).connection.arguments(
-            running: "sleep 900", extra: ["-o", "ExitOnForwardFailure=yes", "-L", "\(port):localhost:\(port)"], shared: false)
-        process.standardInput = FileHandle.nullDevice
+            running: "cat >/dev/null", extra: ["-o", "ExitOnForwardFailure=yes", "-L", "\(port):localhost:\(port)"], shared: false)
+        process.standardInput = Pipe.unshared()
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
+        process.terminationHandler = { [weak self] ended in
+            // Ended by itself right away: the port was taken here.
+            guard ended.terminationReason == .exit, ended.terminationStatus != 0 else { return }
+            Task { @MainActor in
+                guard let self, self.process === ended else { return }
+                self.problem = "Something on this Mac is using port \(port), where the sign-in page comes back, so it can't reach \(machine). Quit what uses it (another sign-in, say), then try again."
+                self.process = nil
+            }
+        }
         guard (try? process.run()) != nil else { return }
         self.process = process
         timeout = Task { [weak self] in
@@ -662,6 +678,7 @@ final class Machines {
     func stop() {
         timeout?.cancel()
         timeout = nil
+        process?.terminationHandler = nil
         if process?.isRunning == true { process?.terminate() }
         process = nil
     }

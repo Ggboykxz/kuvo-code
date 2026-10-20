@@ -32,6 +32,23 @@ export function takeOwnFolders() {
   }
 }
 
+/**
+ * An agent's environment with the machine's own config and data folders back (`XDG_CONFIG_HOME`,
+ * `XDG_DATA_HOME`), for an agent whose commands can't be given them alone (Grok's, Antigravity's):
+ * `gh` and git find their settings; its caches and state stay in Kuvo Code's folder, and its own
+ * sign-in and conversations are in its home there anyway.
+ */
+export function withOwnFolders(env: Record<string, string | undefined>): Record<string, string | undefined> {
+  if (!onMachine) return env
+  const result = { ...env }
+  for (const name of ["XDG_CONFIG_HOME", "XDG_DATA_HOME"]) {
+    if (!(name in ownFolders)) continue
+    if (ownFolders[name]) result[name] = ownFolders[name]
+    else delete result[name]
+  }
+  return result
+}
+
 /** A script that gives a command them back (Claude Code sources it before each: `CLAUDE_ENV_FILE`). */
 export function ownFoldersScript(folder: string): string | undefined {
   const names = Object.keys(ownFolders)
@@ -115,6 +132,11 @@ export function codexProgram(deps: Deps): string | undefined {
 
 export async function installCodex(deps: Deps): Promise<string> {
   await deps.ensure("codex", codexPackages)
+  // An install that stopped halfway (its program missing): again, once.
+  if (!codexProgram(deps)) {
+    deps.reset("codex")
+    await deps.ensure("codex", codexPackages)
+  }
   const path = codexProgram(deps)
   if (!path) throw new Error("OpenAI doesn't make Codex for this machine.")
   return path
@@ -138,6 +160,11 @@ export async function installGrok(deps: Deps): Promise<string> {
   await deps.ensure("grok", [{ name: grokPackage, version: machineVersions.grok }])
   // Its package keeps it compressed (its own installer unpacks it as npm installs it).
   const packed = join(deps.folder("grok"), "node_modules", grokPackage, "bin", "grok.br")
+  // An install that stopped halfway: again, once.
+  if (!existsSync(packed)) {
+    deps.reset("grok")
+    await deps.ensure("grok", [{ name: grokPackage, version: machineVersions.grok }])
+  }
   if (!existsSync(packed)) throw new Error("xAI doesn't make Grok's CLI for this machine.")
   const path = join(deps.folder("grok"), "bin", "grok")
   mkdirSync(dirname(path), { recursive: true })

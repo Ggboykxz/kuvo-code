@@ -11,7 +11,7 @@ import type { Agent, AgentContext, Account, SignInAttempt, SubagentRun, Thread, 
 import { accountName, failure, model } from "../agent"
 import { AcpThread } from "../acp"
 import { emit } from "../events"
-import { takeSharedFile } from "../machine"
+import { takeSharedFile, withOwnFolders } from "../machine"
 import { newID } from "../ids"
 import { run, which } from "../proc"
 import { RPC } from "../rpc"
@@ -472,8 +472,10 @@ export class AntigravityAgent implements Agent {
     if (!existsSync(settings)) writeFileSync(settings, JSON.stringify({ auth: { type: "oauth-personal" } }))
     const temporary = join(this.context.temporary, "antigravity", newID("att"))
     mkdirSync(temporary, { recursive: true })
-    const env: Record<string, string | undefined> = {}
+    let env: Record<string, string | undefined> = {}
     for (const [key, value] of Object.entries(process.env)) if (!scrubbed.includes(key.toUpperCase())) env[key] = value
+    // On a machine, its commands find the machine's own settings (`gh`, git's).
+    env = withOwnFolders(env)
     Object.assign(env, {
       GEMINI_HOME: this.profile,
       AGY_ACP_FORCE_FILE_STORAGE: "1",

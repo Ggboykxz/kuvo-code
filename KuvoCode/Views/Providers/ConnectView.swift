@@ -236,6 +236,10 @@ struct ConnectView: View {
 
     private func waiting(_ attempt: OAuthAttempt) -> some View {
         VStack(spacing: 18) {
+            // A machine's sign-in whose page can't come back to it.
+            if let problem = forward.problem {
+                ErrorCard(message: problem)
+            }
             if let gettingReady {
                 HStack(spacing: 8) {
                     Spinner(size: 16)

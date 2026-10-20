@@ -231,8 +231,15 @@ final class OutsideAgents {
     func disconnect() {
         eventTask?.cancel()
         eventTask = nil
+        downSince?.cancel()
+        downSince = nil
+        isDown = false
         api = nil
     }
+
+    /// A machine's bridge hasn't answered for a while (it stopped there, and didn't start again).
+    private(set) var isDown = false
+    @ObservationIgnored private var downSince: Task<Void, Never>?
 
     private func listen(to api: OpenCodeAPI) {
         eventTask?.cancel()
@@ -241,9 +248,19 @@ final class OutsideAgents {
                 guard let self else { return }
                 switch update {
                 case .connected:
+                    downSince?.cancel()
+                    downSince = nil
+                    isDown = false
                     onConnected?()
                     await loadAuto()
-                case .disconnected: break
+                case .disconnected:
+                    // A machine's: said once it stays away (it starts again by itself after a crash).
+                    guard machine != nil, downSince == nil else { break }
+                    downSince = Task { [weak self] in
+                        try? await Task.sleep(for: .seconds(30))
+                        guard !Task.isCancelled else { return }
+                        self?.isDown = true
+                    }
                 case .event(let event):
                     if event.type == "kuvo.auto.updated" { await loadAuto() }
                     onEvent?(event)

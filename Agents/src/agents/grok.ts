@@ -8,7 +8,7 @@ import { providerID, type AgentAccount } from "../accounts"
 import type { Agent, AgentContext, Account, SignInAttempt, Thread } from "../agent"
 import { accountName, model } from "../agent"
 import { AcpThread, questionFields } from "../acp"
-import { grokProgram, installGrok, managedNote, onMachine } from "../machine"
+import { grokProgram, installGrok, managedNote, onMachine, withOwnFolders } from "../machine"
 import { maintenance, update, type MaintenanceDefinition } from "../maintenance"
 import { plain, run, which } from "../proc"
 import { commandSignIn } from "../signin"
@@ -106,7 +106,7 @@ export class GrokAgent implements Agent {
 
   env(): Record<string, string | undefined> {
     // An added account's own GROK_HOME: its sign-in and sessions there.
-    return { ...process.env, GROK_DISABLE_AUTOUPDATER: "1", ...(this.instance.home ? { GROK_HOME: this.instance.home } : {}) }
+    return withOwnFolders({ ...process.env, GROK_DISABLE_AUTOUPDATER: "1", ...(this.instance.home ? { GROK_HOME: this.instance.home } : {}) })
   }
 
   /** `grok models` says whether you're signed in, and lists your models. */

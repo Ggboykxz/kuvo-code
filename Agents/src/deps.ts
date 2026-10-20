@@ -2,7 +2,7 @@
 // its own (`runtime/<agent>`), by the engine's own Bun (the bridge's runtime), at the version this
 // bridge was written for. Nothing goes anywhere else: Bun's cache is the bridge's too.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 
 export interface Package {
@@ -58,7 +58,15 @@ export class Deps {
       stderr: "pipe",
     })
     const [code, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()])
+    // On a machine, Bun's cache of what it downloaded goes once it's installed: nothing there
+    // needs it again, and it would grow with every update (installs are copied out of it).
+    if (process.env.KUVO_AGENTS_REMOTE === "1") rmSync(join(this.cache, "install"), { recursive: true, force: true })
     if (code !== 0) throw new Error(`Couldn't download what the agent needs (${packages.map((pkg) => pkg.name).join(", ")}): ${stderr.trim().slice(-400)}`)
+  }
+
+  /** An agent's install, gone (one that stopped halfway: its program isn't there), to install again. */
+  reset(agent: string) {
+    rmSync(this.folder(agent), { recursive: true, force: true })
   }
 
   /** Loads an installed package (its entry as Bun resolves it from the agent's folder). */

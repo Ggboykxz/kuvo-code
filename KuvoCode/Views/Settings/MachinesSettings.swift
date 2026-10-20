@@ -81,7 +81,7 @@ struct MachinesSettings: View {
                     .frame(width: 20)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(engine.machine.name)
-                    Text(!engine.isReady ? "Not connected" : engine.agents.api == nil ? "Not running" : signedIn.isEmpty ? "None signed in" : Array(Set(signedIn)).sorted().formatted(.list(type: .and)))
+                    Text(!engine.isReady ? "Not connected" : engine.agents.api == nil || engine.agents.isDown ? "Not running" : signedIn.isEmpty ? "None signed in" : Array(Set(signedIn)).sorted().formatted(.list(type: .and)))
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -132,6 +132,8 @@ private struct MachineAgentsPage: View {
                     ConnectView(integrationID: connecting.id, onDone: { self.connecting = nil }, onCancel: { self.connecting = nil })
                 } else if let failure = engine.agents.failure, engine.agents.api == nil {
                     ErrorCard(message: "The coding agents aren’t running on \(engine.machine.name): \(failure)")
+                } else if engine.agents.isDown {
+                    ErrorCard(message: "The coding agents stopped on \(engine.machine.name). They start again with its engine: when nothing runs there, click Disconnect, then Connect.")
                 } else {
                     SubscriptionsSection(connect: { connecting = $0 }, showsPlans: false)
                 }

@@ -72,6 +72,11 @@ export class ClaudeAgent implements Agent {
   /** Its program, installed first on a machine (where Kuvo Code keeps its own copy). */
   async installedProgram(): Promise<string | undefined> {
     if (onMachine && !this.executable()) await this.sdk()
+    // An install that stopped halfway (its program missing): again, once.
+    if (onMachine && !this.executable()) {
+      this.context.deps.reset(this.id)
+      await this.sdk()
+    }
     return this.executable()
   }
 
@@ -160,7 +165,7 @@ export class ClaudeAgent implements Agent {
 
   async signIn(methodID: string): Promise<SignInAttempt> {
     const executable = await this.installedProgram()
-    if (!executable) throw new Error("Install Claude Code first: curl -fsSL https://claude.ai/install.sh | bash")
+    if (!executable) throw new Error(onMachine ? "Claude Code couldn't be installed on this machine. Try again." : "Install Claude Code first: curl -fsSL https://claude.ai/install.sh | bash")
     return commandSignIn({
       command: executable,
       args: ["auth", "login", methodID === "console" ? "--console" : "--claudeai"],

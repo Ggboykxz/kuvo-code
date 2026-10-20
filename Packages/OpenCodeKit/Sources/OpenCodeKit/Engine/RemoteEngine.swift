@@ -324,9 +324,12 @@ public final class RemoteServer: @unchecked Sendable {
             FileManager.default.createFile(atPath: input.path, contents: Data(lines.utf8), attributes: [.posixPermissions: 0o600])
             defer { try? FileManager.default.removeItem(at: input) }
             do {
-                let pid = try await connection.run(launchScript, input: input).trimmingCharacters(in: .whitespacesAndNewlines)
-                guard let pid = Int(pid) else { throw RemoteEngineError.unreadableHandshake(pid) }
+                // Its process, and the agents bridge's port when it had to take another.
+                let said = try await connection.run(launchScript, input: input).trimmingCharacters(in: .whitespacesAndNewlines)
+                let parts = said.split(separator: " ").map(String.init)
+                guard let pid = parts.first.flatMap({ Int($0) }) else { throw RemoteEngineError.unreadableHandshake(said) }
                 engine.pid = pid
+                if parts.count > 1, let port = Int(parts[1]) { engine.agents?.port = port }
                 return engine
             } catch RemoteEngineError.ssh(let status, let message) where status == 3 && message.localizedCaseInsensitiveContains("in use") {
                 lastError = RemoteEngineError.exited(status: status, output: message)
@@ -406,7 +409,7 @@ public final class RemoteServer: @unchecked Sendable {
           KUVO_HOME="$K" BUN_BE_BUN=1 BUN_RUNTIME_TRANSPILER_CACHE_PATH=0 setsid "$K/engine/\(OpenCodeEngine.version)/opencode" "$K/bin/kuvo-link.js" run >"$R/link.log" 2>&1 </dev/null &
         fi
         setsid sh -c 'i=0; while kill -0 "$1" 2>/dev/null; do sleep 60; grep -q "\\"pid\\":$1," "$2/engine.json" 2>/dev/null || break; "$3/bin/kuvo-wake" fire "$3/bots" "$2/engine.json" 2>/dev/null; i=$((i + 1)); [ $((i % 10)) -eq 0 ] || continue; { ls "$3"/bots/*/wakes/* || ls -d "$3"/bots/*/watches/*/ || ls "$3"/wakes/*/wakes/* || ls -d "$3"/wakes/*/watches/*/; } >/dev/null 2>&1 && continue; [ -n "$(find "$2/attached" -mmin +1440 2>/dev/null)" ] && kill "$1"; done; [ "$(cat "$3/keys/.launch" 2>/dev/null)" = "$4" ] && rm -rf "$3/keys"' watchdog "$pid" "$R" "$K" "$launch" >/dev/null 2>&1 </dev/null &
-        echo "$pid"
+        echo "$pid${aport:+ $aport}"
         """
     }
 
@@ -480,16 +483,29 @@ public final class RemoteServer: @unchecked Sendable {
     deinit { disconnect() }
 
     /// Starts the agents bridge beside the engine (`$pid`, listening on `$port`), when it's asked
-    /// for (`$aport`, and its password in the environment) and on the machine: in a session of its own, from the engine's
-    /// workspace, with everything it keeps in `$K/agents`; an older one there stops first. It
-    /// stops by itself when the engine does. Its process is kept in `run/agents.pid`.
+    /// for (`$aport`, and its password in the environment) and on the machine: in a session of its
+    /// own, from the engine's workspace, with everything it keeps in `$K/agents`; an older one there
+    /// stops first. It stops by itself when the engine does; one that stops otherwise (it crashed)
+    /// starts again, a few times. A port someone else has (it says so, exiting 98) gives way to
+    /// another, written in the engine's record and said with its process (`$aport`). What runs it
+    /// is kept in `run/agents.pid`.
     static var agentsScript: String {
         """
         if [ -n "$aport" ] && [ -n "${KUVO_AGENTS_PASSWORD-}" ] && [ -f "$K/bin/kuvo-agents.js" ]; then
           \(stopAgentsScript)
           mkdir -p "$K/agents" && chmod 700 "$K/agents"
-          KUVO_AGENTS_REMOTE=1 KUVO_AGENTS_HOME="$K/agents" KUVO_HOME="$K" KUVO_AGENTS_PORT="$aport" KUVO_ENGINE_PORT="$port" KUVO_ENGINE_PID="$pid" BUN_BE_BUN=1 BUN_RUNTIME_TRANSPILER_CACHE_PATH=0 setsid "$K/engine/\(OpenCodeEngine.version)/opencode" "$K/bin/kuvo-agents.js" >"$R/agents.log" 2>&1 </dev/null &
-          echo $! >"$R/agents.pid"
+          try=0
+          while :; do
+            : >"$R/agents.log"
+            KUVO_AGENTS_REMOTE=1 KUVO_AGENTS_HOME="$K/agents" KUVO_HOME="$K" KUVO_AGENTS_PORT="$aport" KUVO_ENGINE_PORT="$port" KUVO_ENGINE_PID="$pid" BUN_BE_BUN=1 BUN_RUNTIME_TRANSPILER_CACHE_PATH=0 setsid sh -c 'n=0; while kill -0 "$1" 2>/dev/null && [ $n -lt 5 ]; do "$2" "$3" >>"$4" 2>&1 </dev/null; [ $? -eq 98 ] && exit 98; n=$((n + 1)); sleep 5; done' kuvo-agents "$pid" "$K/engine/\(OpenCodeEngine.version)/opencode" "$K/bin/kuvo-agents.js" "$R/agents.log" </dev/null >/dev/null 2>&1 &
+            apid=$!
+            echo "$apid" >"$R/agents.pid"
+            i=0; until grep -q '"url"' "$R/agents.log" 2>/dev/null || ! kill -0 "$apid" 2>/dev/null || [ $i -ge 100 ]; do sleep 0.1; i=$((i + 1)); done
+            kill -0 "$apid" 2>/dev/null && break
+            try=$((try + 1)); [ $try -ge 3 ] && break
+            old=$aport; aport=$(( $(od -An -N2 -tu2 /dev/urandom | tr -d ' ') % 40000 + 20000 ))
+            sed -i "s/\\"port\\":$old\\([,}]\\)/\\"port\\":$aport\\1/" "$R/engine.json"
+          done
         fi
         unset KUVO_AGENTS_PASSWORD
         """
@@ -500,7 +516,7 @@ public final class RemoteServer: @unchecked Sendable {
     static var stopAgentsScript: String {
         """
         apid=$(cat "$R/agents.pid" 2>/dev/null)
-        if [ -n "$apid" ] && grep -q kuvo-agents "/proc/$apid/cmdline" 2>/dev/null; then kill "$apid" 2>/dev/null; i=0; while kill -0 "$apid" 2>/dev/null && [ $i -lt 30 ]; do sleep 0.1; i=$((i + 1)); done; fi
+        if [ -n "$apid" ] && grep -q kuvo-agents "/proc/$apid/cmdline" 2>/dev/null; then kill -- "-$apid" 2>/dev/null || kill "$apid" 2>/dev/null; i=0; while kill -0 "$apid" 2>/dev/null && [ $i -lt 30 ]; do sleep 0.1; i=$((i + 1)); done; fi
         rm -f "$R/agents.pid"
         """
     }

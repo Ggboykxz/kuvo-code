@@ -45,14 +45,15 @@ struct AutoSettings: View {
                         Text("When one reaches a limit on your whole account (a plan's 5-hour window), Custom Auto skips all of that account's models, in every list; when one model reaches its own limit, only that model. Each comes back once its limit resets.")
                     }
                 }
-                if !agents.auto.limits.isEmpty {
+                if !agents.auto.limits.isEmpty || !machinesHolding.isEmpty {
                     Section {
                         LabeledContent {
                             Button("Try All Again") { clearLimits() }
                                 .disabled(isClearing)
                         } label: {
                             Text("Held back at a limit")
-                            Text("If a limit has reset sooner than its agent said, Custom Auto can try them all again.")
+                            // Each machine's agents have limits of their own (their accounts are theirs).
+                            Text("If a limit has reset sooner than its agent said, Custom Auto can try them all again" + (machinesHolding.isEmpty ? "." : (agents.auto.limits.isEmpty ? ", on " : ", here and on ") + machinesHolding.map(\.machine.name).formatted(.list(type: .and)) + "."))
                         }
                     }
                 }
@@ -188,11 +189,20 @@ struct AutoSettings: View {
         }
     }
 
+    /// Your machines whose agents have models held back at a limit.
+    private var machinesHolding: [MachineEngine] {
+        app.machines.list.compactMap { app.machines.engine($0.id) }.filter { $0.isReady && !$0.agents.auto.limits.isEmpty }
+    }
+
     private func clearLimits() {
         isClearing = true
+        let machines = machinesHolding
         Task {
             defer { isClearing = false }
-            do { try await agents.clearAutoLimits() } catch { failure = error.localizedDescription }
+            do {
+                if !agents.auto.limits.isEmpty { try await agents.clearAutoLimits() }
+                for engine in machines { try await engine.agents.clearAutoLimits() }
+            } catch { failure = error.localizedDescription }
         }
     }
 }

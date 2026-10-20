@@ -69,6 +69,11 @@ delete process.env.OPENCODE_PASSWORD
 
 // An SDK's promise nobody waits for, rejected (Cursor's when a shell fails to start), stops nothing.
 process.on("unhandledRejection", (reason) => console.error("unhandled:", reason))
+// Anything else: said, and it stops (on a machine, it's started again).
+process.on("uncaughtException", (error) => {
+  console.error("uncaught:", error)
+  process.exit(1)
+})
 
 const deps = new Deps(join(home, "runtime"), join(home, "cache"))
 const context = { home, temporary, deps }
@@ -96,12 +101,19 @@ const sessions = new Sessions(
   (directory) => link.titleModel(directory),
 )
 
-const server = Bun.serve({
-  hostname: "127.0.0.1",
-  port,
-  idleTimeout: 0,
-  fetch: handler({ roster, sessions, auto, link, password, version }),
-})
+let server: ReturnType<typeof Bun.serve>
+try {
+  server = Bun.serve({
+    hostname: "127.0.0.1",
+    port,
+    idleTimeout: 0,
+    fetch: handler({ roster, sessions, auto, link, password, version }),
+  })
+} catch (error: any) {
+  console.error("couldn't listen:", error?.message ?? error)
+  // On a machine, its port taken: the launch gives it another.
+  process.exit(onMachine && /in use|EADDRINUSE/i.test(String(error?.code ?? error?.message ?? error)) ? 98 : 1)
+}
 console.log(JSON.stringify({ url: `http://127.0.0.1:${server.port}` }))
 // On a machine, where it's reached, for kuvo-wake and Kuvo Code's tools there (as the engine's
 // launch writes engine.json): only this user can read it, and it goes when the bridge does.

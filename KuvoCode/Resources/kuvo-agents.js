@@ -1,6 +1,6 @@
 // @bun
 // Agents/src/main.ts
-import { mkdirSync as mkdirSync13, readdirSync as readdirSync6, readFileSync as readFileSync15, renameSync as renameSync6, rmSync as rmSync9, writeFileSync as writeFileSync11 } from "fs";
+import { mkdirSync as mkdirSync13, readdirSync as readdirSync6, readFileSync as readFileSync15, renameSync as renameSync6, rmSync as rmSync10, writeFileSync as writeFileSync11 } from "fs";
 import { join as join16 } from "path";
 
 // Agents/src/accounts.ts
@@ -24,6 +24,20 @@ function takeOwnFolders() {
       ownFolders[name] = process.env[key] || undefined;
     delete process.env[key];
   }
+}
+function withOwnFolders(env) {
+  if (!onMachine)
+    return env;
+  const result = { ...env };
+  for (const name of ["XDG_CONFIG_HOME", "XDG_DATA_HOME"]) {
+    if (!(name in ownFolders))
+      continue;
+    if (ownFolders[name])
+      result[name] = ownFolders[name];
+    else
+      delete result[name];
+  }
+  return result;
 }
 function ownFoldersScript(folder) {
   const names = Object.keys(ownFolders);
@@ -89,6 +103,10 @@ function codexProgram(deps) {
 }
 async function installCodex(deps) {
   await deps.ensure("codex", codexPackages);
+  if (!codexProgram(deps)) {
+    deps.reset("codex");
+    await deps.ensure("codex", codexPackages);
+  }
   const path = codexProgram(deps);
   if (!path)
     throw new Error("OpenAI doesn't make Codex for this machine.");
@@ -109,6 +127,10 @@ async function installGrok(deps) {
     return known;
   await deps.ensure("grok", [{ name: grokPackage, version: machineVersions.grok }]);
   const packed = join(deps.folder("grok"), "node_modules", grokPackage, "bin", "grok.br");
+  if (!existsSync(packed)) {
+    deps.reset("grok");
+    await deps.ensure("grok", [{ name: grokPackage, version: machineVersions.grok }]);
+  }
   if (!existsSync(packed))
     throw new Error("xAI doesn't make Grok's CLI for this machine.");
   const path = join(deps.folder("grok"), "bin", "grok");
@@ -438,7 +460,7 @@ function resetTime(at) {
 }
 
 // Agents/src/deps.ts
-import { existsSync as existsSync2, mkdirSync as mkdirSync4, readFileSync as readFileSync4, writeFileSync as writeFileSync4 } from "fs";
+import { existsSync as existsSync2, mkdirSync as mkdirSync4, readFileSync as readFileSync4, rmSync as rmSync3, writeFileSync as writeFileSync4 } from "fs";
 import { join as join4 } from "path";
 var installing = new Map;
 
@@ -486,8 +508,13 @@ class Deps {
       stderr: "pipe"
     });
     const [code, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
+    if (process.env.KUVO_AGENTS_REMOTE === "1")
+      rmSync3(join4(this.cache, "install"), { recursive: true, force: true });
     if (code !== 0)
       throw new Error(`Couldn't download what the agent needs (${packages.map((pkg) => pkg.name).join(", ")}): ${stderr.trim().slice(-400)}`);
+  }
+  reset(agent) {
+    rmSync3(this.folder(agent), { recursive: true, force: true });
   }
   async load(agent, name) {
     const entry = Bun.resolveSync(name, this.folder(agent));
@@ -1255,7 +1282,7 @@ function kuvoToolName(name, args) {
 
 // Agents/src/snapshots.ts
 import { createHash } from "crypto";
-import { existsSync as existsSync3, lstatSync, mkdirSync as mkdirSync5, readdirSync as readdirSync2, readFileSync as readFileSync6, realpathSync, rmdirSync, rmSync as rmSync3, writeFileSync as writeFileSync5 } from "fs";
+import { existsSync as existsSync3, lstatSync, mkdirSync as mkdirSync5, readdirSync as readdirSync2, readFileSync as readFileSync6, realpathSync, rmdirSync, rmSync as rmSync4, writeFileSync as writeFileSync5 } from "fs";
 import { dirname as dirname2, join as join7, relative, resolve, sep } from "path";
 
 // Agents/src/diff.ts
@@ -1664,7 +1691,7 @@ class Snapshots {
       for (const path of back) {
         const full = join7(repository.top, path);
         if (this.isInside(repository.top, full) && existsSync3(full) && lstatSync(full).isDirectory() && !existsSync3(join7(full, ".git")))
-          rmSync3(full, { recursive: true, force: true });
+          rmSync4(full, { recursive: true, force: true });
       }
       await this.checkout(repository, tree, back);
     });
@@ -1725,7 +1752,7 @@ class Snapshots {
       const stat = lstatSync(full);
       if (stat.isDirectory() && !stat.isSymbolicLink() && existsSync3(join7(full, ".git")))
         return;
-      rmSync3(full, { recursive: stat.isDirectory() && !stat.isSymbolicLink(), force: true });
+      rmSync4(full, { recursive: stat.isDirectory() && !stat.isSymbolicLink(), force: true });
     } catch {
       return;
     }
@@ -1749,7 +1776,7 @@ function ancestors(path) {
 
 // Agents/src/agents/antigravity.ts
 import { createHash as createHash2 } from "crypto";
-import { chmodSync as chmodSync3, existsSync as existsSync6, mkdirSync as mkdirSync8, readdirSync as readdirSync3, readFileSync as readFileSync9, renameSync as renameSync4, rmSync as rmSync5, statSync, writeFileSync as writeFileSync8 } from "fs";
+import { chmodSync as chmodSync3, existsSync as existsSync6, mkdirSync as mkdirSync8, readdirSync as readdirSync3, readFileSync as readFileSync9, renameSync as renameSync4, rmSync as rmSync6, statSync, writeFileSync as writeFileSync8 } from "fs";
 import { join as join9 } from "path";
 import { pathToFileURL as pathToFileURL2 } from "url";
 
@@ -2867,7 +2894,7 @@ function questionFields(questions) {
 }
 
 // Agents/src/signin.ts
-import { chmodSync as chmodSync2, existsSync as existsSync5, mkdirSync as mkdirSync7, readFileSync as readFileSync8, rmSync as rmSync4, writeFileSync as writeFileSync7 } from "fs";
+import { chmodSync as chmodSync2, existsSync as existsSync5, mkdirSync as mkdirSync7, readFileSync as readFileSync8, rmSync as rmSync5, writeFileSync as writeFileSync7 } from "fs";
 import { join as join8 } from "path";
 function catcher(temporary) {
   const path = join8(temporary, "bin", "kuvo-catch-url");
@@ -2904,7 +2931,7 @@ async function commandSignIn(options) {
     options.onComplete?.();
   };
   child.exited.then(async (code) => {
-    rmSync4(urlFile, { force: true });
+    rmSync5(urlFile, { force: true });
     if (status.status !== "pending")
       return;
     const signedIn = await options.signedIn().catch(() => false);
@@ -3371,19 +3398,19 @@ class AntigravityAgent {
       const unzipped = await run(zip.program, zip.extract(archive, staging));
       if (unzipped.code !== 0)
         throw new Error(`Couldn't unpack Antigravity's agent: ${unzipped.stderr.trim()}`);
-      rmSync5(archive, { force: true });
+      rmSync6(archive, { force: true });
       for (const name of [executableName, harnessName])
         chmodSync3(join9(staging, name), 493);
       writeFileSync8(join9(staging, ".complete"), JSON.stringify({ version, sha256: release.sha256 }));
-      rmSync5(this.folder, { recursive: true, force: true });
+      rmSync6(this.folder, { recursive: true, force: true });
       renameSync4(staging, this.folder);
       for (const name of readdirSync3(this.root)) {
         if (name !== version && name !== "profile" && /^\d/.test(name))
-          rmSync5(join9(this.root, name), { recursive: true, force: true });
+          rmSync6(join9(this.root, name), { recursive: true, force: true });
       }
     } finally {
       this.downloaded = undefined;
-      rmSync5(staging, { recursive: true, force: true });
+      rmSync6(staging, { recursive: true, force: true });
     }
   }
   launch() {
@@ -3393,10 +3420,11 @@ class AntigravityAgent {
       writeFileSync8(settings, JSON.stringify({ auth: { type: "oauth-personal" } }));
     const temporary = join9(this.context.temporary, "antigravity", newID("att"));
     mkdirSync8(temporary, { recursive: true });
-    const env = {};
+    let env = {};
     for (const [key, value] of Object.entries(process.env))
       if (!scrubbed.includes(key.toUpperCase()))
         env[key] = value;
+    env = withOwnFolders(env);
     Object.assign(env, {
       GEMINI_HOME: this.profile,
       AGY_ACP_FORCE_FILE_STORAGE: "1",
@@ -3407,7 +3435,7 @@ class AntigravityAgent {
       ANTIGRAVITY_HARNESS_PATH: join9(this.folder, harnessName)
     });
     const argv = [join9(this.folder, executableName), "--nosyslog_on_start", ...process.platform === "linux" ? ["--uid="] : []];
-    return { argv, env, cleanEnv: true, onExit: () => rmSync5(temporary, { recursive: true, force: true }), signInFile: join9(temporary, "url") };
+    return { argv, env, cleanEnv: true, onExit: () => rmSync6(temporary, { recursive: true, force: true }), signInFile: join9(temporary, "url") };
   }
   async signIn() {
     let status = { status: "pending" };
@@ -3442,7 +3470,7 @@ class AntigravityAgent {
       });
       rpc.onExit = () => {
         launch.onExit();
-        rmSync5(cwd, { recursive: true, force: true });
+        rmSync6(cwd, { recursive: true, force: true });
       };
       const watch = setInterval(() => {
         try {
@@ -3498,8 +3526,8 @@ class AntigravityAgent {
     };
   }
   async signOut() {
-    rmSync5(this.tokenFile, { force: true });
-    rmSync5(this.modelsFile, { force: true });
+    rmSync6(this.tokenFile, { force: true });
+    rmSync6(this.modelsFile, { force: true });
   }
   async sharedSignIn() {
     if (this.instance.home || this.endedSignIn !== undefined || !existsSync6(this.tokenFile))
@@ -3519,7 +3547,7 @@ class AntigravityAgent {
     if (changed) {
       this.endedSignIn = undefined;
       if (!shared)
-        rmSync5(this.modelsFile, { force: true });
+        rmSync6(this.modelsFile, { force: true });
     }
     return changed;
   }
@@ -3543,8 +3571,8 @@ class AntigravityAgent {
   removeSessionFiles(sessionID) {
     const folder = join9(this.profile, "antigravity-acp");
     for (const suffix of [".db", ".db-wal", ".db-shm", ".db-journal", ".meta"])
-      rmSync5(join9(folder, "conversations", sessionID + suffix), { force: true });
-    rmSync5(join9(folder, "brain", sessionID), { recursive: true, force: true });
+      rmSync6(join9(folder, "conversations", sessionID + suffix), { force: true });
+    rmSync6(join9(folder, "brain", sessionID), { recursive: true, force: true });
   }
   async models() {
     try {
@@ -3902,6 +3930,10 @@ class ClaudeAgent {
   async installedProgram() {
     if (onMachine && !this.executable())
       await this.sdk();
+    if (onMachine && !this.executable()) {
+      this.context.deps.reset(this.id);
+      await this.sdk();
+    }
     return this.executable();
   }
   get definition() {
@@ -3983,7 +4015,7 @@ class ClaudeAgent {
   async signIn(methodID) {
     const executable = await this.installedProgram();
     if (!executable)
-      throw new Error("Install Claude Code first: curl -fsSL https://claude.ai/install.sh | bash");
+      throw new Error(onMachine ? "Claude Code couldn't be installed on this machine. Try again." : "Install Claude Code first: curl -fsSL https://claude.ai/install.sh | bash");
     return commandSignIn({
       command: executable,
       args: ["auth", "login", methodID === "console" ? "--console" : "--claudeai"],
@@ -5251,7 +5283,7 @@ function safeBase642(path) {
 }
 
 // Agents/src/agents/codex.ts
-import { existsSync as existsSync9, lstatSync as lstatSync2, mkdirSync as mkdirSync9, readdirSync as readdirSync4, readlinkSync, rmSync as rmSync6, symlinkSync } from "fs";
+import { existsSync as existsSync9, lstatSync as lstatSync2, mkdirSync as mkdirSync9, readdirSync as readdirSync4, readlinkSync, rmSync as rmSync7, symlinkSync } from "fs";
 import { homedir as homedir2 } from "os";
 import { join as join12 } from "path";
 var places2 = ["/opt/homebrew/bin", "/usr/local/bin", join12(homedir2(), ".local/bin"), join12(homedir2(), ".codex/bin")];
@@ -6669,7 +6701,7 @@ function shadowHome(home) {
       if (stat && !stat.isSymbolicLink())
         continue;
       if (stat)
-        rmSync6(link, { force: true });
+        rmSync7(link, { force: true });
       symlinkSync(target, link);
     } catch {}
   }
@@ -6677,7 +6709,7 @@ function shadowHome(home) {
     const link = join12(home, name);
     try {
       if (lstatSync2(link).isSymbolicLink() && !wanted.includes(name))
-        rmSync6(link, { force: true });
+        rmSync7(link, { force: true });
     } catch {}
   }
 }
@@ -6695,7 +6727,7 @@ function firstLine2(text) {
 }
 
 // Agents/src/agents/cursor.ts
-import { existsSync as existsSync10, mkdirSync as mkdirSync10, readFileSync as readFileSync11, rmSync as rmSync7 } from "fs";
+import { existsSync as existsSync10, mkdirSync as mkdirSync10, readFileSync as readFileSync11, rmSync as rmSync8 } from "fs";
 import { join as join13 } from "path";
 var effortParameters = ["effort", "reasoning", "reasoning_effort"];
 var SDK2 = [{ name: "@cursor/sdk", version: "1.0.35" }];
@@ -6815,7 +6847,7 @@ class CursorAgent {
     this.modelList = undefined;
   }
   async signOut() {
-    rmSync7(this.authFile, { force: true });
+    rmSync8(this.authFile, { force: true });
     this.accountCache = undefined;
     this.modelList = undefined;
   }
@@ -7437,7 +7469,7 @@ class GrokAgent {
     return [{ type: "oauth", id: "grok", label: "Sign in with Grok" }];
   }
   env() {
-    return { ...process.env, GROK_DISABLE_AUTOUPDATER: "1", ...this.instance.home ? { GROK_HOME: this.instance.home } : {} };
+    return withOwnFolders({ ...process.env, GROK_DISABLE_AUTOUPDATER: "1", ...this.instance.home ? { GROK_HOME: this.instance.home } : {} });
   }
   async read(fresh) {
     if (!fresh && this.status && Date.now() - this.status.at < 30000)
@@ -10596,7 +10628,7 @@ ${all}`;
 }
 
 // Agents/src/store.ts
-import { mkdirSync as mkdirSync12, readdirSync as readdirSync5, readFileSync as readFileSync14, renameSync as renameSync5, rmSync as rmSync8, statSync as statSync4, writeFileSync as writeFileSync10 } from "fs";
+import { mkdirSync as mkdirSync12, readdirSync as readdirSync5, readFileSync as readFileSync14, renameSync as renameSync5, rmSync as rmSync9, statSync as statSync4, writeFileSync as writeFileSync10 } from "fs";
 import { join as join15 } from "path";
 
 class Store {
@@ -10643,7 +10675,7 @@ class Store {
     this.records.delete(id);
     clearTimeout(this.pending.get(id));
     this.pending.delete(id);
-    rmSync8(join15(this.root, id), { recursive: true, force: true });
+    rmSync9(join15(this.root, id), { recursive: true, force: true });
   }
   save(id, now = false) {
     clearTimeout(this.pending.get(id));
@@ -10701,16 +10733,20 @@ if (onMachine) {
 }
 var temporary = process.env.TMPDIR?.replace(/\/$/, "") || join16(home, "tmp");
 mkdirSync13(temporary, { recursive: true });
-rmSync9(join16(temporary, "antigravity"), { recursive: true, force: true });
+rmSync10(join16(temporary, "antigravity"), { recursive: true, force: true });
 try {
   for (const name of readdirSync6(join16(home, "antigravity")))
     if (name.startsWith(".install-"))
-      rmSync9(join16(home, "antigravity", name), { recursive: true, force: true });
+      rmSync10(join16(home, "antigravity", name), { recursive: true, force: true });
 } catch {}
 delete process.env.BUN_BE_BUN;
 process.env.KUVO_WAKE_VIA = "bridge";
 delete process.env.OPENCODE_PASSWORD;
 process.on("unhandledRejection", (reason2) => console.error("unhandled:", reason2));
+process.on("uncaughtException", (error2) => {
+  console.error("uncaught:", error2);
+  process.exit(1);
+});
 var deps = new Deps(join16(home, "runtime"), join16(home, "cache"));
 var context = { home, temporary, deps };
 var roster = new Roster(new Accounts(home), context);
@@ -10729,12 +10765,18 @@ function engineAgent(providerID2) {
   return agent;
 }
 var sessions = new Sessions(store, roster, auto, engineAgent, (directory) => link.policies(directory), (name, directory) => link.agent(name, directory), new Snapshots(join16(home, "snapshots")), (directory) => link.titleModel(directory));
-var server2 = Bun.serve({
-  hostname: "127.0.0.1",
-  port,
-  idleTimeout: 0,
-  fetch: handler({ roster, sessions, auto, link, password, version: version2 })
-});
+var server2;
+try {
+  server2 = Bun.serve({
+    hostname: "127.0.0.1",
+    port,
+    idleTimeout: 0,
+    fetch: handler({ roster, sessions, auto, link, password, version: version2 })
+  });
+} catch (error2) {
+  console.error("couldn't listen:", error2?.message ?? error2);
+  process.exit(onMachine && /in use|EADDRINUSE/i.test(String(error2?.code ?? error2?.message ?? error2)) ? 98 : 1);
+}
 console.log(JSON.stringify({ url: `http://127.0.0.1:${server2.port}` }));
 var record = onMachine ? join16(machineHome, "run", "bridge.json") : undefined;
 if (record) {
@@ -10749,7 +10791,7 @@ function stop() {
   cancelSignIns();
   try {
     if (record && JSON.parse(readFileSync15(record, "utf8")).pid === process.pid)
-      rmSync9(record, { force: true });
+      rmSync10(record, { force: true });
   } catch {}
   sessions.closeAll();
   store.flush();
