@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import OpenCodeKit
 
@@ -180,8 +181,18 @@ enum OpencodeImport {
 
     /// `value` with each file it names outside Kuvo Code's folder copied into `filesFolder`, and
     /// named there; one that isn't there anymore reads as nothing, as a missing variable does.
-    @MainActor
     static func ownFiles(_ value: JSONValue) -> JSONValue {
+        naming(value) { own($0) }
+    }
+
+    /// `value` as `ownFiles` would make it, without copying anything: to tell what's been brought
+    /// over before.
+    static func owned(_ value: JSONValue) -> JSONValue {
+        naming(value) { FileManager.default.fileExists(atPath: $0) ? copyPath(of: $0) : nil }
+    }
+
+    /// `value` with each file it names (`{file:…}`) named as `name` says, or left out.
+    private static func naming(_ value: JSONValue, _ name: (String) -> String?) -> JSONValue {
         switch value {
         case .string(let text):
             guard text.contains("{file:") else { return value }
@@ -190,14 +201,22 @@ enum OpencodeImport {
             while let open = rest.range(of: "{file:"), let close = rest[open.upperBound...].firstIndex(of: "}") {
                 result += rest[..<open.lowerBound]
                 let path = (String(rest[open.upperBound..<close]) as NSString).expandingTildeInPath
-                result += own(path).map { "{file:\($0)}" } ?? ""
+                result += name(path).map { "{file:\($0)}" } ?? ""
                 rest = rest[rest.index(after: close)...]
             }
             return .string(result + rest)
-        case .array(let items): return .array(items.map(ownFiles))
-        case .object(let fields): return .object(fields.mapValues(ownFiles))
+        case .array(let items): return .array(items.map { naming($0, name) })
+        case .object(let fields): return .object(fields.mapValues { naming($0, name) })
         default: return value
         }
+    }
+
+    /// Where the copy of the file at `path` goes: named after the file and where it is, so it's
+    /// the same copy each time it's brought over (the path itself when it's there already).
+    static func copyPath(of path: String) -> String {
+        if path.hasPrefix(filesFolder.path + "/") { return path }
+        let place = SHA256.hash(data: Data(path.utf8)).prefix(4).map { String(format: "%02x", $0) }.joined()
+        return filesFolder.appending(path: "\(place)-\((path as NSString).lastPathComponent)").path
     }
 
     /// `json`, settings as text, with what the files in `filesFolder` it names say written in, as
@@ -220,17 +239,16 @@ enum OpencodeImport {
         return result + rest
     }
 
-    /// A copy of the file at `path` in `filesFolder` (the path itself when it's there already).
-    @MainActor
+    /// A copy of the file at `path` in `filesFolder`, as it says now (the path itself when it's
+    /// there already).
     private static func own(_ path: String) -> String? {
         let manager = FileManager.default
         guard manager.fileExists(atPath: path) else { return nil }
-        if path.hasPrefix(filesFolder.path + "/") { return path }
+        let copy = copyPath(of: path)
+        if copy == path { return path }
         try? manager.createDirectory(at: filesFolder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        let name = "\(UUID().uuidString.prefix(8))-\((path as NSString).lastPathComponent)"
-        let copy = filesFolder.appending(path: name)
-        guard let data = manager.contents(atPath: path), manager.createFile(atPath: copy.path, contents: data, attributes: [.posixPermissions: 0o600]) else { return path }
-        return copy.path
+        guard let data = manager.contents(atPath: path), manager.createFile(atPath: copy, contents: data, attributes: [.posixPermissions: 0o600]) else { return path }
+        return copy
     }
 
     private static func deepMerged(_ base: [String: JSONValue], _ over: [String: JSONValue]) -> [String: JSONValue] {
@@ -264,9 +282,10 @@ enum OpencodeImport {
             if config["mcp"]?["servers"]?[named] == nil { servers[named] = server }
         }
         if !servers.isEmpty { plan["mcp"] = .object(["servers": .object(servers)]) }
+        // As they'd be once brought over: a file they name is the copy in Kuvo Code's folder.
         for key in ["plugins", "instructions", "permissions"] {
             let ours = config[key]?.array ?? []
-            let new = (read[key]?.array ?? []).filter { !ours.contains($0) }
+            let new = (read[key]?.array ?? []).filter { !ours.contains(owned($0)) }
             if !new.isEmpty { plan[key] = .array(new) }
         }
         return plan
