@@ -2,7 +2,7 @@
 // engine's settings file, saved whole as they are made.
 
 import { useEffect, useState } from "react";
-import { Symbol } from "./components/symbols";
+import { Symbol, type SymbolName } from "./components/symbols";
 import { api } from "./api";
 import {
   clearShortcut,
@@ -219,7 +219,7 @@ export function Settings() {
                       className={section === id ? "active" : ""}
                       onClick={() => { state.settingsSection = id; render(); }}
                     >
-                      <SettingsPageIcon id={id} />
+                      <Symbol name={PAGE_SYMBOLS[id] ?? "gearshape"} size={15} />
                       <span>{name}</span>
                     </button>
                   ))}
@@ -245,115 +245,24 @@ export function Settings() {
   );
 }
 
-/// The 18 pt mark column of the Settings sidebar. SF Symbols become small line drawings in
-/// the Mac's two weights; Phase 4 binds the full icon set, this keeps the column and shape.
-function SettingsPageIcon({ id }: { id: string }) {
-  const common = { fill: "none", stroke: "currentColor", strokeWidth: 1.2, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
-  switch (id) {
-    case "appearance":
-      return (
-        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
-          <path d="M8 2.2a5.8 5.8 0 1 0 0 11.6c.9 0 1.3-.5 1.3-1.1 0-.6-.5-.9-.5-1.5 0-.6.5-1.1 1.2-1.1h1.1c1.4 0 2.5-1.1 2.5-2.7A5.8 5.8 0 0 0 8 2.2z" {...common} />
-          <circle cx="5.4" cy="6" r=".8" fill="currentColor" />
-          <circle cx="8" cy="4.7" r=".8" fill="currentColor" />
-          <circle cx="10.5" cy="6" r=".8" fill="currentColor" />
-        </svg>
-      );
-    case "general":
-      return (
-        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
-          <circle cx="8" cy="8" r="2.3" {...common} />
-          <path d="M8 1.9v1.6M8 12.5v1.6M1.9 8h1.6M12.5 8h1.6M3.7 3.7l1.1 1.1M11.2 11.2l1.1 1.1M12.3 3.7l-1.1 1.1M4.8 11.2l-1.1 1.1" {...common} />
-        </svg>
-      );
-    case "keyboard":
-      return (
-        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
-          <rect x="1.8" y="4" width="12.4" height="8" rx="2" {...common} />
-          <path d="M4 6.5h.1M6 6.5h.1M8 6.5h.1M10 6.5h.1M12 6.5h.1M4 8.7h.1M6 8.7h.1M8 8.7h.1M10 8.7h.1M12 8.7h.1M5.6 10.4h4.8" {...common} />
-        </svg>
-      );
-    case "mcp":
-      return (
-        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
-          <path d="M3 6.5h3.2V3.8a1.8 1.8 0 1 1 3.6 0v2.7H13v3.2h-2.4a1.8 1.8 0 1 0 0 3.6H13" {...common} />
-        </svg>
-      );
-    case "agents":
-      return (
-        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
-          <circle cx="6" cy="5.5" r="2.2" {...common} />
-          <path d="M2.4 12.7c.4-2 1.8-3.2 3.6-3.2s3.2 1.2 3.6 3.2" {...common} />
-          <path d="M10.4 3.8a2 2 0 0 1 0 3.8M11.3 9.8c1.3.3 2.1 1.3 2.4 2.9" {...common} />
-        </svg>
-      );
-    case "skills":
-      return (
-        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
-          <path d="M3 3.2h4.2A1.8 1.8 0 0 1 9 5v8H4.8A1.8 1.8 0 0 1 3 11.2z" {...common} />
-          <path d="M13 3.2H8.8A1.8 1.8 0 0 0 7 5v8h4.2A1.8 1.8 0 0 0 13 11.2z" {...common} />
-        </svg>
-      );
-    case "commands":
-      return (
-        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
-          <rect x="2" y="3" width="12" height="10" rx="2" {...common} />
-          <path d="M5 6l2 2-2 2M8.5 10h2.8" {...common} />
-        </svg>
-      );
-    case "projects":
-      return (
-        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
-          <path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.2l1.4 1.5H12.5A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z" {...common} />
-        </svg>
-      );
-    case "providers":
-      return (
-        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
-          <circle cx="5.2" cy="8" r="2.6" {...common} />
-          <path d="M7.8 8H14M11.6 8v2.2M13.2 8v1.5" {...common} />
-        </svg>
-      );
-    case "usage":
-      return (
-        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
-          <path d="M2.4 11.5a5.6 5.6 0 1 1 11.2 0" {...common} />
-          <path d="M8 11.5l2.8-3.4" {...common} />
-          <circle cx="8" cy="11.5" r="1" fill="currentColor" />
-        </svg>
-      );
-    case "git":
-      return (
-        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
-          <circle cx="4" cy="3.2" r="1.5" {...common} />
-          <circle cx="4" cy="12.8" r="1.5" {...common} />
-          <circle cx="12" cy="10.8" r="1.5" {...common} />
-          <path d="M4 4.7v6.6M5.4 10.3c3.1 0 4.4-1 5.1-3" {...common} />
-        </svg>
-      );
-    case "archived":
-      return (
-        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
-          <rect x="2.2" y="3" width="11.6" height="3" rx="1" {...common} />
-          <path d="M3.4 6v5.7A1.3 1.3 0 0 0 4.7 13h6.6a1.3 1.3 0 0 0 1.3-1.3V6M6.2 8.5h3.6" {...common} />
-        </svg>
-      );
-    case "permissions":
-      return (
-        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
-          <path d="M8 1.9l5 1.8v3.7c0 3-1.8 5.2-5 6.7-3.2-1.5-5-3.7-5-6.7V3.7z" {...common} />
-          <path d="M5.7 8l1.6 1.6 3.1-3.2" {...common} />
-        </svg>
-      );
-    default:
-      return (
-        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
-          <rect x="2.2" y="3.4" width="11.6" height="9.2" rx="2" {...common} />
-          <path d="M2.2 6.4h11.6M5 10h2.5" {...common} />
-        </svg>
-      );
-  }
-}
+/// The 18 pt mark column of the Settings sidebar: the Mac's own symbols, drawn
+/// (SettingsView.swift:196-232) and kept in the app's symbol library.
+const PAGE_SYMBOLS: Record<string, SymbolName> = {
+  appearance: "paintpalette",
+  general: "gearshape",
+  keyboard: "command",
+  mcp: "puzzlepiece.extension",
+  agents: "person.2",
+  skills: "graduationcap",
+  commands: "slash.circle",
+  projects: "folder",
+  providers: "person.crop.circle",
+  usage: "gauge.with.dots.needle.50percent",
+  git: "arrow.triangle.branch",
+  archived: "archivebox",
+  permissions: "checkmark.shield",
+  system: "cpu",
+};
 
 function AppearancePage() {
   return (

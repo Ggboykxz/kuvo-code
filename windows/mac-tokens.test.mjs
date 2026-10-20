@@ -547,6 +547,23 @@ const checks = [
     assert.match(css, /\.project-compose \{[\s\S]*?opacity: 0;/);
   }],
 
+  ["the settings' pages carry the Mac's own symbols, drawn", ({ settings, symbols }) => {
+    // SettingsView.swift:196-232 — the mark each page has.
+    for (const [page, name] of Object.entries({
+      appearance: "paintpalette", general: "gearshape", keyboard: "command",
+      mcp: "puzzlepiece.extension", agents: "person.2", skills: "graduationcap",
+      commands: "slash.circle", projects: "folder", providers: "person.crop.circle",
+      usage: "gauge.with.dots.needle.50percent", git: "arrow.triangle.branch",
+      archived: "archivebox", permissions: "checkmark.shield", system: "cpu",
+    })) {
+      assert.ok(symbols.includes(`"${name}"`), `the library draws ${name}`);
+      assert.ok(settings.includes(`${page}: "${name}"`), `${page} carries ${name}`);
+    }
+    // And they are drawn, not typed: the library's paths.
+    assert.match(symbols, /"gearshape": \["M/);
+    assert.match(symbols, /"paintpalette": \["M/);
+  }],
+
   ["the window is built by Next.js, and exported as the static files the harness serves", ({ next, page, build }) => {
     // The app talks to the engine over the harness's API: there is no server to render
     // it, so the export is the whole app.
