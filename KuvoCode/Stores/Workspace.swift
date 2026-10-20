@@ -1819,7 +1819,10 @@ final class Workspace {
     /// What runs in `directory` now, as its engine lists it: commands started while this Mac
     /// wasn't listening (before launch, or while a machine was away) show too.
     func readShellJobs(in directory: String) async {
-        guard let api = api(forFolder: directory), let jobs = try? await api.shells(directory: directory) else { return }
+        guard let api = api(forFolder: directory), let engineJobs = try? await api.shells(directory: directory) else { return }
+        // The coding agents' too (commands Claude Code left running), for their sessions.
+        let agentJobs = RemoteFolder.isRemote(directory) ? [] : ((try? await agents?.api?.shells(directory: directory)) ?? [])
+        let jobs = engineJobs + agentJobs
         for session in sessions where session.location.directory == directory {
             let own = jobs.filter { $0.sessionID == session.id && $0.status == "running" }
             if (shellJobs[session.id] ?? []) != own { shellJobs[session.id] = own.isEmpty ? nil : own }
