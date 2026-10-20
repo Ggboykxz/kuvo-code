@@ -192,6 +192,12 @@ export function apply(transcript, event) {
       if (payload.model) entry.model = payload.model.id;
       return transcript;
     }
+    case "session.step.streamed": {
+      // The step's words are streaming (Transcript.swift:310-312).
+      const entry = assistant(transcript, payload.assistantMessageID, now);
+      entry.streamed = now;
+      return transcript;
+    }
     case "session.step.ended":
     case "session.step.failed": {
       const entry = assistant(transcript, payload.assistantMessageID, now);
@@ -258,6 +264,12 @@ export function apply(transcript, event) {
       part.input = payload.input ?? part.input;
       return transcript;
     }
+    case "session.tool.progress": {
+      // The tool is still going, and says how far (Transcript.swift:413-417).
+      const part = toolBlock(assistant(transcript, payload.assistantMessageID, now), payload.id);
+      part.metadata = payload.metadata ?? part.metadata;
+      return transcript;
+    }
     case "session.tool.success": {
       const part = toolBlock(assistant(transcript, payload.assistantMessageID, now), payload.id);
       part.status = "completed";
@@ -273,6 +285,18 @@ export function apply(transcript, event) {
       return transcript;
     }
 
+    case "session.agent.selected": {
+      // The run switched to another agent (Transcript.swift:434-436).
+      const entry = { kind: "notice", id: payload.assistantMessageID ?? `agent_${now}`, created: now, text: `Agent: ${payload.agent ?? ""}` };
+      transcript.entries.push(entry);
+      return transcript;
+    }
+    case "session.model.selected": {
+      // The run switched to another model (Transcript.swift:437-439).
+      const entry = { kind: "notice", id: payload.assistantMessageID ?? `model_${now}`, created: now, text: `Model: ${payload.model?.id ?? ""}` };
+      transcript.entries.push(entry);
+      return transcript;
+    }
     case "session.synthetic":
       transcript.entries.push({ kind: "notice", id: `note_${event.id ?? now}`, created: now, text: payload.text ?? "" });
       return transcript;

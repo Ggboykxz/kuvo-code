@@ -275,16 +275,34 @@ const CONVERSATION_EVENTS = new Set([
   "session.tool.input.delta",
   "session.tool.input.ended",
   "session.tool.called",
+  "session.tool.progress",
   "session.tool.success",
   "session.tool.failed",
+  "session.agent.selected",
+  "session.model.selected",
   "session.synthetic",
+]);
+
+/// The asks the agent is waiting on — the permissions and the forms. They are the
+/// Mac's own kind of thing (a form, a permission), not rows of the conversation, so they
+/// are read again when the engine says one has changed.
+const ASK_EVENTS = new Set([
   "permission.asked",
   "permission.replied",
+  "form.created",
+  "form.replied",
+  "form.cancelled",
 ]);
 
 function handleEvent(event: { type: string; data?: unknown }) {
   const properties = (event.data ?? {}) as Record<string, unknown>;
   if (!state.transcript) return;
+  if (ASK_EVENTS.has(event.type)) {
+    // The agent is asking, or the ask is answered: read the asks again.
+    void loadForms();
+    void openSession(state.session!.id);
+    return;
+  }
   if (CONVERSATION_EVENTS.has(event.type)) {
     state.transcript = apply(state.transcript, event as never);
     render();

@@ -32,6 +32,8 @@ const sources = {
   shimmer: read("app", "src", "components", "ai-elements", "shimmer.tsx"),
   logo: read("app", "src", "components", "provider-logo.tsx"),
   spinner: read("app", "src", "components", "spinner.tsx"),
+  transcript: read("harness", "transcript.mjs"),
+  mac: read("..", "Packages", "OpenCodeKit", "Sources", "OpenCodeKit", "Events", "Transcript.swift"),
   tailwind: read("app", "app", "globals.css"),
   postcss: read("app", "postcss.config.mjs"),
   next: read("app", "next.config.mjs"),
@@ -364,6 +366,21 @@ const checks = [
     assert.match(spinner, /className="spinner-faint"/);
     assert.match(spinner, /className="spinner-drawn"/);
     assert.match(spinner, /strokeDasharray=\{dash\}/);
+  }],
+
+  ["the page listens for the engine's own event names, and the transcript knows them", ({ app, transcript, mac }) => {
+    // The page was listening for names the engine never sends (`message.part.updated`), so
+    // the words of a reply arrived only on a reload, and the Stop button stayed. The names
+    // are the engine's own, and the transcript reads the same ones.
+    const names = (source, pattern) => new Set([...source.matchAll(pattern)].map(match => match[1]));
+    const listened = names(app, /"((?:session|permission|form)\.[a-z.]+)"/g);
+    const known = names(transcript, /case "([^"]+)"/g);
+    const macs = names(mac, /case "([^"]+)"/g);
+    const unheard = [...listened].filter(name => !known.has(name));
+    assert.deepEqual(unheard, [], "every event the page listens for, the transcript reads");
+    // And the names are the Mac's own, where the Mac has them.
+    const strange = [...listened].filter(name => !macs.has(name) && known.has(name));
+    assert.deepEqual(strange, [], "every event the page listens for, the Mac knows it too");
   }],
 
   ["the stylesheet is compiled with Tailwind, and only the AI Elements' classes are in it", ({ build, tailwind, postcss }) => {
