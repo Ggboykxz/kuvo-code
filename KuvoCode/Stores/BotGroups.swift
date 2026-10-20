@@ -1049,12 +1049,22 @@ final class BotGroups {
             // Its run, up to the engine's word that it ended: what came after (its answer to a
             // message queued meanwhile, a wake-up) isn't the part's. Messages steered in during it are.
             let run = conversation.dropFirst()
-            let end = run.firstIndex { if case .idle = $0 { true } else { false } }
+            // Not a stop that the run carried on from (a model switch stops it, and its note goes
+            // on): only one you followed with a message of yours, or the end at last.
+            let end = run.indices.first { index in
+                guard case .idle(let idle) = run[index] else { return false }
+                guard idle.outcome == .interrupted else { return true }
+                let next = run.index(after: index)
+                if next < run.endIndex, case .user = run[next] { return true }
+                return false
+            }
             let answered = end != nil || run.contains { message in
                 if case .assistant(let answer) = message { answer.time.completed != nil } else { false }
             }
             guard answered, let active = try? await api.activeSessions(), !active.contains(bot.sessionID) else { continue }
-            let (text, error, _) = Self.said(in: Array(run[..<(end ?? run.endIndex)]))
+            var (text, error, _) = Self.said(in: Array(run[..<(end ?? run.endIndex)]))
+            // A run that failed says why in its end marker.
+            if error == nil, let end, case .idle(let idle) = run[end], idle.outcome == .failed { error = idle.error?.message }
             // Reported meanwhile (or stopped), from elsewhere: not again.
             guard state(of: taskID, of: wrapUpID, in: id) == .working else { return }
             if text.isEmpty { return fail(taskID, of: wrapUpID, in: id, error ?? "it stopped without saying what it did") }
