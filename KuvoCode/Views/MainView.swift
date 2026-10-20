@@ -1718,11 +1718,26 @@ struct MainView: View {
                 let meter = PerfMeter()
                 meter.start()
                 let range = max(0, (sidebar.documentView?.frame.height ?? 0) - sidebar.contentView.bounds.height)
+                // KUVO_PERF_SIDEBAR_WHEEL: by a trackpad's events (began, changed, ended), as you
+                // scroll, so SwiftUI knows it's being scrolled; otherwise moved there directly.
+                let wheel = environment["KUVO_PERF_SIDEBAR_WHEEL"] != nil
+                func send(_ delta: CGFloat, phase: CGScrollPhase) {
+                    guard let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: Int32(delta), wheel2: 0, wheel3: 0) else { return }
+                    event.setIntegerValueField(.scrollWheelEventScrollPhase, value: Int64(phase.rawValue))
+                    event.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+                    if let ns = NSEvent(cgEvent: event) { sidebar.scrollWheel(with: ns) }
+                }
                 for step in 0..<(count * 2) {
                     let done = Double(step < count ? step + 1 : count * 2 - step - 1) / Double(count)
-                    let clip = sidebar.contentView
-                    clip.scroll(to: NSPoint(x: 0, y: range * done))
-                    sidebar.reflectScrolledClipView(clip)
+                    if wheel {
+                        let delta = (step < count ? -1.0 : 1.0) * range / Double(count)
+                        send(delta, phase: step == 0 || step == count ? .began : .changed)
+                        if step == count - 1 || step == count * 2 - 1 { send(0, phase: .ended) }
+                    } else {
+                        let clip = sidebar.contentView
+                        clip.scroll(to: NSPoint(x: 0, y: range * done))
+                        sidebar.reflectScrolledClipView(clip)
+                    }
                     try? await Task.sleep(for: .milliseconds(16))
                 }
                 log("sidebar scroll x\(count * 2) over \(Int(range)) pt: " + meter.stop() + "\n")
