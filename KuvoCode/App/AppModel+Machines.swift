@@ -385,7 +385,8 @@ extension AppModel {
             }
             // Slashes as they are: the engine finds `{file:…}` in the text before it reads it.
             if let json = try? JSONSerialization.data(withJSONObject: settings, options: [.sortedKeys, .withoutEscapingSlashes]) {
-                environment[RemoteServer.privateSettingsVariable] = String(decoding: json, as: UTF8.self)
+                // Files brought over from opencode are on this Mac only.
+                environment[RemoteServer.privateSettingsVariable] = OpencodeImport.inlined(String(decoding: json, as: UTF8.self))
             }
         }
         // Always, so a choice taken back here is taken back there.

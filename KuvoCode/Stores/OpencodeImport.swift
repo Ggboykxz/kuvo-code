@@ -24,6 +24,9 @@ enum OpencodeImport {
         var signIns: [String] = []
         /// opencode's skills folders, for the engine to find skills in too.
         var skillFolders: [String] = []
+        /// Why opencode's settings couldn't be read, when they couldn't: its keys and skills come
+        /// over anyway.
+        var settingsFailure: String?
 
         var isEmpty: Bool { settings.isEmpty && accounts.isEmpty && skillFolders.isEmpty }
 
@@ -77,8 +80,10 @@ enum OpencodeImport {
     /// for integrations `connected` doesn't, skills folders the engine doesn't look in.
     static func plan(engine: URL, config: [String: JSONValue], connected: Set<String>) async throws -> Plan {
         var plan = Plan()
-        if let read = try await settings(engine: engine) {
-            plan.settings = missing(from: read, in: config)
+        do {
+            if let read = try await settings(engine: engine) { plan.settings = missing(from: read, in: config) }
+        } catch {
+            plan.settingsFailure = error.localizedDescription
         }
         let found = accounts().filter { !connected.contains($0.integration) }
         plan.accounts = found.filter { $0.value["type"]?.string == "key" }
@@ -162,9 +167,70 @@ enum OpencodeImport {
             }
             return .string(result)
         case .array(let items): return .array(items.map(restored))
-        case .object(let fields): return .object(fields.mapValues(restored))
+        case .object(let fields):
+            // A name can hold one too (a header named by a variable).
+            return .object(Dictionary(fields.map { (restored(.string($0.key)).string ?? $0.key, restored($0.value)) }, uniquingKeysWith: { first, _ in first }))
         default: return value
         }
+    }
+
+    /// Where the files opencode's settings name (`{file:…}`) are copied to, so Kuvo Code's don't
+    /// depend on opencode's folder: only you can read them.
+    static var filesFolder: URL { AppInfo.supportDirectory.appending(path: "opencode-files") }
+
+    /// `value` with each file it names outside Kuvo Code's folder copied into `filesFolder`, and
+    /// named there; one that isn't there anymore reads as nothing, as a missing variable does.
+    @MainActor
+    static func ownFiles(_ value: JSONValue) -> JSONValue {
+        switch value {
+        case .string(let text):
+            guard text.contains("{file:") else { return value }
+            var result = ""
+            var rest = Substring(text)
+            while let open = rest.range(of: "{file:"), let close = rest[open.upperBound...].firstIndex(of: "}") {
+                result += rest[..<open.lowerBound]
+                let path = (String(rest[open.upperBound..<close]) as NSString).expandingTildeInPath
+                result += own(path).map { "{file:\($0)}" } ?? ""
+                rest = rest[rest.index(after: close)...]
+            }
+            return .string(result + rest)
+        case .array(let items): return .array(items.map(ownFiles))
+        case .object(let fields): return .object(fields.mapValues(ownFiles))
+        default: return value
+        }
+    }
+
+    /// `json`, settings as text, with what the files in `filesFolder` it names say written in, as
+    /// the engine reads them: for a machine, which doesn't have them (in the private settings it
+    /// gets, which go when its engine stops).
+    static func inlined(_ json: String) -> String {
+        let prefix = "{file:" + filesFolder.path + "/"
+        guard json.contains(prefix) else { return json }
+        var result = ""
+        var rest = Substring(json)
+        while let open = rest.range(of: prefix), let close = rest[open.upperBound...].firstIndex(of: "}") {
+            result += rest[..<open.lowerBound]
+            let path = filesFolder.path + "/" + rest[open.upperBound..<close]
+            let text = (try? String(contentsOfFile: path, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            // As the inside of the JSON string it's in.
+            let encoded = (try? JSONEncoder().encode(text)).map { String(decoding: $0, as: UTF8.self) } ?? "\"\""
+            result += encoded.dropFirst().dropLast()
+            rest = rest[rest.index(after: close)...]
+        }
+        return result + rest
+    }
+
+    /// A copy of the file at `path` in `filesFolder` (the path itself when it's there already).
+    @MainActor
+    private static func own(_ path: String) -> String? {
+        let manager = FileManager.default
+        guard manager.fileExists(atPath: path) else { return nil }
+        if path.hasPrefix(filesFolder.path + "/") { return path }
+        try? manager.createDirectory(at: filesFolder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let name = "\(UUID().uuidString.prefix(8))-\((path as NSString).lastPathComponent)"
+        let copy = filesFolder.appending(path: name)
+        guard let data = manager.contents(atPath: path), manager.createFile(atPath: copy.path, contents: data, attributes: [.posixPermissions: 0o600]) else { return path }
+        return copy.path
     }
 
     private static func deepMerged(_ base: [String: JSONValue], _ over: [String: JSONValue]) -> [String: JSONValue] {
@@ -193,10 +259,10 @@ enum OpencodeImport {
         // A server named as one of Kuvo Code's integrations is opencode's own, not that: named
         // apart, so it isn't taken for it (upgraded, removed with it).
         var servers: [String: JSONValue] = [:]
-        for (name, server) in read["mcp"]?["servers"]?.object ?? [:] where config["mcp"]?["servers"]?[name] == nil {
-            servers[Integrations.service(name) == nil ? name : name + "-opencode"] = server
+        for (name, server) in read["mcp"]?["servers"]?.object ?? [:] {
+            let named = Integrations.service(name) == nil ? name : name + "-opencode"
+            if config["mcp"]?["servers"]?[named] == nil { servers[named] = server }
         }
-        servers = servers.filter { config["mcp"]?["servers"]?[$0.key] == nil }
         if !servers.isEmpty { plan["mcp"] = .object(["servers": .object(servers)]) }
         for key in ["plugins", "instructions", "permissions"] {
             let ours = config[key]?.array ?? []
@@ -264,7 +330,7 @@ enum OpencodeImport {
         var count = 0
         // All in one write, so the engine reloads its settings once.
         var changes: [(path: [String], value: JSONValue?)] = []
-        for (key, value) in plan.settings {
+        for (key, value) in plan.settings.mapValues(ownFiles) {
             switch key {
             case "model":
                 changes.append((["model"], value))
