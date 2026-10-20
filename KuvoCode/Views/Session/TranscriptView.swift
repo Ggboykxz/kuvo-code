@@ -871,6 +871,7 @@ private struct MessageText: View {
     let text: String
     var styled: AttributedString?
     @Environment(\.findHighlight) private var highlight
+    @Environment(\.messageFont) private var messageFont
     @State private var isExpanded = false
     @State private var shownHeight: CGFloat = 0
     @State private var fullHeight: CGFloat = 0
@@ -890,15 +891,16 @@ private struct MessageText: View {
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 4) {
-            Text(shown)
+            MessageMentions.text(shown, size: messageFont.size * 1.1)
                 .transcriptFont()
                 .lineLimit(isExpanded ? nil : Self.lines)
+                .modifier(LinkPointer(isOn: styled?.runs.contains { $0.link != nil } == true))
                 .textSelection(.enabled)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { if mayBeLong { shownHeight = $0 } }
                 .background(alignment: .top) {
                     // The whole text, unseen, to tell whether the limit cuts anything.
                     if mayBeLong, !isExpanded {
-                        Text(shown)
+                        MessageMentions.text(shown, size: messageFont.size * 1.1)
                             .transcriptFont()
                             .fixedSize(horizontal: false, vertical: true)
                             .hidden()

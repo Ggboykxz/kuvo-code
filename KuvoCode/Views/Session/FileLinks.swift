@@ -106,7 +106,7 @@ struct FileLinkingParser: MarkupParser {
         var text = try AttributedStringMarkdownParser.markdown().attributedString(for: protected)
         MathText.restore(&text, formulas)
         if !mentions.isEmpty { GroupMentions.apply(to: &text, bots: mentions, faces: true) }
-        if !agents.isEmpty { MessageMentions.apply(to: &text, agents: agents) }
+        if !agents.isEmpty { MessageMentions.apply(to: &text, agents: agents, marks: .attachments) }
         for (range, url) in FileLinks.spans(in: text, folders: folders()) {
             var attributes = text[range].runs.first?.attributes ?? AttributeContainer()
             var intent = attributes.inlinePresentationIntent ?? []

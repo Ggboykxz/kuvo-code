@@ -75,7 +75,7 @@ private struct QueueRow: View {
             if let picture = item.files.first(where: { AttachmentItem.local($0).isImage }) {
                 QueuePicture(url: picture)
             }
-            Text(styledSummary)
+            MessageMentions.text(styledSummary, size: 14.5)
                 .font(.system(size: 13.5))
                 .lineLimit(1)
                 .truncationMode(.tail)
