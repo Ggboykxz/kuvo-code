@@ -47,9 +47,10 @@ public struct SSHConnection: Sendable, Hashable, Codable {
         Self.options + (shared ? Self.sharing : Self.separate) + extra + [destination, Self.command(running: script)]
     }
 
-    /// The command line for the machine's login shell that runs `script` with `sh`.
+    /// The command line for the machine's login shell that runs `script` with `sh`. Without a
+    /// working `base64` there, it fails (127) rather than running nothing and saying it's done.
     public static func command(running script: String) -> String {
-        "exec sh -c 'eval \"$(printf %s " + Data(script.utf8).base64EncodedString() + " | base64 -d)\"'"
+        "exec sh -c 'kuvo_script=$(printf %s " + Data(script.utf8).base64EncodedString() + " | base64 -d) || exit 127; eval \"$kuvo_script\"'"
     }
 
     /// Runs `script` on the machine and returns what it printed. `input` is sent to it.
