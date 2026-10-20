@@ -103,7 +103,13 @@ enum OpencodeImport {
         do {
             try manager.createDirectory(at: copy, withIntermediateDirectories: true)
             try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
-            for name in present { try manager.copyItem(at: configFolder.appending(path: name), to: copy.appending(path: name)) }
+            // `{env:…}` and `{file:…}` come over as written, not as the engine would fill them in
+            // here (from an empty environment, a file's secret pasted in): kept from it, then
+            // put back.
+            for name in present {
+                let text = try String(contentsOf: configFolder.appending(path: name), encoding: .utf8)
+                try Data(Self.keep(text).utf8).write(to: copy.appending(path: name))
+            }
             for name in folders { try manager.copyItem(at: configFolder.appending(path: name), to: copy.appending(path: name)) }
             let home = root.appending(path: "home")
             try manager.createDirectory(at: home, withIntermediateDirectories: true)
@@ -113,13 +119,17 @@ enum OpencodeImport {
             try? manager.removeItem(at: root)
             throw error
         }
-        let sources = try? await OpenCodeAPI(endpoint: server.endpoint).configSources(directory: engineFolders.workspace.path)
+        var sources: JSONValue?
+        var failure: Error?
+        do { sources = try await OpenCodeAPI(endpoint: server.endpoint).configSources(directory: engineFolders.workspace.path) } catch { failure = error }
         // Its folder goes once it has stopped.
         server.stop()
         Task.detached {
             for _ in 0..<40 where server.isRunning { try? await Task.sleep(for: .milliseconds(250)) }
             try? FileManager.default.removeItem(at: root)
         }
+        // Not read (a settings file it can't make sense of): said, rather than nothing to bring.
+        if let failure { throw failure }
         guard case .array(let sources)? = sources else { return nil }
         // Each source's settings, later ones over earlier, as the engine layers them.
         var merged: [String: JSONValue] = [:]
@@ -127,7 +137,34 @@ enum OpencodeImport {
             guard let info = source["info"]?.object else { continue }
             merged = deepMerged(merged, info)
         }
-        return merged
+        return restored(.object(merged)).object ?? [:]
+    }
+
+    private static let keptEnv = "{kuvo-kept-env:"
+    private static let keptFile = "{kuvo-kept-file:"
+
+    /// opencode's settings with their references in a form the engine leaves alone.
+    static func keep(_ text: String) -> String {
+        text.replacingOccurrences(of: "{env:", with: keptEnv).replacingOccurrences(of: "{file:", with: keptFile)
+    }
+
+    /// The references back as written; a file's relative to opencode's settings folder, where
+    /// they were, now named from anywhere.
+    static func restored(_ value: JSONValue) -> JSONValue {
+        switch value {
+        case .string(let text):
+            guard text.contains("{kuvo-kept-") else { return value }
+            var result = text.replacingOccurrences(of: keptEnv, with: "{env:")
+            while let range = result.range(of: keptFile) {
+                let after = result[range.upperBound...]
+                let relative = !(after.hasPrefix("/") || after.hasPrefix("~"))
+                result.replaceSubrange(range, with: "{file:" + (relative ? configFolder.path + "/" : ""))
+            }
+            return .string(result)
+        case .array(let items): return .array(items.map(restored))
+        case .object(let fields): return .object(fields.mapValues(restored))
+        default: return value
+        }
     }
 
     private static func deepMerged(_ base: [String: JSONValue], _ over: [String: JSONValue]) -> [String: JSONValue] {
@@ -153,7 +190,13 @@ enum OpencodeImport {
             let new = theirs.filter { ours[$0.key] == nil }
             if !new.isEmpty { plan[key] = .object(new) }
         }
-        let servers = (read["mcp"]?["servers"]?.object ?? [:]).filter { config["mcp"]?["servers"]?[$0.key] == nil }
+        // A server named as one of Kuvo Code's integrations is opencode's own, not that: named
+        // apart, so it isn't taken for it (upgraded, removed with it).
+        var servers: [String: JSONValue] = [:]
+        for (name, server) in read["mcp"]?["servers"]?.object ?? [:] where config["mcp"]?["servers"]?[name] == nil {
+            servers[Integrations.service(name) == nil ? name : name + "-opencode"] = server
+        }
+        servers = servers.filter { config["mcp"]?["servers"]?[$0.key] == nil }
         if !servers.isEmpty { plan["mcp"] = .object(["servers": .object(servers)]) }
         for key in ["plugins", "instructions", "permissions"] {
             let ours = config[key]?.array ?? []
