@@ -671,7 +671,7 @@ private struct FileHeader: View {
     }
 
     /// Binary files other than pictures have nothing to open.
-    private var hasBody: Bool { !file.isBinary || file.isImage }
+    private var hasBody: Bool { !(file.isBinary || file.isTooBig) || file.isImage }
 
     /// "Sources/Models/" quiet, "Message.swift" bold.
     private var pathText: Text {
@@ -759,7 +759,7 @@ private struct FileBody: View {
     var body: some View {
         if file.isImage {
             ImageDiff(file: file)
-        } else if file.isBinary {
+        } else if file.isBinary || file.isTooBig {
             // Nothing to show line by line; the header says what changed.
             EmptyView()
         } else if file.lines.isEmpty {
