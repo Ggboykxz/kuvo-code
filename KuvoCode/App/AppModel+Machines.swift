@@ -196,6 +196,21 @@ extension AppModel {
             if event.type == "credential.updated" { self?.nudgeSignIns(engine) }
         }
         engine.onReconnect = { [weak self] in _ = await self?.workspace.refresh(engine) }
+        // Its coding agents, beside its engine: their sessions as its engine's, their accounts and
+        // models in its catalog, and a copy of your Custom Auto lists.
+        engine.agents.mac = agents
+        engine.agents.onEvent = { [weak self, weak engine] event in
+            engine?.catalog.handle(event)
+            self?.workspace.handleAgents(event, machine: machine)
+        }
+        engine.agents.onConnected = { [weak self, weak engine] in
+            guard let self, let engine else { return }
+            Task {
+                await engine.catalog.refreshAgents()
+                _ = await self.workspace.refresh(engine)
+                if self.agents.isAutoLoaded { await engine.agents.copyLists(self.agents.auto.all) }
+            }
+        }
         engine.onExit = { [weak self] in
             self?.workspace.forget(machine)
             // One way back at a time: a connection lost while one is tried is that one's to retry.

@@ -34,6 +34,16 @@ final class Workspace {
     /// whatever their folder (on this Mac).
     @ObservationIgnored var agents: OutsideAgents?
 
+    /// A machine's coding agents (the agents bridge beside its engine), by the machine's name.
+    @ObservationIgnored var machineAgents: (String) -> OutsideAgents? = { _ in nil }
+
+    /// The agents bridge a folder's sessions with the coding agents run in: its machine's, or
+    /// this Mac's.
+    func agents(forFolder folder: String) -> OutsideAgents? {
+        if let machine = RemoteFolder.machine(of: folder) { return machineAgents(machine) }
+        return agents
+    }
+
     /// A machine's engine, by its name, for projects on it (folders written `ssh://machine/path`).
     @ObservationIgnored var machineAPI: (String) -> OpenCodeAPI? = { _ in nil }
     /// The machine each session's events came from, for sessions without a row (a subagent's).
@@ -93,24 +103,26 @@ final class Workspace {
     /// The engine a session runs on.
     func api(forSession id: String) -> OpenCodeAPI? {
         if let session = session(id) { return api(for: session) }
+        // One an agents bridge told of before it has a row (made on your phone, say): the
+        // bridge of the machine its events came from, or this Mac's.
+        if bridgeSessions.contains(id) { return sessionMachines[id].map { machineAgents($0)?.api } ?? agents?.api }
         if let machine = sessionMachines[id] { return machineAPI(machine) }
-        // One the agents bridge told of before it has a row (made on your phone, say).
-        if bridgeSessions.contains(id) { return agents?.api }
         return api
     }
 
     /// Sessions the agents bridge has told of: theirs, wherever they were made.
     @ObservationIgnored private var bridgeSessions: Set<String> = []
 
-    /// An event from the agents bridge: its session is the bridge's.
-    func handleAgents(_ event: ServerEvent) {
+    /// An event from an agents bridge (this Mac's, or `machine`'s): its session is the bridge's.
+    func handleAgents(_ event: ServerEvent, machine: String? = nil) {
         if let id = event.sessionID ?? Self.formSessionID(event) { bridgeSessions.insert(id) }
-        handle(event)
+        handle(event, machine: machine)
     }
 
-    /// What a session runs on: the agents bridge for an outside agent's, else its folder's engine.
+    /// What a session runs on: its folder's agents bridge for an outside agent's, else its
+    /// folder's engine.
     func api(for session: Session) -> OpenCodeAPI? {
-        OutsideAgents.isAgentSession(session) ? agents?.api : api(forFolder: session.location.directory)
+        OutsideAgents.isAgentSession(session) ? agents(forFolder: session.location.directory)?.api : api(forFolder: session.location.directory)
     }
 
     /// This Mac's as last listed until its engine lists them (it takes a moment to start), so the
@@ -371,7 +383,7 @@ final class Workspace {
     func subagentModel(for id: String, in folder: String) async -> SessionModel? {
         if let model = models[id] { return model }
         // A coding agent's subagent is its bridge's; any other, the engine's of its folder.
-        let bridge = agents?.api
+        let bridge = agents(forFolder: folder)?.api
         let places = bridgeSessions.contains(id) ? [bridge, api(forFolder: folder)] : [api(forFolder: folder), bridge]
         var found: (api: OpenCodeAPI, session: Session)?
         for case let place? in places {
@@ -634,11 +646,10 @@ final class Workspace {
         // A model of an outside agent (Claude Code, Codex…), or Auto: the session is the agents
         // bridge's, here.
         let isAgents = OutsideAgents.runsInBridge(model?.providerID)
-        if isAgents, RemoteFolder.isRemote(directory) {
-            throw OutsideAgents.Failure.onlyOnThisMac(model?.providerID == OutsideAgents.autoProvider ? "Custom Auto" : OutsideAgents.name(model?.providerID))
-        }
-        if isAgents, agents?.api == nil { throw OutsideAgents.Failure.notRunning(agents?.failure) }
-        guard let api = isAgents ? agents?.api : api(forFolder: directory) else { throw CancellationError() }
+        // (On a machine, its own bridge, beside its engine.)
+        let bridge = agents(forFolder: directory)
+        if isAgents, bridge?.api == nil { throw OutsideAgents.Failure.notRunning(bridge?.failure) }
+        guard let api = isAgents ? bridge?.api : api(forFolder: directory) else { throw CancellationError() }
         let directory = addFolder(directory)
         let folder = worktree ? try await makeWorktree(of: directory) : directory
         let extra = settings[directory]?.folders ?? []
@@ -851,10 +862,9 @@ final class Workspace {
     /// new session of theirs, with what was waiting and its draft; nothing archived or opened.
     func carryToAgents(_ id: String, model: ModelRef) async throws -> Session? {
         guard let session = session(id), let engine = api(forSession: id) else { return nil }
-        if RemoteFolder.isRemote(session.location.directory) {
-            throw OutsideAgents.Failure.onlyOnThisMac(model.providerID == OutsideAgents.autoProvider ? "Custom Auto" : OutsideAgents.name(model.providerID))
-        }
-        guard let bridge = agents?.api else { throw OutsideAgents.Failure.notRunning(agents?.failure) }
+        // (On a machine, its own bridge, beside its engine.)
+        let place = agents(forFolder: session.location.directory)
+        guard let bridge = place?.api else { throw OutsideAgents.Failure.notRunning(place?.failure) }
         // What waits stays waiting (it comes along), rather than starting as the run ends; if the
         // session can't move after all, it goes on as before.
         let wasPaused = models[id]?.isQueuePaused ?? true
@@ -976,9 +986,11 @@ final class Workspace {
     /// place of what was known of them. Conversations open meanwhile take it and are read again.
     func refreshAgents() async {
         guard let api = agents?.api else { return }
+        // (A machine's come with its engine's: `refresh(_ engine:)`.)
+        let isMacs = { (session: Session) in OutsideAgents.isAgentSession(session) && !RemoteFolder.isRemote(session.location.directory) }
         do {
             let listed = try await api.allSessions().filter { !isHidden($0) }
-            sessions = sessions.filter { !OutsideAgents.isAgentSession($0) } + listed
+            sessions = sessions.filter { !isMacs($0) } + listed
             // Read while the bridge was away: so here, and told it now.
             let listedIDs = Set(listed.map(\.id))
             for (id, idle) in unsentViews where listedIDs.contains(id) {
@@ -986,7 +998,7 @@ final class Workspace {
                 if let index = sessions.firstIndex(where: { $0.id == id }), (sessions[index].time.viewed ?? 0) < idle { sessions[index].time.viewed = idle }
                 Task { try? await api.markViewed(id, idle: idle) }
             }
-            for (id, model) in models where OutsideAgents.isAgentSession(model.session) {
+            for (id, model) in models where isMacs(model.session) {
                 guard let session = listed.first(where: { $0.id == id }) else {
                     models[id] = nil
                     continue
@@ -997,11 +1009,11 @@ final class Workspace {
             }
             beforeEngine = beforeEngine.filter { id in !listed.contains { $0.id == id } }
             if let active = try? await api.activeSessions() {
-                running = running.filter { !isBridgeSession($0) }.union(active)
+                running = running.filter { !isBridgeSession($0, on: nil) }.union(active)
             }
             // Questions it asked before starting over went with it (it keeps them in memory): only
             // those it still asks stay.
-            for (request, id) in asking where sharedForms[request] == nil && isBridgeSession(id) {
+            for (request, id) in asking where sharedForms[request] == nil && isBridgeSession(id, on: nil) {
                 // Not read: as it was.
                 guard let asked = await Self.stillAsked(in: id, api: api), !asked.contains(request) else { continue }
                 asking[request] = nil
@@ -1059,6 +1071,13 @@ final class Workspace {
         session(id).map(OutsideAgents.isAgentSession) ?? bridgeSessions.contains(id)
     }
 
+    /// One of the bridge's on `machine` (nil: this Mac's).
+    private func isBridgeSession(_ id: String, on machine: String?) -> Bool {
+        guard isBridgeSession(id) else { return false }
+        let place = session(id).map { RemoteFolder.machine(of: $0.location.directory) } ?? sessionMachines[id]
+        return place == machine
+    }
+
     /// This Mac's engine stopped for good (it failed, and starting it again did too): its
     /// sessions aren't at work, nor asking anything, nor running commands, as the agents bridge's
     /// aren't once it stops; so they don't show as working, nor keep the Mac awake.
@@ -1085,15 +1104,16 @@ final class Workspace {
         }
     }
 
-    /// The agents bridge stopped for good: its sessions aren't at work, nor asking anything.
+    /// This Mac's agents bridge stopped for good: its sessions aren't at work, nor asking anything.
     func agentsStopped() {
-        for (request, id) in asking where sharedForms[request] == nil && isBridgeSession(id) {
+        let isMacs = { (id: String) in self.isBridgeSession(id, on: nil) }
+        for (request, id) in asking where sharedForms[request] == nil && isMacs(id) {
             asking[request] = nil
             Notifier.shared.clear(request: request)
         }
-        running = running.filter { !isBridgeSession($0) }
-        dropShellJobs(where: isBridgeSession)
-        for model in models.values where OutsideAgents.isAgentSession(model.session) { model.bridgeStopped() }
+        running = running.filter { !isMacs($0) }
+        dropShellJobs(where: isMacs)
+        for model in models.values where isMacs(model.id) { model.bridgeStopped() }
     }
 
     /// The folders of the sessions open or at work on `machine` (nil: this Mac): folders its
@@ -1167,11 +1187,20 @@ final class Workspace {
         }
         do {
             let listed = try await api.allSessions()
+            // Its coding agents' too, from the agents bridge beside its engine; not read (it's
+            // starting), those known stay as they were.
+            let bridge = engine.agents.api
+            let bridgeListed: [Session]? = if let bridge { try? await bridge.allSessions() } else { [] }
             guard isCurrent() else { return true }
             // Its open conversations take this connection first, so nothing sent from them goes
             // to the old one.
-            for model in models.values where RemoteFolder.machine(of: model.session.location.directory) == machine { model.reconnect(api) }
-            let theirs = listed.filter { !isHidden($0) }
+            for model in models.values where RemoteFolder.machine(of: model.session.location.directory) == machine {
+                if !OutsideAgents.isAgentSession(model.session) { model.reconnect(api) } else if let bridge { model.reconnect(bridge) }
+            }
+            let fromBridge = (bridgeListed ?? []).filter { !isHidden($0) }
+            bridgeSessions.formUnion(fromBridge.map(\.id))
+            let keptBridge = bridgeListed != nil ? [] : sessions.filter { RemoteFolder.machine(of: $0.location.directory) == machine && OutsideAgents.isAgentSession($0) }
+            let theirs = listed.filter { !isHidden($0) } + fromBridge + keptBridge
             let reconnected = connectedOnce.contains(machine)
             tellMissedNews(in: theirs, machine: machine)
             sessions = sessions.filter { RemoteFolder.machine(of: $0.location.directory) != machine } + theirs
@@ -1194,17 +1223,26 @@ final class Workspace {
             folders.formUnion(jobFolders.removeValue(forKey: machine) ?? [])
             Task { [weak self] in for folder in folders { await self?.readShellJobs(in: folder) } }
             if let active = try? await api.activeSessions(), isCurrent() {
+                let bridgeActive = bridgeListed == nil ? nil : try? await bridge?.activeSessions()
                 // A subagent's session has no row: its machine is the one its events came from.
-                running = running.filter { id in (session(id).map { RemoteFolder.machine(of: $0.location.directory) } ?? sessionMachines[id]) != machine }.union(active)
-                await noteAsks(on: machine, in: active, api: api, tell: reconnected)
+                // (Its agents' as they were, when they couldn't be read.)
+                running = running.filter { id in
+                    (session(id).map { RemoteFolder.machine(of: $0.location.directory) } ?? sessionMachines[id]) != machine || (bridgeActive == nil && isBridgeSession(id))
+                }.union(active).union(bridgeActive ?? [])
+                var asked = active.map { (id: $0, api: api) }
+                if let bridge, let bridgeActive { asked += bridgeActive.map { (id: $0, api: bridge) } }
+                await noteAsks(on: machine, in: asked, tell: reconnected, complete: bridgeActive != nil)
             }
             // Its open conversations, kept while it was away, are read again; one deleted there
             // meanwhile goes. (The list has only the newest, so one missing from it is asked about.)
-            let known = Set(listed.map(\.id))
+            let known = Set(listed.map(\.id)).union(fromBridge.map(\.id))
             for (id, model) in models where RemoteFolder.machine(of: model.session.location.directory) == machine {
                 guard isCurrent() else { return true }
+                // An agent's, through the bridge (not read now, as it was).
+                let isAgents = OutsideAgents.isAgentSession(model.session)
+                guard let place = isAgents ? (bridgeListed == nil ? nil : bridge) : api else { continue }
                 if !model.isSubagent, !known.contains(id) {
-                    guard let session = try? await api.session(id) else {
+                    guard let session = try? await place.session(id) else {
                         models[id] = nil
                         continue
                     }
@@ -1225,10 +1263,11 @@ final class Workspace {
     /// when it `tell`s (connected again since launch, as for bots' news), each request made while
     /// it was out of reach (a bot's wake-up while your Mac slept) told then, as it would have
     /// been, since no event brings it. One told before isn't told again.
-    private func noteAsks(on machine: String, in active: Set<String>, api: OpenCodeAPI, tell: Bool) async {
+    private func noteAsks(on machine: String, in active: [(id: String, api: OpenCodeAPI)], tell: Bool, complete wholly: Bool = true) async {
         var found: [String: String] = [:]
-        var complete = true
-        for id in active {
+        // (Some of its sessions not read at all: what they asked stays as it was.)
+        var complete = wholly
+        for (id, api) in active {
             async let permissions = api.permissions(session: id)
             async let forms = api.forms(session: id)
             // Couldn't read them: its own are left as they were.
@@ -1912,7 +1951,7 @@ final class Workspace {
         // The coding agents' too (commands Claude Code left running), for their sessions; when their
         // list can't be read, those sessions keep what they showed.
         var agentJobs: [ShellJob]? = []
-        if !RemoteFolder.isRemote(directory), let bridge = agents?.api { agentJobs = try? await bridge.shells(directory: directory) }
+        if let bridge = agents(forFolder: directory)?.api { agentJobs = try? await bridge.shells(directory: directory) }
         let jobs = engineJobs + (agentJobs ?? [])
         for session in sessions where session.location.directory == directory {
             if agentJobs == nil, OutsideAgents.isAgentSession(session) { continue }

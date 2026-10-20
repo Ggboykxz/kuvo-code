@@ -1938,7 +1938,7 @@ struct MainView: View {
                 }
                 // (The coding agents' list first, for a model of theirs.)
                 if OutsideAgents.runsInBridge(model?.providerID) {
-                    while workspace.agents?.api == nil { try? await Task.sleep(for: .seconds(1)) }
+                    while workspace.agents(forFolder: machine.map { RemoteFolder.folder("/", on: $0) } ?? "/")?.api == nil { try? await Task.sleep(for: .seconds(1)) }
                 }
                 bot = try await bots.create(name: name, job: job.line.isEmpty && job.details.isEmpty ? nil : job,
                                             look: .random(), model: model, machine: machine, project: parts.count > 4 && !parts[4].isEmpty ? parts[4] : nil)

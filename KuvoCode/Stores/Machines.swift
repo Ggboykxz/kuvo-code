@@ -26,6 +26,8 @@ final class MachineEngine {
     /// Waiting to try again by itself, after the connection dropped.
     var isRetrying = false
     let catalog = Catalog()
+    /// The coding agents there: the agents bridge beside its engine, through the same tunnel.
+    let agents: OutsideAgents
     /// Its browser, which its agents browse with, shown live in the panel.
     let browser: MachineBrowser
 
@@ -54,6 +56,8 @@ final class MachineEngine {
     init(machine: Machine) {
         self.machine = machine
         browser = MachineBrowser(machine: machine)
+        agents = OutsideAgents(machine: machine.id)
+        catalog.outsideAgents = agents
     }
 
     var isReady: Bool { state == .ready }
@@ -216,6 +220,7 @@ final class MachineEngine {
             let current = OpenCodeAPI(endpoint: server.endpoint, folderPrefix: RemoteFolder.prefix(for: machine.id))
             self.api = current
             catalog.api = current
+            agents.connect(server.agentsEndpoint, folderPrefix: RemoteFolder.prefix(for: machine.id))
             state = .ready
             Analytics.shared.trackOnce("machine_connected")
             listen(to: current)
@@ -290,6 +295,8 @@ final class MachineEngine {
         server = nil
         api = nil
         catalog.api = nil
+        agents.disconnect()
+        catalog.forgetAgents()
         isLive = false
         state = .preparing
     }

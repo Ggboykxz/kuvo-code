@@ -258,6 +258,7 @@ final class AppModel {
             Analytics.shared.catalog = catalog
             workspace.api = api
             workspace.machineAPI = { [weak self] machine in self?.machines.engine(machine)?.api }
+            workspace.machineAgents = { [weak self] machine in self?.machines.engine(machine)?.agents }
             bots.app = self
             wakeUps.app = self
             groups.app = self
@@ -342,7 +343,15 @@ final class AppModel {
             Task {
                 await self?.catalog.refreshAgents()
                 await self?.workspace.refreshAgents()
+                // Your Custom Auto lists, as the machines connected meanwhile copy them.
+                guard let self, self.agents.isAutoLoaded else { return }
+                for engine in self.machines.engines.values where engine.isReady { await engine.agents.copyLists(self.agents.auto.all) }
             }
+        }
+        // Each machine's bridge has a copy of your Custom Auto lists.
+        agents.onListsChanged = { [weak self] lists in
+            guard let self else { return }
+            for engine in machines.engines.values where engine.isReady { Task { await engine.agents.copyLists(lists) } }
         }
         var environment = shellEnvironment
         // Bots' wake-up command by name, and where their folders are, for their sessions with the

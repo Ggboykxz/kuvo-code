@@ -411,15 +411,17 @@ enum ModelScope: Equatable {
     case all
 
     /// What a conversation that lives in `directory` can run on, whatever it is (a project's
-    /// session, a chat, a bot's): every model on this Mac, the coding agents' and Custom Auto too;
-    /// on a machine, its engine's. One rule for all of them, so they never drift apart.
+    /// session, a chat, a bot's): every model where it lives, the coding agents' and Custom Auto
+    /// too, on this Mac and on a machine alike (each machine has its own agents bridge, beside its
+    /// engine, with the agents signed in there). One rule for all of them, so they never drift
+    /// apart.
     static func at(_ directory: String?) -> ModelScope {
-        directory.map(RemoteFolder.isRemote) == true ? .engine : .all
+        .all
     }
 
     /// The same, by the machine it lives on (nil for this Mac).
     static func on(machine: String?) -> ModelScope {
-        machine == nil ? .all : .engine
+        .all
     }
 
     func allows(_ providerID: String) -> Bool {

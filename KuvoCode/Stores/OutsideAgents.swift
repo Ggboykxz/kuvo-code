@@ -9,10 +9,18 @@ private let log = Logger(subsystem: "run.kuvo.code", category: "agents")
 ///
 /// A small server of Kuvo Code's own, the agents bridge (`kuvo-agents.js`, run by the engine's
 /// Bun), drives each agent through its maker's SDK or CLI and answers in the engine's own API, so
-/// their sessions, models and sign-ins show where the engine's do. Its sessions run on this Mac;
-/// what it keeps is in `agents` beside the engine's folder.
+/// their sessions, models and sign-ins show where the engine's do. This Mac's sessions run in the
+/// one it starts, which keeps what it has in `agents` beside the engine's folder; each machine's
+/// in one beside its engine there, which this connects to (`connect`).
 @Observable
 final class OutsideAgents {
+    /// The machine whose bridge this is (nil: this Mac's).
+    let machine: String?
+
+    init(machine: String? = nil) {
+        self.machine = machine
+    }
+
     /// The bridge, once it has started.
     private(set) var api: OpenCodeAPI? {
         didSet { address.endpoint = api?.client.endpoint }
@@ -200,6 +208,32 @@ final class OutsideAgents {
         api = nil
     }
 
+    /// A machine's bridge, through its engine's tunnel (`endpoint`; nil when that engine started
+    /// without one): its sessions, accounts and Custom Auto, as this Mac's. Its folders are the
+    /// machine's (`folderPrefix`).
+    func connect(_ endpoint: ServerEndpoint?, folderPrefix: String) {
+        guard endpoint != api?.client.endpoint || api == nil else { return }
+        eventTask?.cancel()
+        eventTask = nil
+        guard let endpoint else {
+            api = nil
+            failure = "this machine's engine started without them. They come with it when it next starts, once nothing runs there."
+            return
+        }
+        let api = OpenCodeAPI(endpoint: endpoint, folderPrefix: folderPrefix)
+        self.api = api
+        failure = nil
+        listen(to: api)
+        Task { await loadAuto() }
+    }
+
+    /// Its machine disconnected: nothing to reach until it's back.
+    func disconnect() {
+        eventTask?.cancel()
+        eventTask = nil
+        api = nil
+    }
+
     private func listen(to api: OpenCodeAPI) {
         eventTask?.cancel()
         eventTask = Task { [weak self] in
@@ -251,20 +285,38 @@ final class OutsideAgents {
 
     func loadAuto() async {
         guard let api, let list = try? await api.autoList() else { return }
+        isAutoLoaded = true
         if list != auto { auto = list }
     }
 
-    /// A Custom Auto list to show in Settings › Custom Auto as it opens (one picked to edit, or just made).
-    var autoFocus: String?
+    /// Its lists have been read (a machine's copy is made from this Mac's only then).
+    @ObservationIgnored private(set) var isAutoLoaded = false
 
-    /// Your lists as you arranged them.
+    /// This Mac's, for a machine's: your Custom Auto lists are this Mac's, and each machine's
+    /// bridge has a copy of them (with its own limits, its accounts being its own).
+    @ObservationIgnored weak var mac: OutsideAgents?
+    /// Your lists changed (this Mac's): for the machines' copies.
+    @ObservationIgnored var onListsChanged: (([AutoList.Named]) -> Void)?
+
+    /// A Custom Auto list to show in Settings › Custom Auto as it opens (one picked to edit, or just made).
+    var autoFocus: String? {
+        get { mac?.autoFocus ?? focus }
+        set {
+            if let mac { mac.autoFocus = newValue } else { focus = newValue }
+        }
+    }
+    private var focus: String?
+
+    /// Your lists as you arranged them (on a machine, this Mac's, which it copies).
     func saveAuto(_ lists: [AutoList.Named]) async throws {
+        if let mac { return try await mac.saveAuto(lists) }
         guard let api else { throw Failure.unavailable("Custom Auto") }
         let saved = auto
         let arranged = AutoList(entries: lists.first?.entries ?? [], lists: lists, limits: auto.limits)
         auto = arranged
         do {
             auto = try await api.saveAutoLists(lists)
+            onListsChanged?(auto.all)
         } catch {
             // Not saved, as far as it heard: the list Auto uses, which may have come meanwhile (a
             // save that went through, its answer lost), else the one before.
@@ -272,6 +324,12 @@ final class OutsideAgents {
             await loadAuto()
             throw error
         }
+    }
+
+    /// A machine's copy of your lists, as this Mac has them now.
+    func copyLists(_ lists: [AutoList.Named]) async {
+        guard let api, lists != auto.all, let saved = try? await api.saveAutoLists(lists) else { return }
+        auto = saved
     }
 
     /// Every model at a limit tried again.
@@ -331,14 +389,12 @@ final class OutsideAgents {
     }
 
     enum Failure: LocalizedError {
-        case onlyOnThisMac(String)
         case unavailable(String)
         /// The bridge isn't up (yet): why, if it couldn't start.
         case notRunning(String?)
 
         var errorDescription: String? {
             switch self {
-            case .onlyOnThisMac(let agent): "\(agent) runs on this Mac: start its sessions in a project here."
             case .unavailable(let what): "\(what) isn't available in sessions with this agent."
             case .notRunning(let why): why.map { "The coding agents couldn't start: \($0)" } ?? "The coding agents are still starting. Try again in a moment."
             }

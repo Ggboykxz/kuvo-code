@@ -453,7 +453,7 @@ final class WakeUps {
     /// its machine; one that doesn't repeat is then done.
     func wakeNow(_ wake: Wakes.Pending, of owner: Owner) async throws {
         guard let api = api(for: owner) else {
-            if owner.agents { throw OutsideAgents.Failure.notRunning(app?.workspace.agents?.failure) }
+            if owner.agents { throw OutsideAgents.Failure.notRunning(app?.workspace.agents(forFolder: owner.directory)?.failure) }
             throw Failure.notConnected(owner.machine ?? "This Mac's engine")
         }
         if !owner.agents { await api.waitForTools(in: owner.directory) }

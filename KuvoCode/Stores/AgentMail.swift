@@ -45,7 +45,9 @@ final class AgentMail {
     func deliverWaiting(to engine: MachineEngine) async {
         let machine = engine.machine.id
         for letter in waiting where letter.machine == machine {
-            guard let api = engine.api else { return }
+            guard engine.api != nil else { return }
+            // (A session of its coding agents': through their bridge there.)
+            guard let api = app?.workspace.session(letter.to).flatMap({ app?.workspace.api(for: $0) }) ?? engine.api else { continue }
             do {
                 try await api.prompt(session: letter.to, id: Identifier.message(),
                                      text: Self.compose(from: letter.name, session: letter.from ?? "unknown", text: letter.text, waits: false), delivery: .steer)

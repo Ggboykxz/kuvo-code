@@ -195,9 +195,11 @@ struct ChangesPanel: View {
                         // A coding agent's session asks its own model (Claude Code, Codex); one whose
                         // agent can't answer outside the conversation, the engine's default model.
                         let isAgents = model.map { OutsideAgents.isAgentSession($0.session) } ?? false
+                        // (Its bridge: this Mac's, or its machine's.)
+                        let bridge = model.flatMap { workspace.agents(forFolder: $0.session.location.directory)?.api }
                         CommitForm(changes: changes, environment: app.shellEnvironment,
-                                   api: isAgents ? app.agents.api ?? app.api : model.flatMap { workspace.api(forSession: $0.id) } ?? app.api,
-                                   session: isAgents && app.agents.api == nil ? nil : model?.id, model: isAgents ? nil : model?.session.model,
+                                   api: isAgents ? bridge ?? app.api : model.flatMap { workspace.api(forSession: $0.id) } ?? app.api,
+                                   session: isAgents && bridge == nil ? nil : model?.id, model: isAgents ? nil : model?.session.model,
                                    fallback: isAgents ? app.api : nil) { isCommitting = false }
                     }
             }

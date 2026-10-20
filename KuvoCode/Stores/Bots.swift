@@ -100,9 +100,10 @@ final class Bots {
     /// Those that run with the coding agents.
     var agentSessionIDs: Set<String> { Set(list.filter { $0.agents == true }.map(\.sessionID)) }
 
-    /// What a bot's conversation runs on: the coding agents' bridge, or its folder's engine.
+    /// What a bot's conversation runs on: the coding agents' bridge where it lives (this Mac's, or
+    /// its machine's), or its folder's engine.
     func api(for bot: Bot) -> OpenCodeAPI? {
-        bot.agents == true ? app?.workspace.agents?.api : app?.workspace.api(forFolder: bot.directory)
+        bot.agents == true ? app?.workspace.agents(forFolder: bot.directory)?.api : app?.workspace.api(forFolder: bot.directory)
     }
 
     /// Tells the workspace which sessions are bots' (and which of those run with the agents).
@@ -220,7 +221,7 @@ final class Bots {
         // A coding agent's model (or Custom Auto): its conversation runs with the agents.
         if OutsideAgents.runsWithAgents(bot.model, machine: machine) { bot.agents = true }
         guard let api = api(for: bot) else {
-            if bot.agents == true { throw OutsideAgents.Failure.notRunning(app.workspace.agents?.failure) }
+            if bot.agents == true { throw OutsideAgents.Failure.notRunning(app.workspace.agents(forFolder: bot.directory)?.failure) }
             throw Failure.notConnected(machine ?? AppInfo.name)
         }
         let session = try await api.createSession(directory: bot.directory, title: name, model: bot.model, permissions: rules)
@@ -314,7 +315,7 @@ final class Bots {
         let bot = list[index]
         save()
         noteSessions()
-        if let api = app.workspace.agents?.api {
+        if let api = app.workspace.agents(forFolder: moved.location.directory)?.api {
             // What marked it as the bot's (and its group chats'), and its instructions.
             try? await api.setMetadata(session: moved.id, .object(["kuvo": kept ?? .object(["bot": .string(bot.id)])]))
             try? await sendInstructions(of: bot, api: api)

@@ -261,7 +261,7 @@ final class BotGroups {
         } else {
             OutsideAgents.runsWithAgents(bot.model ?? app.workspace.session(bot.sessionID)?.model, machine: bot.machine)
         }
-        return onAgents ? app.workspace.agents?.api : app.workspace.api(forFolder: bot.directory)
+        return onAgents ? app.workspace.agents(forFolder: bot.directory)?.api : app.workspace.api(forFolder: bot.directory)
     }
 
     /// The chat a seat is in.
@@ -683,7 +683,7 @@ final class BotGroups {
             return .absent
         }
         guard let api = seatAPI(of: bot, in: group(id)) else {
-            note("\(bot.name) couldn’t answer: \(app.workspace.agents?.api == nil && OutsideAgents.runsWithAgents(bot.model, machine: bot.machine) ? "the coding agents aren’t running" : "the engine isn’t running").", in: id)
+            note("\(bot.name) couldn’t answer: \(app.workspace.agents(forFolder: bot.directory)?.api == nil && OutsideAgents.runsWithAgents(bot.model, machine: bot.machine) ? "the coding agents aren’t running" : "the engine isn’t running").", in: id)
             return .absent
         }
         do {
