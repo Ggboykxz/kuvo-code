@@ -275,6 +275,9 @@ nonisolated enum MarkdownChunks {
         guard let first = line.first else { return false }
         if first == "#" { return line.drop { $0 == "#" }.first.map { $0 == " " } ?? true }
         if [">", "|", "<", "[", "`", "~", "$"].contains(first) { return false }
+        // A table's row, which needn't start with a pipe ("a | b"): one block with the rows after
+        // it, the space after it in its last cell.
+        if line.contains("|") { return false }
         if "-*+_=".contains(first) {
             // "- item", "* item", "+ item", or a rule or underline ("---", "***", "===").
             if line.dropFirst().first == " " || line.allSatisfy({ $0 == first || $0 == " " }) { return false }
