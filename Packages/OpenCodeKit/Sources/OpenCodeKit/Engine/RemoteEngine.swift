@@ -362,12 +362,13 @@ public final class RemoteServer: @unchecked Sendable {
     ///
     /// With `KUVO_AGENTS_PORT` and `KUVO_AGENTS_PASSWORD`, the agents bridge starts beside the
     /// engine once it listens, with the same settings, and stops with it ([agentsScript]). Only it
-    /// gets its password, never the engine (whose agent's commands could print it).
+    /// gets its password, never the engine (whose agent's commands could print it) nor what starts
+    /// after it.
     static var launchScript: String {
         """
         while IFS= read -r line && [ -n "$line" ]; do export "$line"; done
         port=$KUVO_PORT; record=$KUVO_RECORD; unset KUVO_PORT KUVO_RECORD
-        aport=${KUVO_AGENTS_PORT-}; apass=${KUVO_AGENTS_PASSWORD-}; unset KUVO_AGENTS_PORT KUVO_AGENTS_PASSWORD
+        aport=${KUVO_AGENTS_PORT-}; unset KUVO_AGENTS_PORT
         \(RemoteEngineInstaller.folders)
         if [ -n "${KUVO_SETTINGS+set}" ]; then
           mkdir -p "$K/config/opencode" && (umask 077; printf '%s\\n' "$KUVO_SETTINGS" >"$K/config/opencode/opencode.json")
@@ -391,7 +392,7 @@ public final class RemoteServer: @unchecked Sendable {
         export KUVO_BOTS="$K/bots" KUVO_WAKES="$K/wakes"
         cd "$K/workspace"
         touch "$R/attached"
-        setsid "$K/engine/\(OpenCodeEngine.version)/opencode" serve --port "$port" --hostname 127.0.0.1 >"$R/engine.log" 2>&1 </dev/null &
+        env -u KUVO_AGENTS_PASSWORD setsid "$K/engine/\(OpenCodeEngine.version)/opencode" serve --port "$port" --hostname 127.0.0.1 >"$R/engine.log" 2>&1 </dev/null &
         pid=$!
         i=0
         until grep -q "server listening" "$R/engine.log" 2>/dev/null; do
@@ -479,17 +480,18 @@ public final class RemoteServer: @unchecked Sendable {
     deinit { disconnect() }
 
     /// Starts the agents bridge beside the engine (`$pid`, listening on `$port`), when it's asked
-    /// for (`$aport`, `$apass`) and on the machine: in a session of its own, from the engine's
+    /// for (`$aport`, and its password in the environment) and on the machine: in a session of its own, from the engine's
     /// workspace, with everything it keeps in `$K/agents`; an older one there stops first. It
     /// stops by itself when the engine does. Its process is kept in `run/agents.pid`.
     static var agentsScript: String {
         """
-        if [ -n "$aport" ] && [ -n "$apass" ] && [ -f "$K/bin/kuvo-agents.js" ]; then
+        if [ -n "$aport" ] && [ -n "${KUVO_AGENTS_PASSWORD-}" ] && [ -f "$K/bin/kuvo-agents.js" ]; then
           \(stopAgentsScript)
           mkdir -p "$K/agents" && chmod 700 "$K/agents"
-          KUVO_AGENTS_REMOTE=1 KUVO_AGENTS_HOME="$K/agents" KUVO_HOME="$K" KUVO_AGENTS_PORT="$aport" KUVO_AGENTS_PASSWORD="$apass" KUVO_ENGINE_PORT="$port" KUVO_ENGINE_PID="$pid" BUN_BE_BUN=1 BUN_RUNTIME_TRANSPILER_CACHE_PATH=0 setsid "$K/engine/\(OpenCodeEngine.version)/opencode" "$K/bin/kuvo-agents.js" >"$R/agents.log" 2>&1 </dev/null &
+          KUVO_AGENTS_REMOTE=1 KUVO_AGENTS_HOME="$K/agents" KUVO_HOME="$K" KUVO_AGENTS_PORT="$aport" KUVO_ENGINE_PORT="$port" KUVO_ENGINE_PID="$pid" BUN_BE_BUN=1 BUN_RUNTIME_TRANSPILER_CACHE_PATH=0 setsid "$K/engine/\(OpenCodeEngine.version)/opencode" "$K/bin/kuvo-agents.js" >"$R/agents.log" 2>&1 </dev/null &
           echo $! >"$R/agents.pid"
         fi
+        unset KUVO_AGENTS_PASSWORD
         """
     }
 
