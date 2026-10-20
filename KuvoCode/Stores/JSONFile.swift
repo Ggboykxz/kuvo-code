@@ -3,8 +3,8 @@ import os
 
 /// A value kept in one of Kuvo Code's JSON files: read whole, written whole and atomically, its
 /// folder made as needed. A file that's there but won't read (from a newer version, or damaged)
-/// is set aside as `<name>.unreadable.json` before anything can write over it, so what was in it
-/// isn't lost; the log says so.
+/// is set aside as `<name>.unreadable-<when>.json` before anything can write over it, so what was in
+/// it isn't lost (nor one set aside before); the log says so.
 nonisolated enum JSONFile {
     /// What's in `file`, or nil when there's nothing there or it won't read.
     static func read<Value: Decodable>(_ type: Value.Type, from file: URL, isoDates: Bool = false) -> Value? {
@@ -14,8 +14,8 @@ nonisolated enum JSONFile {
         do {
             return try decoder.decode(type, from: data)
         } catch {
-            let aside = file.deletingPathExtension().appendingPathExtension("unreadable.json")
-            try? FileManager.default.removeItem(at: aside)
+            let when = Date.now.formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false).timeSeparator(.omitted).dateSeparator(.omitted))
+            let aside = file.deletingPathExtension().appendingPathExtension("unreadable-\(when).json")
             try? FileManager.default.moveItem(at: file, to: aside)
             log.error("\(file.lastPathComponent, privacy: .public) couldn't be read and was set aside as \(aside.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
             return nil
