@@ -3,7 +3,7 @@
 // programs are installed in it, at the versions this bridge was written for, rather than looked
 // for on the machine. Nothing is installed for the machine as a whole, nothing goes in its home.
 
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { brotliDecompressSync } from "node:zlib"
 import type { Deps } from "./deps"
@@ -95,7 +95,10 @@ export function claudeProgram(folder: string): string | undefined {
   const names = musl() ? [`claude-agent-sdk-linux-${arch}-musl`, `claude-agent-sdk-linux-${arch}`] : [`claude-agent-sdk-linux-${arch}`, `claude-agent-sdk-linux-${arch}-musl`]
   for (const name of names) {
     const path = join(base, name, "claude")
-    if (existsSync(path)) return path
+    if (!existsSync(path)) continue
+    // The install brings both C libraries' builds (a few hundred MB each): the other goes.
+    for (const other of names) if (other !== name) rmSync(join(base, other), { recursive: true, force: true })
+    return path
   }
   return undefined
 }

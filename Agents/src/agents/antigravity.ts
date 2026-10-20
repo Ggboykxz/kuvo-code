@@ -482,7 +482,8 @@ export class AntigravityAgent implements Agent {
       TMPDIR: temporary,
       ANTIGRAVITY_HARNESS_PATH: join(this.folder, harnessName),
     })
-    const argv = [join(this.folder, executableName), ...(process.platform === "linux" ? ["--uid="] : [])]
+    // (Not its start-up syslog, which leaves a marker folder in /tmp, whatever TMPDIR says.)
+    const argv = [join(this.folder, executableName), "--nosyslog_on_start", ...(process.platform === "linux" ? ["--uid="] : [])]
     return { argv, env, cleanEnv: true, onExit: () => rmSync(temporary, { recursive: true, force: true }), signInFile: join(temporary, "url") }
   }
 
