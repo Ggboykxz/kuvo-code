@@ -490,7 +490,11 @@ class CodexThread implements Thread {
   private policy(hooks: TurnHooks, plan: boolean) {
     if (plan) return { approvalPolicy: "untrusted", sandboxPolicy: { type: "readOnly", networkAccess: true } }
     if (hooks.approvesAll()) return { approvalPolicy: "never", sandboxPolicy: { type: "dangerFullAccess" } }
-    return { approvalPolicy: "untrusted", sandboxPolicy: { type: "readOnly", networkAccess: true } }
+    // Ask First: it asks before any command but a look and before every edit ("untrusted"), and
+    // what it runs can write in the project and where Kuvo Code keeps wake-ups (kuvo-wake, whose
+    // scheduling your rules allow), as the engine's commands can.
+    const writableRoots = [process.env.KUVO_WAKES, process.env.KUVO_BOTS].filter((root): root is string => Boolean(root))
+    return { approvalPolicy: "untrusted", sandboxPolicy: { type: "workspaceWrite", writableRoots, networkAccess: true } }
   }
 
   private async ensureThread(input: RunInput, hooks: TurnHooks) {

@@ -5484,7 +5484,8 @@ class CodexThread {
       return { approvalPolicy: "untrusted", sandboxPolicy: { type: "readOnly", networkAccess: true } };
     if (hooks.approvesAll())
       return { approvalPolicy: "never", sandboxPolicy: { type: "dangerFullAccess" } };
-    return { approvalPolicy: "untrusted", sandboxPolicy: { type: "readOnly", networkAccess: true } };
+    const writableRoots = [process.env.KUVO_WAKES, process.env.KUVO_BOTS].filter((root) => Boolean(root));
+    return { approvalPolicy: "untrusted", sandboxPolicy: { type: "workspaceWrite", writableRoots, networkAccess: true } };
   }
   async ensureThread(input, hooks) {
     const rpc = await this.agent.rpc(this);
