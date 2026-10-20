@@ -305,6 +305,7 @@ private struct WidgetPage: NSViewRepresentable {
         content.add(WeakHandler(context.coordinator), contentWorld: .defaultClient, name: "kuvo")
         content.addUserScript(WKUserScript(source: Self.forward, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .defaultClient))
         content.addUserScript(WKUserScript(source: Self.measure, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
+        content.addUserScript(WKUserScript(source: Self.editing, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .defaultClient))
         let view = WidgetWebView(frame: .zero, configuration: configuration)
         view.setValue(false, forKey: "drawsBackground")
         view.navigationDelegate = context.coordinator
@@ -375,6 +376,23 @@ private struct WidgetPage: NSViewRepresentable {
       navigator.userActivation.consume?.();
       window.webkit.messageHandlers.kuvo.postMessage({ type: "send", text });
     });
+    """
+
+    /// Whether you're typing in a field, whenever the focus moves: a space there isn't a click.
+    private static let editing = """
+    (() => {
+      const buttons = new Set(["button", "submit", "reset", "checkbox", "radio", "image", "file", "color", "range"]);
+      const editing = () => {
+        let element = document.activeElement;
+        while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement;
+        if (!element) return false;
+        if (element.isContentEditable || element.localName === "textarea" || element.localName === "select") return true;
+        return element.localName === "input" && !buttons.has(String(element.type || "text").toLowerCase());
+      };
+      const report = () => window.webkit.messageHandlers.kuvo.postMessage({ type: "editing", value: editing() });
+      document.addEventListener("focusin", report, true);
+      document.addEventListener("focusout", () => setTimeout(report), true);
+    })();
     """
 
     /// Its height, whenever it changes.
@@ -448,6 +466,8 @@ private struct WidgetPage: NSViewRepresentable {
                 let current = height?.wrappedValue ?? 0
                 if keepsHeightUntil > .now, new < current { return }
                 if abs(current - new) > 0.5 { height?.wrappedValue = new }
+            case "editing":
+                view?.isEditing = body["value"] as? Bool ?? false
             case "send":
                 guard let text = body["text"] as? String, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
                 // One message for a click, however many the page tries in the moment it gives: only
@@ -523,9 +543,14 @@ final class WidgetWebView: WKWebView {
         super.mouseDown(with: event)
     }
 
-    /// A key that presses a control (Space or Return on a button) is a click too.
+    /// You're typing in one of its fields (see `WidgetPage.editing`).
+    var isEditing = false
+
+    /// A key that presses a control (Space or Return on a button) is a click too, and Return in
+    /// a field (sending what you typed); typing in a field isn't.
     override func keyDown(with event: NSEvent) {
-        clicked = .now
+        // Return and Enter; Space.
+        if [36, 76].contains(event.keyCode) || (event.keyCode == 49 && !isEditing) { clicked = .now }
         super.keyDown(with: event)
     }
 
