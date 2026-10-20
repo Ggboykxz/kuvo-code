@@ -20,7 +20,11 @@ nonisolated enum SessionEdits {
             for case .tool(let call) in step.content {
                 guard case .completed(let input, _, let metadata) = call.state else { continue }
                 if let files = try? metadata?["files"]?.decode(as: [FileDiff].self) {
-                    for file in files where !file.patch.isEmpty { add(.edit(file), to: file.file) }
+                    // By the same name as a write of it, whichever way the engine names the file.
+                    for var file in files where !file.patch.isEmpty {
+                        file.file = relative(file.file, in: directory)
+                        add(.edit(file), to: file.file)
+                    }
                 } else if call.name == "write", let path = input["path"]?.string ?? input["filePath"]?.string, let content = input["content"]?.string {
                     add(.write(content), to: relative(path, in: directory))
                 }
