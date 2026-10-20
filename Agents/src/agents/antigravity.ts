@@ -6,13 +6,14 @@ import { createHash } from "node:crypto"
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { providerID, type AgentAccount } from "../accounts"
-import type { Agent, AgentContext, Account, SignInAttempt, Thread, SubagentTask } from "../agent"
+import type { Agent, AgentContext, Account, SignInAttempt, SubagentRun, Thread, SubagentTask, TurnHooks } from "../agent"
 import { accountName, failure, model } from "../agent"
 import { AcpThread } from "../acp"
 import { newID } from "../ids"
 import { run } from "../proc"
 import { RPC } from "../rpc"
 import { catcher } from "../signin"
+import type { Turn } from "../turn"
 import type { Model, OAuthStatus, Session } from "../wire"
 
 const version = "1.3.0"
@@ -51,20 +52,242 @@ const scrubbed = [
 ]
 
 /** The subagents an invoke_subagent call starts: {Subagents: [{Role, TypeName, Prompt, Model}]}, as an object or as JSON. */
-export function antigravitySubagents(call: any): SubagentTask[] | undefined {
-  let input = call?.rawInput
-  if (typeof input === "string") {
+/** The subagents an `invoke_subagent` call asks for (its `Subagents`: a list, or the list written as JSON). */
+export function antigravitySubagents(args: any): SubagentTask[] {
+  let list = args?.Subagents
+  if (typeof list === "string") {
     try {
-      input = JSON.parse(input)
-    } catch {}
+      list = JSON.parse(list)
+    } catch {
+      return []
+    }
   }
-  const list = input?.Subagents
-  if (!Array.isArray(list) || !list.length) return undefined
+  if (!Array.isArray(list)) return []
   return list.map((subagent: any) => ({
     title: String(subagent?.Role ?? subagent?.TypeName ?? "A subagent's task"),
     prompt: typeof subagent?.Prompt === "string" ? subagent.Prompt : undefined,
     agent: typeof subagent?.TypeName === "string" && subagent.TypeName !== "self" ? subagent.TypeName : undefined,
   }))
+}
+
+/** One step of Antigravity's record of a conversation (`brain/<id>/.system_generated/logs/transcript.jsonl`). */
+interface Step {
+  step_index: number
+  type?: string
+  status?: string
+  content?: string
+  tool_calls?: { name?: string; args?: Record<string, unknown> }[]
+}
+
+interface Child {
+  id: string
+  row: string
+  task: SubagentTask
+  run: SubagentRun
+  /** Each step shown so far, with its status then. */
+  shown: Map<number, string>
+  /** Its tool calls waiting for their results, oldest first, and the step that gave each a result. */
+  open: string[]
+  results: Map<number, string>
+  toolsSinceText: boolean
+  ended: boolean
+}
+
+/**
+ * Antigravity tells the conversation's own words and tools over its protocol, but not its
+ * subagents: it writes them down. This follows that record while a turn runs: a row and a session
+ * for each subagent it starts (with its role and task), and each one's steps in its session.
+ */
+export class AntigravityFollower {
+  private seen = new Set<number>()
+  private pending: SubagentTask[] = []
+  private children = new Map<string, Child>()
+  private timer: ReturnType<typeof setInterval>
+
+  constructor(
+    private readonly brain: string,
+    private readonly sessionId: string,
+    private readonly turn: Turn,
+    private readonly hooks: TurnHooks,
+    every = 1_000,
+  ) {
+    this.timer = setInterval(() => this.read(), every)
+  }
+
+  stop() {
+    clearInterval(this.timer)
+    this.read()
+    // One that finished its work is done; the rest end with the turn.
+    for (const child of this.children.values()) if (!child.ended && this.isDone(child)) this.end(child)
+  }
+
+  private steps(conversation: string): Step[] {
+    try {
+      return readFileSync(join(this.brain, conversation, ".system_generated", "logs", "transcript.jsonl"), "utf8")
+        .split("\n")
+        .flatMap((line) => {
+          try {
+            const step = JSON.parse(line)
+            return typeof step?.step_index === "number" ? [step as Step] : []
+          } catch {
+            return []
+          }
+        })
+    } catch {
+      return []
+    }
+  }
+
+  read() {
+    if (this.turn.isEnded) return
+    for (const step of this.steps(this.sessionId)) {
+      if (this.seen.has(step.step_index) || step.status === "RUNNING") continue
+      this.seen.add(step.step_index)
+      for (const call of step.tool_calls ?? []) if (call?.name === "invoke_subagent") this.pending.push(...antigravitySubagents(call.args))
+      // "Created the following subagents": their conversations, in the order they were asked for.
+      if (step.type === "INVOKE_SUBAGENT" && typeof step.content === "string") {
+        for (const match of step.content.matchAll(/"conversationId":\s*"([^"]+)"/g)) this.start(match[1])
+      }
+    }
+    for (const child of this.children.values()) this.readChild(child)
+  }
+
+  private start(id: string) {
+    if (this.children.has(id)) return
+    const task = this.pending.shift() ?? { title: "A subagent's task" }
+    const row = `agy-subagent:${id}`
+    this.turn.toolStart(row, "subagent", { description: task.title, prompt: task.prompt, agent: task.agent })
+    const run = this.hooks.subagent(row, task)
+    this.turn.toolSucceeded(row, "Started.", { sessionID: run.sessionID })
+    this.children.set(id, { id, row, task, run, shown: new Map(), open: [], results: new Map(), toolsSinceText: false, ended: false })
+  }
+
+  private readChild(child: Child) {
+    const steps = this.steps(child.id)
+    for (const step of steps) {
+      const was = child.shown.get(step.step_index)
+      if (was === step.status) continue
+      // More to do after it was done (a message for it, a timer of its own): its session goes on.
+      if (child.ended && was === undefined) {
+        child.run = this.hooks.subagent(child.row, { ...child.task, sessionID: child.run.sessionID })
+        child.ended = false
+        child.toolsSinceText = false
+      }
+      child.shown.set(step.step_index, step.status ?? "")
+      if (was === undefined) this.show(child, step)
+      else this.settle(child, step)
+    }
+    if (!child.ended && this.isDone(child, steps)) this.end(child)
+  }
+
+  /** A step it took, in its session. */
+  private show(child: Child, step: Step) {
+    const turn = child.run.turn
+    // The task it was given, and messages for it (a timer, another agent): in its session already, or not words of its own.
+    if (step.type === "SYSTEM_MESSAGE" || step.type === "USER_INPUT") return
+    if (step.type === "PLANNER_RESPONSE") {
+      if (step.content?.trim()) {
+        if (child.toolsSinceText) {
+          turn.endStep()
+          turn.startStep()
+          child.toolsSinceText = false
+        }
+        turn.text(step.content)
+        turn.endBlock()
+      }
+      ;(step.tool_calls ?? []).forEach((call, index) => {
+        const id = `${child.id}:${step.step_index}:${index}`
+        const tool = followedTool(call)
+        turn.toolStart(id, tool.name, tool.input)
+        child.open.push(id)
+        child.toolsSinceText = true
+      })
+      return
+    }
+    // Anything else is what a tool call came back with, in order. One that goes on in the
+    // background (a timer) came back too: its record just stays "running".
+    const id = child.open[0]
+    if (!id) return
+    child.results.set(step.step_index, id)
+    this.settle(child, step)
+  }
+
+  /** A tool's result, done (or failed). */
+  private settle(child: Child, step: Step) {
+    const id = child.results.get(step.step_index)
+    if (!id || !child.open.includes(id)) return
+    child.open = child.open.filter((open) => open !== id)
+    const output = resultText(step.content)
+    if (step.status === "ERROR" || step.status === "FAILED" || step.status === "CANCELED") child.run.turn.toolFailed(id, output || "The tool failed.")
+    else child.run.turn.toolSucceeded(id, output)
+  }
+
+  /**
+   * Done: its last step is its answer, and nothing it left running in the background (a timer)
+   * is still to come back to it ("sender=<its task>" says one has).
+   */
+  private isDone(child: Child, steps = this.steps(child.id)): boolean {
+    const last = steps.at(-1)
+    if (!last || last.type !== "PLANNER_RESPONSE" || last.status !== "DONE" || last.tool_calls?.length) return false
+    return steps.every((step) => {
+      if (step.status !== "RUNNING") return true
+      const task = /task id: (\S+)/.exec(step.content ?? "")?.[1]
+      return Boolean(task && steps.some((later) => later.step_index > step.step_index && later.type === "SYSTEM_MESSAGE" && (later.content ?? "").includes(`sender=${task}`)))
+    })
+  }
+
+  private end(child: Child) {
+    child.ended = true
+    child.run.end("succeeded")
+  }
+}
+
+/** A tool call it wrote down, as the app shows the engine's. */
+function followedTool(call: { name?: string; args?: Record<string, unknown> }): { name: string; input: Record<string, unknown> } {
+  const args: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(call.args ?? {})) {
+    if (key === "toolAction" || key === "toolSummary") continue
+    args[key] = decoded(value)
+  }
+  const description = decoded(call.args?.toolSummary)
+  const name = call.name ?? "tool"
+  switch (name) {
+    case "run_command":
+      return { name: "shell", input: { command: args.CommandLine ?? args.Command, cwd: args.Cwd, description } }
+    case "view_file":
+      return { name: "read", input: { path: args.AbsolutePath ?? args.File } }
+    case "write_to_file":
+      return { name: "write", input: { path: args.TargetFile, content: args.CodeContent } }
+    case "replace_file_content":
+    case "multi_replace_file_content":
+      return { name: "edit", input: { path: args.TargetFile, description } }
+    case "grep_search":
+      return { name: "grep", input: { pattern: args.Query, path: args.SearchPath } }
+    case "list_dir":
+      return { name: "list", input: { path: args.DirectoryPath } }
+    case "find_by_name":
+      return { name: "glob", input: { pattern: args.Pattern, path: args.SearchDirectory } }
+    case "read_url_content":
+      return { name: "webfetch", input: { url: args.Url } }
+    case "search_web":
+      return { name: "websearch", input: { query: args.query ?? args.Query } }
+  }
+  return { name, input: { ...args, ...(description ? { description } : {}) } }
+}
+
+/** Its arguments are written as JSON text ("\"hi\"", "180"): as values. */
+function decoded(value: unknown): unknown {
+  if (typeof value !== "string") return value
+  try {
+    return JSON.parse(value)
+  } catch {
+    return value
+  }
+}
+
+/** A result without its "Created At: … Completed At: …" lines. */
+function resultText(content: string | undefined): string {
+  return (content ?? "").replace(/^(Created At|Completed At):[^\n]*\n?/gm, "").trim()
 }
 
 export class AntigravityAgent implements Agent {
@@ -93,7 +316,7 @@ export class AntigravityAgent implements Agent {
   }
 
   /** Its home (GEMINI_HOME): your sign-in, its settings and conversations; an added account's in its own folder. */
-  private get profile() {
+  get profile() {
     return this.instance.home ? join(this.instance.home, "profile") : join(this.root, "profile")
   }
 
@@ -329,8 +552,9 @@ export class AntigravityAgent implements Agent {
         resumes: true,
         // Google's quotas are each model's own.
         limitScope: "model",
-        subagents: antigravitySubagents,
-        hides: (call) => /\bstart_subagent\b/.test(String(call?.title ?? "")),
+        // Its subagents: from its own record of the conversation (it doesn't tell them).
+        follow: (sessionId, turn, hooks) => new AntigravityFollower(join(agent.profile, "antigravity-acp", "brain"), sessionId, turn, hooks),
+        hides: (call) => /\b(start_subagent|invoke_subagent)\b/.test(`${call?.title ?? ""} ${call?.rawInput?.name ?? ""}`),
         authMethod: () => "oauth-personal",
         async command() {
           if (!agent.isInstalled) throw new Error("Sign in to Antigravity in Settings › Accounts first.")

@@ -74,7 +74,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Claude Code, Codex, Grok and Antigravity can use the side panel's browser, show you files in the panel and message your other agents, as the engine's models do.
 - An agent of yours from Settings › Agents works in sessions with a coding agent too, and Codex's to-do list and This Session's changes show there as in any session.
 - In sessions with a coding agent, Settings › Permissions' Blocks hold as they do on the engine, and reading a .env file asks first.
-- Subagents of Claude Code and Codex show in the bar over the composer, and **Open** shows what each does in the side panel, as the engine's do; you steer or stop them in the conversation that started them. Antigravity's show there too, with their task.
+- Subagents of Claude Code, Codex and Antigravity show in the bar over the composer, and **Open** shows what each does in the side panel, as the engine's do; you steer or stop them in the conversation that started them. Codex's and Antigravity's keep going after the agent's turn when it doesn't wait for them.
 - A session on an engine model can move to a coding agent or Auto: pick one of their models, and the conversation carries on in a session of theirs, in the same tab and with the messages you'd queued, and the old one is archived.
 - A session with a coding agent can move to another model, another agent's or a provider's: the new one gets the conversation so far and carries on.
 - The refresh button in Accounts checks your coding agents again, and so does coming back to the app: one you installed or signed in to in Terminal shows without restarting.

@@ -1689,9 +1689,10 @@ ${others.map((path) => `- ${path}`).join(`
 `)}`;
     prompt.unshift({ type: "text", text });
     return new Promise((resolve2) => {
-      const active = { turn, hooks, resolve: resolve2, rpc, tools: new Map, toolsSinceText: false, ended: false, instructed, spawns: new Map };
+      const active = { turn, hooks, resolve: resolve2, rpc, tools: new Map, toolsSinceText: false, ended: false, instructed };
       this.active = active;
       turn.startStep();
+      active.follower = this.flavor.follow?.(sessionId, turn, hooks);
       const meta = this.flavor.promptMeta?.();
       rpc.request("session/prompt", { sessionId, prompt, ...meta ? { _meta: meta } : {} }).then((result) => {
         active.answered = true;
@@ -1721,12 +1722,7 @@ ${others.map((path) => `- ${path}`).join(`
       this.active = undefined;
     if (active.plan)
       active.turn.toolSucceeded(active.plan.id, "", { todos: active.plan.todos });
-    if (outcome === "succeeded") {
-      for (const spawns of active.spawns.values())
-        for (const spawn of spawns)
-          if (!spawn.ended)
-            active.turn.toolSucceeded(spawn.row, "");
-    }
+    active.follower?.stop();
     active.turn.endStep({ tokens: this.stepTokens(active) });
     if (active.hooks.signal.aborted)
       active.resolve({ outcome: "interrupted" });
@@ -1804,19 +1800,6 @@ ${others.map((path) => `- ${path}`).join(`
       return;
     const merged = { ...active.tools.get(id) ?? {}, ...Object.fromEntries(Object.entries(update).filter(([, value]) => value !== undefined && value !== null)) };
     active.tools.set(id, merged);
-    if (active.spawns.has(id))
-      return;
-    const spawned = this.flavor.subagents?.(merged);
-    if (spawned?.length) {
-      const spawns = spawned.map((task, index) => {
-        const row = `${id}:${index}`;
-        active.toolsSinceText = true;
-        turn.toolStart(row, "subagent", { description: task.title, prompt: task.prompt, agent: task.agent });
-        return { row, run: active.hooks.subagent(row, task) };
-      });
-      active.spawns.set(id, spawns);
-      return;
-    }
     if (this.flavor.hides?.(merged))
       return;
     const kuvo = kuvoTool(merged);
@@ -1844,15 +1827,6 @@ ${others.map((path) => `- ${path}`).join(`
       turn.toolFailed(id, output || "The tool failed.", metadata);
     else if (output)
       turn.toolProgress(id, metadata);
-  }
-  refused(active, callID) {
-    for (const spawn of active.spawns.get(callID) ?? []) {
-      if (spawn.ended)
-        continue;
-      spawn.ended = true;
-      active.turn.toolFailed(spawn.row, "You declined this.");
-      spawn.run.end("failed", { type: "agent", message: "You declined this." });
-    }
   }
   async request(method, params) {
     const own = this.flavor.request?.(method, params, this.context());
@@ -1882,8 +1856,6 @@ ${others.map((path) => `- ${path}`).join(`
           metadata: files.length ? { files } : undefined,
           message: call.title
         });
-        if (decision === "reject")
-          this.refused(active, call.toolCallId);
         const pick = (kinds2) => kinds2.map((kind) => options.find((option2) => option2.kind === kind)).find(Boolean);
         const option = decision === "reject" ? pick(["reject_once", "reject_always"]) : decision === "always" ? pick(["allow_always", "allow_once"]) : pick(["allow_once", "allow_always"]);
         return option ? { outcome: { outcome: "selected", optionId: option.optionId } } : { outcome: { outcome: "cancelled" } };
@@ -2208,21 +2180,209 @@ var scrubbed = [
   "PYTHONUNBUFFERED",
   "ELECTRON_RUN_AS_NODE"
 ];
-function antigravitySubagents(call) {
-  let input = call?.rawInput;
-  if (typeof input === "string") {
+function antigravitySubagents(args) {
+  let list = args?.Subagents;
+  if (typeof list === "string") {
     try {
-      input = JSON.parse(input);
-    } catch {}
+      list = JSON.parse(list);
+    } catch {
+      return [];
+    }
   }
-  const list = input?.Subagents;
-  if (!Array.isArray(list) || !list.length)
-    return;
+  if (!Array.isArray(list))
+    return [];
   return list.map((subagent) => ({
     title: String(subagent?.Role ?? subagent?.TypeName ?? "A subagent's task"),
     prompt: typeof subagent?.Prompt === "string" ? subagent.Prompt : undefined,
     agent: typeof subagent?.TypeName === "string" && subagent.TypeName !== "self" ? subagent.TypeName : undefined
   }));
+}
+
+class AntigravityFollower {
+  brain;
+  sessionId;
+  turn;
+  hooks;
+  seen = new Set;
+  pending = [];
+  children = new Map;
+  timer;
+  constructor(brain, sessionId, turn, hooks, every = 1000) {
+    this.brain = brain;
+    this.sessionId = sessionId;
+    this.turn = turn;
+    this.hooks = hooks;
+    this.timer = setInterval(() => this.read(), every);
+  }
+  stop() {
+    clearInterval(this.timer);
+    this.read();
+    for (const child of this.children.values())
+      if (!child.ended && this.isDone(child))
+        this.end(child);
+  }
+  steps(conversation) {
+    try {
+      return readFileSync7(join8(this.brain, conversation, ".system_generated", "logs", "transcript.jsonl"), "utf8").split(`
+`).flatMap((line) => {
+        try {
+          const step = JSON.parse(line);
+          return typeof step?.step_index === "number" ? [step] : [];
+        } catch {
+          return [];
+        }
+      });
+    } catch {
+      return [];
+    }
+  }
+  read() {
+    if (this.turn.isEnded)
+      return;
+    for (const step of this.steps(this.sessionId)) {
+      if (this.seen.has(step.step_index) || step.status === "RUNNING")
+        continue;
+      this.seen.add(step.step_index);
+      for (const call of step.tool_calls ?? [])
+        if (call?.name === "invoke_subagent")
+          this.pending.push(...antigravitySubagents(call.args));
+      if (step.type === "INVOKE_SUBAGENT" && typeof step.content === "string") {
+        for (const match of step.content.matchAll(/"conversationId":\s*"([^"]+)"/g))
+          this.start(match[1]);
+      }
+    }
+    for (const child of this.children.values())
+      this.readChild(child);
+  }
+  start(id) {
+    if (this.children.has(id))
+      return;
+    const task = this.pending.shift() ?? { title: "A subagent's task" };
+    const row = `agy-subagent:${id}`;
+    this.turn.toolStart(row, "subagent", { description: task.title, prompt: task.prompt, agent: task.agent });
+    const run2 = this.hooks.subagent(row, task);
+    this.turn.toolSucceeded(row, "Started.", { sessionID: run2.sessionID });
+    this.children.set(id, { id, row, task, run: run2, shown: new Map, open: [], results: new Map, toolsSinceText: false, ended: false });
+  }
+  readChild(child) {
+    const steps = this.steps(child.id);
+    for (const step of steps) {
+      const was = child.shown.get(step.step_index);
+      if (was === step.status)
+        continue;
+      if (child.ended && was === undefined) {
+        child.run = this.hooks.subagent(child.row, { ...child.task, sessionID: child.run.sessionID });
+        child.ended = false;
+        child.toolsSinceText = false;
+      }
+      child.shown.set(step.step_index, step.status ?? "");
+      if (was === undefined)
+        this.show(child, step);
+      else
+        this.settle(child, step);
+    }
+    if (!child.ended && this.isDone(child, steps))
+      this.end(child);
+  }
+  show(child, step) {
+    const turn = child.run.turn;
+    if (step.type === "SYSTEM_MESSAGE" || step.type === "USER_INPUT")
+      return;
+    if (step.type === "PLANNER_RESPONSE") {
+      if (step.content?.trim()) {
+        if (child.toolsSinceText) {
+          turn.endStep();
+          turn.startStep();
+          child.toolsSinceText = false;
+        }
+        turn.text(step.content);
+        turn.endBlock();
+      }
+      (step.tool_calls ?? []).forEach((call, index) => {
+        const id2 = `${child.id}:${step.step_index}:${index}`;
+        const tool = followedTool(call);
+        turn.toolStart(id2, tool.name, tool.input);
+        child.open.push(id2);
+        child.toolsSinceText = true;
+      });
+      return;
+    }
+    const id = child.open[0];
+    if (!id)
+      return;
+    child.results.set(step.step_index, id);
+    this.settle(child, step);
+  }
+  settle(child, step) {
+    const id = child.results.get(step.step_index);
+    if (!id || !child.open.includes(id))
+      return;
+    child.open = child.open.filter((open) => open !== id);
+    const output = resultText(step.content);
+    if (step.status === "ERROR" || step.status === "FAILED" || step.status === "CANCELED")
+      child.run.turn.toolFailed(id, output || "The tool failed.");
+    else
+      child.run.turn.toolSucceeded(id, output);
+  }
+  isDone(child, steps = this.steps(child.id)) {
+    const last2 = steps.at(-1);
+    if (!last2 || last2.type !== "PLANNER_RESPONSE" || last2.status !== "DONE" || last2.tool_calls?.length)
+      return false;
+    return steps.every((step) => {
+      if (step.status !== "RUNNING")
+        return true;
+      const task = /task id: (\S+)/.exec(step.content ?? "")?.[1];
+      return Boolean(task && steps.some((later) => later.step_index > step.step_index && later.type === "SYSTEM_MESSAGE" && (later.content ?? "").includes(`sender=${task}`)));
+    });
+  }
+  end(child) {
+    child.ended = true;
+    child.run.end("succeeded");
+  }
+}
+function followedTool(call) {
+  const args = {};
+  for (const [key, value] of Object.entries(call.args ?? {})) {
+    if (key === "toolAction" || key === "toolSummary")
+      continue;
+    args[key] = decoded(value);
+  }
+  const description = decoded(call.args?.toolSummary);
+  const name = call.name ?? "tool";
+  switch (name) {
+    case "run_command":
+      return { name: "shell", input: { command: args.CommandLine ?? args.Command, cwd: args.Cwd, description } };
+    case "view_file":
+      return { name: "read", input: { path: args.AbsolutePath ?? args.File } };
+    case "write_to_file":
+      return { name: "write", input: { path: args.TargetFile, content: args.CodeContent } };
+    case "replace_file_content":
+    case "multi_replace_file_content":
+      return { name: "edit", input: { path: args.TargetFile, description } };
+    case "grep_search":
+      return { name: "grep", input: { pattern: args.Query, path: args.SearchPath } };
+    case "list_dir":
+      return { name: "list", input: { path: args.DirectoryPath } };
+    case "find_by_name":
+      return { name: "glob", input: { pattern: args.Pattern, path: args.SearchDirectory } };
+    case "read_url_content":
+      return { name: "webfetch", input: { url: args.Url } };
+    case "search_web":
+      return { name: "websearch", input: { query: args.query ?? args.Query } };
+  }
+  return { name, input: { ...args, ...description ? { description } : {} } };
+}
+function decoded(value) {
+  if (typeof value !== "string")
+    return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+function resultText(content) {
+  return (content ?? "").replace(/^(Created At|Completed At):[^\n]*\n?/gm, "").trim();
 }
 
 class AntigravityAgent {
@@ -2480,8 +2640,8 @@ class AntigravityAgent {
       authenticatesFirst: true,
       resumes: true,
       limitScope: "model",
-      subagents: antigravitySubagents,
-      hides: (call) => /\bstart_subagent\b/.test(String(call?.title ?? "")),
+      follow: (sessionId, turn, hooks) => new AntigravityFollower(join8(agent.profile, "antigravity-acp", "brain"), sessionId, turn, hooks),
+      hides: (call) => /\b(start_subagent|invoke_subagent)\b/.test(`${call?.title ?? ""} ${call?.rawInput?.name ?? ""}`),
       authMethod: () => "oauth-personal",
       async command() {
         if (!agent.isInstalled)
@@ -4229,6 +4389,7 @@ class CodexThread {
   startedOver = false;
   toolsURL;
   spawnedSessions = new Map;
+  backgroundLanes = new Map;
   constructor(agent, session, state) {
     this.agent = agent;
     this.session = session;
@@ -4369,6 +4530,14 @@ ${others.map((path) => `- ${path}`).join(`
     };
     return new Promise((resolve2) => {
       const active = { turn, hooks, resolve: resolve2, streamed: new Set, changes: new Map, output: new Map, toolsSinceText: false, subagents: new Map, spawning: [], auto: input.auto, model: input.model.id };
+      active.resolve = (result) => {
+        if (result.outcome === "succeeded") {
+          for (const [threadID, lane] of active.subagents)
+            if (!lane.ended)
+              this.backgroundLanes.set(threadID, lane);
+        }
+        resolve2(result);
+      };
       this.active = active;
       turn.startStep();
       rpc.request("turn/start", params, 60000).then((result) => {
@@ -4384,10 +4553,10 @@ ${others.map((path) => `- ${path}`).join(`
   }
   notification(method, params) {
     const active = this.active;
-    if (!active)
-      return;
     if (params?.threadId && this.nativeID && params.threadId !== this.nativeID)
       return this.subagentNotification(active, params.threadId, method, params);
+    if (!active)
+      return;
     const turn = active.turn;
     const turnID = params?.turnId ?? params?.turn?.id;
     if (active.turnID && turnID && turnID !== active.turnID)
@@ -4486,17 +4655,29 @@ ${others.map((path) => `- ${path}`).join(`
       this.linkSubagent(active, call, threadID);
   }
   subagentNotification(active, threadID, method, params) {
-    let lane = active.subagents.get(threadID);
+    let lane = active?.subagents.get(threadID);
+    const kept2 = this.backgroundLanes.get(threadID);
+    if (!lane && kept2) {
+      lane = kept2;
+      if (active) {
+        this.backgroundLanes.delete(threadID);
+        active.subagents.set(threadID, kept2);
+      }
+    }
+    if (!active && !lane)
+      return;
     if (!lane) {
+      if (!active)
+        return;
       const before = this.spawnedSessions.get(threadID);
       if (!before)
         return;
-      const run2 = active.hooks.subagent(before.call, { title: before.title, sessionID: before.sessionID });
+      const run2 = active.hooks.subagent(before.call, { title: before.title, sessionID: before.sessionID, background: true });
       lane = { turn: run2.turn, streamed: new Set, changes: new Map, output: new Map, toolsSinceText: false, run: run2, call: before.call, title: before.title, ended: false };
       active.subagents.set(threadID, lane);
     }
     if (lane.ended) {
-      if (method !== "turn/started")
+      if (method !== "turn/started" || !active)
         return;
       lane = this.continueSubagent(active, threadID, lane);
     }
@@ -4530,9 +4711,21 @@ ${others.map((path) => `- ${path}`).join(`
       case "turn/completed": {
         const status = params.turn?.status;
         this.endSubagent(lane, status === "failed" ? "failed" : status === "interrupted" ? "interrupted" : "succeeded", params.turn?.error?.message);
+        this.backgroundLanes.delete(threadID);
         return;
       }
     }
+  }
+  spawned(main, item) {
+    const threadID = item.agentThreadId;
+    if (typeof threadID !== "string" || main.subagents.has(threadID))
+      return;
+    const title = agentTitle(item.agentPath) || "A spawned agent's task";
+    main.toolsSinceText = true;
+    if (!main.turn.hasTool(item.id))
+      main.turn.toolStart(item.id, "subagent", { description: title, background: true });
+    const lane = this.linkSubagent(main, item.id, threadID);
+    main.turn.toolSucceeded(item.id, "Started.", { sessionID: lane.run.sessionID });
   }
   linkSubagent(active, call, threadID, prompt) {
     const known = active.subagents.get(threadID);
@@ -4541,7 +4734,7 @@ ${others.map((path) => `- ${path}`).join(`
     active.spawning = active.spawning.filter((waiting) => waiting !== call);
     const input = active.turn.toolInput(call) ?? {};
     const title = String(input.description ?? "") || "A spawned agent's task";
-    const run2 = active.hooks.subagent(call, { title, prompt: prompt ?? input.prompt });
+    const run2 = active.hooks.subagent(call, { title, prompt: prompt ?? input.prompt, background: true });
     const lane = { turn: run2.turn, streamed: new Set, changes: new Map, output: new Map, toolsSinceText: false, run: run2, call, title, ended: false };
     active.subagents.set(threadID, lane);
     this.spawnedSessions.set(threadID, { call, title, sessionID: run2.sessionID });
@@ -4549,7 +4742,7 @@ ${others.map((path) => `- ${path}`).join(`
     return lane;
   }
   continueSubagent(active, threadID, lane) {
-    const run2 = active.hooks.subagent(lane.call, { title: lane.title, sessionID: lane.run.sessionID });
+    const run2 = active.hooks.subagent(lane.call, { title: lane.title, sessionID: lane.run.sessionID, background: true });
     const next = { turn: run2.turn, streamed: new Set, changes: new Map, output: new Map, toolsSinceText: false, run: run2, call: lane.call, title: lane.title, ended: false };
     active.subagents.set(threadID, next);
     return next;
@@ -4573,7 +4766,16 @@ ${others.map((path) => `- ${path}`).join(`
     const active = lane;
     const turn = lane.turn;
     switch (item?.type) {
+      case "sleep":
+        active.toolsSinceText = true;
+        turn.toolStart(item.id, "sleep", { seconds: Math.round((item.durationMs ?? 0) / 1000) });
+        return;
       case "collabAgentToolCall": {
+        if (item.tool === "wait") {
+          active.toolsSinceText = true;
+          turn.toolStart(item.id, "wait", { description: "Waiting for its subagents" });
+          return;
+        }
         if (item.tool !== "spawnAgent" || !this.active || lane !== this.active)
           return;
         const main = this.active;
@@ -4588,6 +4790,8 @@ ${others.map((path) => `- ${path}`).join(`
       }
       case "subAgentActivity": {
         const main = this.active;
+        if (main && lane === main && item.kind === "started")
+          return this.spawned(main, item);
         const spawned = main && lane === main ? main.subagents.get(item.agentThreadId) : undefined;
         if (spawned && (item.kind === "completed" || item.kind === "interrupted"))
           this.endSubagent(spawned, item.kind === "completed" ? "succeeded" : "interrupted");
@@ -4622,7 +4826,16 @@ ${others.map((path) => `- ${path}`).join(`
     const active = lane;
     const turn = lane.turn;
     switch (item?.type) {
+      case "sleep":
+        if (turn.hasTool(item.id))
+          turn.toolSucceeded(item.id, `Waited ${Math.round((item.durationMs ?? 0) / 1000)} seconds.`);
+        return;
       case "collabAgentToolCall": {
+        if (item.tool === "wait") {
+          if (turn.hasTool(item.id))
+            item.status === "failed" ? turn.toolFailed(item.id, "It stopped waiting.") : turn.toolSucceeded(item.id, "Done waiting.");
+          return;
+        }
         if (item.tool !== "spawnAgent" || !this.active || lane !== this.active)
           return;
         const main = this.active;
@@ -4636,6 +4849,8 @@ ${others.map((path) => `- ${path}`).join(`
       }
       case "subAgentActivity": {
         const main = this.active;
+        if (main && lane === main && item.kind === "started")
+          return this.spawned(main, item);
         const spawned = main && lane === main ? main.subagents.get(item.agentThreadId) : undefined;
         if (spawned && (item.kind === "completed" || item.kind === "interrupted"))
           this.endSubagent(spawned, item.kind === "completed" ? "succeeded" : "interrupted");
@@ -4814,10 +5029,18 @@ ${others.map((path) => `- ${path}`).join(`
     }
   }
   close() {
+    for (const lane of this.backgroundLanes.values())
+      this.endSubagent(lane, "interrupted");
+    this.backgroundLanes.clear();
     this.agent.forget(this.session.id);
     if (this.nativeID && this.loaded)
       this.agent.rpc().then((rpc) => rpc.request("thread/unsubscribe", { threadId: this.nativeID }).catch(() => {}), () => {});
   }
+}
+function agentTitle(path) {
+  const last2 = typeof path === "string" ? path.split("/").filter(Boolean).pop() ?? "" : "";
+  const words = last2.replace(/[_-]+/g, " ").trim();
+  return words ? words[0].toUpperCase() + words.slice(1) : "";
 }
 function shadowHome(home) {
   const own = join11(homedir2(), ".codex");

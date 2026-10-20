@@ -6,7 +6,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, sy
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { AcpThread } from "../src/acp"
-import { antigravitySubagents } from "../src/agents/antigravity"
+import { AntigravityFollower } from "../src/agents/antigravity"
 import type { Agent, RunInput, RunResult, Thread, TurnHooks } from "../src/agent"
 import { Auto } from "../src/auto"
 import { subscribe } from "../src/events"
@@ -1276,12 +1276,13 @@ describe("subagents", () => {
     expect(() => sessions.get(child)).toThrow()
   })
 
-  test("Antigravity's subagents each get a row and a session, done when its turn is", async () => {
-    const folder = mkdtempSync(join(root, "agy-"))
+  /** An ACP agent that says only what Antigravity says over its protocol, and the record it keeps (`brain`). */
+  function antigravityLike(folder: string, brain: string, holdMs: number) {
     const script = join(folder, "agent.js")
     writeFileSync(
       script,
       `let buffer = ""
+let prompt
 const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n")
 const update = (value) => send({ method: "session/update", params: { sessionId: "s1", update: value } })
 process.stdin.on("data", (chunk) => {
@@ -1295,12 +1296,10 @@ process.stdin.on("data", (chunk) => {
     if (message.method === "initialize") send({ id: message.id, result: { protocolVersion: 1, authMethods: [] } })
     else if (message.method === "session/new") send({ id: message.id, result: { sessionId: "s1" } })
     else if (message.method === "session/prompt") {
-      update({ sessionUpdate: "tool_call", toolCallId: "inv1", title: "Run invoke_subagent?", kind: "other", status: "pending", rawInput: { Subagents: [{ Role: "Timer Worker 1", TypeName: "self", Prompt: "Wait 3 minutes" }, { Role: "Timer Worker 2", TypeName: "self", Prompt: "Wait 3 minutes" }] } })
-      update({ sessionUpdate: "tool_call", toolCallId: "s1:2", title: "Running start_subagent", kind: "other", status: "in_progress", rawInput: {} })
-      update({ sessionUpdate: "tool_call_update", toolCallId: "s1:2", status: "completed", rawOutput: "Launch subagents" })
-      update({ sessionUpdate: "tool_call_update", toolCallId: "inv1", status: "failed", rawOutput: "Tool call was approved but never executed." })
-      update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Both finished." } })
-      send({ id: message.id, result: { stopReason: "end_turn" } })
+      update({ sessionUpdate: "tool_call", toolCallId: "s1:1", title: "Running start_subagent", kind: "other", status: "in_progress", rawInput: {} })
+      update({ sessionUpdate: "tool_call_update", toolCallId: "s1:1", status: "completed", rawOutput: "Start subagents" })
+      update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Started them." } })
+      setTimeout(() => send({ id: message.id, result: { stopReason: "end_turn" } }), ${holdMs})
     } else if (message.id !== undefined) send({ id: message.id, result: {} })
   }
 })
@@ -1321,7 +1320,7 @@ process.stdin.on("data", (chunk) => {
             authMethod: () => undefined,
             command: async () => ({ argv: [process.execPath, script], cwd: folder }),
             selectModel: async () => {},
-            subagents: antigravitySubagents,
+            follow: (sessionId, turn, hooks) => new AntigravityFollower(brain, sessionId, turn, hooks, 25),
             hides: (call) => /\bstart_subagent\b/.test(String(call?.title ?? "")),
           },
           session,
@@ -1329,79 +1328,84 @@ process.stdin.on("data", (chunk) => {
           "Gamma",
         ),
     }
+    return agy
+  }
+
+  /** A conversation's record, as Antigravity writes it. */
+  function record(brain: string, conversation: string, steps: Record<string, unknown>[]) {
+    const folder = join(brain, conversation, ".system_generated", "logs")
+    mkdirSync(folder, { recursive: true })
+    writeFileSync(join(folder, "transcript.jsonl"), steps.map((step, index) => JSON.stringify({ step_index: index, status: "DONE", ...step })).join("\n") + "\n")
+  }
+
+  test("Antigravity's subagents, from its own record: a row and a session each, with their steps", async () => {
+    const folder = mkdtempSync(join(root, "agy-"))
+    const brain = join(folder, "brain")
+    record(brain, "s1", [
+      { source: "USER_EXPLICIT", type: "USER_INPUT", content: "spawn two" },
+      { type: "PLANNER_RESPONSE", tool_calls: [{ name: "invoke_subagent", args: { Subagents: JSON.stringify([{ Role: "Timer Worker 1", TypeName: "self", Prompt: "Wait, then say hi" }, { Role: "Timer Worker 2", TypeName: "self", Prompt: "Wait too" }]) } }] },
+      { type: "INVOKE_SUBAGENT", content: 'Created the following subagents:\n{ "conversationId":  "c1" }\n{ "conversationId":  "c2" }' },
+      { type: "PLANNER_RESPONSE", content: "Started them." },
+    ])
+    // A timer of its own (its record stays "running"), then a message back once it fires.
+    record(brain, "c1", [
+      { type: "SYSTEM_MESSAGE", content: "Wait, then say hi" },
+      { type: "PLANNER_RESPONSE", tool_calls: [{ name: "schedule", args: { DurationSeconds: "1", toolSummary: '"Schedule timer"' } }] },
+      { type: "GENERIC", status: "RUNNING", content: "Created At: x\nTool is running as a background task with task id: c1/task-2" },
+      { type: "PLANNER_RESPONSE", content: "Waiting for the timer." },
+      { type: "SYSTEM_MESSAGE", content: "[Message] sender=c1/task-2 content=done" },
+      { type: "PLANNER_RESPONSE", tool_calls: [{ name: "send_message", args: { Message: '"hi"', Recipient: '"s1"' } }] },
+      { type: "GENERIC", content: "Created At: x\nCompleted At: y\nMessage sent." },
+      { type: "PLANNER_RESPONSE", content: "hi" },
+    ])
+    // The second is still at work as the turn ends.
+    record(brain, "c2", [
+      { type: "SYSTEM_MESSAGE", content: "Wait too" },
+      { type: "PLANNER_RESPONSE", tool_calls: [{ name: "run_command", args: { CommandLine: '"sleep 100"' } }] },
+      { type: "GENERIC", status: "RUNNING", content: "Running…" },
+    ])
+    const agy = antigravityLike(folder, brain, 300)
     sessions = new Sessions(store, { find: (provider: string | undefined) => (provider === "gamma" ? agy : undefined) } as unknown as Roster, auto)
     const id = sessions.create({ model: { providerID: "gamma", id: "one" }, location: { directory: folder } }).id
     send(id, "spawn two")
     await settled(id, 1, 15_000)
     const step = sessions.messages(id).find((message) => message.type === "assistant") as any
-    const tools = step.content.filter((content: any) => content.type === "tool")
-    expect(tools.map((tool: any) => tool.name)).toEqual(["subagent", "subagent"])
-    expect(tools.map((tool: any) => tool.state.status)).toEqual(["completed", "completed"])
-    const children = tools.map((tool: any) => tool.state.metadata.sessionID)
-    expect(children.map((child: string) => sessions.get(child).title)).toEqual(["Timer Worker 1", "Timer Worker 2"])
-    expect(sessions.messages(children[0])[0]).toMatchObject({ type: "user", text: "Wait 3 minutes" })
-    expect(sessions.messages(children[0]).at(-1)).toMatchObject({ type: "idle", outcome: "succeeded" })
+    const rows = step.content.filter((content: any) => content.type === "tool")
+    // Antigravity's own "start_subagent" isn't a row: the subagents are.
+    expect(rows.map((row: any) => [row.name, row.state.input.description])).toEqual([
+      ["subagent", "Timer Worker 1"],
+      ["subagent", "Timer Worker 2"],
+    ])
+    const [first, second] = rows.map((row: any) => row.state.metadata.sessionID)
+    expect(sessions.messages(first)[0]).toMatchObject({ type: "user", text: "Wait, then say hi" })
+    const tools = sessions.messages(first).flatMap((message: any) => (message.type === "assistant" ? message.content.filter((content: any) => content.type === "tool") : []))
+    expect(tools.map((tool: any) => [tool.name, tool.state.status])).toEqual([
+      ["schedule", "completed"],
+      ["send_message", "completed"],
+    ])
+    expect(texts(first)).toContain("hi")
+    expect(sessions.messages(first).at(-1)).toMatchObject({ type: "idle", outcome: "succeeded" })
+    const working = sessions.messages(second).find((message) => message.type === "assistant") as any
+    expect(working.content.find((content: any) => content.type === "tool")).toMatchObject({ name: "shell", state: { input: { command: "sleep 100" } } })
+    expect(sessions.active()).not.toContain(second)
   })
 
-  test("Antigravity's subagents you say no to end as not run", async () => {
+  test("Antigravity's subagents it didn't start (you said no) get no rows", async () => {
     const folder = mkdtempSync(join(root, "agy-"))
-    const script = join(folder, "agent.js")
-    writeFileSync(
-      script,
-      `let buffer = ""
-let prompt
-const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n")
-const update = (value) => send({ method: "session/update", params: { sessionId: "s1", update: value } })
-process.stdin.on("data", (chunk) => {
-  buffer += chunk
-  let at
-  while ((at = buffer.indexOf("\\n")) >= 0) {
-    const line = buffer.slice(0, at)
-    buffer = buffer.slice(at + 1)
-    if (!line.trim()) continue
-    const message = JSON.parse(line)
-    if (message.method === "initialize") send({ id: message.id, result: { protocolVersion: 1, authMethods: [] } })
-    else if (message.method === "session/new") send({ id: message.id, result: { sessionId: "s1" } })
-    else if (message.method === "session/prompt") {
-      prompt = message.id
-      update({ sessionUpdate: "tool_call", toolCallId: "inv1", title: "Run invoke_subagent?", kind: "other", status: "pending", rawInput: { Subagents: [{ Role: "Worker", TypeName: "self", Prompt: "Do it" }] } })
-      send({ id: 900, method: "session/request_permission", params: { sessionId: "s1", toolCall: { toolCallId: "inv1" }, options: [{ optionId: "yes", kind: "allow_once" }, { optionId: "no", kind: "reject_once" }] } })
-    } else if (message.id === 900) {
-      update({ sessionUpdate: "tool_call_update", toolCallId: "inv1", status: "failed", rawOutput: "The user declined." })
-      update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Fine." } })
-      send({ id: prompt, result: { stopReason: "end_turn" } })
-    } else if (message.id !== undefined) send({ id: message.id, result: {} })
-  }
-})
-`,
-    )
-    const agy: Agent = {
-      id: "antigravity",
-      providerID: "gamma",
-      name: "Gamma",
-      instance: { id: "default" },
-      methods: () => [],
-      account: async () => ({ installed: true, signedIn: true }),
-      models: async () => [],
-      thread: (session, state) =>
-        new AcpThread(
-          { fileSystem: false, authMethod: () => undefined, command: async () => ({ argv: [process.execPath, script], cwd: folder }), selectModel: async () => {}, subagents: antigravitySubagents },
-          session,
-          state,
-          "Gamma",
-        ),
-    }
+    const brain = join(folder, "brain")
+    record(brain, "s1", [
+      { source: "USER_EXPLICIT", type: "USER_INPUT", content: "spawn one" },
+      { type: "PLANNER_RESPONSE", tool_calls: [{ name: "invoke_subagent", args: { Subagents: [{ Role: "Worker", Prompt: "Do it" }] } }] },
+      { type: "PLANNER_RESPONSE", content: "Fine." },
+    ])
+    const agy = antigravityLike(folder, brain, 100)
     sessions = new Sessions(store, { find: (provider: string | undefined) => (provider === "gamma" ? agy : undefined) } as unknown as Roster, auto)
     const id = sessions.create({ model: { providerID: "gamma", id: "one" }, location: { directory: folder } }).id
-    sessions.update(id, { permissions: [{ action: "*", resource: "*", effect: "ask" }] })
     send(id, "spawn one")
-    await until(() => sessions.permissions(id).length === 1, 15_000)
-    sessions.replyPermission(id, sessions.permissions(id)[0].id, "reject")
     await settled(id, 1, 15_000)
     const step = sessions.messages(id).find((message) => message.type === "assistant") as any
-    const row = step.content.find((content: any) => content.type === "tool")
-    expect(row.state.status).toBe("error")
-    expect(sessions.messages(row.state.metadata.sessionID).at(-1)).toMatchObject({ type: "idle", outcome: "failed" })
+    expect(step.content.filter((content: any) => content.type === "tool")).toHaveLength(0)
+    expect(sessions.list(folder, id)).toHaveLength(0)
   })
 
   test("a subagent still at work when the turn is stopped is stopped with it", async () => {

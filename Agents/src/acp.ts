@@ -58,9 +58,12 @@ export interface AcpFlavor {
   restartAfterInterrupt?: boolean
   /** What a usage limit holds back: the whole account (the default), or the model. */
   limitScope?: "provider" | "model"
-  /** The subagents a tool call starts, when it's one that does (Antigravity's invoke_subagent). */
-  subagents?(call: any): SubagentTask[] | undefined
-  /** A tool call that isn't worth a row (Antigravity's start_subagent, which only says it started). */
+  /**
+   * Follows what the agent writes down itself but doesn't tell (Antigravity's subagents and their
+   * steps), for the turn under way; stopped, after a last look, as the turn ends.
+   */
+  follow?(sessionId: string, turn: Turn, hooks: TurnHooks): { stop(): void } | undefined
+  /** A tool call that isn't worth a row (Antigravity's start of subagents, which `follow` shows). */
   hides?(call: any): boolean
   /** Changes when the agent's program was updated: a process started before starts again. */
   program?(): number
@@ -93,8 +96,8 @@ interface Active {
   answered?: boolean
   /** How much of its context the conversation fills, as the agent last said (usage_update). */
   used?: number
-  /** Subagents its tool calls started, by the call that started them; their rows, one each. */
-  spawns: Map<string, { row: string; run: SubagentRun; ended?: boolean }[]>
+  /** What follows the agent's own record of the turn, when it keeps one. */
+  follower?: { stop(): void }
 }
 
 export class AcpThread implements Thread {
@@ -275,9 +278,10 @@ export class AcpThread implements Thread {
     if (others.length) text += `\n\nAttached files:\n${others.map((path) => `- ${path}`).join("\n")}`
     prompt.unshift({ type: "text", text })
     return new Promise<RunResult>((resolve) => {
-      const active: Active = { turn, hooks, resolve, rpc, tools: new Map(), toolsSinceText: false, ended: false, instructed, spawns: new Map() }
+      const active: Active = { turn, hooks, resolve, rpc, tools: new Map(), toolsSinceText: false, ended: false, instructed }
       this.active = active
       turn.startStep()
+      active.follower = this.flavor.follow?.(sessionId, turn, hooks)
       const meta = this.flavor.promptMeta?.()
       rpc.request("session/prompt", { sessionId, prompt, ...(meta ? { _meta: meta } : {}) }).then(
         (result: any) => {
@@ -308,8 +312,7 @@ export class AcpThread implements Thread {
     }
     if (this.active === active) this.active = undefined
     if (active.plan) active.turn.toolSucceeded(active.plan.id, "", { todos: active.plan.todos })
-    // Its subagents are done when it is (it says no more of them).
-    if (outcome === "succeeded") for (const spawns of active.spawns.values()) for (const spawn of spawns) if (!spawn.ended) active.turn.toolSucceeded(spawn.row, "")
+    active.follower?.stop()
     active.turn.endStep({ tokens: this.stepTokens(active) })
     if (active.hooks.signal.aborted) active.resolve({ outcome: "interrupted" })
     // It had the message when it said something about it, or answered the prompt itself.
@@ -389,21 +392,6 @@ export class AcpThread implements Thread {
     if (!id) return
     const merged = { ...(active.tools.get(id) ?? {}), ...Object.fromEntries(Object.entries(update).filter(([, value]) => value !== undefined && value !== null)) }
     active.tools.set(id, merged)
-    // One that starts subagents: a row for each, with a session of its own, as the engine's do.
-    // (Antigravity says the call itself "failed" even when its subagents run: they're started by
-    // another call. So its own updates don't change them.)
-    if (active.spawns.has(id)) return
-    const spawned = this.flavor.subagents?.(merged)
-    if (spawned?.length) {
-      const spawns = spawned.map((task, index) => {
-        const row = `${id}:${index}`
-        active.toolsSinceText = true
-        turn.toolStart(row, "subagent", { description: task.title, prompt: task.prompt, agent: task.agent })
-        return { row, run: active.hooks.subagent(row, task) }
-      })
-      active.spawns.set(id, spawns)
-      return
-    }
     if (this.flavor.hides?.(merged)) return
     const kuvo = kuvoTool(merged)
     if (!turn.hasTool(id)) {
@@ -425,16 +413,6 @@ export class AcpThread implements Thread {
     if (merged.status === "completed") turn.toolSucceeded(id, output, metadata)
     else if (merged.status === "failed") turn.toolFailed(id, output || "The tool failed.", metadata)
     else if (output) turn.toolProgress(id, metadata)
-  }
-
-  /** A call's subagents, refused: their rows and sessions end as not run. */
-  private refused(active: Active, callID: string) {
-    for (const spawn of active.spawns.get(callID) ?? []) {
-      if (spawn.ended) continue
-      spawn.ended = true
-      active.turn.toolFailed(spawn.row, "You declined this.")
-      spawn.run.end("failed", { type: "agent", message: "You declined this." })
-    }
   }
 
   private async request(method: string, params: any): Promise<unknown> {
@@ -464,8 +442,6 @@ export class AcpThread implements Thread {
           metadata: files.length ? { files } : undefined,
           message: call.title,
         })
-        // Subagents you said no to never run.
-        if (decision === "reject") this.refused(active, call.toolCallId)
         const pick = (kinds: string[]) => kinds.map((kind) => options.find((option) => option.kind === kind)).find(Boolean)
         const option = decision === "reject" ? pick(["reject_once", "reject_always"]) : decision === "always" ? pick(["allow_always", "allow_once"]) : pick(["allow_once", "allow_always"])
         return option ? { outcome: { outcome: "selected", optionId: option.optionId } } : { outcome: { outcome: "cancelled" } }
