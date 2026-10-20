@@ -230,12 +230,12 @@ struct RulesEditor: View {
                 if let rule = items[index].rule {
                     RuleRow(rule: rule, actions: actions, effects: effects, prompt: prompt ?? Self.example(for: rule.action),
                             problem: { Self.problem(of: $0, hiding: hiding) }) { changed in
-                        change(index, to: changed)
+                        change(index, from: rule, to: changed)
                     } typed: { text in
                         // A draft keeps up with every key, for its Create; without spaces around
                         // the pattern there (they're the end of a word you're typing).
                         let typed = PermissionRule(action: rule.action, resource: text, effect: rule.effect)
-                        if config.isDraft, Self.problem(of: typed, hiding: hiding) == nil, text != rule.resource { change(index, to: typed) }
+                        if config.isDraft, Self.problem(of: typed, hiding: hiding) == nil, text != rule.resource { change(index, from: rule, to: typed) }
                     }
                 }
             }
@@ -273,10 +273,14 @@ struct RulesEditor: View {
         }
     }
 
-    private func change(_ index: Int, to changed: PermissionRule?) {
+    /// Changes `rule`, at `index` when its row was drawn: where it is now, as the list may have
+    /// moved meanwhile (a choice above added a rule, one was removed), and not at all if it's gone.
+    /// A row saving what you typed as it goes away wrote over whatever had come to its place.
+    private func change(_ index: Int, from rule: PermissionRule, to changed: PermissionRule?) {
         var items = config.items(path)
-        guard items.indices.contains(index) else { return }
-        if let changed { items[index] = changed.json } else { items.remove(at: index) }
+        let at = items.indices.contains(index) && items[index].rule == rule ? index : items.firstIndex { $0.rule == rule }
+        guard let at else { return }
+        if let changed { items[at] = changed.json } else { items.remove(at: at) }
         config.setItems(items, at: path)
     }
 
