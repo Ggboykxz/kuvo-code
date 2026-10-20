@@ -535,6 +535,18 @@ const checks = [
     assert.match(css, /\.remove-button:active \{ opacity: \.7; \}/);
   }],
 
+  ["the sidebar names the project, with the Mac's drawn folder", ({ app, css, rule }) => {
+    // SidebarView.swift:795-845: the project's folder (open or closed) and its name, with
+    // the compose button showing under the pointer.
+    assert.match(app, /<FolderIcon open=\{projectOpen\}/);
+    assert.match(app, /className="project-row"/);
+    assert.match(app, /className="project-compose"/);
+    assert.match(app, /title="New Session"/);
+    assert.match(rule(".project-row {"), /height: 32px/);
+    assert.match(rule(".project-icon {"), /flex: 0 0 18px/);
+    assert.match(css, /\.project-compose \{[\s\S]*?opacity: 0;/);
+  }],
+
   ["the window is built by Next.js, and exported as the static files the harness serves", ({ next, page, build }) => {
     // The app talks to the engine over the harness's API: there is no server to render
     // it, so the export is the whole app.

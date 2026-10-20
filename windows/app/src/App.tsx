@@ -45,7 +45,7 @@ import {
 import { Settings, settingsPageTitle } from "./Settings";
 import { DiffModal, Drawer, Palette, Picker, Toast } from "./Overlays";
 import { Shimmer } from "./components/ai-elements/shimmer";
-import { PromptMark, Symbol } from "./components/symbols";
+import { FolderIcon, PromptMark, Symbol } from "./components/symbols";
 import { motion } from "motion/react";
 import { macSpringOrStill } from "./motion";
 
@@ -990,6 +990,12 @@ async function toggleSplit() {
 
 // ---- The sidebar ----
 
+/// The name of a folder, as the Mac's project row shows it.
+function folderName(path: string) {
+  const name = path.replace(/[/\\]+$/, "").split(/[/\\]+/).pop() ?? path;
+  return name || path;
+}
+
 /// A menu, where the Mac has one (RightClickMenu.swift:4-65): the items, and the place
 /// it was asked for.
 function ContextMenu({ x, y, items, onClose }: {
@@ -1013,6 +1019,8 @@ function Sidebar() {
   const visible = state.sessions
     .filter(session => !archived(session))
     .filter(s => (query ? (s.title || "").toLowerCase().includes(query) : true));
+  // Whether the project is open — the Mac's projects fold (SidebarView.swift:798).
+  const [projectOpen, setProjectOpen] = useState(true);
   // A session being renamed, in its row where Rename was chosen (SidebarView.swift:41-52),
   // and the row's own menu, which is where the Mac offers it (SidebarView.swift:586).
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -1028,6 +1036,32 @@ function Sidebar() {
   };
   return (
     <aside>
+      {/* The project, its folder and its name (SidebarView.swift:795-845): the sessions fold
+          under it, and the compose button shows under the pointer. */}
+      {state.project ? (
+        <div className="sidebar-project">
+          <button
+            id="project-row"
+            className="project-row"
+            onClick={() => { setProjectOpen(open => !open); render(); }}
+            aria-expanded={projectOpen}
+          >
+            <FolderIcon open={projectOpen} size={16} className="project-icon" />
+            <span className="project-name">{folderName(state.project)}</span>
+            <span
+              className="project-compose"
+              title="New Session"
+              role="button"
+              tabIndex={0}
+              onClick={event => { event.stopPropagation(); void newSession(); }}
+              onKeyDown={event => { if (event.key === "Enter") { event.stopPropagation(); void newSession(); } }}
+            >
+              <Symbol name="square.and.pencil" size={13} />
+            </span>
+          </button>
+          {projectOpen ? null : <div className="project-closed" />}
+        </div>
+      ) : null}
       <button id="new-session" className="sidebar-new" onClick={() => void newSession()}>
         <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
           <path d="M3 12.5L3.7 9.6 9.9 3.4l2.7 2.7-6.2 6.2z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
@@ -1063,7 +1097,7 @@ function Sidebar() {
         ) : null}
       </label>
       <div className="sidebar-scroll">
-      <ul id="sessions">
+      <ul id="sessions" hidden={!projectOpen}>
         {visible.map(session => {
           const running = state.session?.id === session.id && state.transcript?.running;
           const unread = Boolean(session.time?.idle && session.time?.viewed && session.time.idle > session.time.viewed && session.id !== state.session?.id);

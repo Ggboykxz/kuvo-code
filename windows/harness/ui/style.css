@@ -3239,3 +3239,39 @@ button > svg, .small > svg, .session-delete > svg, .keycap-clear > svg { display
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+/* The project, its folder and its name (SidebarView.swift:795-845): the sessions fold
+   under it, and the compose button shows under the pointer, in place. */
+.sidebar-project { position: relative; }
+.project-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-row);
+  background: transparent;
+  color: var(--ink);
+  font-size: 14px;
+  text-align: left;
+}
+.project-row:hover { background: var(--hover); }
+.project-icon { flex: 0 0 18px; color: var(--ink-soft); }
+.project-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-compose {
+  flex: 0 0 26px;
+  width: 26px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: var(--ink-soft);
+  opacity: 0;
+  transition: opacity var(--motion-hover) var(--ease-hover);
+}
+.project-row:hover .project-compose,
+.project-row:focus-within .project-compose { opacity: 1; }
+.project-compose:hover { background: var(--hover); color: var(--ink); }

@@ -24,7 +24,8 @@ export type SymbolName =
   | "doc"
   | "magnifyingglass"
   | "arrow.triangle.branch"
-  | "arrow.uturn.backward";
+  | "arrow.uturn.backward"
+  | "square.and.pencil";
 
 /// The paths, on the 16 pt grid, in the Mac's own order.
 const PATHS: Record<SymbolName, string[]> = {
@@ -41,6 +42,7 @@ const PATHS: Record<SymbolName, string[]> = {
   "magnifyingglass": ["M7 2.6a4.4 4.4 0 1 0 0 8.8 4.4 4.4 0 0 0 0-8.8Z", "M10.4 10.4L13.4 13.4"],
   "arrow.triangle.branch": ["M5.2 2.6v7.2a2.6 2.6 0 0 0 2.6 2.6h4.4", "M5.2 2.6L2.6 5.2M5.2 2.6l2.6 2.6", "M11 9.6h1.2a1.4 1.4 0 0 0 1.4-1.4V4.4", "M11 9.6L9.4 8M11 9.6l1.6-1.6"],
   "arrow.uturn.backward": ["M4 6.6h5.4a3.4 3.4 0 0 1 0 6.8H6.6", "M6.6 3.6L3.4 6.6l3.2 3"],
+  "square.and.pencil": ["M9.2 3.2h3.6v3.6", "M9.4 6.4L4.2 11.6l-2 .6.6-2 .4.6.6-2-1.4.4 4.2-4.2z"],
 };
 
 export interface SymbolProps {
