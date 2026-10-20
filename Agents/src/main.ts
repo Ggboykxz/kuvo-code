@@ -10,7 +10,7 @@
 // KUVO_AGENTS_PASSWORD, reaches the engine on KUVO_ENGINE_PORT with OPENCODE_PASSWORD, and lives
 // as long as the engine (KUVO_ENGINE_PID) does, the Mac connected or not.
 
-import { mkdirSync, readdirSync, rmSync } from "node:fs"
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { Accounts, parseProvider } from "./accounts"
 import { Auto } from "./auto"
@@ -48,8 +48,11 @@ if (onMachine) {
     if (own) process.env[name] = own
     else delete process.env[name]
   }
-  // Kuvo Code's commands (kuvo-wake) first, as for the engine.
+  // Kuvo Code's commands (kuvo-wake) first, as for the engine, and where bots' and sessions'
+  // wake-ups are kept.
   process.env.KUVO_BIN = join(machineHome!, "bin")
+  process.env.KUVO_BOTS ??= join(machineHome!, "bots")
+  process.env.KUVO_WAKES ??= join(machineHome!, "wakes")
   // Nor do they get what the engine starts with: its settings, with keys in them, nor these.
   for (const name of ["OPENCODE_CONFIG_CONTENT", "OPENCODE_CONFIG", "OPENCODE_CLIENT", "KUVO_AGENTS_PASSWORD", "KUVO_AGENTS_PORT", "KUVO_ENGINE_PORT", "KUVO_ENGINE_PID"]) delete process.env[name]
 }
@@ -66,6 +69,8 @@ try {
 
 // The engine's binary runs this as Bun when told to: the agents it starts aren't told so.
 delete process.env.BUN_BE_BUN
+// A wake-up an agent's command schedules (kuvo-wake) comes back to this bridge's session.
+process.env.KUVO_WAKE_VIA = "bridge"
 // Nor do they get its password: every agent, and each command one runs, gets this environment,
 // and an `env` there would print it, for the model to read and any process here to use.
 delete process.env.OPENCODE_PASSWORD
@@ -106,12 +111,23 @@ const server = Bun.serve({
   fetch: handler({ roster, sessions, auto, link, password, version }),
 })
 console.log(JSON.stringify({ url: `http://127.0.0.1:${server.port}` }))
+// On a machine, where it's reached, for kuvo-wake and Kuvo Code's tools there (as the engine's
+// launch writes engine.json): only this user can read it, and it goes when the bridge does.
+const record = onMachine ? join(machineHome!, "run", "bridge.json") : undefined
+if (record) {
+  writeFileSync(record + ".new", JSON.stringify({ pid: process.pid, port: server.port, password }), { mode: 0o600 })
+  renameSync(record + ".new", record)
+}
 
 let stopping = false
 function stop() {
   if (stopping) return
   stopping = true
   cancelSignIns()
+  // (Unless a newer bridge has put its own there.)
+  try {
+    if (record && JSON.parse(readFileSync(record, "utf8")).pid === process.pid) rmSync(record, { force: true })
+  } catch {}
   sessions.closeAll()
   store.flush()
   server.stop(true)

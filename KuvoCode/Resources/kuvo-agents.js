@@ -1,6 +1,6 @@
 // @bun
 // Agents/src/main.ts
-import { mkdirSync as mkdirSync13, readdirSync as readdirSync6, rmSync as rmSync8 } from "fs";
+import { mkdirSync as mkdirSync13, readdirSync as readdirSync6, readFileSync as readFileSync15, renameSync as renameSync6, rmSync as rmSync8, writeFileSync as writeFileSync11 } from "fs";
 import { join as join16 } from "path";
 
 // Agents/src/accounts.ts
@@ -10440,6 +10440,8 @@ if (onMachine) {
       delete process.env[name];
   }
   process.env.KUVO_BIN = join16(machineHome, "bin");
+  process.env.KUVO_BOTS ??= join16(machineHome, "bots");
+  process.env.KUVO_WAKES ??= join16(machineHome, "wakes");
   for (const name of ["OPENCODE_CONFIG_CONTENT", "OPENCODE_CONFIG", "OPENCODE_CLIENT", "KUVO_AGENTS_PASSWORD", "KUVO_AGENTS_PORT", "KUVO_ENGINE_PORT", "KUVO_ENGINE_PID"])
     delete process.env[name];
 }
@@ -10452,6 +10454,7 @@ try {
       rmSync8(join16(home, "antigravity", name), { recursive: true, force: true });
 } catch {}
 delete process.env.BUN_BE_BUN;
+process.env.KUVO_WAKE_VIA = "bridge";
 delete process.env.OPENCODE_PASSWORD;
 process.on("unhandledRejection", (reason2) => console.error("unhandled:", reason2));
 var deps = new Deps(join16(home, "runtime"), join16(home, "cache"));
@@ -10479,12 +10482,21 @@ var server2 = Bun.serve({
   fetch: handler({ roster, sessions, auto, link, password, version: version2 })
 });
 console.log(JSON.stringify({ url: `http://127.0.0.1:${server2.port}` }));
+var record = onMachine ? join16(machineHome, "run", "bridge.json") : undefined;
+if (record) {
+  writeFileSync11(record + ".new", JSON.stringify({ pid: process.pid, port: server2.port, password }), { mode: 384 });
+  renameSync6(record + ".new", record);
+}
 var stopping = false;
 function stop() {
   if (stopping)
     return;
   stopping = true;
   cancelSignIns();
+  try {
+    if (record && JSON.parse(readFileSync15(record, "utf8")).pid === process.pid)
+      rmSync8(record, { force: true });
+  } catch {}
   sessions.closeAll();
   store.flush();
   server2.stop(true);
