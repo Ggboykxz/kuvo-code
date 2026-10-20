@@ -6,7 +6,14 @@ import SwiftUI
 struct PermissionsSettings: View {
     @Environment(AppModel.self) private var app
     @Environment(Workspace.self) private var workspace
-    @State private var saved: [SavedPermission] = []
+    @State private var saved: [Saved] = []
+
+    /// An approval saved with Always, and the engine that keeps it: this Mac's, or a machine's.
+    private struct Saved: Identifiable {
+        let permission: SavedPermission
+        let engine: MachineEngine?
+        var id: String { (engine?.machine.id ?? "") + "/" + permission.id }
+    }
 
     private var config: EngineConfig { app.engineConfig }
     private static let path = ["permissions"]
@@ -51,20 +58,22 @@ struct PermissionsSettings: View {
                     Text("None yet. Choosing Always when the agent asks saves an approval here.")
                         .foregroundStyle(.secondary)
                 }
-                ForEach(saved) { permission in
+                ForEach(saved) { item in
+                    let permission = item.permission
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("\(Self.title(of: permission.action)): \(permission.resource)")
                                 .lineLimit(2)
                                 .truncationMode(.middle)
-                            Text(projectName(permission.projectID))
+                            Text(projectName(permission.projectID) + (item.engine.map { " · on \($0.machine.name)" } ?? ""))
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
                         Button {
                             Task {
-                                try? await app.api?.removeSavedPermission(permission.id)
+                                // From the engine that keeps it.
+                                try? await (item.engine?.api ?? app.api)?.removeSavedPermission(permission.id)
                                 await loadSaved()
                             }
                         } label: {
@@ -106,16 +115,26 @@ struct PermissionsSettings: View {
         ("integration.use", "MCP server, skill or plugin"),
     ]
 
+    /// This Mac's engine's approvals, then each connected machine's: Always in a session on a
+    /// machine saves it there.
     private func loadSaved() async {
-        guard let api = app.api else { return saved = [] }
-        // The engine lists one project's at a time: the folders outside any, then each project's.
-        var found = (try? await api.savedPermissions()) ?? []
-        for project in Set(workspace.sessions.map(\.projectID)).sorted() {
-            for permission in (try? await api.savedPermissions(projectID: project)) ?? [] where !found.contains(where: { $0.id == permission.id }) {
-                found.append(permission)
-            }
+        var engines: [(api: OpenCodeAPI, engine: MachineEngine?)] = app.api.map { [($0, nil)] } ?? []
+        for engine in app.machines.engines.values.sorted(by: { $0.machine.name < $1.machine.name }) where engine.isReady {
+            if let api = engine.api { engines.append((api, engine)) }
         }
-        saved = found
+        var all: [Saved] = []
+        for (api, engine) in engines {
+            let sessions = workspace.sessions.filter { RemoteFolder.machine(of: $0.location.directory) == engine?.machine.id }
+            // An engine lists one project's at a time: the folders outside any, then each project's.
+            var found = (try? await api.savedPermissions()) ?? []
+            for project in Set(sessions.map(\.projectID)).sorted() {
+                for permission in (try? await api.savedPermissions(projectID: project)) ?? [] where !found.contains(where: { $0.id == permission.id }) {
+                    found.append(permission)
+                }
+            }
+            all += found.map { Saved(permission: $0, engine: engine) }
+        }
+        saved = all
     }
 
     private func projectName(_ id: String) -> String {
@@ -226,7 +245,12 @@ struct RulesEditor: View {
                 Text("None yet.")
                     .foregroundStyle(.secondary)
             }
-            ForEach(shown, id: \.self) { index in
+            // Each row by its rule's action and effect, and which of those it is, not by its place
+            // in the list: a rule put in above (an action's choice) or one removed doesn't hand a
+            // row being typed in to another rule. (Typing a pattern doesn't change it, so the row
+            // keeps the cursor.)
+            ForEach(Self.keyed(shown, in: items), id: \.key) { row in
+                let index = row.index
                 if let rule = items[index].rule {
                     RuleRow(rule: rule, actions: actions, effects: effects, prompt: prompt ?? Self.example(for: rule.action),
                             problem: { Self.problem(of: $0, hiding: hiding) }) { changed in
@@ -276,6 +300,23 @@ struct RulesEditor: View {
     /// Changes `rule`, at `index` when its row was drawn: where it is now, as the list may have
     /// moved meanwhile (a choice above added a rule, one was removed), and not at all if it's gone.
     /// A row saving what you typed as it goes away wrote over whatever had come to its place.
+    private struct RowKey: Hashable {
+        let action: String
+        let effect: String
+        let occurrence: Int
+    }
+
+    private static func keyed(_ shown: [Int], in items: [JSONValue]) -> [(key: RowKey, index: Int)] {
+        var seen: [String: Int] = [:]
+        return shown.compactMap { index in
+            guard let rule = items[index].rule else { return nil }
+            let base = rule.action + "\u{1}" + rule.effect.rawValue
+            let occurrence = seen[base, default: 0]
+            seen[base] = occurrence + 1
+            return (RowKey(action: rule.action, effect: rule.effect.rawValue, occurrence: occurrence), index)
+        }
+    }
+
     private func change(_ index: Int, from rule: PermissionRule, to changed: PermissionRule?) {
         var items = config.items(path)
         let at = items.indices.contains(index) && items[index].rule == rule ? index : items.firstIndex { $0.rule == rule }
