@@ -797,17 +797,16 @@ final class Workspace {
         guard let api = api(forSession: id) else { return }
         let session = try await api.forkSession(id, before: message.id)
         upsert(session)
-        let (withComments, paths) = Attachments.split(CommandMessages.shared.text(of: message))
+        let (text, comments, paths, _) = SentMessage.split(CommandMessages.shared.text(of: message))
         // The engine's copy carries the attachments; one seen arrive live has them as picked.
         let recent = (try? await api.messages(session: id, limit: 100).data) ?? []
         var stored = message
         for case .user(let user) in recent where user.id == message.id { stored = user }
         // What it replied to comes back over the composer, as you wrote it, and so do its comments.
-        let written = ReviewComments.split(withComments)
-        let (quotes, text) = Quoting.draft(of: written.text)
+        let (quotes, words) = Quoting.draft(of: text)
         let files = Attachments.restored(SessionModel.files(of: message, stored: stored), noting: paths)
-        var draft = Drafts.Draft(text: text, files: files, quotes: quotes)
-        draft.comments = written.comments
+        var draft = Drafts.Draft(text: words, files: files, quotes: quotes)
+        draft.comments = comments
         Drafts.shared[session.id] = draft
         requestedTab = session.id
     }
@@ -1620,7 +1619,7 @@ final class Workspace {
     /// line breaks, up to the end of its first sentence or about 48 characters, at a word. A dot in
     /// a word (README.md, a web address) doesn't end a sentence.
     nonisolated static func title(from message: String) -> String? {
-        let split = ReviewComments.split(Attachments.split(message).text)
+        let split = SentMessage.split(message)
         let words = (split.text.isEmpty ? split.comments.first?.text ?? "" : split.text)
             .split(whereSeparator: \.isWhitespace).joined(separator: " ")
         guard !words.isEmpty else { return nil }

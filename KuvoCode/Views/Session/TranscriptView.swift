@@ -697,9 +697,9 @@ private struct RowView: View, Equatable {
         case .user(let message) where CommandMessages.shared.text(of: message).hasPrefix(Wakes.marker):
             WakeRow(note: String(CommandMessages.shared.text(of: message).dropFirst(Wakes.marker.count)), at: message.time.created)
         case .user(let message):
-            let (text, comments, paths) = UserBubble.split(CommandMessages.shared.text(of: message))
+            let (text, comments, paths, references) = SentMessage.split(CommandMessages.shared.text(of: message))
             let stored = (message.files ?? []).enumerated().map { AttachmentItem.stored($1, id: "\(message.id)#\($0)") }
-            YourMessage(text: text, attachments: stored + Attachments.paths(paths, besides: (message.files ?? []).compactMap(\.fileURL)).map(AttachmentItem.path), comments: comments, sent: Date(timeIntervalSince1970: message.time.created / 1000),
+            YourMessage(text: text, references: references, attachments: stored + Attachments.paths(paths, besides: (message.files ?? []).compactMap(\.fileURL)).map(AttachmentItem.path), comments: comments, sent: Date(timeIntervalSince1970: message.time.created / 1000),
                         fork: { fork(message) }, undo: { undo(message) },
                         undoNote: YourMessage.undoNote(in: directory),
                         isOffline: isOffline)
@@ -781,8 +781,7 @@ struct UserBubble: View {
     /// A message as its bubble shows it: its words, the review comments it was sent with, and
     /// the files it names as attached.
     static func split(_ message: String) -> (text: String, comments: [ReviewComment], paths: [String]) {
-        let (withComments, paths) = Attachments.split(message)
-        let (text, comments) = ReviewComments.split(withComments)
+        let (text, comments, paths, _) = SentMessage.split(message)
         return (text, comments, paths)
     }
 
@@ -1419,7 +1418,8 @@ private struct AgentSentRow: View {
     }
 
     var body: some View {
-        let to = input?["to"]?.string ?? "another agent"
+        // As it may have been named: "&Mira".
+        let to = input?["to"]?.string.map { $0.hasPrefix("&") ? String($0.dropFirst()) : $0 } ?? "another agent"
         let address = AgentMail.shared.directory().first { $0.session == to || $0.name.caseInsensitiveCompare(to) == .orderedSame }
         let text = input?["text"]?.string ?? ""
         let answer = said.flatMap { said in said.range(of: " answered:\n\n").map { String(said[$0.upperBound...]) } }

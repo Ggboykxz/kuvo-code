@@ -292,7 +292,7 @@ final class SessionModel {
         for message in transcript.messages {
             let text: String
             switch message {
-            case .user(let user): text = ReviewComments.split(Attachments.split(CommandMessages.shared.text(of: user)).text).text
+            case .user(let user): text = SentMessage.words(of: CommandMessages.shared.text(of: user))
             // Commands you ran come back as you typed them.
             case .shell(let shell): text = "!" + shell.command
             default: continue
@@ -764,7 +764,9 @@ final class SessionModel {
     func send(_ text: String, files: [URL] = [], for model: Model?, queue: Bool = false, withComments: Bool = true) {
         let written = text
         let comments = withComments ? reviewComments : []
-        let text = ReviewComments.text(text.trimmingCharacters(in: .whitespacesAndNewlines), adding: comments)
+        // The agents named with "&" said who they are, then the comments.
+        let named = AgentReferences.text(text.trimmingCharacters(in: .whitespacesAndNewlines), excluding: session.id, here: RemoteFolder.machine(of: session.location.directory))
+        let text = ReviewComments.text(named, adding: comments)
         guard !text.isEmpty || !files.isEmpty else { return }
         if withComments { reviewComments = [] }
         let id = Identifier.message()
@@ -1087,8 +1089,7 @@ final class SessionModel {
     /// attached files (each once, and only those on this Mac), its comments on the changes and
     /// what it replied to.
     private func restoreDraft(_ message: String, files picked: [URL] = []) {
-        let (withComments, paths) = Attachments.split(message)
-        let (quoted, comments) = ReviewComments.split(withComments)
+        let (quoted, comments, paths, _) = SentMessage.split(message)
         let (quotes, text) = Quoting.draft(of: quoted)
         restore(text: text, files: Attachments.restored(picked, noting: paths), quotes: quotes, comments: comments)
     }

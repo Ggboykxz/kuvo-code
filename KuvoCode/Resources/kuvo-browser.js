@@ -1681,7 +1681,8 @@ const text = (value, isError = false) => ({ content: [{ type: "text", text: valu
 
 // Agents writing to each other (AgentMail in Kuvo Code): the list of everyone Kuvo Code leaves in
 // run/agents.json, messages to agents on this machine straight to its engine, and to agents
-// elsewhere left in run/outbox for the Mac to take on. The same words as on the Mac.
+// elsewhere left in run/outbox for the Mac to take on; the conversations of those on this machine
+// read from its engine. The same words as on the Mac.
 const mailSent = new Map();
 
 function readJSON(file) {
@@ -1717,12 +1718,34 @@ async function engine(method, pathname, body) {
   return answer ? JSON.parse(answer) : null;
 }
 
+/// What an agent is, for one on this machine to read: "bot, on the Mac", "session, here, in api".
+function whatAgent(agent, here) {
+  const place = (agent.machine ?? null) === here ? "here" : agent.machine ? `on ${agent.machine}` : "on the Mac";
+  return `${agent.kind}, ${place}${agent.project ? `, in ${agent.project}` : ""}`;
+}
+
 function describeAgents(agents, from, here) {
   const others = agents.filter((agent) => agent.session !== from);
   if (!others.length) return "No other agents yet.";
-  const place = (agent) => (agent.machine === here ? "here" : agent.machine ? `on ${agent.machine}` : "on the Mac");
-  const lines = others.map((agent) => `- ${agent.name} (${agent.kind}, ${place(agent)}${agent.project ? `, in ${agent.project}` : ""}) address: ${agent.session}${agent.about ? `: ${agent.about}` : ""}`);
-  return "Agents you can write to with send_message (by name or address):\n" + lines.join("\n");
+  const lines = others.map((agent) => `- ${agent.name} (${whatAgent(agent, here)}) address: ${agent.session}${agent.about ? `: ${agent.about}` : ""}`);
+  return "Agents you can write to with send_message, or whose conversation you can read with read_conversation (by name or address):\n" + lines.join("\n");
+}
+
+/// The agent `wanted` names (an address, or a name with or without its "&"), or what to say back.
+function findAgent(wanted, agents, from, here) {
+  if (wanted.startsWith("&") && !agents.some((agent) => agent.name === wanted)) wanted = wanted.slice(1);
+  let matches = agents.filter((agent) => agent.session === wanted);
+  if (!matches.length) matches = agents.filter((agent) => agent.name.localeCompare(wanted, undefined, { sensitivity: "base" }) === 0);
+  // A session here not in the list (it started since): by its address.
+  if (!matches.length && wanted.startsWith("ses_")) matches = [{ session: wanted, name: "a session", kind: "session", machine: here }];
+  if (!matches.length) {
+    // Part of a name ("Release" for "Release notes"): those it could be.
+    const close = agents.filter((agent) => agent.name.toLowerCase().includes(wanted.toLowerCase())).slice(0, 8);
+    const hint = close.length ? "Did you mean one of these?\n" + describeAgents(close, from, here) : "Use list_agents to see who there is.";
+    return { error: text(`There's no agent called ${wanted}. ` + hint, true) };
+  }
+  if (matches.length > 1) return { error: text(`More than one agent is called ${wanted}: use one's address.\n` + describeAgents(matches, from, here), true) };
+  return { agent: matches[0] };
 }
 
 function composeMail(name, session, words, waits) {
@@ -1735,6 +1758,7 @@ async function mail(name, args, from) {
   const agents = directory.agents ?? [];
   const here = directory.machine ?? null;
   if (name === "start_session") return startSession(args, from, agents, here);
+  if (name === "read_conversation") return readConversation(args, from, agents, here);
   if (name === "list_agents") {
     if (!agents.length) return text("Kuvo Code on the Mac hasn't shared the list of agents with this machine yet. Write to a session here by its address (ses_…).");
     return text(describeAgents(agents, from, here));
@@ -1744,13 +1768,9 @@ async function mail(name, args, from) {
   if (!to) return text("Say who to write to (to).", true);
   if (!words.trim()) return text("Say what to write (text).", true);
   const waits = args.wait === true;
-  let matches = agents.filter((agent) => agent.session === to);
-  if (!matches.length) matches = agents.filter((agent) => agent.name.localeCompare(to, undefined, { sensitivity: "base" }) === 0);
-  // A session here not in the list (it started since): by its address.
-  if (!matches.length && to.startsWith("ses_")) matches = [{ session: to, name: "a session", kind: "session", machine: here }];
-  if (!matches.length) return text(`There's no agent called ${to}. Use list_agents to see who there is.`, true);
-  if (matches.length > 1) return text(`More than one agent is called ${to}: use one's address.\n` + describeAgents(matches, from, here), true);
-  const target = matches[0];
+  const found = findAgent(to, agents, from, here);
+  if (found.error) return found.error;
+  const target = found.agent;
   if (target.session === from) return text("That's you.", true);
   const key = from ?? "outside";
   const lately = (mailSent.get(key) ?? []).filter((at) => Date.now() - at < 600_000);
@@ -1771,6 +1791,146 @@ async function mail(name, args, from) {
   if (!waits) return text(`Sent to ${target.name}. Its answer, if it writes one, comes to you as a message.`);
   const answer = await replyTo(target.session, id);
   return text(answer ? `${target.name} answered:\n\n` + answer : `${target.name} hasn't answered yet. It may still write back with send_message.`);
+}
+
+/// Another agent's conversation, as read_conversation on the Mac gives it: one on this machine, from
+/// its engine; one elsewhere can't be read from here.
+async function readConversation(args, from, agents, here) {
+  const of = typeof args.of === "string" ? args.of.trim() : "";
+  if (!of) return text("Say whose conversation to read (of).", true);
+  const query = typeof args.query === "string" && args.query.trim() ? args.query.trim() : null;
+  const found = findAgent(of, agents, from, here);
+  if (found.error) return found.error;
+  const target = found.agent;
+  if (target.session === from) return text("That's this conversation: you have it already.", true);
+  if ((target.machine ?? null) !== here) {
+    return text(`${target.name} runs ${target.machine ? `on ${target.machine}` : "on the user's Mac"}, and from here only the conversations on this machine can be read. Ask it what you need with send_message.`, true);
+  }
+  const address = encodeURIComponent(target.session);
+  const session = (await engine("GET", `api/session/${address}`).catch(() => null))?.data;
+  if (!session) return text(`Couldn't read ${target.name}'s conversation: there's no such session here.`, true);
+  // The whole of it, oldest first, as the Mac's export reads it.
+  let page = await engine("GET", `api/session/${address}/message?limit=200&order=desc`);
+  let messages = [...(page?.data ?? [])].reverse();
+  for (let count = 0; count < 100 && page?.data?.length; count++) {
+    const cursor = page.cursor?.next ?? page.cursor?.previous;
+    if (!cursor) break;
+    const older = await engine("GET", `api/session/${address}/message?limit=200&cursor=${encodeURIComponent(cursor)}`);
+    const data = [...(older?.data ?? [])].reverse();
+    if (!data.length || messages.some((message) => message.id === data[data.length - 1].id)) break;
+    messages = [...data, ...messages];
+    page = older;
+  }
+  const revert = session.revert?.messageID;
+  const cut = revert ? messages.findIndex((message) => message.id === revert) : -1;
+  if (cut >= 0) messages = messages.slice(0, cut);
+  const intro = `${target.name}'s conversation (${whatAgent(target, here)}, address ${target.session}), oldest first. What's under **User** is the user's; under **${target.name}**, its agent's.\n\n`;
+  return text(intro + excerpt(conversationMarkdown(target.name, messages, target.name), query, 24_000));
+}
+
+/// A message without the blocks Kuvo Code adds to its end (named agents, comments, attached files).
+function messageWords(written) {
+  let words = written.trim();
+  for (;;) {
+    const block = [["<attached-files>", "</attached-files>"], ["<review-comments>", "</review-comments>"], ["<named-agents>", "</named-agents>"]]
+      .find(([, end]) => words.endsWith("\n" + end));
+    const open = block ? words.lastIndexOf(block[0] + "\n") : -1;
+    if (open < 0 || (open > 0 && words[open - 1] !== "\n")) return words;
+    words = words.slice(0, open).trim();
+  }
+}
+
+/// A conversation as Markdown, as Kuvo Code's export words it, a step as its tool and what it
+/// worked on.
+function conversationMarkdown(title, messages, agent) {
+  const blocks = ["# " + title];
+  let speaker = null;
+  let steps = [];
+  const say = (who, words) => {
+    if (steps.length) {
+      const list = steps.map((step) => "- " + step).join("\n");
+      steps = [];
+      say(agent, list);
+    }
+    if (speaker !== who) blocks.push(`**${who}**`);
+    speaker = who;
+    blocks.push(words);
+  };
+  for (const message of messages) {
+    if (message.type === "user") {
+      const written = String(message.text ?? "");
+      const mail = /^\[Message from (.*) · (ses_\S+|unknown)\] \([^\n]*\)\n\n([\s\S]*)$/.exec(written);
+      const work = /^\[Work from (.*) · [^\]\n]+\]\n\n([\s\S]*?)(\n\n---\n[\s\S]*)?$/.exec(written);
+      if (mail) say(`Message from ${mail[1]}`, mail[3]);
+      else if (written.startsWith("[Wake-up] ")) say("Wake-up", written.slice("[Wake-up] ".length));
+      else if (work) say(`Work from ${work[1]}`, work[2].trim());
+      else {
+        const words = messageWords(written);
+        const files = (message.files ?? []).map((file) => file.name).filter(Boolean);
+        if (words || files.length) say("User", [words, files.length ? "Attached: " + files.join(", ") : ""].filter(Boolean).join("\n\n"));
+      }
+    } else if (message.type === "assistant") {
+      for (const part of message.content ?? []) {
+        if (part.type === "text" && part.text?.trim()) say(agent, part.text.trim());
+        else if (part.type === "tool") {
+          const input = part.state?.input ?? {};
+          const what = input.description ?? input.filePath ?? input.path ?? input.command ?? input.url ?? input.pattern ?? input.query ?? input.to ?? input.of;
+          steps.push(part.name.replace(/^kuvo-browser_/, "") + (typeof what === "string" && what ? `: ${what.split("\n")[0].slice(0, 120)}` : ""));
+        }
+      }
+    } else if (message.type === "shell") {
+      const output = String(message.output?.output ?? "").trim();
+      say("User", "Ran `" + message.command + "`" + (output ? "\n\n```\n" + output + "\n```" : ""));
+    } else if (message.type === "compaction") {
+      say(agent, "_Summarized the conversation so far._");
+    }
+  }
+  if (steps.length) say(agent, "");
+  return blocks.filter(Boolean).join("\n\n") + "\n";
+}
+
+/// As much of `markdown` as `limit` allows, as on the Mac: all of it; with `query`, the paragraphs
+/// around each mention of it; else how it began and its latest part.
+function excerpt(markdown, query, limit) {
+  const paragraphs = markdown.split("\n\n");
+  const fold = (value) => value.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+  if (query) {
+    const wanted = fold(query);
+    const hits = paragraphs.flatMap((paragraph, index) => (fold(paragraph).includes(wanted) ? [index] : []));
+    if (!hits.length) return `Nothing in it mentions "${query}". Read it without query for its latest part.`;
+    const shown = new Set();
+    let used = 0;
+    for (const hit of [...hits].reverse()) {
+      const around = [hit - 1, hit, hit + 1].filter((index) => index >= 0 && index < paragraphs.length && !shown.has(index));
+      const size = around.reduce((sum, index) => sum + paragraphs[index].length + 2, 0);
+      if (used + size > limit && shown.size) break;
+      around.forEach((index) => shown.add(index));
+      used += size;
+    }
+    const parts = [];
+    let last = null;
+    for (const index of [...shown].sort((a, b) => a - b)) {
+      if (last !== null && index > last + 1) parts.push("[…]");
+      parts.push(paragraphs[index].slice(0, limit));
+      last = index;
+    }
+    const where = hits.length === 1 ? "1 place mentions" : `${hits.length} places mention`;
+    return `${where} "${query}"` + (shown.size < paragraphs.length ? " (the rest left out as […])" : "") + ":\n\n" + parts.join("\n\n");
+  }
+  if (markdown.length <= limit) return markdown;
+  let head = paragraphs.slice(0, 3).join("\n\n");
+  if (head.length > limit / 4) head = head.slice(0, limit / 4) + "…";
+  const tail = [];
+  let used = head.length;
+  for (const paragraph of paragraphs.slice(3).reverse()) {
+    if (used + paragraph.length + 2 > limit) {
+      if (!tail.length) tail.push("…" + paragraph.slice(paragraph.length - (limit - used)));
+      break;
+    }
+    tail.unshift(paragraph);
+    used += paragraph.length + 2;
+  }
+  return head + "\n\n[… the middle is left out; read it with query, to find a part …]\n\n" + tail.join("\n\n");
 }
 
 const startedSessions = new Map();
@@ -2298,7 +2458,7 @@ async function mcp() {
         calls.set(call.id, call);
         // Showing something in Kuvo Code's panel needs no browser, nor a turn in the line.
         // Nor does writing to another agent.
-        if (params.name === "list_agents" || params.name === "send_message" || params.name === "start_session") {
+        if (params.name === "list_agents" || params.name === "send_message" || params.name === "read_conversation" || params.name === "start_session") {
           mail(params.name, params.arguments || {}, params._meta?.["ai.opencode/sessionID"] ?? null).then(reply, (error) => reply(text(error instanceof ToolError ? error.message : String(error), true)));
           return;
         }

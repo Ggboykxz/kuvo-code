@@ -236,6 +236,10 @@ struct ToolCallView: View {
             let to = string("to") ?? "another agent"
             if input?["wait"]?.bool == true { return (isActive ? "Asking " : "Asked ") + to }
             return (isActive ? "Writing to " : "Wrote to ") + to
+        case "read_conversation":
+            let of = string("of").map { $0.hasPrefix("&") ? String($0.dropFirst()) : $0 } ?? "another agent"
+            let about = string("query").map { " about “\($0)”" } ?? ""
+            return (isActive ? "Reading " : "Read ") + of + "’s conversation" + about
         case "show_in_panel": return (isActive ? "Showing " : "Showed ") + (relative(string("path")) ?? "a file")
         case "start_session": return (isActive ? "Starting a session" : "Started a session") + (string("title").map { ": \($0)" } ?? "")
         default: return "Used the browser"
@@ -322,6 +326,7 @@ struct ToolCallView: View {
         case "browser_ask_user": "hand.raised"
         case "list_agents": "person.2"
         case "send_message": "paperplane"
+        case "read_conversation": "text.bubble"
         case "show_in_panel": "sidebar.right"
         default: "safari"
         }

@@ -222,6 +222,17 @@ itself. A host serves:
   look and job, and what only the Mac knows: paused, the next wake-up, how many things each
   watches, and `agents`: its conversation is with the coding agents, so it's read and written
   through `kuvo/agents/api/…` (a group chat's members carry the same flag).
+- On a Mac, `kuvo/named`: who you can name with `&` in a message, as the Mac's composer
+  offers them: `{"agents": [{session, name, kind, machine, project, about}]}`, every bot
+  (`kind: "bot"`, `about` its job) then the latest sessions with a title (`kind: "session"`,
+  `project` its project's name, `"Chats"` for a chat); `machine` is null on the Mac. Insert
+  `&` and the name, and send the message as it is: the Mac adds to a prompt it passes on
+  (`api/…` and `kuvo/agents/api/…`) a block naming each agent the text names, which the
+  agent reads, so a machine's bridge, with the Mac closed, sends it without. Show a message
+  without it: it ends the text, from a line `<named-agents>` (then a heading line, then
+  `- &<name> (<session>): <what it is>` lines) to a line `</named-agents>`, before the
+  `<review-comments>` and `<attached-files>` blocks. Show each `&<name>` it lists in bold
+  (a bot's in its color), opening that session.
 - On a Mac, `kuvo/asks`: what agents ask you for while they browse, on the Mac or a machine: a
   sign-in (the fields the page has, and the accounts Passwords keeps for the site, never
   their passwords), a one-time code, or a step only you can do. `kuvo/asks/events` is the same

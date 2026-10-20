@@ -290,7 +290,9 @@ final class PhoneLink {
         return LinkServer(key: key, hello: hello) { [weak self] key, address, hello in
             await self?.authorize(key, address, hello) ?? false
         } handle: { [weak self] request, _ in
-            guard request.path.hasPrefix("kuvo/") else { return EngineRoutes.forward(request, to: base, password: password) }
+            guard request.path.hasPrefix("kuvo/") else {
+                return Self.namingAgents(in: request, by: self) { EngineRoutes.forward($0, to: base, password: password) }
+            }
             // The outside agents' sessions, through their bridge, as the engine's go through it.
             if request.path.hasPrefix(Self.agentsPrefix) {
                 var forwarded = request
@@ -298,7 +300,9 @@ final class PhoneLink {
                 guard let bridge = agents?.endpoint else { return Self.unavailable() }
                 let base = bridge.url.absoluteString.hasSuffix("/") ? bridge.url : URL(string: bridge.url.absoluteString + "/")!
                 // Their accounts and Auto too; never where the engine is (the Mac says).
-                return EngineRoutes.forward(forwarded, to: base, password: bridge.password, allowing: { EngineRoutes.allowsAgents($0, method: $1) })
+                return Self.namingAgents(in: forwarded, by: self) {
+                    EngineRoutes.forward($0, to: base, password: bridge.password, allowing: { EngineRoutes.allowsAgents($0, method: $1) })
+                }
             }
             if request.path == "kuvo/asks/events" { return Self.following { self?.asksJSON() } }
             if request.path == "kuvo/groups/events" { return Self.following { self?.groupsJSON() } }
@@ -397,6 +401,32 @@ final class PhoneLink {
     /// Where the outside agents' bridge is reached over the link.
     nonisolated static let agentsPrefix = "kuvo/agents/"
 
+    /// A message the phone sends (`POST api/session/<id>/prompt`) says who the agents it names
+    /// with "&" are, as one written here does (`AgentReferences`), before `forward` takes it on.
+    nonisolated private static func namingAgents(in request: LinkRequest, by link: PhoneLink?,
+                                                 forward: @escaping @Sendable (LinkRequest) -> AsyncThrowingStream<LinkResponsePart, Error>) -> AsyncThrowingStream<LinkResponsePart, Error> {
+        let parts = request.path.split(separator: "?").first?.split(separator: "/") ?? []
+        guard request.method.uppercased() == "POST", parts.count == 4, parts[0] == "api", parts[1] == "session", parts[3] == "prompt",
+              let session = String(parts[2]).removingPercentEncoding, request.body.contains(UInt8(ascii: "&")) else { return forward(request) }
+        return AsyncThrowingStream { continuation in
+            let task = Task { @MainActor in
+                var named = request
+                if var body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any], let text = body["text"] as? String {
+                    let directory = link?.workspace?.session(session)?.location.directory
+                    body["text"] = AgentReferences.text(text, excluding: session, here: directory.flatMap(RemoteFolder.machine(of:)))
+                    if let data = try? JSONSerialization.data(withJSONObject: body) { named.body = data }
+                }
+                do {
+                    for try await part in forward(named) { continuation.yield(part) }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
     nonisolated private static func unavailable() -> AsyncThrowingStream<LinkResponsePart, Error> {
         AsyncThrowingStream { continuation in
             continuation.yield(.head(status: 503, headers: ["content-type": "application/json"]))
@@ -447,6 +477,16 @@ final class PhoneLink {
                     agents: bot.agents == true)
             }
             return (200, (try? encoder.encode(Listed(bots: entries))) ?? Data())
+        case "kuvo/named":
+            // Who "&" can name in a message: every bot, and the recent sessions with a name.
+            struct Named: Encodable {
+                struct Entry: Encodable { var session: String, name: String, kind: String, machine: String?, project: String?, about: String? }
+                var agents: [Entry]
+            }
+            let entries = AgentReferences.candidates(excluding: nil).map {
+                Named.Entry(session: $0.session, name: $0.name, kind: $0.kind, machine: $0.machine, project: $0.project, about: $0.about)
+            }
+            return (200, (try? encoder.encode(Named(agents: entries))) ?? Data())
         case "kuvo/hosts":
             let hosts = machineHosts.values.sorted { $0.name < $1.name }.map { Hosts.Host(name: $0.name, address: $0.address, key: $0.key, relay: relay.absoluteString) }
             return (200, (try? encoder.encode(Hosts(hosts: hosts))) ?? Data())

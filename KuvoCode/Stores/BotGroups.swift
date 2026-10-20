@@ -718,7 +718,8 @@ final class BotGroups {
         // Only into a run: one that hasn't started yet gets it with the rest at its turn.
         guard let bot = app?.bots.bot(botID), let seat = group(id)?.seats[botID], app?.workspace.running.contains(seat) == true,
               let api = seatAPI(of: bot, in: group(id)) else { return }
-        if (try? await api.prompt(session: seat, id: Identifier.message(), text: "The user, just now: \(message.text)", delivery: .steer)) != nil {
+        let text = AgentReferences.text("The user, just now: \(message.text)", excluding: nil, here: bot.machine)
+        if (try? await api.prompt(session: seat, id: Identifier.message(), text: text, delivery: .steer)) != nil {
             setHeard(message.id, by: botID, in: id)
         }
     }
@@ -841,6 +842,9 @@ final class BotGroups {
                 let words = message.text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).map { "    " + $0 }.joined(separator: "\n")
                 text += "\n\(label(of: message)):\n\(words)\n"
             }
+            // Who the user named with "&", as a session's message says.
+            let yours = unheard.suffix(40).filter { $0.author == nil }.map(\.text)
+            if let note = AgentReferences.note(naming: AgentReferences.named(in: yours), here: bot.machine) { text += "\n" + note + "\n" }
         }
         if wrapUp {
             text += "\nWrap up this discussion now, the one since the user last wrote: in a few short lines, what was decided, what's still open, and who does what next. Write to the user as \"you\". Don't reply PASS."

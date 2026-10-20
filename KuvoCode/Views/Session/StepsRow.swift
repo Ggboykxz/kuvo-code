@@ -136,6 +136,7 @@ enum StepsSummary {
         case "kuvo-browser_show_in_panel": return "show"
         case "kuvo-browser_send_message": return "message"
         case "kuvo-browser_list_agents": return "agents"
+        case "kuvo-browser_read_conversation": return "conversation"
         default:
             // Kuvo Code's own other tools, by their names ("start_session").
             if name.hasPrefix("kuvo-browser_") { return String(name.dropFirst("kuvo-browser_".count)) }
@@ -160,6 +161,7 @@ enum StepsSummary {
         case "show": return many ? "showed you \(count) things" : "showed you something"
         case "message": return many ? "wrote to other agents \(count) times" : "wrote to another agent"
         case "agents": return "looked up the other agents"
+        case "conversation": return many ? "read \(count) other conversations" : "read another conversation"
         case "todowrite", "todoread": return "kept its to-do list"
         case "skill": return many ? "used \(count) skills" : "used a skill"
         case "start_session": return many ? "started \(count) sessions" : "started a session"

@@ -103,6 +103,8 @@ struct Composer: View {
     @State private var commandIndex = 0
     /// The "/" list was closed with Escape; it opens again for a new message.
     @State private var dismissedCommands = false
+    /// "&" and the bots and sessions it names.
+    @State private var agents = AgentPicker()
 
     private var canSend: Bool {
         if isOffline { return false }
@@ -121,6 +123,8 @@ struct Composer: View {
                 CommandList(commands: commandMatches, selected: min(commandIndex, commandMatches.count - 1)) { runCommand($0) }
             } else if let mention {
                 MentionList(files: mention.matches, selected: min(mentionIndex, max(mention.matches.count - 1, 0))) { insertMention($0) }
+            } else if let named = agents.matches(in: text, excluding: session) {
+                AgentReferenceList(agents: named, selected: min(agents.selected, named.count - 1)) { agents.insert($0, into: $text) }
             }
             if commentCount > 0 {
                 Menu {
@@ -250,6 +254,8 @@ struct Composer: View {
                     }
                 }
                 .onSubmit(send)
+                // Last, so its keys come before the ones above while its list is open.
+                .modifier(AgentPicking(picker: agents, text: $text, excluding: session))
 
             HStack(spacing: 4) {
                 if isShell {

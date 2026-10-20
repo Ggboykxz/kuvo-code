@@ -14,6 +14,8 @@ struct YourMessage: View {
     let text: String
     /// Words with styling of their own (a group chat's mentions).
     var style: ((String) -> AttributedString?)?
+    /// The bots and sessions it names with "&": in bold, each opening its conversation.
+    var references: [AgentReferences.Reference] = []
     var attachments: [AttachmentItem] = []
     var comments: [ReviewComment] = []
     let sent: Date
@@ -27,6 +29,7 @@ struct YourMessage: View {
     /// Undo From Here takes the conversation and its files back: not in a session with a coding
     /// agent, which changes files itself.
     @Environment(\.undoesChanges) private var undoesChanges
+    @Environment(AppModel.self) private var app
     @State private var hovering = false
     @State private var confirmsUndo = false
 
@@ -67,9 +70,31 @@ struct YourMessage: View {
         }
     }
 
+    /// Its words' own styling, with the agents it names on top.
+    private var styled: ((String) -> AttributedString?)? {
+        guard !references.isEmpty else { return style }
+        return { [style, references] part in
+            var text = style?(part) ?? AttributedString(part)
+            AgentReferences.apply(to: &text, references: references)
+            return text
+        }
+    }
+
+    /// The named agents whose conversations are here to open, each once.
+    private var openable: [AgentReferences.Reference] {
+        var seen = Set<String>()
+        return references.filter { app.workspace.session($0.session) != nil && seen.insert($0.session).inserted }
+    }
+
     var body: some View {
         VStack(alignment: .trailing, spacing: 2) {
-            UserBubble(text: text, style: style, attachments: attachments, comments: comments)
+            UserBubble(text: text, style: styled, attachments: attachments, comments: comments)
+                // A named agent opens its conversation.
+                .environment(\.openURL, OpenURLAction { url in
+                    guard let session = AgentReferences.session(in: url) else { return .systemAction }
+                    if app.workspace.session(session) != nil { app.open(.session(session)) }
+                    return .handled
+                })
             // Always laid out, shown under the pointer: nothing moves when they appear.
             HStack(spacing: 0) {
                 Text(MessageTime.sentAt(sent))
@@ -98,6 +123,9 @@ struct YourMessage: View {
                 Clipboard.copy(text)
             }
             .disabled(text.isEmpty)
+            ForEach(openable, id: \.session) { reference in
+                Button("Open \(reference.name)") { app.open(.session(reference.session)) }
+            }
             Divider()
             if let fork {
                 Button("New Session From Here", action: fork)
@@ -114,6 +142,9 @@ struct YourMessage: View {
         .accessibilityLabel(spoken)
         .accessibilityActions {
             if !text.isEmpty { Button("Copy") { Clipboard.copy(text) } }
+            ForEach(openable, id: \.session) { reference in
+                Button("Open \(reference.name)") { app.open(.session(reference.session)) }
+            }
             if let fork, !isOffline { Button("New Session From Here", action: fork) }
             if !isOffline, undoesChanges { Button("Undo From Here…") { confirmsUndo = true } }
         }

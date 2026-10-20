@@ -200,7 +200,9 @@ private struct GroupMessageRow: View, Equatable {
                 .frame(maxWidth: .infinity)
                 .multilineTextAlignment(.center)
         } else if message.author == nil {
-            YourMessage(text: message.text, style: { GroupMentions.styled($0, bots: members) }, sent: message.time, undo: undo,
+            YourMessage(text: message.text, style: { GroupMentions.styled($0, bots: members) },
+                        references: AgentReferences.named(in: [message.text]).map { AgentReferences.Reference(name: $0.name, session: $0.session) },
+                        sent: message.time, undo: undo,
                         undoNote: "The chat goes back to before this message, and the message comes back to the composer. The bots are told to set aside what was taken back.")
         } else {
             HStack(alignment: .top, spacing: 10) {
@@ -487,6 +489,8 @@ private struct GroupComposer: View {
     @Environment(\.messageFont) private var messageFont
     @FocusState private var isFocused: Bool
     @FocusState private var answering: UUID?
+    /// "&" and the bots and sessions it names, as in a session.
+    @State private var agents = AgentPicker()
 
     private var canSend: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -495,6 +499,9 @@ private struct GroupComposer: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if let named = agents.matches(in: text, excluding: nil) {
+                AgentReferenceList(agents: named, selected: min(agents.selected, named.count - 1)) { agents.insert($0, into: $text) }
+            }
             if !quotes.isEmpty {
                 QuoteList(quotes: $quotes, answering: $answering, focus: quoteFocus, font: messageFont.body, onSubmit: send)
             }
@@ -521,6 +528,8 @@ private struct GroupComposer: View {
                     stop()
                     return .handled
                 }
+                // Last, so its keys come before the ones above while its list is open.
+                .modifier(AgentPicking(picker: agents, text: $text, excluding: nil))
             HStack(spacing: 2) {
                 // Each bot: a click asks it by name.
                 ForEach(members) { bot in

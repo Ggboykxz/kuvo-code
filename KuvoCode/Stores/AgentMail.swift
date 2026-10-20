@@ -3,10 +3,11 @@ import OpenCodeKit
 import os
 
 /// Agents writing to each other. Any session or bot, on this Mac or a machine, can ask who else
-/// there is (list_agents) and send one of them a message (send_message). The message reaches that
-/// conversation as input that says who sent it, as a wake-up says what it is, and the agent there
-/// takes it up; with `wait`, the sender gets its answer back. Machines get the list of everyone,
-/// and leave messages for this Mac or other machines in an outbox it empties.
+/// there is (list_agents), send one of them a message (send_message) and read its conversation
+/// (read_conversation). The message reaches that conversation as input that says who sent it, as
+/// a wake-up says what it is, and the agent there takes it up; with `wait`, the sender gets its
+/// answer back. Machines get the list of everyone, and leave messages for this Mac or other
+/// machines in an outbox it empties. You name one in a message with "&" (`AgentReferences`).
 @MainActor
 final class AgentMail {
     static let shared = AgentMail()
@@ -133,35 +134,41 @@ final class AgentMail {
     static func describe(_ agents: [Agent], caller: String?, here machine: String?) -> String {
         let others = agents.filter { $0.session != caller }
         guard !others.isEmpty else { return "No other agents yet." }
-        func place(_ agent: Agent) -> String {
-            switch agent.machine {
-            case machine: machine == nil ? "on the Mac" : "here"
-            case nil: "on the Mac"
-            case let other?: "on \(other)"
-            }
-        }
         let lines = others.map { agent in
-            var line = "- \(agent.name) (\(agent.kind), \(place(agent))"
-            if let project = agent.project { line += ", in \(project)" }
-            line += ") address: \(agent.session)"
+            var line = "- \(agent.name) (\(what(agent, here: machine))) address: \(agent.session)"
             if let about = agent.about, !about.isEmpty { line += ": \(about)" }
             return line
         }
-        return "Agents you can write to with send_message (by name or address):\n" + lines.joined(separator: "\n")
+        return "Agents you can write to with send_message, or whose conversation you can read with read_conversation (by name or address):\n" + lines.joined(separator: "\n")
+    }
+
+    /// What an agent is, for one `here` (nil: this Mac) to read: "bot, on the Mac",
+    /// "session, on lokum, in api".
+    static func what(_ agent: Agent, here machine: String?) -> String {
+        let place = switch agent.machine {
+        case machine: machine == nil ? "on the Mac" : "here"
+        case nil: "on the Mac"
+        case let other?: "on \(other)"
+        }
+        return "\(agent.kind), \(place)" + (agent.project.map { ", in \($0)" } ?? "")
     }
 
     // MARK: Sending
 
     /// The tools' calls from this Mac's conversations.
     func call(_ name: String, arguments: [String: Any], caller: String?) async -> (text: String, isError: Bool) {
-        // A bot's seat in a group chat only talks, whatever agent it runs on: the work happens in
-        // each bot's own conversation, handed out after the wrap-up.
-        if let caller, app?.workspace.seats.contains(caller) == true {
+        // A bot's seat in a group chat only talks and looks things up, whatever agent it runs on:
+        // the work happens in each bot's own conversation, handed out after the wrap-up.
+        if let caller, app?.workspace.seats.contains(caller) == true, name == "send_message" || name == "start_session" {
             return ("Not from a group chat: talk it through here; the work is handed out after the wrap-up.", true)
         }
         switch name {
         case "list_agents":
             return (Self.describe(directory(), caller: caller, here: nil), false)
+        case "read_conversation":
+            guard let of = (arguments["of"] as? String)?.trimmingCharacters(in: .whitespaces), !of.isEmpty else { return ("Say whose conversation to read (of).", true) }
+            let query = (arguments["query"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return await read(of, query: query?.isEmpty == false ? query : nil, caller: caller)
         case "send_message":
             guard let to = arguments["to"] as? String, !to.trimmingCharacters(in: .whitespaces).isEmpty else { return ("Say who to write to (to).", true) }
             guard let text = arguments["text"] as? String, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return ("Say what to write (text).", true) }
@@ -189,20 +196,46 @@ final class AgentMail {
     private enum Outcome {
         /// `limited`: too many lately; it can go in a while.
         case done(String), unknown(String), refused(String), limited(String), failed(String)
+
+        var text: String {
+            switch self {
+            case .done(let text), .unknown(let text), .refused(let text), .limited(let text), .failed(let text): text
+            }
+        }
+    }
+
+    /// Who a message or a read is for: the agent, or why there's none to take.
+    private enum Lookup {
+        case found(Agent), missing(Outcome)
+    }
+
+    /// The agent `wanted` names (its address, or its name, with or without the "&" you name it
+    /// with), or why there's none to take.
+    private func find(_ wanted: String, caller: String?) -> Lookup {
+        let agents = directory()
+        var wanted = wanted.trimmingCharacters(in: .whitespaces)
+        if wanted.hasPrefix(String(AgentReferences.trigger)), !agents.contains(where: { $0.name == wanted }) { wanted.removeFirst() }
+        let matches = agents.filter { $0.session == wanted } .nilIfEmpty
+            ?? agents.filter { $0.name.compare(wanted, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame }
+        guard let target = matches.first else {
+            // Part of a name ("Release" for "Release notes"): those it could be.
+            let close = agents.filter { $0.name.range(of: wanted, options: [.caseInsensitive, .diacriticInsensitive]) != nil }.prefix(8)
+            let hint = close.isEmpty ? "Use list_agents to see who there is." : "Did you mean one of these?\n" + Self.describe(Array(close), caller: caller, here: nil)
+            return .missing(.unknown("There's no agent called \(wanted). " + hint))
+        }
+        guard matches.count == 1 else {
+            return .missing(.refused("More than one agent is called \(wanted): use one's address.\n" + Self.describe(matches, caller: caller, here: nil)))
+        }
+        return .found(target)
     }
 
     /// `limitKey`: what the few-at-a-time limit counts by, when not the caller (a machine's
     /// letters, whose sender anything there could claim).
     private func deliver(from caller: String?, name: String, to: String, text: String, waits: Bool, limitKey: String? = nil) async -> Outcome {
-        let agents = directory()
-        let wanted = to.trimmingCharacters(in: .whitespaces)
-        let matches = agents.filter { $0.session == wanted } .nilIfEmpty
-            ?? agents.filter { $0.name.compare(wanted, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame }
-        guard let target = matches.first else {
-            return .unknown("There's no agent called \(wanted). Use list_agents to see who there is.")
-        }
-        guard matches.count == 1 else {
-            return .refused("More than one agent is called \(wanted): use one's address.\n" + Self.describe(matches, caller: caller, here: nil))
+        let target: Agent
+        switch find(to, caller: caller) {
+        case .found(let found): target = found
+        case .missing(let outcome): return outcome
         }
         guard target.session != caller else { return .refused("That's you.") }
         // A few at a time: two agents shouldn't keep writing to each other unattended. Counted as
@@ -242,6 +275,84 @@ final class AgentMail {
             return .done("\(target.name) answered:\n\n" + reply)
         }
         return .done("\(target.name) hasn't answered yet. It may still write back with send_message.")
+    }
+
+    // MARK: Reading another's conversation
+
+    /// About how much of a conversation goes back at once, in characters.
+    private static let readLimit = 24_000
+
+    /// The conversation of the agent `wanted` (a name or an address), as you'd read it: what the
+    /// user and others wrote, its replies and a line for each step, as the export words them. A
+    /// long one gives its start and its latest part; with `query`, the parts that mention it.
+    func read(_ wanted: String, query: String?, caller: String?) async -> (text: String, isError: Bool) {
+        let target: Agent
+        switch find(wanted, caller: caller) {
+        case .found(let found): target = found
+        case .missing(let outcome): return (outcome.text, true)
+        }
+        guard target.session != caller else { return ("That's this conversation: you have it already.", true) }
+        guard let app, let api = app.workspace.api(forSession: target.session) else {
+            return ("\(target.name)'s conversation can't be read now" + (target.machine.map { ": its machine (\($0)) isn't connected" } ?? "") + ". Try again later, or write to it with send_message.", true)
+        }
+        let session: Session
+        let messages: [Message]
+        do {
+            if let known = app.workspace.session(target.session) { session = known } else { session = try await api.session(target.session) }
+            messages = try await ConversationExport.messages(of: session, api: api)
+        } catch {
+            return ("Couldn't read \(target.name)'s conversation: \(error.localizedDescription)", true)
+        }
+        Analytics.shared.track("agent_conversation_read", ["bot": target.kind == "bot", "query": query != nil])
+        let markdown = ConversationExport.markdown(title: target.name, messages: messages, directory: session.location.directory,
+                                                   you: "User", agent: target.name)
+        let intro = "\(target.name)'s conversation (\(Self.what(target, here: nil)), address \(target.session)), oldest first. What's under **User** is the user's; under **\(target.name)**, its agent's.\n\n"
+        return (intro + Self.excerpt(markdown, query: query, limit: Self.readLimit), false)
+    }
+
+    /// As much of `text` as `limit` allows: all of it; with `query`, the paragraphs around each
+    /// mention of it; else its first part (how it began) and its latest. What's left out is marked.
+    nonisolated static func excerpt(_ text: String, query: String?, limit: Int) -> String {
+        let paragraphs = text.components(separatedBy: "\n\n")
+        if let query {
+            let hits = paragraphs.indices.filter { paragraphs[$0].range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil }
+            guard !hits.isEmpty else { return "Nothing in it mentions \"\(query)\". Read it without query for its latest part." }
+            // Each with the paragraph before and after it (who's speaking, and what came next),
+            // the latest first as room runs out.
+            var shown = Set<Int>()
+            var used = 0
+            for hit in hits.reversed() {
+                let around = (max(0, hit - 1)...min(paragraphs.count - 1, hit + 1)).filter { !shown.contains($0) }
+                let size = around.reduce(0) { $0 + paragraphs[$1].count + 2 }
+                if used + size > limit, !shown.isEmpty { break }
+                shown.formUnion(around)
+                used += size
+            }
+            var parts: [String] = []
+            var last: Int?
+            for index in shown.sorted() {
+                if let last, index > last + 1 { parts.append("[…]") }
+                parts.append(String(paragraphs[index].prefix(limit)))
+                last = index
+            }
+            let found = hits.count == 1 ? "1 place mentions" : "\(hits.count) places mention"
+            return "\(found) \"\(query)\"" + (shown.count < paragraphs.count ? " (the rest left out as […])" : "") + ":\n\n" + parts.joined(separator: "\n\n")
+        }
+        guard text.count > limit else { return text }
+        // How it began: the title and the first message.
+        var head = paragraphs.prefix(3).joined(separator: "\n\n")
+        if head.count > limit / 4 { head = String(head.prefix(limit / 4)) + "…" }
+        var tail: [String] = []
+        var used = head.count
+        for paragraph in paragraphs.dropFirst(3).reversed() {
+            if used + paragraph.count + 2 > limit {
+                if tail.isEmpty { tail.append("…" + String(paragraph.suffix(limit - used))) }
+                break
+            }
+            tail.insert(paragraph, at: 0)
+            used += paragraph.count + 2
+        }
+        return head + "\n\n[… the middle is left out; read it with query, to find a part …]\n\n" + tail.joined(separator: "\n\n")
     }
 
     // MARK: Starting another
