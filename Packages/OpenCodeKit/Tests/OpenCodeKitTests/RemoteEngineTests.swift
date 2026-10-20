@@ -204,6 +204,8 @@ struct LiveRemoteEngineTests {
         }
         let own = try await connection.run("printf %s \"${XDG_CONFIG_HOME:-unset}\"")
         #expect(seen == own + "|unset")
+        // Only you can open its folder there.
+        #expect(try await connection.run("stat -c %a \"$HOME/.kuvo-code-test\"").trimmingCharacters(in: .whitespacesAndNewlines) == "700")
         server.disconnect()
 
         try await RemoteServer.stop(on: connection)

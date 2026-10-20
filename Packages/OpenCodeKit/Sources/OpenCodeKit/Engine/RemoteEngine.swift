@@ -125,12 +125,14 @@ public struct RemoteEngineInstaller: Sendable {
     var remoteExecutable: String { "$HOME/\(Self.root)/engine/\(OpenCodeEngine.version)/opencode" }
 
     /// Gives the engine folders of its own in `~/.kuvo-code` (`$K`), for everything it runs there,
-    /// so it never touches the machine's own opencode, if it has one. (The commands the agent
+    /// so it never touches the machine's own opencode, if it has one. Only you can open `$K`: what's
+    /// in it (conversations, bots' memory, settings) is yours, wherever the home folder is open. (The commands the agent
     /// runs get the machine's own back: [CommandEnvironment].)
     /// Worked out each time, never kept, so a `root` set later is the one it names.
     static var folders: String {
         """
         K="$HOME/\(root)"
+        mkdir -p "$K" && chmod 700 "$K"
         \(CommandEnvironment.keepScript)
         export XDG_DATA_HOME="$K/data" XDG_CONFIG_HOME="$K/config" XDG_STATE_HOME="$K/state" XDG_CACHE_HOME="$K/cache" npm_config_cache="$K/cache/npm" BUN_INSTALL="$K/cache/bun" KUVO_INTEGRATIONS="$K/integrations" TMPDIR="$K/tmp"
         mkdir -p "$K/data" "$K/config" "$K/state" "$K/cache" "$K/workspace" "$K/integrations" "$K/tmp"
