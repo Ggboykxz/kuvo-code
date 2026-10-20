@@ -1129,7 +1129,7 @@ final class Workspace {
             }
             for request in permissions {
                 found[request.id] = request.sessionID
-                if tell, asking[request.id] == nil { notifyAsk(request.sessionID, body: Self.describe(request), request: request.id, isPermission: true) }
+                if tell, asking[request.id] == nil { notifyAsk(request.sessionID, body: Self.describe(request), request: request.id, isPermission: true, answerable: Self.showsAll(request)) }
             }
             for form in forms where form.sessionID != FormRequest.anySession {
                 found[form.id] = form.sessionID
@@ -1533,7 +1533,7 @@ final class Workspace {
         case "permission.asked":
             guard let request = try? event.payload(as: PermissionRequest.self) else { return }
             asking[request.id] = request.sessionID
-            notifyAsk(request.sessionID, body: Self.describe(request), request: request.id, isPermission: true)
+            notifyAsk(request.sessionID, body: Self.describe(request), request: request.id, isPermission: true, answerable: Self.showsAll(request))
         case "permission.replied":
             if let reply = try? event.payload(as: EventPayload.PermissionReplied.self) {
                 asking[reply.requestID] = nil
@@ -1600,7 +1600,8 @@ final class Workspace {
     }
 
     /// `request` is the permission or the form, for a notification whose buttons answer it.
-    private func notifyAsk(_ id: String, body: String, request: String, isPermission: Bool = false, question: Notifier.Question? = nil) {
+    /// `answerable`: its buttons answer it (not when the notification can't show all it covers).
+    private func notifyAsk(_ id: String, body: String, request: String, isPermission: Bool = false, answerable: Bool = true, question: Notifier.Question? = nil) {
         // A seat's requests are answered by its group chat.
         guard !seats.contains(id) else { return }
         Task {
@@ -1626,9 +1627,15 @@ final class Workspace {
             }
             Notifier.shared.notify(session: session?.id ?? id, title: session.flatMap { botName?($0.id) } ?? session?.title ?? AppInfo.name,
                                    subtitle: session.flatMap { botName?($0.id) == nil ? projectName($0.location.directory) : nil }, body: body,
-                                   permission: isPermission ? (session: id, request: request) : nil, question: question,
+                                   permission: isPermission && answerable ? (session: id, request: request) : nil, question: question,
                                    push: .init(isPermission ? .permission : .question, request: (session: id, id: request), machine: sessionMachines[id]))
         }
+    }
+
+    /// Whether a notification shows all a permission covers: Allow there would allow what it
+    /// leaves out, so then it has no buttons, and you answer in the conversation.
+    private static func showsAll(_ request: PermissionRequest) -> Bool {
+        request.resources.filter { $0 != "*" }.count <= 4
     }
 
     /// "Wants to run a command: npm test".

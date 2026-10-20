@@ -98,12 +98,23 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     private var questionCategories: [String: UNNotificationCategory] = [:]
     private var isAuthorized: Bool?
 
+    /// `text` with what looks like a secret's value as dots: after a name like token, key, secret,
+    /// password or Authorization (Bearer), and long runs of letters and digits like a key's.
+    nonisolated static func masked(_ text: String) -> String {
+        var text = text
+        let named = #"(?i)((?:token|api[_-]?key|secret|password|passwd|authorization)["']?\s*[:=]\s*["']?(?:bearer\s+|basic\s+)?|bearer\s+)[^\s"'&;]{6,}"#
+        text = text.replacingOccurrences(of: named, with: "$1•••", options: .regularExpression)
+        text = text.replacingOccurrences(of: #"\b[A-Za-z0-9_\-]{32,}\b"#, with: "•••", options: .regularExpression)
+        return text
+    }
+
     func start() {
         let center = UNUserNotificationCenter.current()
         center.delegate = self
         categories = [
+            // Allowing needs the Mac unlocked: from the lock screen it asks for your password first.
             UNNotificationCategory(identifier: Self.permissionCategory, actions: PermissionAnswer.allCases.map { answer in
-                UNNotificationAction(identifier: answer.rawValue, title: answer.title, options: answer == .reject ? [.destructive] : [])
+                UNNotificationAction(identifier: answer.rawValue, title: answer.title, options: answer == .reject ? [.destructive] : [.authenticationRequired])
             }, intentIdentifiers: []),
             UNNotificationCategory(identifier: Self.replyCategory, actions: [
                 UNTextInputNotificationAction(identifier: Self.replyAction, title: "Reply", options: [], textInputButtonTitle: "Send", textInputPlaceholder: "Message"),
@@ -134,6 +145,9 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     /// choices. With `push`, it goes to your phones too, whether the Mac shows it or not.
     func notify(session: String, title: String, subtitle: String? = nil, body: String, permission: (session: String, request: String)? = nil,
                 question: Question? = nil, replies: Bool = false, push: Push? = nil) {
+        // What looks like a secret in a command or reply (a token, a key) isn't shown: these stay
+        // in Notification Center, and a phone's lock screen.
+        let body = Self.masked(body)
         if let push { send(push, session: session, title: title, subtitle: subtitle, body: body) }
         guard Self.isEnabled, !NSApp.isActive else { return }
         Task {
