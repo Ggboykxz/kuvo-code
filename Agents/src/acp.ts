@@ -117,6 +117,8 @@ interface Active {
   started: number
   /** What Kuvo Code last refused it on its own (your settings, not you), since it was last told. */
   refused?: string
+  /** Its calls Kuvo Code said no to: failed with this, unless it says how they ended. */
+  declined?: Map<string, string>
   /** The prompt under way (each "carry on" is a new one): what an older one says isn't its end. */
   prompt: number
   promptID?: string
@@ -382,6 +384,9 @@ export class AcpThread implements Thread {
       active.turn.toolSucceeded(child.row, "", { sessionID: child.run.sessionID })
       child.run.end(outcome === "failed" ? "interrupted" : outcome)
     }
+    // Calls it was told no to and never ended; reads it never said the file of.
+    for (const [id, message] of active.declined ?? []) active.turn.toolFailed(id, message)
+    this.settleReads(active, true)
     active.turn.endStep({ tokens: this.stepTokens(active) })
     if (active.hooks.signal.aborted) active.resolve({ outcome: "interrupted" })
     // It had the message when it said something about it, or answered the prompt itself.
@@ -608,17 +613,32 @@ export class AcpThread implements Thread {
   private words(active: Active) {
     if (!active.toolsSinceText) return
     active.toolsSinceText = false
-    // Its reads are over by now (Antigravity says so only as the turn ends): one of a file that
-    // isn't there failed, the rest are done.
-    if (this.flavor.fileSystem) {
-      for (const [id, call] of active.tools) {
-        if (!this.openRead(call) || call.settled) continue
-        const path = readPath(call)
-        this.settleRead(active, id, path && !existsSync(path) ? { error: "There's no such file." } : { text: "" })
-      }
-    }
+    this.settleReads(active, false)
     active.turn.endStep({ tokens: this.stepTokens(active) })
     active.turn.startStep()
+  }
+
+  /**
+   * Its reads are over by now (Antigravity says so only as the turn ends): one Kuvo Code read for
+   * it shows what was read, one of a file that isn't there failed, the rest are done. One it
+   * hasn't said the file of yet waits for it (`all`: not as the turn ends).
+   */
+  private settleReads(active: Active, all: boolean) {
+    if (!this.flavor.fileSystem) return
+    for (const [id, call] of active.tools) {
+      if (!this.openRead(call) || call.settled) continue
+      const path = this.readPath(call)
+      if (!path && !all) continue
+      const served = path && clientRead(call) ? active.served.get(path)?.shift() : undefined
+      this.settleRead(active, id, served ?? (path && !existsSync(path) ? { error: "There's no such file." } : { text: "" }))
+    }
+  }
+
+  /** The file a read is of, as a full path (in the session's folder, when it names it from there). */
+  private readPath(call: any): string | undefined {
+    const raw = call.rawInput ?? {}
+    const path = call.locations?.[0]?.path ?? raw.absolute_path ?? raw.path ?? raw.file_path ?? raw.filePath
+    return typeof path === "string" && path ? resolve(this.session.location.directory, path) : undefined
   }
 
   /** A step's tokens, as the context gauge reads them: what the conversation fills, as the agent said. */
@@ -641,7 +661,8 @@ export class AcpThread implements Thread {
       turn.toolStart(id, kuvo.name, kuvo.input)
     } else {
       turn.toolRename(id, kuvo.name)
-      if (merged.status !== "completed" && merged.status !== "failed") turn.toolCalled(id, kuvo.input)
+      // Its input, also when it comes only as the call ends.
+      if ((merged.status !== "completed" && merged.status !== "failed") || update.rawInput !== undefined) turn.toolCalled(id, kuvo.input)
     }
     const { text: output, pictures } = toolOutput(merged)
     const files = (merged.content ?? [])
@@ -655,9 +676,10 @@ export class AcpThread implements Thread {
     const made = merged.status === "completed" && this.sessionID ? (this.flavor.madeFiles?.(merged, this.sessionID, active.started) ?? []) : []
     if (merged.status === "completed") turn.toolSucceeded(id, withPictures(output, [...pictures, ...made]), metadata)
     else if (merged.status === "failed") turn.toolFailed(id, output || "The tool failed.", metadata)
+    else if (merged.status === "cancelled") turn.toolFailed(id, output || active.declined?.get(id) || "Stopped.", metadata)
     else if (output) turn.toolProgress(id, metadata)
     // A file Kuvo Code read for it before it said which call read it.
-    const path = this.openRead(merged) && clientRead(merged) ? readPath(merged) : undefined
+    const path = this.openRead(merged) && clientRead(merged) ? this.readPath(merged) : undefined
     const served = path ? active.served.get(path)?.shift() : undefined
     if (served) this.settleRead(active, id, served)
   }
@@ -678,9 +700,9 @@ export class AcpThread implements Thread {
   private served(path: string, served: { text?: string; error?: string }) {
     const active = this.active
     if (!active) return
-    const file = resolve(path)
+    const file = resolve(this.session.location.directory, path)
     for (const [id, call] of active.tools) {
-      if (this.openRead(call) && !call.settled && clientRead(call) && readPath(call) === file) return this.settleRead(active, id, served)
+      if (this.openRead(call) && !call.settled && clientRead(call) && this.readPath(call) === file) return this.settleRead(active, id, served)
     }
     active.served.set(file, [...(active.served.get(file) ?? []), served])
   }
@@ -715,7 +737,11 @@ export class AcpThread implements Thread {
         // Refused by your settings, not by you: the agent stops for any no, and is told to carry on.
         const automatic = active.hooks.check(ask) === "deny"
         const decision: Decision = await active.hooks.permission(ask)
-        if (decision === "reject" && automatic) active.refused = refusedWhat(ask.action, ask.resources)
+        if (decision === "reject") {
+          // A no of yours stops it, as you meant (none of your settings' before it is told now).
+          active.refused = automatic ? refusedWhat(ask.action, ask.resources) : undefined
+          ;(active.declined ??= new Map()).set(call.toolCallId, "Declined.")
+        }
         const pick = (kinds: string[]) => kinds.map((kind) => options.find((option) => option.kind === kind)).find(Boolean)
         const option = decision === "reject" ? pick(["reject_once", "reject_always"]) : decision === "always" ? pick(["allow_always", "allow_once"]) : pick(["allow_once", "allow_always"])
         return option ? { outcome: { outcome: "selected", optionId: option.optionId } } : { outcome: { outcome: "cancelled" } }
@@ -724,7 +750,7 @@ export class AcpThread implements Thread {
         if (!this.flavor.fileSystem) break
         let content: string
         try {
-          content = readFileSync(params.path, "utf8")
+          content = readFileSync(resolve(this.session.location.directory, params.path), "utf8")
         } catch (error) {
           this.served(params.path, { error: (error as any)?.code === "ENOENT" ? "There's no such file." : failure(error).message })
           throw error
@@ -739,8 +765,9 @@ export class AcpThread implements Thread {
       }
       case "fs/write_text_file": {
         if (!this.flavor.fileSystem) break
-        mkdirSync(dirname(params.path), { recursive: true })
-        writeFileSync(params.path, params.content ?? "")
+        const file = resolve(this.session.location.directory, params.path)
+        mkdirSync(dirname(file), { recursive: true })
+        writeFileSync(file, params.content ?? "")
         return {}
       }
       case "elicitation/create": {
@@ -848,10 +875,14 @@ function resources(call: any): string[] {
   return [raw.path ?? raw.url ?? raw.file_path ?? "*"]
 }
 
-/** A read the agent has Kuvo Code do (Antigravity's client_view_file, not its own view_file). */
+/**
+ * A read the agent has Kuvo Code do (Antigravity's client_view_file, not its own view_file), as
+ * its title or input name it. One named only by what the model says it does could be either: it's
+ * Kuvo Code's if Kuvo Code read that file for it.
+ */
 function clientRead(call: any): boolean {
-  const title = String(call.title ?? "")
-  return /client/i.test(title) || !/view_file/i.test(title)
+  const named = `${call.title ?? ""} ${call.rawInput?.name ?? ""}`
+  return /client_view_file/i.test(named) || !/view_file/i.test(named)
 }
 
 /** What was refused, in a few words for the agent. */
@@ -862,13 +893,6 @@ function refusedWhat(action: string, resources: string[]): string {
   if (action === "webfetch") return what ? `opening ${what}` : "opening that page"
   if (action === "read") return what ? `reading ${what}` : "reading that"
   return what ? `${action} on ${what}` : `that (${action})`
-}
-
-/** The file a read is of, as a full path. */
-function readPath(call: any): string | undefined {
-  const raw = call.rawInput ?? {}
-  const path = call.locations?.[0]?.path ?? raw.absolute_path ?? raw.path ?? raw.file_path ?? raw.filePath
-  return typeof path === "string" && path ? resolve(path) : undefined
 }
 
 function backticked(title: unknown): string | undefined {

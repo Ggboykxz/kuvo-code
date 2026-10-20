@@ -854,9 +854,10 @@ export class Sessions {
    */
   /**
    * A conversation from the engine, carried on here (you picked a coding agent's model in it): a
-   * session with its messages, whose agents are handed all of it as they first run.
+   * session with its messages, whose agents are handed all of it as they first run, and the
+   * messages you'd sent that were waiting there, still waiting (nothing starts).
    */
-  importSession(body: { title?: string; agent?: string; model?: ModelRef; location: { directory: string }; permissions?: PermissionRule[]; messages?: unknown[] }): Session {
+  importSession(body: { title?: string; agent?: string; model?: ModelRef; location: { directory: string }; permissions?: PermissionRule[]; messages?: unknown[]; waiting?: unknown[] }): Session {
     const session = this.create(body)
     const record = this.store.get(session.id)!
     const known = new Set(["user", "assistant", "synthetic", "system", "idle", "model-switched", "agent-switched", "shell"])
@@ -865,6 +866,13 @@ export class Sessions {
     )
     // Its last turn is over (a run left open there isn't one here).
     this.repair(session.id)
+    const queue = this.queue(record)
+    for (const item of Array.isArray(body.waiting) ? body.waiting : []) {
+      const { id, text, files } = (item ?? {}) as { id?: unknown; text?: unknown; files?: unknown }
+      if (typeof id !== "string" || typeof text !== "string") continue
+      const kept = (Array.isArray(files) ? files : []).filter((file): file is Input["files"][number] => typeof file?.uri === "string")
+      queue.push({ id, text, files: kept.map((file) => ({ uri: file.uri, ...(typeof file.name === "string" ? { name: file.name } : {}) })), delivery: "queue" })
+    }
     session.title = body.title ?? session.title
     session.time.updated = Date.now()
     this.store.save(session.id, true)
@@ -1396,8 +1404,9 @@ export class Sessions {
   }
 
   /** A title from your first message: from the model you picked for titles, or the session's. */
-  private async nameSession(id: string, text: string) {
+  private async nameSession(id: string, message: string) {
     const directory = this.store.get(id)?.session.location.directory
+    const text = ownWords(message)
     if (!directory || !text.trim()) return
     const prompt = `Write a title for a conversation that begins with the message below: a few words (six at most) saying what it's about, in the message's language. Reply with the title alone, without quotes or a period at the end.\n\n<message>\n${text.slice(0, 4_000)}\n</message>`
     // The model you picked for titles; the session's; or, when its agent can't write one
@@ -1502,10 +1511,14 @@ export class Sessions {
     const before = record.messages[record.messages.length - 1]?.id
     turn.finish(outcome, outcome === "interrupted" ? undefined : result.error)
     // Subagents still at work end with it, but those it sent off in the background, which go on
-    // in their sessions (when it went through: stopped, they stop too).
+    // in their sessions (when it went through: stopped or failed, their agent stops them too, and
+    // what they asked goes with them).
     for (const [child, childTurn] of [...live.subagents]) {
       if (outcome === "succeeded" && live.background.has(child) && !childTurn.isEnded) continue
-      childTurn.finish(outcome === "failed" ? "interrupted" : outcome)
+      const run = live.runs.get(child)
+      if (run && outcome !== "succeeded" && !childTurn.isEnded) void run.stop?.().catch(() => {})
+      if (run?.turn === childTurn) run.end(outcome === "failed" ? "interrupted" : outcome)
+      else childTurn.finish(outcome === "failed" ? "interrupted" : outcome)
       live.subagents.delete(child)
       live.background.delete(child)
     }
@@ -1616,8 +1629,9 @@ export class Sessions {
     const from = record.messages.length
     try {
       // Its conversation, ready (Stop gives up on it as on a run): one it had that couldn't be
-      // picked up again starts over, and is handed all that came before.
-      if (thread.prepare) {
+      // picked up again starts over, and is handed all that came before. (Not for a turn it
+      // began on its own: it's at work already, and getting it ready could start it over.)
+      if (thread.prepare && !input.adopt) {
         const prepared = await Promise.race([thread.prepare({ ...input, model }, hooks), abandoned.then(() => "abandoned" as const)])
         if (prepared === "abandoned") return { outcome: "interrupted" }
         if (prepared?.fresh) slot.seen = undefined
@@ -2143,4 +2157,19 @@ function promptFile(file: { uri: string; name?: string }): PromptFile {
     path = file.uri.startsWith("file:") ? fileURLToPath(file.uri) : undefined
   } catch {}
   return { uri: file.uri, mime: type, name: file.name, path }
+}
+
+/**
+ * Your words in a message, without the blocks the app adds at its end (the agents you named with
+ * "&", your comments on the changes, the note of attached files), as the app's SentMessage reads it.
+ */
+export function ownWords(message: string): string {
+  let text = message.trimEnd()
+  for (;;) {
+    const tag = ["attached-files", "review-comments", "named-agents"].find((name) => text.endsWith(`\n</${name}>`))
+    if (!tag) return text
+    const open = text.lastIndexOf(`<${tag}>\n`, text.length - tag.length - 4)
+    if (open < 0 || (open > 0 && text[open - 1] !== "\n")) return text
+    text = text.slice(0, open).trimEnd()
+  }
 }

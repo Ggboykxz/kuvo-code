@@ -37,7 +37,7 @@ export class CodexAgent implements Agent {
   private starting?: Promise<RPC>
   private threads = new Map<string, CodexThread>()
   /** One-off answers under way (`generate`), by their thread: what each is told. */
-  private oneOffs = new Map<string, (method: string, params: any) => void>()
+  private oneOffs = new Map<string, { rpc: RPC; notify: (method: string, params: any) => void; fail: (error: Error) => void }>()
   private logins = new Map<string, (status: OAuthStatus) => void>()
   private accountCache?: { at: number; account: Account }
   private modelList?: { at: number; models: Model[] }
@@ -101,7 +101,7 @@ export class CodexAgent implements Agent {
       this.outdated = undefined
       return
     }
-    if (this.logins.size || [...this.threads.values()].some((thread) => thread !== starting && (thread.isRunning || thread.keepsWorking))) return
+    if (this.logins.size || this.oneOffs.size || [...this.threads.values()].some((thread) => thread !== starting && (thread.isRunning || thread.keepsWorking))) return
     this.outdated = undefined
     this.shutdown()
     // What the old one listed meanwhile, asked anew.
@@ -125,7 +125,7 @@ export class CodexAgent implements Agent {
     // Stopped when nothing has used it for a while (no session, no sign-in).
     this.idleCheck ??= setInterval(() => {
       this.restartIfQuiet()
-      if (!this.server || this.threads.size || this.logins.size || Date.now() - this.lastUse < 15 * 60_000) return
+      if (!this.server || this.threads.size || this.logins.size || this.oneOffs.size || Date.now() - this.lastUse < 15 * 60_000) return
       this.shutdown()
     }, 60_000)
     this.restartIfQuiet(starting)
@@ -145,6 +145,8 @@ export class CodexAgent implements Agent {
     rpc.onNotification = (method, params) => this.notification(method, params)
     rpc.onRequest = (method, params, id) => this.request(method, params, id)
     rpc.onExit = () => {
+      // A title or commit text it was writing won't come.
+      for (const oneOff of this.oneOffs.values()) if (oneOff.rpc === rpc) oneOff.fail(new Error("Codex stopped."))
       // Stopped on purpose: the threads were told then (they may be on a newer one by now).
       if (this.server !== rpc) return
       this.server = undefined
@@ -198,7 +200,7 @@ export class CodexAgent implements Agent {
       return
     }
     const oneOff = threadID ? this.oneOffs.get(threadID) : undefined
-    if (oneOff) return oneOff(method, params)
+    if (oneOff) return oneOff.notify(method, params)
     if (!threadID) return
     const thread = this.threadFor(threadID)
     if (thread) return thread.notification(method, params)
@@ -356,11 +358,15 @@ export class CodexAgent implements Agent {
         if (turnId) void rpc.request("turn/interrupt", { threadId, turnId }, 10_000).catch(() => {})
         reject(new Error("Codex took too long to answer."))
       }, 120_000)
-      this.oneOffs.set(threadId, (method, params) => {
-        if (method === "item/completed" && params?.item?.type === "agentMessage" && typeof params.item.text === "string") text = params.item.text
-        if (method !== "turn/completed") return
-        if (params?.turn?.status === "completed") resolve(text.trim())
-        else reject(new Error(params?.turn?.error?.message ?? "Codex couldn't answer."))
+      this.oneOffs.set(threadId, {
+        rpc,
+        notify: (method, params) => {
+          if (method === "item/completed" && params?.item?.type === "agentMessage" && typeof params.item.text === "string") text = params.item.text
+          if (method !== "turn/completed") return
+          if (params?.turn?.status === "completed") resolve(text.trim())
+          else reject(new Error(params?.turn?.error?.message ?? "Codex couldn't answer."))
+        },
+        fail: reject,
       })
     })
     // (Settled before it's awaited, it isn't an unhandled failure.)
@@ -532,6 +538,8 @@ class CodexThread implements Thread {
 
   /** Agents it spawned are still at work after the turn: it's kept open for them. */
   get keepsWorking(): boolean {
+    // (One the session ended, with the turn that started it, isn't.)
+    for (const [threadID, lane] of this.backgroundLanes) if (lane.ended || lane.run.turn.isEnded) this.backgroundLanes.delete(threadID)
     return this.backgroundLanes.size > 0
   }
 
@@ -609,7 +617,16 @@ class CodexThread implements Thread {
       // As it ends, the agents it spawned that are still at work go on in their sessions (a turn
       // stopped or failed stops them: the session ends them with it).
       active.resolve = (result) => {
-        if (result.outcome === "succeeded") for (const [threadID, lane] of active.subagents) if (!lane.ended) this.backgroundLanes.set(threadID, lane)
+        for (const [threadID, lane] of active.subagents) {
+          if (lane.ended) continue
+          if (result.outcome === "succeeded") {
+            this.backgroundLanes.set(threadID, lane)
+          } else {
+            // Codex doesn't stop them itself.
+            void this.interruptLane(threadID, lane)
+            this.endSubagent(lane, "interrupted")
+          }
+        }
         resolve(result)
       }
       this.active = active
@@ -842,8 +859,9 @@ class CodexThread implements Thread {
     }
     if (!active && !lane) return
     if (!lane) {
-      if (!active) return
-      // One spawned in an earlier turn, given more to do: its session goes on.
+      // One spawned in an earlier turn, given more to do (a turn starts on its thread): its
+      // session goes on. Anything else from it (closed, its usage) isn't news.
+      if (!active || method !== "turn/started") return
       const before = this.spawnedSessions.get(threadID)
       if (!before) return
       const run = active.hooks.subagent(before.call, { title: before.title, sessionID: before.sessionID, background: true })
@@ -918,7 +936,11 @@ class CodexThread implements Thread {
   /** A spawned agent stopped from Kuvo Code: its turn on its thread is interrupted (it then says so). */
   private async stopSubagent(threadID: string) {
     const lane = this.active?.subagents.get(threadID) ?? this.backgroundLanes.get(threadID)
-    if (!lane || lane.ended || !lane.turnID) return
+    if (lane && !lane.ended) await this.interruptLane(threadID, lane)
+  }
+
+  private async interruptLane(threadID: string, lane: SubagentLane) {
+    if (!lane.turnID) return
     const rpc = await this.agent.rpc().catch(() => undefined)
     await rpc?.request("turn/interrupt", { threadId: threadID, turnId: lane.turnID }, 10_000).catch(() => {})
   }

@@ -880,25 +880,19 @@ final class Workspace {
         if let revert = current.revert, let cut = messages.firstIndex(where: { $0.id == revert.messageID }) {
             messages = Array(messages[..<cut])
         }
-        let waiting = (try? await engine.inbox(session: id)) ?? []
+        // What you'd sent that was waiting comes along, still waiting (nothing starts there).
+        let waiting = ((try? await engine.inbox(session: id)) ?? []).filter { $0.type == "user" && $0.text != nil }
+        let carried = waiting.map { OpenCodeAPI.WaitingPrompt(id: Identifier.message(), text: $0.text ?? "", files: Self.promptFiles(in: $0.payload)) }
         let moved = try await bridge.importSession(directory: session.location.directory, title: session.title, agent: session.agent, model: model,
-                                                   permissions: current.permissions, messages: messages)
+                                                   permissions: current.permissions, messages: messages, waiting: carried)
         moving = false
+        for item in waiting { try? await engine.cancelInbox(session: id, item: item.id) }
         let extra = extraFolders(session.location.directory)
         if !extra.isEmpty {
             try? await bridge.setInstruction(session: moved.id, key: ProjectFolders.instructionKey, text: ProjectFolders.instructions(primary: session.location.directory, folders: extra))
         }
         if let tree = worktrees[session.location.directory] {
             try? await bridge.setInstruction(session: moved.id, key: Self.worktreeInstructionKey, text: Self.instructions(for: tree))
-        }
-        // What you'd sent that was waiting comes along, still waiting.
-        for item in waiting where item.type == "user" {
-            guard let text = item.text else { continue }
-            let files = Self.promptFiles(in: item.payload)
-            do {
-                try await bridge.prompt(session: moved.id, id: Identifier.message(), text: text, files: files, delivery: .queue)
-                try? await engine.cancelInbox(session: id, item: item.id)
-            } catch {}
         }
         upsert(moved)
         Drafts.shared[moved.id] = Drafts.shared[id]

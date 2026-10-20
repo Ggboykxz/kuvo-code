@@ -44,9 +44,10 @@ export class GrokAgent implements Agent {
   saveEfforts(setup: any) {
     const known: Record<string, { values: string[]; default?: string }> = {}
     for (const info of setup?.models?.availableModels ?? []) {
-      const levels: any[] = info?._meta?.reasoningEfforts ?? []
-      if (!info?.modelId || !levels.length) continue
-      known[info.modelId] = { values: levels.map((level) => String(level.value)), default: levels.find((level) => level.default)?.value ?? info._meta?.reasoningEffort }
+      // (One it describes with no efforts has none to pick.)
+      if (!info?.modelId || typeof info._meta !== "object" || !info._meta) continue
+      const levels: any[] = Array.isArray(info._meta.reasoningEfforts) ? info._meta.reasoningEfforts : []
+      known[info.modelId] = { values: levels.map((level) => String(level.value)), default: levels.find((level) => level.default)?.value ?? info._meta.reasoningEffort }
     }
     if (!Object.keys(known).length || JSON.stringify(known) === JSON.stringify(this.efforts())) return
     try {
@@ -178,11 +179,14 @@ export class GrokAgent implements Agent {
             await rpc.request("session/set_model", { sessionId, modelId: modelID }, 30_000)
             if (setup?.models) setup.models.currentModelId = modelID
           }
-          // Its reasoning effort: the one you picked, or (after one was) the model's own.
+          // Its reasoning effort: the one you picked, or (after one was) the model's own: as Grok
+          // describes the model, or what the session had before one was picked.
           const option = (setup?.configOptions ?? []).find((option: any) => option.id === "reasoning_effort" || option.category === "thought_level")
-          const wanted = variant ?? (setup?.kuvoEffort ? agent.efforts()[modelID]?.default : undefined)
+          const described = (setup?.models?.availableModels ?? []).find((info: any) => info?.modelId === modelID)?._meta?.reasoningEffort
+          const wanted = variant ?? (setup?.kuvoEffort ? (agent.efforts()[modelID]?.default ?? described ?? setup.kuvoEffortBefore) : undefined)
           const key = `${modelID}:${variant ?? ""}`
           if (!option || !wanted || setup.kuvoEffort === key) return
+          if (!setup.kuvoEffort) setup.kuvoEffortBefore ??= option.currentValue
           await rpc.request("session/set_config_option", { sessionId, configId: option.id, value: wanted }, 30_000)
           setup.kuvoEffort = variant ? key : undefined
         },

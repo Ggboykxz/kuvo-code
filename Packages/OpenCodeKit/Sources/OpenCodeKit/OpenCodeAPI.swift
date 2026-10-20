@@ -318,9 +318,9 @@ public struct OpenCodeAPI: Sendable {
 
     /// A new session with a conversation from elsewhere (the agents bridge takes one from the
     /// engine): its messages as they were, carried on here.
-    public func importSession(directory: String, title: String?, agent: String?, model: ModelRef, permissions: [PermissionRule]?, messages: [Message]) async throws -> Session {
-        struct Body: Encodable { var title: String?; var agent: String?; var model: ModelRef; var location: Location; var permissions: [PermissionRule]?; var messages: [Message] }
-        let body = Body(title: title, agent: agent, model: model, location: Location(directory: enginePath(directory)), permissions: permissions, messages: messages)
+    public func importSession(directory: String, title: String?, agent: String?, model: ModelRef, permissions: [PermissionRule]?, messages: [Message], waiting: [WaitingPrompt] = []) async throws -> Session {
+        struct Body: Encodable { var title: String?; var agent: String?; var model: ModelRef; var location: Location; var permissions: [PermissionRule]?; var messages: [Message]; var waiting: [WaitingPrompt] }
+        let body = Body(title: title, agent: agent, model: model, location: Location(directory: enginePath(directory)), permissions: permissions, messages: messages, waiting: waiting)
         return appSession(try await send("POST", "api/session/import", body: body, as: DataEnvelope<Session>.self).data)
     }
 
@@ -420,6 +420,19 @@ public struct OpenCodeAPI: Sendable {
     }
 
     // MARK: Running
+
+    /// A message you sent that waits its turn, carried into an imported session (still waiting).
+    public struct WaitingPrompt: Encodable, Sendable {
+        public var id: String
+        public var text: String
+        public var files: [PromptFile]
+
+        public init(id: String, text: String, files: [PromptFile]) {
+            self.id = id
+            self.text = text
+            self.files = files
+        }
+    }
 
     public struct PromptFile: Encodable, Sendable {
         public var uri: String

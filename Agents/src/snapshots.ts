@@ -98,8 +98,8 @@ export class Snapshots {
       // those, though the rules change after.
       const ignored = await this.git(repository, ["ls-files", "-z", "-o", "-i", "--exclude-standard", "--directory", "--", repository.prefix || "."])
       if (ignored.code === 0) this.keepIgnored(store, tree.stdout.trim(), ignored.stdout.split("\0").filter(Boolean))
-      // Kept small now and then.
-      if (++this.taken % 50 === 0) void this.git(repository, ["gc", "--auto", "--quiet"], { timeout: 600_000, packs: true }).catch(() => {})
+      // Kept small now and then: once this is done, before the store's next operation.
+      if (++this.taken % 50 === 0) void this.exclusive(repository, () => this.git(repository, ["gc", "--auto", "--quiet"], { timeout: 600_000, packs: true })).catch(() => {})
       return tree.stdout.trim()
     })
   }

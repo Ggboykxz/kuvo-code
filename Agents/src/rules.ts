@@ -8,7 +8,8 @@ export function matches(pattern: string, value: string): boolean {
   // "git push *" is git push with anything after it, or nothing, as the engine reads it.
   if (pattern.endsWith(" *") && value === pattern.slice(0, -2)) return true
   const expression = "^" + pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$"
-  return new RegExp(expression).test(value)
+  // Across lines too (a commit message, a script), as the engine reads it.
+  return new RegExp(expression, "s").test(value)
 }
 
 export function evaluate(rules: PermissionRule[] | undefined, action: string, resources: string[]): "allow" | "deny" | "ask" {

@@ -214,7 +214,8 @@ export class AntigravityFollower {
       if (was === step.status) continue
       // More to do after it was done (a message for it, a timer of its own): its session goes on.
       if (child.ended && was === undefined) {
-        child.run = this.hooks!.subagent(child.row, { ...child.task, sessionID: child.run.sessionID })
+        // (What it was asked first is in its session already; what it's told now shows as it comes.)
+        child.run = this.hooks!.subagent(child.row, { ...child.task, prompt: undefined, sessionID: child.run.sessionID })
         child.ended = false
         child.toolsSinceText = false
       }

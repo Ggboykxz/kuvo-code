@@ -498,8 +498,13 @@ class ClaudeThread implements Thread {
   turnAway() {
     const own = this.own
     if (!own || own.turnedAway) return
-    own.turnedAway = true
     own.take?.()
+    // Over already: nothing to stop, and what it says next begins another.
+    if (own.frames.some((frame) => frame.type === "result" && !frame.parent_tool_use_id)) {
+      this.own = undefined
+      return
+    }
+    own.turnedAway = true
     void this.query?.interrupt().catch(() => {})
   }
 
@@ -538,7 +543,7 @@ class ClaudeThread implements Thread {
         if (task?.shell) endShell(task.shell, message.status === "completed" ? 0 : undefined)
         // A subagent in the background done: its session's work ends.
         const callID = typeof message.tool_use_id === "string" ? message.tool_use_id : task?.toolUseID
-        const lane = callID ? (this.backgroundLanes.get(callID) ?? this.active?.subagents.get(callID)) : undefined
+        const lane = callID ? (this.keptLane(callID) ?? this.active?.subagents.get(callID)) : undefined
         if (callID && lane?.background) {
           const status = String(message.status ?? "completed")
           if (status === "completed") lane.run.end("succeeded")
@@ -574,7 +579,13 @@ class ClaudeThread implements Thread {
       command,
       () => this.taskOutput(taskID),
       async () => {
-        await this.query?.stopTask?.(taskID)
+        const shell = this.tasks.get(taskID)?.shell
+        const query = this.query
+        // Claude Code is gone, and the command with it.
+        if (!query?.stopTask) return void (shell && endShell(shell))
+        await query.stopTask(taskID).catch(() => {
+          if (shell && !this.liveTasks.has(taskID)) endShell(shell)
+        })
       },
     )
   }
@@ -650,6 +661,8 @@ class ClaudeThread implements Thread {
     if (this.query === query) {
       this.query = undefined
       this.input = undefined
+      // Claude Code stopped (or crashed): what it left running went with it.
+      this.leftRunning()
     }
     // Ended under a turn of this Claude Code (not one started since on a new one).
     const active = this.active
@@ -681,7 +694,7 @@ class ClaudeThread implements Thread {
     const active = this.active
     if (!active) {
       // A subagent at work in the background, after its turn: told in its session.
-      const background = message.parent_tool_use_id ? this.backgroundLanes.get(message.parent_tool_use_id) : undefined
+      const background = message.parent_tool_use_id ? this.keptLane(message.parent_tool_use_id) : undefined
       if (background) return this.laneFrame(undefined, background, message)
       return this.ownFrame(message)
     }
@@ -884,7 +897,7 @@ class ClaudeThread implements Thread {
     const known = active.subagents.get(callID)
     if (known) return known
     // One at work in the background since an earlier turn: this turn has it now.
-    const kept = this.backgroundLanes.get(callID)
+    const kept = this.keptLane(callID)
     if (kept) {
       this.backgroundLanes.delete(callID)
       active.subagents.set(callID, kept)
@@ -1142,10 +1155,18 @@ class ClaudeThread implements Thread {
     for (const [taskID, task] of this.tasks) if (task.toolUseID === callID) await this.query?.stopTask?.(taskID).catch(() => {})
   }
 
+  /** A subagent kept at work in the background, unless the session ended it since (with a turn that failed). */
+  private keptLane(callID: string) {
+    const lane = this.backgroundLanes.get(callID)
+    if (!lane?.run.turn.isEnded) return lane
+    this.backgroundLanes.delete(callID)
+    return undefined
+  }
+
   /** A subagent at work in the background, by Claude Code's id for it (its task's). */
   private backgroundLane(agentID: unknown) {
     const callID = typeof agentID === "string" ? this.tasks.get(agentID)?.toolUseID : undefined
-    const lane = callID ? (this.backgroundLanes.get(callID) ?? this.active?.subagents.get(callID)) : undefined
+    const lane = callID ? (this.keptLane(callID) ?? this.active?.subagents.get(callID)) : undefined
     return lane?.background ? lane : undefined
   }
 
@@ -1219,7 +1240,11 @@ class ClaudeThread implements Thread {
     } catch {}
     this.query = undefined
     this.input = undefined
-    // What it left running ends with it.
+    this.leftRunning()
+  }
+
+  /** What it left running ends with it. */
+  private leftRunning() {
     for (const task of this.tasks.values()) if (task.shell) endShell(task.shell)
     for (const lane of this.backgroundLanes.values()) lane.run.end("interrupted")
     this.backgroundLanes.clear()
