@@ -4,7 +4,7 @@
 // undone turns changed, as the engine's does. Only in git repositories, as the engine's.
 
 import { createHash } from "node:crypto"
-import { existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, rmdirSync, rmSync } from "node:fs"
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join, relative, resolve, sep } from "node:path"
 import { fromPatch } from "./diff"
 import { run } from "./proc"
@@ -94,6 +94,10 @@ export class Snapshots {
       if (added.code !== 0) throw new Error(`Kuvo Code couldn't keep this project's files: ${added.stderr.trim().split("\n").pop() ?? "git failed"}`)
       const tree = await this.git(repository, ["write-tree"])
       if (tree.code !== 0 || !tree.stdout.trim()) throw new Error("Kuvo Code couldn't keep this project's files.")
+      // What the ignore rules leave out now (a whole folder as one), kept with it: Undo spares
+      // those, though the rules change after.
+      const ignored = await this.git(repository, ["ls-files", "-z", "-o", "-i", "--exclude-standard", "--directory", "--", repository.prefix || "."])
+      if (ignored.code === 0) this.keepIgnored(store, tree.stdout.trim(), ignored.stdout.split("\0").filter(Boolean))
       // Kept small now and then.
       if (++this.taken % 50 === 0) void this.git(repository, ["gc", "--auto", "--quiet"], { timeout: 600_000, packs: true }).catch(() => {})
       return tree.stdout.trim()
@@ -170,7 +174,8 @@ export class Snapshots {
       const goneRules = paths.filter((path) => isRules(path) && !there.has(path) && !repositories.has(path))
       for (const path of goneRules) this.remove(repository.top, path)
       await this.checkout(repository, tree, paths.filter((path) => isRules(path) && there.has(path)))
-      let gone = paths.filter((path) => !isRules(path) && !there.has(path) && !repositories.has(path))
+      // (One through a link isn't touched.)
+      let gone = paths.filter((path) => !isRules(path) && !there.has(path) && !repositories.has(path) && this.isInside(repository.top, join(repository.top, path)))
       // One the rules leave out now (their files may have changed outside the session's folder,
       // or in git's own list) stays.
       if (gone.length) {
@@ -181,8 +186,11 @@ export class Snapshots {
         const left = new Set(ignored.stdout.split("\0").filter(Boolean).map((path) => path.replace(/^\.\//, "")))
         gone = gone.filter((path) => !left.has(path))
       }
-      // And one that's older than what was kept: it was there, left out then.
-      if (since !== undefined) gone = gone.filter((path) => !this.madeBefore(join(repository.top, path), since))
+      // And one the rules left out when it was kept: it was there.
+      const leftOut = this.ignoredWith(this.storeOf(repository), tree)
+      if (leftOut) gone = gone.filter((path) => !leftOut.has(path) && !ancestors(path).some((folder) => leftOut.has(`${folder}/`)))
+      // (Kept before that was noted: one made before it, as its file system says.)
+      else if (since !== undefined) gone = gone.filter((path) => !this.madeBefore(join(repository.top, path), since))
       // Gone first, deepest first (a folder that was a file, a file that was a folder).
       for (const path of gone.sort((a, b) => b.length - a.length)) this.remove(repository.top, path)
       const back = paths.filter((path) => !isRules(path) && there.has(path))
@@ -199,6 +207,26 @@ export class Snapshots {
     if (!paths.length) return
     const checked = await this.git(repository, ["checkout", tree, "--pathspec-from-file=-", "--pathspec-file-nul"], { input: paths.join("\0") })
     if (checked.code !== 0) throw new Error(`Kuvo Code couldn't put the files back: ${checked.stderr.trim().split("\n").pop() ?? "git failed"}`)
+  }
+
+  /** Notes what the ignore rules left out as `tree` was kept (with what they left out before, for the same files). */
+  private keepIgnored(store: string, tree: string, paths: string[]) {
+    try {
+      const folder = join(store, "kuvo-ignored")
+      mkdirSync(folder, { recursive: true })
+      const file = join(folder, tree)
+      const known = existsSync(file) ? readFileSync(file, "utf8").split("\0").filter(Boolean) : []
+      writeFileSync(file, [...new Set([...known, ...paths])].join("\0"))
+    } catch {}
+  }
+
+  /** What the ignore rules left out as `tree` was kept, if that was noted. */
+  private ignoredWith(store: string, tree: string): Set<string> | undefined {
+    try {
+      return new Set(readFileSync(join(store, "kuvo-ignored", tree), "utf8").split("\0").filter(Boolean))
+    } catch {
+      return undefined
+    }
   }
 
   /** Whether a file was made before a time (as far as its file system says when it was made). */
@@ -250,4 +278,10 @@ export class Snapshots {
       folder = dirname(folder)
     }
   }
+}
+
+/** A path's folders, outermost first (`a`, `a/b` for `a/b/c`). */
+function ancestors(path: string): string[] {
+  const parts = path.split("/").slice(0, -1)
+  return parts.map((_, index) => parts.slice(0, index + 1).join("/"))
 }

@@ -233,18 +233,14 @@ function scanCommands(text: string, start: number, close: string, out: string[],
       current += text.slice(i, i + 2)
       i += 2
       escaped = true
-    } else if (text.startsWith("$((", i) || (text.startsWith("((", i) && !current.trim())) {
-      // Arithmetic (`$((1 << 2))`, `(( n++ ))`): numbers, not commands; one with a command inside isn't read.
-      let level = 0
-      let j = text[i] === "$" ? i + 1 : i
-      for (; j < text.length; j++) {
-        if (text[j] === "(") level++
-        else if (text[j] === ")" && --level === 0) break
-      }
-      const inner = text.slice(i, j + 1)
-      if (j >= text.length || /\$\(|`/.test(inner.slice(3))) state.sure = false
+    } else if ((text.startsWith("$((", i) || (text.startsWith("((", i) && !current.trim())) && arithmeticEnd(text, text[i] === "$" ? i + 1 : i) !== undefined) {
+      // Arithmetic (`$((1 << 2))`, `(( n++ ))`): numbers, not commands; one with a command inside
+      // isn't read. (`((rm x) && y)` is a subshell in one: read as such, below.)
+      const end = arithmeticEnd(text, text[i] === "$" ? i + 1 : i)!
+      const inner = text.slice(i, end + 1)
+      if (/\$\(|`/.test(inner.slice(3))) state.sure = false
       current += inner
-      i = j + 1
+      i = end + 1
     } else if (ch === "'") {
       const end = text.indexOf("'", i + 1)
       if (end < 0) state.sure = false
@@ -255,7 +251,11 @@ function scanCommands(text: string, start: number, close: string, out: string[],
       let j = i + 1
       while (j < text.length && text[j] !== '"') {
         if (text[j] === "\\") j += 2
-        else if (text.startsWith("$(", j)) j = scanCommands(text, j + 2, ")", out, state) + 1
+        else if (text.startsWith("$((", j) && arithmeticEnd(text, j + 1) !== undefined) {
+          const end = arithmeticEnd(text, j + 1)!
+          if (/\$\(|`/.test(text.slice(j + 3, end))) state.sure = false
+          j = end + 1
+        } else if (text.startsWith("$(", j)) j = scanCommands(text, j + 2, ")", out, state) + 1
         else if (text[j] === "`") j = scanCommands(text, j + 1, "`", out, state) + 1
         else j++
       }
@@ -328,6 +328,24 @@ function scanCommands(text: string, start: number, close: string, out: string[],
 }
 
 /**
+ * Where arithmetic that opens at `open` (its `((`) ends, at the last `)` of its `))`; undefined
+ * when it isn't arithmetic (`((rm x) && y)`: a subshell in a subshell) or doesn't end.
+ */
+function arithmeticEnd(text: string, open: number): number | undefined {
+  let level = 0
+  let inner = -1
+  for (let j = open; j < text.length; j++) {
+    if (text[j] === "(") level++
+    else if (text[j] === ")") {
+      level--
+      if (level === 1 && inner < 0) inner = j
+      if (level === 0) return inner === j - 1 ? j : undefined
+    }
+  }
+  return undefined
+}
+
+/**
  * One command, as written, and as it runs: without assignments, redirections and wrappers before
  * it (`FOO=1`, `2>/dev/null`, `env`, `sudo`, `nohup`…), and for git, without its own options
  * before the subcommand (`git -C dir push`); a shell given a command line (`bash -c '…'`), that
@@ -336,10 +354,15 @@ function scanCommands(text: string, start: number, close: string, out: string[],
 function addCommand(raw: string, out: string[], state: { sure: boolean }) {
   const words = shellWords(raw.trim())
   while (words.length && shellKeywords.has(words[0])) words.shift()
+  // A function's own line (`function f { rm x`): what it runs follows its name.
+  if (words[0] === "function") {
+    words.splice(0, 2)
+    while (words.length && (shellKeywords.has(words[0]) || words[0].startsWith("()"))) words.shift()
+  }
   // A loop's or a case's own line: what runs is inside it.
-  if (!words.length || /^(for|case|select|function)$/.test(words[0])) return
+  if (!words.length || /^(for|case|select)$/.test(words[0])) return
   out.push(words.join(" "))
-  const bare = withoutPrefix(words, (line) => addLine(line, out, state))
+  const bare = withoutPrefix(words, state, (line) => addLine(line, out, state))
   if (!bare.length) return
   out.push(bare.join(" "))
   // As it runs: the words the program gets, and the program by its name (`"git" push`, `\git`,
@@ -349,7 +372,7 @@ function addCommand(raw: string, out: string[], state: { sure: boolean }) {
   const shown = plain.map((word, index) => (/^[\w@%+=:,./-]*$/.test(word) ? word : bare[index]))
   out.push(shown.join(" "))
   // A program named by a variable or a substitution, or quoting this can't read (`$'\x72m'`): not known.
-  if (/[$`]/.test(bare[0]) || bare.some((word) => /\$['"]/.test(word))) state.sure = false
+  if (/[$`]/.test(bare[0]) || bare.some(ansiQuoted)) state.sure = false
   const program = plain[0]
   if (program === "git") {
     const rest = shown.slice(1)
@@ -359,7 +382,7 @@ function addCommand(raw: string, out: string[], state: { sure: boolean }) {
       else break
     }
     out.push(["git", ...rest].join(" "))
-  } else if (/^(ba|z|da|k|fi)?sh$/.test(program)) {
+  } else if (/^(ba|z|da|k|fi|tc|c|a)?sh$/.test(program) || program === "su") {
     // A shell given a command line runs its commands; one reading its script from its input (a
     // here-document, what's piped to it) runs what isn't known here (a script file is as any program).
     const at = plain.findIndex((word, index) => index > 0 && /^-[a-z]*c[a-z]*$/.test(word))
@@ -371,7 +394,7 @@ function addCommand(raw: string, out: string[], state: { sure: boolean }) {
     // The command it runs, with arguments from its input (not known here).
     state.sure = false
     let i = 1
-    while (i < plain.length && plain[i].startsWith("-")) i += /^-[IinPLsdEa]$/.test(plain[i]) ? 2 : 1
+    while (i < plain.length && plain[i].startsWith("-")) i += /^-[IinPLsdEaJRS]$/.test(plain[i]) ? 2 : 1
     if (i < plain.length) addCommand(plain.slice(i).map(quoted).join(" "), out, state)
   } else if (program === "find") {
     // What its -exec runs, up to its `;` or `+`.
@@ -382,6 +405,20 @@ function addCommand(raw: string, out: string[], state: { sure: boolean }) {
       if (end < 0) state.sure = false
     }
   }
+}
+
+/** A word with `$'…'` or `$"…"` quoting outside other quotes (`$'\x72m'`), which this doesn't read. */
+function ansiQuoted(word: string): boolean {
+  let quote = ""
+  for (let i = 0; i < word.length; i++) {
+    const ch = word[i]
+    if (ch === "\\" && quote !== "'") i++
+    else if (quote) {
+      if (ch === quote) quote = ""
+    } else if (ch === "'" || ch === '"') quote = ch
+    else if (ch === "$" && (word[i + 1] === "'" || word[i + 1] === '"')) return true
+  }
+  return false
 }
 
 /** A command's words without its redirections (`<<EOF`, `< file`, `2>&1`). */
@@ -407,22 +444,40 @@ function quoted(word: string): string {
 }
 
 /** Programs that run the command after them, and which of their options take a value (`sudo -u bob`, `nice -n 10`; `sudo -n` takes none). */
-const wrappers: Record<string, RegExp | undefined> = {
-  env: /^-[uCSP]$/,
-  command: undefined,
-  exec: /^-a$/,
-  nohup: undefined,
-  builtin: undefined,
-  sudo: /^-[ugCDhprtUT]$/,
-  doas: /^-[uC]$/,
-  time: /^-[of]$/,
-  nice: /^-n$/,
-  caffeinate: /^-[tw]$/,
-  timeout: /^-[sk]$/,
+/**
+ * Programs that run the command after them, and their options: the short ones that take a value
+ * (`sudo -u bob`, `-ubob`, `-iu bob`; `sudo -n` takes none), the long ones that do (`--user bob`),
+ * and long ones known to take none. Another long option without `=` isn't known: the line isn't
+ * taken as read through.
+ */
+const wrappers: Record<string, { short: string; long?: string[]; flags?: string[] }> = {
+  env: { short: "uCSP", long: ["--unset", "--chdir", "--split-string"], flags: ["--ignore-environment", "--null", "--debug"] },
+  command: { short: "" },
+  exec: { short: "a" },
+  nohup: { short: "" },
+  builtin: { short: "" },
+  sudo: {
+    short: "ugCDhprtUT",
+    long: ["--user", "--group", "--close-from", "--chdir", "--host", "--prompt", "--role", "--type", "--other-user", "--command-timeout"],
+    flags: ["--non-interactive", "--login", "--shell", "--preserve-env", "--background", "--stdin", "--reset-timestamp", "--remove-timestamp", "--set-home", "--bell"],
+  },
+  doas: { short: "uC" },
+  time: { short: "of", long: ["--output", "--format"], flags: ["--portability", "--verbose", "--append"] },
+  nice: { short: "n", long: ["--adjustment"] },
+  caffeinate: { short: "tw" },
+  timeout: { short: "sk", long: ["--signal", "--kill-after"], flags: ["--foreground", "--preserve-status", "--verbose"] },
+  setsid: { short: "", flags: ["--ctty", "--fork", "--wait"] },
+  stdbuf: { short: "ioe", long: ["--input", "--output", "--error"] },
+  watch: { short: "nq", long: ["--interval", "--equexit"], flags: ["--differences", "--no-title", "--beep", "--errexit", "--chgexit", "--exec", "--precise", "--color"] },
+  ionice: { short: "cnp", long: ["--class", "--classdata", "--pid"] },
+  chronic: { short: "" },
 }
 
-/** A command without what comes before what runs; `line` is told a command line an option holds (`env -S '…'`). */
-function withoutPrefix(words: string[], line?: (text: string) => void): string[] {
+/**
+ * A command without what comes before what runs; `line` is told a command line an option holds
+ * (`env -S '…'`).
+ */
+function withoutPrefix(words: string[], state?: { sure: boolean }, line?: (text: string) => void): string[] {
   let i = 0
   while (i < words.length) {
     const word = words[i]
@@ -430,17 +485,40 @@ function withoutPrefix(words: string[], line?: (text: string) => void): string[]
     if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) i++
     else if (/^\d*(>>?|<|&>|>&|<&|&>>)$/.test(word)) i += 2
     else if (/^\d*(>>?|<|&>|>&|<&|&>>)\S/.test(word)) i++
-    else if (Object.hasOwn(wrappers, program)) {
-      const takesValue = wrappers[program]
+    else if (program === "coproc") {
+      // `coproc [NAME] command`: which word is its name isn't known here.
+      if (state) state.sure = false
       i++
-      while (i < words.length && words[i].startsWith("-")) {
-        if (words[i] === "--") {
+    } else if (Object.hasOwn(wrappers, program)) {
+      const spec = wrappers[program]
+      i++
+      while (i < words.length && words[i].startsWith("-") && words[i] !== "-") {
+        const option = dequote(words[i])
+        if (option === "--") {
           i++
           break
         }
-        const split = program === "env" && /^(-S|--split-string)(=|$)/.exec(words[i])
-        if (split) line?.(dequote(split[2] ? words[i].slice(split[0].length) : (words[i + 1] ?? "")))
-        i += takesValue?.test(words[i]) ? 2 : 1
+        if (option.startsWith("--")) {
+          const at = option.indexOf("=")
+          const name = at < 0 ? option : option.slice(0, at)
+          const takes = spec.long?.includes(name) ?? false
+          const value = at >= 0 ? option.slice(at + 1) : takes ? dequote(words[i + 1] ?? "") : undefined
+          if (program === "env" && name === "--split-string" && value !== undefined) line?.(value)
+          if (at < 0 && !takes && !spec.flags?.includes(name) && state) state.sure = false
+          i += at < 0 && takes ? 2 : 1
+          continue
+        }
+        // Short ones, bundled (`-iu bob`, `-oL`, `-S'rm x'`): the first that takes a value takes
+        // the rest of the word, or the next one.
+        let taken = 1
+        for (let k = 1; k < option.length; k++) {
+          if (!spec.short.includes(option[k])) continue
+          const rest = option.slice(k + 1)
+          if (program === "env" && option[k] === "S") line?.(rest || dequote(words[i + 1] ?? ""))
+          if (!rest) taken = 2
+          break
+        }
+        i += taken
       }
       // timeout's duration comes before the command.
       if (program === "timeout" && i < words.length) i++
@@ -514,6 +592,15 @@ function dequote(word: string): string {
     }
   }
   return out
+}
+
+/**
+ * A command line this can't read through, with a Block on commands: what it hides could be what's
+ * blocked (`echo 'rm x' | sh`), so you're asked rather than it running unseen.
+ */
+function hidesFromBlocks(blocks: PermissionRule[] | undefined, ask: PermissionAsk): boolean {
+  if (!isShell(ask.action) || !blocks?.some((rule) => rule.effect === "deny" && isShell(rule.action))) return false
+  return ask.resources.some((line) => !parseCommands(line.trim()).sure)
 }
 
 /** What an ask is about, a command line's commands one by one. */
@@ -1850,6 +1937,7 @@ export class Sessions {
     if (effect === "deny") return "deny"
     // Blocks not known (the engine didn't answer): asked, which reads them again.
     if (live.blocks === undefined && !looks.has(ask.action)) return "ask"
+    if (hidesFromBlocks(live.blocks, ask)) return "ask"
     return effect === "ask" && !this.allowedBefore(live, ask) ? "ask" : undefined
   }
 
@@ -1877,7 +1965,7 @@ export class Sessions {
       ? strictest(session.permissions ?? [], ask.action, parts)
       : (strictest([...(live.agentRules ?? engineDefaults), ...(session.permissions ?? [])], ask.action, parts) ?? "allow")
     if (effect === "deny") return "reject"
-    if (!unknown && (effect === "allow" || this.allowedBefore(live, ask))) return "once"
+    if (!unknown && !hidesFromBlocks(live.blocks, ask) && (effect === "allow" || this.allowedBefore(live, ask))) return "once"
     if (turn.isEnded || live.abort?.signal.aborted) return "reject"
     const request: PermissionRequest = {
       id: newID("per"),
