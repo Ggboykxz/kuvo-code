@@ -22,8 +22,9 @@ struct ToolCallView: View {
     }
 
     var body: some View {
-        // Something the agent made: drawn, not described.
-        if WidgetCard.isWidget(call) {
+        // Something the agent made: drawn, not described. A widget that failed is a step (the
+        // card shows one so, through this view).
+        if WidgetCard.isWidget(call), !call.state.isFailure {
             WidgetCard(call: call, send: answerAgent)
         } else if MadePictureRow.isMade(call) {
             MadePictureRow(call: call)
