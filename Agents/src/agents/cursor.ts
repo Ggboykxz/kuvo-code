@@ -53,7 +53,10 @@ export class CursorAgent implements Agent {
   }
 
   async sdk(): Promise<any> {
-    await this.context.deps.ensure(this.id, SDK)
+    const folder = await this.context.deps.ensure(this.id, SDK)
+    // The SDK finds its sandbox helper (and ripgrep) in a node_modules beside the script that runs
+    // it; the bridge's isn't there, so without this it decides Cursor's sandbox isn't supported.
+    process.argv[1] = join(folder, "package.json")
     return this.context.deps.load(this.id, SDK[0].name)
   }
 
