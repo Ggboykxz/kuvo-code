@@ -13,6 +13,9 @@ import { compareVersions, homebrewKeg, npmGlobalPrefix, versionIn } from "../src
 import { evaluate, matches } from "../src/rules"
 import { handover } from "../src/handover"
 import { EngineLink } from "../src/engine"
+import { generatedImages } from "../src/agents/antigravity"
+import { kuvoToolName, loadKuvoTools, setToolServer } from "../src/kuvotools"
+import { pictureData, pictureFile, withPictures } from "../src/pictures"
 import { expandCommand } from "../src/server"
 import { commandParts, withTextFiles } from "../src/sessions"
 import { commandSignIn } from "../src/signin"
@@ -404,6 +407,61 @@ describe("attachments", () => {
       expect(text).toContain("# Plan\nShip it.")
       expect(text).toContain(`<file path="${join(folder, "notes.md")}">`)
       expect(files.map((file) => file.mime)).toEqual(["application/octet-stream", "image/png"])
+    } finally {
+      rmSync(folder, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("Kuvo Code's tools, as agents name them", () => {
+  test("a call named only by its tool is Kuvo Code's when its arguments are the ones Kuvo Code's tool takes", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch: async (request) => {
+        const message: any = await request.json()
+        return Response.json({ jsonrpc: "2.0", id: message.id, result: { tools: [
+          { name: "show_widget", inputSchema: { properties: { html: {}, title: {} } } },
+          { name: "send_message", inputSchema: { properties: { to: {}, text: {}, wait: {} } } },
+        ] } })
+      },
+    })
+    try {
+      setToolServer({ url: `http://127.0.0.1:${server.port}/mcp`, token: "t", timeout: 1_000 })
+      await loadKuvoTools()
+      expect(kuvoToolName("show_widget", { html: "<b>hi</b>", title: "Hi" })).toBe("kuvo-browser_show_widget")
+      expect(kuvoToolName("send_message", { to: "Sam", text: "hi" })).toBe("kuvo-browser_send_message")
+      // Antigravity's own send_message (to its subagents) isn't Kuvo Code's.
+      expect(kuvoToolName("send_message", { Message: "hi", Recipient: "c1" })).toBeUndefined()
+      expect(kuvoToolName("generate_image", { prompt: "an apple" })).toBeUndefined()
+    } finally {
+      setToolServer(undefined)
+      server.stop(true)
+    }
+  })
+})
+
+describe("pictures", () => {
+  test("a picture file, picture data, and words with pictures after them", () => {
+    expect(pictureFile("/tmp/a b.png")).toEqual({ type: "file", uri: "file:///tmp/a%20b.png", mime: "image/png", name: "a b.png" })
+    expect(pictureFile("/tmp/notes.txt")).toBeUndefined()
+    expect(pictureData("AAAA", "image/jpeg")?.uri).toBe("data:image/jpeg;base64,AAAA")
+    expect(withPictures("done", [undefined])).toBe("done")
+    expect(withPictures("", [pictureFile("/tmp/x.jpg")])).toEqual([{ type: "text", text: "" }, { type: "file", uri: "file:///tmp/x.jpg", mime: "image/jpeg", name: "x.jpg" }])
+  })
+
+  test("Antigravity's generated image: the newest one saved under its name", async () => {
+    const folder = mkdtempSync(join(tmpdir(), "kuvo-images-"))
+    try {
+      writeFileSync(join(folder, "apple_1.jpg"), "x")
+      await Bun.sleep(20)
+      writeFileSync(join(folder, "apple_2.jpg"), "y")
+      writeFileSync(join(folder, "pear_3.png"), "z")
+      writeFileSync(join(folder, "notes.md"), "n")
+      const [image] = generatedImages(folder, { image_name: "apple" })
+      expect(image.name).toBe("apple_2.jpg")
+      expect(image.mime).toBe("image/jpeg")
+      expect(generatedImages(folder, { ImageName: '"pear"' })[0].name).toBe("pear_3.png")
+      expect(generatedImages(join(folder, "missing"), {})).toEqual([])
     } finally {
       rmSync(folder, { recursive: true, force: true })
     }

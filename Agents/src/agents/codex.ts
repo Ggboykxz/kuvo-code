@@ -12,6 +12,7 @@ import { accountName, failure, model } from "../agent"
 import { fromPatch } from "../diff"
 import { emit } from "../events"
 import { kuvoTools } from "../kuvotools"
+import { pictureData, pictureFile, withPictures } from "../pictures"
 import { newID } from "../ids"
 import { maintenance, update, type MaintenanceDefinition } from "../maintenance"
 import { which } from "../proc"
@@ -790,6 +791,12 @@ class CodexThread implements Thread {
           turn.toolStart(item.id, "wait", { description: "Waiting for its subagents" })
           return
         }
+        // Writing to one, or resuming or closing one: a step too.
+        if (item.tool !== "spawnAgent") {
+          active.toolsSinceText = true
+          turn.toolStart(item.id, "agent_" + String(item.tool ?? "action"), { description: collabWords(item.tool), prompt: item.prompt ?? undefined, agents: item.receiverThreadIds })
+          return
+        }
         // Another agent spawned for part of the work: a subagent, at work beside this one.
         if (item.tool !== "spawnAgent" || !this.active || lane !== this.active) return
         const main = this.active
@@ -831,6 +838,20 @@ class CodexThread implements Thread {
         active.toolsSinceText = true
         turn.toolStart(item.id, "websearch", { query: item.query ?? item.action?.query ?? "" })
         return
+      case "imageGeneration":
+        active.toolsSinceText = true
+        turn.toolStart(item.id, "generate_image", { prompt: item.revisedPrompt ?? "" })
+        return
+      case "imageView":
+        active.toolsSinceText = true
+        turn.toolStart(item.id, "read", { path: item.path })
+        return
+      default:
+        // One this bridge doesn't know (a newer Codex's): shown as a step, not lost.
+        if (!codexItems.has(item?.type) && typeof item?.id === "string") {
+          active.toolsSinceText = true
+          turn.toolStart(item.id, String(item.type ?? "tool"), unknownInput(item))
+        }
     }
   }
 
@@ -844,6 +865,11 @@ class CodexThread implements Thread {
       case "collabAgentToolCall": {
         if (item.tool === "wait") {
           if (turn.hasTool(item.id)) item.status === "failed" ? turn.toolFailed(item.id, "It stopped waiting.") : turn.toolSucceeded(item.id, "Done waiting.")
+          return
+        }
+        if (item.tool !== "spawnAgent") {
+          if (!turn.hasTool(item.id)) turn.toolStart(item.id, "agent_" + String(item.tool ?? "action"), { description: collabWords(item.tool) })
+          item.status === "failed" ? turn.toolFailed(item.id, "It didn't go through.") : turn.toolSucceeded(item.id, "")
           return
         }
         if (item.tool !== "spawnAgent" || !this.active || lane !== this.active) return
@@ -895,9 +921,10 @@ class CodexThread implements Thread {
         return
       }
       case "mcpToolCall": {
-        const text = (item.result?.content ?? []).map((part: any) => part?.text ?? "").filter(Boolean).join("\n")
+        const content = item.result?.content ?? []
+        const text = content.map((part: any) => part?.text ?? "").filter(Boolean).join("\n")
         if (item.error || item.status === "failed") turn.toolFailed(item.id, item.error?.message ?? text ?? "The tool failed.")
-        else turn.toolSucceeded(item.id, text.slice(0, outputLimit))
+        else turn.toolSucceeded(item.id, withPictures(text.slice(0, outputLimit), content.map((part: any) => (part?.type === "image" ? pictureData(part.data, part.mimeType) : undefined))))
         return
       }
       case "dynamicToolCall": {
@@ -909,6 +936,36 @@ class CodexThread implements Thread {
       case "webSearch":
         turn.toolSucceeded(item.id, "")
         return
+      case "imageGeneration":
+        if (!turn.hasTool(item.id)) turn.toolStart(item.id, "generate_image", { prompt: item.revisedPrompt ?? "" })
+        if (item.status === "failed" || item.failure) turn.toolFailed(item.id, String(item.failure?.message ?? item.failure ?? "The image couldn't be made."))
+        else turn.toolSucceeded(item.id, withPictures("", [pictureFile(item.savedPath)]))
+        return
+      case "imageView":
+        if (!turn.hasTool(item.id)) turn.toolStart(item.id, "read", { path: item.path })
+        turn.toolSucceeded(item.id, withPictures("", [pictureFile(item.path)]))
+        return
+      case "contextCompaction":
+        turn.notice("Codex summarized the conversation to make room.")
+        return
+      case "enteredReviewMode":
+        turn.notice(`Reviewing${typeof item.review === "string" && item.review ? `: ${item.review}` : ""}`)
+        return
+      case "exitedReviewMode":
+        if (typeof item.review === "string" && item.review.trim()) {
+          this.words(active)
+          turn.text(item.review)
+          turn.endBlock()
+        }
+        return
+      default:
+        // One this bridge doesn't know: its step ends, with what it says.
+        if (!codexItems.has(item?.type) && typeof item?.id === "string") {
+          if (!turn.hasTool(item.id)) turn.toolStart(item.id, String(item.type ?? "tool"), unknownInput(item))
+          const said = unknownOutput(item)
+          if (item.status === "failed" || item.success === false) turn.toolFailed(item.id, said || "It failed.")
+          else turn.toolSucceeded(item.id, said)
+        }
     }
   }
 
@@ -1022,6 +1079,60 @@ class CodexThread implements Thread {
     this.agent.forget(this.session.id)
     if (this.nativeID && this.loaded) void this.agent.rpc().then((rpc) => rpc.request("thread/unsubscribe", { threadId: this.nativeID }).catch(() => {}), () => {})
   }
+}
+
+/**
+ * Codex's items this bridge shows, or leaves out on purpose (your own message, a hook's prompt to
+ * the model). Any other is shown as a step of its own, so a newer Codex's isn't lost.
+ */
+export const codexItems = new Set([
+  "userMessage",
+  "hookPrompt",
+  "agentMessage",
+  "reasoning",
+  "plan",
+  "commandExecution",
+  "fileChange",
+  "mcpToolCall",
+  "dynamicToolCall",
+  "collabAgentToolCall",
+  "subAgentActivity",
+  "webSearch",
+  "imageView",
+  "sleep",
+  "imageGeneration",
+  "enteredReviewMode",
+  "exitedReviewMode",
+  "contextCompaction",
+])
+
+/** What a step with its subagents does, in words. */
+function collabWords(tool: unknown): string {
+  switch (tool) {
+    case "sendInput":
+      return "Wrote to a subagent"
+    case "resumeAgent":
+      return "Resumed a subagent"
+    case "closeAgent":
+      return "Closed a subagent"
+  }
+  return `Subagents: ${String(tool ?? "")}`
+}
+
+/** An item this bridge doesn't know, as a step's input: what it says, without its type and id. */
+function unknownInput(item: any): Record<string, unknown> {
+  const { type: _type, id: _id, ...rest } = item ?? {}
+  return rest
+}
+
+/** What an unknown item came back with, as words. */
+function unknownOutput(item: any): string {
+  for (const key of ["output", "result", "text", "aggregatedOutput", "message"]) {
+    const value = item?.[key]
+    if (typeof value === "string" && value.trim()) return value.slice(0, outputLimit)
+    if (value && typeof value === "object") return JSON.stringify(value).slice(0, outputLimit)
+  }
+  return ""
 }
 
 /** A spawned agent's name from its path ("/root/wait_1" is "Wait 1"). */

@@ -1335,8 +1335,9 @@ class Snapshots {
 
 // Agents/src/agents/antigravity.ts
 import { createHash as createHash2 } from "crypto";
-import { chmodSync as chmodSync2, existsSync as existsSync5, mkdirSync as mkdirSync7, readdirSync as readdirSync2, readFileSync as readFileSync7, renameSync as renameSync3, rmSync as rmSync4, writeFileSync as writeFileSync6 } from "fs";
+import { chmodSync as chmodSync2, existsSync as existsSync5, mkdirSync as mkdirSync7, readdirSync as readdirSync2, readFileSync as readFileSync7, renameSync as renameSync3, rmSync as rmSync4, statSync, writeFileSync as writeFileSync6 } from "fs";
 import { join as join8 } from "path";
+import { pathToFileURL } from "url";
 
 // Agents/src/acp.ts
 import { existsSync as existsSync3, mkdirSync as mkdirSync5, readFileSync as readFileSync5, writeFileSync as writeFileSync4 } from "fs";
@@ -1498,6 +1499,37 @@ function kuvoTools(sessionID) {
     return;
   return { name: toolServerName, url: server.url, headers: { Authorization: `Bearer ${server.token}`, "X-Kuvo-Session": sessionID }, timeout: server.timeout };
 }
+var schemas;
+var loading;
+function loadKuvoTools() {
+  const at = server;
+  if (!at || schemas?.url === at.url)
+    return Promise.resolve();
+  loading ??= (async () => {
+    try {
+      const response = await fetch(at.url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${at.token}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+        signal: AbortSignal.timeout(5000)
+      });
+      const answer = await response.json();
+      const tools = new Map;
+      for (const tool of answer?.result?.tools ?? [])
+        if (typeof tool?.name === "string")
+          tools.set(tool.name, new Set(Object.keys(tool.inputSchema?.properties ?? {})));
+      if (tools.size)
+        schemas = { url: at.url, tools };
+    } catch {}
+  })().finally(() => loading = undefined);
+  return loading;
+}
+function kuvoToolName(name, args) {
+  const known = schemas?.tools.get(name);
+  if (!known)
+    return;
+  return Object.keys(args).every((key) => known.has(key)) ? `${toolServerName}_${name}` : undefined;
+}
 
 // Agents/src/acp.ts
 var outputLimit2 = 30000;
@@ -1642,6 +1674,7 @@ class AcpThread {
     const tools = kuvoTools(this.session.id);
     if (!tools || !init?.agentCapabilities?.mcpCapabilities?.http)
       return [];
+    loadKuvoTools();
     return [{ type: "http", name: tools.name, url: tools.url, headers: Object.entries(tools.headers).map(([name, value]) => ({ name, value })) }];
   }
   async prepare(input, hooks) {
@@ -1821,8 +1854,9 @@ ${others.map((path) => `- ${path}`).join(`
       metadata.exit = exit;
     if (output)
       metadata.output = output;
+    const made = merged.status === "completed" && this.sessionID ? this.flavor.madeFiles?.(merged, this.sessionID) ?? [] : [];
     if (merged.status === "completed")
-      turn.toolSucceeded(id, output, metadata);
+      turn.toolSucceeded(id, made.length ? [{ type: "text", text: output }, ...made] : output, metadata);
     else if (merged.status === "failed")
       turn.toolFailed(id, output || "The tool failed.", metadata);
     else if (output)
@@ -1924,7 +1958,11 @@ function kuvoTool(call) {
     case "think":
       return { name: "think", input: {} };
   }
-  return { name: (call.title ?? "tool").toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_|_$/g, "") || "tool", input: raw };
+  const named = /^(?:running\s+)?([a-z0-9_.-]+)$/i.exec(String(call.title ?? "").trim())?.[1];
+  const own = named && typeof raw === "object" && raw ? kuvoToolName(named, raw) : undefined;
+  if (own)
+    return { name: own, input: raw };
+  return { name: (named ?? call.title ?? "tool").toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_|_$/g, "") || "tool", input: raw };
 }
 function permissionAction(kind, name) {
   switch (kind) {
@@ -2196,6 +2234,25 @@ function antigravitySubagents(args) {
     prompt: typeof subagent?.Prompt === "string" ? subagent.Prompt : undefined,
     agent: typeof subagent?.TypeName === "string" && subagent.TypeName !== "self" ? subagent.TypeName : undefined
   }));
+}
+function generatedImages(folder, input) {
+  const stem = String(decoded(input.image_name ?? input.ImageName ?? "") ?? "");
+  let names;
+  try {
+    names = readdirSync2(folder);
+  } catch {
+    return [];
+  }
+  const types = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif" };
+  const images = names.map((name) => ({ name, type: types[name.split(".").pop()?.toLowerCase() ?? ""] })).filter((file) => file.type && (!stem || file.name.startsWith(`${stem}_`) || file.name.startsWith(`${stem}.`))).map((file) => ({ ...file, at: (() => {
+    try {
+      return statSync(join8(folder, file.name)).mtimeMs;
+    } catch {
+      return 0;
+    }
+  })() })).sort((a, b) => b.at - a.at);
+  const newest = images[0];
+  return newest ? [{ type: "file", uri: pathToFileURL(join8(folder, newest.name)).href, mime: newest.type, name: newest.name }] : [];
 }
 
 class AntigravityFollower {
@@ -2642,6 +2699,7 @@ class AntigravityAgent {
       limitScope: "model",
       follow: (sessionId, turn, hooks) => new AntigravityFollower(join8(agent.profile, "antigravity-acp", "brain"), sessionId, turn, hooks),
       hides: (call) => /\b(start_subagent|invoke_subagent)\b/.test(`${call?.title ?? ""} ${call?.rawInput?.name ?? ""}`),
+      madeFiles: (call, sessionId) => /\bgenerate_image\b/.test(String(call?.title ?? "")) ? generatedImages(join8(agent.profile, "antigravity-acp", "brain", sessionId), call?.rawInput ?? {}) : [],
       authMethod: () => "oauth-personal",
       async command() {
         if (!agent.isInstalled)
@@ -2673,7 +2731,7 @@ class AntigravityAgent {
 
 // Agents/src/agents/claude.ts
 import { randomUUID } from "crypto";
-import { existsSync as existsSync7, readFileSync as readFileSync8, statSync } from "fs";
+import { existsSync as existsSync7, readFileSync as readFileSync8, statSync as statSync2 } from "fs";
 import { homedir } from "os";
 import { join as join10 } from "path";
 
@@ -3071,7 +3129,7 @@ class ClaudeAgent {
   settingsWritten() {
     const folder = this.instance.home ?? homedir();
     try {
-      return statSync(join10(folder, ".claude.json")).mtimeMs;
+      return statSync2(join10(folder, ".claude.json")).mtimeMs;
     } catch {
       return 0;
     }
@@ -4081,6 +4139,30 @@ function safeBase642(path) {
 import { existsSync as existsSync8, lstatSync as lstatSync2, mkdirSync as mkdirSync8, readdirSync as readdirSync3, readlinkSync, rmSync as rmSync5, symlinkSync } from "fs";
 import { homedir as homedir2 } from "os";
 import { join as join11 } from "path";
+
+// Agents/src/pictures.ts
+import { extname } from "path";
+import { pathToFileURL as pathToFileURL2 } from "url";
+var types = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".heic": "image/heic" };
+function pictureFile(path) {
+  if (typeof path !== "string" || !path)
+    return;
+  const mime = types[extname(path).toLowerCase()];
+  if (!mime)
+    return;
+  return { type: "file", uri: pathToFileURL2(path).href, mime, name: path.split("/").pop() };
+}
+function pictureData(data, mime) {
+  if (typeof data !== "string" || !data || typeof mime !== "string" || !mime.startsWith("image/"))
+    return;
+  return { type: "file", uri: `data:${mime};base64,${data}`, mime };
+}
+function withPictures(text, pictures) {
+  const files = pictures.filter((picture) => Boolean(picture));
+  return files.length ? [{ type: "text", text }, ...files] : text;
+}
+
+// Agents/src/agents/codex.ts
 var places2 = ["/opt/homebrew/bin", "/usr/local/bin", join11(homedir2(), ".local/bin"), join11(homedir2(), ".codex/bin")];
 var outputLimit4 = 30000;
 
@@ -4776,6 +4858,11 @@ ${others.map((path) => `- ${path}`).join(`
           turn.toolStart(item.id, "wait", { description: "Waiting for its subagents" });
           return;
         }
+        if (item.tool !== "spawnAgent") {
+          active.toolsSinceText = true;
+          turn.toolStart(item.id, "agent_" + String(item.tool ?? "action"), { description: collabWords(item.tool), prompt: item.prompt ?? undefined, agents: item.receiverThreadIds });
+          return;
+        }
         if (item.tool !== "spawnAgent" || !this.active || lane !== this.active)
           return;
         const main = this.active;
@@ -4820,6 +4907,19 @@ ${others.map((path) => `- ${path}`).join(`
         active.toolsSinceText = true;
         turn.toolStart(item.id, "websearch", { query: item.query ?? item.action?.query ?? "" });
         return;
+      case "imageGeneration":
+        active.toolsSinceText = true;
+        turn.toolStart(item.id, "generate_image", { prompt: item.revisedPrompt ?? "" });
+        return;
+      case "imageView":
+        active.toolsSinceText = true;
+        turn.toolStart(item.id, "read", { path: item.path });
+        return;
+      default:
+        if (!codexItems.has(item?.type) && typeof item?.id === "string") {
+          active.toolsSinceText = true;
+          turn.toolStart(item.id, String(item.type ?? "tool"), unknownInput(item));
+        }
     }
   }
   itemCompleted(lane, item) {
@@ -4834,6 +4934,12 @@ ${others.map((path) => `- ${path}`).join(`
         if (item.tool === "wait") {
           if (turn.hasTool(item.id))
             item.status === "failed" ? turn.toolFailed(item.id, "It stopped waiting.") : turn.toolSucceeded(item.id, "Done waiting.");
+          return;
+        }
+        if (item.tool !== "spawnAgent") {
+          if (!turn.hasTool(item.id))
+            turn.toolStart(item.id, "agent_" + String(item.tool ?? "action"), { description: collabWords(item.tool) });
+          item.status === "failed" ? turn.toolFailed(item.id, "It didn't go through.") : turn.toolSucceeded(item.id, "");
           return;
         }
         if (item.tool !== "spawnAgent" || !this.active || lane !== this.active)
@@ -4896,12 +5002,13 @@ ${others.map((path) => `- ${path}`).join(`
         return;
       }
       case "mcpToolCall": {
-        const text = (item.result?.content ?? []).map((part) => part?.text ?? "").filter(Boolean).join(`
+        const content = item.result?.content ?? [];
+        const text = content.map((part) => part?.text ?? "").filter(Boolean).join(`
 `);
         if (item.error || item.status === "failed")
           turn.toolFailed(item.id, item.error?.message ?? text ?? "The tool failed.");
         else
-          turn.toolSucceeded(item.id, text.slice(0, outputLimit4));
+          turn.toolSucceeded(item.id, withPictures(text.slice(0, outputLimit4), content.map((part) => part?.type === "image" ? pictureData(part.data, part.mimeType) : undefined)));
         return;
       }
       case "dynamicToolCall": {
@@ -4916,6 +5023,42 @@ ${others.map((path) => `- ${path}`).join(`
       case "webSearch":
         turn.toolSucceeded(item.id, "");
         return;
+      case "imageGeneration":
+        if (!turn.hasTool(item.id))
+          turn.toolStart(item.id, "generate_image", { prompt: item.revisedPrompt ?? "" });
+        if (item.status === "failed" || item.failure)
+          turn.toolFailed(item.id, String(item.failure?.message ?? item.failure ?? "The image couldn't be made."));
+        else
+          turn.toolSucceeded(item.id, withPictures("", [pictureFile(item.savedPath)]));
+        return;
+      case "imageView":
+        if (!turn.hasTool(item.id))
+          turn.toolStart(item.id, "read", { path: item.path });
+        turn.toolSucceeded(item.id, withPictures("", [pictureFile(item.path)]));
+        return;
+      case "contextCompaction":
+        turn.notice("Codex summarized the conversation to make room.");
+        return;
+      case "enteredReviewMode":
+        turn.notice(`Reviewing${typeof item.review === "string" && item.review ? `: ${item.review}` : ""}`);
+        return;
+      case "exitedReviewMode":
+        if (typeof item.review === "string" && item.review.trim()) {
+          this.words(active);
+          turn.text(item.review);
+          turn.endBlock();
+        }
+        return;
+      default:
+        if (!codexItems.has(item?.type) && typeof item?.id === "string") {
+          if (!turn.hasTool(item.id))
+            turn.toolStart(item.id, String(item.type ?? "tool"), unknownInput(item));
+          const said = unknownOutput(item);
+          if (item.status === "failed" || item.success === false)
+            turn.toolFailed(item.id, said || "It failed.");
+          else
+            turn.toolSucceeded(item.id, said);
+        }
     }
   }
   async request(method, params) {
@@ -5036,6 +5179,51 @@ ${others.map((path) => `- ${path}`).join(`
     if (this.nativeID && this.loaded)
       this.agent.rpc().then((rpc) => rpc.request("thread/unsubscribe", { threadId: this.nativeID }).catch(() => {}), () => {});
   }
+}
+var codexItems = new Set([
+  "userMessage",
+  "hookPrompt",
+  "agentMessage",
+  "reasoning",
+  "plan",
+  "commandExecution",
+  "fileChange",
+  "mcpToolCall",
+  "dynamicToolCall",
+  "collabAgentToolCall",
+  "subAgentActivity",
+  "webSearch",
+  "imageView",
+  "sleep",
+  "imageGeneration",
+  "enteredReviewMode",
+  "exitedReviewMode",
+  "contextCompaction"
+]);
+function collabWords(tool) {
+  switch (tool) {
+    case "sendInput":
+      return "Wrote to a subagent";
+    case "resumeAgent":
+      return "Resumed a subagent";
+    case "closeAgent":
+      return "Closed a subagent";
+  }
+  return `Subagents: ${String(tool ?? "")}`;
+}
+function unknownInput(item) {
+  const { type: _type, id: _id, ...rest } = item ?? {};
+  return rest;
+}
+function unknownOutput(item) {
+  for (const key of ["output", "result", "text", "aggregatedOutput", "message"]) {
+    const value = item?.[key];
+    if (typeof value === "string" && value.trim())
+      return value.slice(0, outputLimit4);
+    if (value && typeof value === "object")
+      return JSON.stringify(value).slice(0, outputLimit4);
+  }
+  return "";
 }
 function agentTitle(path) {
   const last2 = typeof path === "string" ? path.split("/").filter(Boolean).pop() ?? "" : "";
@@ -5769,7 +5957,7 @@ class Roster {
 // Agents/src/sessions.ts
 import { createHash as createHash3 } from "crypto";
 import { spawn as spawnProcess } from "child_process";
-import { readFileSync as readFileSync10, statSync as statSync2 } from "fs";
+import { readFileSync as readFileSync10, statSync as statSync3 } from "fs";
 import { fileURLToPath } from "url";
 
 // Agents/src/handover.ts
@@ -7852,7 +8040,7 @@ function withTextFiles(text, files) {
     let contents;
     if (!file.mime.startsWith("image/") && file.mime !== "application/pdf") {
       try {
-        const bytes = file.data ? Buffer.from(file.data, "base64") : file.path && statSync2(file.path).isFile() && statSync2(file.path).size <= textFileLimit ? readFileSync10(file.path) : undefined;
+        const bytes = file.data ? Buffer.from(file.data, "base64") : file.path && statSync3(file.path).isFile() && statSync3(file.path).size <= textFileLimit ? readFileSync10(file.path) : undefined;
         if (bytes && !bytes.includes(0))
           contents = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
       } catch {}

@@ -3,8 +3,9 @@
 // it (the agent, your sign-in, its conversations) stays in the bridge's `antigravity` folder.
 
 import { createHash } from "node:crypto"
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
+import { pathToFileURL } from "node:url"
 import { providerID, type AgentAccount } from "../accounts"
 import type { Agent, AgentContext, Account, SignInAttempt, SubagentRun, Thread, SubagentTask, TurnHooks } from "../agent"
 import { accountName, failure, model } from "../agent"
@@ -68,6 +69,31 @@ export function antigravitySubagents(args: any): SubagentTask[] {
     prompt: typeof subagent?.Prompt === "string" ? subagent.Prompt : undefined,
     agent: typeof subagent?.TypeName === "string" && subagent.TypeName !== "self" ? subagent.TypeName : undefined,
   }))
+}
+
+/** The image a generate_image call saved in the conversation's folder (`<image_name>_<time>.jpg`), newest first. */
+export function generatedImages(folder: string, input: Record<string, unknown>): { type: "file"; uri: string; mime: string; name: string }[] {
+  const stem = String(decoded(input.image_name ?? input.ImageName ?? "") ?? "")
+  let names: string[]
+  try {
+    names = readdirSync(folder)
+  } catch {
+    return []
+  }
+  const types: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif" }
+  const images = names
+    .map((name) => ({ name, type: types[name.split(".").pop()?.toLowerCase() ?? ""] }))
+    .filter((file) => file.type && (!stem || file.name.startsWith(`${stem}_`) || file.name.startsWith(`${stem}.`)))
+    .map((file) => ({ ...file, at: (() => {
+      try {
+        return statSync(join(folder, file.name)).mtimeMs
+      } catch {
+        return 0
+      }
+    })() }))
+    .sort((a, b) => b.at - a.at)
+  const newest = images[0]
+  return newest ? [{ type: "file", uri: pathToFileURL(join(folder, newest.name)).href, mime: newest.type!, name: newest.name }] : []
 }
 
 /** One step of Antigravity's record of a conversation (`brain/<id>/.system_generated/logs/transcript.jsonl`). */
@@ -555,6 +581,8 @@ export class AntigravityAgent implements Agent {
         // Its subagents: from its own record of the conversation (it doesn't tell them).
         follow: (sessionId, turn, hooks) => new AntigravityFollower(join(agent.profile, "antigravity-acp", "brain"), sessionId, turn, hooks),
         hides: (call) => /\b(start_subagent|invoke_subagent)\b/.test(`${call?.title ?? ""} ${call?.rawInput?.name ?? ""}`),
+        // An image it made is saved in its folder for the conversation, not handed back.
+        madeFiles: (call, sessionId) => (/\bgenerate_image\b/.test(String(call?.title ?? "")) ? generatedImages(join(agent.profile, "antigravity-acp", "brain", sessionId), call?.rawInput ?? {}) : []),
         authMethod: () => "oauth-personal",
         async command() {
           if (!agent.isInstalled) throw new Error("Sign in to Antigravity in Settings › Accounts first.")

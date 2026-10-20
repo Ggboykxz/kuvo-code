@@ -11,7 +11,7 @@ import type { Limit } from "./auto"
 import { fileDiff } from "./diff"
 import { newID } from "./ids"
 import { RPC, RPCError } from "./rpc"
-import { kuvoTools } from "./kuvotools"
+import { kuvoToolName, kuvoTools, loadKuvoTools } from "./kuvotools"
 import type { Turn } from "./turn"
 import type { Decision, FormField, Session, TokenUsage } from "./wire"
 
@@ -65,6 +65,8 @@ export interface AcpFlavor {
   follow?(sessionId: string, turn: Turn, hooks: TurnHooks): { stop(): void } | undefined
   /** A tool call that isn't worth a row (Antigravity's start of subagents, which `follow` shows). */
   hides?(call: any): boolean
+  /** Files a finished tool call made that it doesn't hand back (Antigravity's generated images). */
+  madeFiles?(call: any, sessionId: string): { type: "file"; uri: string; mime: string; name?: string }[]
   /** Changes when the agent's program was updated: a process started before starts again. */
   program?(): number
 }
@@ -240,6 +242,8 @@ export class AcpThread implements Thread {
   private mcpServers(init: any): unknown[] {
     const tools = kuvoTools(this.session.id)
     if (!tools || !init?.agentCapabilities?.mcpCapabilities?.http) return []
+    // Their names and arguments, to know their calls when they come.
+    void loadKuvoTools()
     return [{ type: "http", name: tools.name, url: tools.url, headers: Object.entries(tools.headers).map(([name, value]) => ({ name, value })) }]
   }
 
@@ -410,7 +414,8 @@ export class AcpThread implements Thread {
     const exit = merged.rawOutput?.exit_code ?? merged.rawOutput?.exitCode
     if (typeof exit === "number") metadata.exit = exit
     if (output) metadata.output = output
-    if (merged.status === "completed") turn.toolSucceeded(id, output, metadata)
+    const made = merged.status === "completed" && this.sessionID ? (this.flavor.madeFiles?.(merged, this.sessionID) ?? []) : []
+    if (merged.status === "completed") turn.toolSucceeded(id, made.length ? [{ type: "text", text: output }, ...made] : output, metadata)
     else if (merged.status === "failed") turn.toolFailed(id, output || "The tool failed.", metadata)
     else if (output) turn.toolProgress(id, metadata)
   }
@@ -508,7 +513,12 @@ function kuvoTool(call: any): { name: string; input: Record<string, unknown> } {
     case "think":
       return { name: "think", input: {} }
   }
-  return { name: (call.title ?? "tool").toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_|_$/g, "") || "tool", input: raw }
+  // Antigravity names a tool only in its title ("Running show_widget"): one of Kuvo Code's goes by
+  // the app's name for it, so it shows as it does for the engine's models (a widget, drawn).
+  const named = /^(?:running\s+)?([a-z0-9_.-]+)$/i.exec(String(call.title ?? "").trim())?.[1]
+  const own = named && typeof raw === "object" && raw ? kuvoToolName(named, raw) : undefined
+  if (own) return { name: own, input: raw }
+  return { name: (named ?? call.title ?? "tool").toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_|_$/g, "") || "tool", input: raw }
 }
 
 function permissionAction(kind: string | undefined, name: string): string {
