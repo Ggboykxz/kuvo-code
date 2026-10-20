@@ -748,7 +748,9 @@ struct WindowStateReader: NSViewRepresentable {
                         guard let self else { return }
                         var next = self.state
                         switch name {
-                        case NSWindow.didEnterFullScreenNotification: next.isFullScreen = true
+                        case NSWindow.didEnterFullScreenNotification:
+                            next.isFullScreen = true
+                            self.clearFullScreenToolbar()
                         case NSWindow.willExitFullScreenNotification: next.isFullScreen = false
                         case NSWindow.willStartLiveResizeNotification: next.isResizing = true
                         default: next.isResizing = false
@@ -758,6 +760,30 @@ struct WindowStateReader: NSViewRepresentable {
                 })
             }
             report(State(isFullScreen: window.styleMask.contains(.fullScreen), isResizing: false))
+        }
+
+        /// In full screen, AppKit moves the toolbar into a window of its own, over the top of
+        /// this one, and paints it flat gray: a band the window's glass doesn't reach, unlike the
+        /// title bar out of full screen, which has no background (the tabs sit on the glass).
+        /// Made see-through, so the row looks as it does in a window.
+        private func clearFullScreenToolbar() {
+            guard let window else { return }
+            for delay in [0.0, 0.3] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak window] in
+                    guard let window else { return }
+                    for bar in NSApp.windows where String(describing: type(of: bar)).contains("ToolbarFullScreen") && bar.frame.intersects(window.frame) {
+                        bar.isOpaque = false
+                        bar.backgroundColor = .clear
+                        if let content = bar.contentView { Self.clearBackdrops(in: content) }
+                    }
+                }
+            }
+        }
+
+        /// The materials AppKit draws under a toolbar, hidden.
+        private static func clearBackdrops(in view: NSView) {
+            if let effect = view as? NSVisualEffectView { effect.isHidden = true }
+            for subview in view.subviews { clearBackdrops(in: subview) }
         }
 
         private func report(_ next: State) {

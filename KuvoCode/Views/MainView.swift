@@ -439,6 +439,8 @@ struct MainView: View {
     private var followingSessions: some View {
         windowContent
         .focusedSceneValue(\.sessionActions, actions)
+        // Escape stops the agent also when the composer doesn't have the keyboard.
+        .background(EscapeToStop(canStop: actions.canStop && !app.showsSettings, stop: actions.stop))
         // Viewed only while you're here: finished while you're in another app, it waits for you
         // on the Dock icon, and counts as seen when you come back. The session beside the tab's
         // is in view too.
