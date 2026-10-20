@@ -16,6 +16,11 @@ final class BrowserToolServer {
         self.agent = agent
     }
 
+    /// Where the coding agents reach it (the bridge gives it to each with its session's header).
+    var agentsServer: OutsideAgents.ToolServer? {
+        url.map { OutsideAgents.ToolServer(url: $0.absoluteString, token: token, timeout: BrowserTools.executionTimeout) }
+    }
+
     /// The engine's config entry for this server, as `OPENCODE_CONFIG_CONTENT` takes it.
     var engineConfig: [String: Any]? {
         url.map { engineConfig(at: $0) }
@@ -93,13 +98,15 @@ final class BrowserToolServer {
             return .json(["jsonrpc": "2.0", "id": NSNull(), "error": ["code": -32700, "message": "Parse error"]])
         }
         let client = request.headers["mcp-session-id"]
+        // A coding agent's: its session, as the bridge named it.
+        let session = request.headers["x-kuvo-session"]
         if let batch = body as? [[String: Any]] {
             var replies: [[String: Any]] = []
-            for message in batch { if let reply = await handle(message, from: client) { replies.append(reply) } }
+            for message in batch { if let reply = await handle(message, from: client, session: session) { replies.append(reply) } }
             return replies.isEmpty ? .init(status: 202) : .json(replies)
         }
         guard let message = body as? [String: Any] else { return .init(status: 400) }
-        guard let reply = await handle(message, from: client) else { return .init(status: 202) }
+        guard let reply = await handle(message, from: client, session: session) else { return .init(status: 202) }
         var response = HTTPResponse.json(reply)
         if message["method"] as? String == "initialize" { response.headers["Mcp-Session-Id"] = UUID().uuidString }
         return response
@@ -117,7 +124,7 @@ final class BrowserToolServer {
     private static func key(_ id: Any, client: String?) -> String { (client ?? "") + "|" + String(describing: id) }
 
     /// The reply to one message, or nil for a notification.
-    private func handle(_ message: [String: Any], from client: String?) async -> [String: Any]? {
+    private func handle(_ message: [String: Any], from client: String?, session: String? = nil) async -> [String: Any]? {
         guard let method = message["method"] as? String else { return nil }
         let params = message["params"] as? [String: Any] ?? [:]
         guard let id = message["id"] else {
@@ -142,8 +149,9 @@ final class BrowserToolServer {
         case "tools/call":
             let name = params["name"] as? String ?? ""
             let arguments = params["arguments"] as? [String: Any] ?? [:]
-            // The engine names the session calling, so an ask goes to the right conversation.
-            let caller = (params["_meta"] as? [String: Any])?["ai.opencode/sessionID"] as? String
+            // The engine names the session calling, so an ask goes to the right conversation; the
+            // agents bridge, in a header.
+            let caller = (params["_meta"] as? [String: Any])?["ai.opencode/sessionID"] as? String ?? session
             // Not the browser's: no page to serve it.
             if name == BrowserTools.showInPanel { return reply(BrowserTools.showInPanelCall(arguments, caller: caller)) }
             if name == BrowserTools.showWidget { return reply(BrowserTools.showWidgetCall(arguments)) }

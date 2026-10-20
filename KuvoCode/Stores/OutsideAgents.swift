@@ -52,6 +52,19 @@ final class OutsideAgents {
         didSet { if engineEndpoint != oldValue { tellEngine() } }
     }
 
+    /// Kuvo Code's own tools (the side panel's browser, show_in_panel, messages to other agents)
+    /// as an MCP server, which the bridge gives each agent with its session.
+    struct ToolServer: Encodable, Equatable, Sendable {
+        var url: String
+        var token: String
+        /// How long a call may take, in milliseconds (one that asks you waits for you).
+        var timeout: Int
+    }
+
+    @ObservationIgnored var toolServer: ToolServer? {
+        didSet { if toolServer != oldValue { tellTools() } }
+    }
+
     /// Auto: your list of models, and those held back at a limit until it resets.
     private(set) var auto = AutoList()
 
@@ -163,6 +176,7 @@ final class OutsideAgents {
             failure = nil
             listen(to: api)
             tellEngine()
+            tellTools()
             // Not waited for here: one that stops meanwhile is started again (see `exited`).
             Task { await loadAuto() }
         } catch {
@@ -216,6 +230,12 @@ final class OutsideAgents {
     }
 
     /// Tells the bridge where the engine is.
+    /// Tells the bridge where Kuvo Code's tools are.
+    private func tellTools() {
+        guard let api, let toolServer else { return }
+        Task { try? await api.setAgentsTools(toolServer) }
+    }
+
     private func tellEngine() {
         guard let api, let engineEndpoint else { return }
         Task { try? await api.setAgentsEngine(engineEndpoint) }
@@ -365,6 +385,10 @@ extension OpenCodeAPI {
     }
 
     /// The agents bridge's own: where the engine is, for its models in the bridge's sessions.
+    func setAgentsTools(_ server: OutsideAgents.ToolServer) async throws {
+        _ = try await client.send(try client.request("PUT", "api/kuvo/tools", body: server), as: Empty.self)
+    }
+
     func setAgentsEngine(_ endpoint: ServerEndpoint) async throws {
         struct Body: Encodable { var url: String; var password: String? }
         _ = try await client.send(try client.request("PUT", "api/kuvo/engine", body: Body(url: endpoint.url.absoluteString, password: endpoint.password)), as: Empty.self)

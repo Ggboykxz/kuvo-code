@@ -1129,6 +1129,18 @@ class RPC {
   }
 }
 
+// Agents/src/kuvotools.ts
+var server;
+function setToolServer(value) {
+  server = value;
+}
+var toolServerName = "kuvo-browser";
+function kuvoTools(sessionID) {
+  if (!server)
+    return;
+  return { name: toolServerName, url: server.url, headers: { Authorization: `Bearer ${server.token}`, "X-Kuvo-Session": sessionID }, timeout: server.timeout };
+}
+
 // Agents/src/acp.ts
 var outputLimit2 = 30000;
 var limitWords = /RESOURCE_EXHAUSTED|usage limit (?:reached|exceeded)|quota exceeded|exceeded your (?:current )?quota|rate limit exceeded|too many requests/i;
@@ -1154,7 +1166,7 @@ class AcpThread {
   }
   async open(input, hooks) {
     const mode = { approvesAll: hooks.approvesAll(), plan: input.plan };
-    const key = JSON.stringify({ ...mode, program: this.flavor.program?.() ?? 0 });
+    const key = JSON.stringify({ ...mode, program: this.flavor.program?.() ?? 0, tools: kuvoTools(this.session.id)?.url });
     if (this.rpc && !this.rpc.isClosed && this.spawnedWith === key && this.rpc !== this.stale)
       return this.rpc;
     this.close();
@@ -1226,7 +1238,7 @@ class AcpThread {
         if (previous && this.flavor.resumes && init?.agentCapabilities?.sessionCapabilities?.resume) {
           this.loading = true;
           try {
-            this.setup = await rpc.request("session/resume", { sessionId: previous, cwd, mcpServers: [] }, 120000);
+            this.setup = await rpc.request("session/resume", { sessionId: previous, cwd, mcpServers: this.mcpServers(init) }, 120000);
             this.sessionID = previous;
             return;
           } catch {} finally {
@@ -1236,14 +1248,14 @@ class AcpThread {
         if (previous && init?.agentCapabilities?.loadSession) {
           this.loading = true;
           try {
-            this.setup = await rpc.request("session/load", { sessionId: previous, cwd, mcpServers: [] }, 120000);
+            this.setup = await rpc.request("session/load", { sessionId: previous, cwd, mcpServers: this.mcpServers(init) }, 120000);
             this.sessionID = previous;
             return;
           } catch {} finally {
             this.loading = false;
           }
         }
-        this.setup = await rpc.request("session/new", { cwd, mcpServers: [] }, 120000);
+        this.setup = await rpc.request("session/new", { cwd, mcpServers: this.mcpServers(init) }, 120000);
         this.sessionID = this.setup?.sessionId;
         if (previous && previous !== this.sessionID) {
           this.startedOver = true;
@@ -1267,6 +1279,12 @@ class AcpThread {
       throw error;
     }
     return rpc;
+  }
+  mcpServers(init) {
+    const tools = kuvoTools(this.session.id);
+    if (!tools || !init?.agentCapabilities?.mcpCapabilities?.http)
+      return [];
+    return [{ type: "http", name: tools.name, url: tools.url, headers: Object.entries(tools.headers).map(([name, value]) => ({ name, value })) }];
   }
   async prepare(input, hooks) {
     await this.open(input, hooks);
@@ -2625,7 +2643,8 @@ class ClaudeThread {
     const modelID = input.model.id;
     const effort = input.model.variant;
     const append = hooks.instructions();
-    if (this.query && (this.opened?.append !== append || this.opened?.program !== this.agent.program))
+    const tools = kuvoTools(this.session.id);
+    if (this.query && (this.opened?.append !== append || this.opened?.program !== this.agent.program || this.opened?.tools !== tools?.url))
       this.close();
     if (!this.query) {
       this.open(sdk, modelID, effort, input.plan, append, hooks);
@@ -2636,7 +2655,7 @@ class ClaudeThread {
         await this.query.applyFlagSettings({ effortLevel: effort ?? null }).catch(() => {});
       if (this.opened?.plan !== input.plan)
         await this.query.setPermissionMode(input.plan ? "plan" : "default").catch(() => {});
-      this.opened = { model: modelID, effort, plan: input.plan, append, program: this.agent.program };
+      this.opened = { model: modelID, effort, plan: input.plan, append, program: this.agent.program, tools: tools?.url };
     }
     if (hooks.signal.aborted)
       return { outcome: "interrupted" };
@@ -2656,7 +2675,8 @@ class ClaudeThread {
     if (!resume)
       delete this.state.claudeCost;
     this.input = new Queue;
-    this.opened = { model: modelID, effort, plan, append, program: this.agent.program };
+    const tools = kuvoTools(this.session.id);
+    this.opened = { model: modelID, effort, plan, append, program: this.agent.program, tools: tools?.url };
     this.query = sdk.query({
       prompt: this.input,
       options: {
@@ -2668,6 +2688,7 @@ class ClaudeThread {
         permissionMode: plan ? "plan" : "default",
         canUseTool: (name, input, options) => this.canUseTool(name, input, options),
         systemPrompt: { type: "preset", preset: "claude_code", ...append ? { append } : {} },
+        ...tools ? { mcpServers: { [tools.name]: { type: "http", url: tools.url, headers: tools.headers, timeout: tools.timeout } } } : {},
         ...resume ? { resume: id } : { sessionId: id },
         env: this.agent.env(),
         stderr: () => {}
@@ -3013,8 +3034,8 @@ function kuvoTool2(name, input) {
       return { name: "plan", input: { plan: input.plan } };
   }
   if (name.startsWith("mcp__")) {
-    const [, server, ...rest] = name.split("__");
-    return { name: `${server}_${rest.join("__")}`, input };
+    const [, server2, ...rest] = name.split("__");
+    return { name: `${server2}_${rest.join("__")}`, input };
   }
   return { name: name.toLowerCase(), input };
 }
@@ -3206,10 +3227,10 @@ class CodexAgent {
     this.restartIfQuiet();
   }
   restartIfQuiet(starting) {
-    const server = this.outdated;
-    if (!server)
+    const server2 = this.outdated;
+    if (!server2)
       return;
-    if (server.isClosed || this.server !== server) {
+    if (server2.isClosed || this.server !== server2) {
       this.outdated = undefined;
       return;
     }
@@ -3383,11 +3404,11 @@ class CodexAgent {
     this.modelList = undefined;
   }
   shutdown() {
-    const server = this.server;
-    if (!server)
+    const server2 = this.server;
+    if (!server2)
       return;
     this.server = undefined;
-    server.kill();
+    server2.kill();
     for (const thread of this.threads.values())
       thread.serverStopped();
   }
@@ -3411,6 +3432,7 @@ class CodexThread {
   active;
   inTurn = false;
   startedOver = false;
+  toolsURL;
   constructor(agent, session, state) {
     this.agent = agent;
     this.session = session;
@@ -3435,10 +3457,13 @@ class CodexThread {
   async ensureThread(input, hooks) {
     const rpc = await this.agent.rpc(this);
     const instructions = hooks.instructions() || null;
-    if (this.nativeID && this.loaded && instructions === this.instructions)
+    const tools = kuvoTools(this.session.id);
+    if (this.nativeID && this.loaded && instructions === this.instructions && tools?.url === this.toolsURL)
       return rpc;
+    this.toolsURL = tools?.url;
     this.instructions = instructions;
-    const common = { cwd: this.session.location.directory, model: input.model.id, developerInstructions: instructions };
+    const config = tools ? { [`mcp_servers.${tools.name}`]: { url: tools.url, http_headers: tools.headers, tool_timeout_sec: Math.ceil(tools.timeout / 1000) } } : undefined;
+    const common = { cwd: this.session.location.directory, model: input.model.id, developerInstructions: instructions, ...config ? { config } : {} };
     if (this.nativeID) {
       try {
         await rpc.request("thread/resume", { threadId: this.nativeID, excludeTurns: true, ...common }, 60000);
@@ -6317,6 +6342,11 @@ function handler(context) {
           return json({});
         }
       }
+      if (area === "kuvo" && a === "tools" && method === "PUT") {
+        const { url: address, token, timeout } = await body();
+        setToolServer(typeof address === "string" && address && typeof token === "string" ? { url: address, token, timeout: Number(timeout) || 960000 } : undefined);
+        return json({});
+      }
       if (area === "kuvo" && a === "engine" && method === "PUT") {
         const { url: address, password } = await body();
         link.configure(typeof address === "string" && address ? address : undefined, typeof password === "string" ? password : undefined);
@@ -6473,13 +6503,13 @@ function engineAgent(providerID2) {
   return agent;
 }
 var sessions = new Sessions(store, roster, auto, engineAgent, (directory) => link.policies(directory), (name, directory) => link.agentPrompt(name, directory));
-var server = Bun.serve({
+var server2 = Bun.serve({
   hostname: "127.0.0.1",
   port: 0,
   idleTimeout: 0,
   fetch: handler({ roster, sessions, auto, link, password, version: version2 })
 });
-console.log(JSON.stringify({ url: `http://127.0.0.1:${server.port}` }));
+console.log(JSON.stringify({ url: `http://127.0.0.1:${server2.port}` }));
 var stopping = false;
 function stop() {
   if (stopping)
@@ -6488,7 +6518,7 @@ function stop() {
   cancelSignIns();
   sessions.closeAll();
   store.flush();
-  server.stop(true);
+  server2.stop(true);
   process.exit(0);
 }
 process.stdin.on("end", stop);

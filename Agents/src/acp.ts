@@ -11,6 +11,7 @@ import type { Limit } from "./auto"
 import { fileDiff } from "./diff"
 import { newID } from "./ids"
 import { RPC, RPCError } from "./rpc"
+import { kuvoTools } from "./kuvotools"
 import type { Turn } from "./turn"
 import type { Decision, FormField, Session } from "./wire"
 
@@ -109,7 +110,8 @@ export class AcpThread implements Thread {
 
   private async open(input: RunInput, hooks: TurnHooks) {
     const mode = { approvesAll: hooks.approvesAll(), plan: input.plan }
-    const key = JSON.stringify({ ...mode, program: this.flavor.program?.() ?? 0 })
+    // Kuvo Code's tools moving (the app started again) starts it again too, to reach them.
+    const key = JSON.stringify({ ...mode, program: this.flavor.program?.() ?? 0, tools: kuvoTools(this.session.id)?.url })
     if (this.rpc && !this.rpc.isClosed && this.spawnedWith === key && this.rpc !== this.stale) return this.rpc
     // Started again for another approval mode (the agent takes it as it starts), or an updated program.
     this.close()
@@ -179,7 +181,7 @@ export class AcpThread implements Thread {
         if (previous && this.flavor.resumes && init?.agentCapabilities?.sessionCapabilities?.resume) {
           this.loading = true
           try {
-            this.setup = await rpc.request("session/resume", { sessionId: previous, cwd, mcpServers: [] }, 120_000)
+            this.setup = await rpc.request("session/resume", { sessionId: previous, cwd, mcpServers: this.mcpServers(init) }, 120_000)
             this.sessionID = previous
             return
           } catch {} finally {
@@ -190,14 +192,14 @@ export class AcpThread implements Thread {
           // What it replays of the conversation is already here.
           this.loading = true
           try {
-            this.setup = await rpc.request("session/load", { sessionId: previous, cwd, mcpServers: [] }, 120_000)
+            this.setup = await rpc.request("session/load", { sessionId: previous, cwd, mcpServers: this.mcpServers(init) }, 120_000)
             this.sessionID = previous
             return
           } catch {} finally {
             this.loading = false
           }
         }
-        this.setup = await rpc.request("session/new", { cwd, mcpServers: [] }, 120_000)
+        this.setup = await rpc.request("session/new", { cwd, mcpServers: this.mcpServers(init) }, 120_000)
         this.sessionID = this.setup?.sessionId
         if (previous && previous !== this.sessionID) {
           // In place of one it had: the instructions go again, and what came before is handed over.
@@ -221,6 +223,13 @@ export class AcpThread implements Thread {
       throw error
     }
     return rpc
+  }
+
+  /** Kuvo Code's own tools, for an agent that takes MCP servers over HTTP. */
+  private mcpServers(init: any): unknown[] {
+    const tools = kuvoTools(this.session.id)
+    if (!tools || !init?.agentCapabilities?.mcpCapabilities?.http) return []
+    return [{ type: "http", name: tools.name, url: tools.url, headers: Object.entries(tools.headers).map(([name, value]) => ({ name, value })) }]
   }
 
   async prepare(input: RunInput, hooks: TurnHooks) {

@@ -10,6 +10,7 @@ import type { Roster } from "./roster"
 import { emit, feed } from "./events"
 import { isOutdated, type Maintenance } from "./maintenance"
 import { refreshLoginPath } from "./proc"
+import { setToolServer } from "./kuvotools"
 import { newID } from "./ids"
 import { BadRequest, NotFound, Sessions } from "./sessions"
 import type { Integration, Model } from "./wire"
@@ -367,6 +368,13 @@ export function handler(context: Context) {
           emit("model.updated", {})
           return json({})
         }
+      }
+
+      // Where Kuvo Code's own tools are (the app says each time they start), for every agent here.
+      if (area === "kuvo" && a === "tools" && method === "PUT") {
+        const { url: address, token, timeout } = await body()
+        setToolServer(typeof address === "string" && address && typeof token === "string" ? { url: address, token, timeout: Number(timeout) || 960_000 } : undefined)
+        return json({})
       }
 
       // Where the engine is (the app says each time it starts), for its models in sessions here.

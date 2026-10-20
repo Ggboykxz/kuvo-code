@@ -11,6 +11,7 @@ import type { Limit } from "../auto"
 import { accountName, failure, model } from "../agent"
 import { fromPatch } from "../diff"
 import { emit } from "../events"
+import { kuvoTools } from "../kuvotools"
 import { newID } from "../ids"
 import { maintenance, update, type MaintenanceDefinition } from "../maintenance"
 import { which } from "../proc"
@@ -347,6 +348,8 @@ class CodexThread implements Thread {
   private inTurn = false
   /** The thread it had was gone: a new one took its place. */
   private startedOver = false
+  /** Where Kuvo Code's tools were when it was loaded. */
+  private toolsURL?: string
 
   constructor(
     private readonly agent: CodexAgent,
@@ -376,9 +379,14 @@ class CodexThread implements Thread {
     const rpc = await this.agent.rpc(this)
     const instructions = hooks.instructions() || null
     // Loaded again with what the app adds to its instructions, when that changed.
-    if (this.nativeID && this.loaded && instructions === this.instructions) return rpc
+    const tools = kuvoTools(this.session.id)
+    // Loaded again when Kuvo Code's tools moved (the app started again), to reach them.
+    if (this.nativeID && this.loaded && instructions === this.instructions && tools?.url === this.toolsURL) return rpc
+    this.toolsURL = tools?.url
     this.instructions = instructions
-    const common = { cwd: this.session.location.directory, model: input.model.id, developerInstructions: instructions }
+    // Kuvo Code's own tools, as the engine's models have them (a setting for this thread alone).
+    const config = tools ? { [`mcp_servers.${tools.name}`]: { url: tools.url, http_headers: tools.headers, tool_timeout_sec: Math.ceil(tools.timeout / 1000) } } : undefined
+    const common = { cwd: this.session.location.directory, model: input.model.id, developerInstructions: instructions, ...(config ? { config } : {}) }
     if (this.nativeID) {
       try {
         await rpc.request("thread/resume", { threadId: this.nativeID, excludeTurns: true, ...common }, 60_000)

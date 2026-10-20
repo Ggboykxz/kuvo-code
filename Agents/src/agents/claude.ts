@@ -16,6 +16,7 @@ import { emit } from "../events"
 import { run, which } from "../proc"
 import { Queue } from "../queue"
 import { commandSignIn } from "../signin"
+import { kuvoTools } from "../kuvotools"
 import type { Turn } from "../turn"
 import type { FileDiff, FormField, Model, Session, TokenUsage } from "../wire"
 
@@ -307,7 +308,7 @@ class ClaudeThread implements Thread {
   private query?: any
   private input?: Queue<any>
   private active?: Active
-  private opened?: { model: string; effort?: string; plan: boolean; append: string; program: number }
+  private opened?: { model: string; effort?: string; plan: boolean; append: string; program: number; tools?: string }
 
   constructor(
     private readonly agent: ClaudeAgent,
@@ -324,7 +325,8 @@ class ClaudeThread implements Thread {
     const append = hooks.instructions()
     // What the app adds to its instructions changed (a worktree, the project's folders), or Claude
     // Code was updated: it starts again, going on with the same conversation.
-    if (this.query && (this.opened?.append !== append || this.opened?.program !== this.agent.program)) this.close()
+    const tools = kuvoTools(this.session.id)
+    if (this.query && (this.opened?.append !== append || this.opened?.program !== this.agent.program || this.opened?.tools !== tools?.url)) this.close()
     if (!this.query) {
       this.open(sdk, modelID, effort, input.plan, append, hooks)
     } else {
@@ -332,7 +334,7 @@ class ClaudeThread implements Thread {
       if (this.opened?.model !== modelID) await this.query.setModel(modelID === "default" ? undefined : modelID).catch(() => {})
       if (this.opened?.effort !== effort) await this.query.applyFlagSettings({ effortLevel: effort ?? null }).catch(() => {})
       if (this.opened?.plan !== input.plan) await this.query.setPermissionMode(input.plan ? "plan" : "default").catch(() => {})
-      this.opened = { model: modelID, effort, plan: input.plan, append, program: this.agent.program }
+      this.opened = { model: modelID, effort, plan: input.plan, append, program: this.agent.program, tools: tools?.url }
     }
     if (hooks.signal.aborted) return { outcome: "interrupted" }
     return new Promise<RunResult>((resolve) => {
@@ -352,7 +354,8 @@ class ClaudeThread implements Thread {
     // A new conversation counts its cost from nothing.
     if (!resume) delete this.state.claudeCost
     this.input = new Queue()
-    this.opened = { model: modelID, effort, plan, append, program: this.agent.program }
+    const tools = kuvoTools(this.session.id)
+    this.opened = { model: modelID, effort, plan, append, program: this.agent.program, tools: tools?.url }
     this.query = sdk.query({
       prompt: this.input,
       options: {
@@ -364,6 +367,8 @@ class ClaudeThread implements Thread {
         permissionMode: plan ? "plan" : "default",
         canUseTool: (name: string, input: Record<string, unknown>, options: any) => this.canUseTool(name, input, options),
         systemPrompt: { type: "preset", preset: "claude_code", ...(append ? { append } : {}) },
+        // Kuvo Code's own tools, as the engine's models have them.
+        ...(tools ? { mcpServers: { [tools.name]: { type: "http", url: tools.url, headers: tools.headers, timeout: tools.timeout } } } : {}),
         ...(resume ? { resume: id } : { sessionId: id }),
         env: this.agent.env(),
         stderr: () => {},

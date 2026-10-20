@@ -217,6 +217,7 @@ final class AppModel {
             do {
                 _ = try await browserTools.start()
                 if let config = browserTools.engineConfig { shell["OPENCODE_CONFIG_CONTENT"] = Self.merged(config, into: shell["OPENCODE_CONFIG_CONTENT"]) }
+                agents.toolServer = browserTools.agentsServer
             } catch {
                 log.error("Browser tools didn't start: \(error.localizedDescription, privacy: .public)")
             }
