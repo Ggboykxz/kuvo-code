@@ -105,31 +105,39 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     /// `text` with what looks like a secret's value as dots: after a name like token, key, secret,
     /// password or Authorization (Bearer), and long runs of letters and digits like a key's.
     nonisolated static func masked(_ text: String) -> String {
-        var text = text
-        // After a name that says it's one (token=…, "password": …, Authorization: Bearer …,
-        // --token …, aws_secret_access_key …).
-        let named = #"(?i)((?:token|api[_-]?key|secret(?:[_-]?access[_-]?key)?|password|passwd|authorization)["']?\s*[:=]\s*["']?(?:bearer\s+|basic\s+)?|bearer\s+|--(?:token|password|passwd|secret|api-key|key)[=\s]+)[^\s"'&;]{3,}"#
-        text = text.replacingOccurrences(of: named, with: "$1•••", options: .regularExpression)
-        // A password in an address (https://user:pass@host) or curl -u user:pass.
-        text = text.replacingOccurrences(of: #"(://[^\s/:@]+:)[^\s/@]+@"#, with: "$1•••@", options: .regularExpression)
-        text = text.replacingOccurrences(of: #"(\s-u\s+[^\s:]+:)\S+"#, with: "$1•••", options: .regularExpression)
+        let text = maskedNamed(text)
         // A long run of letters and digits, as a key is: 24 or more with both, or a key's own
-        // start (sk-, ghp_, xoxb-, AKIA…). Not a commit's hash or a UUID, which aren't secret.
+        // start (sk-, ghp_, xoxb-, AKIA…). Not a commit's hash or a UUID, nor a path or a name
+        // made of words (a branch, a package, a test), which aren't secret.
         guard let long = try? NSRegularExpression(pattern: #"[A-Za-z0-9_\-+/=]{24,}"#) else { return text }
         let source = text as NSString
         var result = ""
         var at = 0
         for match in long.matches(in: text, range: NSRange(location: 0, length: source.length)) {
             let run = source.substring(with: match.range)
-            let isHash = run.range(of: #"^([0-9a-f]{40}|[0-9a-f]{64}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$"#, options: .regularExpression) != nil
-            let isPath = run.contains("/") && run.range(of: #"^[A-Za-z0-9_\-]+(/[A-Za-z0-9_\-.]+)+$"#, options: .regularExpression) != nil && run.range(of: #"\d"#, options: .regularExpression) == nil
-            let looksKey = run.range(of: #"^(sk-|ghp_|gho_|github_pat_|xox[abp]-|AKIA|AIza)"#, options: .regularExpression) != nil
-                || (run.range(of: #"[A-Za-z]"#, options: .regularExpression) != nil && run.range(of: #"\d"#, options: .regularExpression) != nil)
-            guard looksKey, !isHash, !isPath else { continue }
+            let prefixed = run.range(of: #"^(sk-|ghp_|gho_|ghs_|github_pat_|xox[abp]-|AKIA|AIza|glpat-)"#, options: .regularExpression) != nil
+            let isHash = run.range(of: #"^([0-9a-fA-F]{40}|[0-9a-fA-F]{64}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$"#, options: .regularExpression) != nil
+            let wordy = run.contains("/") || run.filter({ "-_".contains($0) }).count >= 2
+            let mixed = run.range(of: #"[A-Za-z]"#, options: .regularExpression) != nil && run.range(of: #"\d"#, options: .regularExpression) != nil
+            guard prefixed || (mixed && !isHash && !wordy) else { continue }
             result += source.substring(with: NSRange(location: at, length: match.range.location - at)) + "•••"
             at = match.range.location + match.range.length
         }
         return result + source.substring(from: at)
+    }
+
+    /// `text` with the secrets it names as dots: after a name that says it's one (token=…,
+    /// "password": …, Authorization: Bearer …, --token …, aws_secret_access_key …), in an address
+    /// (https://user:pass@host), curl -u user:pass and mysql -pPASS. A notification whose text
+    /// this changes doesn't answer from its buttons: you'd answer what you can't see.
+    nonisolated static func maskedNamed(_ text: String) -> String {
+        var text = text
+        let named = #"(?i)((?:token|api[_-]?key|secret(?:[_-]?access[_-]?key)?|password|passwd|authorization)["']?\s*[:=]\s*["']?(?:bearer\s+|basic\s+)?|bearer\s+|--(?:token|password|passwd|secret|api-key|key)[=\s]+)[^\s"'&;]{3,}"#
+        text = text.replacingOccurrences(of: named, with: "$1•••", options: .regularExpression)
+        text = text.replacingOccurrences(of: #"(://[^\s/:@]+:)[^\s@]+@"#, with: "$1•••@", options: .regularExpression)
+        text = text.replacingOccurrences(of: #"(\s-u\s+[^\s:]+:)\S+"#, with: "$1•••", options: .regularExpression)
+        text = text.replacingOccurrences(of: #"(?i)(\b(?:mysql|mariadb|mysqldump|mysqladmin)\b[^\n]*?\s-p)\S+"#, with: "$1•••", options: .regularExpression)
+        return text
     }
 
     func start() {
@@ -152,7 +160,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     private func category(for question: Question) -> String {
         let identifier = "question.\(question.form)"
         var actions: [UNNotificationAction] = question.choices.prefix(4).enumerated().map { index, choice in
-            UNNotificationAction(identifier: Self.choicePrefix + "\(index)", title: choice.label, options: [.authenticationRequired])
+            UNNotificationAction(identifier: Self.choicePrefix + "\(index)", title: Self.masked(choice.label), options: [.authenticationRequired])
         }
         if question.allowsText {
             actions.append(UNTextInputNotificationAction(identifier: Self.answerAction, title: question.choices.isEmpty ? "Answer" : "Other…", options: [.authenticationRequired],
@@ -173,13 +181,13 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         // What looks like a secret in a command or reply (a token, a key) isn't shown: these stay
         // in Notification Center, and a phone's lock screen.
         let body = Self.masked(body)
-        if let push { send(push, session: session, title: title, subtitle: subtitle, body: body) }
+        if let push { send(push, session: session, title: Self.masked(title), subtitle: subtitle.map(Self.masked), body: body) }
         guard Self.isEnabled, !NSApp.isActive else { return }
         Task {
             guard await authorize() else { return }
             let content = UNMutableNotificationContent()
-            content.title = title
-            if let subtitle { content.subtitle = subtitle }
+            content.title = Self.masked(title)
+            if let subtitle { content.subtitle = Self.masked(subtitle) }
             content.body = body
             if Self.playsSound { content.sound = .default }
             content.threadIdentifier = session

@@ -1683,8 +1683,9 @@ final class Workspace {
             }
             Notifier.shared.notify(session: session?.id ?? id, title: session.flatMap { botName?($0.id) } ?? session?.title ?? AppInfo.name,
                                    subtitle: session.flatMap { botName?($0.id) == nil ? projectName($0.location.directory) : nil }, body: body,
-                                   permission: isPermission && answerable && Notifier.masked(body) == body ? (session: id, request: request) : nil, question: question,
-                                   push: .init(isPermission ? .permission : .question, request: (session: id, id: request), machine: sessionMachines[id], answerable: answerable && Notifier.masked(body) == body))
+                                   permission: isPermission && answerable && Notifier.maskedNamed(body) == body ? (session: id, request: request) : nil,
+                                   question: Notifier.maskedNamed(body) == body ? question : nil,
+                                   push: .init(isPermission ? .permission : .question, request: (session: id, id: request), machine: sessionMachines[id], answerable: answerable && Notifier.maskedNamed(body) == body))
         }
     }
 
