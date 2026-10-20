@@ -253,3 +253,40 @@ describe("Claude Code's subagents in the background", () => {
     expect(sessions.messages(child).at(-1)).toMatchObject({ type: "idle", outcome: "succeeded" })
   })
 })
+
+describe("Claude Code, nothing dropped", () => {
+  async function turn(frames: (first: string) => any[]) {
+    const id = sessions.create({ model: { providerID: provider, id: "default" }, location: { directory: root } }).id
+    sessions.prompt(id, { id: "msg_claude_drop_01", text: "go", files: [], delivery: "steer" })
+    await until(() => fake.sent.length === 1)
+    const [first] = fake.sent.map((message) => message.uuid)
+    for (const frame of frames(first)) fake.out.push(frame)
+    fake.result([first])
+    await until(() => idles(id).length === 1)
+    return id
+  }
+  const tools = (id: string) => sessions.messages(id).flatMap((message: any) => (message.type === "assistant" ? message.content.filter((content: any) => content.type === "tool") : []))
+  const notices = (id: string) => sessions.messages(id).flatMap((message: any) => (message.type === "synthetic" ? [message.text] : []))
+
+  test("a picture a tool brings back, and a server tool's results", async () => {
+    const id = await turn((first) => [
+      { type: "assistant", message: { id: "a1", content: [{ type: "tool_use", id: "r1", name: "Read", input: { file_path: "/tmp/shot.png" } }] }, parent_tool_use_id: null, user_message_uuids: [first] },
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "r1", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "CCCC" } }] }] }, parent_tool_use_id: null },
+      { type: "assistant", message: { id: "a2", content: [{ type: "server_tool_use", id: "s1", name: "web_search", input: { query: "kuvo" } }, { type: "web_search_tool_result", tool_use_id: "s1", content: [{ type: "web_search_result", title: "Kuvo", url: "https://kuvo.run" }] }] }, parent_tool_use_id: null },
+    ])
+    const [read, search] = tools(id)
+    expect(read.state.content).toEqual([{ type: "text", text: "" }, { type: "file", uri: "data:image/png;base64,CCCC", mime: "image/png" }])
+    expect(search).toMatchObject({ name: "websearch", state: { status: "completed", content: [{ type: "text", text: "Kuvo — https://kuvo.run" }] } })
+  })
+
+  test("what Claude Code says about itself: compacting, retrying, and a kind this bridge doesn't know", async () => {
+    const id = await turn(() => [
+      { type: "system", subtype: "compact_boundary", compact_metadata: { trigger: "auto" } },
+      { type: "system", subtype: "api_retry", attempt: 2, max_retries: 10, error_status: 529, error: "overloaded" },
+      { type: "system", subtype: "api_retry", attempt: 3, max_retries: 10, error_status: 529, error: "overloaded" },
+      { type: "system", subtype: "brand_new_thing", content: "Something new to read." },
+      { type: "system", subtype: "post_turn_summary", summary: "Already shown." },
+    ])
+    expect(notices(id)).toEqual(["Claude Code summarized the conversation to make room.", "Claude's API is overloaded: trying again (2/10).", "Something new to read."])
+  })
+})

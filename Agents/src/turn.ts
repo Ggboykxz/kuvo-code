@@ -249,8 +249,10 @@ export class Turn {
   toolProgress(id: string, metadata: Record<string, unknown>) {
     const tool = this.tools.get(id)
     if (!tool || tool.call.state.status !== "running" || this.ended) return
-    tool.call.state.metadata = metadata
-    this.send("session.tool.progress", { assistantMessageID: tool.step.id, id, metadata })
+    // Added to what it said before (a subagent's session stays with its progress).
+    const merged = { ...((tool.call.state.metadata as Record<string, unknown> | undefined) ?? {}), ...metadata }
+    tool.call.state.metadata = merged
+    this.send("session.tool.progress", { assistantMessageID: tool.step.id, id, metadata: merged })
     this.save()
   }
 

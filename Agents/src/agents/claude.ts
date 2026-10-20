@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto"
 import { existsSync, readFileSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { pathToFileURL } from "node:url"
 import { providerID, type AgentAccount } from "../accounts"
 import type { Agent, AgentContext, Account, OwnTurn, RunInput, RunResult, SignInAttempt, SubagentRun, Thread, TurnHooks, PromptFile } from "../agent"
 import type { Limit } from "../auto"
@@ -16,8 +17,10 @@ import { emit } from "../events"
 import { run, which } from "../proc"
 import { Queue } from "../queue"
 import { commandSignIn } from "../signin"
+import { newID } from "../ids"
 import { kuvoTools } from "../kuvotools"
 import { addShell, endShell } from "../shells"
+import { pictureData, pictureFile, withPictures } from "../pictures"
 import type { Turn } from "../turn"
 import type { FileDiff, FormField, Model, ModelRef, Session, TokenUsage } from "../wire"
 
@@ -361,6 +364,8 @@ class ClaudeThread implements Thread {
   private active?: Active
   /** The last turn's hooks: its rules still hold for a subagent at work after it. */
   private lastHooks?: TurnHooks
+  /** Notes given once (a warning, a retry, something it sent this bridge doesn't know). */
+  private noticed = new Set<string>()
   onOwnTurn?: (note: OwnTurn) => boolean
   /**
    * A turn Claude Code began on its own between ours (a command it left running ended, and it
@@ -686,22 +691,29 @@ class ClaudeThread implements Thread {
       case "assistant": {
         const content = message.message?.content ?? []
         const id = message.message?.id
-        if (message.error === "authentication_failed" || message.message?.error === "authentication_failed") {
+        const error = message.error ?? message.message?.error
+        if (error === "authentication_failed") {
           this.agent.authFailedAt = Date.now()
           if (active) active.problem = "Claude Code isn't signed in. Sign in again in Settings › Accounts."
-        }
+        } else if (typeof error === "string" && active && lane === active) active.problem ??= apiErrorWords(error)
         for (const block of content) {
-          if (block.type === "tool_use") {
-            lane.calls.set(block.id, { name: block.name, input: block.input ?? {} })
-            const tool = kuvoTool(block.name, block.input ?? {})
+          if (block.type === "tool_use" || block.type === "server_tool_use" || block.type === "mcp_tool_use") {
+            const name = block.type === "mcp_tool_use" ? `mcp__${block.server_name ?? "mcp"}__${block.name}` : block.name
+            lane.calls.set(block.id, { name, input: block.input ?? {} })
+            const tool = kuvoTool(name, block.input ?? {})
             if (!turn.hasTool(block.id)) turn.toolStart(block.id, tool.name)
             turn.toolCalled(block.id, tool.input)
             // A subagent of the turn's own: its session, from now.
             if (active && lane === active && tool.name === "subagent") this.subagentLane(active, block.id)
+          } else if (typeof block.type === "string" && block.type.endsWith("_tool_result")) {
+            // What a tool the API ran itself (a web search, code it ran) came back with.
+            this.serverResult(turn, block)
           } else if (!id || !lane.streamed.has(id)) {
             // Not streamed (it came whole): told now.
             if (block.type === "text" && block.text) turn.text(block.text)
             else if (block.type === "thinking" && block.thinking) turn.reasoning(block.thinking)
+            else if (block.type === "redacted_thinking") turn.reasoning("(The model kept this thinking to itself.)")
+            else if (block.type === "compaction") this.noticeLater(lane, "Claude summarized the conversation to make room.")
           }
         }
         if (id && !lane.streamed.has(id)) turn.endBlock()
@@ -716,6 +728,12 @@ class ClaudeThread implements Thread {
       case "rate_limit_event": {
         if (!active || lane !== active) return
         const info = message.rate_limit_info ?? {}
+        // Close to a limit: said once, so the stop doesn't come out of nowhere.
+        if (info.status === "allowed_warning") {
+          const used = typeof info.utilization === "number" ? ` (${Math.round(info.utilization * 100)}% used)` : ""
+          this.noticeOnce(`warn:${info.rateLimitType}:${info.surpassedThreshold ?? ""}`, turn, `You're close to ${limitWords(info.rateLimitType).replace(/^You've reached /, "").replace(/\.$/, "")}${used}.`)
+          return
+        }
         // Over the plan's limit, unless extra usage you pay for carries on.
         if (info.status !== "rejected" || info.overageInUse || info.isUsingOverage) return
         const resetsAt = typeof info.resetsAt === "number" ? info.resetsAt * 1000 : undefined
@@ -731,12 +749,118 @@ class ClaudeThread implements Thread {
           active.limit ??= message.error === "billing_error" ? { scope: "provider" } : { scope: "model", brief: true }
           active.problem ??= "Claude's API is rate limiting this model."
           void this.query?.interrupt().catch(() => {})
+          return
         }
+        return this.systemFrame(active, lane, message)
+      case "conversation_reset":
+        delete this.state.claudeCost
+        turn.notice("Claude Code started its conversation over.")
+        return
+      case "auth_status":
+        if (message.error && active) active.problem = String(message.error)
+        else if (Array.isArray(message.output) && message.output.length) turn.notice(message.output.join("\n"))
         return
       case "result":
         if (!active || lane !== active) return
         return this.finish(active, message)
+      default:
+        if (!claudeMessages.has(message.type)) this.unknownFrame(turn, String(message.type), message)
     }
+  }
+
+  /** What Claude Code says about itself (compacting, retrying, your hooks, notes for you). */
+  private systemFrame(active: Active | undefined, lane: Lane, message: any) {
+    const turn = lane.turn
+    switch (message.subtype) {
+      case "task_progress":
+        // A subagent's or command's progress, on its row.
+        if (typeof message.tool_use_id === "string" && (message.summary || message.description)) turn.toolProgress(message.tool_use_id, { summary: message.summary ?? message.description, lastTool: message.last_tool_name })
+        return
+      case "compact_boundary":
+        this.noticeLater(lane, "Claude Code summarized the conversation to make room.")
+        return
+      case "status":
+        if (message.compact_result === "failed") turn.notice(`Claude Code couldn't summarize the conversation${message.compact_error ? `: ${message.compact_error}` : ""}.`)
+        return
+      case "api_retry":
+        // The API is busy or a request failed: it tries again (said once a step).
+        this.noticeOnce(`retry:${lane.turn.currentModel.id}`, turn, `Claude's API ${message.error === "overloaded" || message.error_status === 529 ? "is overloaded" : "had a problem"}: trying again${message.max_retries ? ` (${message.attempt}/${message.max_retries})` : ""}.`)
+        return
+      case "local_command_output":
+        // What a command you typed for Claude Code itself printed (/cost, /usage).
+        if (typeof message.content === "string" && message.content.trim()) {
+          turn.text(message.content)
+          turn.endBlock()
+        }
+        return
+      case "informational":
+        if (message.level !== "info" && typeof message.content === "string") turn.notice(message.content)
+        return
+      case "notification":
+        if (message.priority !== "low" && typeof message.text === "string") turn.notice(message.text)
+        return
+      case "model_refusal_fallback":
+      case "model_refusal_no_fallback":
+        if (typeof message.content === "string") turn.notice(message.content)
+        return
+      case "plugin_install":
+        if (message.status === "failed") turn.notice(`A Claude Code plugin didn't install${message.name ? ` (${message.name})` : ""}${message.error ? `: ${message.error}` : ""}.`)
+        return
+      case "hook_response":
+        if (message.outcome === "error" || message.exit_code) turn.notice(`Your ${message.hook_name ?? message.hook_event ?? ""} hook failed${message.stderr ? `: ${String(message.stderr).trim()}` : ""}.`)
+        return
+      case "memory_recall": {
+        const id = newID("call")
+        turn.toolStart(id, "memory", { description: "Recalled from memory" })
+        const paths = Array.isArray(message.paths) ? message.paths.join("\n") : ""
+        turn.toolSucceeded(id, paths || (typeof message.content === "string" ? message.content : ""))
+        return
+      }
+    }
+    if (!claudeSystem.has(message.subtype)) this.unknownFrame(turn, `system:${message.subtype}`, message)
+  }
+
+  /** A note now, or after the words being written (a notice ends the step under way). */
+  private noticeLater(lane: Lane, text: string) {
+    lane.turn.notice(text)
+  }
+
+  /** A note, once per kind for this Claude Code. */
+  private noticeOnce(key: string, turn: Turn, text: string) {
+    if (this.noticed.has(key)) return
+    this.noticed.add(key)
+    turn.notice(text)
+  }
+
+  /** Something Claude Code sent that this bridge doesn't know (a newer one's): its words shown, and logged. */
+  private unknownFrame(turn: Turn, key: string, message: any) {
+    const words = ["content", "text", "message", "summary"].map((field) => message?.[field]).find((value) => typeof value === "string" && value.trim())
+    if (words) this.noticeOnce(`unknown:${key}:${words}`, turn, words)
+    if (!this.noticed.has(`log:${key}`)) {
+      this.noticed.add(`log:${key}`)
+      console.error(`Claude Code sent ${key}, which Kuvo Code doesn't know: ${JSON.stringify(message).slice(0, 300)}`)
+    }
+  }
+
+  /** A server tool's result block (web search, web fetch, code execution, an MCP call the API made). */
+  private serverResult(turn: Turn, block: any) {
+    const id = block.tool_use_id
+    if (typeof id !== "string") return
+    if (!turn.hasTool(id)) turn.toolStart(id, block.type.replace(/_tool_result$/, ""), {})
+    const content = block.content
+    const failed = (content && typeof content === "object" && !Array.isArray(content) && String(content.type ?? "").endsWith("_error")) || block.is_error
+    const lines: string[] = []
+    for (const part of Array.isArray(content) ? content : [content]) {
+      if (!part) continue
+      if (part.type === "web_search_result") lines.push([part.title, part.url].filter(Boolean).join(" — "))
+      else if (typeof part.text === "string") lines.push(part.text)
+      else if (typeof part.stdout === "string" || typeof part.stderr === "string") lines.push([part.stdout, part.stderr].filter(Boolean).join("\n"))
+      else if (part.type === "web_fetch_result") lines.push(part.url ?? "")
+      else if (typeof part.error_code === "string") lines.push(part.error_code)
+    }
+    const text = lines.filter(Boolean).join("\n").slice(0, outputLimit)
+    if (failed) turn.toolFailed(id, text || "The tool failed.")
+    else turn.toolSucceeded(id, text)
   }
 
   /** The session a subagent's work is told in, for its call: made the first time. */
@@ -750,7 +874,8 @@ class ClaudeThread implements Thread {
       active.subagents.set(callID, kept)
       return kept
     }
-    const call = active.calls.get(callID)
+    // Its call, the turn's own or a subagent's (a subagent of a subagent: its session too).
+    const call = active.calls.get(callID) ?? [...active.subagents.values()].map((lane) => lane.calls.get(callID)).find(Boolean)
     const before = this.subagentSessions.get(callID)
     let run: SubagentRun
     let background = false
@@ -791,10 +916,11 @@ class ClaudeThread implements Thread {
       }
       case "content_block_start": {
         const block = event.content_block
-        if (block?.type === "tool_use") {
+        if (block?.type === "tool_use" || block?.type === "server_tool_use" || block?.type === "mcp_tool_use") {
           lane.blockTools.set(event.index, block.id)
-          turn.toolStart(block.id, kuvoTool(block.name, {}).name)
-        }
+          turn.toolStart(block.id, kuvoTool(block.type === "mcp_tool_use" ? `mcp__${block.server_name ?? "mcp"}__${block.name}` : block.name, {}).name)
+        } else if (block?.type === "redacted_thinking") turn.reasoning("(The model kept this thinking to itself.)")
+        else if (typeof block?.type === "string" && block.type.endsWith("_tool_result")) this.serverResult(turn, block)
         return
       }
       case "content_block_delta": {
@@ -826,6 +952,8 @@ class ClaudeThread implements Thread {
     const call = lane.calls.get(id)
     let text = toolText(block.content)
     if (text.length > outputLimit) text = text.slice(0, outputLimit) + "\n…"
+    // Pictures it brought back (a Read of an image, a screenshot), and a PDF it read.
+    const pictures = toolPictures(block.content, call?.input)
     // A subagent's task came back: its session's work is done (one sent off in the background
     // goes on, and ends with the turn).
     const subagent = active && lane === active ? active.subagents.get(id) : undefined
@@ -841,10 +969,17 @@ class ClaudeThread implements Thread {
     const files = call ? diffs(call.name, call.input, structured) : []
     if (files.length) metadata.files = files
     if (call?.name === "Bash" && structured) {
-      const output = [structured.stdout, structured.stderr].filter((part: string) => part).join("\n")
-      if (output) text = output.length > outputLimit ? output.slice(0, outputLimit) + "\n…" : output
+      // A command that printed a picture: the picture, not its data as words.
+      if (structured.isImage && typeof structured.stdout === "string") pictures.push(pictureUrl(structured.stdout.trim()))
+      else {
+        const output = [structured.stdout, structured.stderr].filter((part: string) => part).join("\n")
+        if (output) text = output.length > outputLimit ? output.slice(0, outputLimit) + "\n…" : output
+      }
+      // What its words said besides (it was stopped, it timed out, where the rest went).
+      const notes = [structured.interrupted ? "It was stopped." : "", structured.returnCodeInterpretation ?? "", structured.persistedOutputPath ? `The rest of what it printed is in ${structured.persistedOutputPath}.` : ""].filter(Boolean)
+      if (notes.length) text = [text, ...notes].filter(Boolean).join("\n")
     }
-    turn.toolSucceeded(id, text, Object.keys(metadata).length ? metadata : undefined)
+    turn.toolSucceeded(id, withPictures(text, pictures), Object.keys(metadata).length ? metadata : undefined)
   }
 
   private finish(active: Active, result: any) {
@@ -1069,6 +1204,24 @@ class ClaudeThread implements Thread {
   }
 }
 
+/**
+ * What Claude Code sends, by kind: each is shown, used, or left out on purpose (tool_progress's
+ * elapsed time, a summary of tools already shown, suggestions it isn't asked for). A test checks
+ * the SDK's own list against these; any other kind is shown when it has words, and logged.
+ */
+export const claudeMessages = new Set(["assistant", "user", "stream_event", "result", "system", "rate_limit_event", "auth_status", "conversation_reset", "tool_progress", "tool_use_summary", "prompt_suggestion"])
+
+/** Its `system` messages' kinds: shown (compacting, retries, notes, hooks' failures, memory), used (tasks, init) or bookkeeping. */
+export const claudeSystem = new Set([
+  "init", "compact_boundary", "status", "api_retry", "control_request_progress", "model_refusal_fallback", "model_refusal_no_fallback",
+  "local_command_output", "hook_started", "hook_progress", "hook_response", "plugin_install", "task_notification", "task_started",
+  "task_updated", "task_progress", "background_tasks_changed", "thinking_tokens", "session_state_changed", "worker_shutting_down",
+  "commands_changed", "notification", "files_persisted", "memory_recall", "elicitation_complete", "permission_denied", "mirror_error",
+  "informational",
+  // Newer Claude Codes' summaries of what it already showed.
+  "task_summary", "post_turn_summary",
+])
+
 // MARK: Tools, as the app knows them
 
 /** Claude Code's tool, by the engine's name for its kind, with its input as the app reads it. */
@@ -1093,7 +1246,14 @@ export function kuvoTool(name: string, input: Record<string, any>): { name: stri
     case "WebFetch":
       return { name: "webfetch", input: { url: input.url, prompt: input.prompt } }
     case "WebSearch":
+    case "web_search":
       return { name: "websearch", input: { query: input.query } }
+    // Tools the API runs itself.
+    case "web_fetch":
+      return { name: "webfetch", input: { url: input.url } }
+    case "code_execution":
+    case "bash_code_execution":
+      return { name: "shell", input: { command: input.command ?? input.code, description: "Ran on Anthropic's servers" } }
     case "Task":
     case "Agent":
       return { name: "subagent", input: { description: input.description, agent: input.subagent_type, prompt: input.prompt } }
@@ -1166,6 +1326,8 @@ function diffs(name: string, input: Record<string, any>, structured: any): FileD
     return [fromPatch(path, patch)]
   }
   if (typeof structured?.originalFile === "string" && existsSync(path)) return [fileDiff(path, structured.originalFile, safeRead(path) ?? "")]
+  // A notebook's cell, as it was and is.
+  if (name === "NotebookEdit" && (typeof structured?.old_source === "string" || typeof structured?.new_source === "string")) return [fileDiff(path, structured.old_source ?? "", structured.new_source ?? "")]
   return []
 }
 
@@ -1181,11 +1343,59 @@ function toolText(content: unknown): string {
   if (typeof content === "string") return content
   if (Array.isArray(content)) {
     return content
-      .map((part: any) => (part?.type === "text" ? part.text : part?.type === "image" ? "[image]" : ""))
+      .map((part: any) => {
+        switch (part?.type) {
+          case "text":
+            return part.text
+          case "tool_reference":
+            return `Loaded ${part.tool_name ?? "a tool"}`
+          case "search_result":
+            return [part.title, part.source].filter(Boolean).join(" — ")
+          case "image":
+          case "document":
+            return ""
+        }
+        return typeof part?.text === "string" ? part.text : ""
+      })
       .filter(Boolean)
       .join("\n")
   }
   return ""
+}
+
+/** The pictures (and a PDF) in a tool's result: as data, or the file it read. */
+function toolPictures(content: unknown, input: Record<string, any> | undefined): (ReturnType<typeof pictureData> | ReturnType<typeof pictureFile>)[] {
+  const pictures: (ReturnType<typeof pictureData> | ReturnType<typeof pictureFile>)[] = []
+  for (const part of Array.isArray(content) ? (content as any[]) : []) {
+    if (part?.type === "image") pictures.push(part.source?.type === "base64" ? pictureData(part.source.data, part.source.media_type) : pictureUrl(part.source?.url))
+    if (part?.type === "document" && typeof input?.file_path === "string") pictures.push({ type: "file", uri: pathToFileURL(input.file_path).href, mime: "application/pdf", name: input.file_path.split("/").pop() })
+  }
+  return pictures
+}
+
+/** A picture by its address: data, or a file on this Mac. */
+function pictureUrl(url: unknown): ReturnType<typeof pictureData> {
+  if (typeof url !== "string") return undefined
+  const data = /^data:([^;,]+);base64,(.*)$/s.exec(url)
+  if (data) return pictureData(data[2], data[1])
+  return url.startsWith("file://") ? pictureFile(decodeURIComponent(new URL(url).pathname)) : undefined
+}
+
+/** An API error Claude Code reported in a reply, in words. */
+function apiErrorWords(error: string): string {
+  switch (error) {
+    case "billing_error":
+      return "Claude's API says there's a billing problem with this account."
+    case "rate_limit":
+      return "Claude's API is rate limiting this model."
+    case "invalid_request":
+      return "Claude's API turned the request away."
+    case "server_error":
+      return "Claude's API had a problem."
+    case "max_output_tokens":
+      return "The reply ran out of room."
+  }
+  return `Claude's API reported an error (${error}).`
 }
 
 /** What reaching a Claude plan limit means, in words. */
