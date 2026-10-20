@@ -377,8 +377,15 @@ public struct Transcript: Sendable, Equatable {
             isRunning = true
             let started = try event.payload(as: EventPayload.ToolInputStarted.self)
             editAssistant(started.assistantMessageID) { message in
-                // There already: a read since has it.
-                guard !message.content.contains(where: { $0.isTool(started.id) }) else { return }
+                // There already (a read since has it, or the agent named it again once it knew what
+                // it was, as Antigravity does for Kuvo Code's tools): its name as it is now.
+                if let index = message.content.lastIndex(where: { $0.isTool(started.id) }) {
+                    guard case .tool(var call) = message.content[index], call.name != started.name else { return }
+                    message.content[index] = Self.emptyBlock
+                    call.name = started.name
+                    message.content[index] = .tool(call)
+                    return
+                }
                 let call = Message.ToolCall(id: started.id, name: started.name, state: .streaming(input: ""), time: .init(created: now))
                 message.content.append(.tool(call))
             }
